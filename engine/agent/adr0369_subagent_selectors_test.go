@@ -263,3 +263,56 @@ func TestADR_0369_Scenario3_InvalidSelectors(t *testing.T) {
 		t.Fatalf("model-only specialist override = %+v, err=%v", res, err)
 	}
 }
+
+func TestADR_0369_Scenario1_NamedAutomaticRouterPreservesProviderTarget(t *testing.T) {
+	var built []ModelTarget
+	tool := NewSubagentTool(markerEngine("default"),
+		WithAgentEngines(map[string]*Engine{"reviewer": markerEngine("specialist")}, []AgentMeta{{Name: "reviewer", Provider: "parent"}}),
+		WithRoutableAgents([]string{"reviewer"}),
+		WithAgentTargetEngineFactory(func(name string, target ModelTarget) (*Engine, bool) {
+			if name != "reviewer" {
+				t.Fatalf("target factory agent = %q, want reviewer", name)
+			}
+			built = append(built, target)
+			return markerEngine(target.Model), true
+		}),
+	).(*SubagentTool)
+
+	res, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("named-route", "Subagent", json.RawMessage(`{"prompt":"review","agent":"reviewer"}`)), memEnv("/ws"), func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			if ev.Subagent.Provider != "second" || ev.Subagent.Model != "opaque-model" || ev.Subagent.RoutedCategory != "large" || ev.Subagent.RoutedModel != "opaque-model" {
+				t.Fatalf("routing evidence = %+v", ev.Subagent)
+			}
+		}
+	}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", provider: "second", model: "opaque-model", ok: true}
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("named automatic route = %+v, err=%v", res, err)
+	}
+	if len(built) != 1 || built[0] != (ModelTarget{Provider: "second", Model: "opaque-model"}) {
+		t.Fatalf("target factory calls = %+v, want second/opaque-model", built)
+	}
+}
+
+func TestADR_0369_Scenario1_NamedAutomaticRouterUnavailableTargetFallsSoft(t *testing.T) {
+	tool := NewSubagentTool(markerEngine("default"),
+		WithAgentEngines(map[string]*Engine{"reviewer": markerEngine("specialist")}, []AgentMeta{{Name: "reviewer", Provider: "parent"}}),
+		WithRoutableAgents([]string{"reviewer"}),
+		WithAgentTargetEngineFactory(func(string, ModelTarget) (*Engine, bool) { return nil, false }),
+	).(*SubagentTool)
+	var start *session.SubagentPayload
+	res, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("unavailable-route", "Subagent", json.RawMessage(`{"prompt":"review","agent":"reviewer"}`)), memEnv("/ws"), func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart {
+			start = ev.Subagent
+		}
+	}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", provider: "second", model: "opaque-model", ok: true}
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("unavailable automatic target = %+v, err=%v", res, err)
+	}
+	if start == nil || start.Provider != "parent" || start.Model != "specialist" || start.RoutedCategory != "" || start.RoutedModel != "" || start.RoutingReason != session.RoutingReasonTargetUnavailable {
+		t.Fatalf("fail-soft routing evidence = %+v", start)
+	}
+}

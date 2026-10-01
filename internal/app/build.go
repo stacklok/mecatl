@@ -7794,8 +7794,12 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// closure hands engine/agent only func(string,string)(*Engine,bool); the registry never
 	// crosses (same shape/spirit as WithAgentEngines). A def with inline MCP servers is a
 	// v1 scope limit (the factory declines; selectChildEngine surfaces the error).
-	opts = append(opts, agent.WithAgentModelEngineFactory(
-		buildAgentModelEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)))
+	opts = append(opts,
+		agent.WithAgentModelEngineFactory(
+			buildAgentModelEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
+		agent.WithAgentTargetEngineFactory(
+			buildAgentTargetEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
+	)
 	// ROUTABLE agent defs (issue #286): the SET of def names that expressed NO model intent
 	// (absent `model:`), don't switch provider, and have no inline MCP — so the OPT-IN router
 	// may classify an `agent`-named delegation to them and rebuild the def's scoped engine on
@@ -7817,6 +7821,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	opts = append(opts,
 		agent.WithAgentWritableEngineFactory(writableAgentFactory),
 		agent.WithAgentWritableModelEngineFactory(writableAgentModelFactory),
+		agent.WithAgentWritableTargetEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)),
 	)
 	// WRITABLE subagent (mode:"read-write"): a child engine whose catalog
 	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
@@ -8133,6 +8138,68 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt on override model",
 			"agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model,
 			"preloaded_skills", skillCount, "source", reg.Detail(def.Name))
+		return eng, true
+	}
+}
+
+func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
+		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
+		if reg == nil || agentName == "" || target.Provider == "" || target.Model == "" {
+			return nil, false
+		}
+		def, ok := reg.Get(agentName)
+		if !ok || strings.TrimSpace(def.Model) != "" {
+			return nil, false
+		}
+		if inline, found := defInlineMCPServer(def); found {
+			cfg.diag().Log(ctx, port.LevelInfo, "automatic routed specialist declined: def has inline MCP servers (v1 scope limit)", "agent", def.Name, "server", inline.Name)
+			return nil, false
+		}
+		entry, found := provReg.Lookup(target.Provider)
+		if !found || !entry.available || entry.provider == nil {
+			return nil, false
+		}
+		windowFn := childWindowFor(cfg, provReg, target.Provider, target.Model)
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, target.Model, windowFn,
+			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
+		if mcpClose != nil {
+			if err := mcpClose(); err != nil {
+				cfg.diag().Log(ctx, port.LevelWarn, "automatic routed specialist engine inline MCP close", "agent", def.Name, "model", target.Model, "err", err)
+			}
+		}
+		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt on automatic routed target", "agent", def.Name, "tools", strings.Join(names, ","), "provider", target.Provider, "model", target.Model, "preloaded_skills", skillCount, "source", reg.Detail(def.Name))
+		return eng, true
+	}
+}
+
+func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+	mainRunner := directWriteCommandRunner(cfg)
+	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
+		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
+		if reg == nil || agentName == "" || target.Provider == "" || target.Model == "" {
+			return nil, false
+		}
+		def, ok := reg.Get(agentName)
+		if !ok || strings.TrimSpace(def.Model) != "" {
+			return nil, false
+		}
+		if inline, found := defInlineMCPServer(def); found {
+			cfg.diag().Log(ctx, port.LevelInfo, "automatic routed writable specialist declined: def has inline MCP servers (v1 scope limit)", "agent", def.Name, "server", inline.Name)
+			return nil, false
+		}
+		entry, found := provReg.Lookup(target.Provider)
+		if !found || !entry.available || entry.provider == nil {
+			return nil, false
+		}
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable:target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, target.Model, childWindowFor(cfg, provReg, target.Provider, target.Model),
+			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil, skillIdx, defaultHooks, mainRunner, mainMgr)
+		if mcpClose != nil {
+			if err := mcpClose(); err != nil {
+				cfg.diag().Log(ctx, port.LevelWarn, "automatic routed writable specialist engine inline MCP close", "agent", def.Name, "model", target.Model, "err", err)
+			}
+		}
+		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable on automatic routed target", "agent", def.Name, "tools", strings.Join(names, ","), "provider", target.Provider, "model", target.Model, "preloaded_skills", skillCount, "source", reg.Detail(def.Name))
 		return eng, true
 	}
 }

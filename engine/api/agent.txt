@@ -201,8 +201,10 @@ func UtilityEngineUsage(kind session.UsageKind, identity session.ProviderModelID
 func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error
 func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
 func WithAgentModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
+func WithAgentTargetEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption
 func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) SubagentOption
 func WithAgentWritableModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
+func WithAgentWritableTargetEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption
 func WithAskReviewPolicy(p string) EngineAskReviewerOption
 func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption
 func WithChildForker(f tool.EnvironmentForker) SubagentOption

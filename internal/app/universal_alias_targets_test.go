@@ -249,3 +249,71 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 		}
 	})
 }
+
+func TestADR_0369_Scenario1_NamedAutomaticRouterPairAliasTarget(t *testing.T) {
+	const (
+		parentModel = "parent-model"
+		pairModel   = "opaque/provider-specific:model"
+		bodyMarker  = "PAIR-ROUTED-SPECIALIST-SCOPE"
+	)
+	workspace, agentsDir := t.TempDir(), t.TempDir()
+	writeAgentDefFile(t, agentsDir, "reviewer", "", bodyMarker)
+	var (
+		mu       sync.Mutex
+		pairReqs []reqRec
+	)
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:       workspace,
+		NoSoul:          true,
+		Model:           parentModel,
+		DefaultProvider: providerOpenAI,
+		AgentsDirs:      []string{agentsDir},
+		ModelAliasTargets: ModelAliases{
+			"pair-route": {ProviderID: providerOpenRouter, Model: pairModel},
+		},
+		RouterCategories:      []permconfig.RouterCategory{{Name: "deep", Description: "deep specialist work", Model: "pair-route"}},
+		RouterDefaultCategory: "deep",
+		AllowAllTools:         true,
+		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key", "OPENROUTER_API_KEY": "test-key"}),
+		liveModelHTTPClient:   offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			if id == providerOpenRouter {
+				return mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
+					mu.Lock()
+					pairReqs = append(pairReqs, reqRec{model: r.Model, system: r.System.Render()})
+					mu.Unlock()
+				})}, mockllm.TextTurn("pair child done"))
+			}
+			return mockllm.New(
+				mockllm.ToolCallTurn(session.NewToolCall("named", "Subagent", []byte(`{"prompt":"review","agent":"reviewer"}`))),
+				mockllm.TextTurn(`{"category":"deep"}`),
+				mockllm.TextTurn("parent done"),
+			)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	terminal, starts := drainRunWithSubagentStart(run)
+	if terminal != "parent done" || len(starts) != 1 {
+		t.Fatalf("run = terminal %q starts %+v", terminal, starts)
+	}
+	start := starts[0]
+	if start.Provider != providerOpenRouter || start.Model != pairModel || start.RoutedCategory != "deep" || start.RoutedModel != pairModel || start.RoutingReason != "" {
+		t.Fatalf("named pair route evidence = %+v", start)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(pairReqs) != 1 || pairReqs[0].model != pairModel || !strings.Contains(pairReqs[0].system, bodyMarker) {
+		t.Fatalf("pair-provider requests = %+v, want one scoped %q request", pairReqs, pairModel)
+	}
+}
