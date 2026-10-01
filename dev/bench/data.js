@@ -285648,6 +285648,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790832516502,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3c39ceaafeafc1717369727dedb8c04b88ad563",
+          "message": "test(mecatui): fix carryover handoff close flake (#2020)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T08:21:34+03:00",
+          "tree_id": "cdf9e2c49b8bd9800eee0214bb284ce23f0cd674",
+          "url": "https://github.com/stacklok/mecatl/commit/d3c39ceaafeafc1717369727dedb8c04b88ad563"
+        },
+        "date": 1790833236461,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 114,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -374264,6 +374303,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790833233041,
+  "lastUpdate": 1790833237136,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
