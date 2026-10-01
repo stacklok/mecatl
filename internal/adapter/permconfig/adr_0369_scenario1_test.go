@@ -46,7 +46,7 @@ func TestADR_0369_Scenario1_AliasGrammar(t *testing.T) {
 	}
 }
 
-func TestADR_0369_Scenario1_ProjectModelsDisabled(t *testing.T) {
+func TestProjectModelsOpaqueWarning(t *testing.T) {
 	for _, trust := range []bool{false, true} {
 		t.Run(map[bool]string{false: "untrusted", true: "trusted"}[trust], func(t *testing.T) {
 			var logs bytes.Buffer

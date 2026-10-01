@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"os"
 	"path/filepath"
@@ -181,7 +182,7 @@ func TestParallelEngineFactorySatisfiesOptionShape(_ *testing.T) {
 	_ = agent.WithParallelEngineFactory(f)
 }
 
-func TestParallelTeamSelectorTargetFactories(t *testing.T) {
+func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 	t.Run("parallel target switches provider", func(t *testing.T) {
 		parent := mockllm.New(mockllm.TextTurn("parent"))
 		var mu sync.Mutex
@@ -201,6 +202,23 @@ func TestParallelTeamSelectorTargetFactories(t *testing.T) {
 		}
 	})
 
+	t.Run("provider-bearing named roster rejection is atomic", func(t *testing.T) {
+		builds := 0
+		teamTool := agent.NewTeamTool(func(_ *team.Team, _ agent.MemberSpec, _ string) agent.MemberBuild {
+			builds++
+			return agent.MemberBuild{}
+		}, agent.WithTeamSelectorResolver(func(provider, model string) (agent.ResolvedModelSelector, error) {
+			return agent.ResolvedModelSelector{Target: agent.ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: provider != ""}, nil
+		}))
+		res, err := teamTool.Execute(t.Context(), session.NewToolCall("t", "Team", json.RawMessage(`{"goal":"goal","members":[{"name":"first","role":"lead","model":"ok"},{"name":"second","role":"review","agent":"reviewer","provider":"other","model":"bad"}]}`)), memEnvironment("/ws"))
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if !res.IsError || builds != 0 {
+			t.Fatalf("atomic rejection result error=%v builds=%d, want true/0", res.IsError, builds)
+		}
+	})
+
 	t.Run("named team model override preserves specialist scope", func(t *testing.T) {
 		parent := mockllm.New(mockllm.TextTurn("parent"))
 		var (
@@ -215,7 +233,7 @@ func TestParallelTeamSelectorTargetFactories(t *testing.T) {
 			mu.Unlock()
 		})}, mockllm.TextTurn("done"))
 		reg := twoProviderReg(parent, "parent", "parent-model", second, "second")
-		def := agents.AgentDef{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY", PermissionMode: "plan", MaxTurns: 7, MaxToolCalls: 8}
+		def := agents.AgentDef{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY", Tools: []string{"Read", "Edit", "Write"}, PermissionMode: "plan", MaxTurns: 7, MaxToolCalls: 8}
 		cfg := Config{Model: "parent-model"}
 		factory := buildMemberSelectorEngine(cfg, reg, parent, "parent", "parent-model", hookexec.New(nil), agents.NewRegistry([]agents.AgentDef{def}), nil, nil, nil, false, nil, catalogAssets{}, false)
 		build := factory(team.New("t"), agent.MemberSpec{Name: "reviewer", AgentType: "reviewer"}, agent.ResolvedModelSelector{Target: agent.ModelTarget{Model: "override"}, ActualProvider: "second"})
@@ -230,6 +248,51 @@ func TestParallelTeamSelectorTargetFactories(t *testing.T) {
 		}
 		if build.Mode != session.ModePlan || build.Limits.MaxTurns != 7 || build.Limits.MaxToolCalls != 8 || !strings.Contains(system, "SPECIALIST-SCOPE-CANARY") {
 			t.Fatalf("specialist scope lost: mode=%q limits=%+v system=%q", build.Mode, build.Limits, system)
+		}
+		if !build.Engine.HasTool("Read") || build.Engine.HasTool("Edit") || build.Engine.HasTool("Write") || build.Engine.HasTool("Shell") {
+			t.Fatalf("specialist read-only catalog lost: Read=%v Edit=%v Write=%v Shell=%v", build.Engine.HasTool("Read"), build.Engine.HasTool("Edit"), build.Engine.HasTool("Write"), build.Engine.HasTool("Shell"))
+		}
+	})
+
+	t.Run("selected specialist retains its composed engine across rounds", func(t *testing.T) {
+		lead := mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("l1", "AddTask", json.RawMessage(`{"description":"inspect"}`))),
+			mockllm.TextTurn("delegated"),
+			mockllm.TextTurn("synthesized"),
+		)
+		worker := mockllm.New(
+			mockllm.ToolCallTurn(
+				session.NewToolCall("w1", "CompleteTask", json.RawMessage(`{"task_id":"task-1"}`)),
+				session.NewToolCall("w2", "RecordFinding", json.RawMessage(`{"finding":"done"}`)),
+			),
+			mockllm.TextTurn("complete"),
+		)
+		reg := twoProviderReg(worker, "parent", "parent-model", lead, "second")
+		defs := agents.NewRegistry([]agents.AgentDef{{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY"}})
+		cfg := Config{Model: "parent-model"}
+		defaultFactory := buildMemberEngine(cfg, reg, worker, "parent", "parent-model", hookexec.New(nil), defs, nil, nil, nil, false, nil, catalogAssets{}, false)
+		selectedFactory := buildMemberSelectorEngine(cfg, reg, worker, "parent", "parent-model", hookexec.New(nil), defs, nil, nil, nil, false, nil, catalogAssets{}, false)
+		tm := team.New("team")
+		builds := 0
+		sup := agent.NewSupervisor(tm, memEnvironment("/ws"), func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+			return defaultFactory(tm, spec, routedModel)
+		}, agent.WithTeamMemberSelectorFactory(func(spec agent.MemberSpec, selected agent.ResolvedModelSelector) agent.MemberBuild {
+			builds++
+			return selectedFactory(tm, spec, selected)
+		}), agent.WithReadOnlyForker(memfsForker{}), agent.WithTeamReadLedgerFactory(testReadLedger), agent.WithMaxRounds(10))
+		selected := agent.ResolvedModelSelector{Target: agent.ModelTarget{Model: "override"}, ActualProvider: "second"}
+		if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "lead", Lead: true, AgentType: "reviewer", InitialPrompt: "delegate", Selector: &selected}); err != nil {
+			t.Fatalf("AddMember(lead): %v", err)
+		}
+		if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "worker"}); err != nil {
+			t.Fatalf("AddMember(worker): %v", err)
+		}
+		out := sup.Run(t.Context(), nil)
+		if !out.Quiescent || out.Rounds < 2 {
+			t.Fatalf("team outcome = %+v, builds=%d lead calls=%d worker calls=%d, want multiple quiescent rounds", out, builds, lead.Calls(), worker.Calls())
+		}
+		if builds != 1 || lead.Calls() != 3 {
+			t.Fatalf("selected specialist builds=%d calls=%d, want one composed engine retained for three calls", builds, lead.Calls())
 		}
 	})
 }
