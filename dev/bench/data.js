@@ -258154,6 +258154,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790833232390,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77e1ee5f546712f483312e53f757bf0bbdab3280",
+          "message": "perf(agent): reduce tool-result availability allocations (#2028)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T10:15:57+03:00",
+          "tree_id": "e1b5d208f101c07eb2cacdc8fe8666fb02a1a0c0",
+          "url": "https://github.com/stacklok/mecatl/commit/77e1ee5f546712f483312e53f757bf0bbdab3280"
+        },
+        "date": 1790839672974,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -374741,6 +374775,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790839669845,
+  "lastUpdate": 1790839673838,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
