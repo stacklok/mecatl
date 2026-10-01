@@ -1551,7 +1551,6 @@ definitions, skills, and saved memory, cap their **outer** width at 128 cells or
 the available width, whichever is smaller. Derive body width from the measured
 frame. Permission cards use a 132-cell cap; inline tool cards use 100 cells.
 
-
 **Scrollback and auto-follow.** The conversation viewport **auto-follows** the
 bottom (tails streaming output) until you scroll up — with `pgup`, `home`, or the
 mouse wheel. While scrolled up the header shows a muted **`↑ NN%`** position cue,
