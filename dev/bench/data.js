@@ -260302,6 +260302,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790844535293,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tgrunnagle@gmail.com",
+            "name": "Trey",
+            "username": "tgrunnagle"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "38e8c1566102e0f34c03034b395b744240747a98",
+          "message": "fix(mecated): mcp add settings corruption and late illegal-name failure (#2038)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-01T12:38:09+03:00",
+          "tree_id": "3525e00b9a65bfac3a50d190068807a97b36513c",
+          "url": "https://github.com/stacklok/mecatl/commit/38e8c1566102e0f34c03034b395b744240747a98"
+        },
+        "date": 1790848160661,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -377807,6 +377841,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790848157600,
+  "lastUpdate": 1790848161566,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
