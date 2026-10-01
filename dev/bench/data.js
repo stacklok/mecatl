@@ -289618,6 +289618,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790853013448,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "29df7140f26b797b3023455bb2b6af5dfe763937",
+          "message": "feat(mecatui): bound soul inspector to measured viewport (#2041)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T14:28:51+03:00",
+          "tree_id": "fa67e67f2d3bc45476a3069d923a805963b1d72d",
+          "url": "https://github.com/stacklok/mecatl/commit/29df7140f26b797b3023455bb2b6af5dfe763937"
+        },
+        "date": 1790854805858,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3331.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 121,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -379374,6 +379413,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790854802931,
+  "lastUpdate": 1790854806637,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
