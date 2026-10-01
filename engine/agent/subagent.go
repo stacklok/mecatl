@@ -1727,6 +1727,9 @@ func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolC
 // unsupported combination, an unknown agent, an unwired/unroutable model), and the chosen
 // engine + limits on success.
 func (t *SubagentTool) resolveExplicitSelector(callID session.ToolCallID, args *subagentArgs) (*ResolvedModelSelector, session.ToolResult, bool) {
+	if !validDelegationSelectorValue(args.Provider) || !validDelegationSelectorValue(args.Model) {
+		return nil, session.NewToolError(callID, "Subagent: selector values must be valid UTF-8 without control or format characters and at most 512 bytes"), false
+	}
 	provider := strings.TrimSpace(args.Provider)
 	model := strings.TrimSpace(args.Model)
 	if provider != "" && model == "" {
@@ -2152,7 +2155,7 @@ const (
 //   - read-write + agent with no agentWritableFactory wired is rejected as "not
 //     supported in this deployment" (the writable-specialist path is unwired — also
 //     the no-FS gate, since the no-FS subagent tool wires no writable factory);
-//   - read-write + model (no agent) with no writableEngineFactory wired is rejected as
+//   - read-write + model (no agent) with neither writable model factory wired is rejected as
 //     "not supported in this deployment" (issue #285 — the writable-explorer-on-a-model
 //     path is unwired; a LOUD error, never a silent inherit onto the default model);
 //   - read-write with no writable child engine wired (the no-`agent` writable
@@ -2189,10 +2192,9 @@ func (t *SubagentTool) validateMode(callID session.ToolCallID, args subagentArgs
 	case strings.TrimSpace(args.Agent) != "" && t.agentWritableFactory == nil:
 		return false, session.NewToolError(callID,
 			"Subagent: mode:\"read-write\" with `agent` is not supported in this deployment"), false
-	case strings.TrimSpace(args.Agent) == "" && strings.TrimSpace(args.Model) != "" && t.writableEngineFactory == nil:
-		// A writable EXPLORER on a per-call model (no `agent`) needs the writable engine
-		// factory (issue #285). Unwired ⇒ a LOUD error, never a silent inherit that would
-		// run the writable subagent on a model the caller did not ask for.
+	case strings.TrimSpace(args.Agent) == "" && strings.TrimSpace(args.Model) != "" && t.writableEngineFactory == nil && t.writableTargetFactory == nil:
+		// A writable explorer on a per-call model needs either the contextual-model
+		// factory or the provider-aware target factory. Unwired means a loud error.
 		return false, session.NewToolError(callID,
 			"Subagent: mode:\"read-write\" with a per-call `model` is not supported in this deployment; omit `model` to run the writable subagent on its default model"), false
 	case strings.TrimSpace(args.Agent) == "" && t.writableChildEngine == nil:
@@ -2592,7 +2594,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 		explicitRouterCategory = factorySelector.ExplicitRouterCategory
 	}
 
-	if args.Agent != "" && !(routedAccepted && routedTarget.Provider != "") {
+	if args.Agent != "" && (!routedAccepted || routedTarget.Provider == "") {
 		if provider := t.agentProviders[args.Agent]; provider != "" {
 			actualProvider = provider
 		}

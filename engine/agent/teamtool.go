@@ -548,6 +548,9 @@ func renderTeamResult(teamID, body string) string {
 func (t *TeamTool) resolveMemberSelectors(members []TeamMemberArg) ([]MemberSpec, error) {
 	specs := memberSpecs(members)
 	for i := range members {
+		if !validDelegationSelectorValue(members[i].Provider) || !validDelegationSelectorValue(members[i].Model) {
+			return nil, fmt.Errorf("member %q: selector values must be valid UTF-8 without control or format characters and at most 512 bytes", specs[i].Name)
+		}
 		provider := strings.TrimSpace(members[i].Provider)
 		model := strings.TrimSpace(members[i].Model)
 		if provider != "" && model == "" {

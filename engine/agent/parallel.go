@@ -705,6 +705,10 @@ func (s parallelRunSelection) explicitCategory() string {
 }
 
 func (t *ParallelTool) resolveSelector(callID session.ToolCallID, args parallelArgs) (parallelRunSelection, *session.ToolResult) {
+	if !validDelegationSelectorValue(args.Provider) || !validDelegationSelectorValue(args.Model) {
+		res := session.NewToolError(callID, "Parallel: selector values must be valid UTF-8 without control or format characters and at most 512 bytes")
+		return parallelRunSelection{}, &res
+	}
 	provider := strings.TrimSpace(args.Provider)
 	model := strings.TrimSpace(args.Model)
 	if provider != "" && model == "" {
