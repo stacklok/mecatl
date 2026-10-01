@@ -289221,6 +289221,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790851435098,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "65894e56226b9b321f439f0450e6ca4c04bbe9e0",
+          "message": "fix(mecatui): persist ToolHive provider default (#2043)\n\nCo-authored-by: Codex <noreply@openai.com>",
+          "timestamp": "2026-10-01T11:58:20+01:00",
+          "tree_id": "405665548b8e36f5ff3d141a238f2e47d6038a16",
+          "url": "https://github.com/stacklok/mecatl/commit/65894e56226b9b321f439f0450e6ca4c04bbe9e0"
+        },
+        "date": 1790853013448,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3296,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 88.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -378863,6 +378902,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790853009807,
+  "lastUpdate": 1790853014766,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
