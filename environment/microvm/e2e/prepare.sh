@@ -169,7 +169,7 @@ PY
 image_ref="ghcr.io/stacklok/brood-box/base@$image_manifest"
 (
   cd "$repo_root/environment/microvm"
-  GOWORK=off go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache"
+  GOWORK=off go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache" "linux/$goarch"
 ) >"$oci/tree-digest"
 image_tree_digest=$(cat "$oci/tree-digest")
 MICROVM_RELEASE_FIXTURE_DIR="$fixture" \

@@ -247,6 +247,7 @@ printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseStampRequire
 require '[ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-release.sh ]' "$release"
 
 # Build the Brood Box digest helper from its own module, as the release job does.
+require 'go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache" "linux/$goarch"' "$repo_root/environment/microvm/e2e/prepare.sh"
 mkdir -p "$repo_root/.scratch/microvm-oci-digest-test"
 CGO_ENABLED=0 GOWORK=off go -C "$repo_root/environment/microvm" build -trimpath -buildvcs=false -ldflags='-buildid=' \
   -o "$repo_root/.scratch/microvm-oci-digest-test/digest" ./cmd/mecatl-oci-tree-digest
