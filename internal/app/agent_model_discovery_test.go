@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -497,7 +498,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SystemPromptContainsWorkflowN
 	run := built.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "find a model"})
 	for range run.Events() {
 	}
-	for _, clause := range []string{"DiscoverModels", "without provider_id", "all selectable providers", "exact (provider_id, model_id)", "cannot switch the session", "return it to the caller"} {
+	for _, clause := range []string{"DiscoverModels", "Omit delegation provider and model selectors by default", "before making a justified explicit choice", "model-router rows are delegation categories", "cannot switch the current session"} {
 		if !strings.Contains(captured.StablePrefix, clause) {
 			t.Errorf("StablePrefix missing workflow clause %q", clause)
 		}
@@ -744,6 +745,113 @@ func TestInvariant_agent_model_discovery_Scenario4_PermissionPostureUnchanged(t 
 	for _, rule := range mainRules(Config{}) {
 		if rule.Tool == agentModelDiscoveryToolName {
 			t.Fatalf("DiscoverModels gained a special permission rule: %+v", rule)
+		}
+	}
+}
+
+func TestADR_0369_Scenario5_ModelVisibleWorkflow(t *testing.T) {
+	ctx := context.Background()
+	const model = "gpt-5"
+	const poisonCategory = "poison-router-category"
+	const poisonAlias = "poison-alias"
+
+	capturePerSession := func(assets catalogAssets) prompt.Layered {
+		t.Helper()
+		var captured prompt.Layered
+		provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			captured = req.System
+		})}, mockllm.TextTurn("ok"))
+		factory := sessionEngineFactory(Config{Model: model}, regForTest(provider, providerOpenAI, model), provider,
+			memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
+			prompt.RootAssembler{}, assets, nil)
+		built, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+		if err != nil {
+			t.Fatalf("sessionEngineFactory: %v", err)
+		}
+		t.Cleanup(func() { _ = built.Close() })
+		sess := session.New("model-visible-workflow", session.ModeDefault,
+			session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
+		for range built.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi"}).Events() {
+		}
+		if captured.StablePrefix == "" {
+			t.Fatal("per-session factory did not make an LLM request")
+		}
+		return captured
+	}
+
+	perSession := capturePerSession(catalogAssets{modelInventory: newTestModelInventory([]*mecatlv1.ModelInfo{{ProviderId: "direct-provider", Id: "direct-model"}})})
+	for _, clause := range []string{
+		"Omit delegation provider and model selectors by default",
+		"DiscoverModels before making a justified explicit choice",
+		"model-router rows are delegation categories rather than session-selection targets",
+	} {
+		if !strings.Contains(perSession.StablePrefix, clause) {
+			t.Errorf("per-session StablePrefix missing delegation workflow clause %q", clause)
+		}
+	}
+	for _, forbidden := range []string{poisonCategory, poisonAlias} {
+		if strings.Contains(perSession.StablePrefix, forbidden) {
+			t.Errorf("per-session StablePrefix embeds configured taxonomy value %q", forbidden)
+		}
+	}
+	withoutDiscovery := capturePerSession(catalogAssets{})
+	if strings.Contains(withoutDiscovery.StablePrefix, "Omit delegation provider and model selectors by default") {
+		t.Fatal("per-session factory advertises delegation discovery without DiscoverModels")
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	workspace, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	var shared prompt.Layered
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		shared = req.System
+	})}, mockllm.TextTurn("ok"))
+	built, err := Build(ctx, Config{
+		Workspace: workspace, Model: "mock", StoreDir: t.TempDir(), NoSoul: true, NoUserModel: true,
+		MockProvider:     provider,
+		RouterCategories: []permconfig.RouterCategory{{Name: poisonCategory, Description: "poison description", Model: poisonAlias}},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	t.Cleanup(built.Close)
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRunContent(ctx, sess.ID, "hi", nil)
+	if err != nil {
+		t.Fatalf("StartRunContent: %v", err)
+	}
+	for range run.Events() {
+	}
+	if !strings.Contains(shared.StablePrefix, "Omit delegation provider and model selectors by default") {
+		t.Fatal("shared/default factory omitted the delegation workflow")
+	}
+	for _, forbidden := range []string{poisonCategory, poisonAlias} {
+		if strings.Contains(shared.StablePrefix, forbidden) {
+			t.Errorf("shared/default StablePrefix embeds configured taxonomy value %q", forbidden)
+		}
+	}
+}
+
+func TestADR_0369_Scenario5_ToolSpecification(t *testing.T) {
+	const poisonCategory = "poison-router-category"
+	const poisonAlias = "poison-alias"
+	spec := newAgentModelDiscoveryTool(newTestModelInventory(nil), []permconfig.RouterCategory{{Name: poisonCategory, Description: "poison description", Model: poisonAlias}}).Spec()
+	for _, clause := range []string{
+		"model-router", "delegation categories", "description", "literal search", "bounded", "never probes", "never selects", "never changes the current session",
+	} {
+		if !strings.Contains(spec.Description, clause) {
+			t.Errorf("DiscoverModels specification missing contract clause %q: %s", clause, spec.Description)
+		}
+	}
+	for _, forbidden := range []string{poisonCategory, poisonAlias} {
+		if strings.Contains(spec.Description, forbidden) || strings.Contains(string(spec.Schema), forbidden) {
+			t.Errorf("DiscoverModels static specification embeds configured taxonomy value %q", forbidden)
 		}
 	}
 }

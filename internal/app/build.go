@@ -8837,7 +8837,7 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 	return pc
 }
 
-const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. When the provider is unknown, call DiscoverModels without provider_id; omission searches all selectable providers, and the unfiltered result lists their exact selectable provider IDs. Only use a returned exact (provider_id, model_id) pair with an existing surface that explicitly accepts both, or return it to the caller for selection. DiscoverModels itself cannot switch the session."
+const agentModelDiscoveryPostureNote = "Use DiscoverModels before making a justified explicit choice of delegation provider or model. Omit delegation provider and model selectors by default so inherited/default selection and automatic routing apply; set them only when the user requests a selection or a concrete task capability justifies it. Use returned exact provider/model pairs only with delegation surfaces that explicitly accept both. model-router rows are delegation categories rather than session-selection targets. DiscoverModels is read-only and cannot switch the current session."
 
 func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	if catalog == nil {
