@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -164,6 +165,63 @@ func TestToolResultPublisherCanonicalBeforeLateAvailability(t *testing.T) {
 		!reflect.DeepEqual(first.ToolResult, &canonical) || !reflect.DeepEqual(second.ToolResult, &canonical) ||
 		!reflect.DeepEqual([]session.Event{first, second}, sink.snapshotEvents()) {
 		t.Fatalf("late availability changed canonical publication: stream=%+v sink=%+v", []session.Event{first, second}, sink.snapshotEvents())
+	}
+}
+
+func TestToolResultPublisherManyCalls(t *testing.T) {
+	for _, count := range []int{1, 8, 9, 32} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			// Reusing IDs in a new run must not retain the old run's publication state.
+			e := &Engine{}
+			for range 2 {
+				sink := &recordingSink{}
+				e.deps.Sink = sink
+				r := &Run{events: make(chan session.Event, 6*count)}
+				var want []session.Event
+				for i := range count {
+					id := session.ToolCallID(strconv.Itoa(i))
+					if i == 0 {
+						id = "" // An empty ID must not match unused inline storage.
+					}
+					result := session.NewToolResult(id, "early")
+					kind := session.EvToolResultAvailable
+					if i%2 == 0 {
+						result = session.NewToolError(id, "cancelled")
+						kind = session.EvToolResult
+					}
+					e.publishToolResult(r, session.Event{Type: kind, Turn: i, ToolResult: ptr(result)})
+					want = append(want, session.Event{Type: session.EvToolResultAvailable, Turn: i, ToolResult: ptr(result)})
+					if kind == session.EvToolResult {
+						want = append(want, session.Event{Type: kind, Turn: i, ToolResult: ptr(result)})
+					}
+				}
+				// Replay every ID after the set has grown, including early IDs and
+				// canonical-first calls. Neither may gain another availability event.
+				for _, ev := range want {
+					if ev.Type != session.EvToolResultAvailable {
+						continue
+					}
+					e.publishToolResult(r, ev)
+					if ev.Turn%2 != 0 {
+						canonical := session.NewToolError(ev.ToolResult.CallID, "cancelled")
+						result := session.Event{Type: session.EvToolResult, Turn: ev.Turn, ToolResult: ptr(canonical)}
+						e.publishToolResult(r, result)
+						want = append(want, result)
+						e.publishToolResult(r, ev)
+					}
+				}
+				var got []session.Event
+				for len(r.events) > 0 {
+					got = append(got, <-r.events)
+				}
+				for i := range want {
+					want[i].Seq = int64(i + 1)
+				}
+				if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(got, sink.snapshotEvents()) {
+					t.Fatalf("publication changed after tracking %d calls: stream=%+v want=%+v sink=%+v", count, got, want, sink.snapshotEvents())
+				}
+			}
+		})
 	}
 }
 

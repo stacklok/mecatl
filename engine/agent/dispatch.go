@@ -8,6 +8,7 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -217,6 +218,7 @@ type readBatchPending struct {
 	assessment *actionReviewAssessment
 	record     executionRecord
 	armGrant   bool
+	available  bool
 }
 
 func closeActionAssessments(prepared []readBatchPending) {
@@ -387,16 +389,16 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	// touch the recorder, aggregate, or release-ask state.
 	completed := make(chan int, len(toRun))
 	for i := range toRun {
-		go func(i int) {
+		go func() {
 			p := &toRun[i]
 			p.record = e.executePrivate(ctx, r, sess, env, turnIdx, p.call, p.t, &p.auth, enqueue)
 			completed <- i
-		}(i)
+		}()
 	}
-	available := e.publishCleanReadBatch(ctx, r, sess, env, turnIdx, toRun, completed)
+	e.publishCleanReadBatch(ctx, r, sess, env, turnIdx, toRun, completed)
 
 	// Canonical results still drain only after every worker finishes.
-	cancelled = e.drainReadBatch(ctx, r, sess, env, turnIdx, toRun, available, out)
+	cancelled = e.drainReadBatch(ctx, r, sess, env, turnIdx, toRun, out)
 
 	e.armReadBatchGrants(ctx, r, sess, env, toRun, out)
 	return out, cancelled
@@ -405,8 +407,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 // publishCleanReadBatch consumes every worker completion on the dispatcher
 // goroutine. Workers only write their private record and send its index; this
 // keeps publication and event sequencing serial without blocking on a sibling.
-func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, completed <-chan int) []bool {
-	available := make([]bool, len(pending))
+func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, completed <-chan int) {
 	for range pending {
 		i := <-completed
 		p := &pending[i]
@@ -427,14 +428,13 @@ func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *sessio
 		p.record.result = result
 		p.record.postEvents = nil // the canonical drain must not replay annotations
 		e.publishToolResult(r, session.Event{Type: session.EvToolResultAvailable, Turn: turnIdx, ToolResult: ptr(result)})
-		available[i] = true
+		p.available = true
 	}
-	return available
 }
 
 // drainReadBatch resolves held decisions serially and commits canonical results
 // in model-call order, including cancellation replacements for prior availability.
-func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, available []bool, out map[session.ToolCallID]session.ToolResult) (cancelled bool) {
+func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, out map[session.ToolCallID]session.ToolResult) (cancelled bool) {
 	for i := range pending {
 		p := &pending[i]
 		var result session.ToolResult
@@ -451,7 +451,7 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 			result = session.NewToolError(p.call.ID, withheldResultText+": batch release was cancelled")
 			p.record.result = session.ToolResult{}
 			p.record.postEvents = nil
-		} else if available[i] {
+		} else if p.available {
 			result = p.record.result
 		} else {
 			result, cancelled, originalReleased = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
@@ -463,7 +463,7 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 		// A held result becomes displayable only after resolveInbound returns its
 		// release or synthetic withholding decision. Clean results were published
 		// on completion and must not be published twice.
-		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !available[i], originalReleased)
+		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !p.available, originalReleased)
 		out[p.call.ID] = result
 	}
 	return cancelled
@@ -2383,7 +2383,10 @@ func (e *Engine) openCard(r *Run, turnIdx int, c session.ToolCall) {
 
 // toolResultPublisher tracks display publication across all producers in a run.
 type toolResultPublisher struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+	// Short runs keep their IDs inline; longer runs retain additional IDs in the map.
+	inline    [8]session.ToolCallID
+	inlineLen int
 	available map[session.ToolCallID]struct{}
 }
 
@@ -2398,15 +2401,22 @@ func (e *Engine) emit(r *Run, ev session.Event) {
 func (e *Engine) publishToolResult(r *Run, ev session.Event) {
 	r.results.mu.Lock()
 	defer r.results.mu.Unlock()
-	if r.results.available == nil {
-		r.results.available = make(map[session.ToolCallID]struct{})
-	}
-	_, published := r.results.available[ev.ToolResult.CallID]
+	id := ev.ToolResult.CallID
+	_, published := r.results.available[id]
+	published = published || slices.Contains(r.results.inline[:r.results.inlineLen], id)
 	if ev.Type == session.EvToolResultAvailable && published {
 		return
 	}
 	if !published {
-		r.results.available[ev.ToolResult.CallID] = struct{}{}
+		if r.results.inlineLen < len(r.results.inline) {
+			r.results.inline[r.results.inlineLen] = id
+			r.results.inlineLen++
+		} else {
+			if r.results.available == nil {
+				r.results.available = make(map[session.ToolCallID]struct{})
+			}
+			r.results.available[id] = struct{}{}
+		}
 		if ev.Type == session.EvToolResult {
 			available := ev
 			available.Type = session.EvToolResultAvailable
