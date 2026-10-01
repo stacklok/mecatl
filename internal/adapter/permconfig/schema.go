@@ -1939,8 +1939,8 @@ func (c *RouterCategory) UnmarshalYAML(node ast.Node) error {
 		return errors.New("models.router.categories[].description: must be valid UTF-8 and at most 512 bytes")
 	}
 	for _, r := range c.Description {
-		if unicode.IsControl(r) {
-			return errors.New("models.router.categories[].description: must not contain control characters")
+		if r != '\n' && unicode.IsControl(r) {
+			return errors.New("models.router.categories[].description: must not contain control characters other than newlines")
 		}
 	}
 	return nil

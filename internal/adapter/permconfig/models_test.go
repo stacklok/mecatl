@@ -244,6 +244,30 @@ models:
 	}
 }
 
+func TestRouterCategoryFoldedDescriptionKeepsOperatorConfigValid(t *testing.T) {
+	const yamlCfg = `providers: {}
+models:
+  router:
+    categories:
+      - name: small
+        description: >
+          Handles straightforward tasks
+          without extra reasoning.
+        model: target
+`
+	r := newWithEnv(Options{ExplicitFiles: []string{"/operator.yaml"}}, envWithExplicit("/operator.yaml", yamlCfg))
+	if _, _, err := r.OperatorProviders(); err != nil {
+		t.Fatalf("folded router description invalidated provider config: %v", err)
+	}
+	models := r.OperatorModelPolicy()
+	if models == nil || models.Router == nil || len(models.Router.Categories) != 1 {
+		t.Fatal("folded router description dropped operator model policy")
+	}
+	if got := models.Router.Categories[0].Description; got != "Handles straightforward tasks without extra reasoning.\n" {
+		t.Fatalf("folded description = %q", got)
+	}
+}
+
 func TestRouterCategoryDescriptionBounded(t *testing.T) {
 	for name, description := range map[string]string{
 		"overlong": strings.Repeat("x", 513),
