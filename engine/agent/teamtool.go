@@ -249,7 +249,7 @@ func WithTeamSelectorResolver(r SubagentSelectorResolver) TeamOption {
 	return func(t *TeamTool) { t.selectorResolver = r }
 }
 
-// WithTeamMemberSelectorFactory injects provider-aware member construction.
+// WithTeamToolSelectorFactory injects provider-aware member construction.
 func WithTeamToolSelectorFactory(f func(*team.Team, MemberSpec, ResolvedModelSelector) MemberBuild) TeamOption {
 	return func(t *TeamTool) { t.selectorFactory = f }
 }
@@ -337,6 +337,8 @@ func (t *TeamTool) ExecuteObserved(ctx context.Context, call session.ToolCall, e
 // projection of member activity, and returns the lead's consolidated synthesis
 // (or the labelled fallback) as the single ToolResult that folds back into the
 // parent conversation.
+//
+//nolint:gocyclo // Team validation, enrolment, observation, and teardown remain one transaction.
 func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args teamArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {

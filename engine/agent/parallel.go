@@ -1089,6 +1089,8 @@ func normalizeJoin(join string) string {
 // fork can survive the call. A fork or child failure is captured in the result,
 // never propagated as a harness error (one failing branch must not kill the
 // others).
+//
+//nolint:gocyclo // Branch lifecycle, isolation, observation, and terminal cleanup remain one transaction.
 func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID, i int, task, shared string, env tool.Environment, be branchEmitter, caps parentCaps, selection parallelRunSelection) (branchResult, session.StopReason) {
 	label := branchLabel(i)
 	// childID is the branch's child session id, set up front so EVERY terminal (incl.

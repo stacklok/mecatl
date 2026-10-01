@@ -206,28 +206,6 @@ func resolveModelFor(cfg Config, def agents.AgentDef, parentModel string) string
 	return pick(resolveAlias(cfg, def, sel))
 }
 
-// resolveDefaultChildModel resolves the model a DEF-LESS child engine — the
-// default Subagent explorer, an UNDEFINED team member, a Parallel BRANCH — runs
-// on (issue #35). It is NOT a parallel resolver: it delegates to the ONE chain
-// every def-resolved path already uses, resolveModelFor with the zero def, so the
-// precedence collapses to `SubagentModel (alias-resolved) > parentModel` (no def
-// tier to consult). The context window follows the shared childWindowFor rule:
-// the window is re-derived live-first on the PARENT provider for the resolved
-// model (a child compacts on ITS model's window, never the parent's) — an
-// unchanged model now resolves the parent's REAL window too (issue #64), flooring
-// to 128k only when the model is genuinely uncatalogued.
-//
-// SAME-PROVIDER POSTURE: the override never switches provider — the model id is
-// resolved against parentProviderID (the registry is keyed by provider, not
-// model). A def's `provider:` remains the only cross-provider seam. The Parallel
-// JUDGE deliberately does NOT route through this (it stays on the session model —
-// see registerParallelTool). provReg may be nil on direct-call test paths (the
-// window resolver falls back to the override-or-128k floor).
-func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProviderID, parentModel string) (model string, windowFn func() int) {
-	model = resolveModelFor(cfg, agents.AgentDef{}, parentModel)
-	return model, childWindowFor(cfg, provReg, parentProviderID, model)
-}
-
 // routableAgentNames computes the SET of agent-def names eligible for the OPT-IN model
 // router (issue #286), returned as a SORTED slice for determinism. A def is routable iff:
 //

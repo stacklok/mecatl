@@ -8355,22 +8355,6 @@ func modelCfgFor(cfg Config, model string) Config {
 // member still resolves its model through the def-less chain. The catalog's
 // non-read-only tools (Remember/RememberUser, MCP) ride MemberBuild.MCPToolNames
 // — the supervisor's documented exemption for non-WORKSPACE mutators — so the
-// applyMemberRoute substitutes the OPT-IN model router's ALREADY-RESOLVED routedModel
-// (ADR 0034) for an UNDEFINED member's def-less default model, re-deriving the window AND
-// the prompt's per-model config through the SAME contamination-safe path the rest of
-// buildMemberEngine uses (childWindowFor / modelCfgFor) — so the member compacts/counts/
-// prompts on the routed model, never a clone-and-swap. An empty routedModel (router off,
-// miss, or zero-caps RunTeam) returns the inputs unchanged (byte-identical default). It is
-// split out of buildMemberEngine purely to keep that function under the gocyclo budget; it
-// is only ever called on the UNDEFINED branch (a defined member's def pins its own model).
-func applyMemberRoute(cfg Config, provReg *providerRegistry, parentProviderID, routedModel, model string, windowFn func() int, pc prompt.Config) (string, func() int, prompt.Config) {
-	rm := strings.TrimSpace(routedModel)
-	if rm == "" {
-		return model, windowFn, pc
-	}
-	return rm, childWindowFor(cfg, provReg, parentProviderID, rm), promptConfig(modelCfgFor(cfg, rm), cfg.gitStatus)
-}
-
 // base-sharing read-only-member backstop stays sound. `a` is read only when noFS.
 //
 //nolint:gocyclo // Member catalog shaping and its generation lease share one teardown transaction.
