@@ -8,7 +8,7 @@
 **Delivery:** Split. The isolation claim, the lifecycle change, the startup refusals, and the qualification lane need human review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** none yet; open a tracking issue on request.
-**Plan PR:** <added when opened>
+**Plan PR:** [stacklok/mecatl#2052](https://github.com/stacklok/mecatl/pull/2052)
 **Approved baseline:** absent until approved
 
 This plan follows the [native Kubernetes execution plan](native-kubernetes-execution.md) and
