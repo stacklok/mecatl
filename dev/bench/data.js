@@ -286045,6 +286045,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790833236461,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77e1ee5f546712f483312e53f757bf0bbdab3280",
+          "message": "perf(agent): reduce tool-result availability allocations (#2028)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T10:15:57+03:00",
+          "tree_id": "e1b5d208f101c07eb2cacdc8fe8666fb02a1a0c0",
+          "url": "https://github.com/stacklok/mecatl/commit/77e1ee5f546712f483312e53f757bf0bbdab3280"
+        },
+        "date": 1790839676847,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3323,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -374775,6 +374814,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790839673838,
+  "lastUpdate": 1790839678110,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
