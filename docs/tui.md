@@ -1551,16 +1551,6 @@ definitions, skills, and saved memory, cap their **outer** width at 128 cells or
 the available width, whichever is smaller. Derive body width from the measured
 frame. Permission cards use a 132-cell cap; inline tool cards use 100 cells.
 
-The bounded physical browsers in `/agents` and the external `/skills` inventory
-measure the card frame, wrapped chrome, and any overflow indicator before giving
-remaining height to content rows. Rendering and navigation use the same physical
-row budget. Configured arrows move one row, page keys move by the viewport height,
-and top/end reach the first/last valid window. Each wheel event moves one row in
-the visible owner without scrolling the conversation behind it. If fixed chrome
-and a content row (plus an indicator row when needed) do not fit, a clipped
-close-only fallback consumes wheel input without scrolling. The surface retains
-its own text, filtering, status, and actions; the viewport owns geometry and
-offset. Other surfaces adopt these behaviors through their own reviewed slices.
 
 **Scrollback and auto-follow.** The conversation viewport **auto-follows** the
 bottom (tails streaming output) until you scroll up — with `pgup`, `home`, or the
