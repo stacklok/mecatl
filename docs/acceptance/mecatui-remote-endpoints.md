@@ -4,7 +4,7 @@
 **Work classification:** Bounded — the directing human classified this as Bounded with no ADR (2026-10-01). It adds connection-profile flags to `connect`, a client-only settings fallback for them, and a narrowly gated sign-in path to `connect`. It reuses the existing ADR 0305 discovery, ADR 0286 issuer transports, and ADR 0277 credential lifecycle without changing server, protobuf, engine, or persistence contracts. See the classification risk under Human decisions.
 **Decision record:** None — the directing human chose this plan as the sole record. It narrows two existing rules without amending their ADRs: interactive first-use sign-in is now allowed from `connect`, and discovery may use a private issuer when the operator pins it explicitly, by flags or in an endpoint entry.
 **Phase:** Remote mecatui OAuth bootstrap
-**Status:** draft, 2026-10-01. Converted from an uncommitted ADR draft ("Operator-configured remote endpoints and first-use connect sign-in") at the directing human's request. That draft is intentionally not committed.
+**Status:** proposed, 2026-10-01. The directing human resolved the three open human decisions on 2026-10-01 by direct amendment ("accept all three recommendations"). Converted from an uncommitted ADR draft ("Operator-configured remote endpoints and first-use connect sign-in") at the directing human's request. That draft is intentionally not committed.
 **Delivery:** Split. The change adds new `connect` flags, a new client settings schema, an authentication flow, a trust exception, and new kind fixture behavior. These interfaces need review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** None — no tracking issue exists yet.
@@ -38,9 +38,9 @@ otherwise to the ADR 0305 public defaults. Flags and settings never mix.
 - [x] Private discovery is selected only by explicit operator intent: the `--private-issuer` and `--discovery-ca` flags, or an endpoint entry the operator wrote. A bare address and server metadata can never select it. — Decision: directing human, 2026-10-01, amending the source draft's settings-only rule.
 - [x] The connection profile comes from flags or from client settings, all-or-none. — Decision: directing human, 2026-10-01. Interpreted here as: if any profile flag is present, the flags are the complete profile and no endpoint settings are read for that invocation; an endpoint name combined with any profile flag is a usage error; within the flags, `--private-issuer` and `--discovery-ca` are required together. Unset profile fields take the ADR 0305 defaults, not settings values.
 - [x] A gRPC server CA set on an endpoint is gRPC trust only, never issuer trust. — Decision: directed by the source draft; it follows ADR 0286 and [ADR 0287](../adr/0287-target-aware-mecatui-tls.md).
-- [ ] Settings home. Recommendation: put `remote:` in the strict, client-owned `~/.config/mecatui/settings.yaml`, which no project can write. The source draft instead chose the operator tier of the shared `~/.config/mecatl/settings.yaml`, which would need new project-tier-ignore logic like `telemetry:`. That shared file configures the server, while the remote endpoint is client state.
-- [ ] How the kind fixture provides its profile. Recommendation: `kind-connect` and `kind-login` pass the profile flags and use the operator's normal client root, so the task writes no settings file; destroy and reset run a best-effort `mecatui logout` for the fixture resource first. Rejected alternatives: a fixture-owned `XDG_CONFIG_HOME` root, which hides the enrollment from a plain `mecatui connect` and drops personal client settings; and editing the operator's settings file from a Taskfile, which risks a lossy YAML merge.
-- [ ] Endpoint name grammar. Recommendation: names match `^[a-z][a-z0-9-]{0,62}$`; `sessions` and `debug` are reserved; an exact name match wins over host interpretation. A name contains no `.` or `:`, so it cannot be mistaken for a DNS host, `host:port`, or URL.
+- [x] Settings home. `remote:` lives in the strict, client-owned `~/.config/mecatui/settings.yaml`, which no project can write. Rejected: the source draft's operator tier of the shared `~/.config/mecatl/settings.yaml`, which would need new project-tier-ignore logic like `telemetry:`; that shared file configures the server, while the remote endpoint is client state. — Decision: directing human, 2026-10-01, accepted the recommendation.
+- [x] How the kind fixture provides its profile. `kind-connect` and `kind-login` pass the profile flags and use the operator's normal client root, so the task writes no settings file; destroy and reset run a best-effort `mecatui logout` for the fixture resource first. Rejected alternatives: a fixture-owned `XDG_CONFIG_HOME` root, which hides the enrollment from a plain `mecatui connect` and drops personal client settings; and editing the operator's settings file from a Taskfile, which risks a lossy YAML merge. — Decision: directing human, 2026-10-01, accepted the recommendation.
+- [x] Endpoint name grammar. Names match `^[a-z][a-z0-9-]{0,62}$`; `sessions` and `debug` are reserved; an exact name match wins over host interpretation. A name contains no `.` or `:`, so it cannot be mistaken for a DNS host, `host:port`, or URL. — Decision: directing human, 2026-10-01, accepted the recommendation.
 
 ## Interface contract
 
@@ -56,12 +56,12 @@ otherwise to the ADR 0305 public defaults. Flags and settings never mix.
 
     On discovered `login HOST|URL`, `--grpc-target`, `--private-issuer`, and `--discovery-ca` are accepted, replacing today's rule that rejects `--private-issuer` without an explicit identity. Explicit-identity `login` keeps its current flags; `--discovery-ca` is rejected there because `--tls-ca` already means issuer trust in that mode.
   - **All-or-none.** If any profile flag is present, the flags are the complete profile: no endpoint settings are read for that invocation, and unset fields take the ADR 0305 defaults. An endpoint name (or an implied `remote.default`) combined with any profile flag is a usage error. `--private-issuer` and `--discovery-ca` must be given together. `--tls=false` and `--insecure` remain rejected for authenticated targets.
-  - **Settings fallback.** Optional `remote:` block in the client settings file (location set by the settings-home decision). Each endpoint is the same profile in YAML, decoded strictly like the other keys in that file:
+  - **Settings fallback.** Optional `remote:` block in the client settings file `~/.config/mecatui/settings.yaml`. Each endpoint is the same profile in YAML, decoded strictly like the other keys in that file:
     ```yaml
     remote:
       default: mecatl-kind            # optional; must name an entry in endpoints
       endpoints:
-        mecatl-kind:                  # name grammar per the endpoint-name decision
+        mecatl-kind:                  # ^[a-z][a-z0-9-]{0,62}$; not sessions or debug
           resource: https://mecak8s-mecak8s.mecatl.svc.cluster.local:18081   # required, canonical HTTPS resource URL
           grpc:
             target: mecak8s-mecak8s.mecatl.svc.cluster.local:18080           # = --grpc-target
@@ -76,7 +76,7 @@ otherwise to the ADR 0305 public defaults. Flags and settings never mix.
     - private discovery without its CA, or a discovery CA under public discovery;
     - a non-canonical resource or target;
     - a dangling `default`;
-    - a name that breaks the grammar or uses a reserved word.
+    - a name that does not match `^[a-z][a-z0-9-]{0,62}$`, or is the reserved `sessions` or `debug`.
   - **Profile resolution order** for `connect`, `login`, and `logout`. `resolveInvocation` stays pure argv classification; a separate step that receives the parsed flags and the decoded `remote:` block resolves the profile after parsing and before any network I/O:
     1. any profile flag present: the flag profile;
     2. otherwise, an endpoint selected by an exact name match, by `remote.default` when no positional is given, or by the single endpoint whose `resource` equals the positional's canonical resource URL;
@@ -131,7 +131,7 @@ stay operator-owned per [AGENTS.md](../../AGENTS.md) (operator grants are explic
   - verify: `TestMecatuiRemoteEndpoints_Scenario1_FlagsAllOrNone`
 - AC1.6: A URL positional with no profile flags uses the single endpoint whose `resource` matches it. The flag profile and the equivalent endpoint entry produce identical discovery, enrollment, and dial behavior.
   - verify: `TestMecatuiRemoteEndpoints_Scenario1_FlagsAndSettingsEquivalent`
-- AC1.5: Only the operator-owned file chosen by the settings-home decision is an endpoint source; a `remote:` block in any project-scoped file, or in the other settings file, selects no endpoint.
+- AC1.5: Only the operator-owned `~/.config/mecatui/settings.yaml` is an endpoint source; a `remote:` block in any project-scoped file, or in `~/.config/mecatl/settings.yaml`, selects no endpoint.
   - verify: `TestMecatuiRemoteEndpoints_Scenario1_OperatorOwnedOnly`
 
 ### Scenario 2 — First interactive connect signs in, then connects
