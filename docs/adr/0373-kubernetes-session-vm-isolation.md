@@ -1,6 +1,6 @@
 # ADR 0373 — Per-session VM isolation for Kubernetes execution
 
-- Status: Proposed
+- Status: Accepted (effective when Plan / Interface PR #2052 merges)
 - Date: 2026-10-01
 - Scope: native Kubernetes execution provider isolation boundary, executor lifecycle on last-reference removal, mecak8s host command-execution boundary, and Kata qualification
 - Supersedes: none (follows [ADR 0364](0364-native-kubernetes-execution.md))

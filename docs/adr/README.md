@@ -93,7 +93,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0367 — Operator-configurable standard commit co-author guidance](./0367-configurable-commit-coauthor-guidance.md) *(proposed; strict operator-only opt-out for default standard-prompt commit attribution)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
 - [0364 — Optional native Kubernetes execution provider](./0364-native-kubernetes-execution.md) *(draft; separate service, preserves ADR 0048)*
-- [0373 — Per-session VM isolation for Kubernetes execution](./0373-kubernetes-session-vm-isolation.md) *(proposed; follows 0364, supersedes its last-reference retention of a running executor)*
+- [0373 — Per-session VM isolation for Kubernetes execution](./0373-kubernetes-session-vm-isolation.md) *(accepted on merge of #2052; follows 0364, partially supersedes its last-reference retention of a running executor)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
