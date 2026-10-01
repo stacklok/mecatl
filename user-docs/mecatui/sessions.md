@@ -71,11 +71,27 @@ will not add watch support. Plan approvals and guardrail reviews use their exist
 dedicated flows and cannot be recovered this way.
 
 To get the active session ID, run `/session` and press `c` to copy it. On a
-normal exit, `mecatui` also writes a machine-readable handoff to standard error:
+normal exit, `mecatui` writes a JSON-quoted ID record to standard error:
 
 ```text
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
+
+After an embedded session ends normally, the lines that follow show a
+shell-quoted `mecatui --resume '<SESSION_ID>'` command for that exact final chat.
+Use it to return to the same chat. The separately labelled `--resume-latest`
+alternative looks for the newest eligible chat and can select a different one.
+A connected session prints the ID record; to resume it, use `mecatui connect
+<ADDRESS> --resume <SESSION_ID>` with the original server address.
+
+When the session snapshot is available, **Model calls** counts model calls begun
+in the chat, and **Tokens (main)** shows lifetime input and output tokens for
+that chat. Nonzero cache-read and cache-write counts appear separately, not
+added to input or output. Title-generation tokens and the latest context-meter
+reading are not included. If the snapshot is unavailable, the exact embedded
+resume command and ID record still appear without a summary. An ID that cannot
+be safely displayed as a single terminal line retains its JSON ID record but
+has no copyable command.
 
 ## Inspect the active session during a run
 

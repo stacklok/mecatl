@@ -14,6 +14,26 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+func TestMecatuiExitHandoff_Scenario1_SnapshotProjection(t *testing.T) {
+	cl := newSessionCapabilitiesClient(t, &sessionCapabilitiesServer{
+		snapshot: &mecatlv1.Session{
+			Turns:         7,
+			TitleMetadata: &mecatlv1.SessionTitle{Title: "Server display title"},
+			TokenUsage: map[string]*mecatlv1.TokenUsage{
+				"main":          {Total: &mecatlv1.Usage{InputTokens: 42, OutputTokens: 13, CacheReadTokens: 9, CacheWriteTokens: 3}},
+				"session_title": {Total: &mecatlv1.Usage{InputTokens: 900}},
+			},
+		},
+	})
+	snap, err := cl.GetSession(t.Context(), "resume-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Turns != 7 || snap.Title != "Server display title" || snap.Usage != (Usage{InputTokens: 42, OutputTokens: 13, CacheReadTokens: 9, CacheWriteTokens: 3}) {
+		t.Fatalf("GetSession projection = %+v", snap)
+	}
+}
+
 func TestSnapshotFromUsesSessionMediaCapabilities(t *testing.T) {
 	textOnly := snapshotFrom(&mecatlv1.Session{
 		SessionCapabilities: &mecatlv1.SessionCapabilities{},
@@ -31,6 +51,7 @@ type sessionCapabilitiesServer struct {
 	mecatlv1.UnimplementedHarnessServiceServer
 	global       *mecatlv1.ServerCapabilities
 	globalErr    error
+	snapshot     *mecatlv1.Session
 	sessionMedia *mecatlv1.SessionCapabilities
 }
 
@@ -42,6 +63,9 @@ func (s *sessionCapabilitiesServer) GetCompatibilityInfo(context.Context, *mecat
 }
 
 func (s *sessionCapabilitiesServer) GetSession(context.Context, *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
+	if s.snapshot != nil {
+		return &mecatlv1.GetSessionResponse{Session: s.snapshot}, nil
+	}
 	return &mecatlv1.GetSessionResponse{Session: &mecatlv1.Session{SessionId: "resume-session", SessionCapabilities: s.sessionMedia}}, nil
 }
 

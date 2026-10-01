@@ -30,6 +30,10 @@ import (
 // are set. Otherwise it runs the normal isolated test suite.
 func TestMain(m *testing.M) {
 	os.Exit(testhome.Run("mecatui", func() int {
+		if os.Getenv("MECATUI_TEST_EXIT_HANDOFF_SCENARIO") != "" {
+			runExitHandoffScenarioHarness()
+			return 0
+		}
 		if id, ok := os.LookupEnv("MECATUI_TEST_EXIT_HANDOFF_ID"); ok {
 			runExitHandoffProcessHarness(id)
 			return 0

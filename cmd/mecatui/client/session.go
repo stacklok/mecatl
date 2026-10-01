@@ -18,6 +18,7 @@ import (
 type SessionSnapshot struct {
 	Mode          string
 	State         string
+	Turns         int32
 	Placement     Placement
 	CreatedAt     int64
 	ResolvedModel ResolvedModel
@@ -64,6 +65,7 @@ func snapshotFromWithGlobalCapabilities(s *mecatlv1.Session, global Capabilities
 	return SessionSnapshot{
 		Mode:             ModeString(s.GetMode()),
 		State:            s.GetState(),
+		Turns:            s.GetTurns(),
 		Placement:        placementFrom(s.GetPlacement()),
 		CreatedAt:        s.GetCreatedAtUnix(),
 		ResolvedModel:    resolvedModelFrom(s.GetResolvedModel()),
