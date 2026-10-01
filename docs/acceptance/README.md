@@ -128,6 +128,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Mecatui exit handoff](mecatui-exit-handoff.md) - an exact embedded-session resume command, qualified latest alternative, and authoritative session summary after clean exit, while preserving the machine-readable ID record. Status: proposed.
+
 - [Tool-result availability](tool-result-availability.md) - adds one live-only, call-ID-correlated availability projection for every effective tool result so concurrent cards expose the batch's long pole while canonical results retain ordered history. Status: proposed.
 - [Configurable Mecatl commit co-author guidance](configurable-commit-coauthor-guidance.md) — default-on, operator-only standard-prompt commit attribution for main and delegated engines, with a typed opt-out and no repository authority to disable it. Status: proposed.
 - [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
