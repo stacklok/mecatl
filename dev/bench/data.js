@@ -261018,6 +261018,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790851431101,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "65894e56226b9b321f439f0450e6ca4c04bbe9e0",
+          "message": "fix(mecatui): persist ToolHive provider default (#2043)\n\nCo-authored-by: Codex <noreply@openai.com>",
+          "timestamp": "2026-10-01T11:58:20+01:00",
+          "tree_id": "405665548b8e36f5ff3d141a238f2e47d6038a16",
+          "url": "https://github.com/stacklok/mecatl/commit/65894e56226b9b321f439f0450e6ca4c04bbe9e0"
+        },
+        "date": 1790853008881,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -378829,6 +378863,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790853005055,
+  "lastUpdate": 1790853009807,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
