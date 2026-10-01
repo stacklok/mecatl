@@ -259228,6 +259228,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790842391231,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ef3e9937b8db3ea0f33ab255172bba024b77f1e1",
+          "message": "test: fix microVM guest-pipe and JSONL lineage flakes (#2033)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T11:02:49+03:00",
+          "tree_id": "d3e03984e2e09840866b3392813ce1869d2ea328",
+          "url": "https://github.com/stacklok/mecatl/commit/ef3e9937b8db3ea0f33ab255172bba024b77f1e1"
+        },
+        "date": 1790843108624,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -376274,6 +376308,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790843105517,
+  "lastUpdate": 1790843109861,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
