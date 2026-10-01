@@ -258870,6 +258870,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790840697156,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8318b3db910df8c184a93281b71cc63b9497e7b",
+          "message": "Add a skill for mecak8s kind testing (#2035)",
+          "timestamp": "2026-10-01T10:00:53+02:00",
+          "tree_id": "b096056aa0b360fae572741661e1cf1fc23e4fdc",
+          "url": "https://github.com/stacklok/mecatl/commit/c8318b3db910df8c184a93281b71cc63b9497e7b"
+        },
+        "date": 1790842391231,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -375763,6 +375797,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790842387586,
+  "lastUpdate": 1790842391832,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
