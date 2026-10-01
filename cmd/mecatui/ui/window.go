@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -74,8 +73,8 @@ func renderedLineWindow(scroll, total, window int) renderedLineWindowBounds {
 	return renderedLineWindowBounds{start: start, end: min(start+window, total), total: total, window: window}
 }
 
-// windowRenderedLines windows ALREADY-RENDERED (ANSI-carrying) lines to a fixed
-// window starting at scroll, appending a muted "lines X–Y of N" indicator when
+// windowRenderedLinesWithIndicator windows ALREADY-RENDERED (ANSI-carrying) lines to a fixed
+// window starting at scroll, appending a caller-owned overflow indicator when
 // the content overflows the window. Each input line must be a COMPLETE styled
 // line (lipgloss renders multi-line strings with per-line SGR sequences — the
 // same property capRenderedLines relies on), so slicing never severs an escape.
@@ -83,15 +82,6 @@ func renderedLineWindow(scroll, total, window int) renderedLineWindowBounds {
 // the embedded styling); the line TEXT is sanitized by the callers at render
 // time. Every emitted line carries a trailing newline so the callers' footer
 // concatenation stays uniform across the scrolled and unscrolled cases.
-func windowRenderedLines(th theme.Theme, lines []string, scroll, window int) string {
-	return windowRenderedLinesWithIndicator(th, lines, scroll, window, func(start, end, total int) string {
-		return fmt.Sprintf("lines %d–%d of %d", start+1, end, total)
-	})
-}
-
-// windowRenderedLinesWithIndicator is windowRenderedLines with a caller-owned
-// overflow indicator. It lets a clipped surface retain its live navigation
-// affordances without consuming another row.
 func windowRenderedLinesWithIndicator(th theme.Theme, lines []string, scroll, window int, indicator func(start, end, total int) string) string {
 	w := renderedLineWindow(scroll, len(lines), window)
 

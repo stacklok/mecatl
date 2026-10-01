@@ -87,11 +87,11 @@ func (s *soulState) Render(width, height int) (string, []ClickableRegion) {
 	case s.err != nil:
 		rows = text(th.Style("errorText"), "get soul: "+terminaltext.Sanitize(s.err.Error()))
 	case !s.soul.Present && s.soul.Provenance == client.SoulProvenanceNone:
-		copy := "No user or project soul is available."
+		emptyMessage := "No user or project soul is available."
 		if !s.deps.caps.Soul {
-			copy = soulDisabledNote
+			emptyMessage = soulDisabledNote
 		}
-		rows = text(th.Style("muted"), copy)
+		rows = text(th.Style("muted"), emptyMessage)
 	default:
 		meta = text(th.Style("muted"), renderSoulMeta(s.soul))
 		if s.soul.Content == "" {

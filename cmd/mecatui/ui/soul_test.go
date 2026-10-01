@@ -142,7 +142,7 @@ func TestSoulScroll(t *testing.T) {
 	if !strings.Contains(stripANSIstr(m.View().Content), "unique-row-89") {
 		t.Fatal("last row not visible")
 	}
-	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	keySoul(m, tea.KeyPressMsg{Code: tea.KeyHome})
 	if s.viewport.Offset() != 0 {
 		t.Fatal("home did not return to first row")
 	}
