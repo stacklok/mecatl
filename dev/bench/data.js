@@ -286442,6 +286442,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790839676847,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c2f5721e47be230a3d1bf7b0f3f5b2931578e7ba",
+          "message": "feat(jsonlstore): support read-only access to existing stores (#2031)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T10:33:13+03:00",
+          "tree_id": "f9605dbb0bd83d5793b7345447b97d89788e6a13",
+          "url": "https://github.com/stacklok/mecatl/commit/c2f5721e47be230a3d1bf7b0f3f5b2931578e7ba"
+        },
+        "date": 1790840700135,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3279,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 70,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1156,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -375286,6 +375325,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790840697799,
+  "lastUpdate": 1790840701091,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
