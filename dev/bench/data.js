@@ -257796,6 +257796,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790832512462,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3c39ceaafeafc1717369727dedb8c04b88ad563",
+          "message": "test(mecatui): fix carryover handoff close flake (#2020)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T08:21:34+03:00",
+          "tree_id": "cdf9e2c49b8bd9800eee0214bb284ce23f0cd674",
+          "url": "https://github.com/stacklok/mecatl/commit/d3c39ceaafeafc1717369727dedb8c04b88ad563"
+        },
+        "date": 1790833232390,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -374230,6 +374264,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790833229451,
+  "lastUpdate": 1790833233041,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
