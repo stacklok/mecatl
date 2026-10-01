@@ -25,14 +25,21 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 		checkEmbeddedCompositionChild(t, "available")
 		return
 	}
-	writeIsolatedExecutionSettings(t, app.PlacementHostLocal)
-	tempRoot, err := os.MkdirTemp("/tmp", "mh-") // sockaddr_un requires a short runtime socket path
-	if err != nil {
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	userModelDir := os.Getenv("MECATUI_TEST_HANDOFF_USER_MODEL_DIR")
+	workspace := os.Getenv("MECATUI_TEST_HANDOFF_WORKSPACE")
+	if configHome == "" || runtimeDir == "" || userModelDir == "" || workspace == "" {
+		t.Fatal("embedded composition requires synthetic test environment")
+	}
+	settingsDir := filepath.Join(configHome, "mecatl")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(tempRoot) })
-	t.Setenv("XDG_RUNTIME_DIR", tempRoot)
-	before, err := filepath.Glob(filepath.Join(tempRoot, "mecatui-*", "mecated.sock"))
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.yaml"), []byte("execution:\n  default_placement: "+app.PlacementHostLocal+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := filepath.Glob(filepath.Join(runtimeDir, "mecatui-*", "mecated.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,8 +49,8 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	err = runWithOptions([]string{"mecatui", "--mock", "--quiet", "--no-store", "--no-memory", "--no-user-model", "--user-model-dir=" + t.TempDir(), "--no-soul", "--no-skills", "--no-commands", "--workspace=" + t.TempDir()}, runOptions{runProgram: func(_ context.Context, m ui.Model) (tea.Model, error) {
-		sockets, err := filepath.Glob(filepath.Join(tempRoot, "mecatui-*", "mecated.sock"))
+	err = runWithOptions([]string{"mecatui", "--mock", "--quiet", "--no-store", "--no-memory", "--no-user-model", "--user-model-dir=" + userModelDir, "--no-soul", "--no-skills", "--no-commands", "--workspace=" + workspace}, runOptions{runProgram: func(_ context.Context, m ui.Model) (tea.Model, error) {
+		sockets, err := filepath.Glob(filepath.Join(runtimeDir, "mecatui-*", "mecated.sock"))
 		var fresh []string
 		for _, socket := range sockets {
 			if !known[socket] {
@@ -75,6 +82,11 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 		if _, err := cl.RenameSession(ctx, final, "final title"); err != nil {
 			t.Fatal(err)
 		}
+		finalRecord, err := json.Marshal(final)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = os.Stderr.WriteString("handoff-child-final-id=" + string(finalRecord) + "\n")
 		m0, _ = m.Update(client.SessionReadyMsg{SessionID: final})
 		m = m0.(ui.Model)
 		if m.ActiveSessionID() != final {
@@ -93,7 +105,7 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sockets, err := filepath.Glob(filepath.Join(tempRoot, "mecatui-*", "mecated.sock"))
+	sockets, err := filepath.Glob(filepath.Join(runtimeDir, "mecatui-*", "mecated.sock"))
 	for _, socket := range sockets {
 		if !known[socket] {
 			t.Fatalf("embedded server not cleaned: %v %v", sockets, err)
@@ -105,6 +117,70 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 	_, _ = os.Stderr.WriteString("handoff-child-cleaned\n")
 }
 
+func compositionChildEnv(t *testing.T, scenario string) []string {
+	t.Helper()
+	root := compositionScratchRoot(t)
+	paths := map[string]string{
+		"HOME":                                filepath.Join(root, "home"),
+		"XDG_CONFIG_HOME":                     filepath.Join(root, "config"),
+		"XDG_STATE_HOME":                      filepath.Join(root, "state"),
+		"XDG_DATA_HOME":                       filepath.Join(root, "data"),
+		"XDG_RUNTIME_DIR":                     filepath.Join(root, "runtime"),
+		"MECATUI_TEST_HANDOFF_USER_MODEL_DIR": filepath.Join(root, "user-model"),
+		"MECATUI_TEST_HANDOFF_WORKSPACE":      filepath.Join(root, "workspace"),
+	}
+	for name, dir := range paths {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	return []string{
+		"HOME=" + paths["HOME"],
+		"XDG_CONFIG_HOME=" + paths["XDG_CONFIG_HOME"],
+		"XDG_STATE_HOME=" + paths["XDG_STATE_HOME"],
+		"XDG_DATA_HOME=" + paths["XDG_DATA_HOME"],
+		"XDG_RUNTIME_DIR=" + paths["XDG_RUNTIME_DIR"],
+		"MECATUI_TEST_HANDOFF_USER_MODEL_DIR=" + paths["MECATUI_TEST_HANDOFF_USER_MODEL_DIR"],
+		"MECATUI_TEST_HANDOFF_WORKSPACE=" + paths["MECATUI_TEST_HANDOFF_WORKSPACE"],
+		"MECATUI_TEST_HANDOFF_COMPOSITION=" + scenario,
+		"PATH=" + os.Getenv("PATH"),
+	}
+}
+
+func compositionScratchRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			scratch := filepath.Join(dir, ".scratch")
+			if err := os.MkdirAll(scratch, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.MkdirTemp(scratch, "mh-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(filepath.Join(root, "runtime", "mecatui-0123456789", "mecated.sock")) < 100 {
+				t.Cleanup(func() { _ = os.RemoveAll(root) })
+				return root
+			}
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatal(err)
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatal("no ancestor checkout has a short enough .scratch directory for embedded socket")
+	return ""
+}
+
 func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -112,7 +188,7 @@ func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, "-test.run=^TestMecatuiExitHandoff_Scenario1_EmbeddedComposition$")
-	cmd.Env = append(os.Environ(), "MECATUI_TEST_HANDOFF_COMPOSITION="+scenario)
+	cmd.Env = compositionChildEnv(t, scenario)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -130,6 +206,18 @@ func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 	var id string
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(fields[0], finalSessionHandoffPrefix)), &id); err != nil || id == "" {
 		t.Fatalf("invalid ID: %q: %v", fields[0], err)
+	}
+	const finalIDPrefix = "handoff-child-final-id="
+	finalLine := strings.Index(got, finalIDPrefix)
+	if finalLine < 0 {
+		t.Fatalf("missing seeded final ID: %q", got)
+	}
+	var finalID string
+	if err := json.Unmarshal([]byte(strings.SplitN(got[finalLine+len(finalIDPrefix):], "\n", 2)[0]), &finalID); err != nil {
+		t.Fatalf("invalid seeded final ID: %v", err)
+	}
+	if scenario != "missing" && id != finalID {
+		t.Fatalf("handoff ID = %q, want seeded final ID %q", id, finalID)
 	}
 	if !strings.Contains(got[line:], "Resume: mecatui --resume '"+id+"'\n") || !strings.Contains(got[line:], "Or: mecatui --resume-latest (may select a different chat)\n") {
 		t.Fatalf("final ID command missing: %q", got[line:])
