@@ -261734,6 +261734,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790854802129,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6784c42e7e2f4fca2b31fa1638a0c7472320b2c",
+          "message": "chore(mecak8s): default Kind OpenRouter to GPT-6 Sol (#2050)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T12:38:41+01:00",
+          "tree_id": "ebe09ecbb31f7a750c8c08aeac7db526f6927f4b",
+          "url": "https://github.com/stacklok/mecatl/commit/b6784c42e7e2f4fca2b31fa1638a0c7472320b2c"
+        },
+        "date": 1790855512821,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -379851,6 +379885,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790855509820,
+  "lastUpdate": 1790855513585,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
