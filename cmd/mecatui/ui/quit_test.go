@@ -443,7 +443,3 @@ func (errSession) SetMode(_ context.Context, _, mode string) (string, error) { r
 func (errSession) ForkSession(_ context.Context, _, _ string) (string, error) {
 	return "", context.DeadlineExceeded
 }
-
-func (errSession) CreateSessionWithAgent(_ context.Context, _ client.ModelSelection, _, _ string) (string, client.Capabilities, client.ResolvedModel, error) {
-	return "", client.Capabilities{}, client.ResolvedModel{}, context.DeadlineExceeded
-}

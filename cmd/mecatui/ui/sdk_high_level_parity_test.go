@@ -47,7 +47,6 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 		applicationDetail:      "The TUI chooses direct source refresh or broker workspace enrollment from server capabilities.",
 	},
 	"agents":      {category: sdkBacked, sdkOperation: "Client.agents.list"},
-	"agent":       {category: sdkBacked, sdkOperation: "Client.sessions.create"},
 	"team":        {category: sdkBacked, sdkOperation: "Team.list"},
 	"skills":      {category: sdkBacked, sdkOperation: "Client.skills.list"},
 	"soul":        {category: sdkBacked, sdkOperation: "Client.soul.get"},

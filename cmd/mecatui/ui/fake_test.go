@@ -186,15 +186,6 @@ type fakeConv struct {
 	carryoverFrom  string
 	carryoverCount int
 	carryoverIDs   []string
-	// agentDefRequested records the agentDefName the LAST CreateSessionWithAgent
-	// carried, and agentDefCount counts those calls — the /agent e2e asserts the
-	// typed/picked name threads into the create. agentDefErr, when non-nil, is
-	// returned ONLY by CreateSessionWithAgent (modelling the server's
-	// InvalidArgument for an unknown definition) — createErr/rejectSelector stay
-	// reserved for the ordinary CreateSession path.
-	agentDefRequested string
-	agentDefCount     int
-	agentDefErr       error
 	// recreated, when non-nil, is closed on the SECOND CreateSession (the restart-now
 	// handoff's re-create) — the deterministic signal a teatest sequences the model
 	// switch on, output-independent. createdOnce guards `created`; a dedicated Once
@@ -431,27 +422,6 @@ func (c *fakeConv) CreateSessionWithCarryover(ctx context.Context, sourceSession
 	c.carryoverCount++
 	c.carryoverIDs = append(c.carryoverIDs, sourceSessionID)
 	c.mu.Unlock()
-	return c.CreateSession(ctx, sel, c.mode)
-}
-
-// CreateSessionWithAgent implements the ui SessionCreator's agent-bound seam
-// (ADR 0353): it records the requested def name (so the /agent e2e asserts the
-// typed/picked name threads into the create) and delegates to the shared
-// create body — agentDefErr, when set, fails ONLY this path (modelling the
-// server's InvalidArgument for an unknown definition), distinct from
-// createErr/rejectSelector.
-func (c *fakeConv) CreateSessionWithAgent(ctx context.Context, sel client.ModelSelection, mode, agentDefName string) (string, client.Capabilities, client.ResolvedModel, error) {
-	c.mu.Lock()
-	c.agentDefRequested = agentDefName
-	c.agentDefCount++
-	if mode != "" {
-		c.mode = mode
-	}
-	err := c.agentDefErr
-	c.mu.Unlock()
-	if err != nil {
-		return "", client.Capabilities{}, client.ResolvedModel{}, err
-	}
 	return c.CreateSession(ctx, sel, c.mode)
 }
 

@@ -1687,18 +1687,6 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 
 func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }
 
-// CreateSessionWithAgent implements the ui SessionCreator's agent-bound seam
-// (ADR 0353). An agent-bound session is mutually exclusive with a debug target
-// server-side (AC1.5); this adapter does not attempt to combine them — the
-// debug-target fields are left untouched, as agent-bound sessions are a
-// developer/testing path distinct from debug sessions.
-func (s *sessionAdapter) CreateSessionWithAgent(ctx context.Context, sel client.ModelSelection, mode, agentDefName string) (string, client.Capabilities, client.ResolvedModel, error) {
-	if mode == "" {
-		mode = s.mode
-	}
-	return s.cl.CreateSessionWithAgent(ctx, client.ModeFromString(mode), sel, agentDefName)
-}
-
 // CreateSessionWithCarryover implements the ui SessionCreator's carryover seam
 // (issue #20): like CreateSession it carries the pick + mode, but it ALSO sets
 // source_session_id so the server seeds the new session's history from the source.

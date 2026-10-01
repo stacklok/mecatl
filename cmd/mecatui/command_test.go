@@ -126,10 +126,6 @@ func (*sessionsLaunchCreator) ForkSession(context.Context, string, string) (stri
 	return "", nil
 }
 
-func (*sessionsLaunchCreator) CreateSessionWithAgent(context.Context, client.ModelSelection, string, string) (string, client.Capabilities, client.ResolvedModel, error) {
-	return "", client.Capabilities{}, client.ResolvedModel{}, nil
-}
-
 func (f *sessionsLaunchCreator) ListSessions(context.Context) ([]client.SessionListItem, error) {
 	return f.rows, nil
 }
