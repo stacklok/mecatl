@@ -194,6 +194,11 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
+	// restoreAuthority below) rejects a bind that claims this label without a
+	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
+	// as the real create path already sequences it.
+	s.AgentDefinitionName = meta.AgentDefinitionName
 	if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
@@ -208,7 +213,6 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// through RestoreTitleMetadata below.
 	s.Placement = meta.Placement
 	s.Profile = meta.Profile
-	s.AgentDefinitionName = meta.AgentDefinitionName
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort

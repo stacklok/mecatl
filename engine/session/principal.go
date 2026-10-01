@@ -306,6 +306,17 @@ func (s *Session) BindAuthority(authority Authority) error {
 			}
 		}
 	}
+	// An agent-bound session (ADR 0353) MUST carry a Ceiling — a label claiming
+	// the binding without one would be routed everywhere else (fail-closed
+	// guards, catalog construction) as agent-bound, yet GrantToolAuthority and
+	// CompleteWorkspaceEnrollment treat a nil Ceiling as UNRESTRICTED, silently
+	// defeating the whole non-widenable-ceiling guarantee. This only works
+	// because every caller (session creation, sessnap.Restore, eventsource.Fold)
+	// sets AgentDefinitionName on s BEFORE calling BindAuthority/RestoreLabels —
+	// do not reorder that without preserving this check's precondition.
+	if s.AgentDefinitionName != "" && authority.Ceiling == nil {
+		return errors.New("session: agent-bound session requires a bound Ceiling")
+	}
 	s.Authority = authority.Clone()
 	s.authorityBound = true
 	return nil

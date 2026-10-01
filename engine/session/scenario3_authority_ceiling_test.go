@@ -116,6 +116,33 @@ func TestSessionScopedAgentIdentity_Scenario3_AuthorityCeilingBoundOnce(t *testi
 			t.Fatal("session left in a bound state after a rejected BindAuthority call")
 		}
 	})
+
+	t.Run("rejects a bind for an agent-bound session carrying no Ceiling at all", func(t *testing.T) {
+		// A second hardening gap, found by external review: the prior subtest
+		// closes "CapabilitySet wider than its own Ceiling," but nothing stopped
+		// BindAuthority from accepting a NIL Ceiling outright for a session whose
+		// AgentDefinitionName claims it's agent-bound — GrantToolAuthority and
+		// CompleteWorkspaceEnrollment both treat a nil Ceiling as UNRESTRICTED, so
+		// a persisted record (sessnap/eventsource) with this combination would
+		// restore as agent-bound-by-label yet fully widenable in practice,
+		// silently defeating the entire non-widenable-ceiling guarantee.
+		// Mutation-verified: this subtest failed with a nil error before the
+		// AgentDefinitionName-requires-Ceiling check was added.
+		s := New("agent-bound-no-ceiling", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, Limits{}, time.Unix(1, 0).UTC())
+		s.AgentDefinitionName = "escalator"
+		err := s.BindAuthority(Authority{
+			CapabilitySet:      governance.CapabilitySet{Tools: []string{"Read"}},
+			Provenance:         "agent-def:test",
+			DefinitionIdentity: "agent:test",
+			// Ceiling deliberately omitted (nil).
+		})
+		if err == nil {
+			t.Fatal("BindAuthority accepted an agent-bound session with no Ceiling")
+		}
+		if _, bound := s.BoundAuthority(); bound {
+			t.Fatal("session left in a bound state after a rejected BindAuthority call")
+		}
+	})
 }
 
 func ceilingBoundSession(t *testing.T, ceilingTools, boundTools []string) *Session {
