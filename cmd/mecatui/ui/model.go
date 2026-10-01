@@ -96,6 +96,12 @@ type SessionCreator interface {
 	// and model ALWAYS inherit). The caller owns closing the source session and the
 	// GetSession refetch for the fork's resolved-model echo.
 	ForkSession(ctx context.Context, srcID, reasoningEffort string) (string, error)
+	// CreateSessionWithAgent allocates a session bound to a named AgentDef (ADR
+	// 0353) instead of the default explorer session: the server restricts the
+	// catalog, provider/model, limits, and permission mode to the resolved
+	// definition's own values. An unknown agentDefName fails with
+	// client.IsInvalidArgument.
+	CreateSessionWithAgent(ctx context.Context, sel client.ModelSelection, mode, agentDefName string) (string, client.Capabilities, client.ResolvedModel, error)
 }
 
 // SelectionStore persists + loads the client-side model selection (last-used). It
