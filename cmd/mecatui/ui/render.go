@@ -1159,6 +1159,14 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 	return ""
 }
 
+func delegationModelLabelWithSelection(category, routedModel, routingReason, model, provider, explicitRouterCategory string, decision *client.RoutingDecision) string {
+	explicitRouterCategory = terminaltext.Sanitize(explicitRouterCategory)
+	if explicitRouterCategory != "" {
+		return "selected: model-router/" + explicitRouterCategory + " → " + terminaltext.Sanitize(provider) + "/" + terminaltext.Sanitize(model)
+	}
+	return delegationModelLabel(category, routedModel, routingReason, model, decision)
+}
+
 // delegationModelLabel preserves the historical model line when decision is nil.
 // A fallback may add one candidate line, but the actual model always comes from
 // the existing authoritative model field rather than the rejected candidate.

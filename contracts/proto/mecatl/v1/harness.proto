@@ -2392,6 +2392,11 @@ message Subagent {
   // routing_decision is the optional bounded configured-router evidence captured
   // on subagent.start. Historical events and deployments without a router omit it.
   optional RoutingDecision routing_decision = 19;
+  // provider is the concrete provider that actually ran the child.
+  string provider = 20;
+  // explicit_router_category is the requested router category only for an explicit
+  // provider:"model-router" selection. Classifier-originated routing leaves it empty.
+  string explicit_router_category = 21;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -2439,6 +2444,11 @@ message TeamMemberSpec {
   // routing_decision is the optional bounded configured-router evidence captured
   // for this member on team.start. Historical roster entries omit it.
   optional RoutingDecision routing_decision = 9;
+  // provider is the concrete provider backing the retained member engine.
+  string provider = 10;
+  // explicit_router_category is the requested router category only for an explicit
+  // provider:"model-router" selection. Classifier-originated routing leaves it empty.
+  string explicit_router_category = 11;
 }
 
 // Team is the BOUNDED observability projection carried by the three team.* events.
@@ -2643,6 +2653,11 @@ message Parallel {
   // routing_decision is the optional bounded configured-router evidence captured
   // on branch_start. Historical events and deployments without a router omit it.
   optional RoutingDecision routing_decision = 26;
+  // provider is the concrete provider that actually ran the branch.
+  string provider = 27;
+  // explicit_router_category is the requested router category only for an explicit
+  // provider:"model-router" selection. Classifier-originated routing leaves it empty.
+  string explicit_router_category = 28;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors

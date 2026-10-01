@@ -353,7 +353,7 @@ func teamRosterRuntime(ln *teamLane) string {
 	if ln.ctxWindow > 0 {
 		parts = append(parts, renderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
 	}
-	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
+	if routed := delegationModelLabelWithSelection(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model, ln.provider, ln.explicitRouterCategory, ln.routingDecision); routed != "" {
 		parts = append(parts, routed)
 	}
 	return strings.Join(parts, " · ")

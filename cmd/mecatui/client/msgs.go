@@ -271,9 +271,11 @@ type SubagentMsg struct {
 	// regardless of how it was chosen — inherited default, agent-def pin, per-call
 	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
 	// RoutedModel. Bare metadata, never child content, so gauntlet #7 holds.
-	Model    string
-	ToolName string
-	IsError  bool
+	Model                  string
+	Provider               string
+	ExplicitRouterCategory string
+	ToolName               string
+	IsError                bool
 	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
 	// subagent.tool event per the child's forwarded inner event kind:
 	// InnerKind is "tool.call" (Detail = the bounded args preview), "tool.result"
@@ -377,7 +379,9 @@ type TeamMemberSpec struct {
 	// Model is the concrete model id the member's engine ACTUALLY runs on (team.start
 	// roster only), regardless of how it was chosen (issue #112 / ADR 0035). When routed,
 	// Model == RoutedModel. Bare metadata, never member content, so gauntlet #7 holds.
-	Model string
+	Model                  string
+	Provider               string
+	ExplicitRouterCategory string
 }
 
 // TeamMsg is the BOUNDED projection of an in-process team's run, as plain data
@@ -495,7 +499,9 @@ type ParallelMsg struct {
 	// Model is the concrete model id the branch ACTUALLY ran on (branch_start only),
 	// regardless of how it was chosen (issue #112 / ADR 0035). When routed, Model ==
 	// RoutedModel. Bare metadata, never branch content, so gauntlet #7 holds.
-	Model string
+	Model                  string
+	Provider               string
+	ExplicitRouterCategory string
 	// ToolName / IsError / ToolCount carry per-branch tool activity (branch_tool;
 	// ToolCount is also final on branch_end).
 	ToolName string
@@ -990,26 +996,28 @@ func routingDecisionFrom(in *mecatlv1.RoutingDecision) *RoutingDecision {
 // point for the three subagent.* event kinds.
 func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 	return SubagentMsg{
-		Kind:            kind,
-		ParentCallID:    s.GetParentCallId(),
-		ChildID:         s.GetChildId(),
-		Goal:            s.GetGoal(),
-		Background:      s.GetBackground(),
-		RoutedCategory:  s.GetRoutedCategory(),
-		RoutedModel:     s.GetRoutedModel(),
-		RoutingReason:   s.GetRoutingReason(),
-		RoutingDecision: routingDecisionFrom(s.GetRoutingDecision()),
-		Model:           s.GetModel(),
-		ToolName:        s.GetToolName(),
-		IsError:         s.GetIsError(),
-		InnerKind:       s.GetInnerKind(),
-		Text:            s.GetText(),
-		Detail:          s.GetDetail(),
-		ToolCount:       int(s.GetToolCount()),
-		Usage:           usageFrom(s.GetUsage()),
-		Stop:            s.GetStop(),
-		Cause:           s.GetCause(),
-		DurationMs:      s.GetDurationMs(),
+		Kind:                   kind,
+		ParentCallID:           s.GetParentCallId(),
+		ChildID:                s.GetChildId(),
+		Goal:                   s.GetGoal(),
+		Background:             s.GetBackground(),
+		RoutedCategory:         s.GetRoutedCategory(),
+		RoutedModel:            s.GetRoutedModel(),
+		RoutingReason:          s.GetRoutingReason(),
+		RoutingDecision:        routingDecisionFrom(s.GetRoutingDecision()),
+		Model:                  s.GetModel(),
+		Provider:               s.GetProvider(),
+		ExplicitRouterCategory: s.GetExplicitRouterCategory(),
+		ToolName:               s.GetToolName(),
+		IsError:                s.GetIsError(),
+		InnerKind:              s.GetInnerKind(),
+		Text:                   s.GetText(),
+		Detail:                 s.GetDetail(),
+		ToolCount:              int(s.GetToolCount()),
+		Usage:                  usageFrom(s.GetUsage()),
+		Stop:                   s.GetStop(),
+		Cause:                  s.GetCause(),
+		DurationMs:             s.GetDurationMs(),
 	}
 }
 
@@ -1019,30 +1027,32 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 // single translation point for the parallel.* event family.
 func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 	return ParallelMsg{
-		Kind:            kind,
-		ParentCallID:    p.GetParentCallId(),
-		Join:            p.GetJoin(),
-		BranchCount:     int(p.GetBranchCount()),
-		BranchIndex:     int(p.GetBranchIndex()),
-		ChildID:         p.GetChildId(),
-		BranchLabel:     p.GetBranchLabel(),
-		Goal:            p.GetGoal(),
-		RoutedCategory:  p.GetRoutedCategory(),
-		RoutedModel:     p.GetRoutedModel(),
-		RoutingReason:   p.GetRoutingReason(),
-		RoutingDecision: routingDecisionFrom(p.GetRoutingDecision()),
-		Model:           p.GetModel(),
-		ToolName:        p.GetToolName(),
-		IsError:         p.GetIsError(),
-		InnerKind:       p.GetInnerKind(),
-		Text:            p.GetText(),
-		Detail:          p.GetDetail(),
-		ToolCount:       int(p.GetToolCount()),
-		Failed:          p.GetFailed(),
-		Stop:            p.GetStop(),
-		Usage:           usageFrom(p.GetUsage()),
-		DurationMs:      p.GetDurationMs(),
-		Winner:          int(p.GetWinner()),
+		Kind:                   kind,
+		ParentCallID:           p.GetParentCallId(),
+		Join:                   p.GetJoin(),
+		BranchCount:            int(p.GetBranchCount()),
+		BranchIndex:            int(p.GetBranchIndex()),
+		ChildID:                p.GetChildId(),
+		BranchLabel:            p.GetBranchLabel(),
+		Goal:                   p.GetGoal(),
+		RoutedCategory:         p.GetRoutedCategory(),
+		RoutedModel:            p.GetRoutedModel(),
+		RoutingReason:          p.GetRoutingReason(),
+		RoutingDecision:        routingDecisionFrom(p.GetRoutingDecision()),
+		Model:                  p.GetModel(),
+		Provider:               p.GetProvider(),
+		ExplicitRouterCategory: p.GetExplicitRouterCategory(),
+		ToolName:               p.GetToolName(),
+		IsError:                p.GetIsError(),
+		InnerKind:              p.GetInnerKind(),
+		Text:                   p.GetText(),
+		Detail:                 p.GetDetail(),
+		ToolCount:              int(p.GetToolCount()),
+		Failed:                 p.GetFailed(),
+		Stop:                   p.GetStop(),
+		Usage:                  usageFrom(p.GetUsage()),
+		DurationMs:             p.GetDurationMs(),
+		Winner:                 int(p.GetWinner()),
 	}
 }
 
@@ -1085,15 +1095,17 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 	}
 	for _, r := range t.GetRoster() {
 		msg.Roster = append(msg.Roster, TeamMemberSpec{
-			Name:            r.GetName(),
-			Role:            r.GetRole(),
-			Mutating:        r.GetMutating(),
-			Lead:            r.GetLead(),
-			RoutedCategory:  r.GetRoutedCategory(),
-			RoutedModel:     r.GetRoutedModel(),
-			RoutingReason:   r.GetRoutingReason(),
-			RoutingDecision: routingDecisionFrom(r.GetRoutingDecision()),
-			Model:           r.GetModel(),
+			Name:                   r.GetName(),
+			Role:                   r.GetRole(),
+			Mutating:               r.GetMutating(),
+			Lead:                   r.GetLead(),
+			RoutedCategory:         r.GetRoutedCategory(),
+			RoutedModel:            r.GetRoutedModel(),
+			RoutingReason:          r.GetRoutingReason(),
+			RoutingDecision:        routingDecisionFrom(r.GetRoutingDecision()),
+			Model:                  r.GetModel(),
+			Provider:               r.GetProvider(),
+			ExplicitRouterCategory: r.GetExplicitRouterCategory(),
 		})
 	}
 	for _, tk := range t.GetTasks() {

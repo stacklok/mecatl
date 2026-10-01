@@ -427,9 +427,8 @@
 #   # Aliases binds a short alias to a concrete model id (merged onto the CLI
 #   # --model-alias map, CLI winning per key).
 #   aliases: {}
-#   # Default is the session-default model selector (alias or concrete id). It is the
-#   # project-overridable session default (ADR 0030 Phase 4) — within the operator
-#   # allowlist; the operator's own Default is uncapped. Empty = absent.
+#   # Default is the operator-tier session-default model selector (alias or concrete id).
+#   # Empty = absent.
 #   default: sonnet
 #   # Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
 #   # concrete id): the settings.yaml twin of the --subagent-model flag (issue #288). It
@@ -454,12 +453,7 @@
 #   # Empty = absent (the ladder's preferred default wins). The name pair (default =
 #   # model, default_provider = provider) mirrors the wire grammar exactly.
 #   default_provider: ""
-#   # Allowlist is the OPERATOR-TIER, non-wideable cap (ADR 0030 Phase 4): the set of
-#   # model selectors (alias names and/or concrete ids) a PROJECT-tier models: block may
-#   # bind to. An empty/absent allowlist means project models stay WARN-ignored (the
-#   # opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
-#   # honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored with
-#   # a WARN (a project cannot widen its own cap).
+#   # Allowlist is retained for compatibility and has no effect.
 #   allowlist: []
 #   # Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031, Phase
 #   # 5; enable model superseded by ADR 0042): a classifier slot, the routing categories,
