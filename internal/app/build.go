@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"k8s.io/client-go/kubernetes"
@@ -1911,6 +1912,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override; it
 	// does NOT lower the precedence of key-driven providers. No-op when absent.
 	cfg = foldOperatorDefaultProvider(cfg)
+	pairDefaultCfg, err := foldOperatorPairModelDefault(cfg, cliModelKeys)
+	if err != nil {
+		return nil, err
+	}
+	cfg = pairDefaultCfg
 	resolvedDefaultCfg, err := applyDeploymentDefaultTarget(cfg)
 	if err != nil {
 		return nil, err
@@ -7718,6 +7724,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// gets the HARDENED runner (the main session keeps its own unhardened runner). nil
 	// when Shell is disabled — then no shell, no forker.
 	sandboxedRunner := buildSandboxedCommandRunner(cfg)
+	_, defaultChildProviderID, _, _ := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	engines, meta, mcpClose := buildAgentSubagentEngines(ctx, cfg, provider, provReg, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)
 	opts := []agent.SubagentOption{
 		agent.WithSubagentStopHook(hooks),
@@ -7778,7 +7785,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// closure hands engine/agent only func(string)(*Engine,bool); the registry never
 	// crosses (same shape/spirit as WithAgentEngines).
 	opts = append(opts,
-		agent.WithSubagentProvider(parentProviderID),
+		agent.WithSubagentProvider(defaultChildProviderID),
 		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
 		agent.WithSubagentTargetEngineFactory(buildSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID, sandboxedRunner)),
 		agent.WithSubagentEngineFactory(buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
@@ -7881,7 +7888,7 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
 		agent.WithSubagentNoFSNote(),
 		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
-		agent.WithSubagentProvider(parentProviderID),
+		agent.WithSubagentProvider(childProviderID),
 		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
 		agent.WithSubagentTargetEngineFactory(func(target agent.ModelTarget) (*agent.Engine, bool) {
 			providerID := strings.TrimSpace(target.Provider)
@@ -7934,6 +7941,18 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 // Cross-provider routing by a bare model id is intentionally out of scope this round
 // (the registry is keyed by provider, not model) — a def's `provider:` remains the
 // cross-provider seam.
+func validDelegationSelectorValue(value string) bool {
+	if len(value) > maxAgentModelDiscoveryFilterBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
+}
+
 func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parentProviderID string) agent.SubagentSelectorResolver {
 	resolve := func(explicitProvider, selector string) (agent.ModelTarget, string, error) {
 		explicitProvider = strings.TrimSpace(explicitProvider)
@@ -7964,11 +7983,15 @@ func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parent
 		return factoryTarget, target.ProviderID, nil
 	}
 	return func(provider, model string) (agent.ResolvedModelSelector, error) {
+		if !validDelegationSelectorValue(provider) || !validDelegationSelectorValue(model) {
+			return agent.ResolvedModelSelector{}, fmt.Errorf("selector values must be valid UTF-8 without control or format characters and at most 512 bytes")
+		}
 		provider = strings.TrimSpace(provider)
 		model = strings.TrimSpace(model)
 		if provider != reservedModelRouterProvider {
+			rawAlias, alias := lookupModelAliasTarget(cfg, model)
 			target, actual, err := resolve(provider, model)
-			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: provider != "" || target.Provider != ""}, err
+			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: provider != "" || target.Provider != "" || (alias && rawAlias.ProviderID != "")}, err
 		}
 		if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
 			return agent.ResolvedModelSelector{}, fmt.Errorf("model router is unavailable")

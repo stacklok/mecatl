@@ -462,6 +462,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// fixed keys; the attacker-NAMED-driver residual that remains is accepted at
 	// main-session parity — see buildForceCopyRunner.
 	forceCopyRunner := buildForceCopyRunner(cfg)
+	_, branchProviderID, _, _ := resolveChildProvider(cfg, reg, agents.AgentDef{}, s.provider, s.providerID, s.model)
 	parallelChild := buildParallelChildEngine(cfg, reg, s.provider, s.providerID, s.model, forceCopyRunner)
 	judge := agent.NewEngineJudge(buildParallelJudgeEngine(modelCfgFor(cfg, s.model), reg, s.providerID, s.provider))
 	opts := []agent.ParallelOption{
@@ -483,7 +484,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		agent.WithParallelTargetEngineFactory(
 			buildParallelTargetEngineFactory(cfg, reg, s.provider, s.providerID, forceCopyRunner)),
 		agent.WithParallelSelectorResolver(buildSubagentSelectorResolver(cfg, reg, s.providerID)),
-		agent.WithParallelProvider(s.providerID),
+		agent.WithParallelProvider(branchProviderID),
 	}
 	// NO nil fallback here: Phase A builds exactly ONE reaper per process —
 	// silently minting a per-assembly LRU would multiply the ForkPreservedCap

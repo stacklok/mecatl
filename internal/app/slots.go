@@ -421,6 +421,38 @@ func captureCLIModelKeys(cfg Config) cliModelKeys {
 // when there is no permResolver, no operator models: block, or no operator
 // models.default (or it resolves to inherit/unknown — fail-soft, keep the registry
 // default).
+// foldOperatorPairModelDefault applies the provider half of an operator
+// models.default pair before registry construction. Scalar and unknown selectors
+// retain the existing late fail-soft path in foldOperatorModelDefault.
+func foldOperatorPairModelDefault(cfg Config, cliKeys cliModelKeys) (Config, error) {
+	if cliKeys.modelSet {
+		return cfg, nil
+	}
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg, nil
+	}
+	policy := res.OperatorModelPolicy()
+	if policy == nil {
+		return cfg, nil
+	}
+	selector := strings.TrimSpace(policy.Default)
+	target, known := lookupModelAliasTarget(cfg, selector)
+	if selector == "" || !known || strings.TrimSpace(target.ProviderID) == "" {
+		return cfg, nil
+	}
+	provider := strings.TrimSpace(target.ProviderID)
+	if configured := strings.TrimSpace(cfg.DefaultProvider); configured != "" && configured != provider {
+		return cfg, fmt.Errorf("models.default provider conflicts with explicit default provider")
+	}
+	cfg.DefaultProvider = provider
+	cfg.DefaultModel = target.Model
+	cfg.defaultModelFromAlias = true
+	return cfg, nil
+}
+
+// foldOperatorModelDefault applies a scalar or already-provider-folded operator
+// default after registry construction while preserving the existing fail-soft posture.
 func foldOperatorModelDefault(cfg Config, cliKeys cliModelKeys) Config {
 	if cliKeys.modelSet {
 		return cfg // CLI --model wins over the operator-YAML default.

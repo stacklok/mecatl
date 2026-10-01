@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -26,6 +27,7 @@ func TestADR_0369_Scenario3_SubagentDirectSelectors(t *testing.T) {
 		return markerEngine(target.Provider + "/" + target.Model), true
 	}
 	tool := NewSubagentTool(markerEngine("DEFAULT"),
+		WithSubagentProvider("parent"),
 		WithSubagentSelectorResolver(resolver),
 		WithSubagentTargetEngineFactory(factory)).(*SubagentTool)
 
@@ -51,15 +53,20 @@ func TestADR_0369_Scenario3_SubagentDirectSelectors(t *testing.T) {
 	}
 
 	classifierCalls := 0
-	res, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("omitted", "Subagent", json.RawMessage(`{"prompt":"route me"}`)), memEnv("/ws"), nil, parentCaps{
+	startProvider := ""
+	res, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("omitted", "Subagent", json.RawMessage(`{"prompt":"route me"}`)), memEnv("/ws"), func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			startProvider = ev.Subagent.Provider
+		}
+	}, parentCaps{
 		children: newChildRunRegistry(),
 		routeDecision: func(context.Context, string) modelRoutingResult {
 			classifierCalls++
-			return modelRoutingResult{category: "large", provider: "second", model: "routed", ok: true}
+			return modelRoutingResult{category: "large", model: "routed", ok: true}
 		},
 	})
-	if err != nil || res.IsError || classifierCalls != 1 || built[len(built)-1] != (ModelTarget{Provider: "second", Model: "routed"}) {
-		t.Fatalf("omitted selector did not preserve automatic routing: result=%+v err=%v calls=%d built=%+v", res, err, classifierCalls, built)
+	if err != nil || res.IsError || classifierCalls != 1 || built[len(built)-1] != (ModelTarget{Model: "routed"}) || startProvider != "parent" {
+		t.Fatalf("omitted selector did not preserve automatic routing: result=%+v err=%v calls=%d provider=%q built=%+v", res, err, classifierCalls, startProvider, built)
 	}
 }
 
@@ -99,6 +106,103 @@ func TestADR_0369_Scenario3_SubagentRouterSelector(t *testing.T) {
 	}
 }
 
+func TestADR_0369_Scenario3_ResumeProviderSafety(t *testing.T) {
+	t.Run("cross-provider child resumes on its persisted target", func(t *testing.T) {
+		store := memstore.New()
+		fallback := mockllm.New(mockllm.TextTurn("WRONG"))
+		pair := mockllm.New(mockllm.TextTurn("FIRST"), mockllm.TextTurn("SECOND"))
+		pairEngine := NewEngine(Deps{LLM: pair, Catalog: markerEngine("x").deps.Catalog, Policy: allowAllInt(), Model: "pair-model"})
+		tool := NewSubagentTool(
+			NewEngine(Deps{LLM: fallback, Catalog: markerEngine("x").deps.Catalog, Policy: allowAllInt(), Model: "default-model"}),
+			WithSubagentStore(store),
+			WithSubagentProvider("default"),
+			WithSubagentSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
+				return ResolvedModelSelector{Target: ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: true}, nil
+			}),
+			WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				if target != (ModelTarget{Provider: "second", Model: "pair-model"}) {
+					return nil, false
+				}
+				return pairEngine, true
+			}),
+		).(*SubagentTool)
+
+		fresh, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"first","provider":"second","model":"pair-model"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if err != nil || fresh.IsError {
+			t.Fatalf("fresh pair child = %+v, err=%v", fresh, err)
+		}
+		persisted, err := store.Load(t.Context(), "subagent-p1")
+		if err != nil {
+			t.Fatalf("load pair child: %v", err)
+		}
+		if persisted.ProviderID != "second" || persisted.ModelID != "pair-model" {
+			t.Fatalf("persisted target = %s/%s", persisted.ProviderID, persisted.ModelID)
+		}
+		resumed, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p2", "Subagent", json.RawMessage(`{"prompt":"continue","resume":"subagent-p1"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if err != nil || resumed.IsError || !strings.Contains(resumed.Content, "SECOND") {
+			t.Fatalf("cross-provider resume = %+v, err=%v", resumed, err)
+		}
+		if fallback.Calls() != 0 || pair.Calls() != 2 {
+			t.Fatalf("provider calls default=%d pair=%d, want 0/2", fallback.Calls(), pair.Calls())
+		}
+	})
+
+	t.Run("unknown persisted target fails closed", func(t *testing.T) {
+		store := memstore.New()
+		fallback := mockllm.New(mockllm.TextTurn("WRONG"))
+		pair := mockllm.New(mockllm.TextTurn("FIRST"))
+		catalog := markerEngine("x").deps.Catalog
+		tool := NewSubagentTool(NewEngine(Deps{LLM: fallback, Catalog: catalog, Policy: allowAllInt(), Model: "default-model"}),
+			WithSubagentStore(store), WithSubagentProvider("default"),
+			WithSubagentSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
+				return ResolvedModelSelector{Target: ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: true}, nil
+			}),
+			WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				if target.Provider == "second" {
+					return NewEngine(Deps{LLM: pair, Catalog: catalog, Policy: allowAllInt(), Model: target.Model}), true
+				}
+				return nil, false
+			})).(*SubagentTool)
+		fresh, _ := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"first","provider":"second","model":"pair-model"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if fresh.IsError {
+			t.Fatalf("fresh pair child = %+v", fresh)
+		}
+		persisted, _ := store.Load(t.Context(), "subagent-p1")
+		persisted.ProviderID = "missing"
+		if err := store.Save(t.Context(), persisted); err != nil {
+			t.Fatalf("save unavailable target: %v", err)
+		}
+		resumed, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p2", "Subagent", json.RawMessage(`{"prompt":"continue","resume":"subagent-p1"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if err != nil || !resumed.IsError || len(resumed.Content) > 512 {
+			t.Fatalf("unavailable resume = %+v, err=%v", resumed, err)
+		}
+		if fallback.Calls() != 0 || pair.Calls() != 1 {
+			t.Fatalf("unavailable resume made provider call: default=%d pair=%d", fallback.Calls(), pair.Calls())
+		}
+	})
+
+	t.Run("legacy empty target retains default behavior", func(t *testing.T) {
+		store := memstore.New()
+		fallback := mockllm.New(mockllm.TextTurn("FIRST"), mockllm.TextTurn("SECOND"))
+		tool := NewSubagentTool(NewEngine(Deps{LLM: fallback, Catalog: markerEngine("x").deps.Catalog, Policy: allowAllInt(), Model: "default-model"}),
+			WithSubagentStore(store), WithSubagentProvider("default"),
+			WithSubagentTargetEngineFactory(func(ModelTarget) (*Engine, bool) { t.Fatal("legacy resume called target factory"); return nil, false })).(*SubagentTool)
+		fresh, _ := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"first"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if fresh.IsError {
+			t.Fatalf("fresh legacy seed = %+v", fresh)
+		}
+		persisted, _ := store.Load(t.Context(), "subagent-p1")
+		persisted.ProviderID, persisted.ModelID = "", ""
+		if err := store.Save(t.Context(), persisted); err != nil {
+			t.Fatalf("save legacy snapshot: %v", err)
+		}
+		resumed, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p2", "Subagent", json.RawMessage(`{"prompt":"continue","resume":"subagent-p1"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if err != nil || resumed.IsError || !strings.Contains(resumed.Content, "SECOND") {
+			t.Fatalf("legacy resume = %+v, err=%v", resumed, err)
+		}
+	})
+}
+
 func TestADR_0369_Scenario3_InvalidSelectors(t *testing.T) {
 	defaultLLM := mockllm.New(mockllm.TextTurn("DEFAULT"))
 	resolver := func(provider, model string) (ResolvedModelSelector, error) {
@@ -108,6 +212,8 @@ func TestADR_0369_Scenario3_InvalidSelectors(t *testing.T) {
 				return ResolvedModelSelector{}, errors.New("provider conflicts with alias provider")
 			}
 			return ResolvedModelSelector{Target: ModelTarget{Provider: "second", Model: "pair"}, ProviderBearing: true, ActualProvider: "second"}, nil
+		case "parent-pair-alias":
+			return ResolvedModelSelector{Target: ModelTarget{Model: "pair"}, ProviderBearing: true, ActualProvider: "parent"}, nil
 		case "bad", "missing-category":
 			return ResolvedModelSelector{}, errors.New("selector unavailable")
 		default:
@@ -136,6 +242,7 @@ func TestADR_0369_Scenario3_InvalidSelectors(t *testing.T) {
 		`{"prompt":"x","provider":"first","model":"pair-alias"}`,
 		`{"prompt":"x","agent":"reviewer","provider":"second","model":"literal"}`,
 		`{"prompt":"x","agent":"reviewer","model":"pair-alias"}`,
+		`{"prompt":"x","agent":"reviewer","model":"parent-pair-alias"}`,
 		`{"prompt":"x","provider":"unknown","model":"bad"}`,
 		`{"prompt":"x","provider":"model-router","model":"missing-category"}`,
 		`{"prompt":"x","fork":true,"provider":"second","model":"literal"}`,
