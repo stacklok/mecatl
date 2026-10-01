@@ -998,9 +998,9 @@ func newToolcallsInspectorModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context()})
 	m.phase = phaseIdle
-	m.width, m.height = 100, 30
-	m.relayout()
-	return m
+	// A real resize sizes the prompt too, so the input box keeps its production height.
+	resized, _ := m.onResize(tea.WindowSizeMsg{Width: 100, Height: 30})
+	return resized.(Model)
 }
 
 func openToolcallsForTest(t *testing.T, m Model) Model {

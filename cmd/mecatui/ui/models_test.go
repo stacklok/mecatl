@@ -919,7 +919,7 @@ func TestModelsSelectionSanitizesDisplayNameStatus(t *testing.T) {
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = feedModelSwitchBusiness(t, mm.(Model), cmd)
 
-	for _, rendered := range []string{m.statusMsg, m.renderFooter()} {
+	for _, rendered := range []string{m.statusMsg, m.renderActivity()} {
 		if strings.Contains(rendered, hostile) {
 			t.Errorf("hostile OSC sequence leaked into rendered status: %q", rendered)
 		}
@@ -1885,7 +1885,7 @@ func TestModelsPickerScrolledGolden(t *testing.T) {
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
-	if !bytes.Contains(got, []byte("↑ 26 items")) {
+	if !bytes.Contains(got, []byte("↑ 27 items")) {
 		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
 	}
 	compareGolden(t, "models_scrolled.golden", got)
@@ -2154,24 +2154,27 @@ func TestGatewayNoticeClearedOnKeypress(t *testing.T) {
 	}
 }
 
-// TestGatewayNoticeRenderedAtIdle: the footer renders the notice at idle; at running
-// the running arm owns the footer-left and the notice is NOT shown (even if it were
-// still set, which it is here for the assertion).
+// TestGatewayNoticeRenderedAtIdle: the activity line renders the notice at idle; at
+// running the running arm owns the activity line and the notice is NOT shown (even if
+// it were still set, which it is here for the assertion).
 func TestGatewayNoticeRenderedAtIdle(t *testing.T) {
 	fm := gatewayModels()
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
 	m = mm.(Model)
 	m.sel = selection{} // no active selection: notice arm wins over statusMsg/"ready"
-	got := stripANSIstr(m.renderFooter())
+	got := stripANSIstr(m.renderActivity())
 	if !strings.Contains(got, "toolhive gateway available") {
-		t.Errorf("idle footer should render the notice, got:\n%s", got)
+		t.Errorf("idle activity line should render the notice, got:\n%s", got)
 	}
-	// At running the spinner arm owns the footer-left; the notice must NOT appear.
+	if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "toolhive gateway available") {
+		t.Errorf("footer must not duplicate the notice, got:\n%s", footer)
+	}
+	// At running the spinner arm owns the activity line; the notice must NOT appear.
 	m.phase = phaseRunning
-	got = stripANSIstr(m.renderFooter())
+	got = stripANSIstr(m.renderActivity())
 	if strings.Contains(got, "toolhive gateway available") {
-		t.Errorf("running footer must NOT render the notice (the running arm owns the slot), got:\n%s", got)
+		t.Errorf("running activity line must NOT render the notice (the running arm owns the slot), got:\n%s", got)
 	}
 }
 
@@ -2352,17 +2355,17 @@ func TestProvenanceHintSuppressedWhenNoStatus(t *testing.T) {
 
 // --- golden: idle footer gateway notice ---------------------------------------
 
-// TestFooterGatewayNoticeGolden locks the idle footer-left rendering of the
+// TestFooterGatewayNoticeGolden locks the idle activity-line rendering of the
 // once-per-process gateway notice (Proposal 1): an AvailableNotDefault status fires
-// the notice, and at idle (no selection, no statusMsg) the footer-left renders it
-// muted. The snapshot is the stripped full renderFooter at a wide width.
+// the notice, and at idle (no selection, no statusMsg) the activity line renders it
+// muted. The snapshot is the stripped activity line above the full renderFooter.
 func TestFooterGatewayNoticeGolden(t *testing.T) {
 	fm := gatewayModels()
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models, Statuses: fm.statuses})
 	m = mm.(Model)
 	m.sel = selection{} // no selection: the notice arm wins over statusMsg/"ready"
-	got := stripANSIstr(m.renderFooter())
+	got := stripANSIstr(m.renderActivity() + "\n" + m.renderFooter())
 	compareGolden(t, "footer_gateway_notice.golden", []byte(got+"\n"))
 }
 

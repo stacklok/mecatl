@@ -190,7 +190,7 @@ func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
 	}
 	m.enrollment.busy = true
 	m.enrollment.err = ""
-	// workspaceEnrollmentNotice, not statusMsg: idleFooterLeft gives the notice
+	// workspaceEnrollmentNotice, not statusMsg: idleActivity gives the notice
 	// priority over statusMsg (issue: a /tools-connect outcome written to
 	// statusMsg renders invisibly whenever the ambient "not connected" notice
 	// is also set — which it always is, right up until this call clears it).

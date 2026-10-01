@@ -14,17 +14,17 @@
   ┃    ✓ Read — 103 lines                                                                        ┃
   ┃    ✓ Read — 104 lines                                                                        ┃
   ┃    ✓ Read — 105 lines                                                                        ┃
-  ┃    ✓ Read — 106 lines                                                                        ┃
   ┃                                                                                              ┃
-  ┃  lines 1–7 of 12 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                              ┃
+  ┃  lines 1–6 of 12 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                              ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                         ⟳ team- · 1/1 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ⟳ team- · 1/1 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

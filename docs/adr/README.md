@@ -298,7 +298,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)
 - [0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0222-mecatui-ask-args-view.md)
 - [0247 — mecatui generated status lines](./0247-mecatui-status-line.md) *(superseded by 0289)*
-- [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
+- [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md) *(superseded by 0376)*
+- [0376 — mecatui status surfaces and activity line](./0376-mecatui-status-surfaces-and-activity-line.md)
 - [0344 — Mecatui-owned terminal titles](./0344-mecatui-terminal-title-controller.md) *(proposed)*
 - [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
 - [0291 — Server-owned session placement](./0291-server-owned-session-placement.md)

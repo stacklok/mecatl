@@ -147,7 +147,7 @@ func (m Model) renderHeader() string {
 	badge, badgeW := m.postureBadgeRender()
 	available := m.statusHeaderAvailable(badge, badgeW, tail)
 	if surface := m.generatedStatusLine.Header; m.deps.StatusSource != nil && surface.Present && statusSurfaceFits(surface, available) && statusSpansText(surface.Spans) != "" {
-		generated := renderStatusSurface(m.deps.Theme, surface, available, false)
+		generated := renderStatusSpans(m.deps.Theme, surface.Spans)
 		if line != "" {
 			line += "  ·  "
 		}
@@ -331,8 +331,7 @@ func (m Model) changedFilesIndicator() string {
 }
 
 // headerGapPad is the minimum blank gap kept between the header identity segment
-// and the right-aligned changed-files indicator so they never touch. Mirrors the
-// footer's footerGapPad but is owned by the header path (naming honesty).
+// and the right-aligned changed-files indicator so they never touch.
 const headerGapPad = 2
 
 // statusHeaderAvailable is the custom-header budget after renderer-owned system
@@ -391,9 +390,17 @@ func (m Model) fitHeader(line, badge string, badgeW int, tail string, width int)
 	return line + strings.Repeat(" ", gap) + styled
 }
 
-// footerActivity renders only the renderer-owned activity lane. Status sources
-// receive its reserved width but cannot replace this chrome.
-func (m Model) footerActivity() string {
+// renderActivity renders the renderer-owned activity line above the input box as
+// exactly one row. Status sources cannot replace this chrome.
+func (m Model) renderActivity() string {
+	width := m.widthOr()
+	style := m.deps.Theme.Style("activity")
+	line := ansi.Truncate(m.activity(), max(0, width-style.GetHorizontalFrameSize()), "…")
+	return style.Width(width).Render(line)
+}
+
+// activity is the unstyled-width content of the activity line for the current phase.
+func (m Model) activity() string {
 	approval := approvalFooterProjection{}
 	if m.phase == phaseAwaitingApproval {
 		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
@@ -425,7 +432,7 @@ func (m Model) footerActivity() string {
 			left = m.sp.View() + " " + m.statusMsg
 		}
 	default:
-		left = m.idleFooterLeft()
+		left = m.idleActivity()
 	}
 	if (m.deps.Debug || m.deps.DebugMouse) && m.mouseDebug != "" {
 		left = m.deps.Theme.Style("muted").Render(m.mouseDebug)
@@ -433,13 +440,13 @@ func (m Model) footerActivity() string {
 	return left
 }
 
-// renderFooter is the status bar: spinner + active tool + status + usage.
+// renderFooter is the status bar: left-justified usage (or the custom footer
+// surface) above the key-help line. Activity renders above the input instead.
 func (m Model) renderFooter() string {
 	approval := approvalFooterProjection{}
 	if m.phase == phaseAwaitingApproval {
 		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
 	}
-	left := m.footerActivity()
 
 	// The full decompressed chord list now lives in the "?" help overlay, so the
 	// footer leads with its two entry points and carries only the most useful prompt
@@ -474,30 +481,30 @@ func (m Model) renderFooter() string {
 		}
 	}
 	// While the double-quit guard is armed, prepend a loud "again to quit" cue to
-	// the help line. The footer is the one chrome line present in every phase (the
-	// left status differs by phase), so it is the robust place for the hint.
+	// the help line. The help line is present in every phase, so it is the robust
+	// place for the hint.
 	if m.quitArmed {
 		help = m.deps.Theme.Style("ctxWarn").Render(hk.quit+" again to quit") + " · " + help
 	}
 
 	width := m.widthOr()
-	line := left
+	line := ""
 	available := m.statusLineGeometry().footerAvailable
 	if surface := m.generatedStatusLine.Footer; m.deps.StatusSource != nil && surface.Present && statusSurfaceFits(surface, available) && statusSpansText(surface.Spans) != "" {
-		line += strings.Repeat(" ", footerGapPad) + renderStatusSurface(m.deps.Theme, surface, available, true)
+		line = renderStatusSpans(m.deps.Theme, surface.Spans)
 	}
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
 }
 
-// idleFooterLeft renders the footer-left for the idle/default phase, extracted
-// from renderFooter to keep that dispatcher under the cyclomatic-complexity
+// idleActivity renders the activity line for the idle/default phase, extracted
+// from activity to keep that dispatcher under the cyclomatic-complexity
 // bound. Precedence: the live-feed reconnecting cue (issue #387) → the
 // selection count → the gateway notice → the bare statusMsg / "ready". The
 // selection count appears ONLY in this phase (the running/approval/connecting
-// arms own the footer-left there), so it is never shown mid-run by construction
+// arms own the activity line there), so it is never shown mid-run by construction
 // (Req 5); the reconnecting cue and gateway notice likewise only surface here.
-func (m Model) idleFooterLeft() string {
+func (m Model) idleActivity() string {
 	switch {
 	case m.liveReconnecting:
 		// The live session event feed dropped and the client is reconnecting with
@@ -544,10 +551,6 @@ func (m Model) selectionStatus() string {
 	}
 	return muted.Render(count)
 }
-
-// footerGapPad is the minimum blank gap kept between the left status and the
-// right-aligned usage segment so they never touch.
-const footerGapPad = 2
 
 // queuePreviewLimit is the number of staged follow-ups previewed in the queue
 // card; the rest are summarised as a "+K more" line so a deep queue stays compact.
@@ -741,7 +744,7 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 		BorderLeft(true).
 		BorderForeground(modeAccentStyle(th, mode).GetForeground()).
 		Background(th.Color("bgPanel")).
-		Padding(inputRailPadTop, inputRailPadX, 0, inputRailPadX)
+		Padding(inputRailPadTop, inputRailPadX, inputRailPadBottom, inputRailPadX)
 }
 
 // inputRailPadX is the horizontal padding inside the input panel (each side). With the
@@ -751,13 +754,15 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 // so this value flows through automatically.
 const inputRailPadX = 1
 
-// inputRailPadTop is the TOP inner padding of the input panel: one tinted blank row
-// above the input content so the placeholder/typed text isn't pressed against the top
-// border. It INTENTIONALLY makes the input region one row taller — the layout measures
-// region heights via lipgloss.Height, so the body shrinks by it automatically (the
-// input height-invariance test expects exactly this +1). lipgloss renders the pad row
-// with the style's Background, so it is bgPanel-tinted full-width like the content rows.
-const inputRailPadTop = 1
+// inputRailPadTop and inputRailPadBottom frame the input content with one tinted
+// blank row above and below, so a one-line prompt isn't pressed against its
+// neighbours. The layout measures region heights via lipgloss.Height, so the body
+// shrinks by them automatically. lipgloss renders the pad rows with the style's
+// Background, so they are bgPanel-tinted full-width like the content rows.
+const (
+	inputRailPadTop    = 1
+	inputRailPadBottom = 1
+)
 
 // renderInputRail wraps the textarea view in the mode-coloured rail AND fills the faint
 // panel tint UNIFORMLY across the whole input block — full terminal width and every
