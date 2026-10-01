@@ -290412,6 +290412,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790855516618,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "805e406cbda22281d9fccd23a2bbd84284fe2fa2",
+          "message": "Implement actionable mecatui exit handoff (#2047)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T15:14:32+03:00",
+          "tree_id": "6c75781a064bfe47c3a85fdd822c979c9eceb841",
+          "url": "https://github.com/stacklok/mecatl/commit/805e406cbda22281d9fccd23a2bbd84284fe2fa2"
+        },
+        "date": 1790857589795,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3323,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 112,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -380396,6 +380435,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790857586169,
+  "lastUpdate": 1790857590837,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
