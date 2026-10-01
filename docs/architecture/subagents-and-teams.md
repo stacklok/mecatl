@@ -46,6 +46,27 @@ otherwise the ask is denied with the real cause. [Governance](governance.md) has
 
 ## Subagent
 
+### Provider and model selectors
+
+Calls may supply optional `provider` and `model` selectors. Omitting both preserves
+inherited defaults and automatic routing. A literal model uses the parent provider;
+a pair alias or explicit provider/model pair builds a fresh child through the
+provider-specific factory. `provider: "model-router"` plus an exact discovered category
+selects that operator category without classification. Explicit selection fails before
+child construction rather than falling back.
+
+A named specialist rejects provider-bearing call-level selectors. A read-only model-only
+override rebuilds the specialist while preserving its scope; direct-write rejects the
+explicit `agent` plus `model` combination. Unpinned named specialists remain eligible for
+automatic routing with their prompt, tools, skills, limits, and authority preserved.
+`fork` and `resume` reject selectors. A def-less child uses the global `--subagent-model`
+default before inheriting the parent target; a provider-aware alias preserves its pair.
+
+Parallel applies one optional pair to every branch, while its judge stays on the parent
+model. Team members select their own pairs; the whole roster is validated before adding
+any member, and resolved engines are retained across rounds. Named Team members accept
+a model-only override but reject provider-bearing call-level selectors.
+
 ### Read-only explorer by default
 
 Isolation, not the absence of mutating tools, is the security boundary. With `Shell` available,
@@ -77,7 +98,10 @@ child reads the parent tree through a confined view without the main session's o
   completed, cancelled, or failed, repairing history as needed. The conversation survives but the
   workspace does not, so the child gets a fresh fork and a staleness note. Only a writable resume
   whose persisted environment ref exactly equals the parent's, revision included, is told its
-  edits survived. A guard rejects a second concurrent run on the same ID.
+  edits survived. A guard rejects a second concurrent run on the same ID. Resume remints
+  the provider/model recorded on the child session and fails closed when unavailable;
+  legacy unlabeled children use the default explorer. Requested aliases and category names
+  are not the persisted identity.
 
 ### Direct-write children and the barrier
 

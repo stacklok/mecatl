@@ -56,7 +56,8 @@ Shell.
 |`prompt`|Provide the complete task and expected result. The child cannot see the parent conversation unless you use `fork`.|
 |`description`|Label the work in status views.|
 |`agent`|Use a [named specialist definition](/features/agent-behavior/named-agents.md).|
-|`model`|Override the inherited model.|
+|`provider`|Select an exact provider together with `model`, or use `model-router` with an exact discovered category. Omit it to preserve inherited/operator routing.|
+|`model`|Use a literal model on the inherited provider or a configured alias. A provider-aware alias carries its pair.|
 |`max_turns`, `max_tool_calls`|Tighten the configured limits.|
 |`max_run_tokens`|Tighten the child's cumulative token limit. Values below 25,000 are raised to that floor.|
 |`timeout_ms`|Set a wall-clock deadline.|
@@ -97,8 +98,7 @@ transcript persists and can be resumed later. To cancel it sooner, use the gRPC
 ## Parallel
 
 `Parallel` runs up to 16 self-contained branches, with eight active by default.
-Each branch has a writable isolated workspace and cannot communicate with other
-branches.
+Each branch has a writable isolated workspace and cannot communicate with other branches. One optional `provider`/`model` selector applies to every branch; it is validated before fan-out, while the judge always stays on the parent model.
 
 Use Parallel for competing approaches or isolated implementation branches. For
 independent read-only research, use concurrent Subagent calls. For workers that
@@ -123,10 +123,8 @@ Each branch result includes a branch ID for `InspectSubagent`.
 more than an independent Subagent or Parallel call, so use it only when ongoing
 coordination matters.
 
-Each member has a `name`, `role`, and optional `mutating` flag. The first member
-is the lead. Its role should explain how to divide the goal and what the final
-report must answer. Other members should record each conclusion with
-`RecordFinding` and notify the lead when finished.
+Each member has a `name`, `role`, optional `mutating` flag, and optional `provider`/`model` selector. Mecatl validates the whole roster before adding members, then resolves each member once and keeps its engine across rounds. The first member is the lead. Its role should explain how to divide the goal and what the final
+report must answer. Other members should record each conclusion with `RecordFinding` and notify the lead when finished. A named specialist accepts a model-only call override but rejects a provider-bearing selector, preserving its scoped prompt and tools.
 
 Members are read-only by default. A mutating member gets a private writable copy
 of the workspace. Team workspaces are never merged or preserved, so the durable
@@ -154,9 +152,7 @@ models:
         model: big
 ```
 
-A non-empty category list enables routing. The router fills only an unset model
-choice. It does not override a per-call model, a specialist's pinned model,
-`fork`, or `resume`. The Parallel judge also stays on the parent model.
+A non-empty category list enables routing. The router fills only an unset target and may resolve a provider-aware alias. It does not override an explicit provider/model selector, a specialist's pinned model, `fork`, or `resume`. To request an exact category without classification, set `provider: "model-router"` and `model` to its discovered category name. The Parallel judge stays on the parent model.
 
 In an agent definition, `model: inherit` is an explicit pin to the session
 model. Omit the `model` key to allow routing.
