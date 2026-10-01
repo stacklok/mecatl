@@ -2643,9 +2643,6 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 	if model, cmd, handled, stopSurfaceDispatch := m.applySessionsSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
 	}
-	if model, cmd, handled := m.applyAgentPickIntent(intent); handled {
-		return model, cmd, false
-	}
 	return m, nil, false
 }
 

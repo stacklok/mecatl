@@ -176,7 +176,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		out = append(out, builtin{
 			name: "agent",
 			desc: "start a session bound to a named agent definition",
-			run:  Model.openAgentPicker,
+			run:  Model.runAgentHint,
 		})
 	}
 	if caps.Teams {
@@ -738,16 +738,12 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	}
 	if name, bare, ok := agentCommand(text); ok {
-		// Consuming the command line also closes its derived palette state, like
-		// the generic built-in path below.
-		m.palette.open = false
-		m.palette.filtered = nil
-		m.palette.syncList()
-		m.prompt.Reset()
 		if bare {
-			mm, cmd := m.openAgentPicker()
+			m.prompt.Reset()
+			mm, cmd := m.runAgentHint()
 			return mm, cmd, true
 		}
+		m.prompt.Reset()
 		return m.startAgentSession(name)
 	}
 	trimmed := strings.TrimSpace(text)

@@ -11,7 +11,8 @@ import (
 )
 
 // agentCommand recognizes /agent, mirroring titleCommand's bare-vs-argument
-// split: whitespace (or end of input) after /agent is a bare picker request; a non-whitespace suffix is the agent-definition name to create a
+// split: whitespace (or end of input) after /agent is a bare picker-hint
+// request; a non-whitespace suffix is the agent-definition name to create a
 // session for immediately. The next character must be whitespace (or absent)
 // so "/agents" is never misparsed as "/agent" with argument "s".
 func agentCommand(text string) (name string, bare, ok bool) {
@@ -24,6 +25,17 @@ func agentCommand(text string) (name string, bare, ok bool) {
 	}
 	name = strings.TrimSpace(raw[len("/agent"):])
 	return name, name == "", true
+}
+
+// runAgentHint handles a bare /agent (no name typed), reached only via the
+// command palette (dispatchBareBuiltin's own agentCommand check intercepts
+// bare /agent from the prompt line first). A full filterable picker is
+// deferred; for now this points at /agents (the existing read-only
+// definition inventory) so the operator can find a name to type.
+func (m Model) runAgentHint() (tea.Model, tea.Cmd) {
+	m.statusMsg = m.deps.Theme.Style("warning").Render("usage: /agent <name> — see /agents for available definitions")
+	m.refreshView()
+	return m, nil
 }
 
 // startAgentSession begins the /agent <name> handoff: like restartOnModel it
