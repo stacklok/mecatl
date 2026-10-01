@@ -2659,6 +2659,9 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 	if m.applyToolcallsSurfaceIntent(intent) {
 		return m, nil, false
 	}
+	if model, cmd, handled := m.applyAgentPickIntent(intent); handled {
+		return model, cmd, false
+	}
 	return m, nil, false
 }
 
