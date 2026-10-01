@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -9,6 +12,8 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
 func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
@@ -75,6 +80,57 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 		}
 	})
 
+	t.Run("operator models.default pair applies before new session construction", func(t *testing.T) {
+		settings := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := os.WriteFile(settings, []byte(`models:
+  default: strong
+  aliases:
+    strong:
+      provider: openrouter
+      model: vendor/opaque:model.v1
+`), 0o600); err != nil {
+			t.Fatalf("write settings: %v", err)
+		}
+		resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}})
+		probe := foldOperatorModelSlots(Config{permResolver: resolver})
+		probe, err := foldOperatorPairModelDefault(probe, captureCLIModelKeys(Config{}))
+		if err != nil || probe.DefaultProvider != pairProvider || probe.DefaultModel != pairModel {
+			t.Fatalf("operator pair pre-fold = provider %q model %q err=%v", probe.DefaultProvider, probe.DefaultModel, err)
+		}
+		conflict := foldOperatorModelSlots(Config{permResolver: resolver, DefaultProvider: parentProvider})
+		if _, err := foldOperatorPairModelDefault(conflict, captureCLIModelKeys(Config{})); err == nil {
+			t.Fatal("operator pair default unexpectedly accepted a conflicting explicit default provider")
+		}
+		built, err := buildIsolated(t, t.Context(), Config{
+			NoSoul:                true,
+			ContextWindowOverride: 128000,
+			PermissionConfigs:     []string{settings},
+			envDetector: fakeEnv(map[string]string{
+				"OPENAI_API_KEY":     "test-key",
+				"OPENROUTER_API_KEY": "test-key",
+			}),
+			liveModelHTTPClient: offlineHTTPClient(),
+			providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+				return mockllm.New(mockllm.TextTurn("reply-from-" + id))
+			},
+		})
+		if err != nil {
+			t.Fatalf("Build operator pair default: %v", err)
+		}
+		defer built.Close()
+		sess, err := built.Service.CreateSession(t.Context(), "", defaultLimits())
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		run, err := built.Service.StartRun(t.Context(), sess.ID, "hello")
+		if err != nil {
+			t.Fatalf("StartRun: %v", err)
+		}
+		if got := drainRun(run); got != "reply-from-"+pairProvider {
+			t.Fatalf("operator-default session reply = %q, want pair provider", got)
+		}
+	})
+
 	t.Run("global default and agent definition carry pair", func(t *testing.T) {
 		if normalized, err := normalizeSubagentModel(cfg); err != nil || normalized != "strong" {
 			t.Fatalf("normalize pair default = %q, %v", normalized, err)
@@ -92,6 +148,64 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 		childProvider, providerID, model, _ = resolveChildProvider(cfg, reg, def, parent, parentProvider, parentModel)
 		if childProvider != pair || providerID != pairProvider || model != pairModel {
 			t.Fatalf("definition child = (%T, %q, %q), want pair provider/model", childProvider, providerID, model)
+		}
+	})
+
+	t.Run("global pair default emits actual Subagent and Parallel provider", func(t *testing.T) {
+		built, err := buildIsolated(t, t.Context(), Config{
+			Workspace:             t.TempDir(),
+			NoSoul:                true,
+			Model:                 parentModel,
+			DefaultProvider:       parentProvider,
+			SubagentModel:         "strong",
+			ModelAliasTargets:     cfg.ModelAliasTargets,
+			EnableParallel:        true,
+			AllowAllTools:         true,
+			ContextWindowOverride: 128000,
+			envDetector: fakeEnv(map[string]string{
+				"OPENAI_API_KEY":     "test-key",
+				"OPENROUTER_API_KEY": "test-key",
+			}),
+			liveModelHTTPClient: offlineHTTPClient(),
+			providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+				if id == parentProvider {
+					return mockllm.New(
+						mockllm.ToolCallTurn(
+							session.NewToolCall("sub", "Subagent", []byte(`{"prompt":"inspect"}`)),
+							session.NewToolCall("par", "Parallel", []byte(`{"tasks":["inspect"]}`)),
+						),
+						mockllm.TextTurn("parent done"),
+					)
+				}
+				return mockllm.New(mockllm.TextTurn("child done"), mockllm.TextTurn("branch done"))
+			},
+		})
+		if err != nil {
+			t.Fatalf("Build pair child default: %v", err)
+		}
+		defer built.Close()
+		sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		run, err := built.Service.StartRun(t.Context(), sess.ID, "delegate")
+		if err != nil {
+			t.Fatalf("StartRun: %v", err)
+		}
+		var subagentProvider, parallelProvider, terminal string
+		for ev := range run.Events() {
+			if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+				subagentProvider = ev.Subagent.Provider
+			}
+			if ev.Type == session.EvParallelBranch && ev.Parallel != nil && ev.Parallel.Kind == session.ParallelBranchStart {
+				parallelProvider = ev.Parallel.Provider
+			}
+			if ev.Type == session.EvResult && ev.Result != nil {
+				terminal = ev.Result.Text
+			}
+		}
+		if !strings.Contains(terminal, "parent done") || subagentProvider != pairProvider || parallelProvider != pairProvider {
+			t.Fatalf("delegation evidence terminal=%q subagent=%q parallel=%q, want pair provider %q", terminal, subagentProvider, parallelProvider, pairProvider)
 		}
 	})
 

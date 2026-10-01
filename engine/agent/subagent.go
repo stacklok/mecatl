@@ -2489,14 +2489,47 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if errResult, ok := t.authorizeResumeLookup(ctx, call.ID, session.SessionID(args.Resume), resuming); !ok {
 		return errResult, nil
 	}
+	var resumeTarget *ModelTarget
+	if resuming {
+		persisted, resumeResult, loaded := t.loadOwnedResumeSession(ctx, call.ID, session.SessionID(args.Resume))
+		if !loaded {
+			return resumeResult, nil
+		}
+		providerID, modelID := strings.TrimSpace(persisted.ProviderID), strings.TrimSpace(persisted.ModelID)
+		if (providerID == "") != (modelID == "") {
+			return session.NewToolError(call.ID, "Subagent: resumed subagent has incomplete provider/model binding"), nil
+		}
+		if providerID != "" {
+			factory := t.targetEngineFactory
+			if writable {
+				factory = t.writableTargetFactory
+			}
+			target := ModelTarget{Provider: providerID, Model: modelID}
+			if factory == nil {
+				return session.NewToolError(call.ID, "Subagent: persisted provider/model target is unavailable in this deployment"), nil
+			}
+			reminted, found := factory(target)
+			if !found || reminted == nil {
+				return session.NewToolError(call.ID, "Subagent: persisted provider/model target is unknown or unavailable"), nil
+			}
+			engine = reminted
+			resumeTarget = &target
+		}
+	}
 	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
 		routedCategory, routedModel, routingReason, routedAccepted, routingDecision)
 
 	actualProvider, explicitRouterCategory := t.providerID, ""
+	if resumeTarget != nil {
+		actualProvider = resumeTarget.Provider
+	}
 	if factorySelector != nil {
-		actualProvider = factorySelector.ActualProvider
-		if actualProvider == "" {
-			actualProvider = factorySelector.Target.Provider
+		selectedProvider := factorySelector.ActualProvider
+		if selectedProvider == "" {
+			selectedProvider = factorySelector.Target.Provider
+		}
+		if selectedProvider != "" {
+			actualProvider = selectedProvider
 		}
 		explicitRouterCategory = factorySelector.ExplicitRouterCategory
 	}
@@ -2629,6 +2662,10 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, caps.parentSessionID, caps.parentIncarnation, limits, forkHistory)
 	if !ok {
 		return errResult, nil
+	}
+	if !resuming && actualProvider != "" {
+		child.ProviderID = actualProvider
+		child.ModelID = engine.Model()
 	}
 	// The child is attributed to the PARENT session's owner (ADR 0204 decision 4),
 	// or carries delegated authority when the parent run is authority-bound.
@@ -3012,6 +3049,10 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	if !ok {
 		endOnError(errResult)
 		return
+	}
+	if !b.resuming && b.provider != "" {
+		child.ProviderID = b.provider
+		child.ModelID = b.engine.Model()
 	}
 	if b.resuming || !b.caps.authorityBound {
 		b.caps.inheritOwner(child)

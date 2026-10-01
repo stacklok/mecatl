@@ -153,7 +153,7 @@ func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 			providerBearing := provider != "" || model == "pair"
 			target := ModelTarget{Model: model}
 			if model == "pair" {
-				target = ModelTarget{Provider: "other", Model: "paired"}
+				target = ModelTarget{Model: "paired"}
 			}
 			return ResolvedModelSelector{Target: target, ActualProvider: "parent", ProviderBearing: providerBearing}, nil
 		}}
