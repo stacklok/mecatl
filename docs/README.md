@@ -23,6 +23,7 @@ not restate it.
 - [`usage.md`](usage.md) — the living usage & operator guide.
 - [`adr/README.md`](adr/README.md) — the frozen ADR index (the *why* archive).
 - [`design/PRODUCTION-READINESS.md`](design/PRODUCTION-READINESS.md) — the live shipped/deferred status tracker.
+- [Agent authority direction](agent-authority.md) — the living direction for identity, protected external actions, scheduled authority, and broker continuity.
 - [ADR 0215](adr/0215-openai-subscription-manual-token.md) — the landed,
   experimental `openai-codex` capability and its private-backend boundary.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent

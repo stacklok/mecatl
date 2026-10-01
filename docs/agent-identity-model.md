@@ -1,10 +1,11 @@
 # Agent identity: mecatl as its own SPIFFE trust domain
 
-*Status: strawman / working draft. Speculative scoping, not a design record under
-[ADR 0002](adr/0002-documentation-lifecycle.md) (no frozen decision here). Same
-tier as [`docs/scoped-resource-grants.md`](scoped-resource-grants.md). If this
-direction is ever committed, it becomes one or more ADRs and this doc gets
-superseded.*
+*Status: research background. This is a detailed strawman and standards review,
+not the current product-direction document. For the reconciled direction across
+identity, protected external actions, schedules, and broker continuity, start with
+[`docs/agent-authority.md`](agent-authority.md). It remains useful for the rationale
+and alternatives behind that direction. It is not a design record under
+[ADR 0002](adr/0002-documentation-lifecycle.md).*
 
 This doc proposes how mecatl identifies **who is acting** in a multi-user,
 multi-session, autoscaled deployment: a user spawns an agent, the agent spawns

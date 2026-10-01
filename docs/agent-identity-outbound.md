@@ -1,10 +1,11 @@
 # Agent identity, part 2: the outbound hop
 
-*Status: strawman / working draft. Speculative scoping, not a design record under
-[ADR 0002](adr/0002-documentation-lifecycle.md). Companion to
-[`docs/agent-identity-model.md`](agent-identity-model.md), which this takes as its premise
-and does not restate. Same tier as
-[`docs/scoped-resource-grants.md`](scoped-resource-grants.md).*
+*Status: research background. This is a detailed strawman and standards review,
+not the current product-direction document. For the reconciled direction across
+identity, protected external actions, schedules, and broker continuity, start with
+[`docs/agent-authority.md`](agent-authority.md). It remains useful for the rationale
+and alternatives behind that direction. It is not a design record under
+[ADR 0002](adr/0002-documentation-lifecycle.md).*
 
 ## What this decides
 
