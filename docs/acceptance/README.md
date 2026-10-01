@@ -274,6 +274,7 @@ PR after verification. There is no cleanup or status-only PR.
   surface on two tiers (Team-unique structures stay Team-only). Status: landed.
 - [OAuth protected-resource discovery](oauth-protected-resource-discovery.md) — RFC 9728 metadata from mecated/mecak8s and mecatui shorthand enrollment with issuer/audience/client hints. Status: draft.
 - [Mecatui server-owned discovery scopes](mecatui-server-owned-discovery-scopes.md) — server-authoritative discovery scope selection: advertised sets are requested exactly, omitted metadata selects the fixed OIDC baseline, and discovery-mode `--scopes` is rejected. Status: proposed.
+- [Mecatui remote endpoints](mecatui-remote-endpoints.md) — operator-owned named remote endpoints, interactive first-use sign-in from `connect` via protected-resource discovery, operator-pinned private discovery, and one-command kind fixture connect. Status: draft.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
