@@ -8,7 +8,7 @@
 **Delivery:** Split. The change adds a new client settings schema, an authentication flow, a trust exception, and new kind fixture behavior. These interfaces need review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** None — no tracking issue exists yet.
-**Plan PR:** <added when opened>
+**Plan PR:** [#2049](https://github.com/stacklok/mecatl/pull/2049)
 
 Goal: one command reaches the OIDC-protected `deploy/mecak8s-kind` Keycloak fixture from a
 fresh client: `task mecak8s:kind-connect`, or `mecatui connect mecatl-kind` once the endpoint
