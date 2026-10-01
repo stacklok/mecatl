@@ -258512,6 +258512,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790839672974,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c2f5721e47be230a3d1bf7b0f3f5b2931578e7ba",
+          "message": "feat(jsonlstore): support read-only access to existing stores (#2031)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T10:33:13+03:00",
+          "tree_id": "f9605dbb0bd83d5793b7345447b97d89788e6a13",
+          "url": "https://github.com/stacklok/mecatl/commit/c2f5721e47be230a3d1bf7b0f3f5b2931578e7ba"
+        },
+        "date": 1790840697156,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -375252,6 +375286,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790840694808,
+  "lastUpdate": 1790840697799,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
