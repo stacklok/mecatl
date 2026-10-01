@@ -4,7 +4,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
@@ -134,18 +133,17 @@ type statusLineGeometry struct {
 }
 
 // statusLineGeometry is the single source of status-surface lane reservations.
-// It uses renderer-owned header safety/navigation and footer activity lanes, but
-// does not render or submit anything.
+// It reserves the renderer-owned header safety/navigation lanes and the footer
+// row's padding, but does not render or submit anything.
 func (m Model) statusLineGeometry() statusLineGeometry {
 	badge, badgeWidth, _ := m.postureBadgeRender()
 	tail := m.scrollIndicator()
 	if tail == "" {
 		tail = m.changedFilesIndicator()
 	}
-	left := m.footerActivity()
 	return statusLineGeometry{
 		headerAvailable: m.statusHeaderAvailable(badge, badgeWidth, tail),
-		footerAvailable: max(0, m.widthOr()-2-lipgloss.Width(left)-footerGapPad),
+		footerAvailable: max(0, m.widthOr()-m.deps.Theme.Style("footer").GetHorizontalFrameSize()),
 	}
 }
 

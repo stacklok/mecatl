@@ -11,7 +11,6 @@
 ┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
 ┃      openai · GPT-5 mini  reason 128K                                                               ┃
 ┃      openai · text-embed                                                                            ┃
-┃      openrouter · Claude  image input reason 1M                                                     ┃
 ┃                                                                                                     ┃
 ┃  toolhive: gateway not reachable — start it with `thv llm proxy start`                              ┃
 ┃                                                                                                     ┃
@@ -21,10 +20,11 @@
 ┃                                                                                                     ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

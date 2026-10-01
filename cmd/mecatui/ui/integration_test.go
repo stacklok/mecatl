@@ -125,16 +125,15 @@ func TestFooterNarrowWidthTiers(t *testing.T) {
 		Stop:  "end_turn",
 		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345, CacheReadTokens: 70000},
 	})
-	left := "ready"
 
 	// Wide: full tier — meter (with used/total) AND facets.
-	wide := stripANSIstr(m.fitFooter(left, 120))
+	wide := stripANSIstr(m.fitFooter(115))
 	if !strings.Contains(wide, "140K/200K") || !strings.Contains(wide, "↑140K") {
 		t.Errorf("wide footer should be the full tier:\n%q", wide)
 	}
 
 	// Medium: meter survives, facets dropped.
-	med := stripANSIstr(m.fitFooter(left, 40))
+	med := stripANSIstr(m.fitFooter(35))
 	if strings.Contains(med, "↑140K") {
 		t.Errorf("medium footer should drop io/cache facets first:\n%q", med)
 	}
@@ -143,7 +142,7 @@ func TestFooterNarrowWidthTiers(t *testing.T) {
 	}
 
 	// Tight: even the minimal bar-less percentage must carry the context %.
-	tight := stripANSIstr(m.fitFooter(left, 22))
+	tight := stripANSIstr(m.fitFooter(17))
 	if !strings.Contains(tight, "ctx ") || !strings.Contains(tight, "70%") {
 		t.Errorf("tight footer should still show ctx %%:\n%q", tight)
 	}
@@ -151,8 +150,8 @@ func TestFooterNarrowWidthTiers(t *testing.T) {
 		t.Errorf("tight footer should not carry used/total:\n%q", tight)
 	}
 
-	// Too narrow for anything: just the left status, no usage bleed-through.
-	none := stripANSIstr(m.fitFooter(left, 10))
+	// Too narrow for anything: an empty row, no usage bleed-through.
+	none := stripANSIstr(m.fitFooter(5))
 	if strings.Contains(none, "ctx") {
 		t.Errorf("ultra-narrow footer should drop the usage segment entirely:\n%q", none)
 	}
@@ -174,11 +173,10 @@ func TestFooterTeamSegmentTiers(t *testing.T) {
 	m = seedTeam(m, func(c *conversation) {
 		c.startTeamCard("t1", "team-x", roster()) // lead + scout, both working → 2/2
 	})
-	left := "ready"
 
 	// Wide: full team tier (glyph + team-id + k/N working + f6 agents) AND the
 	// full context meter (ctx + %).
-	wide := stripANSIstr(m.fitFooter(left, 200))
+	wide := stripANSIstr(m.fitFooter(200))
 	for _, want := range []string{teamLiveGlyph, "team-x", "2/2 working", "f6 agents", "ctx ", "70%"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide footer should contain %q:\n%q", want, wide)
@@ -187,7 +185,7 @@ func TestFooterTeamSegmentTiers(t *testing.T) {
 
 	// Medium: team segment degrades to the id-less "⟳ k/N working · f6"; the
 	// context % must still be present.
-	med := stripANSIstr(m.fitFooter(left, 56))
+	med := stripANSIstr(m.fitFooter(51))
 	if !strings.Contains(med, teamLiveGlyph) || !strings.Contains(med, "2/2 working") {
 		t.Errorf("medium footer should keep the team summary:\n%q", med)
 	}
@@ -200,7 +198,7 @@ func TestFooterTeamSegmentTiers(t *testing.T) {
 
 	// Tight: the team segment is dropped entirely; the context % wins (survives
 	// longest). This locks the priority: context % over the team advertisement.
-	tight := stripANSIstr(m.fitFooter(left, 18))
+	tight := stripANSIstr(m.fitFooter(13))
 	if strings.Contains(tight, teamLiveGlyph) {
 		t.Errorf("tight footer should drop the team segment:\n%q", tight)
 	}
@@ -219,7 +217,7 @@ func TestFooterNoTeamSegment(t *testing.T) {
 		Stop:  "end_turn",
 		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345},
 	})
-	footer := stripANSIstr(m.fitFooter("ready", 200))
+	footer := stripANSIstr(m.fitFooter(200))
 	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-") {
 		t.Errorf("no-team footer must carry no team segment:\n%q", footer)
 	}
@@ -241,7 +239,7 @@ func TestFooterTeamDoneDropsSegment(t *testing.T) {
 		c.startTeamCard("t1", "team-x", roster())
 		c.finishTeamCard("t1", "team-x", 3, "end_turn", client.Usage{InputTokens: 100}, nil)
 	})
-	footer := stripANSIstr(m.fitFooter("ready", 200))
+	footer := stripANSIstr(m.fitFooter(200))
 	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-x") {
 		t.Errorf("ended team must drop the footer segment:\n%q", footer)
 	}

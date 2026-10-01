@@ -172,7 +172,7 @@ func TestEffectiveModelDrivesFooterMeter(t *testing.T) {
 	if got := m.contextWindow(); got != 400000 {
 		t.Fatalf("contextWindow() = %d, want 400000 (server-echoed)", got)
 	}
-	got := stripANSIstr(m.fitFooter("connected", 160))
+	got := stripANSIstr(m.fitFooter(160))
 	if !strings.Contains(got, "40K/400K") {
 		t.Errorf("footer = %q, want it to contain %q (echo→render loop closed)", got, "40K/400K")
 	}
@@ -193,7 +193,7 @@ func TestFooterMeterFollowsModelSwitch(t *testing.T) {
 		},
 		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000}},
 	)
-	if got := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(got, "/200K") {
+	if got := stripANSIstr(m.fitFooter(160)); !strings.Contains(got, "/200K") {
 		t.Fatalf("after first model the footer should show /200K, got %q", got)
 	}
 	// Switch model (a fresh SessionReadyMsg with a larger window) — the denominator
@@ -202,7 +202,7 @@ func TestFooterMeterFollowsModelSwitch(t *testing.T) {
 		SessionID:     "sess-switch-0002",
 		ResolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "large", ContextWindow: 400000},
 	})
-	if got := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(got, "/400K") {
+	if got := stripANSIstr(m.fitFooter(160)); !strings.Contains(got, "/400K") {
 		t.Errorf("after model switch the footer should show /400K, got %q", got)
 	}
 }

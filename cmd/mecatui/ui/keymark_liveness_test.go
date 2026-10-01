@@ -282,9 +282,9 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 
 	t.Run("quitArmed statusMsg carries the live override (not the stale default)", func(t *testing.T) {
 		// The arm path (onQuitKey) sets m.statusMsg LIVE from m.keys.Quit, so the
-		// footer-left hint advertises the rebound chord and not the frozen
+		// activity-line hint advertises the rebound chord and not the frozen
 		// "ctrl+c" default (issue #457 SPEC gap: quitHint was a constant). Drive
-		// the real arm reducer and assert the footer-left (idleFooterLeft →
+		// the real arm reducer and assert the activity line (idleActivity →
 		// statusMsg) and the footer-help cue BOTH carry the override.
 		mm := m
 		mm.phase = phaseIdle
@@ -301,12 +301,16 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 		if strings.Contains(mm.statusMsg, "ctrl+c") {
 			t.Errorf("statusMsg still advertises the stale default ctrl+c: %q", mm.statusMsg)
 		}
-		got := stripANSIstr(mm.renderFooter())
+		got := stripANSIstr(mm.renderActivity())
 		if !strings.Contains(got, want) {
-			t.Errorf("armed footer-left should show the live override %q: %q", want, got)
+			t.Errorf("armed activity line should show the live override %q: %q", want, got)
 		}
 		if strings.Contains(got, "press ctrl+c again to quit") {
-			t.Errorf("armed footer still shows the stale default ctrl+c hint: %q", got)
+			t.Errorf("armed activity line still shows the stale default ctrl+c hint: %q", got)
+		}
+		help := stripANSIstr(mm.renderFooter())
+		if !strings.Contains(help, "ctrl+f13 again to quit") || strings.Contains(help, "ctrl+c again") {
+			t.Errorf("armed footer-help cue should carry the live override ctrl+f13: %q", help)
 		}
 	})
 
@@ -333,7 +337,7 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 		m.conv.startSubagentCard("p1", "scout", "", "", "", "")
 		m.conv.updateSubagentCard(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "p1", ToolName: "Grep", ToolCount: 1})
 		m.refreshView()
-		got := stripANSIstr(m.fitFooter("ready", 160))
+		got := stripANSIstr(m.fitFooter(160))
 		if !strings.Contains(got, "ctrl+f9") {
 			t.Errorf("footer agents prefix should carry the overridden agents chord ctrl+f9: %q", got)
 		}
@@ -561,7 +565,7 @@ func TestDefaultFooterHelp(t *testing.T) {
 	m.conv.startTeamCard("t1", "team-abc", roster())
 	m.conv.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
 	m.refreshView()
-	got = stripANSIstr(m.fitFooter("ready", 160))
+	got = stripANSIstr(m.fitFooter(160))
 	if !strings.Contains(got, "f6 agents") {
 		t.Errorf("default team footer should carry the historical f6 literal, got %q", got)
 	}

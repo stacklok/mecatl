@@ -256,11 +256,10 @@ func TestConvTopRowTracksWrappedHeader(t *testing.T) {
 // both cases and asserts the wrapped vpH is strictly LESS — proving the measured
 // height actually flows into sizing (not a no-op).
 func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
-	// taH=5 (input region: the 3-row textarea + its rail top-pad row, measured at 4 +
-	// historical 1), footerH=2, spacerH=1 (the inter-region spacer above the input). The
-	// body is total minus header + spacer + input + footer. (taH grew by 1 vs the
-	// pre-top-pad layout — the inputRailPadTop row.)
-	const taH, footerH, spacerH, totalH = 5, 2, 1, 30
+	// taH=3 (input region: the 1-row minimum textarea + its rail top and bottom pad rows), footerH=3
+	// (top border + usage row + help row), spacerH=2 (the blank rows around the activity
+	// line), activityH=1. The body is total minus header + spacers + activity + input + footer.
+	const taH, footerH, spacerH, activityH, totalH = 3, 3, 2, 1, 30
 
 	// Wrapping case: long deps at a narrow width.
 	m, _ := selModel(t)
@@ -273,15 +272,15 @@ func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
 	if wrappedHeader <= 2 {
 		t.Fatalf("PRECONDITION: header did not wrap (%d rows); sizing test would be vacuous", wrappedHeader)
 	}
-	if got, want := m.vp.Height(), m.height-taH-footerH-spacerH-wrappedHeader; got != want {
-		t.Errorf("wrapped vpH = %d, want %d (height - %d - %d - %d - measured header)", got, want, taH, footerH, spacerH)
+	if got, want := m.vp.Height(), m.height-taH-footerH-spacerH-activityH-wrappedHeader; got != want {
+		t.Errorf("wrapped vpH = %d, want %d (height - %d - %d - %d - %d - measured header)", got, want, taH, footerH, spacerH, activityH)
 	}
 
 	// Non-wrapping steady state: same total height at width 100, header is 2 rows.
 	m2, _ := selModel(t)
 	mm2, _ := m2.onResize(tea.WindowSizeMsg{Width: 100, Height: totalH})
 	m2 = mm2.(Model)
-	if got, want := m2.vp.Height(), m2.height-taH-footerH-spacerH-2; got != want {
+	if got, want := m2.vp.Height(), m2.height-taH-footerH-spacerH-activityH-2; got != want {
 		t.Errorf("steady-state vpH = %d, want %d (header == 2 rows)", got, want)
 	}
 
@@ -771,8 +770,19 @@ func TestGestureInDirtyWindowKeepsDisplayedFrame(t *testing.T) {
 	m.conversationView.mode = followTail
 	m.refreshView()
 
+	// Pick a visible text row rather than a fixed offset: which tail lines are on screen
+	// depends on the chrome height.
 	top := convTopRow(m)
-	y := top + 5
+	y := -1
+	for i, line := range strings.Split(stripANSIstr(m.View().Content), "\n")[top : top+m.vp.Height()] {
+		if strings.Contains(line, "question") {
+			y = top + i
+			break
+		}
+	}
+	if y < 0 {
+		t.Fatal("precondition: no user question row visible in the viewport")
+	}
 
 	// Anchor + extend a selection (non-empty, so it stays active).
 	m, _ = pressMouse(m, tea.MouseLeft, 10, y)
@@ -2602,19 +2612,19 @@ func TestDoubleClickIdentitySnapshotSurvivesRefresh(t *testing.T) {
 
 // TestMouseDebugOverlay covers the gated --debug mouse diagnostic: with
 // DebugMouse on, a mouse press sets m.mouseDebug to the formatted line (raw coords +
-// content and input mapping) and the footer surfaces it (highest priority — over the phase
-// arms). With DebugMouse off, no press sets it and the footer shows the normal
+// content and input mapping) and the activity line surfaces it (highest priority — over the phase
+// arms). With DebugMouse off, no press sets it and the activity line shows the normal
 // status. Default OFF, zero cost when unset.
 func TestMouseDebugOverlay(t *testing.T) {
-	// Off by default: a press records nothing and the footer shows the normal status.
+	// Off by default: a press records nothing and the activity line shows the normal status.
 	m, _ := selModel(t)
 	top := convTopRow(m)
 	m, _ = pressMouse(m, tea.MouseLeft, 3, top)
 	if m.mouseDebug != "" {
 		t.Errorf("DebugMouse off: a press must not set mouseDebug, got %q", m.mouseDebug)
 	}
-	if got := stripANSIstr(m.renderFooter()); strings.Contains(got, "MOUSE raw") {
-		t.Errorf("DebugMouse off: footer must not show the mouse diagnostic, got %q", got)
+	if got := stripANSIstr(m.renderActivity()); strings.Contains(got, "MOUSE raw") {
+		t.Errorf("DebugMouse off: activity line must not show the mouse diagnostic, got %q", got)
 	}
 
 	// mouseDebugLine formats the expected shape directly.
@@ -2628,13 +2638,16 @@ func TestMouseDebugOverlay(t *testing.T) {
 		}
 	}
 
-	// With DebugMouse on, a press sets m.mouseDebug and the footer surfaces it (over
+	// With DebugMouse on, a press sets m.mouseDebug and the activity line surfaces it (over
 	// the idle "ready" status).
 	m2, _ = pressMouse(m2, tea.MouseLeft, 7, convTopRow(m2)+1)
 	if !strings.Contains(m2.mouseDebug, "MOUSE raw") {
 		t.Errorf("DebugMouse on: a press should set mouseDebug, got %q", m2.mouseDebug)
 	}
-	if got := stripANSIstr(m2.renderFooter()); !strings.Contains(got, "MOUSE raw") {
-		t.Errorf("DebugMouse on: footer should surface the mouse diagnostic, got %q", got)
+	if got := stripANSIstr(m2.renderActivity()); !strings.Contains(got, "MOUSE raw") {
+		t.Errorf("DebugMouse on: activity line should surface the mouse diagnostic, got %q", got)
+	}
+	if got := stripANSIstr(m2.renderFooter()); strings.Contains(got, "MOUSE raw") {
+		t.Errorf("DebugMouse on: footer must not duplicate the mouse diagnostic, got %q", got)
 	}
 }

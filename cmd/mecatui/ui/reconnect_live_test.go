@@ -564,9 +564,9 @@ func TestReconnectUI_NoDuplicateConcurrentReconnect(t *testing.T) {
 	}
 }
 
-// TestReconnectUI_DegradedFooter asserts the footer shows the degraded state
-// while liveReconnecting and clears it after reconnect.
-func TestReconnectUI_DegradedFooter(t *testing.T) {
+// TestReconnectUI_DegradedActivity asserts the activity line shows the degraded
+// state while liveReconnecting, and the footer does not duplicate it.
+func TestReconnectUI_DegradedActivity(t *testing.T) {
 	defer restoreBackoffClient(t)()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -580,12 +580,15 @@ func TestReconnectUI_DegradedFooter(t *testing.T) {
 	if !m.liveReconnecting {
 		t.Fatal("expected liveReconnecting")
 	}
-	footer := stripANSIstr(m.renderFooter())
-	if !containsStr(footer, "live feed reconnecting") {
-		t.Errorf("footer should show degraded state, got: %q", footer)
+	activity := stripANSIstr(m.renderActivity())
+	if !containsStr(activity, "live feed reconnecting") {
+		t.Errorf("activity line should show degraded state, got: %q", activity)
 	}
-	if !containsStr(footer, "attempt 1") {
-		t.Errorf("footer should show attempt 1, got: %q", footer)
+	if !containsStr(activity, "attempt 1") {
+		t.Errorf("activity line should show attempt 1, got: %q", activity)
+	}
+	if footer := stripANSIstr(m.renderFooter()); containsStr(footer, "live feed reconnecting") {
+		t.Errorf("the reconnect cue must not be duplicated in the footer, got: %q", footer)
 	}
 }
 
@@ -1027,8 +1030,8 @@ func TestADR_0096_BearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery(t *tes
 	if m.liveCh != nil || m.liveReconCh != nil || m.liveReconnecting || m.liveArmed != "" {
 		t.Fatalf("auth recovery left live/reconnect state armed: live=%v recon=%v reconnecting=%v armed=%q", m.liveCh, m.liveReconCh, m.liveReconnecting, m.liveArmed)
 	}
-	if footer := stripANSIstr(m.renderFooter()); containsStr(footer, "live feed reconnecting") {
-		t.Fatalf("stale reconnect footer remained after auth recovery: %q", footer)
+	if activity := stripANSIstr(m.renderActivity()); containsStr(activity, "live feed reconnecting") {
+		t.Fatalf("stale reconnect activity cue remained after auth recovery: %q", activity)
 	}
 	overlay := stripANSIstr(m.View().Content)
 	for _, guidance := range []string{"Re-login is disabled", "issuer, audience, and CA"} {

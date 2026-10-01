@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,8 +42,8 @@ func TestQuitDFirstOnEmptyArms(t *testing.T) {
 	if m.statusMsg != quitDHintFor(defaultKeys().QuitD) {
 		t.Errorf("status should carry the quitD hint, got %q", m.statusMsg)
 	}
-	if got := stripANSIstr(m.renderFooter()); got == "" {
-		t.Error("footer should render with the armed hint present")
+	if got := stripANSIstr(m.renderActivity()); !strings.Contains(got, quitDHintFor(defaultKeys().QuitD)) {
+		t.Errorf("activity line should render the armed hint, got %q", got)
 	}
 }
 
@@ -111,8 +112,8 @@ func TestQuitDIndependentOfQuitC(t *testing.T) {
 func TestQuitDHintNamesLiveChord(t *testing.T) {
 	m := quitModel(t)
 	m, _ = pressKey(m, ctrlD())
-	if got := stripANSIstr(m.renderFooter()); got == "" {
-		t.Error("footer should render")
+	if got := stripANSIstr(m.renderActivity()); !strings.Contains(got, "press ctrl+d again to quit") {
+		t.Errorf("activity line should render the live quitD hint, got %q", got)
 	}
 	if m.statusMsg != "press ctrl+d again to quit" {
 		t.Errorf("default hint = %q, want 'press ctrl+d again to quit'", m.statusMsg)

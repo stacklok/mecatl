@@ -498,8 +498,8 @@ const (
 	phaseReplay                        // a stored-session transcript replay is open (read-only; issue #245)
 )
 
-// spinnerVisible reports whether the footer renders the animated spinner in the
-// current phase (renderFooter's phaseRunning/phaseConnecting arms — keep in sync).
+// spinnerVisible reports whether the activity line renders the animated spinner in
+// the current phase (activity's phaseRunning/phaseConnecting arms — keep in sync).
 // It gates the spinner.TickMsg handler: a tick in any other phase is dropped,
 // which terminates the self-perpetuating tick chain; every transition INTO a
 // visible phase must re-arm m.sp.Tick. Session transcript loading is owned and

@@ -34,7 +34,7 @@ func TestBuiltinsSlotCompleteness(t *testing.T) {
 // silently returns an empty style — this guards against that drift.
 func TestStylesCompiled(t *testing.T) {
 	want := []string{
-		"header", "footer", "viewport", "userBlock", "userLabel",
+		"header", "footer", "activity", "viewport", "userBlock", "userLabel",
 		"assistantLabel", "toolCard", "toolName", "toolArgs", "toolOk",
 		"toolErr", "askCard", "askTitle", "askArgs", "askButton", "askButtonActive",
 		"spinner", "muted", "warning", "dangerPill", "errorText", "selection",

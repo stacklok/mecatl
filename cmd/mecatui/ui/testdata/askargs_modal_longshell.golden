@@ -1,7 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                  ┃
 ┃  Permission required                                                                             ┃
@@ -21,10 +20,11 @@
 
 
 
+ ⚠ awaiting approval
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⚠ awaiting approval                                                         ctx 0 · ↑0 ↓0 cache 0%
+ ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

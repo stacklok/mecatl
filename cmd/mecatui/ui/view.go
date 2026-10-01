@@ -171,7 +171,7 @@ func (m Model) renderHeader() string {
 	badge, badgeW, hasBadge := m.postureBadgeRender()
 	if hasBadge || tail != "" {
 		if lineSurface := m.generatedStatusLine.Header; m.deps.DebugTarget == "" && lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
-			line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
+			line = renderStatusSpans(m.deps.Theme, lineSurface.Spans)
 			line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
 			line = m.appendDebugPrivacyNotice(line)
 			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
@@ -182,7 +182,7 @@ func (m Model) renderHeader() string {
 		}
 		line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
 	} else if lineSurface := m.generatedStatusLine.Header; m.deps.DebugTarget == "" && lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
-		line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
+		line = renderStatusSpans(m.deps.Theme, lineSurface.Spans)
 	} else if m.deps.DebugTarget == "" && m.deps.StatusSource != nil {
 		line = ""
 	}
@@ -537,9 +537,17 @@ func (m Model) fitHeader(line, badge string, badgeW int, tail string, width int)
 	return line + strings.Repeat(" ", gap) + styled
 }
 
-// footerActivity renders only the renderer-owned activity lane. Status sources
-// receive its reserved width but cannot replace this chrome.
-func (m Model) footerActivity() string {
+// renderActivity renders the renderer-owned activity line above the input box as
+// exactly one row. Status sources cannot replace this chrome.
+func (m Model) renderActivity() string {
+	width := m.widthOr()
+	style := m.deps.Theme.Style("activity")
+	line := ansi.Truncate(m.activity(), max(0, width-style.GetHorizontalFrameSize()), "…")
+	return style.Width(width).Render(line)
+}
+
+// activity is the unstyled-width content of the activity line for the current phase.
+func (m Model) activity() string {
 	approval := approvalFooterProjection{}
 	if m.phase == phaseAwaitingApproval {
 		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
@@ -571,7 +579,7 @@ func (m Model) footerActivity() string {
 			left = m.sp.View() + " " + m.statusMsg
 		}
 	default:
-		left = m.idleFooterLeft()
+		left = m.idleActivity()
 	}
 	if (m.deps.Debug || m.deps.DebugMouse) && m.mouseDebug != "" {
 		left = m.deps.Theme.Style("muted").Render(m.mouseDebug)
@@ -579,13 +587,13 @@ func (m Model) footerActivity() string {
 	return left
 }
 
-// renderFooter is the status bar: spinner + active tool + status + usage.
+// renderFooter is the status bar: left-justified usage (or the custom footer
+// surface) above the key-help line. Activity renders above the input instead.
 func (m Model) renderFooter() string {
 	approval := approvalFooterProjection{}
 	if m.phase == phaseAwaitingApproval {
 		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
 	}
-	left := m.footerActivity()
 
 	// The full decompressed chord list now lives in the "?" help overlay, so the
 	// footer leads with its two entry points and carries only the most useful prompt
@@ -620,37 +628,32 @@ func (m Model) renderFooter() string {
 		}
 	}
 	// While the double-quit guard is armed, prepend a loud "again to quit" cue to
-	// the help line. The footer is the one chrome line present in every phase (the
-	// left status differs by phase), so it is the robust place for the hint.
+	// the help line. The help line is present in every phase, so it is the robust
+	// place for the hint.
 	if m.quitArmed {
 		help = m.deps.Theme.Style("ctxWarn").Render(hk.quit+" again to quit") + " · " + help
 	}
 
 	width := m.widthOr()
-	available := m.statusLineGeometry().footerAvailable
-	if surface := m.generatedStatusLine.Footer; surface.Present && statusSurfaceFits(surface, available) {
-		custom := renderStatusSurface(m.deps.Theme, surface, available, true)
-		line := left + strings.Repeat(" ", footerGapPad) + custom
-		footer := m.deps.Theme.Style("footer").Width(width).Render(line)
-		return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+	var line string
+	switch surface := m.generatedStatusLine.Footer; {
+	case surface.Present && statusSurfaceFits(surface, m.statusLineGeometry().footerAvailable):
+		line = renderStatusSpans(m.deps.Theme, surface.Spans)
+	case m.deps.StatusSource == nil:
+		line = m.fitFooter(width)
 	}
-	if m.deps.StatusSource != nil {
-		footer := m.deps.Theme.Style("footer").Width(width).Render(left)
-		return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
-	}
-	line := m.fitFooter(left, width)
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
 }
 
-// idleFooterLeft renders the footer-left for the idle/default phase, extracted
-// from renderFooter to keep that dispatcher under the cyclomatic-complexity
+// idleActivity renders the activity line for the idle/default phase, extracted
+// from activity to keep that dispatcher under the cyclomatic-complexity
 // bound. Precedence: the live-feed reconnecting cue (issue #387) → the
 // selection count → the gateway notice → the bare statusMsg / "ready". The
 // selection count appears ONLY in this phase (the running/approval/connecting
-// arms own the footer-left there), so it is never shown mid-run by construction
+// arms own the activity line there), so it is never shown mid-run by construction
 // (Req 5); the reconnecting cue and gateway notice likewise only surface here.
-func (m Model) idleFooterLeft() string {
+func (m Model) idleActivity() string {
 	switch {
 	case m.liveReconnecting:
 		// The live session event feed dropped and the client is reconnecting with
@@ -698,10 +701,6 @@ func (m Model) selectionStatus() string {
 	return muted.Render(count)
 }
 
-// footerGapPad is the minimum blank gap kept between the left status and the
-// right-aligned usage segment so they never touch.
-const footerGapPad = 2
-
 // contextWindow returns the denominator for the footer context meter:
 //
 //  1. m.resolvedSessionModel.ContextWindow > 0 — the window the SERVER resolved for THIS
@@ -719,10 +718,10 @@ func (m Model) contextWindow() int64 {
 	return 0
 }
 
-// fitFooter right-aligns the richest usage segment that fits beside the left
-// status, shedding facets before the context signal — context % is the single
+// fitFooter returns the richest usage segment that fits the footer row's width,
+// shedding facets before the context signal — context % is the single
 // most valuable signal, so it survives longest. When a team is LIVE a team-summary
-// segment is PREPENDED to the right side; it is LOWER priority than the context
+// segment is PREPENDED to the usage; it is LOWER priority than the context
 // meter (it's an advertisement, context % is the headline safety signal), so it is
 // the FIRST thing dropped as width tightens. The <agents> chord below is the LIVE
 // Agents binding (issue #457) — "f6" by default, rebound via keymap. Tiers,
@@ -733,7 +732,7 @@ func (m Model) contextWindow() int64 {
 //	"⟳ 2/3 working · f6  ctx ▒▒▒▒▒·· 70%"   (team→medium, ctx→compact)
 //	"⟳ 2/3  ctx 70%"                            (team→compact, ctx→minimal)
 //	"ctx 70%"                                    (team DROPPED, ctx wins)
-//	then the existing ctx-only fallbacks, then left status alone.
+//	then the existing ctx-only fallbacks, then an empty row.
 //
 // When no team is live the team segment is empty and the candidate list collapses
 // to EXACTLY the historical ctx-only list — keeping the no-team footer
@@ -741,7 +740,7 @@ func (m Model) contextWindow() int64 {
 //
 // When the window is unknown every meter tier collapses to "ctx 7.9K", so the
 // tiers naturally narrow to just that, then to nothing.
-func (m Model) fitFooter(left string, width int) string {
+func (m Model) fitFooter(width int) string {
 	th := m.deps.Theme
 	window := m.contextWindow()
 	contextKnown := !m.contextUnknown || m.contextTokens > 0
@@ -816,14 +815,13 @@ func (m Model) fitFooter(left string, width int) string {
 		meterCompact,
 		meterMinimal,
 	)
-	leftW := lipgloss.Width(left)
+	available := width - th.Style("footer").GetHorizontalFrameSize()
 	for _, seg := range candidates {
-		gap := width - leftW - lipgloss.Width(seg) - footerGapPad
-		if gap >= 0 {
-			return left + strings.Repeat(" ", gap) + seg
+		if lipgloss.Width(seg) <= available {
+			return seg
 		}
 	}
-	return left
+	return ""
 }
 
 // joinSeg joins the non-empty segments with sep, so a footer prefix built from up to
@@ -1033,7 +1031,7 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 		BorderLeft(true).
 		BorderForeground(modeAccentStyle(th, mode).GetForeground()).
 		Background(th.Color("bgPanel")).
-		Padding(inputRailPadTop, inputRailPadX, 0, inputRailPadX)
+		Padding(inputRailPadTop, inputRailPadX, inputRailPadBottom, inputRailPadX)
 }
 
 // inputRailPadX is the horizontal padding inside the input panel (each side). With the
@@ -1043,13 +1041,15 @@ func inputRailStyle(th theme.Theme, mode string) lipgloss.Style {
 // so this value flows through automatically.
 const inputRailPadX = 1
 
-// inputRailPadTop is the TOP inner padding of the input panel: one tinted blank row
-// above the input content so the placeholder/typed text isn't pressed against the top
-// border. It INTENTIONALLY makes the input region one row taller — the layout measures
-// region heights via lipgloss.Height, so the body shrinks by it automatically (the
-// input height-invariance test expects exactly this +1). lipgloss renders the pad row
-// with the style's Background, so it is bgPanel-tinted full-width like the content rows.
-const inputRailPadTop = 1
+// inputRailPadTop and inputRailPadBottom frame the input content with one tinted
+// blank row above and below, so a one-line prompt isn't pressed against its
+// neighbours. The layout measures region heights via lipgloss.Height, so the body
+// shrinks by them automatically. lipgloss renders the pad rows with the style's
+// Background, so they are bgPanel-tinted full-width like the content rows.
+const (
+	inputRailPadTop    = 1
+	inputRailPadBottom = 1
+)
 
 // renderInputRail wraps the textarea view in the mode-coloured rail AND fills the faint
 // panel tint UNIFORMLY across the whole input block — full terminal width and every

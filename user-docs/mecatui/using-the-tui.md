@@ -48,6 +48,9 @@ home directory, `@~/…` also remains prose.
 
 ## Keep working while a run is active
 
+The line directly above the prompt shows what the agent is doing: thinking,
+running a tool, waiting for approval, or ready for input.
+
 Type your next instruction while the agent is running, then press `enter`.
 `mecatui` steers the run at the next safe turn boundary when the server supports
 steering. Otherwise, it queues the instruction as a follow-up. Images and other

@@ -43,7 +43,7 @@ func New(cfg Config) Editor {
 	model.ShowLineNumbers = false
 	model.Placeholder = cfg.Placeholder
 	model.DynamicHeight = true
-	model.MinHeight = 3
+	model.MinHeight = 1
 	model.MaxHeight = 8
 	// MaxHeight is also the legacy input limit when MaxContentHeight is unset.
 	// Keep Bubbles' content limit effectively unbounded while it owns scrolling.

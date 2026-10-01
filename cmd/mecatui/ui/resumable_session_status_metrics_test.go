@@ -22,7 +22,7 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeRestoresStatus(t *
 	if m.usage != resume.Snapshot.Usage || m.contextTokens != 40_000 || !m.contextEstimated {
 		t.Fatalf("startup resume did not adopt snapshot status: usage=%+v context=%d estimated=%t", m.usage, m.contextTokens, m.contextEstimated)
 	}
-	footer := stripANSIstr(m.fitFooter("connected", 160))
+	footer := stripANSIstr(m.fitFooter(160))
 	for _, want := range []string{"~40K/200K", "20%", "↑120K", "↓4K", "cache 75%"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("footer = %q, want %q before a prompt", footer, want)
@@ -30,7 +30,7 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeRestoresStatus(t *
 	}
 
 	m = applyAll(m, client.TurnEndMsg{Usage: client.Usage{InputTokens: 50_000}, Estimated: true})
-	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "~50K/200K") {
+	if footer := stripANSIstr(m.fitFooter(160)); !strings.Contains(footer, "~50K/200K") {
 		t.Fatalf("live estimated footer = %q, want estimated marker", footer)
 	}
 }
@@ -200,7 +200,7 @@ func TestResumableSessionStatusMetrics_Scenario3_UnknownAndProvisionalStatus(t *
 	if !m.contextUnknown {
 		t.Fatal("legacy snapshot without occupancy must remain unknown")
 	}
-	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "ctx ?") || strings.Contains(footer, "120K/") {
+	if footer := stripANSIstr(m.fitFooter(160)); !strings.Contains(footer, "ctx ?") || strings.Contains(footer, "120K/") {
 		t.Fatalf("legacy footer = %q, want an unknown context numerator, never cumulative input", footer)
 	}
 
@@ -211,7 +211,7 @@ func TestResumableSessionStatusMetrics_Scenario3_UnknownAndProvisionalStatus(t *
 	if m.usage.InputTokens != 120_000 || !m.contextUnknown {
 		t.Fatalf("resolved-model refresh applied stale metrics: usage=%+v contextUnknown=%t", m.usage, m.contextUnknown)
 	}
-	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "?/200K") || strings.Contains(footer, "120K/200K") {
+	if footer := stripANSIstr(m.fitFooter(160)); !strings.Contains(footer, "?/200K") || strings.Contains(footer, "120K/200K") {
 		t.Fatalf("healed legacy footer = %q, want unknown numerator with healed denominator", footer)
 	}
 }
