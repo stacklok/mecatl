@@ -7,7 +7,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-func TestADR_0369_Scenario4_DelegationEvidence(t *testing.T) {
+func TestDelegationEvidenceRendering(t *testing.T) {
 	const want = "selected: model-router/deep → anthropic/claude-opus-4-1"
 
 	var c conversation

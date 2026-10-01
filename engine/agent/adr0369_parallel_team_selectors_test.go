@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -32,11 +34,17 @@ func (f *countingParallelForker) count() int {
 }
 
 func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
-	t.Run("explicit selector resolves once and applies to every branch", func(t *testing.T) {
+	t.Run("explicit selector drives branches while judge stays on parent", func(t *testing.T) {
 		forker := &countingParallelForker{}
 		var resolves, classifies int
+		var judgeModels []string
+		judgeProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			judgeModels = append(judgeModels, req.Model)
+		})}, mockllm.TextTurn(`{"winner":1,"rationale":"first is sufficient"}`))
+		judgeEngine := NewEngine(Deps{LLM: judgeProvider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "parent-model"})
 		tl := NewParallelTool(markerEngine("PARENT"), forker,
 			WithParallelProvider("parent"),
+			WithParallelJudge(NewEngineJudge(judgeEngine)),
 			WithParallelSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
 				resolves++
 				if provider != "other" || model != "chosen" {
@@ -52,7 +60,7 @@ func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
 			classifies++
 			return modelRoutingResult{model: "automatic", ok: true}
 		}}
-		args, _ := json.Marshal(parallelArgs{Tasks: []string{"a", "b"}, Provider: "other", Model: "chosen"})
+		args, _ := json.Marshal(parallelArgs{Tasks: []string{"a", "b"}, Join: "judge", Provider: "other", Model: "chosen"})
 		var mu sync.Mutex
 		selectedStarts := 0
 		emit := func(ev session.Event) {
@@ -72,6 +80,9 @@ func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
 		defer mu.Unlock()
 		if resolves != 1 || classifies != 0 || selectedStarts != 2 {
 			t.Fatalf("resolves=%d classifies=%d selected starts=%d, want 1, 0, 2", resolves, classifies, selectedStarts)
+		}
+		if len(judgeModels) != 1 || judgeModels[0] != "parent-model" {
+			t.Fatalf("judge models = %v, want [parent-model]", judgeModels)
 		}
 	})
 
@@ -119,7 +130,7 @@ func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
 	})
 }
 
-func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
+func TestTeamMemberSelectorValidationAndLifetime(t *testing.T) {
 	t.Run("invalid roster is atomic", func(t *testing.T) {
 		var builds int
 		factory := func(_ *team.Team, _ MemberSpec, _ string) MemberBuild {
@@ -142,6 +153,53 @@ func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 		}
 		if !res.IsError || builds != 0 {
 			t.Fatalf("result error=%v builds=%d, want true and 0", res.IsError, builds)
+		}
+	})
+
+	t.Run("selected member keeps one engine across rounds", func(t *testing.T) {
+		tm := team.New("team")
+		leadProvider := mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("l1", "AddTask", json.RawMessage(`{"description":"inspect"}`))),
+			mockllm.TextTurn("delegated"),
+			mockllm.TextTurn("synthesized"),
+		)
+		workerProvider := mockllm.New(
+			mockllm.ToolCallTurn(
+				session.NewToolCall("w1", "CompleteTask", json.RawMessage(`{"task_id":"task-1"}`)),
+				session.NewToolCall("w2", "RecordFinding", json.RawMessage(`{"finding":"done"}`)),
+			),
+			mockllm.TextTurn("complete"),
+		)
+		memberEngine := func(spec MemberSpec, provider *mockllm.Provider, model string) *Engine {
+			catalog := tool.NewCatalog()
+			for _, memberTool := range MemberTools(tm, spec.Name, nil) {
+				catalog.MustRegister(memberTool)
+			}
+			return NewEngine(Deps{LLM: provider, Catalog: catalog, Policy: allowAllInt(), Model: model})
+		}
+		builds := 0
+		sup := NewSupervisor(tm, memEnv("/ws"), func(spec MemberSpec, _ string) MemberBuild {
+			return MemberBuild{Engine: memberEngine(spec, workerProvider, "worker-model"), Provider: "parent"}
+		}, WithTeamMemberSelectorFactory(func(spec MemberSpec, selected ResolvedModelSelector) MemberBuild {
+			builds++
+			if selected.Target != (ModelTarget{Provider: "other", Model: "selected-model"}) {
+				t.Fatalf("selected target = %+v", selected.Target)
+			}
+			return MemberBuild{Engine: memberEngine(spec, leadProvider, "selected-model"), Provider: "other"}
+		}), WithMaxRounds(10))
+		selected := ResolvedModelSelector{Target: ModelTarget{Provider: "other", Model: "selected-model"}, ActualProvider: "other", ProviderBearing: true}
+		if err := sup.AddMember(t.Context(), MemberSpec{Name: "lead", Lead: true, InitialPrompt: "delegate", Selector: &selected}); err != nil {
+			t.Fatalf("AddMember(lead): %v", err)
+		}
+		if err := sup.AddMember(t.Context(), MemberSpec{Name: "worker"}); err != nil {
+			t.Fatalf("AddMember(worker): %v", err)
+		}
+		out := sup.Run(t.Context(), nil)
+		if !out.Quiescent || out.Rounds < 2 {
+			t.Fatalf("team outcome = %+v, want multiple quiescent rounds", out)
+		}
+		if builds != 1 || leadProvider.Calls() != 3 {
+			t.Fatalf("selected engine builds=%d calls=%d, want one build retained for three calls", builds, leadProvider.Calls())
 		}
 	})
 
@@ -196,5 +254,98 @@ func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 		if builds != 1 {
 			t.Fatalf("invalid named selector reached factory; builds=%d", builds)
 		}
+	})
+}
+
+func TestADR_0369_Scenario4_DelegationEvidence(t *testing.T) {
+	assertExplicit := func(t *testing.T, provider, model, category, routedCategory, routedModel, routingReason string, decision *session.RoutingDecision) {
+		t.Helper()
+		if provider != "other" || model != "selected-model" || category != "deep" {
+			t.Fatalf("actual selection = %q/%q explicit %q", provider, model, category)
+		}
+		if routedCategory != "" || routedModel != "" || routingReason != "" || decision != nil {
+			t.Fatalf("explicit selection carried classifier evidence: category=%q model=%q reason=%q decision=%+v", routedCategory, routedModel, routingReason, decision)
+		}
+	}
+	resolver := func(provider, model string) (ResolvedModelSelector, error) {
+		if provider != "model-router" || model != "deep" {
+			return ResolvedModelSelector{}, errors.New("unexpected selector")
+		}
+		return ResolvedModelSelector{
+			Target: ModelTarget{Provider: "other", Model: "selected-model"}, ActualProvider: "other",
+			ProviderBearing: true, ExplicitRouterCategory: "deep",
+		}, nil
+	}
+
+	t.Run("Subagent producer", func(t *testing.T) {
+		var start *session.SubagentPayload
+		toolUnderTest := NewSubagentTool(markerEngine("parent"), WithSubagentSelectorResolver(resolver),
+			WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				return markerEngine(target.Model), true
+			})).(*SubagentTool)
+		res, err := toolUnderTest.ExecuteWithParent(t.Context(), session.NewToolCall("s", "Subagent", json.RawMessage(`{"prompt":"private task","provider":"model-router","model":"deep"}`)), memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvSubagentStart {
+				start = ev.Subagent
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+			t.Fatal("explicit selection invoked classifier")
+			return modelRoutingResult{}
+		}})
+		if err != nil || res.IsError || start == nil {
+			t.Fatalf("Subagent execution = %+v, err=%v, start=%+v", res, err, start)
+		}
+		assertExplicit(t, start.Provider, start.Model, start.ExplicitRouterCategory, start.RoutedCategory, start.RoutedModel, start.RoutingReason, start.RoutingDecision)
+	})
+
+	t.Run("Parallel producer", func(t *testing.T) {
+		var mu sync.Mutex
+		var starts []*session.ParallelPayload
+		toolUnderTest := NewParallelTool(markerEngine("parent"), &countingParallelForker{},
+			WithParallelSelectorResolver(resolver),
+			WithParallelTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				return markerEngine(target.Model), true
+			})).(*ParallelTool)
+		args, _ := json.Marshal(parallelArgs{Tasks: []string{"one", "two"}, Provider: "model-router", Model: "deep"})
+		res, err := toolUnderTest.ExecuteWithParent(t.Context(), session.NewToolCall("p", "Parallel", args), memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvParallelBranch && ev.Parallel.Kind == session.ParallelBranchStart {
+				mu.Lock()
+				starts = append(starts, ev.Parallel)
+				mu.Unlock()
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+			t.Fatal("explicit selection invoked classifier")
+			return modelRoutingResult{}
+		}})
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil || res.IsError || len(starts) != 2 {
+			t.Fatalf("Parallel execution = %+v, err=%v, starts=%d", res, err, len(starts))
+		}
+		for _, start := range starts {
+			assertExplicit(t, start.Provider, start.Model, start.ExplicitRouterCategory, start.RoutedCategory, start.RoutedModel, start.RoutingReason, start.RoutingDecision)
+		}
+	})
+
+	t.Run("Team producer", func(t *testing.T) {
+		var start *session.TeamPayload
+		toolUnderTest := NewTeamTool(func(_ *team.Team, _ MemberSpec, _ string) MemberBuild {
+			return MemberBuild{Engine: markerEngine("parent"), Provider: "parent"}
+		}, WithTeamSelectorResolver(resolver), WithTeamToolSelectorFactory(func(_ *team.Team, _ MemberSpec, selected ResolvedModelSelector) MemberBuild {
+			return MemberBuild{Engine: NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("work"), mockllm.TextTurn("summary")), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: selected.Target.Model}), Provider: selected.ActualProvider}
+		})).(*TeamTool)
+		args, _ := json.Marshal(teamArgs{Goal: "private goal", Members: []TeamMemberArg{{Name: "lead", Role: "lead", Provider: "model-router", Model: "deep"}}})
+		res, err := toolUnderTest.ExecuteWithParent(t.Context(), session.NewToolCall("t", "Team", args), memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvTeamStart {
+				start = ev.Team
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+			t.Fatal("explicit selection invoked classifier")
+			return modelRoutingResult{}
+		}})
+		if err != nil || res.IsError || start == nil || len(start.Roster) != 1 {
+			t.Fatalf("Team execution = %+v, err=%v, start=%+v", res, err, start)
+		}
+		member := start.Roster[0]
+		assertExplicit(t, member.Provider, member.Model, member.ExplicitRouterCategory, member.RoutedCategory, member.RoutedModel, member.RoutingReason, member.RoutingDecision)
 	})
 }
