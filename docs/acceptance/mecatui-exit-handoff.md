@@ -4,7 +4,7 @@
 **Work classification:** Bounded — improves one client-owned exit presentation without changing session storage, run authority, or public service contracts.
 **Decision record:** None — the existing session snapshot and resume flags supply the required data; this is a bounded terminal-client workflow decision.
 **Phase:** session continuation
-**Status:** in-progress, 2026-10-01. Plan approved by PR #2039; implementation underway.
+**Status:** landed in this implementation candidate, 2026-10-01. Authoritative on merge.
 **Delivery:** Split. The additional CLI output and its compatibility with the existing machine-readable line warrant interface review before implementation.
 **Expected tasks:** deferred to orchestration.
 **Issue:** [stacklok/mecatl#1992](https://github.com/stacklok/mecatl/issues/1992).
