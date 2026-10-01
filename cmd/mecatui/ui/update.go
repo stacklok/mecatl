@@ -978,6 +978,21 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		_ = m.prompt.Focus()
 		m.refreshView()
 		return m, nil, true
+	case agentSessionFailedMsg:
+		// A /agent <name> create failed. Unlike ConnectErrMsg this is NOT terminal:
+		// leave the app recoverable (idle, no session). No enter-to-retry arm (unlike
+		// restartFailedMsg) — there is no single pending selection to replay, so the
+		// operator retypes /agent <name>.
+		m.phase = phaseIdle
+		m = m.bindSessionID("")
+		reason := "could not start agent " + terminaltext.SanitizeSingleLine(msg.name) + ": " + terminaltext.Sanitize(msg.err.Error())
+		if msg.unknown {
+			reason = fmt.Sprintf("unknown agent definition %q — see /agents for available definitions", terminaltext.SanitizeSingleLine(msg.name))
+		}
+		m.statusMsg = m.deps.Theme.Style("errorText").Render(reason)
+		_ = m.prompt.Focus()
+		m.refreshView()
+		return m, nil, true
 	case client.StreamErrMsg:
 		if m.restoreRefusedApproval(msg.Err) {
 			return m, nil, true
