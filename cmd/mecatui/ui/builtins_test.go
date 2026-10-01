@@ -99,7 +99,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"broker cap and reader", client.Capabilities{MCPConnectorStatus: true}, wiredCollaborators{MCPConnector: true}, []string{"clear", "help", "mcp"}},
 		{"agents cap but not wired", client.Capabilities{Agents: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"agents wired but no cap", client.Capabilities{}, wiredCollaborators{Agents: true}, []string{"clear", "help"}},
-		{"agents cap and wired", client.Capabilities{Agents: true}, wiredCollaborators{Agents: true}, []string{"clear", "help", "agents"}},
+		{"agents cap and wired", client.Capabilities{Agents: true}, wiredCollaborators{Agents: true}, []string{"clear", "help", "agents", "agent"}},
 		{"teams only", client.Capabilities{Teams: true}, wiredCollaborators{}, []string{"clear", "help", "team"}},
 		{"skills cap but not wired", client.Capabilities{Skills: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"skills wired but no cap", client.Capabilities{}, wiredCollaborators{Skills: true}, []string{"clear", "help"}},
@@ -131,7 +131,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 			"all",
 			all,
 			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true, Sessions: true, Compactor: true},
-			[]string{"clear", "help", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
+			[]string{"clear", "help", "compact", "mcp", "agents", "agent", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
 		},
 	}
 	for _, tc := range cases {
@@ -984,7 +984,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "quit", "title", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "quit", "title", "session", "retry", "diagnostics", "compact", "mcp", "agents", "agent", "team", "skills", "soul", "usermodel",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}

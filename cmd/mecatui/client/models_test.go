@@ -21,6 +21,7 @@ type fakeModelsClient struct {
 	lastList *mecatlv1.ListModelsRequest
 
 	createResp *mecatlv1.CreateSessionResponse
+	createErr  error
 	caps       *mecatlv1.ServerCapabilities
 	lastCreate *mecatlv1.CreateSessionRequest
 }
@@ -39,6 +40,9 @@ func (f *fakeModelsClient) GetCompatibilityInfo(_ context.Context, _ *mecatlv1.G
 
 func (f *fakeModelsClient) CreateSession(_ context.Context, in *mecatlv1.CreateSessionRequest, _ ...grpc.CallOption) (*mecatlv1.CreateSessionResponse, error) {
 	f.lastCreate = in
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
 	if f.createResp != nil {
 		return f.createResp, nil
 	}
