@@ -4,7 +4,7 @@
 **Work classification:** Bounded — the directing human classified this as Bounded with no ADR (2026-10-01). It adds connection-profile flags to `connect`, a client-only settings fallback for them, and a narrowly gated sign-in path to `connect`. It reuses the existing ADR 0305 discovery, ADR 0286 issuer transports, and ADR 0277 credential lifecycle without changing server, protobuf, engine, or persistence contracts. See the classification risk under Human decisions.
 **Decision record:** None — the directing human chose this plan as the sole record. It narrows two existing rules without amending their ADRs: interactive first-use sign-in is now allowed from `connect`, and discovery may use a private issuer when the operator pins it explicitly, by flags or in an endpoint entry.
 **Phase:** Remote mecatui OAuth bootstrap
-**Status:** proposed, 2026-10-01. The directing human resolved the three open human decisions on 2026-10-01 by direct amendment ("accept all three recommendations"). Converted from an uncommitted ADR draft ("Operator-configured remote endpoints and first-use connect sign-in") at the directing human's request. That draft is intentionally not committed.
+**Status:** proposed, 2026-10-01. The directing human resolved the three open human decisions on 2026-10-01 by direct amendment ("accept all three recommendations"), and the same day added `mecatui remote` commands for editing endpoint settings (Scenario 6). Converted from an uncommitted ADR draft ("Operator-configured remote endpoints and first-use connect sign-in") at the directing human's request. That draft is intentionally not committed.
 **Delivery:** Split. The change adds new `connect` flags, a new client settings schema, an authentication flow, a trust exception, and new kind fixture behavior. These interfaces need review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** None — no tracking issue exists yet.
@@ -41,6 +41,7 @@ otherwise to the ADR 0305 public defaults. Flags and settings never mix.
 - [x] Settings home. `remote:` lives in the strict, client-owned `~/.config/mecatui/settings.yaml`, which no project can write. Rejected: the source draft's operator tier of the shared `~/.config/mecatl/settings.yaml`, which would need new project-tier-ignore logic like `telemetry:`; that shared file configures the server, while the remote endpoint is client state. — Decision: directing human, 2026-10-01, accepted the recommendation.
 - [x] How the kind fixture provides its profile. `kind-connect` and `kind-login` pass the profile flags and use the operator's normal client root, so the task writes no settings file; destroy and reset run a best-effort `mecatui logout` for the fixture resource first. Rejected alternatives: a fixture-owned `XDG_CONFIG_HOME` root, which hides the enrollment from a plain `mecatui connect` and drops personal client settings; and editing the operator's settings file from a Taskfile, which risks a lossy YAML merge. — Decision: directing human, 2026-10-01, accepted the recommendation.
 - [x] Endpoint name grammar. Names match `^[a-z][a-z0-9-]{0,62}$`; `sessions` and `debug` are reserved; an exact name match wins over host interpretation. A name contains no `.` or `:`, so it cannot be mistaken for a DNS host, `host:port`, or URL. — Decision: directing human, 2026-10-01, accepted the recommendation.
+- [x] `mecatui remote` commands for configuring endpoints are in scope. — Decision: directing human, 2026-10-01 ("There should be mecatui cli commands to configure the remote in the settings file"). The command grammar in the interface contract is the agent's proposal; merging the Plan / Interface PR approves it. The kind fixture decision is unchanged: its tasks still pass profile flags and run no `remote` command.
 
 ## Interface contract
 
@@ -88,18 +89,25 @@ otherwise to the ADR 0305 public defaults. Flags and settings never mix.
     - `deploy/helm/mecak8s/values-kind-keycloak.yaml` adds `oidc.resource: https://mecak8s-mecak8s.mecatl.svc.cluster.local:18081`, `oidc.clientID: mecatui-kind`, and `oidc.scopes: [openid, profile, mecak8s:access, offline_access]`.
     - `kind-connect` runs `mecatui connect https://mecak8s-mecak8s.mecatl.svc.cluster.local:18081 --grpc-target mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls-ca CA --private-issuer --discovery-ca CA`, with `CA` the absolute, refreshed fixture CA path.
     - `kind-login` runs discovered `mecatui login` with the same resource and profile flags (without `--tls-ca`).
+  - **`mecatui remote` commands.** A new top-level command group that edits the `remote:` block of `~/.config/mecatui/settings.yaml`. It makes no network I/O and never touches the registry or the credential store.
+    - `mecatui remote add NAME RESOURCE_URL [--grpc-target HOST:PORT] [--tls-ca PATH] [--private-issuer --discovery-ca PATH] [--default]` adds one endpoint. Profile flags map to fields exactly as in the settings example, with the same pairing rule: `--private-issuer` and `--discovery-ca` together or not at all. A relative CA path is resolved against the working directory and stored absolute, and it must name a readable file containing at least one PEM certificate. `--default` also sets `remote.default`. An existing `NAME` is an error; to change an entry, remove it and add it again.
+    - `mecatui remote list` prints each endpoint's name, resource, gRPC target, discovery address policy, and whether it is the default. It prints CA paths but no file contents and no credential state.
+    - `mecatui remote remove NAME` deletes the entry and clears `remote.default` if it named that entry. It does not log out; it prints the `mecatui logout` command for the endpoint's resource.
+    - `mecatui remote default NAME` sets `remote.default`; `mecatui remote default --clear` removes it.
+    - **Writes.** Each mutation edits the YAML document in place, like the `mecated mcp add` mutators in `internal/adapter/permconfig`: comments, key order, and every key outside the edited `remote:` subtree are preserved. Before writing, the command decodes the whole result with the strict client decoder and applies the Scenario 1 validation. It refuses to edit an existing file that already fails that decode. It writes through a temporary file and rename, and it aborts without writing if the file changed since it was read. A missing file is created with mode `0600`, in a directory created with mode `0700`.
 - **Events / persistence:** None — no new persisted fields. A first-use enrollment writes the existing registry `Connection` fields:
   - `Identity` (the target comes from the profile);
   - `ResourceURL`;
   - `IssuerAddressPolicy` (`private` for pinned private discovery);
   - `IssuerCAFile` (the profile's discovery CA).
 
-  The credential record key is unchanged. Endpoint names and the gRPC CA are never persisted to the registry; they come from flags or settings on every run.
+  The credential record key is unchanged. Endpoint names and the gRPC CA are never persisted to the registry; they come from flags or settings on every run. `mecatui remote` writes only the operator's client settings file, which is configuration, not registry or credential state.
 - **Security / authority:** Explicit profile flags and operator-written endpoint settings become the trust sources for private discovery and connection CAs; nothing else gains authority.
   - **Trust origin.** Private address admission and custom discovery roots come only from `--private-issuer` with `--discovery-ca`, or from an endpoint entry. A bare address, a URL alone, and server metadata can't select them.
   - **Discovery transports.** Public discovery keeps the ADR 0305 public-bootstrap transport. Private discovery uses the ADR 0286 private issuer transport for both the metadata fetch and issuer discovery: only private addresses are admitted, and `discovery.ca` replaces the system roots. Both stay anonymous, redirect-free, and bounded, with exact resource and issuer binding.
   - **CA separation.** The gRPC CA (`--tls-ca` or `grpc.ca`) never becomes issuer or metadata trust, and the discovery CA (`--discovery-ca` or `discovery.ca`) never becomes gRPC trust.
   - **Browser from connect.** `connect` opens a browser only on interactive first use, after confirmation. It never does so for a saved target, a non-TTY process, a static bearer, `--anonymous`, or a `host:port` target.
+  - **Settings writes.** `mecatui remote` writes only `~/.config/mecatui/settings.yaml`, never a project-scoped file or `~/.config/mecatl/settings.yaml`. It runs only at the operator's explicit invocation, so endpoint entries stay operator-written.
   - **Logging.** Credential values never reach logs, prompts, or argv.
 - **Compatibility / migration:** Additive client behavior.
   - Without new flags or a `remote:` block, every existing invocation resolves and behaves as before, including `connect HOST:PORT --tls-ca PATH`. One message changes: a credential-free `connect` to a resource-addressable, unenrolled target on a TTY now offers sign-in instead of printing "run mecatui login".
@@ -108,7 +116,7 @@ otherwise to the ADR 0305 public defaults. Flags and settings never mix.
   - When a saved enrollment no longer matches the resolved profile (resource, gRPC target, address policy, or discovery CA, from flags or from a changed endpoint entry), connect fails closed and names the `mecatui login` command to run.
   - Kind fixture users drop `kind-login` from the normal journey. Existing explicit-identity `login` commands still work.
 
-## In scope — 5 scenarios, in implementation order
+## In scope — 6 scenarios
 
 ### Scenario 1 — Profile flags, with endpoint settings as the fallback
 
@@ -240,16 +248,48 @@ Fixture boundaries follow `deploy/mecak8s-kind/README.md`. Its credentials stay 
 - AC5.4: No saved fixture enrollment, a recreated cluster, and one `task mecak8s:kind-connect` together show the discovered-tuple confirmation, a browser login, and the TUI connected as the Keycloak user. A second `kind-connect` reconnects without a browser.
   - verify: manual — a live kind cluster and a browser login are operator-run and not part of offline gates; record the result in the implementation PR.
 
+### Scenario 6 — `mecatui remote` commands configure endpoints
+
+The operator adds, lists, removes, and selects a default endpoint from the command line
+instead of editing YAML by hand. The commands write the same Scenario 1 schema to the same
+operator-owned file, so a command-written entry and a hand-written entry are interchangeable.
+They join the `topLevelCommands` catalog in
+[`cmd/mecatui/command.go`](../../cmd/mecatui/command.go) and edit the file the strict decoder
+in [`cmd/mecatui/client_settings.go`](../../cmd/mecatui/client_settings.go) reads. Writes
+follow the settings-mutation rules of [ADR 0345](../adr/0345-direct-mcp-onboarding.md): one
+exact writable target, preservation outside the edit, stale-write detection, full validation,
+and private atomic replacement. Entries stay operator-written per [AGENTS.md](../../AGENTS.md)
+(operator grants are explicit).
+
+**Acceptance:**
+- AC6.1: `mecatui remote add` writes an entry that Scenario 1 resolves exactly like the equivalent hand-written entry and like the equivalent profile flags. `--default` sets `remote.default`. A relative CA path is stored absolute. A missing settings file is created with mode `0600`.
+  - verify: `TestMecatuiRemoteEndpoints_Scenario6_AddMatchesHandWrittenEntry`
+- AC6.2: Every `remote` mutation preserves comments, key order, and all content outside the edited `remote:` subtree, including `keymap` and the other client settings keys.
+  - verify: `TestMecatuiRemoteEndpoints_Scenario6_EditsPreserveDocument`
+- AC6.3: Each of these fails with a usage or path-qualified error and leaves the file byte-identical (or absent):
+  - a name that breaks the grammar or is reserved;
+  - a duplicate name;
+  - an invalid profile flag combination;
+  - a non-canonical resource or target;
+  - an unreadable or non-PEM CA file;
+  - an existing settings file that fails the strict decode;
+  - a file that changed between read and write.
+  - verify: `TestMecatuiRemoteEndpoints_Scenario6_RejectsWithoutWriting`
+- AC6.4: `mecatui remote remove NAME` deletes the entry, clears a default that named it, leaves the registry and credential store unchanged, and prints the `mecatui logout` command for its resource. `mecatui remote default NAME` and `mecatui remote default --clear` set and clear `remote.default`. An unknown name is an error.
+  - verify: `TestMecatuiRemoteEndpoints_Scenario6_RemoveAndDefault`
+- AC6.5: `mecatui remote list` shows each entry's name, resource, gRPC target, discovery address policy, and default marker. It makes no network I/O and reads no credential. The top-level command index lists `remote`.
+  - verify: `TestMecatuiRemoteEndpoints_Scenario6_ListIsOfflineAndSecretFree`
+
 ## Out of scope
 
 | Item | Defer-to | Decision |
 |---|---|---|
 | Amending ADR 0277 or ADR 0305 text | Later, if the human wants it | The directing human chose this plan as the sole record |
-| A `mecatui remote add/list/remove` command for editing settings | Later UX issue | Operators edit settings or pass flags |
 | Device-code or other non-browser grants for headless first use | Later | Non-TTY connect keeps today's behavior |
 | Removing the kind `/etc/hosts` aliases or the `IsLoopbackHost` heuristic | Separate issue | The aliases remain the fixture's documented fix |
 | Changing shipped Helm defaults or `values-kind.yaml` | — | Only the Keycloak fixture overlay changes |
 | Merging flag values with endpoint settings | — | All-or-none by decision |
+| A `remote` command that edits an existing entry in place, or that logs out on remove | Later, if needed | Remove and add again; `logout` stays a separate command |
 | Opening a browser from the in-TUI auth-recovery overlay | — | The overlay keeps its no-browser rule; first use happens only before the TUI starts |
 
 ## Definition of done
@@ -257,7 +297,7 @@ Fixture boundaries follow `deploy/mecak8s-kind/README.md`. Its credentials stay 
 1. `task lint`, `task test:race`, `task docs`, and `task api:check` pass on the final candidate.
 2. `task ac-trace-strict` resolves every named proof when the plan becomes `landed`.
 3. `go run ./cmd/mecademo` still shows a tool call, a permission ask and approval, and a result.
-4. `user-docs/mecatui/remote-servers.md` documents the profile flags, endpoint settings, first-use connect sign-in, and private discovery. `deploy/mecak8s-kind/README.md` documents the one-command journey. `task site:build` passes.
+4. `user-docs/mecatui/remote-servers.md` documents the profile flags, endpoint settings, the `mecatui remote` commands, first-use connect sign-in, and private discovery. `deploy/mecak8s-kind/README.md` documents the one-command journey and the equivalent `mecatui remote add` entry. `task site:build` passes.
 5. The implementation PR links the Plan / Interface PR and the approved commit, reports interface conformance, and records the AC5.4 manual result.
 6. `/panel-review` reports no ship blockers and no unwaived reviewer failures.
 
