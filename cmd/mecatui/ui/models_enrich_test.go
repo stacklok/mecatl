@@ -63,8 +63,8 @@ func TestHeaderNextBadgeShownWhenDiffers(t *testing.T) {
 	if !strings.Contains(header, "next: Claude") {
 		t.Fatalf("header missing the next: badge:\n%s", header)
 	}
-	// The effective model (GPT-5) is still the primary model segment.
-	if !strings.Contains(header, "GPT-5") {
+	// The effective provider/model identity remains the primary segment.
+	if !strings.Contains(header, "openai/gpt-5") {
 		t.Fatalf("header missing the effective model segment:\n%s", header)
 	}
 }

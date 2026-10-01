@@ -1687,12 +1687,16 @@ type ModelsSection struct {
 	// tier when configured. The guardrail slot alone also accepts an operator-only
 	// explicit provider route.
 	Slots ModelSlots `yaml:"slots"`
-	// Aliases binds a short name to either a scalar contextual-provider model ID or
-	// a strict provider/model object. CLI --model-alias replaces the whole lower-tier
-	// target for its name; --model-alias-provider supplies its optional provider.
+	// Aliases binds a short name to either a scalar model ID (bound to the
+	// effective configured default provider when present, otherwise contextual)
+	// or a strict provider/model object. CLI --model-alias replaces the whole
+	// lower-tier target with a contextual scalar; --model-alias-provider supplies
+	// its optional provider.
 	Aliases ModelAliases `yaml:"aliases"`
 	// Default is the operator-tier session-default model selector (alias or concrete
-	// id). Empty = absent.
+	// id). A provider-aware alias selects the whole provider/model default; a
+	// separately configured default_provider applies only to scalar selectors.
+	// Empty = absent.
 	Default string `yaml:"default"`
 	// Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
 	// concrete id): the settings.yaml twin of the --subagent-model flag (issue #288).
@@ -1709,13 +1713,17 @@ type ModelsSection struct {
 	// openai, openrouter, anthropic, toolhive). It mirrors the --default-provider flag
 	// (app.Config.DefaultProvider) so an operator can declare "toolhive is my default
 	// despite my API key" persistently in settings.yaml without unsetting the key. It
-	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override — it
-	// does NOT lower the precedence of key-driven providers. Operator-tier only: a
+	// feeds the preferredDefaultProvider ladder as an explicit fallback for a default
+	// model with no provider of its own. It also binds provider-less operator aliases,
+	// slots, subagent defaults, and router targets independently of the main session.
+	// A provider-aware default alias chooses the complete session target instead. Operator-tier only: a
 	// project-tier default_provider: is IGNORED with a WARN (the same operator-only
-	// captureModels discipline as posture/guardrails/allowlist). Validated FAIL-FAST at
-	// Build (validateDefaultModel): an unknown/unavailable provider is a startup error.
-	// Empty = absent (the ladder's preferred default wins). The name pair
-	// (default = model, default_provider = provider) mirrors the wire grammar exactly.
+	// captureModels discipline as posture/guardrails/allowlist). The effective
+	// provider is validated FAIL-FAST at Build (validateDefaultModel): an unknown or
+	// unavailable selected provider is a startup error. A configured default provider
+	// must also be available when a paired default selects another main provider,
+	// because provider-less operator bindings can still use it. Empty = absent
+	// (the ladder's preferred default wins).
 	DefaultProvider string `yaml:"default_provider"`
 	// Allowlist is retained for compatibility, has no effect, and emits a warning when configured.
 	Allowlist []string `yaml:"allowlist"`
@@ -1839,6 +1847,7 @@ type RouterCategory struct {
 	Description string `yaml:"description"`
 	// Model is the model selector (alias / slot / concrete id) a task classified into
 	// this category is minted on, resolved through the operator-merged alias map.
+	// A scalar target uses the configured default provider when present.
 	Model string `yaml:"model"`
 }
 

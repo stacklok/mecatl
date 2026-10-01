@@ -234,10 +234,9 @@ func TestEffectiveModelOlderServerNoSegment(t *testing.T) {
 	_ = got.renderHeader()
 }
 
-// TestHeaderModelLabelUsesInventoryDisplayName asserts the header resolves the human
-// display name from the ListModels inventory by (provider_id, model_id), falling
-// back to the raw id when the inventory has no match.
-func TestHeaderModelLabelUsesInventoryDisplayName(t *testing.T) {
+// TestHeaderModelLabelUsesResolvedProviderAndID keeps the header's model identity
+// exact even when inventory advertises a friendly display name.
+func TestHeaderModelLabelUsesResolvedProviderAndID(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.phase = phaseIdle // past the connecting gate (the create response has landed)
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
@@ -245,14 +244,14 @@ func TestHeaderModelLabelUsesInventoryDisplayName(t *testing.T) {
 		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5 (Friendly)"},
 		{ID: "other", ProviderID: "openai", DisplayName: "Other"},
 	}
-	if got := m.headerModelLabel(); got != "GPT-5 (Friendly)" {
-		t.Fatalf("headerModelLabel = %q, want the inventory display name", got)
+	if got := m.headerModelLabel(); got != "openai/gpt-5" {
+		t.Fatalf("headerModelLabel = %q, want the resolved provider/model id", got)
 	}
 
-	// No inventory match ⇒ raw model id.
+	// No inventory match leaves the exact identity unchanged.
 	m.modelCatalog.models = []client.ModelInfo{{ID: "different", ProviderID: "openai", DisplayName: "X"}}
-	if got := m.headerModelLabel(); got != "gpt-5" {
-		t.Fatalf("headerModelLabel = %q, want the raw model id fallback", got)
+	if got := m.headerModelLabel(); got != "openai/gpt-5" {
+		t.Fatalf("headerModelLabel = %q, want the resolved provider/model id", got)
 	}
 }
 
@@ -264,8 +263,8 @@ func TestHeaderModelLabelFallsBackWhenNoEffectiveModel(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.phase = phaseIdle
 	m.createModelSelection = client.ModelSelection{ProviderID: "openai", ModelID: "x"}
-	if got := m.headerModelLabel(); got != "x" {
-		t.Fatalf("headerModelLabel = %q, want the active selection %q", got, "x")
+	if got := m.headerModelLabel(); got != "openai/x" {
+		t.Fatalf("headerModelLabel = %q, want the active selection %q", got, "openai/x")
 	}
 
 	// With no effective model AND no active selection, fall back to deps.Model.

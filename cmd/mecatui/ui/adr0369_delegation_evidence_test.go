@@ -57,7 +57,33 @@ func TestDelegationEvidenceRendering(t *testing.T) {
 		}
 	}
 
-	if got := delegationModelLabelWithSelection("deep", "claude-opus-4-1", "", "claude-opus-4-1", "anthropic", "", &client.RoutingDecision{Outcome: "routed"}); got != "routed: deep → claude-opus-4-1" {
+	if got := delegationModelLabelWithSelection("deep", "claude-opus-4-1", "", "claude-opus-4-1", "anthropic", "", &client.RoutingDecision{Outcome: "routed"}); got != "routed: deep → anthropic/claude-opus-4-1" {
 		t.Fatalf("classifier label regressed: %q", got)
+	}
+	if got := delegationModelLabelWithSelection("small", "gpt-6-luna", "", "gpt-6-luna", "sprout-openai-api", "", nil); got != "routed: small → sprout-openai-api/gpt-6-luna" {
+		t.Fatalf("configured scalar route label = %q", got)
+	}
+	c.addTool("routed-sub", "Subagent", `{}`)
+	applySubagentTo(&c, client.SubagentMsg{
+		Kind: client.SubagentStart, ParentCallID: "routed-sub", ChildID: "routed-child", Goal: "smoke test",
+		Provider: "sprout-openai-api", Model: "gpt-6-luna", RoutedCategory: "small", RoutedModel: "gpt-6-luna",
+		RoutingDecision: &client.RoutingDecision{Outcome: "routed"},
+	})
+	routed, ok := c.subagentCard("routed-sub")
+	if !ok {
+		t.Fatal("routed subagent card missing")
+	}
+	routedPresentation := subagentCardPresentationFromSnapshot(routed)
+	if got := stripANSIstr(newTestRenderer().renderSubagentPresentation(routedPresentation, false, 120)); !strings.Contains(got, "routed: small → sprout-openai-api/gpt-6-luna") {
+		t.Fatalf("routed subagent card omitted its actual provider/model: %q", got)
+	}
+	if got := stripANSIstr(newTestRenderer().renderSubagentPresentation(routedPresentation, true, 120)); !strings.Contains(got, "actual model: sprout-openai-api/gpt-6-luna") {
+		t.Fatalf("expanded card omitted its actual provider/model: %q", got)
+	}
+	if got := delegationModelLabelWithSelection("", "", "resume", "gpt-6-luna", "sprout-openai-api", "", nil); got != "model: sprout-openai-api/gpt-6-luna · not routed: resume" {
+		t.Fatalf("resumed child label = %q", got)
+	}
+	if got := delegationModelLabelWithSelection("", "", "", "gpt-6-luna", "", "", nil); got != "model: gpt-6-luna" {
+		t.Fatalf("older server label = %q", got)
 	}
 }

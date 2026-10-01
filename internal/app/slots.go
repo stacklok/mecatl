@@ -166,7 +166,7 @@ func resolveSlotTarget(cfg Config, slotName, contextualProvider string) (ModelTa
 	if sel == "" {
 		return ModelTarget{}, false
 	}
-	target, err := resolveModelTarget(cfg, contextualProvider, "", sel)
+	target, err := resolveConfiguredModelTarget(cfg, contextualProvider, sel)
 	if err != nil || strings.TrimSpace(target.Model) == "" {
 		return ModelTarget{}, false
 	}
@@ -421,34 +421,66 @@ func captureCLIModelKeys(cfg Config) cliModelKeys {
 // when there is no permResolver, no operator models: block, or no operator
 // models.default (or it resolves to inherit/unknown — fail-soft, keep the registry
 // default).
-// foldOperatorPairModelDefault applies the provider half of an operator
-// models.default pair before registry construction. Scalar and unknown selectors
-// retain the existing late fail-soft path in foldOperatorModelDefault.
-func foldOperatorPairModelDefault(cfg Config, cliKeys cliModelKeys) (Config, error) {
-	if cliKeys.modelSet {
-		return cfg, nil
+// bindOperatorModelProvider fixes settings scalar aliases to the effective
+// operator default before a paired models.default replaces the session default.
+// CLI scalar aliases retain their contextual-provider semantics.
+func bindOperatorModelProvider(cfg Config, cliKeys cliModelKeys) Config {
+	provider := strings.TrimSpace(cfg.DefaultProvider)
+	if provider == "" {
+		return cfg
 	}
+	cfg.modelBindingProvider = provider
 	res, ok := cfg.permResolver.(*permconfig.Resolver)
 	if !ok || res == nil {
-		return cfg, nil
+		return cfg
 	}
 	policy := res.OperatorModelPolicy()
 	if policy == nil {
-		return cfg, nil
+		return cfg
+	}
+	for name, target := range policy.Aliases {
+		name = strings.TrimSpace(name)
+		model := strings.TrimSpace(target.Model)
+		if name == "" || target.Provider != "" || model == "" {
+			continue
+		}
+		if _, cliSet := cliKeys.aliases[name]; cliSet {
+			continue
+		}
+		if cfg.ModelAliasTargets == nil {
+			cfg.ModelAliasTargets = make(ModelAliases)
+		}
+		cfg.ModelAliasTargets[name] = ModelTarget{ProviderID: provider, Model: model}
+	}
+	return cfg
+}
+
+// foldOperatorPairModelDefault applies the provider half of an operator
+// models.default pair before registry construction. The pair overrides a
+// separately configured default provider; scalar and unknown selectors retain
+// the existing late fail-soft path in foldOperatorModelDefault.
+func foldOperatorPairModelDefault(cfg Config, cliKeys cliModelKeys) Config {
+	if cliKeys.modelSet {
+		return cfg
+	}
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	policy := res.OperatorModelPolicy()
+	if policy == nil {
+		return cfg
 	}
 	selector := strings.TrimSpace(policy.Default)
 	target, known := lookupModelAliasTarget(cfg, selector)
 	if selector == "" || !known || strings.TrimSpace(target.ProviderID) == "" {
-		return cfg, nil
+		return cfg
 	}
 	provider := strings.TrimSpace(target.ProviderID)
-	if configured := strings.TrimSpace(cfg.DefaultProvider); configured != "" && configured != provider {
-		return cfg, fmt.Errorf("models.default provider conflicts with explicit default provider")
-	}
 	cfg.DefaultProvider = provider
 	cfg.DefaultModel = target.Model
 	cfg.defaultModelFromAlias = true
-	return cfg, nil
+	return cfg
 }
 
 // foldOperatorModelDefault applies a scalar or already-provider-folded operator

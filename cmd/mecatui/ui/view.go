@@ -289,30 +289,22 @@ func (m Model) postureBadgeRender() (styled string, plainWidth int, present bool
 //
 //  1. While CONNECTING (no create response yet) ⇒ "" (no segment): the server owns
 //     the resolved value and we must not guess it.
-//  2. The EFFECTIVE model the server resolved THIS session to (m.resolvedSessionModel,
-//     echoed verbatim on SessionReadyMsg) — shown from turn zero. Its human display
-//     name is resolved from the already-held ListModels inventory by (provider_id,
-//     model_id); when the inventory has no match (not yet loaded, or a passthrough
-//     id) it falls back to the raw model id.
+//  2. The EFFECTIVE provider/model the server resolved THIS session to
+//     (m.resolvedSessionModel, echoed on SessionReadyMsg), shown exactly from
+//     turn zero, even when the inventory has a friendly display name.
 //  3. The picker's active selection (what the NEXT session will request), then the
-//     launch-time --model — the PRE-EXISTING fallbacks, kept as-is so an older server
-//     that omits resolved_model still shows the configured model after connect.
+//     launch-time --model (without an inferred provider) for older servers.
 func (m Model) headerModelLabel() string {
 	if m.phase == phaseConnecting {
 		return ""
 	}
 	if rm := m.resolvedSessionModel; rm.ModelID != "" {
-		for _, mi := range m.modelCatalog.models {
-			if mi.ProviderID == rm.ProviderID && mi.ID == rm.ModelID && mi.DisplayName != "" {
-				return mi.DisplayName
-			}
-		}
-		return rm.ModelID
+		return qualifiedModelLabel(rm.ProviderID, rm.ModelID)
 	}
-	if name := m.createModelSelection.ModelID; name != "" {
-		return name
+	if sel := m.createModelSelection; sel.ModelID != "" {
+		return qualifiedModelLabel(sel.ProviderID, sel.ModelID)
 	}
-	return m.deps.Model
+	return terminaltext.Sanitize(m.deps.Model)
 }
 
 // headerIdentityPad is the slack subtracted from the header width when deciding
@@ -1124,9 +1116,9 @@ func (m Model) renderFatalAtHeight(height int) string {
 	return card
 }
 
-// maxModelLen caps the model name shown in the header so a long provider-scoped
-// id (e.g. "anthropic/claude-opus-4-...") can't blow out the header width.
-const maxModelLen = 24
+// maxModelLen caps the provider/model identity in the header while leaving
+// ordinary provider-qualified IDs visible at common terminal widths.
+const maxModelLen = 48
 
 // effortHeaderSuffix returns the reasoning-effort token to show beside the model in
 // the header, or "" when nothing should render (ADR 0055). It hides the unset state

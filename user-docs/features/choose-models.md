@@ -175,7 +175,8 @@ This matters for cost. Anthropic caches a prompt only when the caller asks, and
 cache reads bill at a tenth of uncached input, so a long session on an unasked
 path pays the full price every turn. Mecatl therefore prefers
 `openrouter-anthropic` when the default model is an Anthropic model. An explicit
-`--default-provider` or an operator `models.default_provider` still wins.
+`--default-provider` or an operator `models.default_provider` overrides this
+preference unless a provider-aware default model alias selects a complete pair.
 
 `openrouter-anthropic` lists Anthropic models only, because OpenRouter's
 Anthropic endpoint does not serve other vendors' models.
@@ -246,7 +247,7 @@ models:
         model: image
 ```
 
-A scalar alias resolves its model on the consumer's current provider. An object alias requires both `provider` and `model` and carries that atomic pair wherever the alias is used, including defaults, auxiliary slots, agent definitions, router categories, and delegation selectors. Unknown or unavailable object providers fail startup; model IDs remain opaque and are not checked through a live provider probe.
+A scalar alias in `settings.yaml` binds to the effective `models.default_provider` (or `--default-provider`) when one is configured. So if the main session uses a provider-aware alias on `openrouter` while the configured default provider is `openai`, a router category targeting a scalar `coder` alias still runs `coder` on `openai`. Scalar slots, subagent defaults, and literal router-category targets follow the same rule; without a configured default provider, they remain contextual. An object alias always carries its `{provider, model}` pair, including when used as `models.default` for new sessions. A bare literal `model` in a Subagent call still uses the parent session's provider; a call naming a configured alias uses that alias's target. CLI scalar aliases remain contextual. Both the configured default provider and any provider selected by a pair must be available at startup; model IDs remain opaque and are not checked through a live provider probe.
 
 For ephemeral overrides, keep the model and provider in separate repeatable flags so model IDs need no delimiter:
 
@@ -321,16 +322,19 @@ routing; categories are advisory classification for otherwise unpinned work.
 ### Diagnose a delegated model decision
 
 Start with the model line on the live delegation card. A successful decision keeps
-the compact `routed: <category> → <model>` form. A fallback names the model that
-actually ran and can add the rejected candidate and its confidence comparison:
+the compact `routed: <category> → <provider>/<model>` form when the provider is
+known. The main-session header likewise shows its resolved provider/model ID.
+A fallback names the provider and model that actually ran and can add the
+rejected candidate and its confidence comparison:
 
 ```text
-model: gpt-6-astra · fallback: low-confidence
+model: openai/gpt-6-astra · fallback: low-confidence
 candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50
 ```
 
-The candidate is evidence about the classifier result. It is not the model that
-ran. The `model:` value remains the actual model after a fallback.
+The candidate is evidence about the classifier result, not a confirmed
+provider/model target. Older delegation events without provider evidence keep
+the model-only label.
 
 Press **F6** and focus the child, Parallel branch, or team member for the complete
 decision. The detail identifies the configured backend and classifier, candidate,

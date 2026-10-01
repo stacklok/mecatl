@@ -1159,12 +1159,28 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 	return ""
 }
 
+// qualifiedModelLabel displays the exact provider/model identity when both are
+// available; older servers without a provider retain their model-only label.
+func qualifiedModelLabel(provider, model string) string {
+	model = terminaltext.Sanitize(model)
+	if model == "" {
+		return ""
+	}
+	provider = terminaltext.Sanitize(provider)
+	if provider == "" {
+		return model
+	}
+	return provider + "/" + model
+}
+
+// delegationModelLabelWithSelection renders the actual provider/model identity
+// for live and restored delegation cards. Candidate evidence remains unqualified.
 func delegationModelLabelWithSelection(category, routedModel, routingReason, model, provider, explicitRouterCategory string, decision *client.RoutingDecision) string {
 	explicitRouterCategory = terminaltext.Sanitize(explicitRouterCategory)
 	if explicitRouterCategory != "" {
-		return "selected: model-router/" + explicitRouterCategory + " → " + terminaltext.Sanitize(provider) + "/" + terminaltext.Sanitize(model)
+		return "selected: model-router/" + explicitRouterCategory + " → " + qualifiedModelLabel(provider, model)
 	}
-	return delegationModelLabel(category, routedModel, routingReason, model, decision)
+	return delegationModelLabel(category, qualifiedModelLabel(provider, routedModel), routingReason, qualifiedModelLabel(provider, model), decision)
 }
 
 // delegationModelLabel preserves the historical model line when decision is nil.

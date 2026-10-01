@@ -55,6 +55,13 @@ func validateModelAliases(aliases ModelAliases, reg *providerRegistry) error {
 	return nil
 }
 
+func resolveConfiguredModelTarget(cfg Config, contextualProvider, selector string) (ModelTarget, error) {
+	if cfg.modelBindingProvider != "" {
+		contextualProvider = cfg.modelBindingProvider
+	}
+	return resolveModelTarget(cfg, contextualProvider, "", selector)
+}
+
 func resolveModelTarget(cfg Config, contextualProvider, explicitProvider, selector string) (ModelTarget, error) {
 	target, known := lookupModelAliasTarget(cfg, selector)
 	if !known || strings.TrimSpace(target.Model) == "" {

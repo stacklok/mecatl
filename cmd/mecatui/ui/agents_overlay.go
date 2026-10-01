@@ -1465,7 +1465,7 @@ func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, 
 	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("subagent · "+goal, bodyWidth)))
 	out.WriteString("\n")
 	out.WriteString(muted.Render(subagentRosterText(ln, bodyWidth, 0)))
-	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+	if detail := routingDecisionDetail(ln.routingDecision, qualifiedModelLabel(ln.provider, ln.model), ln.routingReason); detail != "" {
 		out.WriteString("\n")
 		out.WriteString(muted.Render(hangingIndentWrap(detail, "  ", bodyWidth)))
 	}
@@ -1737,7 +1737,7 @@ func indentParallelBranchTrace(trace string, bodyWidth int) string {
 func parallelBranchText(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
 	text := parallelBranchTitle(br, bodyWidth, titlePrefixWidth) + "\n" +
 		hangingIndentWrap(parallelBranchDetails(br), "    ", bodyWidth)
-	if detail := routingDecisionDetail(br.routingDecision, br.model, br.routingReason); detail != "" {
+	if detail := routingDecisionDetail(br.routingDecision, qualifiedModelLabel(br.provider, br.model), br.routingReason); detail != "" {
 		text += "\n" + hangingIndentWrap(detail, "    ", bodyWidth)
 	}
 	return text

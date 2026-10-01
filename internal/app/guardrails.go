@@ -553,7 +553,13 @@ func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, mod
 	} else {
 		return "", "", srcNone, false, nil
 	}
-	target, targetErr := resolveModelTarget(cfg, reg.Default(), explicitProvider, selector)
+	var target ModelTarget
+	var targetErr error
+	if src == srcSlot && explicitProvider == "" {
+		target, targetErr = resolveConfiguredModelTarget(cfg, reg.Default(), selector)
+	} else {
+		target, targetErr = resolveModelTarget(cfg, reg.Default(), explicitProvider, selector)
+	}
 	if targetErr != nil && cfg.UseMock {
 		target = ModelTarget{ProviderID: explicitProvider, Model: selector}
 		if target.ProviderID == "" {

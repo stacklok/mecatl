@@ -266,7 +266,7 @@ func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, expand
 		out.WriteString("\n")
 	}
 	if expand {
-		if detail := routingDecisionDetail(p.routing, p.model, p.routingReason); detail != "" {
+		if detail := routingDecisionDetail(p.routing, qualifiedModelLabel(p.provider, p.model), p.routingReason); detail != "" {
 			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
 			out.WriteString("\n")
 		}
@@ -324,7 +324,7 @@ func (r *renderer) renderTeamPresentation(p teamCardPresentation, expand bool, b
 		out.WriteString("\n")
 		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(lane, nameW, p.done), bodyWidth))
 		if expand {
-			if detail := routingDecisionDetail(lane.routingDecision, lane.model, lane.routingReason); detail != "" {
+			if detail := routingDecisionDetail(lane.routingDecision, qualifiedModelLabel(lane.provider, lane.model), lane.routingReason); detail != "" {
 				out.WriteString("\n")
 				out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
 			}

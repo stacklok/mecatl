@@ -7,6 +7,9 @@ import (
 )
 
 func applyDeploymentDefaultTarget(cfg Config) (Config, error) {
+	if cfg.defaultModelFromAlias {
+		return cfg, nil // models.default already resolved its alias before registry construction.
+	}
 	selector := strings.TrimSpace(cfg.DefaultModel)
 	if selector == "" {
 		return cfg, nil
@@ -19,9 +22,6 @@ func applyDeploymentDefaultTarget(cfg Config) (Config, error) {
 		return cfg, fmt.Errorf("default model %q means inherit", selector)
 	}
 	if target.ProviderID != "" {
-		if cfg.DefaultProvider != "" && strings.TrimSpace(cfg.DefaultProvider) != target.ProviderID {
-			return cfg, fmt.Errorf("default model alias provider conflicts with default provider")
-		}
 		cfg.DefaultProvider = target.ProviderID
 		cfg.defaultModelFromAlias = true
 	}
