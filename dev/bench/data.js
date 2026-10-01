@@ -260660,6 +260660,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790848160661,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4d378cc5ef5bee59cba09c8e72e9be7647e9b637",
+          "message": "fix(release): hash Brood Box images with a native helper (#2040)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T13:31:34+03:00",
+          "tree_id": "699bb94d36cc3449abd8519523045231fc0debbb",
+          "url": "https://github.com/stacklok/mecatl/commit/4d378cc5ef5bee59cba09c8e72e9be7647e9b637"
+        },
+        "date": 1790851431101,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -378318,6 +378352,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790851428122,
+  "lastUpdate": 1790851432195,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
