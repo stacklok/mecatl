@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 const finalSessionHandoffPrefix = "mecatui: final-session-id="
@@ -44,7 +45,7 @@ func finishFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, inter
 	id := reporter.ActiveSessionID()
 	var human strings.Builder
 	if available {
-		if title := safeHandoffTitle(snapshot.Title); title != "" {
+		if title := strings.TrimSpace(terminaltext.SanitizeSingleLine(snapshot.Title)); title != "" {
 			_, _ = fmt.Fprintf(&human, "Session: %s\n", title)
 		}
 		_, _ = fmt.Fprintf(&human, "Model calls: %d\nTokens (main): %d input, %d output", snapshot.Turns, snapshot.Usage.InputTokens, snapshot.Usage.OutputTokens)
@@ -70,15 +71,6 @@ func safeHandoffID(id string) bool {
 		}
 	}
 	return true
-}
-
-func safeHandoffTitle(title string) string {
-	return strings.TrimSpace(strings.Map(func(r rune) rune {
-		if !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r) {
-			return ' '
-		}
-		return r
-	}, title))
 }
 
 func maybeWriteFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, interrupted bool) bool {

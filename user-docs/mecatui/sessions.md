@@ -81,8 +81,8 @@ After an embedded session ends normally, the lines that follow show a
 shell-quoted `mecatui --resume '<SESSION_ID>'` command for that exact final chat.
 Use it to return to the same chat. The separately labelled `--resume-latest`
 alternative looks for the newest eligible chat and can select a different one.
-A connected session prints the ID record; to resume it, use `mecatui connect
-<ADDRESS> --resume <SESSION_ID>` with the original server address.
+A connected session prints the ID record; to resume it, use
+`mecatui connect <ADDRESS> --resume <SESSION_ID>` with the original server address.
 
 When the session snapshot is available, **Model calls** counts model calls begun
 in the chat, and **Tokens (main)** shows lifetime input and output tokens for

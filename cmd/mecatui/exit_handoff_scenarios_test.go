@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 )
 
@@ -137,7 +138,7 @@ func TestMecatuiExitHandoff_Scenario1_SafePresentation(t *testing.T) {
 	got = handoffOutput(t, "final", true, handoffSnapshotGetter(func(context.Context, string) (client.SessionSnapshot, error) {
 		return client.SessionSnapshot{State: "completed", Title: "ok\nFAKE LINE\x1b[31m\u202eevil", Turns: 1}, nil
 	}), nil, false)
-	if strings.Contains(got, "\x1b") || strings.Contains(got, "\u202e") || strings.Contains(got, "\nFAKE LINE") || strings.Count(got, "Session:") != 1 {
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\u202e") || strings.Contains(got, "\nFAKE LINE") || strings.Count(got, "Session:") != 1 || !strings.Contains(got, "Session: okFAKE LINE[31mevil\n") {
 		t.Fatalf("untrusted title controls/lines: %q", got)
 	}
 }
@@ -167,6 +168,9 @@ func TestMecatuiExitHandoff_Scenario2_SnapshotUnavailable(t *testing.T) {
 			}
 		})
 	}
+	t.Run("embedded GetSession missing", func(t *testing.T) {
+		checkEmbeddedCompositionChild(t, "missing")
+	})
 }
 
 func TestMecatuiExitHandoff_Scenario2_ExitMatrix(t *testing.T) {
@@ -194,7 +198,36 @@ func TestMecatuiExitHandoff_Scenario2_ExitMatrix(t *testing.T) {
 			}
 		})
 	}
-	if shouldWriteFinalSessionHandoff(connectRestartModel{intent: ui.ConnectRestartIntent{Target: "remote.example:443"}}, nil, false) {
-		t.Fatal("connect restart must not emit a final-session handoff")
+	// Exercise a real UI connect intent through the same exit and restart seams.
+	m := ui.New(ui.Deps{Connect: staticConnectController{target: "remote.example:443"}, ConnectOpen: true, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true})
+	model, _ := m.Update(m.Init()())
+	m = model.(ui.Model)
+	for range 2 {
+		model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = model.(ui.Model)
+	}
+	intent, ok := m.ConnectRestartIntent()
+	if !ok {
+		t.Fatal("connect intent not produced")
+	}
+	model, _ = m.Update(client.SessionReadyMsg{SessionID: "pre-restart"})
+	m = model.(ui.Model)
+	if m.ActiveSessionID() != "pre-restart" {
+		t.Fatalf("pre-restart ID = %q", m.ActiveSessionID())
+	}
+	var out bytes.Buffer
+	lookups := 0
+	finishFinalSessionHandoff(&out, m, nil, false, true, handoffSnapshotGetter(func(context.Context, string) (client.SessionSnapshot, error) {
+		lookups++
+		return client.SessionSnapshot{State: "completed", Title: "pre-restart title", Turns: 9}, nil
+	}), func() { out.WriteString("cleanup-complete\n") })
+	if out.String() != "cleanup-complete\n" || lookups != 0 {
+		t.Fatalf("restart handoff=%q lookups=%d", out.String(), lookups)
+	}
+	if err := restartFromConnectIntentWith([]string{"mecatui"}, intent, restartTransport{}, connectRestartOps{run: func([]string, runOptions) error {
+		out.WriteString("successor started\n")
+		return nil
+	}}); err != nil || out.String() != "cleanup-complete\nsuccessor started\n" {
+		t.Fatalf("restart err=%v output=%q", err, out.String())
 	}
 }
