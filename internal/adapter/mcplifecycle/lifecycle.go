@@ -6,6 +6,10 @@ package mcplifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
 
@@ -45,6 +49,11 @@ type AddResult struct {
 // caller; an empty issuer performs discovery here.
 func Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	if err := ctx.Err(); err != nil {
+		return AddResult{}, err
+	}
+	// Reject an illegal name before discovery and custody selection, which can
+	// touch the network and provision key material.
+	if err := ValidateName(req.Name); err != nil {
 		return AddResult{}, err
 	}
 	var settings permconfig.Config
@@ -93,6 +102,29 @@ func Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		return AddResult{}, err
 	}
 	return AddResult{Settings: after, Backend: selected.Backend, Locator: locator}, nil
+}
+
+// ValidateName rejects an illegal profile name with an operator-facing
+// explanation and, when one can be derived, a suggested legal name built by
+// mapping other characters to single underscores.
+func ValidateName(name string) error {
+	if permconfig.ValidateMCPServerName(name) == nil {
+		return nil
+	}
+	msg := fmt.Sprintf("invalid MCP server name %q: names may contain only ASCII letters, digits, and single underscores, because the name becomes part of an environment variable name", name)
+	var b strings.Builder
+	for _, r := range name {
+		if r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			b.WriteRune(r)
+		} else if s := b.String(); s != "" && !strings.HasSuffix(s, "_") {
+			b.WriteByte('_')
+		}
+	}
+	suggestion := strings.TrimSuffix(b.String(), "_")
+	if permconfig.ValidateMCPServerName(suggestion) == nil {
+		msg += fmt.Sprintf(" (try %q)", suggestion)
+	}
+	return errors.New(msg)
 }
 
 // ListEntry is the bounded, non-secret profile projection used by list.

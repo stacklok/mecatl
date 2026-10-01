@@ -1,6 +1,7 @@
 package mcplifecycle
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -24,6 +25,35 @@ func TestAC08DirectMCPLifecycleAddRejectsBrokerBeforeDiscovery(t *testing.T) {
 		t.Fatalf("Add() error = %v, want broker rejection", err)
 	}
 }
+
+// TestDirectMCPLifecycleAddRejectsIllegalNameBeforeDiscovery uses an
+// unroutable URL: reaching discovery would surface a network error instead.
+func TestDirectMCPLifecycleAddRejectsIllegalNameBeforeDiscovery(t *testing.T) {
+	for name, suggestion := range map[string]string{
+		"connector-gateway": `(try "connector_gateway")`,
+		"a__b":              `(try "a_b")`,
+		"-my.svc-":          `(try "my_svc")`,
+		"ı":                 "",
+		"":                  "",
+	} {
+		var stages []string
+		_, err := Add(t.Context(), AddRequest{
+			Name: name, URL: "https://mcp.invalid/mcp",
+			Settings: []byte("mcp:\n  mode: global\n"),
+			Progress: func(stage string) { stages = append(stages, stage) },
+		})
+		if err == nil || !strings.Contains(err.Error(), "invalid MCP server name") {
+			t.Fatalf("Add(%q) error = %v, want name rejection", name, err)
+		}
+		if got := strings.Contains(err.Error(), "(try "); got != (suggestion != "") || !strings.HasSuffix(err.Error(), suggestion) {
+			t.Fatalf("Add(%q) error = %q, want suggestion %q", name, err, suggestion)
+		}
+		if len(stages) != 0 {
+			t.Fatalf("Add(%q) reached stages %v before rejecting the name", name, stages)
+		}
+	}
+}
+
 func TestAC08DirectMCPLifecycleRemoveDelegatesNarrowMutation(t *testing.T) {
 	before := []byte("mcp:\n  servers:\n    - name: calendar\n      url: https://mcp.example/calendar\n      auth: {mode: none}\n")
 	got, err := Remove(before, "calendar")

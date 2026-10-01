@@ -449,6 +449,9 @@ func runMCPAddContext(ctx context.Context, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return err
 	}
+	if err := mcplifecycle.ValidateName(parsed.name); err != nil {
+		return err
+	}
 	if parsed.custody != "auto" && parsed.custody != mcpcredential.BackendKeyring && parsed.custody != mcpcredential.BackendFile {
 		return errors.New("MCP credential-store must be auto, keyring, or file")
 	}

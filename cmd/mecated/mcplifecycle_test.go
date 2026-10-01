@@ -377,6 +377,34 @@ func TestDirectMCPOnboarding_Scenario4_CleanupEveryTerminalPath(t *testing.T) {
 	}
 }
 
+func TestDirectMCPAddRejectsIllegalNameBeforeDiscovery(t *testing.T) {
+	configHome, stateHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	original := []byte("mcp:\n  mode: global\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscover := discoverMCPDirectIssuer
+	t.Cleanup(func() { discoverMCPDirectIssuer = oldDiscover })
+	discoverMCPDirectIssuer = func(context.Context, string) (mcp.DirectIssuerDiscovery, error) {
+		t.Fatal("discovery ran for an illegal name")
+		return mcp.DirectIssuerDiscovery{}, nil
+	}
+	var stdout bytes.Buffer
+	err := runMCPAdd([]string{"connector-gateway", "https://mcp.example/mcp", "--file", path}, &stdout, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), `(try "connector_gateway")`) {
+		t.Fatalf("runMCPAdd error = %v, want name rejection with suggestion", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("progress written before name rejection: %q", stdout.String())
+	}
+	if settings, err := os.ReadFile(path); err != nil || !bytes.Equal(settings, original) {
+		t.Fatalf("settings changed after name rejection: %q, %v", settings, err)
+	}
+}
+
 func TestDirectMCPOnboarding_Scenario4_ProgressAndVerification(t *testing.T) {
 	configHome, stateHome := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)

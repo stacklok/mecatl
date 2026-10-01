@@ -800,6 +800,15 @@ var (
 	mecatlSecretReference = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
 )
 
+// ValidateMCPServerName reports whether name is a legal mcp.servers[].name, so
+// callers can reject it before side effects instead of at schema validation.
+func ValidateMCPServerName(name string) error {
+	if !mcpProfileName.MatchString(name) || strings.Contains(name, "__") {
+		return errors.New("mcp.servers[].name must match [A-Za-z0-9_]+ and must not contain __")
+	}
+	return nil
+}
+
 const (
 	modeKey           = "mode"
 	mcpOAuth2Mode     = "oauth2"
@@ -848,8 +857,8 @@ func (s *MCPServerProfile) UnmarshalYAML(node ast.Node) error {
 	if !mappingHasKey(node, "auth") {
 		return errors.New("mcp.servers[].auth is required")
 	}
-	if !mcpProfileName.MatchString(s.Name) || strings.Contains(s.Name, "__") {
-		return errors.New("mcp.servers[].name must match [A-Za-z0-9_]+ and must not contain __")
+	if err := ValidateMCPServerName(s.Name); err != nil {
+		return err
 	}
 	u, err := validateMCPHTTPURL("mcp.servers[].url", s.URL, false)
 	if err != nil {
