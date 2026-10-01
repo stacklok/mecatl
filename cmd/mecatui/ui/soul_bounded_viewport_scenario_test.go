@@ -310,7 +310,6 @@ func TestMecatuiSoulBoundedViewport_Scenario2_WheelOwnershipAndCompactIsolation(
 
 	m = resize(m, 94, 30)
 	_ = m.View()
-	s = soulActive(m)
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
 	offset, conversationOffset := soulActive(m).viewport.Offset(), m.vp.YOffset()
