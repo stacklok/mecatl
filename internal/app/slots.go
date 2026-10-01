@@ -359,16 +359,6 @@ func foldOperatorModelSlots(cfg Config) Config {
 	return cfg
 }
 
-func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
-	out := make(map[string]string, len(slots))
-	for name, value := range slots {
-		if !value.ExplicitProvider {
-			out[name] = value.Model
-		}
-	}
-	return out
-}
-
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
 // (--model-slot / --model-alias / --model), taken BEFORE foldOperatorModelSlots merges
 // the operator-YAML in. It preserves CLI precedence over operator settings.yaml.

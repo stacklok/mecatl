@@ -813,6 +813,7 @@ func ValidateMCPServerName(name string) error {
 
 const (
 	modeKey           = "mode"
+	modelKey          = "model"
 	mcpOAuth2Mode     = "oauth2"
 	mcpCredentialFile = "file"
 )
@@ -1609,7 +1610,7 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 			seen := map[string]bool{}
 			for _, field := range fields.Values {
 				key, isString := permconfigMappingKey(field.Key)
-				if !isString || (key != "provider" && key != "model") {
+				if !isString || (key != "provider" && key != modelKey) {
 					return fmt.Errorf("models.slots.guardrail: unknown key %q", key)
 				}
 				if seen[key] {
@@ -1673,7 +1674,7 @@ func (a *ModelAliases) UnmarshalYAML(node ast.Node) error {
 			seen := map[string]bool{}
 			for _, field := range fields.Values {
 				key, isString := permconfigMappingKey(field.Key)
-				if !isString || (key != "provider" && key != "model") || seen[key] {
+				if !isString || (key != "provider" && key != modelKey) || seen[key] {
 					return fmt.Errorf("models.aliases.%s: object must contain exactly provider and model", name)
 				}
 				seen[key] = true
@@ -1902,7 +1903,7 @@ func (j *JevRouterSection) UnmarshalYAML(node ast.Node) error {
 		}
 	}
 	if err := decodeStrictMapping(node, "models.router.jev", map[string]any{
-		"model": &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
+		modelKey: &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
 		"maximum-input-bytes": &j.MaximumInputBytes,
 	}); err != nil {
 		return err
@@ -1956,7 +1957,7 @@ func (c *RouterCategory) strictFields() map[string]any {
 	return map[string]any{
 		"name":        &c.Name,
 		"description": &c.Description,
-		"model":       &c.Model,
+		modelKey:      &c.Model,
 	}
 }
 
@@ -2073,7 +2074,7 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 
 func (g *GuardrailsSection) strictFields() map[string]any {
 	return map[string]any{
-		"model":         &g.Model,
+		modelKey:        &g.Model,
 		"disabled":      &g.Disabled,
 		"onCheckerDown": &g.OnCheckerDown,
 		"defaultMode":   &g.DefaultMode,

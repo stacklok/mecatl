@@ -164,7 +164,7 @@ func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 		factory := func(MemberSpec, string) MemberBuild {
 			return MemberBuild{Engine: markerEngine("default"), Provider: "parent"}
 		}
-		selectorFactory := func(spec MemberSpec, selected ResolvedModelSelector) MemberBuild {
+		selectorFactory := func(_ MemberSpec, selected ResolvedModelSelector) MemberBuild {
 			builds++
 			if selected.Target.Model != "override" {
 				t.Fatalf("factory target = %#v", selected)

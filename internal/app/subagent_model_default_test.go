@@ -415,7 +415,7 @@ func TestNormalizeSubagentModelKeepsConcreteIDVerbatim(t *testing.T) {
 // TestNormalizeSubagentModelKeepsOperatorAliasVerbatim pins the documented
 // verbatim semantics for an operator-defined alias: lookupModelAlias maps it to
 // the concrete id (so it VALIDATES), but normalize returns the ALIAS itself —
-// per-child resolution (resolveModelFor/resolveDefaultChildModel) maps it
+// per-child resolution (resolveModelFor) maps it
 // silently downstream.
 func TestNormalizeSubagentModelKeepsOperatorAliasVerbatim(t *testing.T) {
 	cfg := Config{SubagentModel: "fast", ModelAliases: map[string]string{"fast": "gpt-4o-mini"}}
@@ -427,9 +427,9 @@ func TestNormalizeSubagentModelKeepsOperatorAliasVerbatim(t *testing.T) {
 		t.Fatalf("normalizeSubagentModel = %q, want the alias kept verbatim (%q)", got, "fast")
 	}
 	// The per-child def-less chain resolves the kept alias to the concrete id.
-	model, _ := resolveDefaultChildModel(cfg, nil, providerMock, "parent-model")
+	model := resolveModelFor(cfg, agents.AgentDef{}, "parent-model")
 	if model != "gpt-4o-mini" {
-		t.Fatalf("resolveDefaultChildModel over the kept alias = %q, want the mapped concrete id %q", model, "gpt-4o-mini")
+		t.Fatalf("resolveModelFor over the kept alias = %q, want the mapped concrete id %q", model, "gpt-4o-mini")
 	}
 }
 
