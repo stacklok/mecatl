@@ -1933,7 +1933,10 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 		c.applySubagentTyped(msg)
 		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model, msg.Background)
 		if msg.ChildID != "" {
-			c.fleetLane(msg.ChildID).routingDecision = cloneRoutingDecision(msg.RoutingDecision)
+			lane := c.fleetLane(msg.ChildID)
+			lane.provider = msg.Provider
+			lane.explicitRouterCategory = msg.ExplicitRouterCategory
+			lane.routingDecision = cloneRoutingDecision(msg.RoutingDecision)
 		}
 	case client.SubagentTool:
 		c.applySubagentTyped(msg)
@@ -1965,6 +1968,11 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 		c.parallelStart(msg.ParentCallID, msg.Join, msg.BranchCount)
 	case client.ParallelBranchStart:
 		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
+		if msg.ParentCallID != "" {
+			branch := c.parallelGroupFor(msg.ParentCallID).parallelBranchFor(msg.BranchIndex)
+			branch.provider = msg.Provider
+			branch.explicitRouterCategory = msg.ExplicitRouterCategory
+		}
 		c.setParallelRoutingDecision(msg.ParentCallID, msg.BranchIndex, msg.RoutingDecision)
 	case client.ParallelBranchTool:
 		c.parallelBranchTool(msg)

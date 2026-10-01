@@ -247,7 +247,9 @@ type teamLane struct {
 	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112),
 	// regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never member content — so gauntlet #7 holds.
-	model string
+	model                  string
+	provider               string
+	explicitRouterCategory string
 
 	current   string // last tool name run, or "" when none yet
 	toolCount int
@@ -328,21 +330,23 @@ type teamFinding struct {
 // via SubagentStatus — the events carry only background + done, never the
 // registry's delivered state, so the lane renders what it honestly knows.
 type subagentLane struct {
-	childID         string
-	goal            string
-	background      bool
-	routedCategory  string // opt-in model router's category label; "" when unrouted
-	routedModel     string // opt-in model router's chosen model id; "" when unrouted
-	routingReason   string // WHY the router did not classify (issue #397); "" on a routed hit
-	routingDecision *client.RoutingDecision
-	model           string // concrete model id the child ACTUALLY ran on (issue #112); == routedModel when routed
-	current         string // latest child tool name, "" when none yet
-	trace           []teamTrace
-	toolCount       int
-	usage           client.Usage
-	isError         bool // the most-recent child tool errored (transient)
-	done            bool
-	stop            string
+	childID                string
+	goal                   string
+	background             bool
+	routedCategory         string // opt-in model router's category label; "" when unrouted
+	routedModel            string // opt-in model router's chosen model id; "" when unrouted
+	routingReason          string // WHY the router did not classify (issue #397); "" on a routed hit
+	routingDecision        *client.RoutingDecision
+	model                  string // concrete model id the child ACTUALLY ran on (issue #112); == routedModel when routed
+	provider               string
+	explicitRouterCategory string
+	current                string // latest child tool name, "" when none yet
+	trace                  []teamTrace
+	toolCount              int
+	usage                  client.Usage
+	isError                bool // the most-recent child tool errored (transient)
+	done                   bool
+	stop                   string
 	// cause is the child's FAILURE DETAIL on an errored terminal (subagent.end's
 	// Cause; empty otherwise) — the harness/provider error, not child-authored
 	// output, so gauntlet #7 holds (issue #319). It is the ONLY place the fleet
@@ -676,16 +680,18 @@ type parallelBranch struct {
 	// model is the concrete model id this branch ACTUALLY ran on (issue #112),
 	// regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never branch content — so gauntlet #7 holds.
-	model      string
-	current    string // latest branch tool name, "" when none yet
-	trace      []teamTrace
-	toolCount  int
-	usage      client.Usage
-	isError    bool // the most-recent branch tool errored (transient)
-	done       bool
-	failed     bool
-	stop       string
-	durationMs int64
+	model                  string
+	provider               string
+	explicitRouterCategory string
+	current                string // latest branch tool name, "" when none yet
+	trace                  []teamTrace
+	toolCount              int
+	usage                  client.Usage
+	isError                bool // the most-recent branch tool errored (transient)
+	done                   bool
+	failed                 bool
+	stop                   string
+	durationMs             int64
 }
 
 // parallelGroup is the fan-out GROUP projection of ONE Parallel call, keyed by

@@ -262,7 +262,7 @@ func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, bodyWi
 		out.WriteString(renderDelegationToolCardText(muted, "↳ "+terminaltext.Sanitize(p.goal), bodyWidth))
 		out.WriteString("\n")
 	}
-	modelLabel := delegationModelLabel(p.routedCategory, p.routedModel, p.routingReason, p.model, p.routing)
+	modelLabel := delegationModelLabelWithSelection(p.routedCategory, p.routedModel, p.routingReason, p.model, p.provider, p.explicitRouterCategory, p.routing)
 	if modelLabel != "" {
 		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
 		out.WriteString("\n")
