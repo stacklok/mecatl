@@ -6,6 +6,7 @@
 # visibly-annotated opt-in -- the same escape hatch deploy/mecak8s-vmcp's
 # Taskfile.yml uses for its own real-provider wiring (#800).
 mockProvider: false
+model: openai/gpt-6-sol
 security:
   allowUnsafeRealProvider: true
 extraEnv:

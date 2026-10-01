@@ -97,6 +97,35 @@ func TestMecak8sKindFixture_Scenario2_MockDefault(t *testing.T) {
 	}
 }
 
+func TestMecak8sKindFixture_Scenario2_LiveProviderDefaultModel(t *testing.T) {
+	body, err := os.ReadFile("kind-provider-real.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values struct {
+		Model string `yaml:"model"`
+	}
+	if err := yaml.Unmarshal(body, &values); err != nil {
+		t.Fatal(err)
+	}
+	if values.Model != "openai/gpt-6-sol" {
+		t.Fatalf("real-provider model = %q, want %q", values.Model, "openai/gpt-6-sol")
+	}
+
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required to render the real-provider fixture")
+	}
+	cmd := exec.Command("helm", "template", "kind", ".", "-f", "values-kind.yaml", "-f", "../../mecak8s-kind/kind-provider-real.yaml")
+	cmd.Dir = "../helm/mecak8s"
+	rendered, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render real-provider fixture: %v\n%s", err, rendered)
+	}
+	if !strings.Contains(string(rendered), "--model=openai/gpt-6-sol") {
+		t.Fatal("real-provider fixture render omits the pinned model")
+	}
+}
+
 // TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit pins that the executable
 // setup task closure excludes the billable live-provider smoke action.
 func TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit(t *testing.T) {
