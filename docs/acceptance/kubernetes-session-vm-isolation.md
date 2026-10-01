@@ -63,7 +63,7 @@ Planned behavior stays here until implemented.
   - **Upgrade sweep.** On upgrade, environments that are already active with an empty reference set are stopped by the same reconciliation.
 - **Security / authority:** A per-environment kernel boundary and no host execution in mecak8s; all other authority unchanged:
   - **Isolation.** Separate environments share no kernel when the profile names a Kata RuntimeClass. The controller verifies on every Pod read that `runtimeClassName` and `spec.overhead` match the profile RuntimeClass, and fails closed on mismatch through existing RuntimeClass `get` RBAC; no new RBAC.
-  - **No host execution in mecak8s.** With execution enabled, mecak8s constructs no host `CommandRunner`, and no hook runner with configured commands, for any session placement.
+  - **No host execution in mecak8s.** With execution enabled, mecak8s constructs no host `CommandRunner`, and no hook runner with configured commands, for any session placement. This first implementation disallows operator command hooks while execution is enabled. A later plan can revisit allowing them, for example by running them in the executor or as remote hooks.
   - **Unchanged.** OIDC owner binding, creator `clientHash`, Ed25519 grants, run claims, fencing, credential-free workload requests, default-deny NetworkPolicy and the Pod security context are all unchanged.
   - **What ADR 0373 claims.** A per-environment kernel boundary on a qualified Kata RuntimeClass. It does not claim hostile public tenancy, egress control or provider-side runtime detection.
 - **Compatibility / migration:** Behavioral breaks only for draft-feature deployments; no in-place runtime conversion:
@@ -184,7 +184,7 @@ execution production lane is path-gated (`.github/workflows/k8s-e2e.yml:207-241`
 | A per-session VM for Fork/Clear successors | Not planned | ADR 0364 shared-environment semantics retained |
 | Provider-side runtime detection or a profile isolation field | Not planned | The RuntimeClass is operator-qualified configuration |
 | Firecracker (`kata-fc`), gVisor, and macOS Kata | Not planned | Needs devmapper / not a VM / no KVM in Docker Desktop |
-| Remote command hooks or VM-side hooks | Later | Hook-bearing definitions are refused instead |
+| Allowing operator command hooks while execution is enabled (for example, executor-side or remote hooks) | Later plan, to be revisited | The first implementation refuses hook-bearing definitions |
 | Multi-replica mecak8s product qualification | Parent plan deferral | Unchanged |
 
 ## Definition of done
