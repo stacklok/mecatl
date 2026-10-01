@@ -181,6 +181,59 @@ func TestParallelEngineFactorySatisfiesOptionShape(_ *testing.T) {
 	_ = agent.WithParallelEngineFactory(f)
 }
 
+func TestParallelTeamSelectorTargetFactories(t *testing.T) {
+	t.Run("parallel target switches provider", func(t *testing.T) {
+		parent := mockllm.New(mockllm.TextTurn("parent"))
+		var mu sync.Mutex
+		var models []string
+		second := observedProvider(&models, &mu, mockllm.TextTurn("second"))
+		reg := twoProviderReg(parent, "parent", "parent-model", second, "second")
+		factory := buildParallelTargetEngineFactory(Config{Model: "parent-model"}, reg, parent, "parent", nil)
+		eng, ok := factory(agent.ModelTarget{Provider: "second", Model: "chosen"})
+		if !ok || eng == nil {
+			t.Fatal("cross-provider parallel target was not built")
+		}
+		drainEngine(t, eng)
+		mu.Lock()
+		defer mu.Unlock()
+		if len(models) != 1 || models[0] != "chosen" {
+			t.Fatalf("second-provider models = %v, want [chosen]", models)
+		}
+	})
+
+	t.Run("named team model override preserves specialist scope", func(t *testing.T) {
+		parent := mockllm.New(mockllm.TextTurn("parent"))
+		var (
+			mu     sync.Mutex
+			models []string
+			system string
+		)
+		second := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			mu.Lock()
+			models = append(models, req.Model)
+			system = req.System.Render()
+			mu.Unlock()
+		})}, mockllm.TextTurn("done"))
+		reg := twoProviderReg(parent, "parent", "parent-model", second, "second")
+		def := agents.AgentDef{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY", PermissionMode: "plan", MaxTurns: 7, MaxToolCalls: 8}
+		cfg := Config{Model: "parent-model"}
+		factory := buildMemberSelectorEngine(cfg, reg, parent, "parent", "parent-model", hookexec.New(nil), agents.NewRegistry([]agents.AgentDef{def}), nil, nil, nil, false, nil, catalogAssets{}, false)
+		build := factory(team.New("t"), agent.MemberSpec{Name: "reviewer", AgentType: "reviewer"}, agent.ResolvedModelSelector{Target: agent.ModelTarget{Model: "override"}, ActualProvider: "second"})
+		if build.Engine == nil {
+			t.Fatal("named member model override returned nil engine")
+		}
+		drainEngine(t, build.Engine)
+		mu.Lock()
+		defer mu.Unlock()
+		if build.Provider != "second" || len(models) != 1 || models[0] != "override" {
+			t.Fatalf("provider=%q models=%v, want second/[override]", build.Provider, models)
+		}
+		if build.Mode != session.ModePlan || build.Limits.MaxTurns != 7 || build.Limits.MaxToolCalls != 8 || !strings.Contains(system, "SPECIALIST-SCOPE-CANARY") {
+			t.Fatalf("specialist scope lost: mode=%q limits=%+v system=%q", build.Mode, build.Limits, system)
+		}
+	})
+}
+
 // ---- routingProvider: a deterministic content-routing port.LLMProvider for the e2e ------
 
 // routingProvider is a deterministic, concurrency-safe port.LLMProvider for the team /

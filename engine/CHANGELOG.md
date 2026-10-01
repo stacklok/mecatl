@@ -15,8 +15,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Provider-aware delegation target seam** — adds `agent.ModelTarget`,
   `agent.ResolvedModelSelector`, `agent.SubagentSelectorResolver`, provider-aware
-  Subagent engine-factory options, and the optional `Provider` field on
-  `agent.ModelRouteResult`. `session.SubagentPayload` gains concrete `Provider`
+  Subagent, Parallel, and Team engine-factory options, and the optional `Provider`
+  field on `agent.ModelRouteResult`. `session.SubagentPayload`,
+  `session.ParallelPayload`, and `session.TeamMemberSpec` gain concrete `Provider`
   and `ExplicitRouterCategory` start metadata. Composition can preserve direct,
   aliased, and automatic router provider/model pairs while rebuilding
   provider-dependent child dependencies. Added (minor).

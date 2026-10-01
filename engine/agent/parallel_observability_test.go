@@ -382,6 +382,9 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// Model (issue #112 / ADR 0035) is the concrete MODEL id this branch ACTUALLY ran
 		// on, regardless of how it was chosen — bare metadata, never branch content.
 		"Model": true,
+		// Provider and ExplicitRouterCategory are bounded selector provenance: concrete
+		// registry/category identifiers, never branch-authored content.
+		"Provider": true, "ExplicitRouterCategory": true,
 		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields: Text
 		// carries a clamped child message/result-text preview, Detail a clamped
 		// tool-call-args or tool-result-body preview, InnerKind the inner event kind
