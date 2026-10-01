@@ -532,14 +532,12 @@ phasing).
 Model selection layers **on top of** the provider routing above, all in composition
 (the domain/agent only ever sees a concrete model string).
 
-**Aliases are the spine ([ADR 0030](../adr/0030-model-selection-heuristics.md)).** A
-short semantic name (`cheap`/`fast`/`reasoning`, or the Claude-Code-style
-`sonnet`/`opus`/`haiku`) maps to a concrete provider model id through the operator's
-`ModelAliases` map (`--model-alias name=id`, or the `models.aliases` YAML map), then the
-built-in aliases. The ONE grammar is `lookupModelAlias` in
-`internal/app/agentdefs.go` — shared by the forgiving agent-def `model:` path
-(`resolveAlias`) and the fail-fast flag path (`normalizeSubagentModel`), so they never
-drift.
+**Aliases are universal targets ([ADR 0369](../adr/0369-delegation-provider-model-selectors.md)).** A short semantic name (`cheap`/`fast`/`reasoning`, or the Claude-Code-style `sonnet`/`opus`/`haiku`) can use either form:
+
+- a scalar model ID, resolved on the consumer's contextual provider; or
+- an operator-YAML `{provider, model}` object, resolved as one atomic target.
+
+Every alias consumer preserves that target across defaults, slots, agent definitions, router categories, and delegation selectors. The CLI keeps `--model-alias name=model-id`; an optional matching `--model-alias-provider name=provider-id` supplies the provider without imposing a delimiter on opaque model IDs. Composition owns the single-hop resolution and re-derives provider-dependent dependencies through its factories; engine core never receives the provider registry.
 
 **Per-slot models (`models.slots`, Phase 1+2).** A **slot** is a named internal
 lightweight LLM call. Three are routed to a slot so housekeeping can run on a cheaper
@@ -551,25 +549,9 @@ model than the session:
 | `ask-reviewer` | the headless child-ask reviewer (issue #31) | `askAdjudicatorDeps` |
 | `guardrail` | the LLM content checker (issue #27) | `buildGuardrailsChecker` |
 
-The single choke point is **`resolveSlotModel`** (`internal/app/slots.go`): an explicit
-`models.slots[<slot>]` binding wins, else the slot's default **tier** (`compaction`,
-`ask-reviewer`, and `guardrail` all default to `cheap`), else `("", false)`. A resolved
-selector is mapped THROUGH `lookupModelAlias`, so a slot value is itself an alias or a
-literal id. For the compaction slot, ONLY the summary LLM call's model (and its
-token-counter) is swapped — the engine's own Model / TokenCounter / PromptConfig /
-ContextWindow stay on the session model. For `ask-reviewer` the slot **supersedes the
-model** of `--subagent-ask-reviewer`, but that flag stays the **on/off gate** (a slot
-alone never enables the reviewer). For `guardrail` the slot **supersedes the model**
-of `--guardrails-model` AND **enables** guardrails (ADR 0046 — configure = enable); the
-flag is no longer the sole enable gate.
+The shared choke point resolves a slot selector to a provider/model target. An explicit `models.slots[<slot>]` binding wins, then the slot's default tier (`compaction`, `ask-reviewer`, and `guardrail` default to `cheap`), then no configured target. A successful cross-provider auxiliary target re-derives only that call's provider-dependent dependencies; it never mutates the parent engine or session. For compaction, only the summary call changes. For `ask-reviewer`, the slot supersedes the model of `--subagent-ask-reviewer`, but that flag remains the enable gate. For `guardrail`, the slot supersedes `--guardrails-model` and enables guardrails (ADR 0046).
 
-Posture is **fail-soft** and the default is **byte-identical**: with no slot configured
-every routed call keeps the session model; a typo'd slot key or an alias meaning inherit
-WARNs and degrades to the session model — a broken housekeeping slot never wedges the
-call. `models.slots` / `models.aliases` come from the operator tier (user-global
-`settings.yaml` + `--model-slot` / `--model-alias`); a project tier may also bind them
-**within an operator allowlist** (see below). Team synthesis is **deferred** (it runs on
-the lead member's whole engine); the subagent router shipped in Phase 5 (see below).
+Posture is **fail-soft** and the default is **byte-identical**: with no slot configured every routed call keeps its ordinary model; an unknown selector or unavailable runtime target warns and degrades to that behavior rather than wedging compaction or a checker. `models.slots` and `models.aliases` are operator-tier only. A project-tier `models:` node is treated as opaque ignored content and emits one value-free warning regardless of project trust.
 
 **Mode→model: the `plan` slot (Phase 3, the opusplan pattern).** A fourth slot, `plan`,
 is wired on the **mode axis** rather than the internal-call axis. It does **not** route a
@@ -580,61 +562,15 @@ executing turn on the session model. Two divergences from the call-slots: its de
 consumer is the **per-session engine factory** (`sessionEngineFactory`), not a per-call
 deps builder. It reuses `resolveSlotModel` unchanged — same grammar, different consumer.
 
-The re-resolution is **fixed per turn, re-resolved between turns**: the model is fixed
-for the duration of a turn; a mode switch (`SetMode`, rejected mid-turn) takes effect at
-the next **run-entry seam** — the SAME seam `rehydrateSession` already rebuilds a
-per-session engine on. The provider stays **fixed per session**: the plan slot only
-swaps the **model** within the session provider, never the provider. Two rebuild triggers
-live in the server (`engineAndEnvironmentFor`): a registered per-session engine whose
-`builtForMode` no longer matches the session's `Mode` is **rebuilt** (CASE 1), and a
-default-FS session whose mode would change the model — gated by the composition predicate
-`server.Config.ModeNeedsEngine` (nil unless a plan slot is active, the **byte-identical**
-guard) — is **promoted** to a per-session engine (CASE 2). Both go through the one shared
-`buildAndRegisterSessionEngine` helper. `resolved_model` re-emits the new model on the
-next `GetSession`/turn echo after the rebuild (a `SetMode` response still carries the
-pre-rebuild model — the model is fixed per turn). With no plan slot, a mode flip changes
-nothing. See [ADR 0030](../adr/0030-model-selection-heuristics.md) Layer 3.
+The re-resolution is **fixed per turn, re-resolved between turns**: a mode switch takes effect at the next run-entry rebuild. The session's persisted provider stays fixed because its history may contain provider-private replay state. A same-provider plan target changes the model. A cross-provider plan target emits a warning and keeps plan permission mode while running on the session's ordinary provider/model; it never rebases the target model onto the session provider. `resolved_model` reports the actual model used after the rebuild. With no plan slot, a mode flip changes no model selection. See [ADR 0030](../adr/0030-model-selection-heuristics.md) Layer 3 and [ADR 0369](../adr/0369-delegation-provider-model-selectors.md).
 
-**Project-overridable model config, capped by an operator allowlist (Phase 4).** A
-**trusted** project's `.mecatl/settings.yaml` may re-bind `models.default` / `models.slots`
-/ `models.aliases` — but only to entries the operator vetted. The whole layering chain is:
+**Model policy is operator-tier only.** Project settings cannot bind `models.default`, `models.slots`, `models.aliases`, router categories, context windows, or provider choices, even in a trusted workspace. After whole-document YAML parsing, Mecatl treats a project `models:` node as opaque ignored content and emits one warning without rendering its values. The operator `models.allowlist` key remains parseable only for migration compatibility; it has no effect and warns. Effective precedence is:
 
 ```text
-CLI (operator flags) > project-YAML (capped) > operator-YAML (settings.yaml) > built-in
+CLI operator flags > operator settings.yaml > built-in defaults
 ```
 
-The operator's `models.allowlist` (a list of alias names and/or concrete ids) is the
-**non-wideable cap**. It is the **opt-in**: with no operator allowlist, a project `models:`
-block stays WARN-ignored — byte-identical to before Phase 4. A project-tier
-`models.allowlist:` key is always ignored with a WARN (a project cannot widen its own cap).
-
-Two halves enforce it:
-
-- **`permconfig`** (`OperatorModelPolicy()` / `ProjectModelBindings(ws)`) captures the
-  project bindings within the **trust gate** (the SAME `TrustProject` gate as project allow
-  rules — an untrusted repo's `models:` is dropped) and the opt-in (an operator allowlist
-  must exist). The allowlist: key is stripped at capture; the membership cap is left to
-  composition (it needs the operator-merged alias map to canonicalize).
-- **Composition** (`foldProjectModelBindings`, `internal/app/slots.go`) canonicalizes the
-  allowlist to a concrete-id **set** (each entry resolved through the operator-merged alias
-  map), then for each project binding does **resolve-then-check**: resolve the value to a
-  concrete id, test membership, **accept** (merge) or **drop** (keep the operator/default
-  value) with one build-once WARN. Slot bindings are also validated against the known slot
-  names. The allowlist applies to **every** config-file binding consumer — the session
-  `default`, all slots (including the Phase-3 `plan` slot), and aliases.
-
-Precedence within the cap: a project binding **overrides** the operator-YAML value for the
-same key but **skips** any key the operator set on the **CLI** (the CLI flag is a deliberate
-per-run override that still wins). The mechanism is a snapshot of the CLI-set keys taken in
-`Build` **before** the operator-YAML fold runs (`captureCLIModelKeys`); the project fold
-overrides operator-YAML keys yet skips the snapshotted CLI keys. The allowlist and its
-canonicalization are always operator-only.
-
-**Out of scope (this slice):** the allowlist caps **config-file** bindings only — a per-def
-`AgentDef.Model` literal and the per-session API selector
-(`CreateSessionRequest.model_id`) are not capped here. The operator's OWN bindings are
-never capped (the operator is authoritative). See
-[ADR 0030](../adr/0030-model-selection-heuristics.md).
+This authority boundary supersedes ADR 0030's trusted-project model binding through [ADR 0369](../adr/0369-delegation-provider-model-selectors.md).
 
 ## The semantic model router (Phase 5)
 
@@ -690,23 +626,9 @@ deadlines, and arbitrary SDK error text is never classified. Reported
 input and output usage survives hits, low-confidence misses, mapping misses, and
 protocol errors that contain validated usage.
 
-**How it fires.** For a default delegation with no per-call `model`, `fork`, or `resume`,
-the `Subagent` `run()` hook calls a composition-built classifier (`RunModelRouter`, role
-`model-router`, tool-less, one turn, no-progress nudge disabled). A named `agent` remains
-eligible when its definition declared no `model:` and composition can rebuild its scoped
-engine on a same-provider routed model; a pinned, provider-switched, or inline-MCP definition
-bypasses classification. The classifier reads the category descriptions in the clear
-and the (untrusted) task prompt inside the `UntrustedFence`, and returns a category by the
-**whole-output-single-JSON-object** parse (the hardened parse the ask reviewer uses); a
-hallucinated category is a miss. Composition maps the chosen category to its model selector
-through the alias machinery (operator targets are **uncapped**) and mints the child via the
-**existing per-call engine factory** — **decide-once, commit-for-child-lifetime,
-same-provider** (the engine layer stays model-string-only; the chosen model is never a
-`port.LLMRequest` field). Both the foreground and background paths route.
+**How it fires.** For a delegation with no call-level selector, `fork`, or `resume`, the composition-built classifier runs tool-less for one turn. Eligible named specialists are rebuilt with their scoped prompt, tools, limits, and authority on the routed provider/model target; pinned, explicitly provider-switched, or inline-MCP definitions bypass classification. The classifier reads category descriptions and the fenced task prompt, then returns one exact category. Composition resolves that category's scalar or pair alias and mints fresh provider-specific dependencies once for the child's lifetime. Both foreground and background paths use the same route.
 
-**Precedence** (by gating): explicit per-call `model` > agent-def `Model` (incl. explicit
-`inherit`) > fork/resume > **router** > `--subagent-model` default > session model. The
-router fills the gap; it never overrides pinned intent.
+**Precedence** (by gating): explicit call-level provider/model selector > agent-definition model intent > fork/resume > **router** > `--subagent-model` default > inherited target. Explicit router-category selection bypasses classification. Automatic routing remains fail-soft; explicit selection fails before child construction.
 
 **Named agent-defs too (issue #286, [ADR 0066](../adr/0066-route-unpinned-and-writable-delegations.md),
 extended for writable specialists by [ADR 0242](../adr/0242-route-unpinned-writable-named-specialists.md)).**
@@ -716,10 +638,7 @@ SCOPED engine (its catalog/prompt/hooks) on the picked model. The writable path 
 mutating specialist scope and MAIN runner, so it remains direct-write against the parent
 workspace. ANY non-empty `def.Model` — `inherit`, a built-in alias, a concrete id — PINS the
 def (routing skips it); **explicit `model: inherit` is how you opt a def OUT of routing**.
-Composition excludes a def that switches provider or declares inline MCP from the routable
-set, so the classifier is never spent for it. An unavailable routed target fails soft to the
-ordinary specialist engine and reports `route-target-unavailable`; per-definition limits are
-unchanged. Team members and Parallel branches are out of scope (unchanged).
+Composition excludes a definition that already switches provider or declares inline MCP from the routable set. An unavailable routed target fails soft to the ordinary specialist engine and reports `route-target-unavailable`; per-definition limits are unchanged. Undefined Team members and Parallel branches consume the same provider/model target grammar, while a defined Team member retains its definition unless it receives an allowed model-only override.
 
 **Writable delegations too (issue #285).** A `mode:"read-write"` delegation honours the
 same axes: a per-call `model` (or the router pick) rebuilds the WRITABLE explorer on that

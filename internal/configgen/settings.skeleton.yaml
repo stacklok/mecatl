@@ -424,8 +424,9 @@
 #   # "plan" is unset, it falls through to the "reasoning" tier when configured. The
 #   # guardrail slot alone also accepts an operator-only explicit provider route.
 #   slots: {}
-#   # Aliases binds a short alias to a concrete model id (merged onto the CLI
-#   # --model-alias map, CLI winning per key).
+#   # Aliases binds a short name to either a scalar contextual-provider model ID or a
+#   # strict provider/model object. CLI --model-alias replaces the whole lower-tier target
+#   # for its name; --model-alias-provider supplies its optional provider.
 #   aliases: {}
 #   # Default is the operator-tier session-default model selector (alias or concrete id).
 #   # Empty = absent.
@@ -453,7 +454,8 @@
 #   # Empty = absent (the ladder's preferred default wins). The name pair (default =
 #   # model, default_provider = provider) mirrors the wire grammar exactly.
 #   default_provider: ""
-#   # Allowlist is retained for compatibility and has no effect.
+#   # Allowlist is retained for compatibility, has no effect, and emits a warning when
+#   # configured.
 #   allowlist: []
 #   # Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031, Phase
 #   # 5; enable model superseded by ADR 0042): a classifier slot, the routing categories,

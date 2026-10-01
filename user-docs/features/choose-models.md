@@ -211,7 +211,9 @@ models:
   default: gpt-5.6-terra
   aliases:
     planner: gpt-5.6-sol
-    heavy: gpt-5.6-terra
+    heavy:
+      provider: openrouter
+      model: openai/gpt-5.6-terra
     coder: gpt-5.6-luna
     quick: gemini-3.5-flash
     image: gpt-5.6-terra
@@ -244,6 +246,18 @@ models:
         model: image
 ```
 
+A scalar alias resolves its model on the consumer's current provider. An object alias requires both `provider` and `model` and carries that atomic pair wherever the alias is used, including defaults, auxiliary slots, agent definitions, router categories, and delegation selectors. Unknown or unavailable object providers fail startup; model IDs remain opaque and are not checked through a live provider probe.
+
+For ephemeral overrides, keep the model and provider in separate repeatable flags so model IDs need no delimiter:
+
+```sh
+mecated serve \
+  --model-alias heavy=openai/gpt-5.6-terra \
+  --model-alias-provider heavy=openrouter
+```
+
+A provider flag requires a matching CLI model alias with the same name. The CLI model replaces the complete lower-tier YAML target; it never inherits a YAML provider.
+
 The `guardrail` slot also accepts a strict provider-aware object when the checker
 must use a different configured provider:
 
@@ -257,8 +271,7 @@ models:
 
 Both object fields are required. Unknown providers, missing fields, unknown keys,
 and an unresolvable model fail startup; Mecatl never infers a provider from an
-opaque model ID. The scalar form binds its selector to the deployment default
-provider. Project-tier objects are ignored with a warning.
+opaque model ID. The scalar guardrail form uses the deployment default provider. The entire project-tier `models:` block is ignored with one warning, regardless of project trust. Model policy belongs only in operator settings or operator flags.
 
 ### Use a planning model in plan mode
 
@@ -275,11 +288,7 @@ models:
     plan: planner
 ```
 
-When the session enters plan mode, its next turn uses the `plan` model. When
-you approve the plan and Mecatl continues in default or accept-edits mode, it
-uses the session default again. Mecatl rebuilds the session engine at the mode
-change, so the provider stays fixed. Configure both model IDs for the same
-provider.
+When the session enters plan mode, its next turn uses the `plan` target when that target is on the session's persisted provider. When you approve the plan and Mecatl continues in default or accept-edits mode, it uses the session default again. A session remains provider-bound because its history may contain provider-private replay data. If a provider-aware `plan` alias names another provider, Mecatl warns, keeps plan permission mode, and runs on the session's ordinary provider/model instead of replaying the conversation elsewhere.
 
 If `plan` is unset, Mecatl uses the `reasoning` slot when it is configured;
 otherwise plan mode uses the session default model. See
@@ -375,28 +384,29 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-Resolution is fail-soft for slots and routes other than `title`: an invalid
-alias, slot, or route target warns and falls back to the session model. The
-`title` slot is the exception described above; an absent or unresolvable title
-binding disables generation rather than falling back or making a provider call.
-Explicit per-call models, model-pinned named agents, fork or resume choices, and
-other higher- precedence selectors are not overridden by the router. A named
-definition with no `model:` is routable; `model: inherit` is an explicit pin.
-Writable named routing keeps the specialist's direct-write scope, while explicit
-`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies
-are operator decisions; project model settings are ignored unless the operator
-explicitly allows the relevant model set on a trusted project via
-`models.allowlist`.
+Resolution is fail-soft for automatic slots and routes other than `title`: an invalid runtime target warns and falls back to the consumer's ordinary provider/model. The `title` slot disables generation instead. Explicit per-call selectors, pinned agents, fork, and resume are not overridden by automatic routing. A named definition with no `model:` is routable; `model: inherit` is an explicit pin. Routed named specialists keep their scoped prompt, tools, limits, and writable posture across provider/model targets.
 
-An allowlisted model is not scoped to a particular use: a trusted project can
-bind any allowlisted model to any slot, including the `guardrail` and
-`ask-reviewer` safety checkers, not just the session default. Do not allowlist a
-model you would be unwilling to see used as a safety checker.
+This configuration belongs in operator-global settings, not a checked-in project file. Mecatl ignores every project-tier `models:` block with one warning, even for a trusted project. The legacy operator `models.allowlist` key remains accepted temporarily but has no effect and warns. See the [configuration reference](/reference/configuration.md#models) for the complete schema.
 
-This configuration belongs in the operator-global settings file, not a
-checked-in project file. See the
-[configuration reference](/reference/configuration.md#models) for the complete
-field schema and defaults.
+### Select a delegated target explicitly
+
+Leave `provider` and `model` unset on Subagent, Parallel, and Team calls to preserve operator defaults and automatic routing. When a task requires a specific capability, call `DiscoverModels` first and pass the exact returned provider/model pair. For example:
+
+```json
+{"prompt":"Review this design","provider":"anthropic","model":"claude-opus-4-1"}
+```
+
+`DiscoverModels` also includes enabled router categories as virtual rows whose `provider_id` is `model-router`. Their descriptions participate in literal search, but their configured targets are not disclosed. Select one explicitly with its exact category name:
+
+```json
+{"prompt":"Review this design","provider":"model-router","model":"large"}
+```
+
+An explicit category bypasses classification and fails instead of silently inheriting when it cannot resolve. Mecatui renders its provenance as `selected: model-router/large → anthropic/claude-opus-4-1`; automatic classifier choices retain `routed:`.
+
+Parallel accepts one selector for all branches and keeps its judge on the parent model. Each Team member accepts its own selector, and Mecatl validates the complete roster before adding members. A named specialist accepts a model-only override but rejects a provider-bearing call-level selector so its scoped definition is not replaced. `fork` and `resume` reject selectors; resume uses the actual provider/model persisted for the original child.
+
+Router categories remain delegation policy. They do not appear in `ListModels`, mecatui's `/models`, or root-session creation.
 
 ### Route OpenRouter models through preferred downstreams
 
@@ -534,22 +544,11 @@ status still reports that outcome where provider status is exposed. A later
 non-empty listing replaces the retained list. Retained metadata can become stale;
 it does not guarantee current model access or context limits.
 
-Models whose catalog includes it can call the read-only `DiscoverModels` tool to
-inspect this same resolved inventory. Start without `provider_id` when the
-provider is unknown. The first unfiltered result includes every selectable
-provider ID and its model count, plus the first bounded model page. You can then
-search across all providers or add an exact provider filter. A query is a set of
-case-lowered literal terms; every term must occur in the provider ID, model ID,
-or display name of a result. Punctuation has no special query syntax.
+Models whose catalog includes it can call the read-only `DiscoverModels` tool to inspect the bounded resolved inventory used for explicit selection. Start without `provider_id` when the provider is unknown. The first unfiltered result includes every selectable provider ID and model count, plus enabled delegation router categories under the virtual `model-router` provider. A router row uses the exact category name as `model_id` and its bounded operator description; it never reveals the category's alias, target, endpoint, credential, or provider topology.
 
-Each result contains the exact `provider_id` plus `model_id` selection handle and
-the same safe metadata as `ListModels`; equal model IDs under different providers
-remain separate. Output defaults to 20 entries and is capped at 50 entries and
-32 KiB. When `next_cursor` is present, call the tool again with only that value as
-`cursor`. A changed inventory invalidates the cursor, so restart without it. The
-tool does not probe or refresh providers, accept endpoints or credentials, select
-or route a model, or change the current session. It remains available in
-no-filesystem sessions.
+Search spans provider ID, model ID, display name, and available descriptions. A query is a set of case-lowered literal terms, and every term must match. Exact filters cover direct and router rows. Each direct result contains the exact `provider_id` and `model_id` handle plus safe metadata; equal model IDs under different providers remain separate. Output defaults to 20 entries and is capped at 50 entries and 32 KiB. When `next_cursor` is present, call again with only that value. Inventory or description changes invalidate the cursor, so restart without it.
+
+The tool does not probe or refresh providers, accept endpoints or credentials, select or route a model, or change the current session. It remains available in no-filesystem sessions. `model-router` rows are valid only on delegation surfaces, not root-session selection.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued

@@ -1620,8 +1620,10 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 // ModelAliasTarget is one operator alias target. An empty Provider preserves the
 // scalar, contextual-provider form; a non-empty Provider is an atomic pair.
 type ModelAliasTarget struct {
+	// Provider optionally names the exact configured provider for this alias.
 	Provider string
-	Model    string
+	// Model is the opaque provider model ID and is always required.
+	Model string
 }
 
 // ModelAliases is the strict models.aliases mapping.
@@ -1642,26 +1644,17 @@ func (a *ModelAliases) UnmarshalYAML(node ast.Node) error {
 		if _, duplicate := out[name]; duplicate {
 			return fmt.Errorf("models.aliases.%s: duplicate alias key", name)
 		}
-		if fields, isMapping := permconfigMapping(entry.Value); isMapping {
+		if _, isMapping := permconfigMapping(entry.Value); isMapping {
 			var target ModelAliasTarget
-			seen := map[string]bool{}
-			for _, field := range fields.Values {
-				key, isString := permconfigMappingKey(field.Key)
-				if !isString || (key != "provider" && key != modelKey) || seen[key] {
-					return fmt.Errorf("models.aliases.%s: object must contain exactly provider and model", name)
-				}
-				seen[key] = true
-				var scalar string
-				if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(field.Value, &scalar); err != nil {
-					return fmt.Errorf("models.aliases.%s.%s: must be a string", name, key)
-				}
-				if key == "provider" {
-					target.Provider = strings.TrimSpace(scalar)
-				} else {
-					target.Model = strings.TrimSpace(scalar)
-				}
+			if err := decodeStrictMapping(entry.Value, "models.aliases."+name, map[string]any{
+				"provider": &target.Provider,
+				modelKey:   &target.Model,
+			}); err != nil {
+				return err
 			}
-			if len(seen) != 2 || target.Provider == "" || target.Model == "" {
+			target.Provider = strings.TrimSpace(target.Provider)
+			target.Model = strings.TrimSpace(target.Model)
+			if target.Provider == "" || target.Model == "" {
 				return fmt.Errorf("models.aliases.%s: provider and model are both required and non-empty", name)
 			}
 			out[name] = target
@@ -1694,8 +1687,9 @@ type ModelsSection struct {
 	// tier when configured. The guardrail slot alone also accepts an operator-only
 	// explicit provider route.
 	Slots ModelSlots `yaml:"slots"`
-	// Aliases binds a short alias to a concrete model id (merged onto the CLI
-	// --model-alias map, CLI winning per key).
+	// Aliases binds a short name to either a scalar contextual-provider model ID or
+	// a strict provider/model object. CLI --model-alias replaces the whole lower-tier
+	// target for its name; --model-alias-provider supplies its optional provider.
 	Aliases ModelAliases `yaml:"aliases"`
 	// Default is the operator-tier session-default model selector (alias or concrete
 	// id). Empty = absent.
@@ -1723,7 +1717,7 @@ type ModelsSection struct {
 	// Empty = absent (the ladder's preferred default wins). The name pair
 	// (default = model, default_provider = provider) mirrors the wire grammar exactly.
 	DefaultProvider string `yaml:"default_provider"`
-	// Allowlist is retained for compatibility and has no effect.
+	// Allowlist is retained for compatibility, has no effect, and emits a warning when configured.
 	Allowlist []string `yaml:"allowlist"`
 	// Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031,
 	// Phase 5; enable model superseded by ADR 0042): a classifier slot, the routing

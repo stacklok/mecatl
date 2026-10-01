@@ -52,24 +52,14 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
    summary string** as one `ToolResult` (gauntlet #7) — no child transcript
    ever enters the parent conversation.
 
-**Per-call knobs (`subagentArgs`).** Beyond `prompt`/`description`/`agent`, a Subagent call may
-supply: `max_turns`/`max_tool_calls`/`max_run_tokens` (TIGHTEN-ONLY caps — the model can
-make its child stricter than the operator's bound, never looser; `max_run_tokens` is the
-cumulative input+output run-budget arg;
-**default: inherited/unlimited**); `timeout_ms` (a
-wall-clock deadline → a time-budget tool error); `model` (pin THIS child to a specific
-provider model — minted via the composition-supplied `WithSubagentEngineFactory` closure
-through the contamination-safe `newChildEngineForProvider` path, NEVER a clone-and-swap;
-mutually exclusive with `agent`); and `output_schema` (a model-authored JSON schema —
-the child is given a synthetic `SubmitResult` tool whose params ARE the schema, must
-call it to deliver, and the submitted payload is validated by `session.ValidateJSON`
-with a bounded correction-retry, NO `tool_choice` forcing). The Subagent RESULT is labelled
+**Per-call knobs (`subagentArgs`).** Beyond `prompt`/`description`/`agent`, a Subagent call may supply tighten-only limits, `timeout_ms`, `provider`, `model`, and `output_schema`. Omitting provider/model preserves inherited defaults and automatic routing. A bare literal model uses the parent provider; a configured pair alias or explicit provider/model pair mints a fresh child through the provider-specific composition factory. `provider: "model-router"` plus an exact discovered category explicitly selects that operator category and bypasses classification. Provider-bearing call-level selectors are rejected with a named specialist, while the existing read-only `agent` plus model-only override rebuilds and preserves the specialist's scope. `fork` and `resume` reject selectors. Parallel accepts the same optional pair once per call and applies it to every branch while its judge remains on the parent model. Each Team member accepts its own pair; the complete roster is validated before any member is added, and each resolved engine is retained across rounds. A named Team member accepts a model-only override but rejects a provider-bearing call-level selector.
+
+The Subagent result is labelled
 by terminal reason (success / `[subagent stopped: …]` note / structured-output
 validation error / error) and carries an `agentId: <childID>` trailer on every terminal
 (model-visible, mirroring the Team-id line) so the parent can discover the child id and
 read its persisted transcript via the read-only `InspectSubagent` tool (the id is used
-verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up prompt
-(default engine only). Resume notes distinguish where this call runs from
+verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up prompt. Resume remints the provider/model recorded on the child session and fails closed when that target is unavailable; legacy unlabeled children use the default explorer. The requested alias or router category is not persisted. Resume notes distinguish where this call runs from
 whether earlier edits survived. A writable resume uses the edits-survived note
 only when the prior valid `EnvironmentRef` exactly equals the parent's ref,
 including `Revision`; a path match alone is insufficient. Read-only resumes use
@@ -96,19 +86,13 @@ Edit/Write/Shell mutate the real tree IN PLACE, exactly as the main agent does, 
 git is the rollback layer — the "delegate one task and land its edits" path
 (default-wired, no flag; rejected with `background`, with explicit `agent`+`model` together
 (v1 scope limit), and under the no-FS profile; `read-write`+`agent` alone runs the named
-specialist WRITABLE when the deployment wires the writable-specialist factory). An unpinned,
-same-provider named specialist is eligible for semantic routing: the routed engine preserves
-its scoped catalog/prompt/skills, Edit/Write authority, MAIN runner, and per-definition limits.
+specialist WRITABLE when the deployment wires the writable-specialist factory). An unpinned named specialist is eligible for semantic routing: the routed engine preserves its scoped catalog/prompt/skills, Edit/Write authority, MAIN runner, and per-definition limits while honoring the category's provider/model target.
 Pinned definitions, `fork`, and `resume` bypass routing; inline MCP remains unsupported on
 this per-call writable path, and an unavailable routed target falls back to the ordinary
 writable specialist with truthful routing metadata (ADR 0242). The result text honestly notes the edits landed directly (review with `git
 diff`/`git status`); a crashed/cancelled child can leave PARTIAL edits behind
 (recoverable via git — the accepted direct-write trade-off). When
-neither `agent` nor `model` pins one, a def-less child runs on the global
-`--subagent-model` default (the analogue of `CLAUDE_CODE_SUBAGENT_MODEL`; a concrete
-id or a `--model-alias` name, resolved same-provider; precedence `def.Model >
---subagent-model > parent model`, empty inheriting the parent's). None of
-these widen `port.LLMRequest` — they are `subagentArgs`/`RunRequest`/factory concerns.
+neither `agent` nor `model` pins one, a def-less child runs on the global `--subagent-model` default. A scalar alias uses the parent provider; a provider-aware alias carries its pair. Precedence is definition model > global child default > parent target. None of these widen `port.LLMRequest`; they remain argument, run-request, and factory concerns.
 
 **Background, SubagentStatus & per-child cancel (`docs/adr/0015-background-subagents.md`).**
 `background: true` DETACHES the child, RUN-scoped: the call returns an immediate
@@ -175,9 +159,7 @@ security boundary:
   (`isolated:false`, so the A2 isolation auto-approve does not apply to its Shell) and
   git is the rollback. A `read-write`+`agent` call routes through
   `agentWritableFactory` (`buildAgentWritableEngineFactory`) on the definition's resolved
-  model, or—when the definition is unpinned and same-provider—through
-  `agentWritableModelFactory` (the routed half of `buildAgentWritableEngineFactories`) on the semantic
-  router's pick. Both rebuild the specialist with `allowMutating=true` over the MAIN runner,
+  model, or—when the definition is unpinned—through the provider-aware routed specialist factory on the semantic router's target. Both rebuild the specialist with `allowMutating=true` over the MAIN runner,
   preserving its prompt/skills/catalog and per-def limits (ADR 0058/0239). A routed factory
   decline falls back to the ordinary writable specialist and reports the unavailable target
   rather than claiming the routed model ran. Per-def Subagent engines keep Shell via `scopedToolNamesMode`'s
