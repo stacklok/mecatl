@@ -74,11 +74,12 @@ operator-managed credential file when interactive entry is unsuitable. See
 [Run mecated standalone](/building/deployment/mecated.md#configure-providers) for
 credential-file and daemon configuration details.
 
-After setup, you may set the embedded default with
-`mecatui providers set-default PROVIDER [MODEL]`; declining leaves the current
-default unchanged. `mecatui providers` and `mecatui providers status [PROVIDER]`
-report local configuration without revealing credentials. Presence does not prove
-model access, billing, or account health.
+After credential setup, the wizard offers to set the provider as the embedded
+deployment default. This includes ToolHive after its externally managed login.
+Declining leaves the current default unchanged. You can change the selection later
+with `mecatui providers set-default PROVIDER [MODEL]`. `mecatui providers` and
+`mecatui providers status [PROVIDER]` report local configuration without revealing
+credentials. Presence does not prove model access, billing, or account health.
 
 `openai-codex` is distinct from the public `openai` API-key provider. Setup can
 reuse a locally usable manual Codex subscription token for default selection but

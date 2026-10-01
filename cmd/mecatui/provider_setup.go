@@ -135,6 +135,9 @@ func (c providerCommands) runNamedSetup(ctx context.Context, provider string, st
 			if status.AuthMethod == providerAuthOIDC {
 				return c.offerSetupDefault(ctx, provider, "Completed OIDC enrollment remains saved", stdout, stderr)
 			}
+			if status.AuthMethod == providerAuthExternal {
+				return c.offerSetupDefault(ctx, provider, "Completed ToolHive login remains saved", stdout, stderr)
+			}
 			return nil
 		}
 		if status.Configured {
