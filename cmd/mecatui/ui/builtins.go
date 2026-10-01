@@ -173,6 +173,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "browse agent definitions",
 			run:  Model.runAgentsInv,
 		})
+		out = append(out, builtin{
+			name: "agent",
+			desc: "start a session bound to a named agent definition",
+			run:  Model.runAgentHint,
+		})
 	}
 	if caps.Teams {
 		out = append(out, builtin{
@@ -644,7 +649,7 @@ type builtinName struct {
 var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
 	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
-	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
+	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "agent", acceptsArgs: true}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},
 	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
@@ -731,6 +736,15 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		}
 		mm, cmd := m.renameTitle(title)
 		return mm, cmd, true
+	}
+	if name, bare, ok := agentCommand(text); ok {
+		if bare {
+			m.prompt.Reset()
+			mm, cmd := m.runAgentHint()
+			return mm, cmd, true
+		}
+		m.prompt.Reset()
+		return m.startAgentSession(name)
 	}
 	trimmed := strings.TrimSpace(text)
 	fields := strings.Fields(trimmed)
