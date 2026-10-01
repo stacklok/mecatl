@@ -288030,6 +288030,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790843833543,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c4fabfe05d2ef9566f3edf3e0fffbece3e7f8a18",
+          "message": "fix(mecated): force-remove unavailable MCP profiles (#1938)\n\nCo-authored-by: OpenAI <noreply@openai.com>",
+          "timestamp": "2026-10-01T10:27:39+02:00",
+          "tree_id": "201d15f78ce65605c6b0a1da8fe463074aa1499a",
+          "url": "https://github.com/stacklok/mecatl/commit/c4fabfe05d2ef9566f3edf3e0fffbece3e7f8a18"
+        },
+        "date": 1790844539296,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3303.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 94,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -377330,6 +377369,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790844536157,
+  "lastUpdate": 1790844540214,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
