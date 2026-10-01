@@ -259944,6 +259944,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790843829213,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c4fabfe05d2ef9566f3edf3e0fffbece3e7f8a18",
+          "message": "fix(mecated): force-remove unavailable MCP profiles (#1938)\n\nCo-authored-by: OpenAI <noreply@openai.com>",
+          "timestamp": "2026-10-01T10:27:39+02:00",
+          "tree_id": "201d15f78ce65605c6b0a1da8fe463074aa1499a",
+          "url": "https://github.com/stacklok/mecatl/commit/c4fabfe05d2ef9566f3edf3e0fffbece3e7f8a18"
+        },
+        "date": 1790844535293,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -377296,6 +377330,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790844532248,
+  "lastUpdate": 1790844536157,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
