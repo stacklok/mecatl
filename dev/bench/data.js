@@ -286839,6 +286839,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790840700135,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8318b3db910df8c184a93281b71cc63b9497e7b",
+          "message": "Add a skill for mecak8s kind testing (#2035)",
+          "timestamp": "2026-10-01T10:00:53+02:00",
+          "tree_id": "b096056aa0b360fae572741661e1cf1fc23e4fdc",
+          "url": "https://github.com/stacklok/mecatl/commit/c8318b3db910df8c184a93281b71cc63b9497e7b"
+        },
+        "date": 1790842395301,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3324,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -375797,6 +375836,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790842391832,
+  "lastUpdate": 1790842395926,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
