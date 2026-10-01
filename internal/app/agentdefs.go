@@ -113,7 +113,8 @@ func resolveProviderModel(cfg Config, provReg *providerRegistry, def agents.Agen
 	}
 
 	selector := strings.TrimSpace(def.Model)
-	if selector == "" || selector == "inherit" {
+	fromDefault := selector == "" || selector == "inherit"
+	if fromDefault {
 		selector = strings.TrimSpace(cfg.SubagentModel)
 	}
 	if selector == "" {
@@ -129,7 +130,11 @@ func resolveProviderModel(cfg Config, provReg *providerRegistry, def agents.Agen
 	if explicitProvider != "" && !invalidExplicitProvider {
 		providerConstraint = resolvedProvider
 	}
-	target, err := resolveModelTarget(cfg, parentProviderID, providerConstraint, selector)
+	contextualProvider := parentProviderID
+	if fromDefault && cfg.modelBindingProvider != "" {
+		contextualProvider = cfg.modelBindingProvider
+	}
+	target, err := resolveModelTarget(cfg, contextualProvider, providerConstraint, selector)
 	if err != nil || target.Model == "" {
 		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target is unavailable or conflicts with its provider; inheriting fallback target",
 			"agent", def.Name, "origin", string(def.Origin))

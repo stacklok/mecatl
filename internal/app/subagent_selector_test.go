@@ -1,13 +1,98 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
+
+func TestSettingsScalarSelectorsBindDefaultProvider(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(`models:
+  default_provider: openai
+  default: main
+  subagent: child-model
+  aliases:
+    main: {provider: openrouter, model: parent-model}
+    coder: child-model
+  slots:
+    compaction: utility-model
+    plan: coder
+    guardrail: coder
+  router:
+    categories:
+      - name: medium
+        description: ordinary work
+        model: coder
+      - name: direct
+        description: direct model
+        model: direct-model
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{permResolver: permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}}), ModelAliases: map[string]string{"cli": "cli-model"}}
+	keys := captureCLIModelKeys(cfg)
+	cfg = foldOperatorModelSlots(cfg)
+	cfg = foldOperatorDefaultProvider(cfg)
+	cfg = bindOperatorModelProvider(cfg, keys)
+	cfg = foldOperatorPairModelDefault(cfg, keys)
+	if cfg.DefaultProvider != "openrouter" {
+		t.Fatalf("main pair = %q", cfg.DefaultProvider)
+	}
+	cfg = foldOperatorModelRouter(cfg)
+	cfg = foldOperatorSubagentModel(cfg, keys)
+	parent := mockllm.New(mockllm.TextTurn("parent"))
+	child := mockllm.New(mockllm.TextTurn("child"))
+	reg := twoProviderReg(parent, "openrouter", "parent-model", child, "openai")
+	resolve := buildSubagentSelectorResolver(cfg, reg, "openrouter")
+	for _, tc := range []struct {
+		name, provider, model, wantProvider, wantModel string
+	}{
+		{"configured alias", "", "coder", "openai", "child-model"},
+		{"router alias", reservedModelRouterProvider, "medium", "openai", "child-model"},
+		{"router literal", reservedModelRouterProvider, "direct", "openai", "direct-model"},
+		{"direct literal", "", "child-model", "openrouter", "child-model"},
+		{"CLI scalar alias", "", "cli", "openrouter", "cli-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolve(tc.provider, tc.model)
+			if err != nil || got.ActualProvider != tc.wantProvider || got.Target.Model != tc.wantModel {
+				t.Fatalf("selector = %+v, err=%v", got, err)
+			}
+		})
+	}
+	if _, err := resolve("openrouter", "coder"); err == nil {
+		t.Fatal("explicit provider overrode a settings-bound alias")
+	}
+	if target, ok := resolveSlotTarget(cfg, slotCompaction, "openrouter"); !ok || target.ProviderID != "openai" || target.Model != "utility-model" {
+		t.Fatalf("configured slot = %+v, ok=%t", target, ok)
+	}
+	if target, ok := resolveSlotTarget(cfg, slotPlan, "openrouter"); !ok || target.ProviderID != "openai" || target.Model != "child-model" {
+		t.Fatalf("provider-bound plan target = %+v, ok=%t", target, ok)
+	}
+	if provider, model, _, configured, err := resolveGuardrailBinding(cfg, reg); err != nil || !configured || provider != "openai" || model != "child-model" {
+		t.Fatalf("guardrail slot = (%q, %q), configured=%t err=%v", provider, model, configured, err)
+	}
+	if provider, model := resolveProviderModel(cfg, reg, agentfs.AgentDef{}, "openrouter", "parent-model"); provider != "openai" || model != "child-model" {
+		t.Fatalf("configured subagent default = (%q, %q)", provider, model)
+	}
+	if provider, model := resolveProviderModel(cfg, reg, agentfs.AgentDef{Model: "coder"}, "openrouter", "parent-model"); provider != "openai" || model != "child-model" {
+		t.Fatalf("agent definition alias = (%q, %q)", provider, model)
+	}
+	cli := Config{permResolver: cfg.permResolver, DefaultProvider: "openrouter", DefaultProviderFlagSet: true}
+	cliKeys := captureCLIModelKeys(cli)
+	cli = foldOperatorModelSlots(cli)
+	cli = bindOperatorModelProvider(foldOperatorDefaultProvider(cli), cliKeys)
+	if target, known := lookupModelAliasTarget(cli, "coder"); !known || target.ProviderID != "openrouter" || target.Model != "child-model" {
+		t.Fatalf("CLI default-provider precedence = %+v, known=%t", target, known)
+	}
+}
 
 func TestSubagentSelectorComposition(t *testing.T) {
 	parent := mockllm.New(mockllm.TextTurn("parent"))

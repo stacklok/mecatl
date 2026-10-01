@@ -83,6 +83,7 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 	t.Run("operator models.default pair applies before new session construction", func(t *testing.T) {
 		settings := filepath.Join(t.TempDir(), "settings.yaml")
 		if err := os.WriteFile(settings, []byte(`models:
+  default_provider: openai
   default: strong
   aliases:
     strong:
@@ -93,13 +94,18 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 		}
 		resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}})
 		probe := foldOperatorModelSlots(Config{permResolver: resolver})
-		probe, err := foldOperatorPairModelDefault(probe, captureCLIModelKeys(Config{}))
-		if err != nil || probe.DefaultProvider != pairProvider || probe.DefaultModel != pairModel {
-			t.Fatalf("operator pair pre-fold = provider %q model %q err=%v", probe.DefaultProvider, probe.DefaultModel, err)
+		probe = foldOperatorDefaultProvider(probe)
+		if probe.DefaultProvider != parentProvider {
+			t.Fatalf("operator fallback provider = %q", probe.DefaultProvider)
 		}
-		conflict := foldOperatorModelSlots(Config{permResolver: resolver, DefaultProvider: parentProvider})
-		if _, err := foldOperatorPairModelDefault(conflict, captureCLIModelKeys(Config{})); err == nil {
-			t.Fatal("operator pair default unexpectedly accepted a conflicting explicit default provider")
+		probe = foldOperatorPairModelDefault(probe, captureCLIModelKeys(Config{}))
+		if probe.DefaultProvider != pairProvider || probe.DefaultModel != pairModel {
+			t.Fatalf("operator pair pre-fold = provider %q model %q", probe.DefaultProvider, probe.DefaultModel)
+		}
+		fallback := foldOperatorModelSlots(Config{permResolver: resolver, DefaultProvider: parentProvider})
+		fallback = foldOperatorPairModelDefault(fallback, captureCLIModelKeys(Config{}))
+		if fallback.DefaultProvider != pairProvider || fallback.DefaultModel != pairModel {
+			t.Fatalf("operator pair must override fallback provider: provider %q model %q", fallback.DefaultProvider, fallback.DefaultModel)
 		}
 		built, err := buildIsolated(t, t.Context(), Config{
 			NoSoul:                true,
@@ -248,6 +254,98 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 			t.Fatalf("pair provider requests = %v, want [%s]", seen, pairModel)
 		}
 	})
+}
+
+func TestSettingsScalarBindingUnavailableProviderFailsBuild(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(`models:
+  default_provider: openai
+  default: main
+  aliases:
+    main: {provider: openrouter, model: parent-model}
+  subagent: child-model
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:           t.TempDir(),
+		NoSoul:              true,
+		PermissionConfigs:   []string{settings},
+		envDetector:         fakeEnv(map[string]string{"OPENROUTER_API_KEY": "test-key"}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("should not run"))
+		},
+	})
+	if built != nil {
+		defer built.Close()
+	}
+	if err == nil {
+		t.Fatal("unavailable provider for configured child model did not fail Build")
+	}
+}
+
+func TestADR_0369_Scenario1_SettingsScalarRouterUsesDefaultProvider(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(`models:
+  default_provider: openai
+  default: main
+  aliases:
+    main: {provider: openrouter, model: parent-model}
+    coder: child-model
+  router:
+    categories:
+      - name: medium
+        description: normal work
+        model: coder
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var childModels []string
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:             t.TempDir(),
+		NoSoul:                true,
+		PermissionConfigs:     []string{settings},
+		AllowAllTools:         true,
+		ContextWindowOverride: 128000,
+		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key", "OPENROUTER_API_KEY": "test-key"}),
+		liveModelHTTPClient:   offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			if id == providerOpenAI {
+				return mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
+					mu.Lock()
+					childModels = append(childModels, r.Model)
+					mu.Unlock()
+				})}, mockllm.TextTurn("child done"))
+			}
+			return mockllm.New(
+				mockllm.ToolCallTurn(session.NewToolCall("routed", "Subagent", []byte(`{"prompt":"smoke","provider":"model-router","model":"medium"}`))),
+				mockllm.TextTurn("parent done"),
+			)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	terminal, starts := drainRunWithSubagentStart(run)
+	if terminal != "parent done" || len(starts) != 1 || starts[0].Provider != providerOpenAI || starts[0].Model != "child-model" || starts[0].ExplicitRouterCategory != "medium" {
+		t.Fatalf("run = terminal %q starts %+v", terminal, starts)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(childModels) != 1 || childModels[0] != "child-model" {
+		t.Fatalf("configured provider requests = %v", childModels)
+	}
 }
 
 func TestADR_0369_Scenario1_NamedAutomaticRouterPairAliasTarget(t *testing.T) {

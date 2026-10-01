@@ -446,7 +446,7 @@ func prepareTeamFocusAt(th theme.Theme, b *teamOverlaySnapshot, member string, d
 		subhead += " · " + renderfmt.RenderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
 	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
-	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+	if detail := routingDecisionDetail(ln.routingDecision, qualifiedModelLabel(ln.provider, ln.model), ln.routingReason); detail != "" {
 		out.WriteString("\n")
 		out.WriteString(muted.Render(hangingIndentWrap(detail, "  ", bodyWidth)))
 	}

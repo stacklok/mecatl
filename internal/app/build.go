@@ -842,6 +842,9 @@ type Config struct {
 	// ModelAliasTargets carries provider-aware alias targets from typed config and
 	// shared CLI plumbing. ModelAliases remains the scalar compatibility seam.
 	ModelAliasTargets ModelAliases
+	// modelBindingProvider is the effective operator default before a paired
+	// session default overrides it. Configured scalar bindings use this provider.
+	modelBindingProvider string
 	// modelProviderRegistry is the immutable Build-owned registry used only to mint
 	// provider-specific auxiliary-call dependencies. It never reaches engine core.
 	modelProviderRegistry *providerRegistry
@@ -1912,11 +1915,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override; it
 	// does NOT lower the precedence of key-driven providers. No-op when absent.
 	cfg = foldOperatorDefaultProvider(cfg)
-	pairDefaultCfg, err := foldOperatorPairModelDefault(cfg, cliModelKeys)
-	if err != nil {
-		return nil, err
-	}
-	cfg = pairDefaultCfg
+	cfg = bindOperatorModelProvider(cfg, cliModelKeys)
+	cfg = foldOperatorPairModelDefault(cfg, cliModelKeys)
 	resolvedDefaultCfg, err := applyDeploymentDefaultTarget(cfg)
 	if err != nil {
 		return nil, err
@@ -1926,6 +1926,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	reg, provider, err := buildProvider(ctx, cfg)
 	if err != nil {
 		return nil, err
+	}
+	if !cfg.UseMock && cfg.modelBindingProvider != "" && cfg.modelBindingProvider != cfg.DefaultProvider {
+		if _, ok := reg.Lookup(cfg.modelBindingProvider); !ok {
+			return nil, fmt.Errorf("configured model binding provider is unknown or unavailable")
+		}
 	}
 	if err := validateModelAliases(cfg.ModelAliasTargets, reg); err != nil {
 		return nil, err
@@ -7582,7 +7587,7 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 			result.Reason, result.OK = fmt.Sprintf("category-selector-empty (category=%s)", category), false
 			return result
 		}
-		resolved, err := resolveModelTarget(cfg, parentProviderID, "", sel)
+		resolved, err := resolveConfiguredModelTarget(cfg, parentProviderID, sel)
 		if err != nil || resolved.Model == "" {
 			result.Reason, result.OK = fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
 			return result
@@ -7959,12 +7964,12 @@ func validDelegationSelectorValue(value string) bool {
 }
 
 func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parentProviderID string) agent.SubagentSelectorResolver {
-	resolve := func(explicitProvider, selector string) (agent.ModelTarget, string, error) {
+	resolve := func(explicitProvider, selector, contextualProvider string) (agent.ModelTarget, string, error) {
 		explicitProvider = strings.TrimSpace(explicitProvider)
 		selector = strings.TrimSpace(selector)
 		var target ModelTarget
 		if _, alias := lookupModelAliasTarget(cfg, selector); alias {
-			resolved, err := resolveModelTarget(cfg, parentProviderID, explicitProvider, selector)
+			resolved, err := resolveModelTarget(cfg, contextualProvider, explicitProvider, selector)
 			if err != nil {
 				return agent.ModelTarget{}, "", err
 			}
@@ -7972,7 +7977,7 @@ func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parent
 		} else {
 			target = ModelTarget{ProviderID: explicitProvider, Model: selector}
 			if target.ProviderID == "" {
-				target.ProviderID = parentProviderID
+				target.ProviderID = contextualProvider
 			}
 		}
 		if target.Model == "" {
@@ -7995,7 +8000,7 @@ func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parent
 		model = strings.TrimSpace(model)
 		if provider != reservedModelRouterProvider {
 			rawAlias, alias := lookupModelAliasTarget(cfg, model)
-			target, actual, err := resolve(provider, model)
+			target, actual, err := resolve(provider, model, parentProviderID)
 			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: provider != "" || target.Provider != "" || (alias && rawAlias.ProviderID != "")}, err
 		}
 		if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
@@ -8005,7 +8010,11 @@ func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parent
 			if strings.TrimSpace(category.Name) != model {
 				continue
 			}
-			target, actual, err := resolve("", category.Model)
+			contextualProvider := parentProviderID
+			if cfg.modelBindingProvider != "" {
+				contextualProvider = cfg.modelBindingProvider
+			}
+			target, actual, err := resolve("", category.Model, contextualProvider)
 			if err != nil {
 				return agent.ResolvedModelSelector{}, fmt.Errorf("router category is unresolvable")
 			}
