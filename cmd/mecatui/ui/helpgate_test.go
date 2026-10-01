@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // TestHelpOpensOnlyOnEmptyInput pins the "?"-is-printable gotcha: "?" opens the
@@ -198,6 +199,80 @@ func TestHelpWrapsNarrowBodyAndNavigatesWrappedRows(t *testing.T) {
 	if view.Below != 0 {
 		t.Fatalf("end should reveal the final wrapped row, with %d rows still below", view.Below)
 	}
+}
+
+func TestHelpWheelOwnershipAndPhysicalRowBrowsing(t *testing.T) {
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 40, Height: 24})
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
+	m.vp.GotoBottom()
+	m.vp.ScrollUp(5)
+	m.prompt.Rewrite("hidden draft")
+	m.prompt.SelectAll()
+
+	assertHiddenUnchanged := func(beforeConversation int, beforePrompt string, beforeFocused, beforePromptSelection bool) {
+		t.Helper()
+		if got := m.vp.YOffset(); got != beforeConversation {
+			t.Fatalf("wheel leaked to hidden conversation: got %d, want %d", got, beforeConversation)
+		}
+		if m.sel.active {
+			t.Fatal("wheel activated hidden conversation selection")
+		}
+		if got := m.prompt.Value(); got != beforePrompt {
+			t.Fatalf("wheel changed hidden prompt from %q to %q", beforePrompt, got)
+		}
+		if got := m.prompt.Focused(); got != beforeFocused {
+			t.Fatalf("wheel changed hidden prompt focus from %t to %t", beforeFocused, got)
+		}
+		if got := m.prompt.HasSelection(); got != beforePromptSelection {
+			t.Fatalf("wheel changed hidden prompt selection from %t to %t", beforePromptSelection, got)
+		}
+	}
+	beforeConversation := m.vp.YOffset()
+	beforePrompt, beforeFocused, beforePromptSelection := m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+
+	updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != 1 {
+		t.Fatalf("wheel down offset = %d, want one physical row", got)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != 0 {
+		t.Fatalf("wheel at top offset = %d, want consumed endpoint 0", got)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	total, _ := m.helpScrollGeometry()
+	m.helpViewport.Move(bounded.End, total)
+	atEnd := m.helpViewport.Offset()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != atEnd {
+		t.Fatalf("wheel at end offset = %d, want consumed endpoint %d", got, atEnd)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 10, Height: 3})
+	beforeConversation = m.vp.YOffset()
+	beforePrompt, beforeFocused, beforePromptSelection = m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 1000})
+	if total, window := m.helpScrollGeometry(); total > window {
+		t.Fatalf("precondition: tall Help viewport should not overflow (total=%d window=%d)", total, window)
+	}
+	beforeConversation = m.vp.YOffset()
+	beforePrompt, beforeFocused, beforePromptSelection = m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != 0 {
+		t.Fatalf("wheel without overflow offset = %d, want consumed endpoint 0", got)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
 }
 
 func TestHelpScrollNavigationAndReset(t *testing.T) {

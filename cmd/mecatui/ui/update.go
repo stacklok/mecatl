@@ -2390,6 +2390,21 @@ func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// onHelpWheel keeps physical scrolling owned by the visible Help overlay.
+// It configures Help's wrapped viewport before every move so wheel events are
+// consumed at endpoints and in compact or non-overflow geometry.
+func (m Model) onHelpWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	total, _ := m.helpScrollGeometry()
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		m.helpViewport.Move(bounded.LineUp, total)
+	case tea.MouseWheelDown:
+		m.helpViewport.Move(bounded.LineDown, total)
+	}
+	m.helpScroll = m.helpViewport.Offset()
+	return m, nil
+}
+
 // helpScrollGeometry derives the same wrapped rows and window used by
 // renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
 func (m *Model) helpScrollGeometry() (total, window int) {
@@ -4277,6 +4292,12 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // re-discriminates the concrete mouse type here, where the dispatch logically
 // belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.showHelp {
+		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+			return m.onHelpWheel(wheel)
+		}
+		return m, nil
+	}
 	if m.agentsInv.view != agentsInvNone {
 		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
 			return m.onAgentsInvWheel(wheel)
