@@ -147,6 +147,41 @@ func TestADR_0369_Scenario3_ResumeProviderSafety(t *testing.T) {
 		}
 	})
 
+	t.Run("cross-provider writable child resumes on its persisted target", func(t *testing.T) {
+		store := memstore.New()
+		fallback := mockllm.New(mockllm.TextTurn("WRONG"))
+		pair := mockllm.New(mockllm.TextTurn("FIRST"), mockllm.TextTurn("SECOND"))
+		catalog := markerEngine("x").deps.Catalog
+		fallbackEngine := NewEngine(Deps{LLM: fallback, Catalog: catalog, Policy: allowAllInt(), Model: "default-model"})
+		pairEngine := NewEngine(Deps{LLM: pair, Catalog: catalog, Policy: allowAllInt(), Model: "pair-model"})
+		tool := NewSubagentTool(fallbackEngine,
+			WithSubagentStore(store),
+			WithSubagentProvider("default"),
+			WithWritableChildEngine(fallbackEngine),
+			WithSubagentSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
+				return ResolvedModelSelector{Target: ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: true}, nil
+			}),
+			WithWritableTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				if target != (ModelTarget{Provider: "second", Model: "pair-model"}) {
+					return nil, false
+				}
+				return pairEngine, true
+			}),
+		).(*SubagentTool)
+
+		fresh, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("w1", "Subagent", json.RawMessage(`{"prompt":"first","mode":"read-write","provider":"second","model":"pair-model"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if err != nil || fresh.IsError {
+			t.Fatalf("fresh writable pair child = %+v, err=%v", fresh, err)
+		}
+		resumed, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("w2", "Subagent", json.RawMessage(`{"prompt":"continue","mode":"read-write","resume":"subagent-w1"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		if err != nil || resumed.IsError || !strings.Contains(resumed.Content, "SECOND") {
+			t.Fatalf("writable cross-provider resume = %+v, err=%v", resumed, err)
+		}
+		if fallback.Calls() != 0 || pair.Calls() != 2 {
+			t.Fatalf("writable provider calls default=%d pair=%d, want 0/2", fallback.Calls(), pair.Calls())
+		}
+	})
+
 	t.Run("unknown persisted target fails closed", func(t *testing.T) {
 		store := memstore.New()
 		fallback := mockllm.New(mockllm.TextTurn("WRONG"))

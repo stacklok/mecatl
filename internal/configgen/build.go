@@ -532,11 +532,10 @@ func modelsSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{
 		Key:  "models",
-		Tier: TierProject,
-		Doc: "Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and " +
-			"the semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all " +
-			"fields are honoured; a project tier honours slots/aliases/default within the operator " +
-			"allowlist on a trusted workspace (router/allowlist are operator-only).",
+		Tier: TierOperator,
+		Doc: "Provider/model aliases, slots, defaults, and delegated router taxonomy. Every effective " +
+			"binding is operator-owned. A project-tier models block is ignored in full with one warning, " +
+			"regardless of trust. The legacy operator allowlist key remains parseable but has no effect and warns.",
 		CommentedOut: true,
 		Fields:       fields,
 	}

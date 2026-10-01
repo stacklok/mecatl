@@ -7742,7 +7742,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		agent.WithAgentModelEngineFactory(
 			buildAgentModelEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
 		agent.WithAgentTargetEngineFactory(
-			buildAgentTargetEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
+			buildAgentTargetEngineFactory(ctx, cfg, provReg, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
 	)
 	// ROUTABLE agent defs (issue #286): the SET of def names that expressed NO model intent
 	// (absent `model:`), don't switch provider, and have no inline MCP — so the OPT-IN router
@@ -7765,7 +7765,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	opts = append(opts,
 		agent.WithAgentWritableEngineFactory(writableAgentFactory),
 		agent.WithAgentWritableModelEngineFactory(writableAgentModelFactory),
-		agent.WithAgentWritableTargetEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)),
+		agent.WithAgentWritableTargetEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, reg, skillIdx, hooks, mainMgr)),
 	)
 	// WRITABLE subagent (mode:"read-write", ADR 0041): a child engine whose catalog
 	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
@@ -8086,7 +8086,7 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 	}
 }
 
-func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
 		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
 		if reg == nil || agentName == "" || target.Provider == "" || target.Model == "" {
@@ -8117,7 +8117,7 @@ func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *pro
 	}
 }
 
-func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
 	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
 		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)

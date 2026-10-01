@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
@@ -20,6 +21,20 @@ import (
 type ModelTarget struct {
 	Provider string
 	Model    string
+}
+
+const maxDelegationSelectorBytes = 512
+
+func validDelegationSelectorValue(value string) bool {
+	if len(value) > maxDelegationSelectorBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
 }
 
 // ResolvedModelSelector is composition's validated interpretation of one explicit

@@ -60,10 +60,10 @@ func TestADR_0369_Scenario1_ProjectModelsDisabled(t *testing.T) {
   default: poison
   aliases:
     poison:
-      provider: poison-provider
+      provider: mock
       model: poison-model
   slots:
-    plan: poison-slot
+    plan: poison
 `
 	for _, trust := range []bool{false, true} {
 		name := map[bool]string{false: "untrusted", true: "trusted"}[trust]
@@ -108,7 +108,7 @@ func TestADR_0369_Scenario1_ProjectModelsDisabled(t *testing.T) {
 			if strings.Count(log, "IGNORING project-tier models block") != 1 {
 				t.Fatalf("project models warning count != 1: %s", log)
 			}
-			for _, forbidden := range []string{"poison-provider", "poison-model", "poison-slot"} {
+			for _, forbidden := range []string{"poison-model", "plan: poison"} {
 				if strings.Contains(log, forbidden) {
 					t.Fatalf("warning leaked ignored value %q: %s", forbidden, log)
 				}
