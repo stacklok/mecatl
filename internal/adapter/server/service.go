@@ -2315,10 +2315,15 @@ type createRequest struct {
 	sourceID       session.SessionID
 	kind           session.SessionKind
 	relationship   session.SessionRelationship
+	// agentDefinitionName is the caller-requested binding (ADR 0353). Compared
+	// explicitly in matches() because it is excluded from the generic field
+	// comparison below (see matches' own comment on why limits is also
+	// special-cased for a non-empty value here).
+	agentDefinitionName string
 }
 
 func newCreateRequest(ref session.EnvironmentRef, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, opts createSessionOpts) createRequest {
-	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
+	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain, agentDefinitionName: opts.agentDefinitionName}
 	switch {
 	case opts.debugTargetID != "":
 		request.kind = session.SessionKindDebug
@@ -2331,10 +2336,30 @@ func newCreateRequest(ref session.EnvironmentRef, mode session.PermissionMode, l
 }
 
 func (r createRequest) matches(sess *session.Session) bool {
-	return r.sourceID == "" && sess.EnvironmentRef == r.environmentRef && sess.Mode == r.mode &&
-		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
-		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
-		sess.Profile == string(r.profile) && sess.Kind == r.kind && sess.Relationship == r.relationship
+	if r.sourceID != "" || sess.EnvironmentRef != r.environmentRef || sess.Mode != r.mode ||
+		sess.ProviderID != r.selector.ProviderID || sess.ModelID != r.selector.ModelID ||
+		sess.ReasoningEffort != r.selector.ReasoningEffort || sess.Profile != string(r.profile) ||
+		sess.Kind != r.kind || sess.Relationship != r.relationship ||
+		sess.AgentDefinitionName != r.agentDefinitionName {
+		return false
+	}
+	if r.agentDefinitionName != "" {
+		// An agent-bound session's persisted Limits are the bound def's own
+		// tighten-only CLAMPED effective value (computed once, inside
+		// AgentDefSessionEngine) — never createSession's raw r.limits, since
+		// that WithDefaults fold is deliberately skipped for an agent-bound
+		// create so the factory alone sees "zero means not supplied" (see
+		// createSession's own comment on this). Comparing sess.Limits against
+		// a retry's raw r.limits directly would reject nearly every
+		// legitimate retry whenever the def's cap differs at all from
+		// whatever the caller happened to send. The agentDefinitionName
+		// match above already establishes "same create intent" here: the
+		// effective limits are deterministically re-derived from the SAME
+		// def's tighten-only clamp regardless of the retry's own raw value,
+		// so they are never compared directly for this case.
+		return true
+	}
+	return sess.Limits == r.limits
 }
 
 func sameCreateOwner(a, b *session.Principal) bool {
