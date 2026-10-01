@@ -198,10 +198,6 @@ expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the
 prompt; in the models picker it sets the global default. Remapping an action to
 a textarea chord gives the client-owned action precedence.
 
-For every action name, editing chord, overlay key, mouse behavior, and
-validation rule, see the
-[exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).
-
 ## Related information
 
 - [Work in the TUI](./using-the-tui.md) for steering, approvals, and common

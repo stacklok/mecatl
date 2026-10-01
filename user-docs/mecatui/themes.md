@@ -62,9 +62,6 @@ than once, the later location wins:
 Then choose it with `--theme midnight` or `MECATUI_THEME=midnight`. Themes are
 discovered at startup, so restart `mecatui` after adding or changing a file.
 
-For all palette slots and the complete theming reference, see
-[`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#theming).
-
 ## Next steps
 
 - [Customize keybindings](./keybindings.md#remap-actions).

@@ -336,10 +336,6 @@ one-second deadline, and standard output and standard error share a 4 KiB limit.
 Failures never render raw output. A failed refresh keeps the last successful
 surface with a stale marker when it fits, or falls back to the shipped default.
 
-For the lower-level client architecture and the complete source lifecycle, see
-the
-[status-line section in `docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#local-status-lines).
-
 ## Customize the terminal title
 
 `mecatui` updates the terminal title when its rendered value changes and clears

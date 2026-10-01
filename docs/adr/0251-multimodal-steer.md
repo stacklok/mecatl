@@ -47,5 +47,5 @@ The inbox must retain bytes until drain, cancel, or terminal promotion completes
 ## See also
 
 - [Agent loop architecture](../architecture/agent-loop.md#steer-while-running)
-- [TUI guide](../tui.md#steer-mode-mid-run-steer-when-the-server-advertises-it)
+- [TUI guide at the decision baseline](https://github.com/stacklok/mecatl/blob/d3c39ceaafeafc1717369727dedb8c04b88ad563/docs/tui.md#steer-mode-mid-run-steer-when-the-server-advertises-it)
 - [ADR 0232](./0232-steer-while-running.md)

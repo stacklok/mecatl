@@ -61,4 +61,4 @@ or configuration surface.
 - [ADR 0025 — UX discoverability](./0025-ux-discoverability.md)
 - [ADR 0222 — mecatui ask-args view](./0222-mecatui-ask-args-view.md)
 - [Mecatui double-Escape acceptance plan](../acceptance/mecatui-double-escape.md)
-- [Mecatui guide](../tui.md#keys)
+- [Mecatui keybindings](../../user-docs/mecatui/keybindings.md#everyday-keys)

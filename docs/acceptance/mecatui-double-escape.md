@@ -47,7 +47,7 @@ is a fresh first press; it must never become a destructive second press.
   not arm or clear: a repeat cannot be distinguished safely from a deliberate press.
   With support, a first non-repeat press must be followed by `tea.KeyReleaseMsg` before
   a second non-repeat Escape can clear.
-- The existing key reference in [`docs/tui.md`](../tui.md#keys), public
+- The existing key reference in [`docs/tui.md` at the plan baseline](https://github.com/stacklok/mecatl/blob/d3c39ceaafeafc1717369727dedb8c04b88ad563/docs/tui.md#keys), public
   `user-docs/mecatui/keybindings.md`, and live help must state the enhanced key-event
   support requirement, silent first press, exact 500 ms window, attachment/paste
   clearing, owner precedence, and universal `ctrl+u`/ClearPrompt alternative. Timer
@@ -136,7 +136,7 @@ Given the live help view and the published key references, following
 - Update live help to state that enhanced key-event support is required, the first
   physical Escape is silent, the exact 500 ms release-qualified gesture clears staged
   attachments/pastes, and `ctrl+u`/ClearPrompt is universal.
-- Update [`docs/tui.md`](../tui.md#keys) with the same support requirement, two
+- Update [`docs/tui.md` at the plan baseline](https://github.com/stacklok/mecatl/blob/d3c39ceaafeafc1717369727dedb8c04b88ad563/docs/tui.md#keys) with the same support requirement, two
   distinct physical Escape presses, 500 ms window, silent first press, release/repeat
   rule, attachment/paste clearing, ownership precedence, and ClearPrompt alternative.
 - Update `user-docs/mecatui/keybindings.md` with the same user-facing safety contract.

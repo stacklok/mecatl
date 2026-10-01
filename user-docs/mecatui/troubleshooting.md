@@ -235,9 +235,6 @@ attached. It excludes credentials, TLS and authentication settings, raw errors,
 and other configuration. A `mecatui connect` client does not write an equivalent
 local server log; inspect the remote server's operator logs instead.
 
-For exhaustive flags and failure behavior, see
-[`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).
-
 ## Related information
 
 - [Connect to a server](./remote-servers.md) for authentication and TLS options.
