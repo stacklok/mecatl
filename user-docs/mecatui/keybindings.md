@@ -37,7 +37,7 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 | `pgup` / `pgdn` | Scroll the conversation. |
 | `home` / `end` | Jump to the top or bottom; `end` resumes auto-follow. |
 | `/` | Open the slash-command palette. |
-| `ctrl+c` twice on an empty prompt | Quit safely. |
+| `ctrl+c` | With text in the prompt, the first press clears the draft and staged media without quitting. With an empty prompt, press twice to quit. |
 | `/quit` (or `/exit`) | Quit immediately and cancel an active run. `/quit` appears in the slash palette; `/exit` is a dispatch-only alias. |
 | `ctrl+z` | Suspend to the shell; use `fg` to return. |
 
