@@ -1,6 +1,7 @@
 package jsonlstore
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -425,6 +426,13 @@ type snapshotFile struct {
 
 // snapshotFiles enumerates only current snapshots.
 func (r sessionResolver) snapshotFiles() ([]snapshotFile, error) {
+	return r.snapshotFilesContext(context.Background())
+}
+
+func (r sessionResolver) snapshotFilesContext(ctx context.Context) ([]snapshotFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root, err := r.openRoot()
 	if err != nil {
 		return nil, err
@@ -436,7 +444,7 @@ func (r sessionResolver) snapshotFiles() ([]snapshotFile, error) {
 	}
 	defer func() { _ = canonicalRoot.Close() }()
 	byID := make(map[session.SessionID]snapshotFile)
-	if err := scanCurrentSnapshotDir(canonicalRoot, byID); err != nil {
+	if err := scanCurrentSnapshotDir(ctx, canonicalRoot, byID); err != nil {
 		return nil, err
 	}
 	out := slices.Collect(maps.Values(byID))
@@ -444,12 +452,15 @@ func (r sessionResolver) snapshotFiles() ([]snapshotFile, error) {
 	return out, nil
 }
 
-func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFile) error {
+func scanCurrentSnapshotDir(ctx context.Context, root *os.Root, byID map[session.SessionID]snapshotFile) error {
 	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("jsonlstore: list store dir: %w", err)
 	}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), currentSnapshotSuffix) {
 			continue
 		}

@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -127,8 +125,10 @@ func metaSnapshotFromSession(s *session.Session) metaSnapshot {
 }
 
 func (st *Store) discoveryMetaList(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
-	st.inventoryMu.Lock()
-	defer st.inventoryMu.Unlock()
+	if !st.readOnly {
+		st.inventoryMu.Lock()
+		defer st.inventoryMu.Unlock()
+	}
 	var rows []port.SessionDiscoveryMeta
 	err := st.withInventoryCatalogLock(ctx, func() error {
 		var err error
@@ -139,6 +139,27 @@ func (st *Store) discoveryMetaList(ctx context.Context) ([]port.SessionDiscovery
 }
 
 func (st *Store) discoveryMetaListLocked(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
+	if st.readOnly {
+		catalog, err := st.readOnlyInventoryManifest(nil)
+		if err != nil {
+			return nil, err
+		}
+		scope, ok := catalog.Scopes[inventoryGlobalScope]
+		if !ok {
+			return nil, fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: global scope missing")
+		}
+		rows, err := st.readInventoryScopeContext(ctx, scope)
+		if err != nil {
+			return nil, fmt.Errorf("jsonlstore: read-only inventory scope unavailable: %w", err)
+		}
+		if !validInventoryRows(rows) {
+			return nil, fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: invalid rows")
+		}
+		if err := st.checkReadOnlyInventory(ctx, catalog, nil); err != nil {
+			return nil, err
+		}
+		return rows, nil
+	}
 	// A durable catalog is derivative only. Every read first fingerprints the
 	// authoritative snapshot directory entries, so another Store's atomic save,
 	// create, remove, or promotion invalidates it without relying on process memory.
@@ -237,8 +258,10 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 	if request.Limit < 0 {
 		return port.SessionMetadataPage{}, fmt.Errorf("jsonlstore: metadata page limit must be non-negative")
 	}
-	st.inventoryMu.Lock()
-	defer st.inventoryMu.Unlock()
+	if !st.readOnly {
+		st.inventoryMu.Lock()
+		defer st.inventoryMu.Unlock()
+	}
 	var page port.SessionMetadataPage
 	err := st.withInventoryCatalogLock(ctx, func() error {
 		var err error
@@ -265,11 +288,21 @@ func (st *Store) pageSessionMetadataLocked(ctx context.Context, request port.Ses
 		if request.Cursor != nil {
 			return port.SessionMetadataPage{}, port.ErrSessionMetadataCursorRestart
 		}
+		if st.readOnly {
+			if err := st.checkReadOnlyInventory(ctx, catalog, request.Cursor); err != nil {
+				return port.SessionMetadataPage{}, err
+			}
+		}
 		return port.SessionMetadataPage{TotalCount: 0}, nil
 	}
 	rows, nextPosition, hasMore, err := st.readInventoryScopePage(ctx, request, scope)
 	if err != nil {
 		return port.SessionMetadataPage{}, err
+	}
+	if st.readOnly {
+		if err := st.checkReadOnlyInventory(ctx, catalog, request.Cursor); err != nil {
+			return port.SessionMetadataPage{}, err
+		}
 	}
 	page := port.SessionMetadataPage{Sessions: rows, TotalCount: scope.Count}
 	if hasMore && len(rows) > 0 {
@@ -283,6 +316,9 @@ func (st *Store) pageSessionMetadataLocked(ctx context.Context, request port.Ses
 }
 
 func (st *Store) readyInventoryCatalog(ctx context.Context, cursor *port.SessionMetadataCursor) (inventoryCatalog, error) {
+	if st.readOnly {
+		return st.readOnlyInventoryManifest(cursor)
+	}
 	for attempt := 0; attempt < 3; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return inventoryCatalog{}, err
@@ -352,8 +388,11 @@ func (st *Store) readInventoryScopePage(ctx context.Context, request port.Sessio
 			return nil, 0, false, port.ErrSessionMetadataCursorRestart
 		}
 	}
-	f, err := os.Open(filepath.Join(st.inventoryCatalogDir(), scope.File)) //nolint:gosec // manifest-validated adapter-private path
+	f, err := st.openInventoryScope(scope.File)
 	if err != nil {
+		if st.readOnly {
+			return nil, 0, false, fmt.Errorf("jsonlstore: read-only inventory scope unavailable: %w", err)
+		}
 		if request.Cursor != nil {
 			return nil, 0, false, port.ErrSessionMetadataCursorRestart
 		}
@@ -374,6 +413,9 @@ func (st *Store) readInventoryScopePage(ctx context.Context, request port.Sessio
 		line, readErr := readInventoryLine(ctx, reader)
 		if readErr != nil {
 			if readErr == io.EOF {
+				if st.readOnly && len(rows) == 0 && scope.Count > 0 {
+					return nil, 0, false, fmt.Errorf("jsonlstore: read-only inventory scope unavailable: catalog has no rows")
+				}
 				return rows, nextPosition, false, nil
 			}
 			return nil, 0, false, readErr

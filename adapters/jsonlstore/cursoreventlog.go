@@ -172,6 +172,12 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			}
 			offset = next
 			for _, rec := range batch {
+				if st.readOnly && ctx.Err() != nil {
+					if !opts.Follow {
+						yield(port.LogRecord{}, ctx.Err())
+					}
+					return
+				}
 				rec.Live = live
 				if !yield(rec, nil) {
 					return
@@ -258,7 +264,11 @@ func (st *Store) readEventPage(ctx context.Context, id session.SessionID, basis 
 		return nil, offset, basis, nil
 	}
 
-	out, next, err := decodeEventPage(id, f, basis, offset, completeSize, limit)
+	decodeCtx := context.Background()
+	if st.readOnly {
+		decodeCtx = ctx
+	}
+	out, next, err := decodeEventPage(decodeCtx, id, f, basis, offset, completeSize, limit)
 	if err != nil {
 		return nil, 0, basis, err
 	}
@@ -273,11 +283,14 @@ func (st *Store) readEventPage(ctx context.Context, id session.SessionID, basis 
 // snapshot-family lock and owns the generation re-check — reads separately from
 // the decode half, which holds no lock and only needs the already-captured
 // committed size.
-func decodeEventPage(id session.SessionID, f *os.File, basis logBasis, offset, completeSize int64, limit int) ([]port.LogRecord, int64, error) {
+func decodeEventPage(ctx context.Context, id session.SessionID, f *os.File, basis logBasis, offset, completeSize int64, limit int) ([]port.LogRecord, int64, error) {
 	var out []port.LogRecord
 	next := offset
 	sc := newEventScanner(io.NewSectionReader(f, offset, completeSize-offset))
 	for sc.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		line := sc.Bytes()
 		next += int64(len(line)) + 1
 		var rec eventLogRecord

@@ -61,17 +61,51 @@ func loadSnapshot(ctx context.Context, dir string, id session.SessionID) (*sessi
 ```
 
 `New` creates directories, probes atomic replacement and file/directory sync,
-and reaps abandoned temporary generations. `Load`, `Read`, and `ReadAfter` need
-family lock files; metadata paging can rebuild or delete derivative catalog
-artifacts. This is **not a general read-only filesystem mount API**, even if your
-application only reads. Plain `List` or lineage reads do not remove the
-constructor's write requirements. Use a writable copy when inspecting an
-immutable backup.
+and reaps abandoned temporary generations. The published `adapters/v0.1.1`
+release does not contain `OpenReader`; the following read-only API requires a
+build containing this change. Use `OpenReader` for an existing
+store when the process must not write to its source. It returns a separate
+`*jsonlstore.Reader` with `List`, `MetaList`, `PageSessionMetadata`, `Load`,
+`ReadSessionLineage`, `Read`, and `ReadAfter` (including follow cursors). It has
+no save, delete, append, schedule, or repair methods. Prepare a store with a
+writable `New` instance before switching to read-only access:
+
+```go
+func loadReadOnlySnapshot(ctx context.Context, dir string, id session.SessionID) (*session.Session, error) {
+    reader, err := jsonlstore.OpenReader(dir)
+    if err != nil {
+        return nil, err
+    }
+    return reader.Load(ctx, id)
+}
+```
+
+`OpenReader` requires existing directories and uses existing lock files with
+shared, context-cancellable locks. It does not create missing files, rebuild
+catalogs, or clean up stale artifacts. `List`, `Load`, lineage queries, and
+event reads remain available without a current metadata catalog. For `MetaList`
+and bounded paging, first call `MetaList` or `PageSessionMetadata` on the
+writable store to prepare the derivative catalog at the same canonical path.
+A missing or invalid catalog returns an error. Saves by a concurrent writer
+invalidate that catalog: paging is unavailable until the writable owner
+refreshes it. Invalidation detected during a metadata read also fails the read;
+continuation requests return `port.ErrSessionMetadataCursorRestart`. Pass
+metadata cursors back to `Reader`, not to the writable `Store`: reader cursors
+also track the number of rows consumed so a truncated catalog cannot report a
+complete final page. Each page reads at most `Limit+1` rows without scanning
+previous pages. Catalog fingerprints include the absolute directory path, so a
+backup relocated to a different path cannot use its copied catalog for paging;
+prepare the catalog at the destination with a writable owner if paging is
+needed. Existing lock files are required for the relevant family and lineage
+partitions; missing locks return an error rather than silently treating data
+as absent. `New` still requires write access even if you only call `Load`.
 
 JSONL has no `Store.Close`. Operations own their file handles; event iterators
 retain handles until iteration ends. Finish iteration, break out of the range,
-or cancel its context, and let the iterator return. Cancellation cannot interrupt
-your code while it is handling a yielded record.
+or cancel its context, and let the iterator return. `Reader` checks cancellation
+between snapshots, metadata rows, lineage records, and replayed events.
+Cancellation cannot interrupt an in-progress filesystem call or your code while
+it is handling a yielded record.
 
 ### Open Redis storage
 

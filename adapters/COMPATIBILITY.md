@@ -92,5 +92,6 @@ These commands include the cross-adapter tests in `integration/`, using pinned
 module dependencies and Go's normal download and build caches. The repository's
 `task test` and `task test:race` already include this module.
 
-Tests use local fixtures, not live services. They do not verify public tag
-availability, real Redis ACL behavior, or read-only filesystem access.
+Tests use local fixtures, not live services. The JSONL reader tests exercise
+an existing store with filesystem writes denied by the OS in a subprocess;
+they do not verify public tag availability or real Redis ACL behavior.

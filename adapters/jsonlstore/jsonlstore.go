@@ -155,6 +155,7 @@ type Store struct {
 	// (including the plain root dir, resolver.dir — Store has no separate
 	// copy of it).
 	resolver sessionResolver
+	readOnly bool
 	// mu is confined to the sibling schedule store. Session-family mutations
 	// coordinate by their stable cross-process flock identity instead.
 	mu                            sync.Mutex
@@ -478,6 +479,9 @@ func withSnapshotFamilyLock(ctx context.Context, snapshotPath string, blocked fu
 }
 
 func (st *Store) withSnapshotFamilyLock(ctx context.Context, snapshotPath string, fn func() error) error {
+	if st.readOnly {
+		return withExistingSharedLock(ctx, snapshotFamilyLockPath(snapshotPath), fn)
+	}
 	return withSnapshotFamilyLock(ctx, snapshotPath, st.snapshotFamilyLockBlocked, fn)
 }
 
@@ -980,6 +984,10 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 
 		sc := newEventScanner(io.NewSectionReader(f, 0, completeSize))
 		for sc.Scan() {
+			if st.readOnly && ctx.Err() != nil {
+				yield(session.Event{}, ctx.Err())
+				return
+			}
 			b := sc.Bytes()
 			var rec eventLogRecord
 			if err := json.Unmarshal(b, &rec); err != nil {

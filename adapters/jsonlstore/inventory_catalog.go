@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -96,6 +97,12 @@ func (st *Store) advanceInventoryGeneration() error {
 }
 
 func (st *Store) withInventoryCatalogLock(ctx context.Context, fn func() error) error {
+	if st.readOnly {
+		if err := withExistingSharedLock(ctx, filepath.Join(st.inventoryCatalogDir(), inventoryCatalogLockName), fn); err != nil {
+			return fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: %w", err)
+		}
+		return nil
+	}
 	fl := flock.New(filepath.Join(st.inventoryCatalogDir(), inventoryCatalogLockName), flock.SetPermissions(0o600))
 	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {
@@ -114,14 +121,31 @@ func (st *Store) withInventoryCatalogLock(ctx context.Context, fn func() error) 
 func (st *Store) inventoryFingerprint() (string, error) {
 	h := sha256.New()
 	dir := st.resolver.canonicalDir()
-	info, err := os.Stat(dir)
+	info, err := os.Stat(dir) //nolint:gosec // normalized store root plus fixed canonicalDirName, not a session-supplied path
 	if err != nil {
 		return "", fmt.Errorf("jsonlstore: fingerprint inventory directory: %w", err)
 	}
 	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\n", dir, info.ModTime().UnixNano(), info.Size(), info.Mode())
-	marker, err := os.ReadFile(st.inventoryGenerationMarkerPath()) //nolint:gosec // adapter-private owner-only path
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("jsonlstore: read inventory generation marker: %w", err)
+	var marker []byte
+	if st.readOnly {
+		root, openErr := st.inventoryCatalogRoot()
+		if openErr != nil {
+			return "", openErr
+		}
+		f, fileErr := openRegular(root, inventoryGenerationMarkerName)
+		if fileErr == nil {
+			marker, fileErr = io.ReadAll(f)
+			_ = f.Close()
+		}
+		_ = root.Close()
+		if fileErr != nil && !os.IsNotExist(fileErr) {
+			return "", fmt.Errorf("jsonlstore: read inventory generation marker: %w", fileErr)
+		}
+	} else {
+		marker, err = os.ReadFile(st.inventoryGenerationMarkerPath()) //nolint:gosec // adapter-private owner-only path
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("jsonlstore: read inventory generation marker: %w", err)
+		}
 	}
 	_, _ = h.Write(marker)
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -167,6 +191,67 @@ func (st *Store) readInventoryManifest(fingerprint string) (inventoryCatalog, bo
 	if err != nil {
 		return inventoryCatalog{}, false
 	}
+	return decodeInventoryManifest(data, fingerprint)
+}
+
+func (st *Store) readOnlyInventoryManifest(cursor *port.SessionMetadataCursor) (inventoryCatalog, error) {
+	fingerprint, err := st.inventoryFingerprint()
+	if err != nil {
+		return inventoryCatalog{}, err
+	}
+	root, err := st.inventoryCatalogRoot()
+	if err != nil {
+		return inventoryCatalog{}, err
+	}
+	defer func() { _ = root.Close() }()
+	f, err := openRegular(root, inventoryCatalogFileName)
+	if err != nil {
+		return inventoryCatalog{}, fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return inventoryCatalog{}, fmt.Errorf("jsonlstore: read inventory manifest: %w", err)
+	}
+	var header inventoryCatalog
+	if err := json.Unmarshal(data, &header); err != nil {
+		return inventoryCatalog{}, fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: %w", err)
+	}
+	catalog, ok := decodeInventoryManifest(data, header.Fingerprint)
+	if !ok {
+		return inventoryCatalog{}, fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: missing, stale, or invalid manifest")
+	}
+	if _, ok := catalog.Scopes[inventoryGlobalScope]; !ok {
+		return inventoryCatalog{}, fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: global scope missing")
+	}
+	if catalog.Fingerprint != fingerprint {
+		return inventoryCatalog{}, readOnlyInventoryInvalidated(cursor)
+	}
+	return catalog, nil
+}
+
+func readOnlyInventoryInvalidated(cursor *port.SessionMetadataCursor) error {
+	if cursor != nil {
+		return port.ErrSessionMetadataCursorRestart
+	}
+	return fmt.Errorf("jsonlstore: read-only inventory catalog unavailable: source changed")
+}
+
+func (st *Store) checkReadOnlyInventory(ctx context.Context, catalog inventoryCatalog, cursor *port.SessionMetadataCursor) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fingerprint, err := st.inventoryFingerprint()
+	if err != nil {
+		return err
+	}
+	if fingerprint != catalog.Fingerprint {
+		return readOnlyInventoryInvalidated(cursor)
+	}
+	return nil
+}
+
+func decodeInventoryManifest(data []byte, fingerprint string) (inventoryCatalog, bool) {
 	var catalog inventoryCatalog
 	if json.Unmarshal(data, &catalog) != nil || catalog.Format != inventoryCatalogFormat ||
 		catalog.Fingerprint != fingerprint || catalog.Sources == nil || len(catalog.Sources) != 0 || catalog.Scopes == nil ||
@@ -197,8 +282,24 @@ func (st *Store) readInventoryCatalog(fingerprint string) ([]port.SessionDiscove
 	return rows, true
 }
 
+func (st *Store) openInventoryScope(name string) (*os.File, error) {
+	if !st.readOnly {
+		return os.Open(filepath.Join(st.inventoryCatalogDir(), name)) //nolint:gosec // manifest-validated basename
+	}
+	root, err := st.inventoryCatalogRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return openRegular(root, name)
+}
+
 func (st *Store) readInventoryScope(scope inventoryCatalogScope) ([]port.SessionDiscoveryMeta, error) {
-	f, err := os.Open(filepath.Join(st.inventoryCatalogDir(), scope.File)) //nolint:gosec // validated adapter-private basename
+	return st.readInventoryScopeContext(context.Background(), scope)
+}
+
+func (st *Store) readInventoryScopeContext(ctx context.Context, scope inventoryCatalogScope) ([]port.SessionDiscoveryMeta, error) {
+	f, err := st.openInventoryScope(scope.File)
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +308,12 @@ func (st *Store) readInventoryScope(scope inventoryCatalogScope) ([]port.Session
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), maxScannerTokenSize)
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if st.readOnly {
+			st.observeInventoryWork(inventoryWorkCatalogRow)
+		}
 		var row port.SessionDiscoveryMeta
 		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
 			return nil, err

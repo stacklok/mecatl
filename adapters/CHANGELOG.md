@@ -6,6 +6,10 @@ Changes to the public adapter API follow [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ### Added
 
+- `jsonlstore.OpenReader` and `Reader` provide explicitly read-only access to
+  existing JSONL snapshots, metadata, lineage, and event cursors without source
+  initialization, repair, or mutation. Metadata paging requires a prepared
+  current catalog at the same canonical path.
 - Initial public `github.com/stacklok/mecatl/adapters` module containing the
   complete `jsonlstore`, `redisstore`, and `grpcdriver` packages, including their
   existing write, schedule, content-source, and learning-driver exports.

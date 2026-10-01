@@ -110,12 +110,16 @@ func validateLineageRecord(row port.SessionLineageRecord) error {
 
 //nolint:gocyclo // Validation remains fail-closed at each decode boundary.
 func readLineagePartition(
+	ctx context.Context,
 	path, format string,
 	limit int,
 	checkDirty bool,
 	accept func(port.SessionLineageRecord) bool,
 	less func(port.SessionLineageRecord, port.SessionLineageRecord) bool,
 ) ([]port.SessionLineageRecord, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if checkDirty {
 		_, err := os.Stat(lineageDirtyPath(path)) //nolint:gosec // adapter-private owner-only path
 		if err == nil {
@@ -150,6 +154,9 @@ func readLineagePartition(
 		return true
 	}
 	for len(rows) < limit {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		var row port.SessionLineageRecord
 		if err := dec.Decode(&row); errors.Is(err, io.EOF) {
 			return rows, false, nil
@@ -157,6 +164,9 @@ func readLineagePartition(
 			return nil, false, errors.New("jsonlstore: corrupt lineage partition")
 		}
 		rows = append(rows, row)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 	var sentinel port.SessionLineageRecord
 	if err := dec.Decode(&sentinel); errors.Is(err, io.EOF) {
@@ -168,7 +178,7 @@ func readLineagePartition(
 }
 
 func readWholeLineagePartition(path, format string) ([]port.SessionLineageRecord, error) {
-	rows, _, err := readLineagePartition(path, format, int(^uint(0)>>1)-1, false, nil, nil)
+	rows, _, err := readLineagePartition(context.Background(), path, format, int(^uint(0)>>1)-1, false, nil, nil)
 	if errors.Is(err, errLineagePartitionUnavailable) {
 		return nil, nil
 	}
@@ -574,8 +584,8 @@ func (st *Store) pruneLineage(ctx context.Context, id session.SessionID, deleteS
 	})
 }
 
-func (st *Store) missingLineagePoint(query port.SessionLineageQuery) (port.SessionLineageResult, error) {
-	rows, _, err := readLineagePartition(
+func (st *Store) missingLineagePoint(ctx context.Context, query port.SessionLineageQuery) (port.SessionLineageResult, error) {
+	rows, _, err := readLineagePartition(ctx,
 		st.lineageRecordPath(query.RecordID), lineageRecordFormat, 1, true,
 		func(row port.SessionLineageRecord) bool { return row.ID == query.RecordID },
 		func(a, b port.SessionLineageRecord) bool { return lineageResultLess(a, b, query.RecordID) },
@@ -594,29 +604,32 @@ func (st *Store) missingLineagePoint(query port.SessionLineageQuery) (port.Sessi
 
 // ReadSessionLineage reads only the selected root record and exact-incarnation
 // direct-edge partitions. It never locks, reconciles, or writes.
-func (st *Store) ReadSessionLineage(_ context.Context, query port.SessionLineageQuery) (port.SessionLineageResult, error) {
+func (st *Store) ReadSessionLineage(ctx context.Context, query port.SessionLineageQuery) (port.SessionLineageResult, error) {
+	if !st.readOnly {
+		ctx = context.Background()
+	}
 	if err := port.ValidateSessionLineageQuery(query); err != nil {
 		return port.SessionLineageResult{}, err
 	}
 	if query.RecordID != "" {
 		path := st.lineagePointPath(query.RootID, query.RootIncarnation, query.RecordID, string(query.RecordIncarnation))
-		rows, more, err := readLineagePartition(path, lineagePointFormat, 1, true,
+		rows, more, err := readLineagePartition(ctx, path, lineagePointFormat, 1, true,
 			func(row port.SessionLineageRecord) bool {
 				return row.ID == query.RecordID && row.Incarnation == string(query.RecordIncarnation) && lineageReferences(row, query.RootID, query.RootIncarnation)
 			}, nil)
 		if errors.Is(err, errLineagePartitionUnavailable) {
-			return st.missingLineagePoint(query)
+			return st.missingLineagePoint(ctx, query)
 		}
 		if err != nil {
 			return port.SessionLineageResult{}, err
 		}
 		if more || len(rows) != 1 {
-			return st.missingLineagePoint(query)
+			return st.missingLineagePoint(ctx, query)
 		}
 		return port.SessionLineageResult{Records: rows}, nil
 	}
 	// The root and edge partitions have distinct ordering contracts.
-	records, moreRecords, err := readLineagePartition(
+	records, moreRecords, err := readLineagePartition(ctx,
 		st.lineageRecordPath(query.RootID), lineageRecordFormat, query.Limit, true,
 		func(row port.SessionLineageRecord) bool { return row.ID == query.RootID },
 		func(a, b port.SessionLineageRecord) bool { return lineageResultLess(a, b, query.RootID) },
@@ -628,7 +641,7 @@ func (st *Store) ReadSessionLineage(_ context.Context, query port.SessionLineage
 	more := moreRecords
 	if !more {
 		remaining := query.Limit - len(rows)
-		edges, moreEdges, err := readLineagePartition(
+		edges, moreEdges, err := readLineagePartition(ctx,
 			st.lineageEdgePath(query.RootID, query.RootIncarnation), lineageEdgeFormat, remaining, true,
 			func(row port.SessionLineageRecord) bool {
 				return lineageReferences(row, query.RootID, query.RootIncarnation)
