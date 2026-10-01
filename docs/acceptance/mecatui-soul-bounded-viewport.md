@@ -5,6 +5,7 @@
 **Decision record:** None — the responsive card, pointer-owned viewport, and modal input behavior remain private to `cmd/mecatui/ui`; their rationale belongs in this plan.
 **Phase:** bounded browsing adoption, soul inspector slice
 **Status:** landed in this implementation candidate, 2026-10-01. Authoritative when the implementation PR merges; approved plan baseline `0e396dc4631d94bf773062ac85cf9c9544ea332f`.
+**Amendment:** 2026-10-01 — during implementation PR #2041 review, the directing operator authorized removing redundant public controls prose and `/soul`-specific contributor guidance. Existing command discovery and general TUI design guidance remain the owners; no runtime or interface behavior changes.
 **Delivery:** Split. Responsive geometry, physical paging, and wheel ownership change the visible interaction contract and merit separate review before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1899](https://github.com/stacklok/mecatl/issues/1899).
@@ -25,7 +26,7 @@
 - **CLI / config:** None — `/soul`, its visibility gate, and binding names/defaults remain unchanged. Configured `Up`/`Down` move one wrapped physical row, `ScrollU`/`ScrollD` page by the current viewport height, and `ScrollTop`/`ScrollBottom` reach physical endpoints. Each wheel event moves one physical row without changing selection or scrolling the hidden conversation; compact state only consumes the event.
 - **Events / persistence:** None — the browsing offset and measured geometry remain transient modal state; soul loading and provenance retain their existing owners.
 - **Security / authority:** None — the inspector remains read-only, idle-only, and capability-gated; it sanitizes server-derived content before styling, and trust and drift remain server-owned.
-- **Compatibility / migration:** Replace the local numeric scroll/window helpers and fixed twelve-row card with one pointer-owned bounded viewport and parent-measured, centered `askCard` capped at 128 outer cells. Preserve `ansi.Wrap` layout by passing already wrapped, sanitized, styled physical rows to `bounded.Clip`; do not rewrap them with `bounded.Wrap`. Retain metadata, ownership footer, overflow wording, loading/error/empty/untrusted copy, and existing modal open/close/focus behavior. Bind the existing `GetSoul` reply to its open so a closed or superseded request cannot overwrite a later modal. Responsive height, physical page keys, one-line wheel scrolling, and close-only compact fallback are intentional behavior changes. Document useful operator controls in the existing public TUI guide when they ship; keep contributor design rationale separate.
+- **Compatibility / migration:** Replace the local numeric scroll/window helpers and fixed twelve-row card with one pointer-owned bounded viewport and parent-measured, centered `askCard` capped at 128 outer cells. Preserve `ansi.Wrap` layout by passing already wrapped, sanitized, styled physical rows to `bounded.Clip`; do not rewrap them with `bounded.Wrap`. Retain metadata, ownership footer, overflow wording, loading/error/empty/untrusted copy, and existing modal open/close/focus behavior. Bind the existing `GetSoul` reply to its open so a closed or superseded request cannot overwrite a later modal. Responsive height, physical page keys, one-line wheel scrolling, and close-only compact fallback are intentional behavior changes. The public TUI guide already lists `/soul` under command discovery, and the inspector itself shows its controls; the contributor TUI guide's general bounded-card and modal-input guidance applies without a `/soul`-specific section.
 
 ## In scope — 2 scenarios, in implementation order
 
@@ -54,10 +55,6 @@ The existing [`soulState` surface](../../cmd/mecatui/ui/soul.go) still owns the 
   - verify: `TestMecatuiSoulBoundedViewport_Scenario2_RemappableNavigation`
 - AC2.3: Each wheel-up/down event moves the soul window one physical row, including within wrapped content; at either endpoint and in compact mode the event remains consumed without scrolling the hidden conversation or constructing a viewport.
   - verify: `TestMecatuiSoulBoundedViewport_Scenario2_WheelOwnershipAndCompactIsolation`
-- AC2.4: After the behavior ships, the existing public terminal-client guide explains how to inspect a long soul with `/soul`, arrow/page keys, wheel, and Escape in one concise passage beside command discovery. It names the measured-page and one-row wheel behavior because those are not evident from command discovery alone; it does not narrate card geometry or duplicate the soul feature guide.
-  - verify: inspection — update the owning [`user-docs/mecatui/using-the-tui.md`](../../user-docs/mecatui/using-the-tui.md) and run `task site:build`.
-- AC2.5: The contributor TUI design guide explains why `/soul` shares measured physical-row geometry, browsing-input ownership, and close-only fallback with other bounded browsers, without becoming a second end-user control reference. Coordinate this update with the separately ongoing `docs/tui.md` reorganization; remove obsolete user-facing `/soul` copy there if it remains when implementation lands.
-  - verify: inspection — check the owning [`docs/tui.md`](../tui.md) after implementation and run `task docs`.
 
 ## Out of scope
 
