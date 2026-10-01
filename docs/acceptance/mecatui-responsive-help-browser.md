@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes the local, user-visible geometry and physical-row browsing behavior of the existing Help overlay without changing a public API, persistence boundary, protocol, security boundary, or system architecture.
 **Decision record:** None — the root-owned Help state, local viewport integration, and card geometry remain confined to `cmd/mecatui/ui`; their rationale belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-browser adoption, Help slice
-**Status:** proposed, 2026-10-01. Retroactively records the directing human's decisions after an authorized UI spike validated the interaction.
+**Status:** landed in this implementation candidate, 2026-10-01. Authoritative when the implementation PR merges.
 **Delivery:** Split. The user-visible width, wrapping, compact fallback, and keyboard-ownership contract need plan/interface review before the implementation candidate can merge.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1900](https://github.com/stacklok/mecatl/issues/1900).
