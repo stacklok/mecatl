@@ -261376,6 +261376,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790853008881,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "29df7140f26b797b3023455bb2b6af5dfe763937",
+          "message": "feat(mecatui): bound soul inspector to measured viewport (#2041)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T14:28:51+03:00",
+          "tree_id": "fa67e67f2d3bc45476a3069d923a805963b1d72d",
+          "url": "https://github.com/stacklok/mecatl/commit/29df7140f26b797b3023455bb2b6af5dfe763937"
+        },
+        "date": 1790854802129,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -379340,6 +379374,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790854799252,
+  "lastUpdate": 1790854802931,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
