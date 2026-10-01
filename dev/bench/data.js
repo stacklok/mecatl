@@ -285251,6 +285251,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790808817402,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "816fdb725d3cab30e74759af80361cc68a938246",
+          "message": "test(modules): guard published module pins and proxy closure (#2026)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T08:16:10+03:00",
+          "tree_id": "fd65ee2c985ee6aac8abe2778fcf85d1ea10bc78",
+          "url": "https://github.com/stacklok/mecatl/commit/816fdb725d3cab30e74759af80361cc68a938246"
+        },
+        "date": 1790832516502,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -373753,6 +373792,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790832513439,
+  "lastUpdate": 1790832517491,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
