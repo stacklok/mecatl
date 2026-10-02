@@ -481,6 +481,56 @@ func TestMecak8sKindFixture_Scenario3_KeycloakDemoQuickstart(t *testing.T) {
 	}
 }
 
+// TestMecak8sKindFixture_OneShotLifecycle pins the one-shot compositions: the
+// destructive bring-up is confirmation-guarded and orders hosts aliases before
+// the readiness/CA step, the hosts steps reach sudo only when there is work,
+// and teardown logs out before deleting the cluster.
+func TestMecak8sKindFixture_OneShotLifecycle(t *testing.T) {
+	upBlock := fixtureTaskBlock(t, "kind-up")
+	if !strings.Contains(upBlock, "prompt:") {
+		t.Fatal("kind-up recreates the cluster and must carry a prompt guard")
+	}
+	if strings.Contains(upBlock, "deps:") {
+		t.Fatal("kind-up must run its steps sequentially through cmds, not parallel deps")
+	}
+	assertOrdered(t, upBlock, "task: kind-keycloak-setup", "task: :build", "task: kind-hosts-add", "task: kind-keycloak-demo")
+
+	// /etc/hosts is world-readable: both hosts tasks check it unprivileged
+	// before reaching sudo, so an already-converged run never prompts.
+	assertOrdered(t, fixtureTaskBlock(t, "kind-hosts-add"), `if grep -Fqx "$entry" /etc/hosts`, "continue", "sudo sh -c")
+	assertOrdered(t, fixtureTaskBlock(t, "kind-hosts-remove"), "if ! grep -Fqx", "exit 0", "sudo sed -i.bak")
+
+	downBlock := fixtureTaskBlock(t, "kind-down")
+	assertOrdered(t, downBlock, "mecatui logout mecak8s-mecak8s.mecatl.svc.cluster.local:18080", "task: kind-hosts-remove", "task: kind-destroy")
+}
+
+// fixtureTaskBlock returns only the named task's own block, after verifying
+// that every task it transitively references exists.
+func fixtureTaskBlock(t *testing.T, name string) string {
+	t.Helper()
+	closure := fixtureTaskClosure(t, name)
+	headers := fixtureTaskBlockRe.FindAllStringIndex(closure, 2)
+	if len(headers) < 2 {
+		return closure
+	}
+	return closure[:headers[1][0]]
+}
+
+func assertOrdered(t *testing.T, text string, steps ...string) {
+	t.Helper()
+	prev := -1
+	for _, step := range steps {
+		idx := strings.Index(text, step)
+		if idx < 0 {
+			t.Fatalf("missing step %q", step)
+		}
+		if idx < prev {
+			t.Fatalf("step %q is out of order", step)
+		}
+		prev = idx
+	}
+}
+
 // TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay pins the disposable
 // private-HTTPS OIDC shape. The CA is narrowly mounted for the validator and
 // no process-wide or deprecated insecure escape hatch is admitted.

@@ -20,8 +20,9 @@ provisioning.
 - Working directory is the mecatl repo (or a worktree of it).
 - `ko`, `kubectl`, `kind`, and either `docker` or `podman` installed.
 - The `mecatl-dev` Kind cluster already exists (`kind get clusters` shows it).
-  If it doesn't, run `task mecak8s:kind-setup` first — that's provisioning,
-  not this skill's job.
+  If it doesn't, run `task mecak8s:kind-setup` (base) or
+  `task mecak8s:kind-up` (one-shot Keycloak bring-up) first — that's
+  provisioning, not this skill's job.
 
 ## Step 1 — Refresh the mecak8s image with current source
 
@@ -93,7 +94,8 @@ the TUI/client code changed.
 This skill never tears the cluster down. To destroy the whole fixture:
 
 ```sh
-task mecak8s:kind-destroy
+task mecak8s:kind-down     # logout, remove /etc/hosts aliases, destroy
+task mecak8s:kind-destroy  # cluster and local state only
 ```
 
 ## Reference
