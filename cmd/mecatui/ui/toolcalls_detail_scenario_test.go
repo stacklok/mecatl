@@ -149,6 +149,19 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	if !strings.Contains(strings.Split(wide, "\n")[2], "anchor-row") {
 		t.Fatalf("wide reflow shifted reading position: before=%q after=%q", resized, wide)
 	}
+	m3 = applyAll(m3, client.ToolResultMsg{CallID: "reflow", Available: true, Content: strings.Repeat("streamed-line\n", 20)})
+	reading := inspectorDetail(t, s3, 90, 8)
+	if !strings.Contains(strings.Split(reading, "\n")[2], "anchor-row") || strings.Contains(reading, "streamed-line") {
+		t.Fatalf("append after resize displaced non-following reader: before=%q after=%q", wide, reading)
+	}
+	s3.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if got := inspectorDetail(t, s3, 90, 8); !strings.Contains(got, "streamed-line") {
+		t.Fatalf("streamed tail unreachable: %q", got)
+	}
+	m3 = applyAll(m3, client.ToolResultMsg{CallID: "reflow", Content: strings.Repeat("streamed-line\n", 20) + "canonical-tail"})
+	if got := inspectorDetail(t, s3, 90, 8); !strings.Contains(got, "canonical-tail") || strings.Contains(got, "Result: pending") {
+		t.Fatalf("following reader lost canonical appended tail: %q", got)
+	}
 
 	m5 := newToolcallsInspectorModel(t)
 	var wrapped strings.Builder

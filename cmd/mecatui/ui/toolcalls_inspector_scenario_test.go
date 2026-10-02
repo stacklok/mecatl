@@ -309,6 +309,55 @@ func TestMecatuiToolcallsInspector_Scenario3_SessionReplacementClosesInspector(t
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario3_LoadedSessionReplacement(t *testing.T) {
+	resume := &client.ResumeSelection{
+		Row: client.SessionListItem{ID: "source"},
+		Transcript: client.SessionTranscript{Messages: []client.ConversationMessage{
+			{Role: "assistant", ToolCalls: []client.ConvToolCall{{ID: "reused", Name: "Read", Args: `{"path":"source"}`}}},
+			{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "reused", Content: "source result"}},
+		}},
+	}
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context(), Resume: resume})
+	m.width, m.height = 100, 30
+	m.relayout()
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	s.Render(80, 12)
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	if got := inspectorDetail(t, s, 80, 12); !strings.Contains(got, "source result") {
+		t.Fatalf("loaded source detail missing: %q", got)
+	}
+	oldGen := m.liveGen
+	target := conversationFromTranscript([]client.ConversationMessage{
+		{Role: "assistant", ToolCalls: []client.ConvToolCall{{ID: "reused", Name: "Write", Args: `{"path":"target"}`}}},
+		{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "reused", Content: "target result"}},
+	})
+	updated, _, handled := m.adoptAuthoritativeTranscript(client.SessionListItem{ID: "target"}, target, client.SessionSnapshot{})
+	m = updated.(Model)
+	if m.liveGen == oldGen {
+		t.Fatal("replacement did not invalidate former session's live reader")
+	}
+	if !handled || m.sessionID != "target" || toolcallsForTest(t, m) != nil {
+		t.Fatalf("loaded target failed to close source inspector: session=%q modal=%T", m.sessionID, m.modal)
+	}
+	updated, _ = m.Update(liveMsg{gen: oldGen, msg: client.ToolCallMsg{ID: "late", Name: "Read", Args: `{"path":"source"}`}})
+	m = updated.(Model)
+	updated, _ = m.Update(liveMsg{gen: oldGen, msg: client.ToolResultMsg{CallID: "reused", Content: "late source result"}})
+	m = updated.(Model)
+	m = openToolcallsForTest(t, m)
+	fresh := toolcallsForTest(t, m)
+	if fresh == s || len(fresh.entries) != 1 || fresh.entries[0].name != "Write" {
+		t.Fatalf("target inventory leaked source: %#v", fresh.entries)
+	}
+	fresh.Render(80, 12)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	if got := inspectorDetail(t, fresh, 80, 12); !strings.Contains(got, "target result") || strings.Contains(got, "source result") || strings.Contains(got, "late source result") {
+		t.Fatalf("target detail leaked source: %q", got)
+	}
+}
+
 func newToolcallsInspectorModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context()})
