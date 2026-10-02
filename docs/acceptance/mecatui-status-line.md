@@ -3,6 +3,7 @@
 **Phase:** capability — local TUI presentation extension
 **Status:** in-progress, 2026-08-27. Updated after the template, shared-markup, and mecatui-settings decisions.
 **ADR:** [ADR-0289](../adr/0289-hardened-status-command-boundary.md) — hardened command output and explicit environment extension; it supersedes [ADR-0247](../adr/0247-mecatui-status-line.md).
+**Superseded placement:** [ADR-0373](../adr/0373-mecatui-status-surfaces-and-activity-line.md) supersedes ADR-0289 and moves the activity lane described below out of the footer to its own line above the input box; custom footers no longer share their row with it.
 **Accumulator branch:** `acc/mecatui-status-line` (off `main`).
 
 The smallest useful capability makes both the current mecatui header and status/usage row shipped default templates. Operators may replace either surface through the user-global mecatui settings document with responsive templates or one local command. Both paths consume the same status input and produce the same safe, theme-aware `StatusML` document. The keyboard-help row remains mecatui chrome, and the renderer preserves mandatory header safety/navigation indicators outside template control.

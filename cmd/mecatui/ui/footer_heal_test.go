@@ -40,7 +40,7 @@ func healModel(t *testing.T, conv *fakeConv) Model {
 }
 
 // footerStr renders the (ANSI-stripped) footer the user sees.
-func footerStr(m Model) string { return stripANSIstr(m.fitFooter("connected", 160)) }
+func footerStr(m Model) string { return stripANSIstr(m.fitFooter(160)) }
 
 // TestFooterHealRaceThenHeal is the decisive offline reproduction of the issue-#66
 // footer-heal race: a raced create echoes a 0 window (the footer degrades to the

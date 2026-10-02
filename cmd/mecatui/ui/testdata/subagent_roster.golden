@@ -14,17 +14,17 @@
   ┃      Shell… · 11 tools · ↑0 ↓0                                                               ┃
   ┃    ✓ map test coverage #r-d0c4                                                               ┃
   ┃      done · 9 tools · ↑15K ↓4K                                                               ┃
-  ┃    ✗ check error handling #r-e9b5                                                            ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                           ⛭ subagents 3◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+ ⛭ subagents 3◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

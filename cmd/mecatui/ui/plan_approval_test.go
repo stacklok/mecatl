@@ -98,14 +98,17 @@ func TestPlanAskNoAlwaysButtonCopy(t *testing.T) {
 	}
 }
 
-func TestPlanAskFooterLabel(t *testing.T) {
+func TestPlanAskActivityLabel(t *testing.T) {
 	m := planAskModel(t, true)
-	got := stripANSIstr(m.renderFooter())
+	got := stripANSIstr(m.renderActivity())
 	if !strings.Contains(got, "plan review") {
-		t.Errorf("plan ask footer must show 'plan review', got %q", got)
+		t.Errorf("plan ask activity line must show 'plan review', got %q", got)
 	}
 	if strings.Contains(got, "awaiting approval") {
-		t.Errorf("plan ask footer must NOT show 'awaiting approval', got %q", got)
+		t.Errorf("plan ask activity line must NOT show 'awaiting approval', got %q", got)
+	}
+	if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "plan review") {
+		t.Errorf("the plan review label must not be duplicated in the footer, got %q", footer)
 	}
 }
 
@@ -176,10 +179,10 @@ func TestPlanAskDenyThenIterateTerminalReturnsToIdle(t *testing.T) {
 	if m.phase != phaseIdle {
 		t.Fatalf("after StopPlanIterate the phase must be phaseIdle (input usable), got %v", m.phase)
 	}
-	// The footer must show the iterate label (muted/transient — awaiting feedback).
-	got := stripANSIstr(m.renderFooter())
+	// The activity line must show the iterate label (muted/transient — awaiting feedback).
+	got := stripANSIstr(m.renderActivity())
 	if !strings.Contains(got, "plan iterate · awaiting your feedback") {
-		t.Errorf("footer after StopPlanIterate = %q, want it to contain 'plan iterate · awaiting your feedback'", got)
+		t.Errorf("activity after StopPlanIterate = %q, want it to contain 'plan iterate · awaiting your feedback'", got)
 	}
 	// The textarea is focused (input usable): the cursor-blink state is on.
 	if !m.prompt.Focused() {
@@ -197,13 +200,13 @@ func TestStopPlanApprovedFooterLabel(t *testing.T) {
 	}
 }
 
-func TestStopPlanApprovedReachesFooter(t *testing.T) {
+func TestStopPlanApprovedReachesActivity(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.phase = phaseRunning
 	m = applyAll(m, client.ResultMsg{Stop: "plan_approved"})
-	got := stripANSIstr(m.renderFooter())
+	got := stripANSIstr(m.renderActivity())
 	if !strings.Contains(got, "plan approved · executing") {
-		t.Errorf("ResultMsg{Stop:plan_approved} → footer = %q, want it to contain 'plan approved · executing'", got)
+		t.Errorf("ResultMsg{Stop:plan_approved} → activity = %q, want it to contain 'plan approved · executing'", got)
 	}
 }
 
@@ -219,10 +222,10 @@ func TestPlanAskQueueBadge(t *testing.T) {
 	if !strings.Contains(got, "Plan ready for review (1 of 2)") {
 		t.Errorf("plan ask with queue must show '(1 of 2)' badge, got %q", got)
 	}
-	// Footer must also carry the badge.
-	footer := stripANSIstr(m.renderFooter())
-	if !strings.Contains(footer, "plan review (1 of 2)") {
-		t.Errorf("plan ask footer with queue must show 'plan review (1 of 2)', got %q", footer)
+	// The activity line must also carry the badge.
+	activity := stripANSIstr(m.renderActivity())
+	if !strings.Contains(activity, "plan review (1 of 2)") {
+		t.Errorf("plan ask activity line with queue must show 'plan review (1 of 2)', got %q", activity)
 	}
 }
 
@@ -233,14 +236,18 @@ func TestGenericAskFooterIsUnchanged(t *testing.T) {
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
 	openApprovalSurface(&m).ask = pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", Reason: "Shell requires approval"}
+	activity := stripANSIstr(m.renderActivity())
+	if !strings.Contains(activity, "awaiting approval") {
+		t.Errorf("generic ask activity line must show 'awaiting approval', got %q", activity)
+	}
+	if strings.Contains(activity, "plan review") {
+		t.Errorf("generic ask activity line must NOT show 'plan review', got %q", activity)
+	}
 	got := stripANSIstr(m.renderFooter())
-	if !strings.Contains(got, "awaiting approval") {
-		t.Errorf("generic ask footer must show 'awaiting approval', got %q", got)
+	if strings.Contains(got, "awaiting approval") {
+		t.Errorf("the approval label must not be duplicated in the footer, got %q", got)
 	}
-	if strings.Contains(got, "plan review") {
-		t.Errorf("generic ask footer must NOT show 'plan review', got %q", got)
-	}
-	// The header help line must not leak plan-approval hints.
+	// The footer help line must not leak plan-approval hints.
 	if strings.Contains(got, "A approve & run") {
 		t.Errorf("generic ask footer help must not show plan-approval copy: %q", got)
 	}

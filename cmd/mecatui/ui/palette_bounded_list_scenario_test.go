@@ -325,7 +325,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 		{Name: "beta", Description: "second"},
 	}})
 	paged = typeRune(t, paged, '/')
-	paged = applyAll(paged, tea.WindowSizeMsg{Width: 24, Height: 21})
+	paged = applyAll(paged, tea.WindowSizeMsg{Width: 24, Height: 22})
 	_ = paged.View()
 	paged.palette.list.SetCursor(7) // alpha follows the seven built-ins.
 	paged.keys = applyKeyOverrides(paged.keys, map[string][]string{"ScrollU": {"p"}, "ScrollD": {"n"}})

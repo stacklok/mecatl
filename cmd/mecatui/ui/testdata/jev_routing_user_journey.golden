@@ -70,11 +70,11 @@
 
 
 
+ team done · 1 round
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- team done · 1 round                              ⑂ parallel 0◐ 1✓ · f6  ⛭ subagents 0◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+ ⑂ parallel 0◐ 1✓ · f6  ⛭ subagents 0◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

@@ -100,11 +100,10 @@ func buildFooterModel(tb testing.TB, window int64) Model {
 // default (window>0 -> bar). This is what renderFooter pays every View() now.
 func BenchmarkFooterFitBar(b *testing.B) {
 	m := buildFooterModel(b, benchWindow)
-	left := "ready"
 	width := m.widthOr()
 	b.ReportAllocs()
 	for b.Loop() {
-		footerSink = m.fitFooter(left, width)
+		footerSink = m.fitFooter(width)
 	}
 }
 
@@ -112,10 +111,9 @@ func BenchmarkFooterFitBar(b *testing.B) {
 // default (window==0 -> degrade). Same fitFooter ladder, cheap meter strings.
 func BenchmarkFooterFitDegrade(b *testing.B) {
 	m := buildFooterModel(b, 0)
-	left := "ready"
 	width := m.widthOr()
 	b.ReportAllocs()
 	for b.Loop() {
-		footerSink = m.fitFooter(left, width)
+		footerSink = m.fitFooter(width)
 	}
 }

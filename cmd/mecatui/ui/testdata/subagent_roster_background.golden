@@ -13,7 +13,6 @@
   ┃    ◐ find dead code #r-b2e2                                                                  ┃
   ┃      Read… · 4 tools · ↑0 ↓0                                                                 ┃
   ┃    ◐ trace config loading #r-c1d3                                                            ┃
-  ┃      Shell… · 11 tools · ↑0 ↓0                                                               ┃
   ┃    · +3 rows below                                                                           ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close         ┃
@@ -21,10 +20,11 @@
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
+ background subagent #r-g7b7 done — result ready for the agent
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- background subagent #r-g7b7 done — result ready for the agent        ⛭ subagents 4◐ 3✓ · f6  ctx 0
+ ⛭ subagents 4◐ 3✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

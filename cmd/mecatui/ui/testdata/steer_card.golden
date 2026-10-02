@@ -13,7 +13,6 @@
 
 
 
-
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                         ┃
 ┃  ⏳ steer queued · ↑ edit · esc cancel  ┃
@@ -21,10 +20,11 @@
 ┃                                         ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
+ ⣾  thinking…
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⣾  thinking…                                                                ctx 0 · ↑0 ↓0 cache 0%
+ ctx 0 · ↑0 ↓0 cache 0%
 enter queue · ctrl+u clear · esc cancel · ? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+c quit
