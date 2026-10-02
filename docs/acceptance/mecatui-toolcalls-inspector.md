@@ -4,12 +4,12 @@
 **Work classification:** Bounded — a new client-local conversation browser changes visible navigation and detail presentation but not durable ownership, protocol, or trust boundaries.
 **Decision record:** None — the existing TUI surface, typed scrollback, and bounded navigation contracts contain this feature without a new durable architecture decision.
 **Phase:** issue #1361, first slice: additive tool-call inspection
-**Status:** landed, 2026-10-02. Proposed implementation in this PR; authoritative when merged.
+**Status:** in-progress, 2026-10-02. Plan / Interface PR #2056 merged at `9edd9b751`. The directing operator authorized an in-PR amendment to presentation and inspector-row selection after hands-on review; mark the amended implementation landed only after verification.
 **Delivery:** Split. The new command, live browsing behavior, and detail contract benefit from human review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1361](https://github.com/stacklok/mecatl/issues/1361).
 
-The main conversation remains unchanged. A local `/toolcalls` browser lets a reader inspect one call's complete available arguments and results without expanding every card. It works during a run and on the loaded transcript of the current session. The browser is a second view of the canonical UI [scrollback](../../cmd/mecatui/ui/internal/scrollback/scrollback.go), not another history store. This slice does not change `ctrl+t`, shrink cards, or add pointer activation; later issue #1361 slices require separate plans after hands-on review.
+The main conversation remains unchanged. A local `/toolcalls` browser lets a reader inspect one call's complete available arguments and results without expanding every card. It works during a run and on the loaded transcript of the current session. The browser is a second view of the canonical UI [scrollback](../../cmd/mecatui/ui/internal/scrollback/scrollback.go), not another history store. The operator's in-PR amendment adds readable tool-specific presentation and click-to-select inside the inspector. This slice does not change `ctrl+t`, shrink cards, or activate the inspector by clicking a conversation card; later issue #1361 slices require separate plans after hands-on review.
 
 ## Human decisions
 
@@ -17,18 +17,19 @@ The main conversation remains unchanged. A local `/toolcalls` browser lets a rea
 - [x] Navigation and live updates — Decision: `/toolcalls` is available during idle and running phases. Up/Down select calls; the configured page/top/bottom actions navigate the list; Enter inspects the selected call; Escape returns to the same call in the list, then closes. New calls are followed only if the reader was at the newest call; otherwise selection stays with the same call. A selected live call's detail updates in place and follows added content only while already at its bottom. The inspector must not move the hidden conversation's reading position. Replacing or clearing the active session closes the inspector and discards its old selection and detail.
 - [x] Layout — Decision: list and detail take the offered conversation region while the existing header, prompt, and footer remain. Normal layout gives the list compact rows and the detail a scrollable area for long content. If even a usable row and its navigation hints cannot fit, show a width-safe message that the view is too small with Escape to close; do not add a miniature browser.
 - [x] Detail boundary — Decision: show complete available text arguments and result, pending/completed/failed state, and readable typed result content, including text-bearing embedded resources. Show structured JSON as a labeled value and resource links as labels and URIs; summarize byte-bearing media and embedded resources without dumping bytes. Do not dereference links, fetch more data, or imply a summary contains hidden raw media. Preserve existing display-safe content and status boundaries.
+- [x] In-PR presentation and pointer amendment — Decision: replace JSON argument envelopes with readable, complete labeled fields and tool-specific one-line intents for recognized core tools; preserve every received value and a generic readable fallback for unknown/extended tools. Use visual section hierarchy; space out `Read` result line-number gutters without modifying received text. A primary click on a visible inspector-list row selects that call but does not enter its detail; Enter remains the activation key. No clicking conversation cards. Source: the directing operator's feedback and explicit instruction to amend the contract within Implementation PR #2061 (2026-10-02).
 
 ## Interface contract
 
 - **gRPC / protobuf:** None — use current `tool.call`, `tool.result`, and typed result fields; no wire change or new RPC.
 - **Exported Go APIs / interfaces:** None — only private `cmd/mecatui/ui` and UI-internal component contracts may change; the engine and SDK exports remain unchanged.
 - **Tool schemas:** None — no model-facing tool changes; `/toolcalls` is a client command, not a model tool.
-- **CLI / config:** Add the exact no-argument, slash-palette-visible local command `/toolcalls` in mecatui. It opens for the current session while idle or running, with no capability-dependent server lookup, new flag, settings key, or global binding. Configured existing list and scroll bindings work inside the browser; `ctrl+t` retains its conversation-wide behavior when the browser is closed.
+- **CLI / config:** Add the exact no-argument, slash-palette-visible local command `/toolcalls` in mecatui. It opens for the current session while idle or running, with no capability-dependent server lookup, new flag, settings key, or global binding. Configured existing list and scroll bindings work inside the browser; a primary click on a visible inspector-list row only selects it, with Enter still opening detail. `ctrl+t` retains its conversation-wide behavior when the browser is closed.
 - **Events / persistence:** None — no new events, session store, or durable migration. The existing UI scrollback remains the only conversation projection. It retains or projects structured content supplied in an existing result, including a field-only result when no corresponding typed block exists. Browser selection, list/detail offsets, and follow state are ephemeral and reset on session replacement.
-- **Security / authority:** None — this read-only browser uses only the current session's already received display-safe result projection. No permission bypass, URL fetch, raw binary display, new workspace access, or cross-session browsing. Sanitize all untrusted names, arguments, text, JSON, and resource metadata at the rendering boundary; do not reconstruct content withheld by the server.
-- **Compatibility / migration:** Additive local UI. Existing cards, global `ctrl+t`, conversation scroll/selection, approvals, keyboard routing outside the browser, and transcript rehydration remain intact. The implementation updates the owning public TUI usage guide for command discovery and corrects its existing focused-card `ctrl+t` wording to describe current global behavior.
+- **Security / authority:** None — this read-only browser uses only the current session's already received display-safe result projection. No permission bypass, URL fetch, raw binary display, new workspace access, or cross-session browsing. Sanitize all untrusted names, arguments, text, JSON, and resource metadata at the rendering boundary; do not reconstruct content withheld by the server. Pointer hits are frame-scoped and affect only visible inspector rows; misses, stale IDs, compact views and no-mouse configurations never select a hidden conversation card.
+- **Compatibility / migration:** Additive local UI. Existing cards, global `ctrl+t`, conversation scroll/selection, approvals, keyboard routing outside the browser, and transcript rehydration remain intact. The implementation updates the owning public TUI usage guide for command discovery, inspector click-to-select, and corrects its existing focused-card `ctrl+t` wording to describe current global behavior.
 
-## In scope - 3 scenarios, in implementation order
+## In scope - 5 scenarios, in implementation order
 
 ### Scenario 1 - find a call in the current conversation
 
@@ -66,6 +67,28 @@ The [measured conversation layout](../tui.md#layout-and-navigation) gives the mo
 - AC3.3: The owning public TUI usage page explains `/toolcalls` and correctly describes global `ctrl+t`; the browser's visible hints explain its own keys. The contributor [TUI guide](../tui.md) records verified, reusable list/detail and fill-placement conventions rather than presenting planned `/toolcalls` behavior as already shipped.
   - verify: inspection — compare the implemented command and hints to the owning public guide, run `task docs` and `task site:build`
 
+### Scenario 4 - read tool intent and detail without argument envelopes
+
+The first implementation presents internal call arguments as serialized JSON. The operator's hands-on review calls for scannable, domain-specific intent and complete readable argument fields. Preserve the selected call's already received data and lifecycle; presentation is local to the inspector, subject to [AGENTS.md](../../AGENTS.md)'s effective-payload and secret-scrubbing invariants. Core filesystem tools (Read, ListDir, Glob, Grep, Edit, Write, Copy, Move, Remove), Shell, WebFetch and FetchMcpResource receive meaningful path/pattern/command/URI intent. Other tools, including delegation, memory, schedule, MCP and future registrations, receive a generic one-line action derived from their name and salient argument fields; never infer a schema or discard unknown fields. For malformed or non-object input, show sanitized original text as a fallback. A structured **result** remains explicitly labeled as JSON; the request is not to conceal received structured results.
+
+**Acceptance:**
+- AC4.1: For recognized core tool calls, the list shows a one-line human-readable action and target rather than a JSON argument envelope, and the detail shows complete labeled arguments in a deterministic, readable order. Read line limits/offsets, Edit/Write full replacement/content, and Shell command text remain inspectable; unknown fields remain available rather than silently disappearing. Tool names, paths, commands, and values remain sanitized and width bounded in the list, without truncating long values in detail.
+  - verify: `TestMecatuiToolcallsInspector_Scenario4_CoreToolPresentation`
+- AC4.2: Unknown, MCP, delegated, and malformed calls show a useful non-JSON list intent and full readable detail, with a safe, deterministic generic field presentation for valid JSON objects; invalid or non-object inputs remain available as sanitized original text. Canonical typed/structured result content and provisional-to-canonical updates remain unchanged.
+  - verify: `TestMecatuiToolcallsInspector_Scenario4_GenericFallbackAndLifecycle`
+- AC4.3: The detail visually distinguishes call identity/status, arguments, result text/errors, structured content, and typed resources through readable headings and spacing at ordinary and narrow widths; keyboard line/page scrolling, follow, resize anchoring, and terminal-control safety remain intact. Only numbered rows emitted by Read acquire visible space between line number and content in the inspector; the stored result and non-Read text are byte-for-byte unchanged.
+  - verify: `TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter`
+
+### Scenario 5 - select a visible inspector call with the pointer
+
+Only the inspector's **list rows** are pointer-selectable; this does not activate a conversation card, turn mouse input on for disabled terminals, or open a call's detail on click. Follow the [model picker surface](../../cmd/mecatui/ui/models_surface.go)'s frame-local hit-region precedent and [ADR 0301](../adr/0301-logical-conversation-anchors.md)'s reading-position boundary. The existing surface routing still owns clicks and wheels before the hidden conversation.
+
+**Acceptance:**
+- AC5.1: In a normally sized inspector list with pointer input enabled, a primary click on a visible row selects its stable block identity, reveals it and leaves the list open. Enter then opens that call's detail. Keyboard navigation and wheel scrolling continue to work, and clicking does not move the hidden conversation's reading position or start text selection.
+  - verify: `TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall`
+- AC5.2: A click on header, footer, blank/overflow rows, detail, compact fallback, or outside the inspector changes no selection. After resize or live-list reflow, stale hit IDs and hidden/offscreen rows cannot select another call; no-mouse configurations do not activate a row. A completed call ID reused later still selects the clicked row's block, not another call.
+  - verify: `TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits`
+
 ## Out of scope
 
 | Item | Defer-to | Decision |
@@ -77,7 +100,7 @@ The [measured conversation layout](../tui.md#layout-and-navigation) gives the mo
 
 ## Definition of done
 
-1. Focused scrollback, command routing, modal lifecycle, client projection, and render tests pass; the integrated candidate passes `task test`, `task lint`, `task test:race`, `task docs`, `task site:build`, and `task ac-trace-strict`.
+1. Focused scrollback, command routing, modal lifecycle, client projection, render, tool-presentation, and pointer-hit tests pass; the integrated candidate passes `task test`, `task lint`, `task test:race`, `task docs`, `task site:build`, and `task ac-trace-strict`.
 2. The offline demo still shows a tool call, permission ask/approval, and result; intentional visuals receive fixed-size golden review.
 3. The implementation PR links this merged Plan / Interface PR and baseline and passes `/panel-review` without ship blockers. The operator reviews real short/long, live, failed, and resumed runs before specifying the next #1361 phase.
 
