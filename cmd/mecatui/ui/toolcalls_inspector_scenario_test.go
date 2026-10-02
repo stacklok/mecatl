@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // These acceptance pins intentionally start at the UI reducer seam: the tool-call
@@ -25,6 +27,44 @@ func TestMecatuiToolcallsInspector_Scenario1_OpenEmptyRunningAndResume(t *testin
 	m = openToolcallsForTest(t, m)
 	if got, want := len(toolcallsForTest(t, m).entries), 2; got != want {
 		t.Fatalf("resumed current-session calls = %d, want %d", got, want)
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario1_TopLevelDelegationsOnly(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("ordinary", "Read", `{"path":"first"}`)
+	m.conv.addTool("sub", "Subagent", `{"prompt":"delegate"}`)
+	if !m.conv.scrollback.Subagents().Start("sub", scrollback.SubagentStart{ChildID: "child", Goal: "work"}) {
+		t.Fatal("could not specialize Subagent parent call")
+	}
+	if !m.conv.scrollback.Subagents().Update("sub", scrollback.SubagentUpdate{Trace: []scrollback.TraceEntry{{Kind: "tool.call", ToolName: "nested-Read"}}}) {
+		t.Fatal("could not record child tool trace")
+	}
+	m.conv.addTool("team", "Team", `{"task":"coordinate"}`)
+	if !m.conv.scrollback.Teams().Start("team", scrollback.TeamStart{TeamID: "team-1"}) {
+		t.Fatal("could not specialize Team parent call")
+	}
+	if !m.conv.scrollback.Teams().Update("team", scrollback.TeamUpdate{TeamID: "team-1", Lanes: []scrollback.TeamLane{{Name: "member", Trace: []scrollback.TraceEntry{{Kind: "tool.call", ToolName: "nested-Grep"}}}}}) {
+		t.Fatal("could not record team member tool trace")
+	}
+	m.conv.addTool("last", "Grep", `{"pattern":"done"}`)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	if len(s.entries) != 4 {
+		t.Fatalf("top-level entries = %#v; want four parents and no nested child tools", s.entries)
+	}
+	for i, name := range []string{"Read", "Subagent", "Team", "Grep"} {
+		if s.entries[i].name != name {
+			t.Fatalf("entry %d name = %q, want %q", i, s.entries[i].name, name)
+		}
+	}
+	if !m.conv.scrollback.Tools().Resolve("sub", scrollback.ToolResult{Body: "child complete"}) ||
+		!m.conv.scrollback.Tools().Resolve("team", scrollback.ToolResult{Body: "team complete", IsError: true}) {
+		t.Fatal("could not resolve specialized parent calls")
+	}
+	m.syncToolcalls()
+	if !s.entries[1].resolved || s.entries[1].failed || !s.entries[2].resolved || !s.entries[2].failed {
+		t.Fatalf("delegation parent result state did not update in place: %#v", s.entries)
 	}
 }
 
@@ -78,6 +118,18 @@ func TestMecatuiToolcallsInspector_Scenario3_FullRegionAndCompactFallback(t *tes
 	m = addToolcallsForTest(t, m, 1)
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
+	if placement := s.modalPlacement(); placement != modalPlacementFill {
+		t.Fatalf("inspector placement = %v, want conversation-region fill", placement)
+	}
+	m.width, m.height = 240, 35
+	m.relayout()
+	_ = m.View()
+	if got, want := m.metrics.contentBounds.x1-m.metrics.contentBounds.x0, m.width; got != want {
+		t.Fatalf("browser width = %d, want offered %d (not a capped centered card)", got, want)
+	}
+	if got, want := m.metrics.contentBounds.y1-m.metrics.contentBounds.y0, m.vp.Height(); got != want {
+		t.Fatalf("browser height = %d, want offered %d", got, want)
+	}
 	if got, _ := s.Render(0, 1); got != "" {
 		t.Fatalf("nonpositive geometry rendered %q", got)
 	}
@@ -114,10 +166,26 @@ func TestMecatuiToolcallsInspector_Scenario3_InputOwnershipAndSafety(t *testing.
 
 func TestMecatuiToolcallsInspector_Scenario3_SessionReplacementClosesInspector(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
+	m.sessionID = "source"
+	m.conv.addTool("reused", "Read", `{"path":"source"}`)
 	m = openToolcallsForTest(t, m)
-	m = m.resetSession()
-	if toolcallsForTest(t, m) != nil {
-		t.Fatal("session replacement left the inspector open")
+	s := toolcallsForTest(t, m)
+	_, _ = s.Render(80, 20)
+	_, _, _ = s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.clearPending = &clearHandoff{sourceID: "source", token: 1}
+	updated, _ := m.Update(clearSessionReadyMsg{
+		oldID: "source", token: 1,
+		ready: client.SessionReadyMsg{SessionID: "successor"},
+	})
+	m = updated.(Model)
+	if m.sessionID != "successor" || toolcallsForTest(t, m) != nil || !m.conv.isEmpty() {
+		t.Fatalf("clear lifecycle leaked source inspector or scrollback: session=%q modal=%T", m.sessionID, m.modal)
+	}
+	m.conv.addTool("reused", "Write", `{"path":"successor"}`)
+	m = openToolcallsForTest(t, m)
+	fresh := toolcallsForTest(t, m)
+	if len(fresh.entries) != 1 || fresh.entries[0].name != "Write" || fresh.detail || fresh == s {
+		t.Fatalf("reused call ID retained prior session state: %#v", fresh)
 	}
 }
 

@@ -45,8 +45,7 @@ type toolcallsState struct {
 	compact  bool
 }
 
-func (*toolcallsState) modalMaxOuterWidth() int                 { return 128 }
-func (s *toolcallsState) modalFrame() bool                      { return !s.compact }
+func (*toolcallsState) modalPlacement() modalPlacement          { return modalPlacementFill }
 func (*toolcallsState) Close()                                  {}
 func (*toolcallsState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
 
@@ -54,15 +53,28 @@ func (m Model) toolcallEntries() []toolcallEntry {
 	entries := make([]toolcallEntry, 0)
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
 		snapshot := m.conv.scrollback.SnapshotAt(i)
-		card, ok := snapshot.Payload.(scrollback.ToolCardSnapshot)
-		if !ok {
+		var entry toolcallEntry
+		switch card := snapshot.Payload.(type) {
+		case scrollback.ToolCardSnapshot:
+			entry = toolcallEntry{
+				name: card.Call.Name, intent: card.Call.Arguments,
+				resolved: card.Resolved || card.Finished, failed: card.Result.IsError || card.Failed,
+			}
+		case scrollback.SubagentCardSnapshot:
+			entry = toolcallEntry{
+				name: card.Call.Name, intent: card.Call.Arguments,
+				resolved: card.Resolved, failed: card.Result.IsError,
+			}
+		case scrollback.TeamCardSnapshot:
+			entry = toolcallEntry{
+				name: card.Call.Name, intent: card.Call.Arguments,
+				resolved: card.Resolved, failed: card.Result.IsError,
+			}
+		default:
 			continue
 		}
-		entries = append(entries, toolcallEntry{
-			blockID: snapshot.ID, name: card.Call.Name, intent: card.Call.Arguments,
-			resolved: card.Resolved || card.Finished,
-			failed:   card.Result.IsError || card.Failed,
-		})
+		entry.blockID = snapshot.ID
+		entries = append(entries, entry)
 	}
 	return entries
 }
