@@ -1622,6 +1622,13 @@ func (s *Service) placementDiscoveryAvailable() bool {
 	return ok
 }
 
+// worktreeCreationAvailable reports whether CreateSession may request a fresh
+// server-created worktree. Only the provider knows its gate (ADR 0374).
+func (s *Service) worktreeCreationAvailable() bool {
+	creator, ok := s.cfg.PlacementProvider.(PlacementWorktreeCreator)
+	return ok && creator.CanCreateWorktrees()
+}
+
 // BindPlacement atomically authorizes and resolves a placement through the
 // deployment provider. The caller principal comes only from the authenticated
 // context and the scope only from trusted composition; neither is supplied by
@@ -1816,6 +1823,17 @@ type createSessionOpts struct {
 	// publication even when the provider has no detachable attachment. ACP editor
 	// buffers are the only such create-time override.
 	placementEnvironmentOverride bool
+	// newWorktree asks the provider to create and bind a fresh server-created
+	// worktree instead of the deployment default (ADR 0374 Decision 1).
+	newWorktree bool
+}
+
+// WithNewWorktree binds the new session to a fresh server-created worktree
+// (ADR 0374). It is admitted only when the provider reports worktree creation
+// (PlacementWorktreeCreator) and the profile is the default; otherwise the
+// create fails with ErrWorktreeCreationUnavailable before any side effect.
+func WithNewWorktree() CreateSessionOption {
+	return func(o *createSessionOpts) { o.newWorktree = true }
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -2376,6 +2394,9 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
+	if opts.newWorktree && (profile != ProfileDefault || opts.placement != nil || opts.debugTargetID != "" || !s.worktreeCreationAvailable()) {
+		return nil, fmt.Errorf("%w: a new worktree requires the default profile on a local deployment that can create worktrees", ErrWorktreeCreationUnavailable)
+	}
 	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil
 	if definitelyPerSession {
 		if opts.debugTargetID != "" {
@@ -2469,7 +2490,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID)
+		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID, opts.newWorktree)
 		if err != nil {
 			return nil, err
 		}
@@ -2819,6 +2840,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
 		Worktrees:         s.placementDiscoveryAvailable(),
+		CreateWorktrees:   s.worktreeCreationAvailable(),
 		Reflection:        s.cfg.ReflectSession != nil,
 		LearningProposals: s.cfg.Proposals != nil,
 		LearnedSkills:     s.cfg.LearnedSkills != nil,

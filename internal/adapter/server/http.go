@@ -243,6 +243,9 @@ type createSessionBody struct {
 	// one authorized target; it never copies target conversation state.
 	DebugTargetSessionID string   `json:"debug_target_session_id,omitempty"`
 	DebugMCPServers      []string `json:"debug_mcp_servers,omitempty"`
+	// NewWorktree asks the server to create and bind a fresh worktree (ADR 0374).
+	// It is an intent only; no path, name, or branch crosses the wire.
+	NewWorktree bool `json:"new_worktree,omitempty"`
 	// MCPServers are CLIENT-PROVIDED streaming-HTTP MCP servers mounted for this
 	// session's lifetime, mirroring the proto field (issue #821, ADR 0237). Empty
 	// is byte-identical to today. Whether the field is accepted at all is a
@@ -538,6 +541,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.DebugMCPServers) > 0 {
 		opts = append(opts, WithDebugMCP(body.DebugMCPServers))
+	}
+	if body.NewWorktree {
+		opts = append(opts, WithNewWorktree())
 	}
 	// Client-provided MCP servers (issue #821, ADR 0237): the SAME Service seam the
 	// gRPC handler calls, so both transports classify through one validator and

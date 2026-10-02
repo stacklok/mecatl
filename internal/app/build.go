@@ -2323,6 +2323,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return buildCommandRunnerForRoot(cfg, root)
 		},
 		worktrees: worktreeLister, selectors: selectorIssuer,
+		creator: newWorktreeCreator(cfg),
 	}
 	if placementProvider == nil {
 		placementProvider = localProvider

@@ -101,6 +101,9 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
+	if req.GetNewWorktree() {
+		opts = append(opts, WithNewWorktree())
+	}
 	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
 	// through the ONE Service seam, which classifies through the same validator the
 	// ACP surface uses and then applies the deployment policy — so this handler
