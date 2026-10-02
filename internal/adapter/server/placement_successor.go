@@ -179,6 +179,16 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			rollbackUnpublishedPlacement(s, &binding)
 		}
 	}()
+	// A selector bind of a local worktree contends with worktree removal on the
+	// per-path lock until the successor is published (ADR 0374 Decision 4), and
+	// fails if the worktree vanished while it waited.
+	if req.Placement.Selector != "" && binding.Ref.Kind == session.EnvKindLocal {
+		unlockPath := lockWorktreePath(binding.Ref.ID)
+		defer unlockPath()
+		if err := s.confirmSelectedWorktree(mutationCtx, source.Owner, binding.Ref, destinationID); err != nil {
+			return "", err
+		}
+	}
 	// Durable awaiting sessions have no registered relay for the preflight to
 	// settle. Cancel them only after placement has been revalidated under the
 	// mutation lease, so a failed successor cannot consume the pending ask.

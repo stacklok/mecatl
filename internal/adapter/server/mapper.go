@@ -1261,10 +1261,12 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 			Fork:                    s.Capabilities.Fork,
 			Rename:                  s.Capabilities.Rename,
 			Delete:                  s.Capabilities.Delete,
+			RemoveWorktree:          s.Capabilities.RemoveWorktree,
 			Reasons: &mecatlv1.SessionInventoryActionReasons{
 				PublicChat: string(s.Reasons.PublicChat), Inspect: string(s.Reasons.Inspect),
 				CopyId: string(s.Reasons.CopyID), ViewTranscript: string(s.Reasons.ViewTranscript),
 				Fork: string(s.Reasons.Fork), Rename: string(s.Reasons.Rename), Delete: string(s.Reasons.Delete),
+				RemoveWorktree: string(s.Reasons.RemoveWorktree),
 			},
 		},
 		ReasonCode: string(s.ReasonCode),

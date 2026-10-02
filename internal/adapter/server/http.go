@@ -1262,12 +1262,34 @@ func (h *HTTPHandler) renameSession(w http.ResponseWriter, r *http.Request) {
 
 // deleteSession handles POST /v1/sessions/{id}/delete. DELETE on the base path
 // intentionally retains CloseSession's resource-release-only semantics.
+//
+// The optional JSON body {stop_active, remove_worktree} carries the ADR 0374
+// options. The response is 204 unless remove_worktree was requested, when it
+// is 200 with the worktree outcome.
 func (h *HTTPHandler) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DeleteSession(r.Context(), session.SessionID(r.PathValue("id"))); err != nil {
+	var body struct {
+		StopActive     bool `json:"stop_active,omitempty"`
+		RemoveWorktree bool `json:"remove_worktree,omitempty"`
+	}
+	if err := decodeOptionalStrictJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	result, err := h.svc.DeleteSessionWithOptions(r.Context(), session.SessionID(r.PathValue("id")), DeleteSessionOptions{
+		StopActive: body.StopActive, RemoveWorktree: body.RemoveWorktree,
+	})
+	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if !body.RemoveWorktree {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		WorktreeRemoved        bool   `json:"worktree_removed"`
+		WorktreeRetainedReason string `json:"worktree_retained_reason"`
+	}{result.WorktreeRemoved, result.WorktreeRetainedReason})
 }
 
 // compactSession handles the bodyless POST /v1/sessions/{id}/compact action.

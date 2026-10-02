@@ -220,6 +220,43 @@ func (p *localPlacementProvider) listedWorktree(ctx context.Context, path string
 	return server.Worktree{}, false
 }
 
+// WorktreeOwnership implements server.PlacementWorktreeRemover. Cleanliness is
+// checked only for a server-created worktree: an empty
+// `git status --porcelain --untracked-files=normal` run in the worktree with
+// the hardened git environment. With the worktree gate closed (creator nil)
+// nothing is server-created and no git runs.
+func (p *localPlacementProvider) WorktreeOwnership(ctx context.Context, req server.PlacementReattachRequest) (server.WorktreeOwnership, error) {
+	if req.Scope != p.scope {
+		return server.WorktreeOwnership{}, server.ErrPlacementNotFound
+	}
+	if !p.serverCreatedWorktree(ctx, req.Ref) {
+		return server.WorktreeOwnership{}, nil
+	}
+	status, err := p.creator.git(ctx, req.Ref.ID, "status", "--porcelain", "--untracked-files=normal")
+	if err != nil {
+		return server.WorktreeOwnership{ServerCreated: true}, fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
+	}
+	return server.WorktreeOwnership{ServerCreated: true, Clean: strings.TrimSpace(status) == ""}, nil
+}
+
+// RemoveWorktree implements server.PlacementWorktreeRemover: `git worktree
+// remove` of a server-created worktree from the configured root, never with
+// --force (git itself refuses a dirty or locked worktree). The mecatl/<name>
+// branch is kept.
+func (p *localPlacementProvider) RemoveWorktree(ctx context.Context, req server.PlacementReattachRequest) error {
+	if req.Scope != p.scope || !p.serverCreatedWorktree(ctx, req.Ref) {
+		return server.ErrPlacementNotFound
+	}
+	resolved, err := filepath.EvalSymlinks(req.Ref.ID)
+	if err != nil {
+		return server.ErrPlacementNotFound
+	}
+	if _, err := p.creator.git(ctx, p.root, "worktree", "remove", resolved); err != nil {
+		return fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
+	}
+	return nil
+}
+
 // serverCreatedWorktree reports whether ref names a worktree this provider
 // created (ADR 0374 Decision 3): the ref's path is not a symlink, its resolved
 // form is a direct child of the resolved managed root, and git lists it as a

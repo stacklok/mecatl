@@ -190,6 +190,9 @@ var (
 	// ErrSessionDeleteUnsupported means the configured store cannot physically
 	// remove snapshots and their sidecars.
 	ErrSessionDeleteUnsupported = errors.New("server: session deletion is not supported by the configured store")
+	// ErrSessionStopTimeout means DeleteSession{stop_active} cancelled a live run
+	// that did not end within the stop bound; nothing was deleted (ADR 0374).
+	ErrSessionStopTimeout = errors.New("server: session run did not stop in time; nothing was deleted")
 	// ErrSchedulerNotRunning is returned by FireNow when a ScheduleStore IS
 	// available (Create/Get/List/etc. all work) but no scheduler.Scheduler is
 	// wired on this process (s.scheduler == nil — e.g. --scheduler was not

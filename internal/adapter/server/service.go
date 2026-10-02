@@ -292,6 +292,9 @@ type Config struct {
 	// SessionCleared drops process-local state tied to a source session after a
 	// successful ClearSession successor publication. nil is inert.
 	SessionCleared func(session.SessionID)
+	// StopActiveTimeout bounds how long DeleteSession{stop_active} waits for a
+	// cancelled run to settle. Zero means the 10-second default (ADR 0374).
+	StopActiveTimeout time.Duration
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
@@ -3957,29 +3960,14 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 // sidecars. Absence and foreign ownership are both idempotent success, preventing
 // deletion from becoming an ownership oracle. Infrastructure failures remain loud.
 func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error {
-	absent, err := s.managementOwnershipPreflight(ctx, id, true)
-	if err != nil || absent {
-		return err
-	}
-	unlock := s.runEntryMu.lock(id)
-	defer unlock()
-	_, absent, err = s.managementTargetAwaitingDrain(ctx, id, true)
-	if err != nil || absent {
-		return err
-	}
-	prunable, ok := s.cfg.Store.(port.PrunableStore)
-	if !ok {
-		return ErrSessionDeleteUnsupported
-	}
-	release, err := s.acquireMutationLease(ctx, id)
-	if err != nil {
-		return err
-	}
-	defer release()
-	sess, absent, err := s.managementTargetAwaitingDrain(ctx, id, true)
-	if err != nil || absent {
-		return err
-	}
+	_, err := s.DeleteSessionWithOptions(ctx, id, DeleteSessionOptions{})
+	return err
+}
+
+// deleteManagedSessionLocked removes one authorized, loaded session. The caller
+// holds runEntryMu for its id and the mutation lease.
+func (s *Service) deleteManagedSessionLocked(ctx context.Context, sess *session.Session, prunable port.PrunableStore) error {
+	id := sess.ID
 	referenceDelete, err := s.prepareReferenceDelete(ctx, sess)
 	if err != nil {
 		return err
@@ -9414,6 +9402,9 @@ type SessionInventoryCapabilities struct {
 	Fork                    bool
 	Rename                  bool
 	Delete                  bool
+	// RemoveWorktree reports that delete may also remove the row's unshared
+	// server-created worktree (ADR 0374). Dirtiness is checked at delete time.
+	RemoveWorktree bool
 }
 
 // SessionInventoryActionReasons carries one closed reason for each disabled action.
@@ -9425,6 +9416,7 @@ type SessionInventoryActionReasons struct {
 	Fork           CapabilityReason
 	Rename         CapabilityReason
 	Delete         CapabilityReason
+	RemoveWorktree CapabilityReason
 }
 
 // CapabilityReason is a stable machine-readable explanation for a disabled
@@ -9445,6 +9437,13 @@ const (
 	CapabilityReasonStorageUnsupported CapabilityReason = "storage_unsupported"
 	// CapabilityReasonUnknown means the row cannot prove action eligibility.
 	CapabilityReasonUnknown CapabilityReason = "unknown"
+	// CapabilityReasonNotServerCreated means the row's placement is not a
+	// worktree the server created.
+	CapabilityReasonNotServerCreated CapabilityReason = "not_server_created"
+	// CapabilityReasonShared means another session or schedule binds the worktree.
+	CapabilityReasonShared CapabilityReason = "shared"
+	// CapabilityReasonUnavailable means worktree removal is not offered here.
+	CapabilityReasonUnavailable CapabilityReason = "unavailable"
 )
 
 const (
@@ -9513,6 +9512,7 @@ func inventoryCapabilities(kind session.SessionKind, id session.SessionID, state
 		PublicChat: CapabilityReasonUnknown, CopyID: CapabilityReasonUnknown,
 		ViewTranscript: CapabilityReasonTranscriptUnavailable, Fork: CapabilityReasonUnknown,
 		Rename: CapabilityReasonUnknown, Delete: CapabilityReasonUnknown,
+		RemoveWorktree: CapabilityReasonUnavailable,
 	}
 	if caps.CopyID {
 		reasons.CopyID = ""
@@ -9648,6 +9648,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 		}
 		out.Sessions = append(out.Sessions, s.summaryFromDiscoveryMeta(meta))
 	}
+	s.annotateRemoveWorktree(ctx, out.Sessions, page.Sessions)
 	out.NextCursor, err = encodeInventoryCursor(page.NextCursor)
 	if err != nil {
 		return ListSessionsPage{}, fmt.Errorf("%w: encode session inventory cursor: %v", ErrInternal, err)

@@ -159,6 +159,23 @@ type PlacementWorktreeCreator interface {
 	CanCreateWorktrees() bool
 }
 
+// WorktreeOwnership is a provider's derived verdict on one exact local ref
+// (ADR 0374 Decision 3). Clean is meaningful only when ServerCreated is true: no
+// uncommitted or untracked changes.
+type WorktreeOwnership struct {
+	ServerCreated bool
+	Clean         bool
+}
+
+// PlacementWorktreeRemover is the optional provider capability behind
+// DeleteSessionRequest.remove_worktree (ADR 0374 Decision 4). RemoveWorktree
+// removes only a server-created worktree, never forcibly, and keeps its branch.
+// A provider without it makes worktree removal unavailable.
+type PlacementWorktreeRemover interface {
+	WorktreeOwnership(ctx context.Context, req PlacementReattachRequest) (WorktreeOwnership, error)
+	RemoveWorktree(ctx context.Context, req PlacementReattachRequest) error
+}
+
 // PlacementMetadata is the bounded, display-safe provider projection returned
 // with a binding. It contains no roots, locators, credentials, or authority.
 type PlacementMetadata struct {
