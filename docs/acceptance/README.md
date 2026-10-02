@@ -157,6 +157,7 @@ PR after verification. There is no cleanup or status-only PR.
   operator-global `command_runner` defaults for the Shell interpreter and a deliberately
   constrained main-shell ambient credential grant, while managed temporary storage remains
   a separate lifecycle policy. Status: proposed.
+- [Mecatui tool-call inspector](mecatui-toolcalls-inspector.md) - proposed first slice of #1361: a keyboard-first `/toolcalls` browser over the main conversation, with live detail and no change to existing cards or `ctrl+t`. Status: proposed.
 - [Mecatui bounded scroll and cursor control](mecatui-bounded-scroll-selection.md) — establishes composed package-private physical-line viewport and stable-ID list cursor behavior, then proves complete geometry, caller-owned selection styling, independent wheel ownership, and Models click-to-cursor semantics across Agents and Models. Status: landed in this implementation candidate; authoritative on merge.
 - [Mecatui responsive Help browser](mecatui-responsive-help-browser.md) — replaces Help's content-derived card sizing and complete-line window with a stable responsive, wrapped physical-row browser while preserving root ownership, live-binding chrome, and keyboard lifecycle. Status: proposed.
 - [Mecatui slash-command palette bounded list](mecatui-slash-palette-bounded-list.md) — migrates the inline slash-command palette to the established bounded-list contract while preserving its input filtering, command dispatch/completion, and Escape ownership. Status: proposed.

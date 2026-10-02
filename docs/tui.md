@@ -51,6 +51,15 @@ wheel events into the conversation.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Let the surface own item semantics and activation.
+For list-and-detail browsers, use a bounded list for stable item selection and a
+separate bounded viewport for long detail. Preserve the selected item and list
+window when returning from detail; size both controls against the current
+measured body instead of storing an independent row budget. The saved-memory
+browser demonstrates list/detail ownership; Sessions demonstrates the
+conversation-region fill placement for content that needs more room. Fill
+surfaces use only the offered conversation region and keep the frame's header,
+prompt, and footer.
+
 Normal list and inspector cards cap their outer width at 128 cells or the
 available width, whichever is smaller. Permission cards cap at 132 cells and
 inline tool cards at 100. Derive content width from the actual styled frame;
