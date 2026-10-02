@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -26,6 +28,131 @@ func inspectorOpenDetail(t *testing.T, m *Model) *toolcallsState {
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	*m = updated.(Model)
 	return toolcallsForTest(t, *m)
+}
+
+func TestMecatuiToolcallsInspector_DetailUsesToolPaletteAndKeepsResultsFlush(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("styled", "Read", `{"path":"safe\u001b[31m","options":{"mode":"full"}}`)
+	m.conv.resolveTool("styled", "a long result line\n     1\twith a Read gutter", false)
+	s := inspectorOpenDetail(t, &m)
+	s.refreshDetail(&m.conv.scrollback)
+
+	styled := strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n")
+	if strings.Contains(styled, "\x1b[31m") || strings.Contains(styled, "\x1b]") {
+		t.Fatalf("untrusted terminal control reached styled detail: %q", styled)
+	}
+	if !strings.Contains(styled, s.deps.theme.Style("toolName").Render("  Path:")+s.deps.theme.Style("toolArgs").Render(" safe[31m")) {
+		t.Fatalf("argument key/value did not use semantic contrast: %q", styled)
+	}
+	if !strings.Contains(stripANSIstr(styled), "Arguments:\n  Path: safe[31m\n  Options:\n    Mode: full") {
+		t.Fatalf("arguments are not indented as labeled rows: %q", stripANSIstr(styled))
+	}
+	if !strings.Contains(stripANSIstr(styled), "Result:\na long result line\n     1  with a Read gutter") {
+		t.Fatalf("result text was indented or Read gutter changed: %q", stripANSIstr(styled))
+	}
+	if !strings.Contains(styled, s.deps.theme.Style("toolArgs").Render("a long result line")) {
+		t.Fatalf("result does not use the muted tool-args style: %q", styled)
+	}
+
+	for _, width := range []int{38, 24} {
+		body := inspectorDetail(t, s, width, 12)
+		for _, row := range strings.Split(body, "\n") {
+			if ansi.StringWidth(row) > width {
+				t.Fatalf("width %d overflowed row %q", width, row)
+			}
+		}
+	}
+}
+
+func TestMecatuiToolcallsInspector_UntrustedDetailTextCannotBecomeChrome(t *testing.T) {
+	th := theme.NewRegistry().Default()
+	s := &toolcallsState{deps: surfaceDeps{theme: th}}
+	entry := toolcallDetail{
+		name: "Shell", intent: `{"Resources: value":"keep: both","bad\u001b[31m:key":"safe"}`,
+		resultReceived: true, resolved: true,
+		result: scrollback.ToolResult{
+			Body:              "Arguments:\nResources\nIdentity · forged\nStructured content · forged:\nResult:\nCall: forged\nordinary tail",
+			StructuredContent: "Resources",
+			Artifacts:         []scrollback.Artifact{{Kind: string(client.ContentBlockText), Text: "Error:"}},
+		},
+	}
+	styled := strings.Join(s.styledToolcallDetailLines(entry), "\n")
+	plain := stripANSIstr(styled)
+	for _, line := range strings.Split(entry.result.Body, "\n") {
+		if !strings.Contains(styled, th.Style("toolArgs").Render(line)) || !strings.Contains(plain, "\n"+line+"\n") {
+			t.Fatalf("result line %q was styled as chrome or indented: %q", line, styled)
+		}
+	}
+	if !strings.Contains(styled, th.Style("toolArgs").Render("Resources")) ||
+		!strings.Contains(styled, th.Style("toolArgs").Render("Error:")) {
+		t.Fatalf("structured or typed value became a section: %q", styled)
+	}
+	if !strings.Contains(styled, th.Style("toolName").Render("  Resources: value:")+th.Style("toolArgs").Render(" keep: both")) ||
+		!strings.Contains(styled, th.Style("toolName").Render("  Bad[31m:key:")+th.Style("toolArgs").Render(" safe")) {
+		t.Fatalf("argument key with colon/control was split or reinterpreted: %q", styled)
+	}
+	if strings.Contains(styled, "\x1b[31m") || strings.Contains(styled, "\x1b]") {
+		t.Fatalf("untrusted controls reached styled output: %q", styled)
+	}
+	for _, width := range []int{55, 38} {
+		s.detail, s.open, s.detailEntry = true, true, &entry
+		view, _ := s.Render(width, 35)
+		for _, row := range strings.Split(stripANSIstr(view), "\n") {
+			if ansi.StringWidth(row) > width {
+				t.Fatalf("width %d overflows: %q", width, row)
+			}
+		}
+	}
+}
+
+func TestMecatuiToolcallsInspector_ResultPaletteAcrossBuiltins(t *testing.T) {
+	registry := theme.NewRegistry()
+	for _, name := range []string{"aztec", "mono", "solar"} {
+		t.Run(name, func(t *testing.T) {
+			th, ok := registry.Get(name)
+			if !ok {
+				t.Fatalf("missing theme %q", name)
+			}
+			s := &toolcallsState{deps: surfaceDeps{theme: th}}
+			rows := s.styledToolcallDetailLines(toolcallDetail{name: "Shell", resultReceived: true, result: scrollback.ToolResult{Body: "long-form output"}})
+			if rows[len(rows)-2] != th.Style("toolName").Render("Result:") ||
+				rows[len(rows)-1] != th.Style("toolArgs").Render("long-form output") ||
+				rows[len(rows)-1] == th.Style("viewport").Render("long-form output") {
+				t.Fatalf("result does not match muted tool palette: %q", rows)
+			}
+		})
+	}
+}
+
+func TestMecatuiToolcallsInspector_ListUsesToolPaletteAcrossBuiltins(t *testing.T) {
+	registry := theme.NewRegistry()
+	for _, name := range []string{"aztec", "mono", "solar"} {
+		t.Run(name, func(t *testing.T) {
+			th, ok := registry.Get(name)
+			if !ok {
+				t.Fatalf("missing built-in theme %q", name)
+			}
+			m := newToolcallsInspectorModel(t)
+			m.deps.Theme = th
+			m.conv.addTool("call", "Read", `{"path":"palette.go"}`)
+			m = openToolcallsForTest(t, m)
+			s := toolcallsForTest(t, m)
+			body, _ := s.Render(100, 10)
+			selected := presentListRow(s.list.ViewWithIndicators(6, false).Rows[0], th.Style("toolName"), th.Style("toolArgs"))
+			if !strings.Contains(body, selected.Style.Render(selected.Text)) {
+				t.Fatalf("selected row does not use tool-name palette: %q", body)
+			}
+			s.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+			m.conv.addTool("later", "Read", `{"path":"later.go"}`)
+			m.syncToolcalls()
+			body, _ = s.Render(100, 10)
+			row := s.list.ViewWithIndicators(6, false).Rows[0]
+			unselected := presentListRow(row, th.Style("toolName"), th.Style("toolArgs"))
+			if row.Selected || !strings.Contains(body, unselected.Style.Render(unselected.Text)) {
+				t.Fatalf("unselected row does not use tool-args palette: row=%+v body=%q", row, body)
+			}
+		})
+	}
 }
 
 func TestMecatuiToolcallsInspector_Scenario2_LiveResultAndStatus(t *testing.T) {
@@ -134,7 +261,7 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	m3.conv.addTool("reflow", "Read", "start\n"+strings.Repeat("wide", 25)+"\nanchor-row\n"+strings.Repeat("after\n", 80))
 	s3 := inspectorOpenDetail(t, &m3)
 	inspectorDetail(t, s3, 70, 8)
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 7; i++ {
 		s3.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	at := inspectorDetail(t, s3, 70, 8)

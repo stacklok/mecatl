@@ -98,7 +98,7 @@ func TestMecatuiToolcallsInspector_Scenario4_RenderedPaginationAndStyle(t *testi
 	m.conv.resolveTool("read", "     1\t"+strings.Repeat("wrapped", 20)+"\n     2\tend-gutter", true)
 	m.syncToolcalls()
 	raw := m.View().Content
-	if !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Error:")) || !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Identity · Read · failed")) || !strings.Contains(raw, s.deps.theme.Style("spinner").Bold(true).Render("Arguments:")) {
+	if !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Error:")) || !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Identity · Read · failed")) || !strings.Contains(raw, s.deps.theme.Style("toolName").Render("Arguments:")) {
 		t.Fatalf("rendered sections lack distinct styles: %q", raw)
 	}
 	for _, width := range []int{70, 55} {
@@ -163,7 +163,7 @@ func TestMecatuiToolcallsInspector_Scenario4_RenderedPaginationAndStyle(t *testi
 	s3.refreshDetail(&m3.conv.scrollback)
 	styled := m3.View().Content
 	for _, heading := range []string{"Arguments:", "Result:", "Structured content · Structured JSON:", "Resources"} {
-		if !strings.Contains(styled, s3.deps.theme.Style("spinner").Bold(true).Render(heading)) {
+		if !strings.Contains(styled, s3.deps.theme.Style("toolName").Render(heading)) {
 			t.Fatalf("section %q not distinguished in rendered detail: %q", heading, styled)
 		}
 	}

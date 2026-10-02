@@ -107,16 +107,41 @@ func toolcallsTooSmallHint(width int, dismiss string) string {
 	return ansi.Truncate(dismiss, width, "")
 }
 
+type toolcallRowKind uint8
+
+const (
+	toolcallBody toolcallRowKind = iota
+	toolcallIdentity
+	toolcallHeading
+	toolcallError
+	toolcallArgument
+	toolcallField
+)
+
+type toolcallDetailRow struct {
+	text, label string
+	kind        toolcallRowKind
+}
+
 func toolcallArgumentLines(name, arguments string) []string {
+	rows := toolcallArgumentRows(name, arguments)
+	lines := make([]string, len(rows))
+	for i, row := range rows {
+		lines[i] = row.text
+	}
+	return lines
+}
+
+func toolcallArgumentRows(name, arguments string) []toolcallDetailRow {
 	var fields map[string]any
 	decoder := json.NewDecoder(strings.NewReader(arguments))
 	decoder.UseNumber()
 	if decoder.Decode(&fields) != nil || fields == nil {
-		return []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
+		return []toolcallDetailRow{{text: "Original arguments: " + terminaltext.Sanitize(arguments), label: "Original arguments:", kind: toolcallArgument}}
 	}
 	var trailing any
 	if decoder.Decode(&trailing) != io.EOF {
-		return []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
+		return []toolcallDetailRow{{text: "Original arguments: " + terminaltext.Sanitize(arguments), label: "Original arguments:", kind: toolcallArgument}}
 	}
 
 	known := map[string][]string{
@@ -147,7 +172,7 @@ func toolcallArgumentLines(name, arguments string) []string {
 	sort.Strings(extra)
 	ordered = append(ordered, extra...)
 
-	lines := make([]string, 0, len(ordered))
+	lines := make([]toolcallDetailRow, 0, len(ordered))
 	for _, key := range ordered {
 		if value, ok := fields[key]; ok {
 			lines = appendArgumentTree(lines, argumentLabel(key), value)
@@ -158,7 +183,7 @@ func toolcallArgumentLines(name, arguments string) []string {
 
 // Decode once, then walk the decoded tree instead of reparsing each subtree.
 // Cap indentation so deeply nested valid input cannot force quadratic output.
-func appendArgumentTree(lines []string, label string, value any) []string {
+func appendArgumentTree(lines []toolcallDetailRow, label string, value any) []toolcallDetailRow {
 	type item struct {
 		label string
 		value any
@@ -169,13 +194,16 @@ func appendArgumentTree(lines []string, label string, value any) []string {
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		prefix := strings.Repeat("  ", min(current.depth, 16)) + terminaltext.SanitizeSingleLine(current.label) + ":"
+		add := func(value string) {
+			lines = append(lines, toolcallDetailRow{text: prefix + value, label: prefix, kind: toolcallArgument})
+		}
 		switch v := current.value.(type) {
 		case map[string]any:
 			if len(v) == 0 {
-				lines = append(lines, prefix+" (empty object)")
+				add(" (empty object)")
 				continue
 			}
-			lines = append(lines, prefix)
+			add("")
 			keys := make([]string, 0, len(v))
 			for key := range v {
 				keys = append(keys, key)
@@ -186,21 +214,21 @@ func appendArgumentTree(lines []string, label string, value any) []string {
 			}
 		case []any:
 			if len(v) == 0 {
-				lines = append(lines, prefix+" (empty array)")
+				add(" (empty array)")
 				continue
 			}
-			lines = append(lines, prefix)
+			add("")
 			for i := len(v) - 1; i >= 0; i-- {
 				stack = append(stack, item{fmt.Sprintf("[%d]", i), v[i], current.depth + 1})
 			}
 		case string:
-			lines = append(lines, prefix+" "+terminaltext.Sanitize(v))
+			add(" " + terminaltext.Sanitize(v))
 		case json.Number:
-			lines = append(lines, prefix+" "+terminaltext.Sanitize(string(v)))
+			add(" " + terminaltext.Sanitize(string(v)))
 		case bool:
-			lines = append(lines, prefix+" "+fmt.Sprint(v))
+			add(" " + fmt.Sprint(v))
 		default:
-			lines = append(lines, prefix+" null")
+			add(" null")
 		}
 	}
 	return lines
@@ -408,13 +436,14 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
 	}
 	footer := line(th.Style("muted"), footerText)
-	if len(s.entries) == 0 {
-		return strings.Join([]string{title, "", line(th.Style("muted"), "no tool calls in this session."), "", footer}, "\n"), nil
-	}
 	bodyHeight := height - 4
 	if bodyHeight < 1 {
 		s.compact, s.list = true, nil
 		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+	}
+	body := []string{title, ""}
+	if len(s.entries) == 0 {
+		return toolcallsPanel(append(body, line(th.Style("muted"), "no tool calls in this session.")), height, footer), nil
 	}
 	if s.list == nil {
 		s.list = new(bounded.List)
@@ -433,12 +462,26 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	s.list.SetGeometry(width, bodyHeight, 1, bounded.Clip)
 	s.list.SetItems(items)
 	s.list.SetCursor(s.selected)
-	view := s.list.View()
-	body := []string{title, ""}
+	view := s.list.ViewWithIndicators(bodyHeight, s.list.RevealPending())
+	body, regions := s.renderListRows(body, view, width, line)
+	return toolcallsPanel(body, height, footer), regions
+}
+
+func toolcallsPanel(body []string, height int, footer string) string {
+	for len(body) < height-2 {
+		body = append(body, "")
+	}
+	return strings.Join(append(body, "", footer), "\n")
+}
+
+func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, width int, line func(lipgloss.Style, string) string) ([]string, []ClickableRegion) {
 	regions := make([]ClickableRegion, 0, len(view.Rows))
 	s.hitItems = make(map[HitID]scrollback.BlockID, len(view.Rows))
+	if view.Above > 0 {
+		body = append(body, line(s.deps.theme.Style("muted"), fmt.Sprintf("↑ %d items", view.Above)))
+	}
 	for _, row := range view.Rows {
-		presentation := presentListRow(row, th.Style("accent"), th.Style("muted"))
+		presentation := presentListRow(row, s.deps.theme.Style("toolName"), s.deps.theme.Style("toolArgs"))
 		y := len(body)
 		body = append(body, ansi.Cut(presentation.Style.Render(presentation.Text), 0, width)+"\x1b[0m")
 		if s.deps.hits == nil || row.ItemIndex < 0 || row.ItemIndex >= len(s.entries) {
@@ -451,8 +494,10 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 			s.hitItems[id] = s.entries[row.ItemIndex].blockID
 		}
 	}
-	body = append(body, "", footer)
-	return strings.Join(body, "\n"), regions
+	if view.Below > 0 {
+		body = append(body, line(s.deps.theme.Style("muted"), fmt.Sprintf("↓ %d items", view.Below)))
+	}
+	return body, regions
 }
 
 func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string) string {
@@ -504,19 +549,33 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 }
 
 func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []string {
-	content := toolcallDetailLines(entry)
-	for i, row := range content {
-		if strings.HasPrefix(row, "Identity · ") {
-			style := s.deps.theme.Style("askTitle")
+	rows := toolcallDetailRows(entry)
+	content := make([]string, len(rows))
+	for i, row := range rows {
+		text := terminaltext.Sanitize(row.text)
+		switch row.kind {
+		case toolcallIdentity:
+			style := s.deps.theme.Style("toolName")
 			if entry.failed {
 				style = s.deps.theme.Style("errorText")
 			}
-			content[i] = style.Render(row)
-		} else if row == "Error:" {
-			content[i] = s.deps.theme.Style("errorText").Render(row)
-		} else if row == "Arguments:" || row == "Result:" || row == "Result: pending" ||
-			strings.HasPrefix(row, "Structured content · ") || row == "Resources" {
-			content[i] = s.deps.theme.Style("spinner").Bold(true).Render(row)
+			content[i] = style.Render(text)
+		case toolcallHeading:
+			content[i] = s.deps.theme.Style("toolName").Render(text)
+		case toolcallError:
+			content[i] = s.deps.theme.Style("errorText").Render(text)
+		case toolcallArgument:
+			label := "  " + terminaltext.Sanitize(row.label)
+			value := strings.TrimPrefix(text, terminaltext.Sanitize(row.label))
+			content[i] = s.deps.theme.Style("toolName").Render(label) +
+				s.deps.theme.Style("toolArgs").Render(strings.ReplaceAll(value, "\n", "\n  "))
+		case toolcallField:
+			label := terminaltext.Sanitize(row.label)
+			content[i] = s.deps.theme.Style("toolName").Render(label) +
+				s.deps.theme.Style("toolArgs").Render(strings.TrimPrefix(text, label))
+		case toolcallBody:
+			// Body and typed result content retain their original left edge.
+			content[i] = s.deps.theme.Style("toolArgs").Render(text)
 		}
 	}
 	return content
@@ -542,7 +601,7 @@ func (s *toolcallsState) recordAnchor() {
 		return
 	}
 	start := 0
-	for _, count := range toolcallRowCounts(toolcallDetailLines(*s.detailEntry), s.width) {
+	for _, count := range toolcallRowCounts(s.styledToolcallDetailLines(*s.detailEntry), s.width) {
 		if s.window.Offset() < start+count {
 			s.anchor = (s.window.Offset() - start) * s.width
 			return
@@ -552,6 +611,15 @@ func (s *toolcallsState) recordAnchor() {
 }
 
 func toolcallDetailLines(entry toolcallDetail) []string {
+	rows := toolcallDetailRows(entry)
+	lines := make([]string, len(rows))
+	for i, row := range rows {
+		lines[i] = row.text
+	}
+	return lines
+}
+
+func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 	status := "running"
 	if entry.resolved {
 		status = statusDone
@@ -560,50 +628,59 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 		status = statusFailed
 	}
 
-	lines := []string{"Identity · " + terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:"}
-	lines = append(lines, toolcallArgumentLines(entry.name, entry.intent)...)
+	lines := []toolcallDetailRow{
+		{text: "Identity · " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity},
+		{text: "Call: " + terminaltext.Sanitize(entry.callID), label: "Call:", kind: toolcallField},
+		{text: "Arguments:", kind: toolcallHeading},
+	}
+	lines = append(lines, toolcallArgumentRows(entry.name, entry.intent)...)
 	if !entry.resultReceived {
-		return append(lines, "", "Result: pending")
+		return append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Result: pending", kind: toolcallHeading})
 	}
 
 	result := entry.result
+	lines = append(lines, toolcallDetailRow{})
 	if entry.failed {
-		lines = append(lines, "", "Error:")
+		lines = append(lines, toolcallDetailRow{text: "Error:", kind: toolcallError})
 	} else {
-		lines = append(lines, "", "Result:")
+		lines = append(lines, toolcallDetailRow{text: "Result:", kind: toolcallHeading})
 	}
 	if result.Body != "" {
-		lines = append(lines, toolcallResultBodyLines(entry.name, result.Body)...)
+		for _, text := range toolcallResultBodyLines(entry.name, result.Body) {
+			for _, line := range strings.Split(text, "\n") {
+				lines = append(lines, toolcallDetailRow{text: line})
+			}
+		}
 	}
 
 	structured := result.StructuredContent
-	var resources []string
+	var resources []toolcallDetailRow
 	for _, a := range result.Artifacts {
 		switch client.ContentBlockKind(a.Kind) {
 		case client.ContentBlockText:
 			if a.Text != "" && a.Text != result.Body {
-				lines = append(lines, "Text:", terminaltext.Sanitize(a.Text))
+				lines = append(lines, toolcallDetailRow{text: "Text:", kind: toolcallHeading}, toolcallDetailRow{text: terminaltext.Sanitize(a.Text)})
 			}
 		case client.ContentBlockStructuredContent:
 			// The typed block is canonical when a field mirror is also present.
 			structured = a.Text
 		case client.ContentBlockResourceLink:
-			resources = append(resources, "Resource: "+terminaltext.Sanitize(a.Name)+" · "+terminaltext.Sanitize(a.URL))
+			resources = append(resources, toolcallDetailRow{text: "Resource: " + terminaltext.Sanitize(a.Name) + " · " + terminaltext.Sanitize(a.URL), label: "Resource:", kind: toolcallField})
 		case client.ContentBlockEmbeddedResource:
 			if len(a.Data) > 0 {
-				resources = append(resources, "Embedded resource ("+terminaltext.Sanitize(a.MIMEType)+", binary content)")
+				resources = append(resources, toolcallDetailRow{text: "Embedded resource (" + terminaltext.Sanitize(a.MIMEType) + ", binary content)"})
 			} else {
-				resources = append(resources, "Embedded resource: "+terminaltext.Sanitize(a.Text))
+				resources = append(resources, toolcallDetailRow{text: "Embedded resource: " + terminaltext.Sanitize(a.Text), label: "Embedded resource:", kind: toolcallField})
 			}
 		case client.ContentBlockImage, client.ContentBlockAudio:
-			resources = append(resources, a.Kind+" ("+terminaltext.Sanitize(a.MIMEType)+", media content)")
+			resources = append(resources, toolcallDetailRow{text: a.Kind + " (" + terminaltext.Sanitize(a.MIMEType) + ", media content)"})
 		}
 	}
 	if structured != "" {
-		lines = append(lines, "Structured content · Structured JSON:", terminaltext.Sanitize(structured))
+		lines = append(lines, toolcallDetailRow{text: "Structured content · Structured JSON:", kind: toolcallHeading}, toolcallDetailRow{text: terminaltext.Sanitize(structured)})
 	}
 	if len(resources) > 0 {
-		lines = append(lines, "", "Resources")
+		lines = append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Resources", kind: toolcallHeading})
 		lines = append(lines, resources...)
 	}
 	return lines

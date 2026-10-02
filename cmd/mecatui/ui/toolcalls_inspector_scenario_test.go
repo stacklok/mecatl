@@ -664,6 +664,62 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario5_ListIndicatorsCursorAndHitsStayBounded(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m = addToolcallsForTest(t, m, 125)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+
+	assertList := func(width, height int, indicator string) []ClickableRegion {
+		t.Helper()
+		body, regions := s.Render(width, height)
+		plain := stripANSIstr(body)
+		if !strings.Contains(plain, indicator) {
+			t.Fatalf("%dx%d missing %q:\n%s", width, height, indicator, plain)
+		}
+		if got, want := len(strings.Split(body, "\n")), height; got != want {
+			t.Fatalf("%dx%d rendered %d lines, want full offered region of %d", width, height, got, want)
+		}
+		for _, row := range strings.Split(plain, "\n") {
+			if ansi.StringWidth(row) > width {
+				t.Fatalf("%dx%d overflowed row %q", width, height, row)
+			}
+		}
+		if got, want := s.list.CursorID(), fmt.Sprintf("%d", s.entries[s.selected].blockID); got != want {
+			t.Fatalf("cursor ID = %q, want selected block %q", got, want)
+		}
+		view := s.list.ViewWithIndicators(height-4, false)
+		found := false
+		for _, row := range view.Rows {
+			if row.Selected && row.CursorMarker {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("selected cursor is not visible: selected=%d view=%+v", s.selected, view)
+		}
+		return regions
+	}
+
+	assertList(80, 12, "↑ ")
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyHome})
+	assertList(80, 12, "↓ ")
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	regions := assertList(44, 9, "↑ ")
+	for _, region := range regions {
+		blockID := s.hitItems[region.hit]
+		if blockID == s.entries[s.selected].blockID {
+			continue
+		}
+		_, handled, closed := s.HandleMsg(surfaceHitMsg{ID: region.hit})
+		if !handled || closed || s.entries[s.selected].blockID != blockID {
+			t.Fatalf("resized row hit selected block %d, want %d (handled=%v closed=%v)", s.entries[s.selected].blockID, blockID, handled, closed)
+		}
+		return
+	}
+	t.Fatal("resized list had no selectable non-cursor row")
+}
+
 func TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.deps.NoAltScreen = false
