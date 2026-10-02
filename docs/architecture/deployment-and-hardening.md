@@ -108,6 +108,21 @@ replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future
 placement provider uses the same private Bind/Reattach contract. See
 ADR 0291.
 
+`CreateSession{new_worktree}` asks a trusted local deployment (configured workspace,
+shell, trusted project, local default placement) to create and bind a fresh worktree
+under `$XDG_STATE_HOME/mecatl/worktrees/<repo>-<hash8>/<name>` on a new `mecatl/<name>`
+branch from HEAD, running git with the forker's scrubbed, hook-free environment and a
+per-repository create lock; `ServerCapabilities.create_worktrees` advertises exactly
+that gate. New local worktree refs persist `Revision: "worktree-v1"` and reattach by
+path so a commit no longer breaks the session; a legacy well-formed hex HEAD revision
+also reattaches by path, while the configured root keeps its exact revision and any
+other revision fails closed. Ownership is derived, never persisted: a worktree is
+server-created when its symlink-resolved path sits under the managed root and git lists
+it. `DeleteSession{stop_active}` stops an active session after the run-entry lock and
+real lease are held; `remove_worktree` removes only a clean, unshared server-created
+worktree under a per-path lock, never with `--force`, and keeps the branch. See
+[ADR 0374](../adr/0374-server-created-session-worktrees.md).
+
 ### Multi-replica affinity, correlation, and single-writer enforcement
 
 `X-Mecatl-Session-ID` is one exact, optional byte contract across official clients,

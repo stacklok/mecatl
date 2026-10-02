@@ -58,7 +58,10 @@ the module boundary; `task test` does. Focused engine test:
   credentials stay protected. Never inspect or disclose credential values. Scrubbing
   is not an OS sandbox.
 - Placement is server-owned: exact `EnvironmentRef{Kind, ID, Revision}`, fail-closed
-  reattachment, no public paths or cwd-based inference. No-FS children stay
+  reattachment, no public paths or cwd-based inference. Server-created worktrees
+  come only from the boolean `new_worktree` intent; local worktree refs persist
+  `Revision: "worktree-v1"` and reattach by path (a legacy hex HEAD revision also
+  reattaches by path; anything else fails closed). No-FS children stay
   file-less. Skills expose logical assets, not extra workspace or execution roots.
 - Fence untrusted content with the canonical governance fences and keep child
   isolation. MCP is streaming-HTTP only; never spawn stdio MCP servers. Post-tool
