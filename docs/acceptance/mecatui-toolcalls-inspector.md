@@ -4,7 +4,7 @@
 **Work classification:** Bounded — a new client-local conversation browser changes visible navigation and detail presentation but not durable ownership, protocol, or trust boundaries.
 **Decision record:** None — the existing TUI surface, typed scrollback, and bounded navigation contracts contain this feature without a new durable architecture decision.
 **Phase:** issue #1361, first slice: additive tool-call inspection
-**Status:** in-progress, 2026-10-02. Plan / Interface PR #2056 merged at `9edd9b751`. The directing operator authorized an in-PR amendment to presentation and inspector-row selection after hands-on review; mark the amended implementation landed only after verification.
+**Status:** landed, 2026-10-02. Amended implementation candidate in PR #2061; authoritative only when merged.
 **Delivery:** Split. The new command, live browsing behavior, and detail contract benefit from human review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1361](https://github.com/stacklok/mecatl/issues/1361).
