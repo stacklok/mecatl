@@ -367,6 +367,111 @@ func TestMecatuiToolcallsInspector_Scenario3_LoadedSessionReplacement(t *testing
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario4_CoreToolPresentation(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	calls := []struct {
+		id, name, args, wantIntent string
+	}{
+		{"read", "Read", `{"path":"src/main.go","offset":12,"limit":20,"extra":"kept"}`, "Read src/main.go"},
+		{"list", "ListDir", `{"path":"src","depth":2}`, "List src"},
+		{"glob", "Glob", `{"pattern":"**/*.go","path":"cmd"}`, "Find **/*.go"},
+		{"grep", "Grep", `{"pattern":"TODO","path":"cmd"}`, "Search TODO"},
+		{"edit", "Edit", `{"path":"a.go","old_string":"old","new_string":"new","extra":true}`, "Edit a.go"},
+		{"write", "Write", `{"path":"a.go","content":"complete replacement"}`, "Write a.go"},
+		{"copy", "Copy", `{"source":"a.go","destination":"b.go"}`, "Copy a.go → b.go"},
+		{"move", "Move", `{"source":"a.go","destination":"b.go"}`, "Move a.go → b.go"},
+		{"remove", "Remove", `{"path":"old.go"}`, "Remove old.go"},
+		{"shell", "Shell", `{"command":"go test ./..."}`, "Run go test ./..."},
+		{"web", "WebFetch", `{"url":"https://example.invalid/docs"}`, "Fetch https://example.invalid/docs"},
+		{"resource", "FetchMcpResource", `{"uri":"mcp://docs/readme"}`, "Fetch mcp://docs/readme"},
+	}
+	for _, call := range calls {
+		m.conv.addTool(call.id, call.name, call.args)
+	}
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	for i, call := range calls {
+		if got := s.entries[i].intent; !strings.Contains(got, call.wantIntent) || strings.Contains(got, `{"`) {
+			t.Fatalf("%s list intent = %q, want readable %q", call.name, got, call.wantIntent)
+		}
+		s.selected = i
+		s.detail = true
+		s.refreshDetail(&m.conv.scrollback)
+		lines := strings.Join(toolcallDetailLines(*s.detailEntry), "\n")
+		for _, want := range []string{"Arguments:"} {
+			if !strings.Contains(lines, want) {
+				t.Fatalf("%s detail missing %q: %q", call.name, want, lines)
+			}
+		}
+	}
+	// Read limits and unknowns, replacements, content, and commands must be
+	// complete labeled values rather than an argument-object envelope.
+	for _, check := range []struct {
+		index int
+		wants []string
+	}{
+		{0, []string{"Path: src/main.go", "Offset: 12", "Limit: 20", "Extra: kept"}},
+		{4, []string{"Path: a.go", "Old string: old", "New string: new", "Extra: true"}},
+		{5, []string{"Path: a.go", "Content: complete replacement"}},
+		{9, []string{"Command: go test ./..."}},
+	} {
+		s.selected = check.index
+		s.refreshDetail(&m.conv.scrollback)
+		got := strings.Join(toolcallDetailLines(*s.detailEntry), "\n")
+		for _, want := range check.wants {
+			if !strings.Contains(got, want) {
+				t.Fatalf("detail %d missing %q: %q", check.index, want, got)
+			}
+		}
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario4_GenericFallbackAndLifecycle(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("unknown", "future-tool", `{"zebra":"last","alpha":"first","target":"useful target"}`)
+	m.conv.addTool("mcp", "mcp__docs__lookup", `{"query":"needle"}`)
+	m.conv.addTool("delegate", "Subagent", `{"prompt":"delegate this"}`)
+	m.conv.addTool("invalid", "odd", "not-json\x1b[31m")
+	m.conv.addTool("array", "odd-array", `["not","an","object"]`)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	for i, want := range []string{"future-tool useful target", "mcp__docs__lookup needle", "Subagent delegate this", "odd", "odd-array"} {
+		if got := s.entries[i].intent; !strings.Contains(got, want) || strings.Contains(got, `{"`) || strings.Contains(got, "\x1b[") {
+			t.Fatalf("generic list %d = %q, want %q", i, got, want)
+		}
+	}
+	for _, check := range []struct {
+		index int
+		wants []string
+	}{
+		{0, []string{"Alpha: first", "Target: useful target", "Zebra: last"}},
+		{1, []string{"Query: needle"}},
+		{2, []string{"Prompt: delegate this"}},
+		{3, []string{"Original arguments: not-json"}},
+		{4, []string{"Original arguments: [\"not\",\"an\",\"object\"]"}},
+	} {
+		s.selected = check.index
+		s.detail = true
+		s.refreshDetail(&m.conv.scrollback)
+		got := strings.Join(toolcallDetailLines(*s.detailEntry), "\n")
+		for _, want := range check.wants {
+			if !strings.Contains(got, want) {
+				t.Fatalf("generic detail %d missing %q: %q", check.index, want, got)
+			}
+		}
+	}
+	s.selected = 0
+	s.refreshDetail(&m.conv.scrollback)
+	m = applyAll(m, client.ToolResultMsg{CallID: "unknown", Content: "provisional", Available: true, StructuredContent: `{"phase":"temporary"}`})
+	if got := strings.Join(toolcallDetailLines(*s.detailEntry), "\n"); !strings.Contains(got, "provisional") || !strings.Contains(got, `{"phase":"temporary"}`) {
+		t.Fatalf("provisional result changed: %q", got)
+	}
+	m = applyAll(m, client.ToolResultMsg{CallID: "unknown", Content: "canonical", StructuredContent: `{"phase":"final"}`})
+	if got := strings.Join(toolcallDetailLines(*s.detailEntry), "\n"); !strings.Contains(got, "canonical") || strings.Contains(got, "provisional") || !strings.Contains(got, `{"phase":"final"}`) {
+		t.Fatalf("canonical result changed: %q", got)
+	}
+}
+
 func newToolcallsInspectorModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context()})

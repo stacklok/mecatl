@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -82,6 +84,109 @@ func toolcallsTooSmallHint(width int, dismiss string) string {
 	return ansi.Truncate(dismiss, width, "")
 }
 
+func toolcallPresentation(name, arguments string) (string, []string) {
+	fields := make(map[string]json.RawMessage)
+	if json.Unmarshal([]byte(arguments), &fields) != nil || fields == nil {
+		return terminaltext.SanitizeSingleLine(name), []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
+	}
+
+	known := map[string][]string{
+		"Read":             {"path", "offset", "limit"},
+		"ListDir":          {"path", "depth"},
+		"Glob":             {"pattern", "path"},
+		"Grep":             {"pattern", "path"},
+		"Edit":             {"path", "old_string", "new_string"},
+		"Write":            {"path", "content"},
+		"Copy":             {"source", "destination"},
+		"Move":             {"source", "destination"},
+		"Remove":           {"path"},
+		"Shell":            {"command"},
+		"WebFetch":         {"url"},
+		"FetchMcpResource": {"uri"},
+	}
+	ordered := append([]string(nil), known[name]...)
+	seen := make(map[string]bool, len(ordered))
+	for _, key := range ordered {
+		seen[key] = true
+	}
+	var extra []string
+	for key := range fields {
+		if !seen[key] {
+			extra = append(extra, key)
+		}
+	}
+	sort.Strings(extra)
+	ordered = append(ordered, extra...)
+
+	lines := make([]string, 0, len(ordered))
+	for _, key := range ordered {
+		if raw, ok := fields[key]; ok {
+			lines = append(lines, argumentLabel(key)+": "+argumentValue(raw))
+		}
+	}
+	return toolcallIntent(name, fields), lines
+}
+
+func toolcallIntent(name string, fields map[string]json.RawMessage) string {
+	value := func(key string) string { return argumentValue(fields[key]) }
+	switch name {
+	case "Read":
+		return "Read " + value("path")
+	case "ListDir":
+		return "List " + value("path")
+	case "Glob":
+		return "Find " + value("pattern")
+	case "Grep":
+		return "Search " + value("pattern")
+	case "Edit":
+		return "Edit " + value("path")
+	case "Write":
+		return "Write " + value("path")
+	case "Copy", "Move":
+		return name + " " + value("source") + " → " + value("destination")
+	case "Remove":
+		return "Remove " + value("path")
+	case "Shell":
+		return "Run " + value("command")
+	case "WebFetch":
+		return "Fetch " + value("url")
+	case "FetchMcpResource":
+		return "Fetch " + value("uri")
+	}
+	for _, key := range []string{"target", "path", "uri", "url", "command", "query", "prompt", "task"} {
+		if raw, ok := fields[key]; ok {
+			return terminaltext.SanitizeSingleLine(name) + " " + argumentValue(raw)
+		}
+	}
+	return terminaltext.SanitizeSingleLine(name)
+}
+
+func argumentValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if json.Unmarshal(raw, &value) == nil {
+		return terminaltext.Sanitize(value)
+	}
+	return terminaltext.Sanitize(string(raw))
+}
+
+func argumentLabel(key string) string {
+	labels := map[string]string{
+		"uri": "URI", "url": "URL", "old_string": "Old string", "new_string": "New string",
+	}
+	if label, ok := labels[key]; ok {
+		return label
+	}
+	return strings.ToUpper(key[:1]) + strings.ReplaceAll(key[1:], "_", " ")
+}
+
+func toolcallIntentFor(name, arguments string) string {
+	intent, _ := toolcallPresentation(name, arguments)
+	return intent
+}
+
 func (m Model) toolcallEntries() []toolcallEntry {
 	entries := make([]toolcallEntry, 0)
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
@@ -92,7 +197,7 @@ func (m Model) toolcallEntries() []toolcallEntry {
 		entries = append(entries, toolcallEntry{
 			blockID: metadata.ID, index: i,
 			name:     ansi.Truncate(terminaltext.SanitizeSingleLine(metadata.Name), 120, "…"),
-			intent:   ansi.Truncate(strings.ReplaceAll(terminaltext.Sanitize(metadata.Arguments), "\n", " "), 120, "…"),
+			intent:   ansi.Truncate(terminaltext.SanitizeSingleLine(toolcallIntentFor(metadata.Name, metadata.Arguments)), 120, "…"),
 			resolved: metadata.Resolved,
 			failed:   metadata.Failed || subagentStopErrored(metadata.Stop),
 		})
@@ -306,7 +411,9 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 	if entry.failed {
 		status = statusFailed
 	}
-	lines := []string{terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:", terminaltext.Sanitize(entry.intent)}
+	_, arguments := toolcallPresentation(entry.name, entry.intent)
+	lines := []string{terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:"}
+	lines = append(lines, arguments...)
 	if !entry.resultReceived {
 		return append(lines, "", "Result: pending")
 	}
