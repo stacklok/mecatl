@@ -299,7 +299,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
 - [0344 — Mecatui-owned terminal titles](./0344-mecatui-terminal-title-controller.md) *(proposed)*
 - [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
-- [0291 — Server-owned session placement](./0291-server-owned-session-placement.md)
+- [0291 — Server-owned session placement](./0291-server-owned-session-placement.md) *(create-time worktree and local worktree revision rules proposed for partial supersession by 0374)*
+- [0374 — Server-created session worktrees and stop-and-delete](./0374-server-created-session-worktrees.md) *(proposed)*
 - [0294 — End-to-end session correlation and affinity](./0294-session-correlation-and-affinity.md) *(proposed)*
 - [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0301)*
 - [0296 — Opt-in local session context service](./0296-opt-in-local-session-context.md) *(proposed)*
