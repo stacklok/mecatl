@@ -14,8 +14,15 @@ the agent without waiting for the current run to finish. Assistant text streams
 as it arrives. Tool calls appear as compact cards; Edit and Write cards include
 their diff.
 
-Focus a tool card and press `ctrl+t` to view its complete arguments and output.
-Press `ctrl+t` again to return to the preview.
+Use `/toolcalls` to browse the current session's tool calls, including calls still
+running. Select a call with the navigation keys shown in the browser and press
+`enter` to inspect its complete arguments and received result. Scroll long details
+with the displayed keys; press `esc` to return to the list, then `esc` again to
+close it. The browser also works when you reopen a session's transcript.
+
+In the conversation, `ctrl+t` expands or collapses tool details across the
+conversation, regardless of which card is selected. Use `/toolcalls` to read one
+call's full result without expanding the other cards.
 
 ## Attach a local file
 
