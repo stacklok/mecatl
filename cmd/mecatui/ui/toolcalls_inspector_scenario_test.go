@@ -211,6 +211,15 @@ func TestMecatuiToolcallsInspector_Scenario3_FullRegionAndCompactFallback(t *tes
 	if !s.compact || !strings.Contains(stripANSIstr(compact), s.deps.marks.closeOnly) {
 		t.Fatalf("compact fallback = %q, compact=%v", compact, s.compact)
 	}
+	for _, width := range []int{12, 13, 14} {
+		body, _ := s.Render(width, 3)
+		if got := stripANSIstr(body); !s.compact || got != "small · "+s.deps.marks.closeOnly || ansi.StringWidth(got) > width {
+			t.Fatalf("width %d lost too-small/Escape hint: %q", width, got)
+		}
+	}
+	if body, _ := s.Render(15, 3); !s.compact || stripANSIstr(body) != "too small · "+s.deps.marks.closeOnly {
+		t.Fatalf("width 15 lost full too-small hint: %q", body)
+	}
 	// The normal navigation hint is wider than this offer. Do not clip Escape:
 	// switch to the close-only fallback before rendering the list.
 	compact, _ = s.Render(30, 20)

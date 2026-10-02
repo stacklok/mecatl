@@ -72,6 +72,10 @@ func toolcallsTooSmallHint(width int, dismiss string) string {
 	if ansi.StringWidth(message) <= width {
 		return message
 	}
+	message = "small · " + dismiss
+	if ansi.StringWidth(message) <= width {
+		return message
+	}
 	if ansi.StringWidth(dismiss) <= width {
 		return dismiss
 	}
