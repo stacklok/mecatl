@@ -664,6 +664,66 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario5_IndicatorRowsDoNotShiftGlobalMouseHits(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.deps.NoAltScreen = false
+	m = addToolcallsForTest(t, m, 125)
+	m = openToolcallsForTest(t, m)
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
+	m.vp.SetYOffset(5)
+	beforeConversation := m.vp.YOffset()
+	view := m.View()
+	if !strings.Contains(stripANSIstr(view.Content), "↑ ") {
+		t.Fatalf("rendered inspector missing above indicator:\n%s", stripANSIstr(view.Content))
+	}
+
+	s := toolcallsForTest(t, m)
+	beforeListOffset := s.list.Offset()
+	var target renderedHitRegion
+	for _, region := range m.hits.frame {
+		if s.hitItems[region.id] != s.entries[s.selected].blockID {
+			target = region
+			break
+		}
+	}
+	if target.id == 0 || target.rect.y0 == 0 {
+		t.Fatalf("rendered inspector has no non-selected row below its above indicator: %#v", m.hits.frame)
+	}
+	indicatorY := target.rect.y0 - 1
+	if _, ok := m.hits.at(target.rect.x0, indicatorY); ok {
+		t.Fatal("above indicator unexpectedly owns a click region")
+	}
+
+	x, y := m.metrics.localToGlobal(target.rect.x0, indicatorY)
+	updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if got := s.entries[s.selected].blockID; got != s.entries[len(s.entries)-1].blockID {
+		t.Fatalf("above-indicator click selected block %d, want unchanged block %d", got, s.entries[len(s.entries)-1].blockID)
+	}
+	if got := s.list.Offset(); got != beforeListOffset {
+		t.Fatalf("above-indicator click moved browser list from %d to %d", beforeListOffset, got)
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("above-indicator click moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+
+	wantBlock := s.hitItems[target.id]
+	x, y = m.metrics.localToGlobal(target.rect.x0, target.rect.y0)
+	updated, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if got := s.entries[s.selected].blockID; got != wantBlock {
+		t.Fatalf("global row click selected block %d, want %d", got, wantBlock)
+	}
+	if got := s.list.Offset(); got != beforeListOffset {
+		t.Fatalf("visible-row click moved browser list from %d to %d", beforeListOffset, got)
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("visible-row click moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+}
+
 func TestMecatuiToolcallsInspector_Scenario5_ListIndicatorsCursorAndHitsStayBounded(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m = addToolcallsForTest(t, m, 125)

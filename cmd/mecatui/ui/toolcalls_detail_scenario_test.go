@@ -64,6 +64,54 @@ func TestMecatuiToolcallsInspector_DetailUsesToolPaletteAndKeepsResultsFlush(t *
 	}
 }
 
+func TestMecatuiToolcallsInspector_DetailWrapsResultsFlushLeftAcrossThemes(t *testing.T) {
+	registry := theme.NewRegistry()
+	for _, name := range []string{"aztec", "mono", "solar"} {
+		t.Run(name, func(t *testing.T) {
+			th, ok := registry.Get(name)
+			if !ok {
+				t.Fatalf("missing theme %q", name)
+			}
+			m := newToolcallsInspectorModel(t)
+			m.deps.Theme = th
+			m.conv.addTool("wrapped", "Shell", `{"command":"echo wrapped"}`)
+			m.conv.resolveTool("wrapped", strings.Repeat("wrapped-result-token ", 12), false)
+			s := inspectorOpenDetail(t, &m)
+			s.refreshDetail(&m.conv.scrollback)
+
+			const width = 55
+			body := inspectorDetail(t, s, width, 28)
+			lines := strings.Split(body, "\n")
+			result := -1
+			for i, line := range lines {
+				if line == "Result:" {
+					result = i
+					break
+				}
+			}
+			if result < 0 {
+				t.Fatalf("result heading missing:\n%s", body)
+			}
+			continuations := 0
+			for _, line := range lines[result+1:] {
+				if !strings.Contains(line, "wrapped-result-token") {
+					continue
+				}
+				continuations++
+				if strings.HasPrefix(line, " ") {
+					t.Fatalf("wrapped result continuation is indented: %q", line)
+				}
+				if got := ansi.StringWidth(line); got > width {
+					t.Fatalf("wrapped result continuation width %d exceeds %d: %q", got, width, line)
+				}
+			}
+			if continuations < 2 {
+				t.Fatalf("result did not genuinely wrap at width %d:\n%s", width, body)
+			}
+		})
+	}
+}
+
 func TestMecatuiToolcallsInspector_UntrustedDetailTextCannotBecomeChrome(t *testing.T) {
 	th := theme.NewRegistry().Default()
 	s := &toolcallsState{deps: surfaceDeps{theme: th}}
