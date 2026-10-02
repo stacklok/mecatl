@@ -47,6 +47,9 @@ type Capabilities struct {
 	// git worktree (issue #102). An older server, or a no-FS/cloud server with no
 	// lister, yields false, so the overlay is honestly absent.
 	Worktrees bool
+	// CreateWorktrees is true when CreateSession honours NewWorktree (ADR 0374).
+	// An older server yields false.
+	CreateWorktrees bool
 	// Scheduling is true when a ScheduleStore is reachable on the server (the
 	// ScheduleService RPCs are functional). Gates the /schedule overlay. An older
 	// server (field absent → false) hides the overlay. Independent of the scheduler
@@ -122,6 +125,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Audio:               c.GetAudio(),
 		Posture:             c.GetPosture(),
 		Worktrees:           c.GetWorktrees(),
+		CreateWorktrees:     c.GetCreateWorktrees(),
 		Scheduling:          c.GetScheduling(),
 		Reflection:          c.GetReflection(),
 		LearningProposals:   c.GetLearningProposals(),

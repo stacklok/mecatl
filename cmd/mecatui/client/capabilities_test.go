@@ -79,6 +79,11 @@ func TestCapabilitiesFrom(t *testing.T) {
 			want: Capabilities{ManualCompaction: true},
 		},
 		{
+			name: "create_worktrees maps independently",
+			in:   &mecatlv1.ServerCapabilities{CreateWorktrees: true},
+			want: Capabilities{CreateWorktrees: true},
+		},
+		{
 			name: "model_selection maps independently",
 			in:   &mecatlv1.ServerCapabilities{ModelSelection: true},
 			want: Capabilities{ModelSelection: true},

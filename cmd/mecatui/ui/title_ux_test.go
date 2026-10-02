@@ -20,7 +20,9 @@ func (r *titleRenamer) RenameSession(_ context.Context, id, title string) (clien
 	r.calls = append(r.calls, struct{ id, title string }{id, title})
 	return r.snap, r.err
 }
-func (*titleRenamer) DeleteSession(context.Context, string) error { return nil }
+func (*titleRenamer) DeleteSession(context.Context, string, client.DeleteSessionOptions) (client.DeleteSessionResult, error) {
+	return client.DeleteSessionResult{}, nil
+}
 
 func titleModel(t *testing.T, renamer *titleRenamer) Model {
 	t.Helper()

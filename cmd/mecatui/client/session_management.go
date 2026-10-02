@@ -31,9 +31,25 @@ type SessionRenamer interface {
 	RenameSession(ctx context.Context, id, title string) (SessionSnapshot, error)
 }
 
+// DeleteSessionOptions widens DeleteSession (ADR 0374). StopActive cancels an
+// active run before deleting; RemoveWorktree also removes the session's clean,
+// unshared server-created worktree. The zero value is a plain delete.
+type DeleteSessionOptions struct {
+	StopActive     bool
+	RemoveWorktree bool
+}
+
+// DeleteSessionResult reports the worktree outcome of a delete. Both fields
+// are zero unless RemoveWorktree was requested. WorktreeRetainedReason is
+// "dirty", "shared", "remove_failed", or empty.
+type DeleteSessionResult struct {
+	WorktreeRemoved        bool
+	WorktreeRetainedReason string
+}
+
 // SessionDeleter permanently deletes one stored session.
 type SessionDeleter interface {
-	DeleteSession(ctx context.Context, id string) error
+	DeleteSession(ctx context.Context, id string, opts DeleteSessionOptions) (DeleteSessionResult, error)
 }
 
 // SessionManager is the mutable stored-session inventory surface.
@@ -53,12 +69,17 @@ func (c *Client) RenameSession(ctx context.Context, id, title string) (SessionSn
 }
 
 // DeleteSession permanently removes a stored session.
-func (c *Client) DeleteSession(ctx context.Context, id string) error {
-	_, err := c.svc.DeleteSession(withSessionAffinity(ctx, id), &mecatlv1.DeleteSessionRequest{SessionId: id})
+func (c *Client) DeleteSession(ctx context.Context, id string, opts DeleteSessionOptions) (DeleteSessionResult, error) {
+	resp, err := c.svc.DeleteSession(withSessionAffinity(ctx, id), &mecatlv1.DeleteSessionRequest{
+		SessionId: id, StopActive: opts.StopActive, RemoveWorktree: opts.RemoveWorktree,
+	})
 	if err != nil {
-		return fmt.Errorf("delete session: %w", err)
+		return DeleteSessionResult{}, fmt.Errorf("delete session: %w", err)
 	}
-	return nil
+	return DeleteSessionResult{
+		WorktreeRemoved:        resp.GetWorktreeRemoved(),
+		WorktreeRetainedReason: validText(resp.GetWorktreeRetainedReason()),
+	}, nil
 }
 
 // RenameSessionCmdWithToken correlates an asynchronous rename with a UI request.
@@ -72,6 +93,7 @@ func RenameSessionCmdWithToken(ctx context.Context, r SessionRenamer, id, title 
 // DeleteSessionCmd performs DeleteSession off the reducer goroutine.
 func DeleteSessionCmd(ctx context.Context, d SessionDeleter, id string) tea.Cmd {
 	return func() tea.Msg {
-		return SessionDeletedMsg{SessionID: id, Err: d.DeleteSession(ctx, id)}
+		_, err := d.DeleteSession(ctx, id, DeleteSessionOptions{})
+		return SessionDeletedMsg{SessionID: id, Err: err}
 	}
 }

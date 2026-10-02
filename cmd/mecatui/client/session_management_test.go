@@ -15,6 +15,7 @@ type fakeSessionManagementClient struct {
 	renameResp *mecatlv1.RenameSessionResponse
 	renameErr  error
 	deleteErr  error
+	deleteResp *mecatlv1.DeleteSessionResponse
 	renameReq  *mecatlv1.RenameSessionRequest
 	deleteReq  *mecatlv1.DeleteSessionRequest
 }
@@ -28,6 +29,9 @@ func (f *fakeSessionManagementClient) DeleteSession(_ context.Context, in *mecat
 	f.deleteReq = in
 	if f.deleteErr != nil {
 		return nil, f.deleteErr
+	}
+	if f.deleteResp != nil {
+		return f.deleteResp, nil
 	}
 	return &mecatlv1.DeleteSessionResponse{}, nil
 }
@@ -63,7 +67,7 @@ func TestDeleteSessionWrapperAndCmd(t *testing.T) {
 	if msg.Err != nil || msg.SessionID != "opaque-id" {
 		t.Fatalf("message = %+v", msg)
 	}
-	if fake.deleteReq.GetSessionId() != "opaque-id" {
+	if fake.deleteReq.GetSessionId() != "opaque-id" || fake.deleteReq.GetStopActive() || fake.deleteReq.GetRemoveWorktree() {
 		t.Fatalf("request = %+v", fake.deleteReq)
 	}
 
@@ -71,5 +75,29 @@ func TestDeleteSessionWrapperAndCmd(t *testing.T) {
 	msg = DeleteSessionCmd(context.Background(), cl, "opaque-id")().(SessionDeletedMsg)
 	if msg.Err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDeleteSessionSendsOptionsAndReturnsWorktreeOutcome(t *testing.T) {
+	fake := &fakeSessionManagementClient{deleteResp: &mecatlv1.DeleteSessionResponse{WorktreeRetainedReason: "dirty"}}
+	cl := newFakeClient(fake)
+	got, err := cl.DeleteSession(context.Background(), "s1", DeleteSessionOptions{StopActive: true, RemoveWorktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fake.deleteReq.GetStopActive() || !fake.deleteReq.GetRemoveWorktree() || fake.deleteReq.GetSessionId() != "s1" {
+		t.Fatalf("request = %+v", fake.deleteReq)
+	}
+	if got != (DeleteSessionResult{WorktreeRetainedReason: "dirty"}) {
+		t.Fatalf("result = %+v", got)
+	}
+
+	fake.deleteResp = &mecatlv1.DeleteSessionResponse{WorktreeRemoved: true}
+	got, err = cl.DeleteSession(context.Background(), "s1", DeleteSessionOptions{RemoveWorktree: true})
+	if err != nil || got != (DeleteSessionResult{WorktreeRemoved: true}) {
+		t.Fatalf("result = %+v, err = %v", got, err)
+	}
+	if fake.deleteReq.GetStopActive() {
+		t.Fatalf("request = %+v", fake.deleteReq)
 	}
 }

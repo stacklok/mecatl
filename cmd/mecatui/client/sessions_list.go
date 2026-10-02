@@ -51,6 +51,10 @@ const (
 	CapabilityReasonEnvironmentUnavailable CapabilityReason = "environment_unavailable"
 	CapabilityReasonStorageUnsupported     CapabilityReason = "storage_unsupported"
 	CapabilityReasonUnknown                CapabilityReason = "unknown"
+	// RemoveWorktree reasons (ADR 0374).
+	CapabilityReasonNotServerCreated CapabilityReason = "not_server_created"
+	CapabilityReasonShared           CapabilityReason = "shared"
+	CapabilityReasonUnavailable      CapabilityReason = "unavailable"
 )
 
 // SessionRelationship identifies the parent, schedule, or team context of a session.
@@ -75,6 +79,7 @@ type SessionInventoryCapabilities struct {
 	Fork                    bool
 	Rename                  bool
 	Delete                  bool
+	RemoveWorktree          bool
 }
 
 // SessionInventoryActionReasons carries the server reason for each disabled action.
@@ -86,6 +91,7 @@ type SessionInventoryActionReasons struct {
 	Fork           CapabilityReason
 	Rename         CapabilityReason
 	Delete         CapabilityReason
+	RemoveWorktree CapabilityReason
 }
 
 // SessionListItem is one server-authored stored-session inventory row. ID remains
@@ -200,12 +206,13 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 				PublicChat: caps.GetPublicChat(), Inspect: caps.GetInspect(),
 				AuthoritativeTranscript: caps.GetAuthoritativeTranscript(), ActivityReplay: caps.GetActivityReplay(),
 				CopyID: caps.GetCopyId(), ViewTranscript: caps.GetViewTranscript(), Fork: caps.GetFork(),
-				Rename: caps.GetRename(), Delete: caps.GetDelete(),
+				Rename: caps.GetRename(), Delete: caps.GetDelete(), RemoveWorktree: caps.GetRemoveWorktree(),
 			},
 			Reasons: SessionInventoryActionReasons{
 				PublicChat: CapabilityReason(reasons.GetPublicChat()), Inspect: CapabilityReason(reasons.GetInspect()),
 				CopyID: CapabilityReason(reasons.GetCopyId()), ViewTranscript: CapabilityReason(reasons.GetViewTranscript()),
 				Fork: CapabilityReason(reasons.GetFork()), Rename: CapabilityReason(reasons.GetRename()), Delete: CapabilityReason(reasons.GetDelete()),
+				RemoveWorktree: CapabilityReason(reasons.GetRemoveWorktree()),
 			},
 			ReasonCode: CapabilityReason(s.GetReasonCode()),
 			UsageState: activityFromSummary(s.GetActivityState()),

@@ -100,7 +100,7 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 		{"transcript", func() error { _, err := client.GetSessionTranscript(ctx, sessionID); return err }},
 		{"mode", func() error { _, err := client.SetMode(ctx, sessionID, ModeDefaultString); return err }},
 		{"rename", func() error { _, err := client.RenameSession(ctx, sessionID, "title"); return err }},
-		{"delete", func() error { return client.DeleteSession(ctx, sessionID) }},
+		{"delete", func() error { _, err := client.DeleteSession(ctx, sessionID, DeleteSessionOptions{}); return err }},
 		{"compact", func() error { _, err := client.CompactSession(ctx, sessionID); return err }},
 		{"reflect", func() error { _, err := client.ReflectSession(ctx, sessionID); return err }},
 		{"commands", func() error { _, err := client.ListCommands(ctx, sessionID); return err }},
