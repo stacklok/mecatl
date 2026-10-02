@@ -10,6 +10,7 @@ import (
 
 	teakey "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
@@ -31,6 +32,12 @@ import (
 //
 // Side-effecting Deps hooks (terminal title, status-line source, lifecycle
 // hook) are wrapped per session and forward only while that session is active.
+//
+// From the list (Scenarios 5 and 6), n and w start a session through the normal
+// create flow — w with the ADR 0374 NewWorktree intent, offered only when the
+// server advertises create_worktrees — and d deletes a row with stop_active,
+// optionally removing its server-created worktree when the inventory row
+// allows it. A deleted row closes only its own session model.
 
 // Window session row statuses.
 const (
@@ -285,6 +292,10 @@ func windowBroadcastMsg(msg tea.Msg) bool {
 type windowSession struct {
 	key   int
 	model Model
+	// pending marks a session started from the list (n/w) whose CreateSession has
+	// not answered yet; a creation error removes it and returns to origin.
+	pending bool
+	origin  int
 }
 
 type windowListState struct {
@@ -294,16 +305,28 @@ type windowListState struct {
 
 type windowQuitConfirm struct{ others int }
 
+// windowDeleteConfirm is the open delete confirmation for one list row.
+// checking is true while the row's remove_worktree capability is fetched.
+type windowDeleteConfirm struct {
+	key            int
+	id             string
+	label          string
+	checking       bool
+	removeWorktree bool // the row may also remove its server-created worktree
+	busy           bool // DeleteSession is in flight
+}
+
 type window struct {
-	base        Deps
-	keys        keyMap
-	sessions    []windowSession
-	activeKey   int
-	nextKey     int
-	activeCell  *atomic.Int64
-	hookOwner   *atomic.Int64
-	list        *windowListState
-	quitConfirm *windowQuitConfirm
+	base          Deps
+	keys          keyMap
+	sessions      []windowSession
+	activeKey     int
+	nextKey       int
+	activeCell    *atomic.Int64
+	hookOwner     *atomic.Int64
+	list          *windowListState
+	quitConfirm   *windowQuitConfirm
+	deleteConfirm *windowDeleteConfirm
 
 	// Terminal facts replayed to sessions created later.
 	lastSize      *tea.WindowSizeMsg
@@ -404,6 +427,10 @@ func (w window) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return w, tea.Batch(cmd, w.statusWaitCmd())
 	case tea.KeyPressMsg:
 		return w.onKey(msg)
+	case windowDeleteCapsMsg:
+		return w.onDeleteCaps(msg)
+	case windowDeletedMsg:
+		return w.onDeleted(msg)
 	}
 	if windowBroadcastMsg(msg) {
 		return w.broadcast(msg)
@@ -461,13 +488,24 @@ func (w window) onSessionMsg(msg windowSessionMsg) (tea.Model, tea.Cmd) {
 		return w.quitAll()
 	case windowOpenSavedMsg:
 		return w.openSaved(inner)
+	case client.ConnectErrMsg:
+		if i := w.index(msg.key); i >= 0 && w.sessions[i].pending {
+			return w.failCreate(msg.key, inner.Err)
+		}
 	}
-	return w.updateSession(msg.key, msg.msg)
+	w, cmd := w.updateSession(msg.key, msg.msg)
+	if i := w.index(msg.key); i >= 0 && w.sessions[i].pending && w.sessions[i].model.sessionID != "" {
+		w.sessions[i].pending = false
+	}
+	return w, cmd
 }
 
 func (w window) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if w.quitConfirm != nil {
 		return w.onQuitConfirmKey(msg)
+	}
+	if w.deleteConfirm != nil {
+		return w.onDeleteConfirmKey(msg)
 	}
 	if w.list != nil {
 		return w.onListKey(msg)
@@ -495,6 +533,16 @@ func (w window) onListKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case msg.Text == "o":
 		return w.openSavedPicker()
+	case msg.Text == "n":
+		return w.newSession(false)
+	case msg.Text == "w":
+		if w.activeModel().caps.CreateWorktrees {
+			return w.newSession(true)
+		}
+	case msg.Text == "d":
+		if list.cursor < len(w.sessions) {
+			return w.startDelete(w.sessions[list.cursor].key)
+		}
 	case teakey.Matches(msg, w.keys.Quit), teakey.Matches(msg, w.keys.QuitD), teakey.Matches(msg, w.keys.Suspend):
 		w.list = nil
 		return w.updateSession(w.activeKey, msg)
@@ -536,6 +584,7 @@ func (w window) onQuitConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // switchTo makes key the active session and re-submits its status state.
 func (w window) switchTo(key int) (tea.Model, tea.Cmd) {
 	w.list = nil
+	w.deleteConfirm = nil
 	if w.index(key) < 0 {
 		return w, nil
 	}
@@ -570,6 +619,7 @@ func (w window) requestQuit() (tea.Model, tea.Cmd) {
 func (w window) quitAll() (tea.Model, tea.Cmd) {
 	w.quitConfirm = nil
 	w.list = nil
+	w.deleteConfirm = nil
 	w.sessions = append([]windowSession(nil), w.sessions...)
 	for i := range w.sessions {
 		w.sessions[i].model = w.sessions[i].model.quitCleanup()
@@ -657,6 +707,186 @@ func (w window) closeSession(key int) (window, tea.Cmd) {
 	switched, cmd := w.switchTo(next)
 	w, _ = switched.(window)
 	return w, cmd
+}
+
+// newSession starts a session from the list through the normal create flow,
+// optionally in a fresh server-created worktree (ADR 0374), and switches to it.
+func (w window) newSession(worktree bool) (tea.Model, tea.Cmd) {
+	origin := w.activeKey
+	w, cmd := w.addSession(sessionOpen{create: &client.CreateSessionRequest{NewWorktree: worktree}})
+	i := w.index(w.activeKey)
+	w.sessions[i].pending = true
+	w.sessions[i].origin = origin
+	return w, cmd
+}
+
+// failCreate removes a list-started session whose create failed, returns to
+// the session it was started from, and shows the error in the list.
+func (w window) failCreate(key int, err error) (tea.Model, tea.Cmd) {
+	origin := w.sessions[w.index(key)].origin
+	w, cmd := w.closeSession(key)
+	if w.index(origin) >= 0 && origin != w.activeKey {
+		switched, switchCmd := w.switchTo(origin)
+		w, _ = switched.(window)
+		cmd = tea.Batch(cmd, switchCmd)
+	}
+	notice := "could not create the session"
+	if err != nil {
+		notice += ": " + terminaltext.SanitizeSingleLine(err.Error())
+	}
+	w.list = &windowListState{cursor: max(0, w.index(w.activeKey)), notice: notice}
+	return w, cmd
+}
+
+// windowDeleteCapsMsg reports whether a row may also remove its worktree.
+type windowDeleteCapsMsg struct {
+	key            int
+	id             string
+	removeWorktree bool
+}
+
+// windowDeletedMsg reports a DeleteSession result for one row.
+type windowDeletedMsg struct {
+	key            int
+	label          string
+	removeWorktree bool
+	result         client.DeleteSessionResult
+	err            error
+}
+
+// windowInventoryPageLimit bounds the inventory pages read to find one row's
+// remove_worktree capability.
+const windowInventoryPageLimit = 20
+
+// startDelete opens the confirmation for key's row and fetches the row's
+// remove_worktree capability from the session inventory.
+func (w window) startDelete(key int) (tea.Model, tea.Cmd) {
+	m, _ := w.modelFor(key)
+	if m.sessionID == "" {
+		w.list.notice = "this session is still starting"
+		return w, nil
+	}
+	if w.base.SessionManagement == nil {
+		w.list.notice = "deleting sessions is unavailable on this server"
+		return w, nil
+	}
+	label := ""
+	for _, row := range w.listRows() {
+		if row.key == key {
+			label = row.label
+		}
+	}
+	w.list.notice = ""
+	w.deleteConfirm = &windowDeleteConfirm{key: key, id: m.sessionID, label: label, checking: true}
+	ctx, pager, id := w.base.Ctx, w.base.Sessions, m.sessionID
+	return w, func() tea.Msg {
+		out := windowDeleteCapsMsg{key: key, id: id}
+		if pager == nil {
+			return out
+		}
+		cursor := ""
+		for range windowInventoryPageLimit {
+			page, err := pager.ListSessionPage(ctx, cursor)
+			if err != nil {
+				return out
+			}
+			for _, row := range page.Sessions {
+				if row.ID == id {
+					out.removeWorktree = row.Capabilities.RemoveWorktree
+					return out
+				}
+			}
+			if page.NextCursor == "" {
+				return out
+			}
+			cursor = page.NextCursor
+		}
+		return out
+	}
+}
+
+func (w window) onDeleteCaps(msg windowDeleteCapsMsg) (tea.Model, tea.Cmd) {
+	if c := w.deleteConfirm; c != nil && c.key == msg.key && c.id == msg.id && c.checking {
+		next := *c
+		next.checking = false
+		next.removeWorktree = msg.removeWorktree
+		w.deleteConfirm = &next
+	}
+	return w, nil
+}
+
+func (w window) onDeleteConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	c := *w.deleteConfirm
+	if c.busy {
+		return w, nil
+	}
+	switch {
+	case msg.Text == "n", teakey.Matches(msg, w.keys.Close):
+		w.deleteConfirm = nil
+		return w, nil
+	case c.checking:
+		return w, nil
+	case msg.Text == "y", teakey.Matches(msg, w.keys.Choose):
+		return w.confirmDelete(c, false)
+	case msg.Text == "r" && c.removeWorktree:
+		return w.confirmDelete(c, true)
+	}
+	return w, nil
+}
+
+// confirmDelete deletes the row with stop_active, so a running or awaiting
+// session is stopped first (ADR 0374).
+func (w window) confirmDelete(c windowDeleteConfirm, removeWorktree bool) (tea.Model, tea.Cmd) {
+	c.busy = true
+	w.deleteConfirm = &c
+	ctx, deleter := w.base.Ctx, w.base.SessionManagement
+	return w, func() tea.Msg {
+		res, err := deleter.DeleteSession(ctx, c.id, client.DeleteSessionOptions{StopActive: true, RemoveWorktree: removeWorktree})
+		return windowDeletedMsg{key: c.key, label: c.label, removeWorktree: removeWorktree, result: res, err: err}
+	}
+}
+
+// onDeleted removes a deleted row (closing only its own stream) or shows why
+// the server refused. Deleting the last row opens a new default session.
+func (w window) onDeleted(msg windowDeletedMsg) (tea.Model, tea.Cmd) {
+	if c := w.deleteConfirm; c != nil && c.key == msg.key {
+		w.deleteConfirm = nil
+	}
+	if msg.err != nil {
+		w.list = &windowListState{cursor: max(0, w.index(msg.key)), notice: "could not delete " + msg.label + ": " + terminaltext.SanitizeSingleLine(msg.err.Error())}
+		return w, nil
+	}
+	notice := "chat deleted"
+	switch {
+	case msg.removeWorktree && msg.result.WorktreeRemoved:
+		notice = "chat deleted and worktree removed; its branch is kept"
+	case msg.removeWorktree:
+		notice = "chat deleted, worktree kept: " + windowRetainedReason(msg.result.WorktreeRetainedReason)
+	}
+	w, cmd := w.closeSession(msg.key)
+	if len(w.sessions) == 0 {
+		var createCmd tea.Cmd
+		w, createCmd = w.addSession(sessionOpen{create: &client.CreateSessionRequest{}})
+		cmd = tea.Batch(cmd, createCmd)
+		notice += "; opened a new session"
+	}
+	w.list = &windowListState{cursor: max(0, w.index(w.activeKey)), notice: notice}
+	return w, cmd
+}
+
+// windowRetainedReason puts a DeleteSession worktree_retained_reason in plain words.
+func windowRetainedReason(reason string) string {
+	switch reason {
+	case "dirty":
+		return "it has uncommitted or untracked changes"
+	case "shared":
+		return "another session or schedule still uses it"
+	case "remove_failed":
+		return "removing it failed"
+	case "":
+		return "the server did not remove it"
+	}
+	return terminaltext.SanitizeSingleLine(reason)
 }
 
 // windowRow is one row of the window session list.
@@ -760,10 +990,52 @@ func (w window) renderList(m Model) string {
 		b.WriteString(renderToolCardText(style, line, m.widthOr()) + "\n")
 	}
 	if w.list.notice != "" {
-		b.WriteString("\n" + th.Style("warning").Render(w.list.notice) + "\n")
+		b.WriteString("\n" + windowText(th.Style("warning"), w.list.notice, m.widthOr()) + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": switch  o: saved sessions (/sessions)  "+hk.closeOnly+": close"))
+	if c := w.deleteConfirm; c != nil {
+		b.WriteString("\n" + w.renderDeleteConfirm(m, *c))
+		return b.String()
+	}
+	actions := hk.choose + ": switch  n: new session  "
+	if m.caps.CreateWorktrees {
+		actions += "w: new worktree session  "
+	}
+	actions += "d: delete  o: saved sessions (/sessions)  " + hk.closeOnly + ": close"
+	b.WriteString("\n" + windowText(th.Style("muted"), actions, m.widthOr()))
 	return b.String()
+}
+
+// windowText word-wraps one plain-text line to the window width and styles it.
+func windowText(style lipgloss.Style, text string, width int) string {
+	rows := strings.Split(wrapCardText(text, width), "\n")
+	for i, row := range rows {
+		rows[i] = style.Render(row)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (window) renderDeleteConfirm(m Model, c windowDeleteConfirm) string {
+	th := m.deps.Theme
+	width := m.widthOr()
+	lines := []string{
+		th.Style("askTitle").Render("Delete " + c.label + "?"),
+		windowText(th.Style("toolArgs"), "If it is running or waiting for approval, it is stopped first.", width),
+	}
+	muted := th.Style("muted")
+	switch {
+	case c.busy:
+		lines = append(lines, muted.Render("deleting…"))
+	case c.checking:
+		lines = append(lines, muted.Render("checking the session…  n/esc: keep"))
+	case c.removeWorktree:
+		lines = append(lines,
+			windowText(th.Style("toolArgs"), "It runs in a worktree mecatl created.", width),
+			windowText(th.Style("toolArgs"), "Removing the worktree also deletes ignored files in it. Its branch is kept.", width),
+			windowText(muted, "y: delete the chat  r: delete and remove worktree  n/esc: keep", width))
+	default:
+		lines = append(lines, muted.Render("y: delete  n/esc: keep"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (w window) renderQuitConfirm(m Model) string {

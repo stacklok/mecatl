@@ -56,10 +56,48 @@ type windowConv struct {
 	mu      sync.Mutex
 	streams map[string][]windowStream
 	runCtx  map[string][]context.Context
+	// createReqs records every CreateSessionWith request; worktreeErr fails a
+	// NewWorktree create; placements is the GetSession placement per session.
+	createReqs  []client.CreateSessionRequest
+	worktreeErr error
+	placements  map[string]client.Placement
 }
 
 func newWindowConv() *windowConv {
-	return &windowConv{fakeConv: &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}, streams: map[string][]windowStream{}, runCtx: map[string][]context.Context{}}
+	return &windowConv{fakeConv: &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}, streams: map[string][]windowStream{}, runCtx: map[string][]context.Context{}, placements: map[string]client.Placement{}}
+}
+
+// CreateSessionWith models a server that binds a NewWorktree create to a fresh
+// mecatl/brave-otter worktree and reports it as GetSession placement metadata.
+func (c *windowConv) CreateSessionWith(ctx context.Context, req client.CreateSessionRequest) (string, client.Capabilities, client.ResolvedModel, error) {
+	c.mu.Lock()
+	c.createReqs = append(c.createReqs, req)
+	failure := c.worktreeErr
+	c.mu.Unlock()
+	if req.NewWorktree && failure != nil {
+		return "", client.Capabilities{}, client.ResolvedModel{}, failure
+	}
+	id, caps, resolved, err := c.CreateSession(ctx, req.Selection, req.Mode)
+	if err == nil && req.NewWorktree {
+		c.mu.Lock()
+		c.placements[id] = client.Placement{Kind: "local", Label: "mecatl/brave-otter", Branch: "mecatl/brave-otter"}
+		c.mu.Unlock()
+	}
+	return id, caps, resolved, err
+}
+
+func (c *windowConv) GetSession(ctx context.Context, id string) (client.SessionSnapshot, error) {
+	snapshot, err := c.fakeConv.GetSession(ctx, id)
+	c.mu.Lock()
+	snapshot.Placement = c.placements[id]
+	c.mu.Unlock()
+	return snapshot, err
+}
+
+func (c *windowConv) requests() []client.CreateSessionRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]client.CreateSessionRequest(nil), c.createReqs...)
 }
 
 func (c *windowConv) script(id string, recv client.Recver) *fakeSender {
@@ -821,5 +859,315 @@ func TestTUIMultiSession_Scenario4_ListLeadsToSavedSessions(t *testing.T) {
 	bare.press(tea.KeyPressMsg{Code: tea.KeyLeft})
 	if view := stripANSIstr(bare.w.View().Content); !strings.Contains(view, "/sessions") {
 		t.Fatalf("the hint must show even when no saved-session inventory is wired:\n%s", view)
+	}
+}
+
+func keyText(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r, Text: string(r)} }
+
+// openListAt opens the window session list with the cursor on key's row.
+func (d *windowDriver) openListAt(key int) {
+	d.t.Helper()
+	if d.w.list == nil {
+		d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	}
+	if d.w.list == nil {
+		d.t.Fatal("left did not open the window session list")
+	}
+	for i := 0; i < len(d.w.sessions); i++ {
+		d.press(tea.KeyPressMsg{Code: tea.KeyUp})
+	}
+	for _, row := range d.w.listRows() {
+		if row.key == key {
+			return
+		}
+		d.press(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	d.t.Fatalf("no list row for session %d", key)
+}
+
+func windowView(d *windowDriver) string { return stripANSIstr(d.w.View().Content) }
+
+func TestTUIMultiSession_Scenario5_NewSession(t *testing.T) {
+	conv := newWindowConv()
+	d := readyWindow(t, conv, nil)
+	first := d.w.activeKey
+
+	d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := windowView(d); !strings.Contains(view, "n: new session") {
+		t.Fatalf("the window list must offer n:\n%s", view)
+	}
+	d.press(keyText('n'))
+	if d.w.list != nil {
+		t.Fatal("n must close the list and switch to the new session")
+	}
+	d.until("new session ready", func(w window) bool {
+		m := w.activeModel()
+		return w.activeKey != first && m.sessionID != "" && m.phase == phaseIdle
+	})
+	if len(d.w.sessions) != 2 || d.model(first).sessionID != "0001-sess-test" || d.w.activeModel().sessionID != "0002-sess-test" {
+		t.Fatalf("n must add a second session and keep the first: sessions=%d", len(d.w.sessions))
+	}
+	for _, req := range conv.requests() {
+		if req.NewWorktree {
+			t.Fatalf("n must create on the default placement, got %+v", req)
+		}
+	}
+	if row := d.w.listRows()[1]; row.branch != "" {
+		t.Fatalf("a default-placement session has no branch, got %q", row.branch)
+	}
+}
+
+func TestTUIMultiSession_Scenario5_NewWorktreeSession(t *testing.T) {
+	conv := newWindowConv()
+	conv.caps = client.Capabilities{CreateWorktrees: true}
+	d := readyWindow(t, conv, nil)
+	first := d.w.activeKey
+
+	d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := windowView(d); !strings.Contains(view, "w: new worktree session") {
+		t.Fatalf("a create_worktrees server must offer w:\n%s", view)
+	}
+	d.press(keyText('w'))
+	d.until("worktree session shows its branch", func(w window) bool {
+		m := w.activeModel()
+		return w.activeKey != first && m.phase == phaseIdle && m.activePlacement.Branch == "mecatl/brave-otter"
+	})
+	reqs := conv.requests()
+	if len(reqs) != 1 || !reqs[0].NewWorktree {
+		t.Fatalf("w must create with NewWorktree, got %+v", reqs)
+	}
+	d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := windowView(d); !strings.Contains(view, "(mecatl/brave-otter)") {
+		t.Fatalf("the new worktree session must show its branch:\n%s", view)
+	}
+
+	// A creation error is shown and adds no row.
+	conv.mu.Lock()
+	conv.worktreeErr = fmt.Errorf("create session: worktree creation is unavailable: unborn HEAD")
+	conv.mu.Unlock()
+	before := len(d.w.sessions)
+	active := d.w.activeKey
+	d.press(keyText('w'))
+	d.until("creation error shown", func(w window) bool { return w.list != nil && w.list.notice != "" })
+	if len(d.w.sessions) != before || d.w.activeKey != active {
+		t.Fatalf("a failed create must add no row and keep the active session: sessions=%d/%d active=%d/%d", len(d.w.sessions), before, d.w.activeKey, active)
+	}
+	if view := windowView(d); !strings.Contains(view, "unborn HEAD") {
+		t.Fatalf("the creation error must be shown:\n%s", view)
+	}
+
+	// Without create_worktrees the action is hidden and inert.
+	plain := newWindowConv()
+	bare := readyWindow(t, plain, nil)
+	bare.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := windowView(bare); strings.Contains(view, "w: new worktree") {
+		t.Fatalf("w must be hidden without create_worktrees:\n%s", view)
+	}
+	bare.press(keyText('w'))
+	bare.settle()
+	if len(bare.w.sessions) != 1 || len(plain.requests()) != 0 || plain.createCount != 1 {
+		t.Fatalf("w must be inert without create_worktrees: sessions=%d reqs=%d creates=%d", len(bare.w.sessions), len(plain.requests()), plain.createCount)
+	}
+}
+
+// windowDeleter records DeleteSession calls and replays scripted outcomes.
+type windowDeleter struct {
+	mu      sync.Mutex
+	calls   []string
+	opts    []client.DeleteSessionOptions
+	results []client.DeleteSessionResult
+	errs    []error
+}
+
+func (*windowDeleter) RenameSession(context.Context, string, string) (client.SessionSnapshot, error) {
+	return client.SessionSnapshot{}, nil
+}
+
+func (f *windowDeleter) DeleteSession(_ context.Context, id string, opts client.DeleteSessionOptions) (client.DeleteSessionResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := len(f.calls)
+	f.calls = append(f.calls, id)
+	f.opts = append(f.opts, opts)
+	var res client.DeleteSessionResult
+	var err error
+	if n < len(f.results) {
+		res = f.results[n]
+	}
+	if n < len(f.errs) {
+		err = f.errs[n]
+	}
+	return res, err
+}
+
+func (f *windowDeleter) recorded() ([]string, []client.DeleteSessionOptions) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...), append([]client.DeleteSessionOptions(nil), f.opts...)
+}
+
+func inventoryRow(id string, removeWorktree bool) client.SessionListItem {
+	return client.SessionListItem{ID: id, Kind: client.SessionKindMain, State: "idle",
+		Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Delete: true, RemoveWorktree: removeWorktree}}
+}
+
+func TestTUIMultiSession_Scenario6_DeleteStopsAndRemovesRow(t *testing.T) {
+	conv := newWindowConv()
+	hold := make(chan struct{})
+	defer close(hold)
+	conv.script("0001-sess-test", &heldRecver{script: streamScript("alpha", delta(3, "alpha-one"), delta(4, "alpha-two")), holds: map[int]chan struct{}{4: hold}})
+	deleter := &windowDeleter{}
+	lister := &fakeSessionLister{sessions: []client.SessionListItem{inventoryRow("0001-sess-test", false), inventoryRow("0002-sess-test", false), inventoryRow("0003-sess-test", false)}}
+	d := readyWindow(t, conv, func(deps *Deps) { deps.SessionManagement = deleter; deps.Sessions = lister })
+	first := d.w.activeKey
+	d.submit("start alpha")
+	d.until("alpha streaming", func(w window) bool {
+		m, _ := w.modelFor(first)
+		return strings.Contains(viewText(m), "alpha-one")
+	})
+	second := d.addCreated()
+	third := d.addCreated()
+
+	// Deleting the running background session asks first, then stops and deletes it.
+	d.openListAt(first)
+	if view := windowView(d); !strings.Contains(view, "d: delete") {
+		t.Fatalf("the window list must offer d:\n%s", view)
+	}
+	d.press(keyText('d'))
+	d.until("delete confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	if view := windowView(d); !strings.Contains(view, "Delete") || !strings.Contains(view, "stopped") || strings.Contains(view, "remove worktree") {
+		t.Fatalf("confirmation must say a running session is stopped and offer no worktree removal:\n%s", view)
+	}
+	if ids, _ := deleter.recorded(); len(ids) != 0 {
+		t.Fatal("d must not delete before confirmation")
+	}
+	d.press(keyText('y'))
+	d.until("row removed", func(w window) bool { return len(w.sessions) == 2 })
+	ids, opts := deleter.recorded()
+	if len(ids) != 1 || ids[0] != "0001-sess-test" || !opts[0].StopActive || opts[0].RemoveWorktree {
+		t.Fatalf("delete calls = %v %+v, want one stop_active delete of the first session", ids, opts)
+	}
+	if ctx := conv.lastRunCtx("0001-sess-test"); ctx == nil || ctx.Err() == nil {
+		t.Fatal("deleting a session must end its stream")
+	}
+	if d.w.activeKey != third {
+		t.Fatalf("deleting a background session must keep the active one, got %d", d.w.activeKey)
+	}
+	if view := windowView(d); !strings.Contains(view, "deleted") {
+		t.Fatalf("the list must confirm the deletion:\n%s", view)
+	}
+
+	// Declining keeps the session.
+	d.openListAt(second)
+	d.press(keyText('d'))
+	d.until("delete confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if d.w.deleteConfirm != nil || len(d.w.sessions) != 2 {
+		t.Fatal("esc must cancel the deletion")
+	}
+
+	// Deleting the active session switches to the next row.
+	d.openListAt(third)
+	d.press(keyText('d'))
+	d.until("delete confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	d.press(keyText('y'))
+	d.until("active row removed", func(w window) bool { return len(w.sessions) == 1 })
+	if d.w.activeKey != second {
+		t.Fatalf("deleting the active session must switch to the remaining row, got %d want %d", d.w.activeKey, second)
+	}
+
+	// Deleting the last session opens a new default session.
+	d.openListAt(second)
+	d.press(keyText('d'))
+	d.until("delete confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	d.press(keyText('y'))
+	d.until("replacement session ready", func(w window) bool {
+		m := w.activeModel()
+		return len(w.sessions) == 1 && w.activeKey != second && m.sessionID != "" && m.phase == phaseIdle
+	})
+	if got := d.w.activeModel().sessionID; got != "0004-sess-test" {
+		t.Fatalf("replacement session = %q, want a newly created one", got)
+	}
+	if ids, _ := deleter.recorded(); len(ids) != 3 {
+		t.Fatalf("delete calls = %v, want 3", ids)
+	}
+}
+
+func TestTUIMultiSession_Scenario6_DeleteOffersWorktreeRemoval(t *testing.T) {
+	conv := newWindowConv()
+	deleter := &windowDeleter{
+		results: []client.DeleteSessionResult{{}, {WorktreeRemoved: false, WorktreeRetainedReason: "dirty"}, {WorktreeRemoved: true}},
+		errs:    []error{fmt.Errorf("delete session: worktree removal refused: the worktree has uncommitted or untracked changes")},
+	}
+	lister := &fakeSessionLister{sessions: []client.SessionListItem{inventoryRow("0001-sess-test", false), inventoryRow("0002-sess-test", true), inventoryRow("0003-sess-test", true)}}
+	d := readyWindow(t, conv, func(deps *Deps) { deps.SessionManagement = deleter; deps.Sessions = lister })
+	first := d.w.activeKey
+	second := d.addCreated()
+	third := d.addCreated()
+
+	// A row without remove_worktree offers only the plain delete; r is inert.
+	d.openListAt(first)
+	d.press(keyText('d'))
+	d.until("plain confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	if view := windowView(d); strings.Contains(view, "remove worktree") {
+		t.Fatalf("a row without remove_worktree must not offer it:\n%s", view)
+	}
+	d.press(keyText('r'))
+	d.settle()
+	if ids, _ := deleter.recorded(); len(ids) != 0 || d.w.deleteConfirm == nil {
+		t.Fatalf("r must be inert without remove_worktree: calls=%v", ids)
+	}
+	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	// A server-created worktree row offers removal and explains it.
+	d.openListAt(second)
+	d.press(keyText('d'))
+	d.until("worktree confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	view := windowView(d)
+	for _, fragment := range []string{"delete and remove worktree", "ignored files", "branch is kept"} {
+		if !strings.Contains(view, fragment) {
+			t.Fatalf("worktree confirmation is missing %q:\n%s", fragment, view)
+		}
+	}
+
+	// A refusal is shown and the session is kept.
+	d.press(keyText('r'))
+	d.until("refusal shown", func(w window) bool { return w.deleteConfirm == nil && w.list != nil && w.list.notice != "" })
+	if len(d.w.sessions) != 3 {
+		t.Fatalf("a refused delete must keep the session, sessions=%d", len(d.w.sessions))
+	}
+	if view := windowView(d); !strings.Contains(view, "uncommitted") {
+		t.Fatalf("the refusal must be shown:\n%s", view)
+	}
+
+	// A post-stop dirty worktree: chat deleted, worktree kept, with the reason.
+	d.openListAt(second)
+	d.press(keyText('d'))
+	d.until("worktree confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	d.press(keyText('r'))
+	d.until("row removed", func(w window) bool { return len(w.sessions) == 2 })
+	if view := windowView(d); !strings.Contains(view, "chat deleted, worktree kept") || !strings.Contains(view, "uncommitted") {
+		t.Fatalf("a kept worktree must be reported with its reason:\n%s", view)
+	}
+
+	// A clean removal reports that the branch is kept.
+	d.openListAt(third)
+	d.press(keyText('d'))
+	d.until("worktree confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	d.press(keyText('r'))
+	d.until("row removed", func(w window) bool { return len(w.sessions) == 1 })
+	if view := windowView(d); !strings.Contains(view, "worktree removed") {
+		t.Fatalf("a removed worktree must be reported:\n%s", view)
+	}
+
+	ids, opts := deleter.recorded()
+	want := []string{"0002-sess-test", "0002-sess-test", "0003-sess-test"}
+	if fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Fatalf("delete calls = %v, want %v", ids, want)
+	}
+	for _, o := range opts {
+		if !o.StopActive || !o.RemoveWorktree {
+			t.Fatalf("worktree deletes must send stop_active and remove_worktree, got %+v", opts)
+		}
 	}
 }
