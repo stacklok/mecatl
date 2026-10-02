@@ -4,7 +4,7 @@
 - Date: 2026-07-23
 - Scope: the `/models` picker switch UX (mecatui), the `CreateSession.source_session_id` carryover surface (server), and the new `session.StripProviderState` domain transform (engine/session)
 - Supersedes: the "Mid-session model switch" + "Same-provider history carryover" decisions in [ADR 0016](./0016-multi-provider.md) (the confirm-overlay UX and the same-provider-only gate), and the "same-provider constraint" note for carryover in [ADR 0065](./0065-conversation-fork.md)
-- Superseded by: none
+- Superseded by: [ADR 0343](./0343-session-configuration-generations.md) only for the replacement session's durable generation identity
 
 ## Context
 
