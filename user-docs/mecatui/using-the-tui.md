@@ -15,10 +15,10 @@ as it arrives. Tool calls appear as compact cards; Edit and Write cards include
 their diff.
 
 Use `/toolcalls` to browse the current session's tool calls, including calls still
-running. Select a call with the navigation keys shown in the browser and press
-`enter` to inspect its complete arguments and received result. The detail
-separates call identity and status, arguments, result or error text, structured
-content, and resource details when present. In Read results, numbered file lines
+running. Select a visible call by clicking its row or with the navigation keys
+shown in the browser, then press `enter` to inspect its complete arguments and
+received result. The detail separates call identity and status, arguments, result
+or error text, structured content, and resource details when present. In Read results, numbered file lines
 have space between the line number and content. Other result text keeps its
 original spacing. Scroll long details with the displayed keys; press `esc` to
 return to the list, then `esc` again to close it. The browser also works when

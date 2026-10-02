@@ -621,6 +621,130 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.deps.NoAltScreen = false
+	m = addToolcallsForTest(t, m, 3)
+	m = openToolcallsForTest(t, m)
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
+	m.vp.SetYOffset(5)
+	beforeConversation := m.vp.YOffset()
+	_ = m.View()
+
+	s := toolcallsForTest(t, m)
+	var first renderedHitRegion
+	for _, region := range m.hits.frame {
+		if s.hitItems[region.id] == s.entries[0].blockID {
+			first = region
+			break
+		}
+	}
+	if first.id == 0 {
+		t.Fatal("rendered inspector has no hit for the first visible call")
+	}
+	globalX, globalY := m.metrics.localToGlobal(first.rect.x0, first.rect.y0)
+	updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.detail || s.entries[s.selected].blockID != s.hitItems[first.id] {
+		t.Fatalf("click selected detail=%v block=%d, want visible block %d", s.detail, s.entries[s.selected].blockID, s.hitItems[first.id])
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("click moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = updated.(Model)
+	if toolcallsForTest(t, m).selected == 0 {
+		t.Fatal("wheel no longer moves the inspector selection")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	if s := toolcallsForTest(t, m); !s.detail || s.detailEntry == nil || s.detailEntry.callID != "call-1" {
+		t.Fatalf("Enter opened %#v, want selected call-1 detail", s)
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.deps.NoAltScreen = false
+	m = addToolcallsForTest(t, m, 8)
+	m = openToolcallsForTest(t, m)
+	_ = m.View()
+	s := toolcallsForTest(t, m)
+	if len(m.hits.frame) == 0 {
+		t.Fatal("rendered inspector has no row hits")
+	}
+	stale := m.hits.frame[0].id
+	before := s.selected
+
+	for _, point := range [][2]int{{0, m.metrics.contentOrigin.y}, {0, m.metrics.contentBounds.y1 - 1}, {m.width - 1, m.metrics.contentOrigin.y + 1}} {
+		updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: point[0], Y: point[1]})
+		m = updated.(Model)
+		if got := toolcallsForTest(t, m).selected; got != before {
+			t.Fatalf("non-row click at %v selected %d, want %d", point, got, before)
+		}
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 10})
+	m = updated.(Model)
+	_ = m.View()
+	s = toolcallsForTest(t, m)
+	s.selected = len(s.entries) - 1
+	updated, _ = m.Update(surfaceHitMsg{ID: stale})
+	m = updated.(Model)
+	if got, want := toolcallsForTest(t, m).selected, len(s.entries)-1; got != want {
+		t.Fatalf("stale hit selected %d, want %d", got, want)
+	}
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 10, Height: 3})
+	m = updated.(Model)
+	_ = m.View()
+	before = toolcallsForTest(t, m).selected
+	updated, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: m.metrics.contentOrigin.y})
+	m = updated.(Model)
+	if got := toolcallsForTest(t, m).selected; got != before {
+		t.Fatalf("compact click selected %d, want %d", got, before)
+	}
+
+	noMouse := newToolcallsInspectorModel(t)
+	noMouse.deps.NoAltScreen = true
+	noMouse = addToolcallsForTest(t, noMouse, 2)
+	noMouse = openToolcallsForTest(t, noMouse)
+	_ = noMouse.View()
+	before = toolcallsForTest(t, noMouse).selected
+	region := noMouse.hits.frame[0]
+	x, y := noMouse.metrics.localToGlobal(region.rect.x0, region.rect.y0)
+	updated, _ = noMouse.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	noMouse = updated.(Model)
+	if got := toolcallsForTest(t, noMouse).selected; got != before {
+		t.Fatalf("no-mouse click selected %d, want %d", got, before)
+	}
+
+	reused := newToolcallsInspectorModel(t)
+	reused.deps.NoAltScreen = false
+	reused.conv.addTool("reused", "Read", `{"path":"first"}`)
+	reused.conv.resolveTool("reused", "complete", false)
+	reused.conv.addTool("reused", "Write", `{"path":"second"}`)
+	reused = openToolcallsForTest(t, reused)
+	_ = reused.View()
+	rs := toolcallsForTest(t, reused)
+	wantBlock := rs.entries[1].blockID
+	var reusedHit renderedHitRegion
+	for _, candidate := range reused.hits.frame {
+		if rs.hitItems[candidate.id] == wantBlock {
+			reusedHit = candidate
+			break
+		}
+	}
+	if reusedHit.id == 0 {
+		t.Fatal("reused call ID has no hit for its later block")
+	}
+	x, y = reused.metrics.localToGlobal(reusedHit.rect.x0, reusedHit.rect.y0)
+	updated, _ = reused.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	reused = updated.(Model)
+	if got := toolcallsForTest(t, reused).entries[toolcallsForTest(t, reused).selected].blockID; got != wantBlock {
+		t.Fatalf("reused ID click selected block %d, want later block %d", got, wantBlock)
+	}
+}
+
 func newToolcallsInspectorModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context()})

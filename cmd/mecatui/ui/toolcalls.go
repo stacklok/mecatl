@@ -68,11 +68,31 @@ type toolcallsState struct {
 	follow      bool
 	list        *bounded.List
 	compact     bool
+	hitItems    map[HitID]scrollback.BlockID // view cache: visible rows from the current Render frame
 }
 
-func (*toolcallsState) modalPlacement() modalPlacement          { return modalPlacementFill }
-func (*toolcallsState) Close()                                  {}
-func (*toolcallsState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
+func (*toolcallsState) modalPlacement() modalPlacement { return modalPlacementFill }
+func (*toolcallsState) Close()                         {}
+func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	hit, ok := msg.(surfaceHitMsg)
+	if !ok || !s.open || s.compact || s.detail {
+		return nil, false, false
+	}
+	blockID, current := s.hitItems[hit.ID]
+	if !current {
+		return nil, true, false
+	}
+	for i, entry := range s.entries {
+		if entry.blockID == blockID {
+			s.selected = i
+			if s.list != nil {
+				s.list.SetCursor(i)
+			}
+			return nil, true, false
+		}
+	}
+	return nil, true, false
+}
 
 func toolcallsTooSmallHint(width int, dismiss string) string {
 	if width <= 0 {
@@ -336,6 +356,7 @@ func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
 
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	s.compact = false
+	s.hitItems = nil
 	if !s.open || width <= 0 || height <= 0 {
 		s.list = nil
 		return "", nil
@@ -390,12 +411,24 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	s.list.SetCursor(s.selected)
 	view := s.list.View()
 	body := []string{title, ""}
+	regions := make([]ClickableRegion, 0, len(view.Rows))
+	s.hitItems = make(map[HitID]scrollback.BlockID, len(view.Rows))
 	for _, row := range view.Rows {
 		presentation := presentListRow(row, th.Style("accent"), th.Style("muted"))
+		y := len(body)
 		body = append(body, ansi.Cut(presentation.Style.Render(presentation.Text), 0, width)+"\x1b[0m")
+		if s.deps.hits == nil || row.ItemIndex < 0 || row.ItemIndex >= len(s.entries) {
+			continue
+		}
+		id := s.deps.hits.allocate()
+		x1 := min(max(0, width), lipgloss.Width(body[y]))
+		if x1 > 0 {
+			regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
+			s.hitItems[id] = s.entries[row.ItemIndex].blockID
+		}
 	}
 	body = append(body, "", footer)
-	return strings.Join(body, "\n"), nil
+	return strings.Join(body, "\n"), regions
 }
 
 func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string) string {
