@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -16,13 +17,6 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
-)
-
-const (
-	toolEditName  = "Edit"
-	toolWriteName = "Write"
-	toolPathArg   = "path"
-	toolURLArg    = "url"
 )
 
 // runToolcalls opens the current session's local tool-call projection. It has no
@@ -39,12 +33,13 @@ func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
 }
 
 type toolcallEntry struct {
-	blockID  scrollback.BlockID
-	index    int
-	name     string
-	intent   string
-	resolved bool
-	failed   bool
+	blockID          scrollback.BlockID
+	argumentRevision uint64
+	index            int
+	name             string
+	intent           string
+	resolved         bool
+	failed           bool
 }
 
 type toolcallDetail struct {
@@ -113,8 +108,14 @@ func toolcallsTooSmallHint(width int, dismiss string) string {
 }
 
 func toolcallArgumentLines(name, arguments string) []string {
-	fields := make(map[string]json.RawMessage)
-	if json.Unmarshal([]byte(arguments), &fields) != nil || fields == nil {
+	var fields map[string]any
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.UseNumber()
+	if decoder.Decode(&fields) != nil || fields == nil {
+		return []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
 		return []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
 	}
 
@@ -148,48 +149,61 @@ func toolcallArgumentLines(name, arguments string) []string {
 
 	lines := make([]string, 0, len(ordered))
 	for _, key := range ordered {
-		if raw, ok := fields[key]; ok {
-			lines = appendArgumentLines(lines, argumentLabel(key), raw, "")
+		if value, ok := fields[key]; ok {
+			lines = appendArgumentTree(lines, argumentLabel(key), value)
 		}
 	}
 	return lines
 }
 
-func appendArgumentLines(lines []string, label string, raw json.RawMessage, indent string) []string {
-	value := strings.TrimSpace(string(raw))
-	prefix := indent + terminaltext.SanitizeSingleLine(label) + ":"
-	if strings.HasPrefix(value, "{") {
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(raw, &fields) == nil {
-			if len(fields) == 0 {
-				return append(lines, prefix+" (empty object)")
+// Decode once, then walk the decoded tree instead of reparsing each subtree.
+// Cap indentation so deeply nested valid input cannot force quadratic output.
+func appendArgumentTree(lines []string, label string, value any) []string {
+	type item struct {
+		label string
+		value any
+		depth int
+	}
+	stack := []item{{label: label, value: value}}
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		prefix := strings.Repeat("  ", min(current.depth, 16)) + terminaltext.SanitizeSingleLine(current.label) + ":"
+		switch v := current.value.(type) {
+		case map[string]any:
+			if len(v) == 0 {
+				lines = append(lines, prefix+" (empty object)")
+				continue
 			}
 			lines = append(lines, prefix)
-			keys := make([]string, 0, len(fields))
-			for key := range fields {
+			keys := make([]string, 0, len(v))
+			for key := range v {
 				keys = append(keys, key)
 			}
 			sort.Strings(keys)
-			for _, key := range keys {
-				lines = appendArgumentLines(lines, argumentLabel(key), fields[key], indent+"  ")
+			for i := len(keys) - 1; i >= 0; i-- {
+				stack = append(stack, item{argumentLabel(keys[i]), v[keys[i]], current.depth + 1})
 			}
-			return lines
-		}
-	}
-	if strings.HasPrefix(value, "[") {
-		var items []json.RawMessage
-		if json.Unmarshal(raw, &items) == nil {
-			if len(items) == 0 {
-				return append(lines, prefix+" (empty array)")
+		case []any:
+			if len(v) == 0 {
+				lines = append(lines, prefix+" (empty array)")
+				continue
 			}
 			lines = append(lines, prefix)
-			for i, item := range items {
-				lines = appendArgumentLines(lines, fmt.Sprintf("[%d]", i), item, indent+"  ")
+			for i := len(v) - 1; i >= 0; i-- {
+				stack = append(stack, item{fmt.Sprintf("[%d]", i), v[i], current.depth + 1})
 			}
-			return lines
+		case string:
+			lines = append(lines, prefix+" "+terminaltext.Sanitize(v))
+		case json.Number:
+			lines = append(lines, prefix+" "+terminaltext.Sanitize(string(v)))
+		case bool:
+			lines = append(lines, prefix+" "+fmt.Sprint(v))
+		default:
+			lines = append(lines, prefix+" null")
 		}
 	}
-	return append(lines, prefix+" "+argumentValue(raw))
+	return lines
 }
 
 func argumentSummary(raw json.RawMessage) string {
@@ -279,17 +293,27 @@ func toolcallIntentFor(name, arguments string) string {
 	return toolcallIntent(name, fields)
 }
 
-func (m Model) toolcallEntries() []toolcallEntry {
+func (m Model) toolcallEntries() []toolcallEntry { return m.toolcallEntriesSince(nil) }
+
+func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
+	cached := make(map[scrollback.BlockID]toolcallEntry, len(previous))
+	for _, entry := range previous {
+		cached[entry.blockID] = entry
+	}
 	entries := make([]toolcallEntry, 0)
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
 		metadata, ok := m.conv.scrollback.ToolCallMetadataAt(i)
 		if !ok {
 			continue
 		}
+		intent := cached[metadata.ID].intent
+		if old, ok := cached[metadata.ID]; !ok || old.argumentRevision != metadata.ArgumentRevision {
+			intent = ansi.Truncate(terminaltext.SanitizeSingleLine(toolcallIntentFor(metadata.Name, metadata.Arguments)), 120, "…")
+		}
 		entries = append(entries, toolcallEntry{
-			blockID: metadata.ID, index: i,
+			blockID: metadata.ID, argumentRevision: metadata.ArgumentRevision, index: i,
 			name:     ansi.Truncate(terminaltext.SanitizeSingleLine(metadata.Name), 120, "…"),
-			intent:   ansi.Truncate(terminaltext.SanitizeSingleLine(toolcallIntentFor(metadata.Name, metadata.Arguments)), 120, "…"),
+			intent:   intent,
 			resolved: metadata.Resolved,
 			failed:   metadata.Failed || subagentStopErrored(metadata.Stop),
 		})
@@ -325,7 +349,7 @@ func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 
 func (m *Model) syncToolcalls() {
 	if s, ok := m.modal.(*toolcallsState); ok {
-		s.setEntries(m.toolcallEntries(), false)
+		s.setEntries(m.toolcallEntriesSince(s.entries), false)
 		if s.detail {
 			s.refreshDetail(&m.conv.scrollback)
 		}
@@ -492,7 +516,7 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 			content[i] = s.deps.theme.Style("errorText").Render(row)
 		} else if row == "Arguments:" || row == "Result:" || row == "Result: pending" ||
 			strings.HasPrefix(row, "Structured content · ") || row == "Resources" {
-			content[i] = s.deps.theme.Style("accent").Render(row)
+			content[i] = s.deps.theme.Style("spinner").Bold(true).Render(row)
 		}
 	}
 	return content

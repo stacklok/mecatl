@@ -82,7 +82,11 @@ func (t ToolCards) ReconcileUnresolved(call ToolCall) bool {
 		return true
 	}
 	payload.Call = updated
-	return c.replace(i, payload)
+	if c.replace(i, payload) {
+		c.cards[i].argumentRevision++
+		return true
+	}
+	return false
 }
 
 // Finish records a terminal lifecycle projection before the tool result arrives.
