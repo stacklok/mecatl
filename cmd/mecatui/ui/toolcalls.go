@@ -64,29 +64,34 @@ func (*toolcallsState) modalPlacement() modalPlacement          { return modalPl
 func (*toolcallsState) Close()                                  {}
 func (*toolcallsState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
 
+func toolcallsTooSmallHint(width int, close string) string {
+	if width <= 0 {
+		return ""
+	}
+	message := "too small · " + close
+	if ansi.StringWidth(message) <= width {
+		return message
+	}
+	if ansi.StringWidth(close) <= width {
+		return close
+	}
+	return ansi.Truncate(close, width, "")
+}
+
 func (m Model) toolcallEntries() []toolcallEntry {
 	entries := make([]toolcallEntry, 0)
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
-		snapshot := m.conv.scrollback.SnapshotAt(i)
-		var entry toolcallEntry
-		switch card := snapshot.Payload.(type) {
-		case scrollback.ToolCardSnapshot:
-			entry = toolcallEntry{name: card.Call.Name, intent: card.Call.Arguments,
-				resolved: card.Resolved || card.Finished, failed: card.Result.IsError || card.Failed}
-		case scrollback.SubagentCardSnapshot:
-			entry = toolcallEntry{name: card.Call.Name, intent: card.Call.Arguments,
-				resolved: card.Resolved || card.Update.Done, failed: card.Result.IsError || (card.Update.Done && subagentStopErrored(card.Update.Stop))}
-		case scrollback.TeamCardSnapshot:
-			entry = toolcallEntry{name: card.Call.Name, intent: card.Call.Arguments,
-				resolved: card.Resolved || card.Update.Done, failed: card.Result.IsError || (card.Update.Done && subagentStopErrored(card.Update.Stop))}
-		default:
+		metadata, ok := m.conv.scrollback.ToolCallMetadataAt(i)
+		if !ok {
 			continue
 		}
-		entry.index = i
-		entry.blockID = snapshot.ID
-		entry.name = ansi.Truncate(terminaltext.SanitizeSingleLine(entry.name), 120, "…")
-		entry.intent = ansi.Truncate(strings.ReplaceAll(terminaltext.Sanitize(entry.intent), "\n", " "), 120, "…")
-		entries = append(entries, entry)
+		entries = append(entries, toolcallEntry{
+			blockID: metadata.ID, index: i,
+			name:     ansi.Truncate(terminaltext.SanitizeSingleLine(metadata.Name), 120, "…"),
+			intent:   ansi.Truncate(strings.ReplaceAll(terminaltext.Sanitize(metadata.Arguments), "\n", " "), 120, "…"),
+			resolved: metadata.Resolved,
+			failed:   metadata.Failed || subagentStopErrored(metadata.Stop),
+		})
 	}
 	return entries
 }
@@ -160,46 +165,53 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	if height < 5 || width < 12 {
 		s.compact, s.list = true, nil
-		return line(th.Style("muted"), "too small · "+s.deps.marks.closeOnly+" close"), nil
+		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
 	}
 	title := line(th.Style("askTitle"), "Tool calls")
 	if s.detail {
+		hint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.jumpTopFull + "/" + s.deps.marks.jumpEndFull + " · " + s.deps.marks.closeOnly + " back"
+		if ansi.StringWidth(hint) > width {
+			s.compact, s.list = true, nil
+			return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+		}
 		return s.renderDetail(width, height, title, line), nil
 	}
-	footer := line(th.Style("muted"), s.deps.marks.navUp+"/"+s.deps.marks.navDown+" · "+s.deps.marks.scroll+" · "+s.deps.marks.choose+" detail · "+s.deps.marks.closeOnly+" close")
+	footerText := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.choose + " detail · " + s.deps.marks.closeOnly + " close"
+	if ansi.StringWidth(footerText) > width {
+		s.compact, s.list = true, nil
+		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+	}
+	footer := line(th.Style("muted"), footerText)
 	if len(s.entries) == 0 {
 		return strings.Join([]string{title, "", line(th.Style("muted"), "no tool calls in this session."), "", footer}, "\n"), nil
 	}
 	bodyHeight := height - 4
 	if bodyHeight < 1 {
 		s.compact, s.list = true, nil
-		return line(th.Style("muted"), "too small · "+s.deps.marks.closeOnly+" close"), nil
+		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
 	}
 	if s.list == nil {
 		s.list = new(bounded.List)
 	}
 	items := make([]bounded.ListItem, len(s.entries))
 	for i, entry := range s.entries {
-		status := "running"
+		marker, status := "…", "running"
 		if entry.resolved {
-			status = statusDone
+			marker, status = "✓", statusDone
 		}
 		if entry.failed {
-			status = statusFailed
+			marker, status = "✗", statusFailed
 		}
-		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent}
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent, StatusCells: [2]string{marker}}
 	}
-	s.list.SetGeometry(width, bodyHeight, 0, bounded.Clip)
+	s.list.SetGeometry(width, bodyHeight, 1, bounded.Clip)
 	s.list.SetItems(items)
 	s.list.SetCursor(s.selected)
 	view := s.list.View()
 	body := []string{title, ""}
 	for _, row := range view.Rows {
-		prefix := "  "
-		if row.Selected {
-			prefix = "> "
-		}
-		body = append(body, ansi.Cut(prefix+row.Text, 0, width)+"\x1b[0m")
+		presentation := presentListRow(row, th.Style("accent"), th.Style("muted"))
+		body = append(body, ansi.Cut(presentation.Style.Render(presentation.Text), 0, width)+"\x1b[0m")
 	}
 	body = append(body, "", footer)
 	return strings.Join(body, "\n"), nil

@@ -80,6 +80,45 @@ type Conversation struct {
 	seen     map[string]struct{}
 }
 
+// ToolCallMetadata is the compact tool-card projection used by inventories. It
+// intentionally excludes results and artifacts, whose byte payloads remain owned by
+// the conversation until a selected detail requests a detached snapshot.
+type ToolCallMetadata struct {
+	ID                      BlockID
+	CallID, Name, Arguments string
+	Resolved, Failed        bool
+	Stop                    string
+}
+
+// ToolCallMetadataAt returns the compact top-level tool projection at index i
+// without detaching its payload. It returns false for non-tool cards.
+func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
+	card := c.cards[i]
+	var call ToolCall
+	var resolved, failed bool
+	var stop string
+	switch payload := card.payload.(type) {
+	case ToolCardSnapshot:
+		call, resolved = payload.Call, payload.Resolved || payload.Finished
+		failed = payload.Result.IsError || payload.Failed
+	case SubagentCardSnapshot:
+		call, resolved = payload.Call, payload.Resolved || payload.Update.Done
+		if payload.Update.Done {
+			stop = payload.Update.Stop
+		}
+		failed = payload.Result.IsError
+	case TeamCardSnapshot:
+		call, resolved = payload.Call, payload.Resolved || payload.Update.Done
+		if payload.Update.Done {
+			stop = payload.Update.Stop
+		}
+		failed = payload.Result.IsError
+	default:
+		return ToolCallMetadata{}, false
+	}
+	return ToolCallMetadata{ID: card.id, CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Resolved: resolved, Failed: failed, Stop: stop}, true
+}
+
 // Len returns the number of ordinary cards in the conversation. It excludes the
 // separately rendered changed-files appendix.
 func (c *Conversation) Len() int { return len(c.cards) }

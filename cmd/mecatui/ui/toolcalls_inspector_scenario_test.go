@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -28,6 +30,29 @@ func TestMecatuiToolcallsInspector_Scenario1_OpenEmptyRunningAndResume(t *testin
 	m = openToolcallsForTest(t, m)
 	if got, want := len(toolcallsForTest(t, m).entries), 2; got != want {
 		t.Fatalf("resumed current-session calls = %d, want %d", got, want)
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario1_ResumeProjection(t *testing.T) {
+	resume := &client.ResumeSelection{
+		Row: client.SessionListItem{ID: "resumed"},
+		Transcript: client.SessionTranscript{Messages: []client.ConversationMessage{
+			{Role: "assistant", ToolCalls: []client.ConvToolCall{{ID: "reused", Name: "Read", Args: `{"path":"resumed"}`}}},
+			{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "reused", Content: "rehydrated"}},
+		}},
+	}
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context(), Resume: resume})
+	m.width, m.height = 100, 30
+	m.relayout()
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	if len(s.entries) != 1 || s.entries[0].name != "Read" {
+		t.Fatalf("resumed inventory: %#v", s.entries)
+	}
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	if got := inspectorDetail(t, toolcallsForTest(t, m), 80, 12); !strings.Contains(got, "rehydrated") || !strings.Contains(got, "resumed") {
+		t.Fatalf("resumed detail: %q", got)
 	}
 }
 
@@ -70,6 +95,55 @@ func TestMecatuiToolcallsInspector_Scenario1_TopLevelDelegationsOnly(t *testing.
 }
 
 func TestMecatuiToolcallsInspector_Scenario1_ChronologicalNavigation(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m = addToolcallsForTest(t, m, 125)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	s.Render(80, 12)
+	if s.selected != 124 || !strings.Contains(stripANSIstr(m.View().Content), "file-124.go") {
+		t.Fatalf("opening did not reveal newest call: %d", s.selected)
+	}
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.selected != 0 || !strings.Contains(stripANSIstr(m.View().Content), "file-0.go") {
+		t.Fatalf("top did not reveal oldest call: %d", s.selected)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.selected <= 0 || s.selected >= 124 {
+		t.Fatalf("page down did not navigate: %d", s.selected)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.selected != 124 {
+		t.Fatalf("end selection = %d", s.selected)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.selected >= 124 {
+		t.Fatalf("page up did not navigate: %d", s.selected)
+	}
+	selected := s.selected
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.detail || s.selected != selected {
+		t.Fatalf("first Escape lost list selection: %d", s.selected)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	if toolcallsForTest(t, m) != nil || !m.prompt.Focused() {
+		t.Fatal("second Escape did not close and restore prompt")
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario1_ChronologicalNavigationShort(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m = addToolcallsForTest(t, m, 3)
 	m = openToolcallsForTest(t, m)
@@ -135,12 +209,58 @@ func TestMecatuiToolcallsInspector_Scenario3_FullRegionAndCompactFallback(t *tes
 		t.Fatalf("nonpositive geometry rendered %q", got)
 	}
 	compact, _ := s.Render(10, 3)
-	if !s.compact || !strings.Contains(stripANSIstr(compact), "too small") {
+	if !s.compact || !strings.Contains(stripANSIstr(compact), s.deps.marks.closeOnly) {
 		t.Fatalf("compact fallback = %q, compact=%v", compact, s.compact)
+	}
+	// The normal navigation hint is wider than this offer. Do not clip Escape:
+	// switch to the close-only fallback before rendering the list.
+	compact, _ = s.Render(30, 20)
+	if !s.compact || !strings.Contains(stripANSIstr(compact), s.deps.marks.closeOnly) {
+		t.Fatalf("narrow fallback clipped close hint: %q", compact)
 	}
 	normal, _ := s.Render(80, 20)
 	if s.compact || !strings.Contains(stripANSIstr(normal), "Tool calls") {
 		t.Fatalf("normal geometry did not restore the list: %q", normal)
+	}
+	listHint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.choose + " detail · " + s.deps.marks.closeOnly + " close"
+	limit := ansi.StringWidth(listHint)
+	if body, _ := s.Render(limit-1, 20); !s.compact || strings.Contains(body, "Tool calls") {
+		t.Fatalf("below list hint threshold: %q", body)
+	}
+	if body, _ := s.Render(limit, 20); s.compact || !strings.Contains(body, s.deps.marks.closeOnly) {
+		t.Fatalf("at list hint threshold: %q", body)
+	}
+	if s.selected != 0 || s.list == nil || !strings.Contains(stripANSIstr(normal), "▶") {
+		t.Fatalf("resize lost selection or non-color marker: selected=%d list=%v body=%q", s.selected, s.list, normal)
+	}
+	for _, width := range []int{1, 3, 10, 30, 80, 160} {
+		body, _ := s.Render(width, 20)
+		for _, row := range strings.Split(stripANSIstr(body), "\n") {
+			if ansi.StringWidth(row) > width {
+				t.Fatalf("list width %d overflows: %q", width, row)
+			}
+		}
+		if s.compact && ansi.StringWidth(s.deps.marks.closeOnly) <= width && !strings.Contains(stripANSIstr(body), s.deps.marks.closeOnly) {
+			t.Fatalf("width %d lost Escape hint: %q", width, body)
+		}
+	}
+	s.Render(80, 20)
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	detailHint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.jumpTopFull + "/" + s.deps.marks.jumpEndFull + " · " + s.deps.marks.closeOnly + " back"
+	limit = ansi.StringWidth(detailHint)
+	if body, _ := s.Render(limit-1, 20); !s.compact || strings.Contains(body, "Tool calls") {
+		t.Fatalf("below detail hint threshold: %q", body)
+	}
+	if body, _ := s.Render(limit, 20); s.compact || !strings.Contains(body, s.deps.marks.closeOnly) {
+		t.Fatalf("at detail hint threshold: %q", body)
+	}
+	for _, width := range []int{1, 10, 30, 80} {
+		body, _ := s.Render(width, 20)
+		if width == 30 && (!s.compact || !strings.Contains(stripANSIstr(body), s.deps.marks.closeOnly)) {
+			t.Fatalf("detail narrow hint clipped: %q", body)
+		}
 	}
 }
 

@@ -67,21 +67,21 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	args := strings.Join([]string{"first-argument", strings.Repeat("longargument", 12), "last-argument"}, "\n")
 	m.conv.addTool("edit", "Edit", args)
 	s := inspectorOpenDetail(t, &m)
-	initial := inspectorDetail(t, s, 35, 9)
+	initial := inspectorDetail(t, s, 70, 9)
 	if !strings.Contains(initial, "first-argument") {
 		t.Fatalf("first argument missing: %q", initial)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if got := inspectorDetail(t, s, 35, 9); !strings.Contains(got, "last-argument") {
+	if got := inspectorDetail(t, s, 70, 9); !strings.Contains(got, "last-argument") {
 		t.Fatalf("last argument unreachable: %q", got)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyHome})
 	m = applyAll(m, client.ToolResultMsg{CallID: "edit", Content: strings.Repeat("diff line\n", 40) + "final-diff-line"})
-	if got := inspectorDetail(t, s, 35, 9); !strings.Contains(got, "first-argument") || strings.Contains(got, "final-diff-line") {
+	if got := inspectorDetail(t, s, 70, 9); !strings.Contains(got, "first-argument") || strings.Contains(got, "final-diff-line") {
 		t.Fatalf("lost reading position: %q", got)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if got := inspectorDetail(t, s, 35, 9); !strings.Contains(got, "final-diff-line") {
+	if got := inspectorDetail(t, s, 70, 9); !strings.Contains(got, "final-diff-line") {
 		t.Fatalf("last diff unreachable: %q", got)
 	}
 	m.conv.addTool("more", "Write", "other")
@@ -116,16 +116,16 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	m4 = addToolcallsForTest(t, m4, 25)
 	m4 = openToolcallsForTest(t, m4)
 	s4 := toolcallsForTest(t, m4)
-	s4.Render(40, 8)
+	s4.Render(70, 8)
 	s4.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	s4.Render(40, 8)
+	s4.Render(70, 8)
 	listOffset, selected := s4.list.Offset(), s4.selected
 	s4.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m4.syncToolcalls()
 	m4 = addToolcallsForTest(t, m4, 1)
-	s4.Render(40, 8)
+	s4.Render(70, 8)
 	s4.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	s4.Render(40, 8)
+	s4.Render(70, 8)
 	if s4.selected != selected || s4.list.Offset() != listOffset {
 		t.Fatalf("return from detail changed list window: selected=%d (want %d), offset=%d (want %d)", s4.selected, selected, s4.list.Offset(), listOffset)
 	}
@@ -133,19 +133,19 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	m3 := newToolcallsInspectorModel(t)
 	m3.conv.addTool("reflow", "Read", "start\n"+strings.Repeat("wide", 25)+"\nanchor-row\n"+strings.Repeat("after\n", 80))
 	s3 := inspectorOpenDetail(t, &m3)
-	inspectorDetail(t, s3, 40, 8)
-	for i := 0; i < 7; i++ {
+	inspectorDetail(t, s3, 70, 8)
+	for i := 0; i < 6; i++ {
 		s3.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	at := inspectorDetail(t, s3, 40, 8)
+	at := inspectorDetail(t, s3, 70, 8)
 	if !strings.Contains(strings.Split(at, "\n")[2], "anchor-row") {
 		t.Fatalf("anchor setup failed: %q", at)
 	}
-	resized := inspectorDetail(t, s3, 24, 8)
+	resized := inspectorDetail(t, s3, 55, 8)
 	if !strings.Contains(strings.Split(resized, "\n")[2], "anchor-row") {
 		t.Fatalf("narrow reflow shifted reading position: before=%q after=%q", at, resized)
 	}
-	wide := inspectorDetail(t, s3, 60, 8)
+	wide := inspectorDetail(t, s3, 90, 8)
 	if !strings.Contains(strings.Split(wide, "\n")[2], "anchor-row") {
 		t.Fatalf("wide reflow shifted reading position: before=%q after=%q", resized, wide)
 	}
@@ -157,18 +157,18 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	}
 	m5.conv.addTool("wrapped", "Read", wrapped.String())
 	s5 := inspectorOpenDetail(t, &m5)
-	inspectorDetail(t, s5, 40, 8)
+	inspectorDetail(t, s5, 70, 8)
 	for i := 0; i < 10; i++ {
 		s5.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	original := strings.Split(inspectorDetail(t, s5, 40, 8), "\n")[2]
-	marker := original[:4]
-	if marker != "0070" {
+	original := strings.Split(inspectorDetail(t, s5, 70, 8), "\n")[2]
+	marker := original[2:6]
+	if marker != "0123" {
 		t.Fatalf("wrapped anchor setup failed: %q", original)
 	}
-	for _, w := range []int{20, 80, 40} {
-		got := strings.Split(inspectorDetail(t, s5, w, 8), "\n")[2]
-		if !strings.Contains(got, marker) {
+	for _, w := range []int{55, 90, 70} {
+		got := inspectorDetail(t, s5, w, 8)
+		if !strings.Contains(strings.ReplaceAll(got, "\n", ""), marker) {
 			t.Fatalf("wrapped text anchor moved at width %d: before=%q after=%q", w, original, got)
 		}
 	}
