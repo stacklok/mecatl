@@ -472,6 +472,75 @@ func TestMecatuiToolcallsInspector_Scenario4_GenericFallbackAndLifecycle(t *test
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario4_NestedArgumentsAndEmptyKeys(t *testing.T) {
+	cases := []struct {
+		name, tool, args, intent string
+		want, absent             []string
+	}{
+		{
+			name: "top-level empty key", tool: "future-tool",
+			args:   `{"":1,"ok":null}`,
+			intent: "future-tool",
+			want:   []string{"(empty key): 1", "Ok: null"},
+		},
+		{
+			name: "empty keys and stable order", tool: "Subagent",
+			args:   `{"authority":{"z":false,"":null,"a":[{"":1,"b":true},false]},"messages":["hello",{"role":"user","content":"hi"}]}`,
+			intent: "Subagent",
+			want:   []string{"Authority:", "  (empty key): null", "  A:", "    [0]:", "      (empty key): 1", "      B: true", "    [1]: false", "  Z: false", "Messages:", "  [0]: hello", "  [1]:", "    Content: hi", "    Role: user"},
+			absent: []string{`{"z":`, `[{`, `{"role":`},
+		},
+		{
+			name: "nested target intent", tool: "future-tool",
+			args:   `{"target":{"path":"one","revision":2},"other":[null,true,3.25],"empty":{},"items":[]}`,
+			intent: "future-tool 2 fields",
+			want:   []string{"Target:", "  Path: one", "  Revision: 2", "Other:", "  [0]: null", "  [1]: true", "  [2]: 3.25", "Empty: (empty object)", "Items: (empty array)"},
+		},
+		{
+			name: "array target and unicode key", tool: "mcp__lookup",
+			args:   `{"target":[{"étiquette":"safe"},null],"payload":{"notes":"\u001b[31m"}}`,
+			intent: "mcp__lookup 2 items",
+			want:   []string{"Target:", "  [0]:", "    Étiquette: safe", "  [1]: null", "Payload:", "  Notes:"},
+			absent: []string{"\x1b[31m", `[{"étiquette"`},
+		},
+		{
+			name: "hostile controls and long nested values", tool: "Read",
+			args:   `{"path":"safe","extra":{"\u001b[31m":"\u001b]8;;evil\u0007"},"content":"` + strings.Repeat("large-value-", 30) + `"}`,
+			intent: "Read safe",
+			want:   []string{"Extra:", strings.Repeat("large-value-", 30)},
+			absent: []string{"\x1b[31m", "\x1b]8;;evil"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newToolcallsInspectorModel(t)
+			m.conv.addTool("call", tc.tool, tc.args)
+			m = openToolcallsForTest(t, m)
+			s := toolcallsForTest(t, m)
+			if got := s.entries[0].intent; !strings.Contains(got, tc.intent) || strings.Contains(got, `{"`) || strings.Contains(got, "\x1b") || ansi.StringWidth(got) > 120 {
+				t.Fatalf("list intent = %q", got)
+			}
+			s.detail = true
+			s.refreshDetail(&m.conv.scrollback)
+			lines := toolcallDetailLines(*s.detailEntry)
+			got := strings.Join(lines, "\n")
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("detail missing %q: %q", want, got)
+				}
+			}
+			for _, bad := range tc.absent {
+				if strings.Contains(got, bad) {
+					t.Errorf("detail contains %q: %q", bad, got)
+				}
+			}
+			if tc.name == "empty keys and stable order" && (strings.Index(got, "(empty key): null") >= strings.Index(got, "  A:") || strings.Index(got, "  A:") >= strings.Index(got, "  Z: false")) {
+				t.Errorf("nested fields not sorted: %q", got)
+			}
+		})
+	}
+}
+
 func newToolcallsInspectorModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context()})

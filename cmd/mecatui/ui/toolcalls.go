@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
-	"charm.land/bubbles/v2/key"
+	bubbleskey "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -121,14 +122,68 @@ func toolcallPresentation(name, arguments string) (string, []string) {
 	lines := make([]string, 0, len(ordered))
 	for _, key := range ordered {
 		if raw, ok := fields[key]; ok {
-			lines = append(lines, argumentLabel(key)+": "+argumentValue(raw))
+			lines = appendArgumentLines(lines, argumentLabel(key), raw, "")
 		}
 	}
 	return toolcallIntent(name, fields), lines
 }
 
+func appendArgumentLines(lines []string, label string, raw json.RawMessage, indent string) []string {
+	value := strings.TrimSpace(string(raw))
+	prefix := indent + terminaltext.SanitizeSingleLine(label) + ":"
+	if strings.HasPrefix(value, "{") {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) == nil {
+			if len(fields) == 0 {
+				return append(lines, prefix+" (empty object)")
+			}
+			lines = append(lines, prefix)
+			keys := make([]string, 0, len(fields))
+			for key := range fields {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				lines = appendArgumentLines(lines, argumentLabel(key), fields[key], indent+"  ")
+			}
+			return lines
+		}
+	}
+	if strings.HasPrefix(value, "[") {
+		var items []json.RawMessage
+		if json.Unmarshal(raw, &items) == nil {
+			if len(items) == 0 {
+				return append(lines, prefix+" (empty array)")
+			}
+			lines = append(lines, prefix)
+			for i, item := range items {
+				lines = appendArgumentLines(lines, fmt.Sprintf("[%d]", i), item, indent+"  ")
+			}
+			return lines
+		}
+	}
+	return append(lines, prefix+" "+argumentValue(raw))
+}
+
+func argumentSummary(raw json.RawMessage) string {
+	value := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(value, "{") {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) == nil {
+			return fmt.Sprintf("%d fields", len(fields))
+		}
+	}
+	if strings.HasPrefix(value, "[") {
+		var items []json.RawMessage
+		if json.Unmarshal(raw, &items) == nil {
+			return fmt.Sprintf("%d items", len(items))
+		}
+	}
+	return argumentValue(raw)
+}
+
 func toolcallIntent(name string, fields map[string]json.RawMessage) string {
-	value := func(key string) string { return argumentValue(fields[key]) }
+	value := func(key string) string { return argumentSummary(fields[key]) }
 	switch name {
 	case "Read":
 		return "Read " + value("path")
@@ -155,7 +210,7 @@ func toolcallIntent(name string, fields map[string]json.RawMessage) string {
 	}
 	for _, key := range []string{"target", "path", "uri", "url", "command", "query", "prompt", "task"} {
 		if raw, ok := fields[key]; ok {
-			return terminaltext.SanitizeSingleLine(name) + " " + argumentValue(raw)
+			return terminaltext.SanitizeSingleLine(name) + " " + argumentSummary(raw)
 		}
 	}
 	return terminaltext.SanitizeSingleLine(name)
@@ -165,6 +220,9 @@ func argumentValue(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return "null"
+	}
 	var value string
 	if json.Unmarshal(raw, &value) == nil {
 		return terminaltext.Sanitize(value)
@@ -173,13 +231,17 @@ func argumentValue(raw json.RawMessage) string {
 }
 
 func argumentLabel(key string) string {
+	if key == "" {
+		return "(empty key)"
+	}
 	labels := map[string]string{
 		"uri": "URI", "url": "URL", "old_string": "Old string", "new_string": "New string",
 	}
 	if label, ok := labels[key]; ok {
 		return label
 	}
-	return strings.ToUpper(key[:1]) + strings.ReplaceAll(key[1:], "_", " ")
+	_, size := utf8.DecodeRuneInString(key)
+	return strings.ToUpper(key[:size]) + strings.ReplaceAll(key[size:], "_", " ")
 }
 
 func toolcallIntentFor(name, arguments string) string {
@@ -451,7 +513,7 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 }
 
 func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	if key.Matches(msg, s.deps.keys.Close) {
+	if bubbleskey.Matches(msg, s.deps.keys.Close) {
 		if s.detail {
 			s.detail = false
 			s.detailEntry = nil
@@ -464,18 +526,18 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	}
 	move := bounded.LineDown
 	switch {
-	case key.Matches(msg, s.deps.keys.Down):
-	case key.Matches(msg, s.deps.keys.Up):
+	case bubbleskey.Matches(msg, s.deps.keys.Down):
+	case bubbleskey.Matches(msg, s.deps.keys.Up):
 		move = bounded.LineUp
-	case key.Matches(msg, s.deps.keys.ScrollD):
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollD):
 		move = bounded.PageDown
-	case key.Matches(msg, s.deps.keys.ScrollU):
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollU):
 		move = bounded.PageUp
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollBottom):
 		move = bounded.End
-	case key.Matches(msg, s.deps.keys.ScrollTop):
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollTop):
 		move = bounded.Top
-	case key.Matches(msg, s.deps.keys.Choose):
+	case bubbleskey.Matches(msg, s.deps.keys.Choose):
 		if !s.detail {
 			s.detail = true
 			s.window = new(bounded.Viewport)
