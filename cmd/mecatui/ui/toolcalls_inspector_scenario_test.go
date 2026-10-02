@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -561,6 +562,62 @@ func TestMecatuiToolcallsInspector_Scenario4_LargeListIntentDoesNotBuildDetail(t
 	lines := toolcallDetailLines(*s.detailEntry)
 	if !strings.Contains(strings.Join(lines[len(lines)-6:], "\n"), "[1999]:") {
 		t.Fatalf("full detail lost last nested item: %q", lines[len(lines)-6:])
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	const readResult = "     1\talpha\n     2\tbeta\nplain\ttext\n1\tshort\n      0\tzero\n1234567\twide\n     3\t\x1b[31munsafe"
+	m.conv.addTool("read", "Read", `{"path":"notes.txt"}`)
+	m.conv.resolveTool("read", readResult, true,
+		client.ContentBlock{Kind: client.ContentBlockStructuredContent, Text: `{"count":2}`},
+		client.ContentBlock{Kind: client.ContentBlockResourceLink, Name: "report", URL: "mcp://reports/latest"},
+	)
+	s := inspectorOpenDetail(t, &m)
+	lines := strings.Join(toolcallDetailLines(*s.detailEntry), "\n")
+	for _, want := range []string{"Identity", "Arguments", "Error", "Structured content", "Resources", "Read", "failed", "alpha", `{"count":2}`, "report", "mcp://reports/latest"} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("detail lines missing %q: %q", want, lines)
+		}
+	}
+	if !strings.Contains(lines, "     1  alpha") || !strings.Contains(lines, "     2  beta") {
+		t.Errorf("Read lines lack inspector gutter: %q", lines)
+	}
+	if !strings.Contains(lines, "plain\ttext") || !strings.Contains(lines, "1\tshort") || !strings.Contains(lines, "      0\tzero") {
+		t.Errorf("changed non-numbered Read text: %q", lines)
+	}
+	if !strings.Contains(lines, "1234567  wide") || strings.Contains(lines, "\x1b[31m") {
+		t.Errorf("wide Read line or terminal-control sanitation: %q", lines)
+	}
+	if got := toolcallResultBodyLines("Shell", readResult); len(got) != 1 || !strings.Contains(got[0], "     1\talpha") || strings.Contains(got[0], "     1  alpha") {
+		t.Errorf("non-Read result changed: %q", got)
+	}
+	for _, width := range []int{80, 54} {
+		s.window = new(bounded.Viewport)
+		s.width = 0
+		s.follow = false
+		got := inspectorDetail(t, s, width, 40)
+		for _, want := range []string{"Identity", "Arguments", "Error", "Structured content", "Resources"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("width %d detail missing %q: %q", width, want, got)
+			}
+		}
+	}
+	entry := *s.detailEntry
+	if entry.result.Body != readResult {
+		t.Fatalf("inspector changed canonical result: got %q, want %q", entry.result.Body, readResult)
+	}
+	previous := -1
+	for _, row := range []string{"Identity ·", "Arguments:", "Error:", "Structured content", "Resources"} {
+		pos := strings.Index(lines, row)
+		if pos <= previous {
+			t.Fatalf("section %q missing or out of order in %q", row, lines)
+		}
+		previous = pos
+	}
+	okResult := toolcallDetailLines(toolcallDetail{name: "Shell", resolved: true, resultReceived: true, result: scrollback.ToolResult{Body: "     1\tnot a Read row"}})
+	if got := strings.Join(okResult, "\n"); !strings.Contains(got, "Result:\n     1\tnot a Read row") || strings.Contains(got, "Error:") {
+		t.Errorf("successful non-Read result changed: %q", got)
 	}
 }
 

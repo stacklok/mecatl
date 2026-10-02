@@ -409,7 +409,7 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 	}
 	header := []string{title, ""}
 	footer := line(s.deps.theme.Style("muted"), s.deps.marks.navUp+"/"+s.deps.marks.navDown+" · "+s.deps.marks.scroll+" · "+s.deps.marks.jumpTopFull+"/"+s.deps.marks.jumpEndFull+" · "+s.deps.marks.closeOnly+" back")
-	content := toolcallDetailLines(entry)
+	content := s.styledToolcallDetailLines(entry)
 	if !s.follow && s.width > 0 && s.width != width {
 		oldRows := toolcallRowCounts(content, s.width)
 		newRows := toolcallRowCounts(content, width)
@@ -444,6 +444,25 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 		header = append(header, "")
 	}
 	return strings.Join(append(header, footer), "\n")
+}
+
+func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []string {
+	content := toolcallDetailLines(entry)
+	for i, row := range content {
+		if strings.HasPrefix(row, "Identity · ") {
+			style := s.deps.theme.Style("askTitle")
+			if entry.failed {
+				style = s.deps.theme.Style("errorText")
+			}
+			content[i] = style.Render(row)
+		} else if row == "Error:" {
+			content[i] = s.deps.theme.Style("errorText").Render(row)
+		} else if row == "Arguments:" || row == "Result:" || row == "Result: pending" ||
+			strings.HasPrefix(row, "Structured content · ") || row == "Resources" {
+			content[i] = s.deps.theme.Style("accent").Render(row)
+		}
+	}
+	return content
 }
 
 // toolcallRowCounts uses the same bounded wrapping policy as the detail window
@@ -483,18 +502,25 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 	if entry.failed {
 		status = statusFailed
 	}
-	arguments := toolcallArgumentLines(entry.name, entry.intent)
-	lines := []string{terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:"}
-	lines = append(lines, arguments...)
+
+	lines := []string{"Identity · " + terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:"}
+	lines = append(lines, toolcallArgumentLines(entry.name, entry.intent)...)
 	if !entry.resultReceived {
 		return append(lines, "", "Result: pending")
 	}
+
 	result := entry.result
-	lines = append(lines, "", "Result:")
-	if result.Body != "" {
-		lines = append(lines, terminaltext.Sanitize(result.Body))
+	if entry.failed {
+		lines = append(lines, "", "Error:")
+	} else {
+		lines = append(lines, "", "Result:")
 	}
+	if result.Body != "" {
+		lines = append(lines, toolcallResultBodyLines(entry.name, result.Body)...)
+	}
+
 	structured := result.StructuredContent
+	var resources []string
 	for _, a := range result.Artifacts {
 		switch client.ContentBlockKind(a.Kind) {
 		case client.ContentBlockText:
@@ -505,21 +531,56 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 			// The typed block is canonical when a field mirror is also present.
 			structured = a.Text
 		case client.ContentBlockResourceLink:
-			lines = append(lines, "Resource: "+terminaltext.Sanitize(a.Name)+" · "+terminaltext.Sanitize(a.URL))
+			resources = append(resources, "Resource: "+terminaltext.Sanitize(a.Name)+" · "+terminaltext.Sanitize(a.URL))
 		case client.ContentBlockEmbeddedResource:
 			if len(a.Data) > 0 {
-				lines = append(lines, "Embedded resource ("+terminaltext.Sanitize(a.MIMEType)+", binary content)")
+				resources = append(resources, "Embedded resource ("+terminaltext.Sanitize(a.MIMEType)+", binary content)")
 			} else {
-				lines = append(lines, "Embedded resource:", terminaltext.Sanitize(a.Text))
+				resources = append(resources, "Embedded resource: "+terminaltext.Sanitize(a.Text))
 			}
 		case client.ContentBlockImage, client.ContentBlockAudio:
-			lines = append(lines, a.Kind+" ("+terminaltext.Sanitize(a.MIMEType)+", media content)")
+			resources = append(resources, a.Kind+" ("+terminaltext.Sanitize(a.MIMEType)+", media content)")
 		}
 	}
 	if structured != "" {
-		lines = append(lines, "Structured JSON:", terminaltext.Sanitize(structured))
+		lines = append(lines, "Structured content · Structured JSON:", terminaltext.Sanitize(structured))
+	}
+	if len(resources) > 0 {
+		lines = append(lines, "", "Resources")
+		lines = append(lines, resources...)
 	}
 	return lines
+}
+
+// toolcallResultBodyLines formats only Read's adapter-minted numbered rows for
+// the inspector. It never changes the canonical scrollback result.
+func toolcallResultBodyLines(name, body string) []string {
+	if name != "Read" {
+		return []string{terminaltext.Sanitize(body)}
+	}
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		lines[i] = terminaltext.Sanitize(readResultGutter(line))
+	}
+	return lines
+}
+
+func readResultGutter(line string) string {
+	tab := strings.IndexByte(line, '\t')
+	if tab < 6 {
+		return line
+	}
+	prefix := line[:tab]
+	digits := strings.TrimLeft(prefix, " ")
+	if digits == "" || digits[0] == '0' || (len(prefix) > 6 && len(prefix) != len(digits)) {
+		return line
+	}
+	for i := range digits {
+		if digits[i] < '0' || digits[i] > '9' {
+			return line
+		}
+	}
+	return prefix + "  " + line[tab+1:]
 }
 
 func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {

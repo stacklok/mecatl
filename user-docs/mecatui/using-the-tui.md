@@ -16,9 +16,13 @@ their diff.
 
 Use `/toolcalls` to browse the current session's tool calls, including calls still
 running. Select a call with the navigation keys shown in the browser and press
-`enter` to inspect its complete arguments and received result. Scroll long details
-with the displayed keys; press `esc` to return to the list, then `esc` again to
-close it. The browser also works when you reopen a session's transcript.
+`enter` to inspect its complete arguments and received result. The detail
+separates call identity and status, arguments, result or error text, structured
+content, and resource details when present. In Read results, numbered file lines
+have space between the line number and content. Other result text keeps its
+original spacing. Scroll long details with the displayed keys; press `esc` to
+return to the list, then `esc` again to close it. The browser also works when
+you reopen a session's transcript.
 
 In the conversation, `ctrl+t` expands or collapses tool details across the
 conversation, regardless of which card is selected. Use `/toolcalls` to read one
