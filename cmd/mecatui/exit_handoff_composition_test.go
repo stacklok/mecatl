@@ -14,7 +14,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
@@ -49,7 +48,7 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	err = runWithOptions([]string{"mecatui", "--mock", "--quiet", "--no-store", "--no-memory", "--no-user-model", "--user-model-dir=" + userModelDir, "--no-soul", "--no-skills", "--no-commands", "--workspace=" + workspace}, runOptions{runProgram: func(_ context.Context, m ui.Model) (tea.Model, error) {
+	err = runWithOptions([]string{"mecatui", "--mock", "--quiet", "--no-store", "--no-memory", "--no-user-model", "--user-model-dir=" + userModelDir, "--no-soul", "--no-skills", "--no-commands", "--workspace=" + workspace}, runOptions{runProgram: func(_ context.Context, m tea.Model) (tea.Model, error) {
 		sockets, err := filepath.Glob(filepath.Join(runtimeDir, "mecatui-*", "mecated.sock"))
 		var fresh []string
 		for _, socket := range sockets {
@@ -74,7 +73,7 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 			t.Fatal(err)
 		}
 		m0, _ := m.Update(client.SessionReadyMsg{SessionID: first})
-		m = m0.(ui.Model)
+		m = m0
 		final := seedStartupResumeSession(ctx, t, target, "")
 		if final == first {
 			t.Fatal("seed must switch sessions")
@@ -88,13 +87,13 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 		}
 		_, _ = os.Stderr.WriteString("handoff-child-final-id=" + string(finalRecord) + "\n")
 		m0, _ = m.Update(client.SessionReadyMsg{SessionID: final})
-		m = m0.(ui.Model)
-		if m.ActiveSessionID() != final {
-			t.Fatalf("active=%q final=%q", m.ActiveSessionID(), final)
+		m = m0
+		if m.(activeSessionReporter).ActiveSessionID() != final {
+			t.Fatalf("active=%q final=%q", m.(activeSessionReporter).ActiveSessionID(), final)
 		}
 		if os.Getenv("MECATUI_TEST_HANDOFF_COMPOSITION") == "missing" {
 			m0, _ = m.Update(client.SessionReadyMsg{SessionID: "missing-final"})
-			m = m0.(ui.Model)
+			m = m0
 		}
 		// Run an alternate-screen program before returning the actual UI model.
 		if _, err := tea.NewProgram(handoffTestModel{}, tea.WithInput(nil), tea.WithOutput(os.Stderr)).Run(); err != nil {

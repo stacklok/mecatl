@@ -154,7 +154,7 @@ func buildClientPresentation(cfg config, settings clientSettings, output io.Writ
 
 func newMecatuiProgram(ctx context.Context, deps ui.Deps, title *terminalTitleController) *tea.Program {
 	deps.TerminalTitle = title.Set
-	return tea.NewProgram(ui.New(deps), tea.WithContext(ctx), tea.WithOutput(title))
+	return tea.NewProgram(ui.NewWindow(deps), tea.WithContext(ctx), tea.WithOutput(title))
 }
 
 func closeTerminalTitle(title *terminalTitleController) error {
@@ -185,7 +185,7 @@ type runOptions struct {
 	connectTransport       restartTransport
 	recoveryOnly           bool
 	beforeEmbeddedStart    func(app.Config) error
-	runProgram             func(context.Context, ui.Model) (tea.Model, error)
+	runProgram             func(context.Context, tea.Model) (tea.Model, error)
 }
 
 //nolint:gocyclo // composition root sequences transport, safe auth recovery, and Bubble Tea lifecycle.
@@ -441,7 +441,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	var runErr error
 	if options.runProgram != nil {
 		deps.TerminalTitle = title.Set
-		finalModel, runErr = options.runProgram(ctx, ui.New(deps))
+		finalModel, runErr = options.runProgram(ctx, ui.NewWindow(deps))
 	} else {
 		finalModel, runErr = newMecatuiProgram(ctx, deps, title).Run()
 	}
@@ -1722,6 +1722,19 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 }
 
 func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }
+
+// CreateSessionWith carries a full create request, including the ADR 0374
+// NewWorktree intent. Debug analysis sessions are no-filesystem by design, so
+// they never accept a worktree intent.
+func (s *sessionAdapter) CreateSessionWith(ctx context.Context, req client.CreateSessionRequest) (string, client.Capabilities, client.ResolvedModel, error) {
+	if s.debugTarget != "" {
+		if req.NewWorktree {
+			return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("debug sessions cannot use a worktree")
+		}
+		return s.CreateSession(ctx, req.Selection, req.Mode)
+	}
+	return s.cl.CreateSessionWith(ctx, req)
+}
 
 // CreateSessionWithCarryover implements the ui SessionCreator's carryover seam
 // (issue #20): like CreateSession it carries the pick + mode, but it ALSO sets

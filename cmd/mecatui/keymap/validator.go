@@ -57,6 +57,7 @@ const (
 	actionEffort             = "Effort"
 	actionSetGlobalDefault   = "SetGlobalDefault"
 	actionRawArgs            = "RawArgs"
+	actionSessions           = "Sessions"
 )
 
 // validActions is the public action name contract (keyMap struct field names as strings).
@@ -71,7 +72,7 @@ var validActions = map[string]struct{}{
 	actionFindings: {}, actionJumpTop: {}, actionJumpEnd: {}, actionAgents: {},
 	actionToolcalls: {}, actionExpandConversation: {}, actionNextTab: {},
 	actionCancelChild: {}, actionHelp: {}, actionEffort: {}, actionSetGlobalDefault: {},
-	actionRawArgs: {},
+	actionRawArgs: {}, actionSessions: {},
 }
 
 // scope membership per action.
@@ -83,6 +84,7 @@ var (
 		actionScrollD: {}, actionScrollTop: {}, actionScrollBottom: {}, actionModeSwitch: {},
 		actionMCPPanel: {}, actionResources: {}, actionPrompts: {}, actionAgents: {},
 		actionToolcalls: {}, actionExpandConversation: {}, actionHelp: {}, actionEffort: {},
+		actionSessions: {},
 	}
 	overlayInternal = map[string]struct{}{
 		actionUp: {}, actionDown: {}, actionChoose: {}, actionClose: {}, actionRefresh: {},

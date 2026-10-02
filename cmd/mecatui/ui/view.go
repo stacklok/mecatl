@@ -94,6 +94,9 @@ func (m Model) View() tea.View {
 func (m Model) renderBody() string {
 	m.hits.clear()
 	m.metrics.clear()
+	if m.windowOverlay != "" {
+		return m.windowOverlay
+	}
 	if m.phase == phaseAuthorizing {
 		return m.renderMCPAuthorization()
 	}
@@ -468,6 +471,10 @@ func (m Model) renderFooter() string {
 	// left status differs by phase), so it is the robust place for the hint.
 	if m.quitArmed {
 		help = m.deps.Theme.Style("ctxWarn").Render(hk.quit+" again to quit") + " · " + help
+	}
+	// A window badge (another session needs approval) leads the same line.
+	if m.windowBadge != "" {
+		help = m.deps.Theme.Style("askTitle").Render(m.windowBadge) + " · " + help
 	}
 
 	width := m.widthOr()

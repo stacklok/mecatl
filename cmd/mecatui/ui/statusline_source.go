@@ -25,7 +25,7 @@ func (m Model) refreshStatusContextCmd() tea.Cmd {
 		return nil
 	}
 	id := m.sessionID
-	customization.ClearCommandCWD(m.deps.StatusSource)
+	clearStatusCommandCWD(m.deps.StatusSource)
 	if m.deps.LocalSessionContext == nil {
 		return nil
 	}
@@ -39,9 +39,11 @@ func (m Model) refreshStatusContextCmd() tea.Cmd {
 	}
 }
 
-// statusLineWaitCmd is the UI's sole source listener.
+// statusLineWaitCmd is the UI's sole source listener. A window session has
+// none: the window root owns the single listener and forwards changes to the
+// active session, so background sessions never race it for the wake-up edge.
 func (m Model) statusLineWaitCmd() tea.Cmd {
-	if m.deps.StatusSource == nil {
+	if m.deps.StatusSource == nil || m.deps.window != nil {
 		return nil
 	}
 	ctx, source := m.deps.Ctx, m.deps.StatusSource

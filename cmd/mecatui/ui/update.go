@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -801,7 +800,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case statusContextMsg:
 		if msg.sessionID == m.sessionID {
 			m.statusContextRoot = msg.root
-			customization.SetCommandCWD(m.deps.StatusSource, msg.root)
+			setStatusCommandCWD(m.deps.StatusSource, msg.root)
 			m.submitStatusLine()
 		}
 		return m, nil, true
@@ -1807,6 +1806,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 	// context-occupancy meter (m.contextTokens), never m.usage — adding both
 	// would double-count.
 	m.usage = sumUsage(m.usage, msg.Usage)
+	m.lastRunFailed = msg.Stop == stopError
 	if msg.Stop == stopError && msg.Error != "" {
 		rejection := friendlyWorkspaceEnrollmentRejection(msg.Error)
 		if msg.Permanent {
@@ -2578,6 +2578,9 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 		m.maintenanceCleanupJobID = intent.jobID
 		return m, nil, true, false
 	case sessionsTranscriptAdoptionIntent:
+		if mm, cmd, handed := m.handOffToWindow(intent); handed {
+			return mm, cmd, true, true
+		}
 		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript, intent.snapshot)
 		return mm, cmd, true, stopSurfaceDispatch
 	case sessionsStartupQuitIntent:
@@ -2707,12 +2710,23 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	// In the window the root decides: it may first confirm cancelling the other
+	// sessions, and on quit it runs quitCleanup for every session.
+	if m.deps.window != nil {
+		return m, func() tea.Msg { return windowQuitRequestMsg{} }
+	}
+	return m.quitCleanup(), tea.Quit
+}
+
+// quitCleanup is the local half of quitting: it cancels this session's run and
+// retires any pending approval recovery.
+func (m Model) quitCleanup() Model {
 	m.admissionSubmission = nil
 	(&m).retirePendingApprovalRecovery()
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
-	return m, tea.Quit
+	return m
 }
 
 // onQuitKey implements the guarded ctrl+c exit behavior. The immediate exit is
@@ -5061,8 +5075,19 @@ func authStreamErr(m Model, err error) client.StreamErrMsg {
 func (m Model) createSessionCmd() tea.Cmd {
 	deps := m.deps
 	sel := m.createModelSelection // the reconciled apply-on-next-create selection (zero ⇒ server default)
+	newWorktree := m.createNewWorktree
+	create := func(sel client.ModelSelection) (string, client.Capabilities, client.ResolvedModel, error) {
+		if !newWorktree {
+			return deps.Session.CreateSession(deps.Ctx, sel, m.desiredMode())
+		}
+		creator, ok := deps.Session.(requestSessionCreator)
+		if !ok {
+			return "", client.Capabilities{}, client.ResolvedModel{}, errWorktreeCreateUnavailable
+		}
+		return creator.CreateSessionWith(deps.Ctx, client.CreateSessionRequest{Mode: m.desiredMode(), Selection: sel, NewWorktree: true})
+	}
 	return func() tea.Msg {
-		id, caps, resolved, err := deps.Session.CreateSession(deps.Ctx, sel, m.desiredMode())
+		id, caps, resolved, err := create(sel)
 		if err == nil {
 			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
 		}
@@ -5070,7 +5095,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 			reason, _ := client.AuthFailure(err, deps.BearerBacked)
 			return client.ConnectErrMsg{Err: err, AuthReason: reason}
 		}
-		id, caps, resolved, retryErr := deps.Session.CreateSession(deps.Ctx, client.ModelSelection{}, m.desiredMode())
+		id, caps, resolved, retryErr := create(client.ModelSelection{})
 		if retryErr != nil {
 			// Authentication on the retry is authoritative: unlike an unclassified
 			// infrastructure failure, it must enter auth recovery rather than being

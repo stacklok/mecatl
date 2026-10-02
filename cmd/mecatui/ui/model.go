@@ -409,6 +409,12 @@ type Deps struct {
 	// (An all-fake-side scheme that also signals run-completion would remove this
 	// field; that rework is deferred. For now: nil ⇒ zero cost, zero behaviour change.)
 	onPhase func(phase)
+
+	// window is set only for a model owned by the multi-session window root
+	// (window.go). It scopes this session's side effects to the active session and
+	// redirects window-level intents (quit, opening a saved chat) to the root. nil
+	// is the standalone single-session model, unchanged from before.
+	window *windowScope
 }
 
 // maxQueued caps the number of follow-up prompts that may be staged while a run
@@ -1042,6 +1048,18 @@ type Model struct {
 	// workspaceEnrollmentNotice persists while protected workspace services are
 	// unavailable; activity does not dismiss a fact that remains true.
 	workspaceEnrollmentNotice string
+
+	// lastRunFailed records whether the latest terminal result was an error, so
+	// the window session list can show "failed" for an otherwise idle session.
+	lastRunFailed bool
+	// createNewWorktree asks the next CreateSession for a fresh server-created
+	// worktree (ADR 0374); set only by a window session opened with that intent.
+	createNewWorktree bool
+	// windowOverlay and windowBadge are presentation supplied by the window root
+	// just before View: the session list (or quit confirmation) replaces the body,
+	// and the badge prefixes the footer help line. Both are empty standalone.
+	windowOverlay string
+	windowBadge   string
 }
 
 // New builds the root model from deps. It wires the widgets but does not connect;

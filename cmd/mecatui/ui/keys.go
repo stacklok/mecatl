@@ -27,6 +27,10 @@ type keyMap struct {
 	// is non-destructive (the queue is moved into the input, not dropped). It is live
 	// both mid-run and while a paused queue is held.
 	EditBack key.Binding
+	// Sessions (←) opens the window session list. Like EditBack it is consulted
+	// only on an EMPTY prompt, and only when no overlay or modal owns the keyboard,
+	// so ← over a draft stays a plain cursor key.
+	Sessions key.Binding
 	// Paste (ctrl+v) reads the OS clipboard: an image stages as an inline media
 	// attachment ([Image #N]), text inserts into the prompt. Distinct from a
 	// bracketed paste (tea.PasteMsg, handled by onPaste) which never reaches here.
@@ -210,6 +214,10 @@ func defaultKeys() keyMap {
 		EditBack: key.NewBinding(
 			key.WithKeys("up"),
 			key.WithHelp("↑", "edit queued"),
+		),
+		Sessions: key.NewBinding(
+			key.WithKeys("left"),
+			key.WithHelp("←", "sessions"),
 		),
 		Paste: key.NewBinding(
 			key.WithKeys("ctrl+v"),
@@ -406,6 +414,9 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		},
 		"EditBack": func(chords []string) {
 			km.EditBack = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.EditBack.Help().Desc))
+		},
+		"Sessions": func(chords []string) {
+			km.Sessions = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Sessions.Help().Desc))
 		},
 		"Paste": func(chords []string) {
 			km.Paste = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Paste.Help().Desc))
