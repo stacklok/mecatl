@@ -541,6 +541,29 @@ func TestMecatuiToolcallsInspector_Scenario4_NestedArgumentsAndEmptyKeys(t *test
 	}
 }
 
+func TestMecatuiToolcallsInspector_Scenario4_LargeListIntentDoesNotBuildDetail(t *testing.T) {
+	const items = 2000
+	args := `{"prompt":"delegate","messages":[` + strings.TrimSuffix(strings.Repeat(`{"content":"body"},`, items), ",") + `]}`
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("large", "Subagent", args)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	if got := s.entries[0].intent; got != "Subagent delegate" || ansi.StringWidth(got) > 120 {
+		t.Fatalf("large list intent = %q", got)
+	}
+	// Parsing the top-level object is required, but the list must not expand
+	// thousands of nested detail labels on every scrollback update.
+	if allocs := testing.AllocsPerRun(5, func() { _ = toolcallIntentFor("Subagent", args) }); allocs > 200 {
+		t.Fatalf("list intent allocated %.0f times for %d detail items", allocs, items)
+	}
+	s.detail = true
+	s.refreshDetail(&m.conv.scrollback)
+	lines := toolcallDetailLines(*s.detailEntry)
+	if !strings.Contains(strings.Join(lines[len(lines)-6:], "\n"), "[1999]:") {
+		t.Fatalf("full detail lost last nested item: %q", lines[len(lines)-6:])
+	}
+}
+
 func newToolcallsInspectorModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context()})

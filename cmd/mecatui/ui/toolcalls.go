@@ -18,6 +18,13 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
+const (
+	toolEditName  = "Edit"
+	toolWriteName = "Write"
+	toolPathArg   = "path"
+	toolURLArg    = "url"
+)
+
 // runToolcalls opens the current session's local tool-call projection. It has no
 // server dependency, so it remains available while a run streams.
 func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
@@ -85,24 +92,24 @@ func toolcallsTooSmallHint(width int, dismiss string) string {
 	return ansi.Truncate(dismiss, width, "")
 }
 
-func toolcallPresentation(name, arguments string) (string, []string) {
+func toolcallArgumentLines(name, arguments string) []string {
 	fields := make(map[string]json.RawMessage)
 	if json.Unmarshal([]byte(arguments), &fields) != nil || fields == nil {
-		return terminaltext.SanitizeSingleLine(name), []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
+		return []string{"Original arguments: " + terminaltext.Sanitize(arguments)}
 	}
 
 	known := map[string][]string{
-		"Read":             {"path", "offset", "limit"},
-		"ListDir":          {"path", "depth"},
-		"Glob":             {"pattern", "path"},
-		"Grep":             {"pattern", "path"},
-		"Edit":             {"path", "old_string", "new_string"},
-		"Write":            {"path", "content"},
+		"Read":             {toolPathArg, "offset", "limit"},
+		"ListDir":          {toolPathArg, "depth"},
+		"Glob":             {"pattern", toolPathArg},
+		"Grep":             {"pattern", toolPathArg},
+		toolEditName:       {toolPathArg, "old_string", "new_string"},
+		toolWriteName:      {toolPathArg, "content"},
 		"Copy":             {"source", "destination"},
 		"Move":             {"source", "destination"},
-		"Remove":           {"path"},
+		"Remove":           {toolPathArg},
 		"Shell":            {"command"},
-		"WebFetch":         {"url"},
+		"WebFetch":         {toolURLArg},
 		"FetchMcpResource": {"uri"},
 	}
 	ordered := append([]string(nil), known[name]...)
@@ -125,7 +132,7 @@ func toolcallPresentation(name, arguments string) (string, []string) {
 			lines = appendArgumentLines(lines, argumentLabel(key), raw, "")
 		}
 	}
-	return toolcallIntent(name, fields), lines
+	return lines
 }
 
 func appendArgumentLines(lines []string, label string, raw json.RawMessage, indent string) []string {
@@ -186,29 +193,29 @@ func toolcallIntent(name string, fields map[string]json.RawMessage) string {
 	value := func(key string) string { return argumentSummary(fields[key]) }
 	switch name {
 	case "Read":
-		return "Read " + value("path")
+		return "Read " + value(toolPathArg)
 	case "ListDir":
-		return "List " + value("path")
+		return "List " + value(toolPathArg)
 	case "Glob":
 		return "Find " + value("pattern")
 	case "Grep":
 		return "Search " + value("pattern")
-	case "Edit":
-		return "Edit " + value("path")
-	case "Write":
-		return "Write " + value("path")
+	case toolEditName:
+		return "Edit " + value(toolPathArg)
+	case toolWriteName:
+		return "Write " + value(toolPathArg)
 	case "Copy", "Move":
 		return name + " " + value("source") + " → " + value("destination")
 	case "Remove":
-		return "Remove " + value("path")
+		return "Remove " + value(toolPathArg)
 	case "Shell":
 		return "Run " + value("command")
 	case "WebFetch":
-		return "Fetch " + value("url")
+		return "Fetch " + value(toolURLArg)
 	case "FetchMcpResource":
 		return "Fetch " + value("uri")
 	}
-	for _, key := range []string{"target", "path", "uri", "url", "command", "query", "prompt", "task"} {
+	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task"} {
 		if raw, ok := fields[key]; ok {
 			return terminaltext.SanitizeSingleLine(name) + " " + argumentSummary(raw)
 		}
@@ -235,7 +242,7 @@ func argumentLabel(key string) string {
 		return "(empty key)"
 	}
 	labels := map[string]string{
-		"uri": "URI", "url": "URL", "old_string": "Old string", "new_string": "New string",
+		"uri": "URI", toolURLArg: "URL", "old_string": "Old string", "new_string": "New string",
 	}
 	if label, ok := labels[key]; ok {
 		return label
@@ -245,8 +252,11 @@ func argumentLabel(key string) string {
 }
 
 func toolcallIntentFor(name, arguments string) string {
-	intent, _ := toolcallPresentation(name, arguments)
-	return intent
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(arguments), &fields) != nil || fields == nil {
+		return terminaltext.SanitizeSingleLine(name)
+	}
+	return toolcallIntent(name, fields)
 }
 
 func (m Model) toolcallEntries() []toolcallEntry {
@@ -473,7 +483,7 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 	if entry.failed {
 		status = statusFailed
 	}
-	_, arguments := toolcallPresentation(entry.name, entry.intent)
+	arguments := toolcallArgumentLines(entry.name, entry.intent)
 	lines := []string{terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:"}
 	lines = append(lines, arguments...)
 	if !entry.resultReceived {
