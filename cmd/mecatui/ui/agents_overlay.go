@@ -1841,7 +1841,7 @@ func parallelBranchStopLabel(br *parallelBranch) string {
 		if br.stop != "" {
 			return "failed · " + subagentStopLabel(br.stop)
 		}
-		return "failed"
+		return statusFailed
 	}
 	return subagentStopLabel(br.stop)
 }

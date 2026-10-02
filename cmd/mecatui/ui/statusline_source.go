@@ -205,7 +205,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 	case phaseAwaitingApproval:
 		state, approval = "awaiting_approval", "awaiting"
 	case phaseFatal:
-		state = "failed"
+		state = statusFailed
 	}
 	return customization.Input{
 		Version: customization.ProtocolVersion,

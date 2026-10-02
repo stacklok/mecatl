@@ -1211,7 +1211,7 @@ func stateBadge(state string) string {
 		return "▶"
 	case "completed":
 		return "✓"
-	case teamStopReasonCancelled, "failed":
+	case teamStopReasonCancelled, statusFailed:
 		return "✗"
 	case "awaiting":
 		return "⏸"

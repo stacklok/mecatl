@@ -182,10 +182,10 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	for i, entry := range s.entries {
 		status := "running"
 		if entry.resolved {
-			status = "done"
+			status = statusDone
 		}
 		if entry.failed {
-			status = "failed"
+			status = statusFailed
 		}
 		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent}
 	}
@@ -246,9 +246,7 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 		s.window.Move(bounded.End, s.lines)
 		view = s.window.View(content)
 	}
-	for _, row := range view.Rows {
-		header = append(header, row)
-	}
+	header = append(header, view.Rows...)
 	for len(header) < height-1 {
 		header = append(header, "")
 	}
@@ -287,10 +285,10 @@ func (s *toolcallsState) recordAnchor() {
 func toolcallDetailLines(entry toolcallDetail) []string {
 	status := "running"
 	if entry.resolved {
-		status = "done"
+		status = statusDone
 	}
 	if entry.failed {
-		status = "failed"
+		status = statusFailed
 	}
 	lines := []string{terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:", terminaltext.Sanitize(entry.intent)}
 	if !entry.resultReceived {
@@ -320,7 +318,7 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 				lines = append(lines, "Embedded resource:", terminaltext.Sanitize(a.Text))
 			}
 		case client.ContentBlockImage, client.ContentBlockAudio:
-			lines = append(lines, string(a.Kind)+" ("+terminaltext.Sanitize(a.MIMEType)+", media content)")
+			lines = append(lines, a.Kind+" ("+terminaltext.Sanitize(a.MIMEType)+", media content)")
 		}
 	}
 	if structured != "" {

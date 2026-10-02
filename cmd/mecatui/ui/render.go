@@ -1478,7 +1478,7 @@ func teamLaneState(ln *teamLane, teamDone bool) string {
 		// the opposite of what the supervisor reported.
 		return "done (retried)"
 	case teamDone:
-		return "done"
+		return statusDone
 	case ln.idle:
 		return "idle"
 	}
@@ -1680,7 +1680,7 @@ func oneLine(s string) string {
 func subagentStopLabel(stop string) string {
 	switch stop {
 	case "end_turn", "":
-		return "done"
+		return statusDone
 	case "max_tool_calls":
 		return "max-tools"
 	case "max_turns":
