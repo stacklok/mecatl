@@ -75,6 +75,7 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 	"guardrails":           {category: sdkBacked, sdkOperation: "Session.guardrailCoverage"},
 	"help":                 {category: applicationOnly, rationale: "The help overlay describes local keys and panels."},
 	"quit":                 {category: applicationOnly, rationale: "Exiting the terminal application has no server outcome."},
+	"toolcalls":            {category: applicationOnly, rationale: "The TUI locally projects only the current session's already-rendered tool calls."},
 	"diagnostics":          {category: applicationOnly, rationale: "The TUI assembles a client-state report and its own diagnostic prompt."},
 	"connect":              {category: operatorOnly, rationale: "Saved targets, login, and credential handling belong to the operator client."},
 	"learning":             {category: operatorOnly, rationale: "This changes the TUI's local learning-mode setting."},

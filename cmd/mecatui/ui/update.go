@@ -1338,6 +1338,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if p, ok := mutatedPath(msg.Name, msg.Args); ok {
 			m.conv.recordFileChange(p)
 		}
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolResultMsg:
 		resolved := false
@@ -1351,6 +1352,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.activeTool = m.conv.latestPendingToolName()
 		m.toolProgress = ""
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolProgressMsg:
 		// Transient advisory line from a long-running tool: show it beside the

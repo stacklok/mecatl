@@ -137,7 +137,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := builtinNames(tc.caps, tc.w)
-			want := append([]string{"clear", "help", "quit", "title", "session", "retry", "diagnostics"}, tc.want[2:]...)
+			want := append([]string{"clear", "help", "quit", "title", "session", "retry", "toolcalls", "diagnostics"}, tc.want[2:]...)
 			if strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("builtinCommands order/filter = %v, want %v", got, want)
 			}
@@ -991,7 +991,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "quit", "title", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "memory",
+		"clear", "help", "quit", "title", "session", "retry", "toolcalls", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "memory",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}

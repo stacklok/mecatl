@@ -327,7 +327,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 	paged = typeRune(t, paged, '/')
 	paged = applyAll(paged, tea.WindowSizeMsg{Width: 24, Height: 21})
 	_ = paged.View()
-	paged.palette.list.SetCursor(7) // alpha follows the seven built-ins.
+	paged.palette.list.SetCursor(8) // alpha follows the eight built-ins.
 	paged.keys = applyKeyOverrides(paged.keys, map[string][]string{"ScrollU": {"p"}, "ScrollD": {"n"}})
 	updated, _ := paged.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	paged = updated.(Model)
@@ -343,7 +343,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 
 	workspace := newPaletteModel(t, sampleCommands())
 	workspace = typeRune(t, workspace, '/')
-	workspace.palette.list.SetCursor(7)
+	workspace.palette.list.SetCursor(8)
 	completed, _ := workspace.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	workspace = completed.(Model)
 	if workspace.prompt.Value() != "/fix " || workspace.palette.open {
@@ -382,7 +382,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 			runningPalette = typeRune(t, runningPalette, '/')
 			runningPalette.phase = phaseRunning
 			_ = runningPalette.View()
-			runningPalette.palette.list.SetCursor(7) // /fix workspace command
+			runningPalette.palette.list.SetCursor(8) // /fix workspace command
 			updated, _ := runningPalette.Update(keyMsg)
 			runningPalette = updated.(Model)
 			if runningPalette.prompt.Value() != "/fix " || runningPalette.palette.open {
