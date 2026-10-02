@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -21,8 +22,9 @@ func inspectorOpenDetail(t *testing.T, m *Model) *toolcallsState {
 	*m = openToolcallsForTest(t, *m)
 	s := toolcallsForTest(t, *m)
 	s.Render(70, 12)
-	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	return s
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	*m = updated.(Model)
+	return toolcallsForTest(t, *m)
 }
 
 func TestMecatuiToolcallsInspector_Scenario2_LiveResultAndStatus(t *testing.T) {
@@ -118,6 +120,7 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	s4.Render(40, 8)
 	listOffset, selected := s4.list.Offset(), s4.selected
 	s4.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m4.syncToolcalls()
 	m4 = addToolcallsForTest(t, m4, 1)
 	s4.Render(40, 8)
 	s4.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -127,7 +130,7 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	}
 
 	m3 := newToolcallsInspectorModel(t)
-	m3.conv.addTool("reflow", "Read", "start\n"+strings.Repeat("wide", 25)+"\nanchor-row\n"+strings.Repeat("after\n", 20))
+	m3.conv.addTool("reflow", "Read", "start\n"+strings.Repeat("wide", 25)+"\nanchor-row\n"+strings.Repeat("after\n", 80))
 	s3 := inspectorOpenDetail(t, &m3)
 	inspectorDetail(t, s3, 40, 8)
 	for i := 0; i < 7; i++ {
@@ -139,7 +142,102 @@ func TestMecatuiToolcallsInspector_Scenario2_FullScrollableDetail(t *testing.T) 
 	}
 	resized := inspectorDetail(t, s3, 24, 8)
 	if !strings.Contains(strings.Split(resized, "\n")[2], "anchor-row") {
-		t.Fatalf("reflow shifted reading position: before=%q after=%q", at, resized)
+		t.Fatalf("narrow reflow shifted reading position: before=%q after=%q", at, resized)
+	}
+	wide := inspectorDetail(t, s3, 60, 8)
+	if !strings.Contains(strings.Split(wide, "\n")[2], "anchor-row") {
+		t.Fatalf("wide reflow shifted reading position: before=%q after=%q", resized, wide)
+	}
+
+	m5 := newToolcallsInspectorModel(t)
+	var wrapped strings.Builder
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&wrapped, "%04d", i)
+	}
+	m5.conv.addTool("wrapped", "Read", wrapped.String())
+	s5 := inspectorOpenDetail(t, &m5)
+	inspectorDetail(t, s5, 40, 8)
+	for i := 0; i < 10; i++ {
+		s5.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	original := strings.Split(inspectorDetail(t, s5, 40, 8), "\n")[2]
+	marker := original[:4]
+	if marker != "0070" {
+		t.Fatalf("wrapped anchor setup failed: %q", original)
+	}
+	for _, w := range []int{20, 80, 40} {
+		got := strings.Split(inspectorDetail(t, s5, w, 8), "\n")[2]
+		if !strings.Contains(got, marker) {
+			t.Fatalf("wrapped text anchor moved at width %d: before=%q after=%q", w, original, got)
+		}
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario2_CanonicalDetailOnly(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	long := strings.Repeat("heavy-argument-", 500)
+	m.conv.addTool("first", "Read", long)
+	m.conv.addTool("reused", "Read", "original")
+	m.conv.resolveTool("first", strings.Repeat("large-result", 1000), false, client.ContentBlock{Kind: client.ContentBlockImage, Data: []byte(strings.Repeat("bytes", 1000))})
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	if _, ok := reflect.TypeOf(toolcallEntry{}).FieldByName("result"); ok {
+		t.Fatal("list entries retain full historical results instead of canonical scrollback")
+	}
+	for _, entry := range s.entries {
+		if len(entry.intent) > 128 {
+			t.Fatalf("list retained full arguments: %d bytes", len(entry.intent))
+		}
+	}
+	s.Render(70, 12)
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.syncToolcalls() // the owning reducer refreshes the selected snapshot on entry
+	if got := inspectorDetail(t, s, 70, 12); !strings.Contains(got, "Call: reused") || !strings.Contains(got, "original") {
+		t.Fatalf("selected pending detail: %q", got)
+	}
+	m.conv.resolveTool("reused", "old result", false)
+	m.syncToolcalls()
+	m.conv.addTool("reused", "Write", "new arguments")
+	m.syncToolcalls()
+	m.conv.resolveTool("reused", "new result", false)
+	m.syncToolcalls()
+	got := inspectorDetail(t, s, 70, 12)
+	if !strings.Contains(got, "old result") || strings.Contains(got, "new result") || strings.Contains(got, "new arguments") {
+		t.Fatalf("selected block changed when call ID was reused: %q", got)
+	}
+}
+
+func TestMecatuiToolcallsInspector_Scenario2_FinishBeforeResult(t *testing.T) {
+	cases := []struct {
+		name          string
+		start, finish tea.Msg
+	}{
+		{"Parallel", nil, client.ParallelMsg{Kind: client.ParallelEnd, ParentCallID: "call", Stop: "error"}},
+		{"Subagent", client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "call", ChildID: "child"}, client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "call", ChildID: "child", Stop: "error"}},
+		{"Team", client.TeamMsg{Kind: client.TeamStart, ParentCallID: "call", TeamID: "team"}, client.TeamMsg{Kind: client.TeamEnd, ParentCallID: "call", TeamID: "team", Stop: "error"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newToolcallsInspectorModel(t)
+			m.phase = phaseRunning
+			m.conv.addTool("call", tc.name, `{}`)
+			if tc.start != nil {
+				m = applyAll(m, tc.start)
+			}
+			m = openToolcallsForTest(t, m)
+			s := toolcallsForTest(t, m)
+			s.Render(70, 12)
+			s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m.syncToolcalls()
+			m = applyAll(m, tc.finish)
+			if got := inspectorDetail(t, s, 70, 12); !strings.Contains(got, "failed") || !strings.Contains(got, "Result: pending") {
+				t.Fatalf("finished-before-result not reflected: %q", got)
+			}
+			m = applyAll(m, client.ToolResultMsg{CallID: "call", Content: "canonical"})
+			if got := inspectorDetail(t, s, 70, 12); !strings.Contains(got, "canonical") {
+				t.Fatalf("canonical result missing after terminal event: %q", got)
+			}
+		})
 	}
 }
 

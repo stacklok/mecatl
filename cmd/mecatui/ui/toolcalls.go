@@ -30,26 +30,34 @@ func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
 
 type toolcallEntry struct {
 	blockID  scrollback.BlockID
-	callID   string
+	index    int
 	name     string
 	intent   string
-	result   scrollback.ToolResult
 	resolved bool
 	failed   bool
 }
 
+type toolcallDetail struct {
+	callID, name, intent string
+	result               scrollback.ToolResult
+	resolved, failed     bool
+	resultReceived       bool
+}
+
 type toolcallsState struct {
-	open     bool
-	deps     surfaceDeps
-	entries  []toolcallEntry
-	selected int
-	detail   bool
-	window   *bounded.Viewport
-	width    int
-	lines    int
-	follow   bool
-	list     *bounded.List
-	compact  bool
+	open        bool
+	deps        surfaceDeps
+	entries     []toolcallEntry
+	selected    int
+	detail      bool
+	detailEntry *toolcallDetail
+	window      *bounded.Viewport
+	width       int
+	anchor      int
+	lines       int
+	follow      bool
+	list        *bounded.List
+	compact     bool
 }
 
 func (*toolcallsState) modalPlacement() modalPlacement          { return modalPlacementFill }
@@ -63,24 +71,21 @@ func (m Model) toolcallEntries() []toolcallEntry {
 		var entry toolcallEntry
 		switch card := snapshot.Payload.(type) {
 		case scrollback.ToolCardSnapshot:
-			entry = toolcallEntry{
-				callID: card.Call.ID, name: card.Call.Name, intent: card.Call.Arguments, result: card.Result,
-				resolved: card.Resolved || card.Finished, failed: card.Result.IsError || card.Failed,
-			}
+			entry = toolcallEntry{name: card.Call.Name, intent: card.Call.Arguments,
+				resolved: card.Resolved || card.Finished, failed: card.Result.IsError || card.Failed}
 		case scrollback.SubagentCardSnapshot:
-			entry = toolcallEntry{
-				callID: card.Call.ID, name: card.Call.Name, intent: card.Call.Arguments, result: card.Result,
-				resolved: card.Resolved, failed: card.Result.IsError,
-			}
+			entry = toolcallEntry{name: card.Call.Name, intent: card.Call.Arguments,
+				resolved: card.Resolved || card.Update.Done, failed: card.Result.IsError || (card.Update.Done && subagentStopErrored(card.Update.Stop))}
 		case scrollback.TeamCardSnapshot:
-			entry = toolcallEntry{
-				callID: card.Call.ID, name: card.Call.Name, intent: card.Call.Arguments, result: card.Result,
-				resolved: card.Resolved, failed: card.Result.IsError,
-			}
+			entry = toolcallEntry{name: card.Call.Name, intent: card.Call.Arguments,
+				resolved: card.Resolved || card.Update.Done, failed: card.Result.IsError || (card.Update.Done && subagentStopErrored(card.Update.Stop))}
 		default:
 			continue
 		}
+		entry.index = i
 		entry.blockID = snapshot.ID
+		entry.name = ansi.Truncate(terminaltext.SanitizeSingleLine(entry.name), 120, "…")
+		entry.intent = ansi.Truncate(strings.ReplaceAll(terminaltext.Sanitize(entry.intent), "\n", " "), 120, "…")
 		entries = append(entries, entry)
 	}
 	return entries
@@ -115,7 +120,32 @@ func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 func (m *Model) syncToolcalls() {
 	if s, ok := m.modal.(*toolcallsState); ok {
 		s.setEntries(m.toolcallEntries(), false)
+		if s.detail {
+			s.refreshDetail(&m.conv.scrollback)
+		}
 	}
+}
+
+func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
+	entry := s.entries[s.selected]
+	snapshot := c.SnapshotAt(entry.index)
+	if snapshot.ID != entry.blockID {
+		s.detailEntry = nil
+		return
+	}
+	var call scrollback.ToolCall
+	var result scrollback.ToolResult
+	var received bool
+	switch card := snapshot.Payload.(type) {
+	case scrollback.ToolCardSnapshot:
+		call, result, received = card.Call, card.Result, card.Resolved
+	case scrollback.SubagentCardSnapshot:
+		call, result, received = card.Call, card.Result, card.Resolved
+	case scrollback.TeamCardSnapshot:
+		call, result, received = card.Call, card.Result, card.Resolved
+	}
+	s.detailEntry = &toolcallDetail{callID: call.ID, name: call.Name, intent: call.Arguments, result: result,
+		resolved: entry.resolved, failed: entry.failed, resultReceived: received}
 }
 
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
@@ -157,8 +187,7 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 		if entry.failed {
 			status = "failed"
 		}
-		intent := strings.ReplaceAll(terminaltext.Sanitize(entry.intent), "\n", " ")
-		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + terminaltext.Sanitize(entry.name) + " · " + intent}
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent}
 	}
 	s.list.SetGeometry(width, bodyHeight, 0, bounded.Clip)
 	s.list.SetItems(items)
@@ -177,7 +206,10 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string) string {
-	entry := s.entries[s.selected]
+	if s.detailEntry == nil {
+		return strings.Join([]string{title, "", line(s.deps.theme.Style("muted"), "call unavailable · "+s.deps.marks.closeOnly+" back")}, "\n")
+	}
+	entry := *s.detailEntry
 	if s.window == nil {
 		s.window = new(bounded.Viewport)
 		s.follow = true
@@ -188,11 +220,15 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 	if !s.follow && s.width > 0 && s.width != width {
 		oldRows := toolcallRowCounts(content, s.width)
 		newRows := toolcallRowCounts(content, width)
-		oldStart, newStart := 0, 0
+		oldStart, newStart, totalNew := 0, 0, 0
+		for _, count := range newRows {
+			totalNew += count
+		}
 		for i, count := range oldRows {
 			if s.window.Offset() < oldStart+count {
 				s.window.SetGeometry(width, height-len(header)-1, 0, bounded.Wrap)
-				s.window.Move(bounded.End, newStart+min(s.window.Offset()-oldStart, newRows[i]-1)+s.window.Height())
+				within := s.anchor / width
+				s.window.SetOffset(newStart+min(within, newRows[i]-1), totalNew)
 				break
 			}
 			oldStart += count
@@ -234,7 +270,21 @@ func toolcallRowCounts(lines []string, width int) []int {
 	return counts
 }
 
-func toolcallDetailLines(entry toolcallEntry) []string {
+func (s *toolcallsState) recordAnchor() {
+	if s.width == 0 || s.detailEntry == nil {
+		return
+	}
+	start := 0
+	for _, count := range toolcallRowCounts(toolcallDetailLines(*s.detailEntry), s.width) {
+		if s.window.Offset() < start+count {
+			s.anchor = (s.window.Offset() - start) * s.width
+			return
+		}
+		start += count
+	}
+}
+
+func toolcallDetailLines(entry toolcallDetail) []string {
 	status := "running"
 	if entry.resolved {
 		status = "done"
@@ -243,7 +293,7 @@ func toolcallDetailLines(entry toolcallEntry) []string {
 		status = "failed"
 	}
 	lines := []string{terminaltext.Sanitize(entry.name) + " · " + status, "Call: " + terminaltext.Sanitize(entry.callID), "Arguments:", terminaltext.Sanitize(entry.intent)}
-	if !entry.resolved {
+	if !entry.resultReceived {
 		return append(lines, "", "Result: pending")
 	}
 	result := entry.result
@@ -283,6 +333,7 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if key.Matches(msg, s.deps.keys.Close) {
 		if s.detail {
 			s.detail = false
+			s.detailEntry = nil
 			return nil, true, false
 		}
 		return nil, true, true
@@ -307,6 +358,8 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		if !s.detail {
 			s.detail = true
 			s.window = new(bounded.Viewport)
+			s.width = 0
+			s.anchor = 0
 			s.follow = false
 		}
 		return nil, true, false
@@ -317,6 +370,9 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		if s.window != nil {
 			s.window.Move(move, s.lines)
 			s.follow = s.window.Offset() >= max(0, s.lines-s.window.Height())
+			if !s.follow {
+				s.recordAnchor()
+			}
 		}
 		return nil, true, false
 	}
@@ -335,6 +391,9 @@ func (s *toolcallsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 		}
 		s.window.Move(move, s.lines)
 		s.follow = s.window.Offset() >= max(0, s.lines-s.window.Height())
+		if !s.follow {
+			s.recordAnchor()
+		}
 		return nil, true
 	}
 	if s.list == nil {
