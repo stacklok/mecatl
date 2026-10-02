@@ -64,18 +64,18 @@ func (*toolcallsState) modalPlacement() modalPlacement          { return modalPl
 func (*toolcallsState) Close()                                  {}
 func (*toolcallsState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
 
-func toolcallsTooSmallHint(width int, close string) string {
+func toolcallsTooSmallHint(width int, dismiss string) string {
 	if width <= 0 {
 		return ""
 	}
-	message := "too small · " + close
+	message := "too small · " + dismiss
 	if ansi.StringWidth(message) <= width {
 		return message
 	}
-	if ansi.StringWidth(close) <= width {
-		return close
+	if ansi.StringWidth(dismiss) <= width {
+		return dismiss
 	}
-	return ansi.Truncate(close, width, "")
+	return ansi.Truncate(dismiss, width, "")
 }
 
 func (m Model) toolcallEntries() []toolcallEntry {

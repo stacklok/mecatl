@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -71,7 +72,7 @@ func TestMecatuiToolcallsInspector_Scenario2_ReceivedProjectionBoundary(t *testi
 	m := newToolcallsInspectorModel(t)
 	call := &mecatlv1.Event{Type: "tool.call", ToolCall: &mecatlv1.ToolCall{Id: "safe", Name: "Read", Args: `{"path":"safe"}`}}
 	m = applyAll(m, client.EventToMsg(call))
-	s := inspectorOpenDetail(t, &m)
+	_ = inspectorOpenDetail(t, &m)
 	// Only the effective, display-safe result arrives on this client boundary.
 	// The original withheld body and decoded media bytes are not reconstructible.
 	result := &mecatlv1.Event{Type: "tool.result", ToolResult: &mecatlv1.ToolResult{CallId: "safe", Content: "effective text", Blocks: []*mecatlv1.ContentBlock{
@@ -82,7 +83,7 @@ func TestMecatuiToolcallsInspector_Scenario2_ReceivedProjectionBoundary(t *testi
 	if snap := m.conv.scrollback.SnapshotAt(0).Payload.(scrollback.ToolCardSnapshot); snap.Result.Body != "effective text" {
 		t.Fatalf("received body: %q", snap.Result.Body)
 	}
-	s = toolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
 	var pages, raw string
 	for _, width := range []int{70, 100} {
 		s.Render(width, 9)
