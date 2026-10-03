@@ -621,10 +621,11 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 	}
 }
 
-func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.T) {
+func TestMecatuiToolcallsInspector_Scenario5_WheelScrollsListWithoutChangingSelection(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.deps.NoAltScreen = false
-	m = addToolcallsForTest(t, m, 3)
+	m = addToolcallsForTest(t, m, 125)
+	m.conv.resolveTool("call-124", strings.Repeat("detail line\n", 40), false)
 	m = openToolcallsForTest(t, m)
 	m.vp.SetContent(strings.Repeat("conversation\n", 100))
 	m.vp.SetYOffset(5)
@@ -632,35 +633,140 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.
 	_ = m.View()
 
 	s := toolcallsForTest(t, m)
-	var first renderedHitRegion
+	selectedBlock := s.entries[s.selected].blockID
+	beforeOffset := s.list.Offset()
+	for range 8 {
+		updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+		m = updated.(Model)
+		_ = m.View()
+	}
+	s = toolcallsForTest(t, m)
+	if got := s.list.Offset(); got >= beforeOffset {
+		t.Fatalf("wheel list offset = %d, want less than %d", got, beforeOffset)
+	}
+	if got := s.entries[s.selected].blockID; got != selectedBlock {
+		t.Fatalf("wheel changed selected block to %d, want %d", got, selectedBlock)
+	}
+	for _, blockID := range s.hitItems {
+		if blockID == selectedBlock {
+			t.Fatal("wheel did not move selected row offscreen")
+		}
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("wheel moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+	offTailOffset := s.list.Offset()
+
+	m = addToolcallsForTest(t, m, 1)
+	_ = m.View()
+	s = toolcallsForTest(t, m)
+	if got := s.list.Offset(); got != offTailOffset {
+		t.Fatalf("live addition moved off-tail list from %d to %d", offTailOffset, got)
+	}
+	if got := s.entries[s.selected].blockID; got != selectedBlock {
+		t.Fatalf("live addition changed off-tail selection to %d, want %d", got, selectedBlock)
+	}
+	if got, want := s.list.CursorID(), fmt.Sprintf("%d", selectedBlock); got != want {
+		t.Fatalf("live addition moved list cursor to %q, want %q", got, want)
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	s.refreshDetail(&m.conv.scrollback)
+	s.Render(m.width, 16)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	detailOffset := s.window.Offset()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = updated.(Model)
+	_ = m.View()
+	s = toolcallsForTest(t, m)
+	if got := s.window.Offset(); got >= detailOffset {
+		t.Fatalf("detail wheel offset = %d, want less than %d", got, detailOffset)
+	}
+	if got := s.entries[s.selected].blockID; got != selectedBlock {
+		t.Fatalf("detail wheel changed selected block to %d, want %d", got, selectedBlock)
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("detail wheel moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	m = updated.(Model)
+	_ = m.View()
+	s = toolcallsForTest(t, m)
+	if s.selected != 0 {
+		t.Fatalf("Home selected %d, want oldest row", s.selected)
+	}
+	var clicked renderedHitRegion
 	for _, region := range m.hits.frame {
-		if s.hitItems[region.id] == s.entries[0].blockID {
-			first = region
+		if s.hitItems[region.id] != s.entries[s.selected].blockID {
+			clicked = region
 			break
 		}
 	}
-	if first.id == 0 {
-		t.Fatal("rendered inspector has no hit for the first visible call")
+	if clicked.id == 0 {
+		t.Fatal("keyboard reveal left no alternate visible row to click")
 	}
-	globalX, globalY := m.metrics.localToGlobal(first.rect.x0, first.rect.y0)
-	updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
+	wantBlock := s.hitItems[clicked.id]
+	x, y := m.metrics.localToGlobal(clicked.rect.x0, clicked.rect.y0)
+	updated, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	m = updated.(Model)
+	_ = m.View()
 	s = toolcallsForTest(t, m)
-	if s.detail || s.entries[s.selected].blockID != s.hitItems[first.id] {
-		t.Fatalf("click selected detail=%v block=%d, want visible block %d", s.detail, s.entries[s.selected].blockID, s.hitItems[first.id])
+	if got := s.entries[s.selected].blockID; got != wantBlock {
+		t.Fatalf("click selected block %d, want %d", got, wantBlock)
 	}
-	if got := m.vp.YOffset(); got != beforeConversation {
-		t.Fatalf("click moved hidden conversation from %d to %d", beforeConversation, got)
+	if s.list.CursorID() != fmt.Sprintf("%d", wantBlock) {
+		t.Fatalf("click did not reveal selected block %d", wantBlock)
 	}
-	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	m = updated.(Model)
-	if toolcallsForTest(t, m).selected == 0 {
-		t.Fatal("wheel no longer moves the inspector selection")
+}
+
+func TestMecatuiToolcallsInspector_Scenario5_WheelReturnsToTailAndFollowsNewCalls(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m = addToolcallsForTest(t, m, 125)
+	m = openToolcallsForTest(t, m)
+	_ = m.View()
+	s := toolcallsForTest(t, m)
+	selectedBlock := s.entries[s.selected].blockID
+	for range 8 {
+		updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+		m = updated.(Model)
+		_ = m.View()
 	}
-	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = updated.(Model)
-	if s := toolcallsForTest(t, m); !s.detail || s.detailEntry == nil || s.detailEntry.callID != "call-1" {
-		t.Fatalf("Enter opened %#v, want selected call-1 detail", s)
+	if s.list.View().Below == 0 || s.listFollow {
+		t.Fatalf("wheel up did not leave tail: offset=%d follow=%v", s.list.Offset(), s.listFollow)
+	}
+	for i := 0; i < 125 && s.list.View().Below > 0; i++ {
+		updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m = updated.(Model)
+		_ = m.View()
+	}
+	if s.list.View().Below != 0 || !s.listFollow || s.list.RevealPending() {
+		t.Fatalf("wheel down did not restore tail without reveal: offset=%d follow=%v reveal=%v", s.list.Offset(), s.listFollow, s.list.RevealPending())
+	}
+	if got := s.entries[s.selected].blockID; got != selectedBlock {
+		t.Fatalf("wheel changed selection from %d to %d", selectedBlock, got)
+	}
+	m = addToolcallsForTest(t, m, 1)
+	view := m.View()
+	if s.selected != len(s.entries)-1 || s.entries[s.selected].blockID == selectedBlock {
+		t.Fatalf("tail reader did not select new call: selected=%d entries=%d", s.selected, len(s.entries))
+	}
+	newBlock := s.entries[s.selected].blockID
+	if s.list.CursorID() != fmt.Sprintf("%d", newBlock) || s.list.View().Below != 0 {
+		t.Fatalf("new call not at visible tail: cursor=%q below=%d", s.list.CursorID(), s.list.View().Below)
+	}
+	visible := false
+	for _, block := range s.hitItems {
+		visible = visible || block == newBlock
+	}
+	if !visible || !strings.Contains(stripANSIstr(view.Content), "file-125.go") {
+		t.Fatalf("newest call is not rendered in list: %q", stripANSIstr(view.Content))
 	}
 }
 

@@ -98,7 +98,7 @@ func TestMecatuiToolcallsInspector_Scenario4_RenderedPaginationAndStyle(t *testi
 	m.conv.resolveTool("read", "     1\t"+strings.Repeat("wrapped", 20)+"\n     2\tend-gutter", true)
 	m.syncToolcalls()
 	raw := m.View().Content
-	if !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Error:")) || !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Identity · Read · failed")) || !strings.Contains(raw, s.deps.theme.Style("toolName").Render("Arguments:")) {
+	if !strings.Contains(raw, s.deps.theme.Style("errorText").Render("Error:")) || !strings.Contains(raw, s.deps.theme.Style("toolErr").Render("✗")) || !strings.Contains(raw, s.deps.theme.Style("toolErr").Render("failed")) || !strings.Contains(raw, s.deps.theme.Style("toolName").Render("Arguments:")) {
 		t.Fatalf("rendered sections lack distinct styles: %q", raw)
 	}
 	for _, width := range []int{70, 55} {

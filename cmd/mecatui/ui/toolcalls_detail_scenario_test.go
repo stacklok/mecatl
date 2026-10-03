@@ -186,8 +186,8 @@ func TestMecatuiToolcallsInspector_ListUsesToolPaletteAcrossBuiltins(t *testing.
 			m = openToolcallsForTest(t, m)
 			s := toolcallsForTest(t, m)
 			body, _ := s.Render(100, 10)
-			selected := presentListRow(s.list.ViewWithIndicators(6, false).Rows[0], th.Style("toolName"), th.Style("toolArgs"))
-			if !strings.Contains(body, selected.Style.Render(selected.Text)) {
+			selected := renderToolcallListRow(presentListRow(s.list.ViewWithIndicators(6, false).Rows[0], th.Style("toolName"), th.Style("toolArgs")), th.Style("toolName"))
+			if !strings.Contains(body, selected) {
 				t.Fatalf("selected row does not use tool-name palette: %q", body)
 			}
 			s.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -195,9 +195,72 @@ func TestMecatuiToolcallsInspector_ListUsesToolPaletteAcrossBuiltins(t *testing.
 			m.syncToolcalls()
 			body, _ = s.Render(100, 10)
 			row := s.list.ViewWithIndicators(6, false).Rows[0]
-			unselected := presentListRow(row, th.Style("toolName"), th.Style("toolArgs"))
-			if row.Selected || !strings.Contains(body, unselected.Style.Render(unselected.Text)) {
+			unselected := renderToolcallListRow(presentListRow(row, th.Style("toolName"), th.Style("toolArgs")), th.Style("toolName"))
+			if row.Selected || !strings.Contains(body, unselected) {
 				t.Fatalf("unselected row does not use tool-args palette: row=%+v body=%q", row, body)
+			}
+		})
+	}
+}
+
+func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
+	registry := theme.NewRegistry()
+	for _, name := range []string{"aztec", "mono", "solar"} {
+		t.Run(name, func(t *testing.T) {
+			th, ok := registry.Get(name)
+			if !ok {
+				t.Fatalf("missing built-in theme %q", name)
+			}
+			m := newToolcallsInspectorModel(t)
+			m.deps.Theme = th
+			m.conv.addTool("pending", "Read", `{"path":"pending.go"}`)
+			m.conv.addTool("success", "Read", `{"path":"success.go"}`)
+			m.conv.resolveTool("success", "done", false)
+			m.conv.addTool("failure", "Read", `{"path":"failure.go"}`)
+			m.conv.resolveTool("failure", "failed", true)
+			m.conv.addTool("reused", "Read", `{"path":"first.go"}`)
+			m.conv.resolveTool("reused", "first", false)
+			m.conv.addTool("reused", "Read", `{"path":"second.go"}`)
+			m = openToolcallsForTest(t, m)
+			s := toolcallsForTest(t, m)
+			body, _ := s.Render(80, 12)
+			plain := stripANSIstr(body)
+			for _, tc := range []struct {
+				glyph, status, slot string
+			}{
+				{"…", "running", "toolName"},
+				{"✓", "done", "toolOk"},
+				{"✗", "failed", "toolErr"},
+			} {
+				if !strings.Contains(plain, tc.glyph+" "+tc.status) {
+					t.Fatalf("list lacks non-color status %q %q:\n%s", tc.glyph, tc.status, plain)
+				}
+				if !strings.Contains(body, th.Style(tc.slot).Render(tc.glyph)) {
+					t.Fatalf("list glyph %q does not use %s: %q", tc.glyph, tc.slot, body)
+				}
+			}
+			if !strings.Contains(plain, "first.go") || !strings.Contains(plain, "second.go") {
+				t.Fatalf("reused call IDs did not retain separate list rows:\n%s", plain)
+			}
+			for _, tc := range []toolcallDetail{
+				{name: "Read", resultReceived: false},
+				{name: "Read", resolved: true, resultReceived: true},
+				{name: "Read", failed: true, resultReceived: true}, // provisional error follows the resolved-card failure semantics.
+			} {
+				glyph, status, slot := toolcallStatus(tc.resolved, tc.failed)
+				styled := strings.Join(s.styledToolcallDetailLines(tc), "\n")
+				if plain := stripANSIstr(styled); !strings.Contains(plain, "Identity · "+glyph+" Read · "+status) {
+					t.Fatalf("detail lacks non-color status %q:\n%s", status, plain)
+				}
+				if !strings.Contains(styled, th.Style(slot).Render(glyph)) || !strings.Contains(styled, th.Style(slot).Render(status)) {
+					t.Fatalf("detail status %q does not use %s: %q", status, slot, styled)
+				}
+			}
+			narrow, _ := s.Render(24, 8)
+			for _, row := range strings.Split(stripANSIstr(narrow), "\n") {
+				if ansi.StringWidth(row) > 24 {
+					t.Fatalf("narrow status row overflows: %q", row)
+				}
 			}
 		})
 	}

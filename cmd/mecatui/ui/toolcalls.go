@@ -62,6 +62,7 @@ type toolcallsState struct {
 	lines       int
 	follow      bool
 	list        *bounded.List
+	listFollow  bool
 	compact     bool
 	hitItems    map[HitID]scrollback.BlockID // view cache: visible rows from the current Render frame
 }
@@ -82,6 +83,7 @@ func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 			s.selected = i
 			if s.list != nil {
 				s.list.SetCursor(i)
+				s.listFollow = i == len(s.entries)-1
 			}
 			return nil, true, false
 		}
@@ -119,8 +121,22 @@ const (
 )
 
 type toolcallDetailRow struct {
-	text, label string
-	kind        toolcallRowKind
+	text, label             string
+	kind                    toolcallRowKind
+	identityName            string
+	statusGlyph, statusText string
+	statusStyle             string
+}
+
+func toolcallStatus(resolved, failed bool) (glyph, text, style string) {
+	switch {
+	case failed:
+		return "✗", statusFailed, "toolErr"
+	case resolved:
+		return "✓", statusDone, "toolOk"
+	default:
+		return "…", "running", "toolName"
+	}
 }
 
 func toolcallArgumentLines(name, arguments string) []string {
@@ -352,8 +368,11 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 // setEntries preserves an earlier reader's block identity while new calls arrive.
 // A reader already following the newest row advances to the new newest row.
 func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
+	if opening {
+		s.listFollow = true
+	}
 	var selected scrollback.BlockID
-	following := !s.detail && (opening || (len(s.entries) > 0 && s.selected == len(s.entries)-1))
+	following := !s.detail && (opening || (s.listFollow && len(s.entries) > 0 && s.selected == len(s.entries)-1))
 	if !following && s.selected >= 0 && s.selected < len(s.entries) {
 		selected = s.entries[s.selected].blockID
 	}
@@ -450,18 +469,14 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	items := make([]bounded.ListItem, len(s.entries))
 	for i, entry := range s.entries {
-		marker, status := "…", "running"
-		if entry.resolved {
-			marker, status = "✓", statusDone
-		}
-		if entry.failed {
-			marker, status = "✗", statusFailed
-		}
-		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent, StatusCells: [2]string{marker}}
+		glyph, status, _ := toolcallStatus(entry.resolved, entry.failed)
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent, StatusCells: [2]string{glyph}}
 	}
-	s.list.SetGeometry(width, bodyHeight, 1, bounded.Clip)
+	s.list.SetGeometry(width, bodyHeight, 2, bounded.Clip)
 	s.list.SetItems(items)
-	s.list.SetCursor(s.selected)
+	if s.list.CursorID() != items[s.selected].ID {
+		s.list.SetCursor(s.selected)
+	}
 	view := s.list.ViewWithIndicators(bodyHeight, s.list.RevealPending())
 	body, regions := s.renderListRows(body, view, width, line)
 	return toolcallsPanel(body, height, footer), regions
@@ -482,8 +497,13 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 	}
 	for _, row := range view.Rows {
 		presentation := presentListRow(row, s.deps.theme.Style("toolName"), s.deps.theme.Style("toolArgs"))
+		statusStyle := s.deps.theme.Style("toolName")
+		if row.ItemIndex >= 0 && row.ItemIndex < len(s.entries) {
+			_, _, slot := toolcallStatus(s.entries[row.ItemIndex].resolved, s.entries[row.ItemIndex].failed)
+			statusStyle = s.deps.theme.Style(slot)
+		}
 		y := len(body)
-		body = append(body, ansi.Cut(presentation.Style.Render(presentation.Text), 0, width)+"\x1b[0m")
+		body = append(body, ansi.Cut(renderToolcallListRow(presentation, statusStyle), 0, width)+"\x1b[0m")
 		if s.deps.hits == nil || row.ItemIndex < 0 || row.ItemIndex >= len(s.entries) {
 			continue
 		}
@@ -498,6 +518,17 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		body = append(body, line(s.deps.theme.Style("muted"), fmt.Sprintf("↓ %d items", view.Below)))
 	}
 	return body, regions
+}
+
+// renderToolcallListRow keeps the row's cursor and selection styling while using
+// the canonical semantic slot for its status glyph.
+func renderToolcallListRow(row listRowPresentation, status lipgloss.Style) string {
+	runes := []rune(row.Text)
+	if len(runes) < 2 {
+		return row.Style.Render(row.Text)
+	}
+	glyphStyle := row.Style.Foreground(status.GetForeground()).Bold(status.GetBold())
+	return row.Style.Render(string(runes[:1])) + glyphStyle.Render(string(runes[1:2])) + row.Style.Render(string(runes[2:]))
 }
 
 func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string) string {
@@ -555,11 +586,7 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 		text := terminaltext.Sanitize(row.text)
 		switch row.kind {
 		case toolcallIdentity:
-			style := s.deps.theme.Style("toolName")
-			if entry.failed {
-				style = s.deps.theme.Style("errorText")
-			}
-			content[i] = style.Render(text)
+			content[i] = s.styledToolcallIdentity(row)
 		case toolcallHeading:
 			content[i] = s.deps.theme.Style("toolName").Render(text)
 		case toolcallError:
@@ -579,6 +606,15 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 		}
 	}
 	return content
+}
+
+func (s *toolcallsState) styledToolcallIdentity(row toolcallDetailRow) string {
+	nameStyle := s.deps.theme.Style("toolName")
+	statusStyle := s.deps.theme.Style(row.statusStyle)
+	return nameStyle.Render("Identity · ") +
+		statusStyle.Render(row.statusGlyph) +
+		nameStyle.Render(" "+terminaltext.Sanitize(row.identityName)+" · ") +
+		statusStyle.Render(row.statusText)
 }
 
 // toolcallRowCounts uses the same bounded wrapping policy as the detail window
@@ -620,16 +656,10 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 }
 
 func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
-	status := "running"
-	if entry.resolved {
-		status = statusDone
-	}
-	if entry.failed {
-		status = statusFailed
-	}
+	glyph, status, style := toolcallStatus(entry.resolved, entry.failed)
 
 	lines := []toolcallDetailRow{
-		{text: "Identity · " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity},
+		{text: "Identity · " + glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
 		{text: "Call: " + terminaltext.Sanitize(entry.callID), label: "Call:", kind: toolcallField},
 		{text: "Arguments:", kind: toolcallHeading},
 	}
@@ -767,6 +797,7 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if s.list != nil {
 		s.list.Move(move)
 		s.selected = s.list.Cursor()
+		s.listFollow = s.selected == len(s.entries)-1
 	}
 	return nil, true, false
 }
@@ -787,7 +818,7 @@ func (s *toolcallsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if s.list == nil {
 		return nil, true
 	}
-	s.list.Move(map[bool]bounded.Move{true: bounded.LineUp, false: bounded.LineDown}[msg.Mouse().Button == tea.MouseWheelUp])
-	s.selected = s.list.Cursor()
+	s.list.Scroll(map[bool]bounded.Move{true: bounded.LineUp, false: bounded.LineDown}[msg.Mouse().Button == tea.MouseWheelUp])
+	s.listFollow = s.selected == len(s.entries)-1 && s.list.View().Below == 0
 	return nil, true
 }
