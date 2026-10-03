@@ -144,6 +144,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Native Kubernetes execution provider](native-kubernetes-execution.md) — separately deployed,
   optional controller/executor service in this monorepo, with retained workspaces and kind
   qualification. Status: draft; implementation is planned as a draft PR stacked on the plan PR.
+- [Kubernetes session VM isolation](kubernetes-session-vm-isolation.md) — follow-up that runs each
+  native execution environment in its own Kata VM, keeps all session command execution out of the
+  mecak8s Pod, and stops the VM when the last reference is removed. Status: proposed.
 
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
