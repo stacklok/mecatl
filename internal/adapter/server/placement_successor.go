@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -97,7 +96,7 @@ func (s *Service) cancelAndAwaitClearSource(ctx context.Context, id session.Sess
 	st.cancelling = true
 	s.mu.Unlock()
 
-	s.cancelRegisteredRunState(id, st, nil, false, agent.CancelCauseRequested)
+	s.cancelRegisteredRunState(id, st, nil, false)
 	select {
 	case <-settled:
 		return nil

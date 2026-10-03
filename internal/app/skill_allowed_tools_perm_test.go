@@ -87,7 +87,7 @@ func TestAllowedToolsDoesNotBypassPolicy(t *testing.T) {
 	} {
 		policy := permpolicy.NewPolicy(rules, nil)
 		call := session.NewToolCall("id", "Shell", json.RawMessage(`{"command":"echo hi"}`))
-		got := policy.Evaluate(ctx, "s1", session.ModeDefault, call, nil).Effect
+		got := policy.Evaluate(ctx, "s1", session.ModeDefault, call, nil).Decision.Effect
 		if got != governance.Ask {
 			t.Errorf("[%s] Shell call should resolve to Ask (allowed-tools must NOT pre-approve), got %v", name, got)
 		}

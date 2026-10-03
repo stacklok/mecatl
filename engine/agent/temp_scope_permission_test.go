@@ -38,7 +38,7 @@ func runScopedShell(t *testing.T, rules []governance.Rule, call session.ToolCall
 		events = append(events, event)
 		if event.Type == session.EvPermissionAsk && event.Ask != nil && !asked {
 			asked = true
-			run.Cancel(CancelCauseRequested)
+			run.Cancel()
 		}
 		if event.Type == session.EvToolResult && event.ToolResult != nil {
 			result = *event.ToolResult

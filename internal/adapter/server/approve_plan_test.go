@@ -95,7 +95,7 @@ func parkPlanAsk(t *testing.T, svc *server.Service, sessID session.SessionID) (a
 	select {
 	case a := <-askCh:
 		cleanup := func() {
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			select {
 			case <-drainDone:
 			case <-time.After(5 * time.Second):
@@ -148,7 +148,7 @@ func cleanupStartedRun(t *testing.T, svc *server.Service, sessID session.Session
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			for range r.Events() {
 			}
 			svc.FinishRun(sessID, r)
@@ -428,7 +428,7 @@ func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
 	}
 	firstCleanup := cleanupStartedRun(t, svc, sess.ID, first)
 	firstAskID, firstEvs := awaitLivePlanAsk(t, first, "c1", "original")
-	first.Cancel(agent.CancelCauseRequested)
+	first.Cancel()
 	firstEvs = append(firstEvs, drainApprovedEvents(t, first.Events())...)
 	firstCleanup()
 
@@ -508,7 +508,7 @@ func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
 	if !foundInterrupted {
 		t.Fatal("service recovery did not close out the cancelled PresentPlan call")
 	}
-	second.Cancel(agent.CancelCauseRequested)
+	second.Cancel()
 	_ = drainApprovedEvents(t, second.Events())
 	secondCleanup()
 }
@@ -626,7 +626,7 @@ func TestApprovePlanNotPlanAskFails(t *testing.T) {
 			// Deregister and cancel: the run must not stay live (ApprovePlan rejects
 			// a live run, and the goroutine must not leak).
 			svc.FinishRun(sess.ID, r)
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 		}
 	}
 	if !parked {
@@ -1096,7 +1096,7 @@ func TestApprovePlanHTTPNotPlanAsk409(t *testing.T) {
 			parked = true
 			svc.Persist(context.Background(), session.SessionID(id))
 			svc.FinishRun(session.SessionID(id), r)
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 		}
 	}
 	if !parked {

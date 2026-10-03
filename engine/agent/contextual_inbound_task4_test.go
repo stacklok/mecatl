@@ -299,7 +299,7 @@ func TestADR_0363_ContextualGuardrails_Scenario3_ConcurrentInboundReleaseOrderin
 			if cancelAsks == 1 {
 				_ = resolveScoped(t, cancelRun, ev.Ask, session.VerdictAllowOnce)
 			} else {
-				cancelRun.Cancel(agent.CancelCauseRequested)
+				cancelRun.Cancel()
 			}
 		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {

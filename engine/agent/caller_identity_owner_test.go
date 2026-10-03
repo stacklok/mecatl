@@ -183,7 +183,7 @@ func drainRunEvents(t *testing.T, r *Run) {
 				return
 			}
 		case <-deadline:
-			r.Cancel(CancelCauseRequested)
+			r.Cancel()
 			t.Fatal("run did not terminate (possible wedge)")
 		}
 	}

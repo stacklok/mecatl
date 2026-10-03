@@ -851,7 +851,7 @@ func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 			if rl.sendErr == nil {
 				if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: notice}); err != nil {
 					rl.sendErr = err
-					run.Cancel(agent.CancelCauseRequested)
+					run.Cancel()
 				}
 			}
 		case ack, ok := <-acks:

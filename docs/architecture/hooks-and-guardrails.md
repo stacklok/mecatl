@@ -118,10 +118,10 @@ applicable rules bind main and worker calls; only the checker engine is inert.
 
 Model usage from action, inbound-result, and substitution-floor reviews is attributed to
 the reviewed session, including a worker session, and merged during the dispatcher’s
-ordered drain. The main-session path-escape pre-check reports usage through a
-request-scoped callback instead; ordinary hooks receive no accounting capability. Results
-completed after session ownership is lost are dropped rather than replayed or persisted
-through a stale owner. See [ADR 0363](../adr/0363-contextual-investigative-guardrails.md)
+ordered drain. The main-session path-escape pre-check returns its usage with the
+permission decision; the Engine records each evaluation while the owning run remains
+active. Results completed after session ownership is lost are dropped rather than
+replayed or persisted through a stale owner. See [ADR 0363](../adr/0363-contextual-investigative-guardrails.md)
 and [ADR 0371](../adr/0371-contextual-guardrail-usage-accounting.md).
 
 ## Prerequisites

@@ -72,8 +72,8 @@ func TestCanonicalShellTool_Scenario1_CommandPolicyCoverage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			decision := permpolicy.NewPolicy(tc.rules, nil).Evaluate(context.Background(), "policy", tc.mode, tc.call, nil)
-			if decision.Effect != tc.want {
-				t.Fatalf("decision = %q, want %q (%s)", decision.Effect, tc.want, decision.Reason)
+			if decision.Decision.Effect != tc.want {
+				t.Fatalf("decision = %q, want %q (%s)", decision.Decision.Effect, tc.want, decision.Decision.Reason)
 			}
 		})
 	}

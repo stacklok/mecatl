@@ -532,39 +532,70 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeUsage(t *testing.T) {
 	route := &escapeGuardrailRoute{checker: pathUsageChecker{result: modelhook.CheckResult{
 		Verdict: modelhook.Verdict{Safe: &safe}, Usage: pathCheckerUsage(3),
 	}}}
-	var reported session.AuxiliaryUsage
-	ctx, deactivate := port.WithAuxiliaryUsageReporter(t.Context(), func(usage session.AuxiliaryUsage) {
-		reported = reported.Merge(usage)
-	})
-	defer deactivate()
-	verdict, err := route.review(ctx, session.NewToolCall("escape", "Read", []byte(`{"path":"../outside"}`)))
-	if err != nil || verdict.Safe == nil || !*verdict.Safe {
-		t.Fatalf("path escape verdict = %+v, err=%v", verdict, err)
+	result, err := route.review(t.Context(), session.NewToolCall("escape", "Read", []byte(`{"path":"../outside"}`)))
+	if err != nil || result.Verdict.Safe == nil || !*result.Verdict.Safe {
+		t.Fatalf("path escape result = %+v, err=%v", result, err)
 	}
-	if got := reported.Buckets[session.UsageKindGuardrail].Total.InputTokens; got != 3 {
-		t.Fatalf("reported path usage = %d, want 3", got)
+	if got := result.Usage.Buckets[session.UsageKindGuardrail].Total.InputTokens; got != 3 {
+		t.Fatalf("returned path usage = %d, want 3", got)
 	}
 }
 
 func TestContextualGuardrailUsage_Scenario2_PathEscapeFailureAndChildIsolation(t *testing.T) {
 	failure := errors.New("checker unavailable")
 	route := &escapeGuardrailRoute{checker: pathUsageChecker{result: modelhook.CheckResult{Usage: pathCheckerUsage(5)}, err: failure}}
-	var reported session.AuxiliaryUsage
-	ctx, deactivate := port.WithAuxiliaryUsageReporter(t.Context(), func(usage session.AuxiliaryUsage) {
-		reported = reported.Merge(usage)
-	})
-	_, err := route.review(ctx, session.NewToolCall("escape", "Write", []byte(`{"path":"../outside","content":"x"}`)))
-	deactivate()
+	result, err := route.review(t.Context(), session.NewToolCall("escape", "Write", []byte(`{"path":"../outside","content":"x"}`)))
 	if !errors.Is(err, failure) {
 		t.Fatalf("path escape error = %v, want checker failure", err)
 	}
-	if got := reported.Buckets[session.UsageKindGuardrail].Total.InputTokens; got != 5 {
+	if got := result.Usage.Buckets[session.UsageKindGuardrail].Total.InputTokens; got != 5 {
 		t.Fatalf("partial path usage = %d, want 5", got)
 	}
-	// Child engines do not install the main request-scoped reporter. A checker call
-	// on an unarmed child context therefore cannot mutate or replay parent usage.
+	// Child evaluations cannot mutate or replay parent usage without a parent run.
 	_, _ = route.review(context.Background(), session.NewToolCall("child", "Write", []byte(`{"path":"../outside","content":"x"}`)))
-	if got := reported.Buckets[session.UsageKindGuardrail].Total.InputTokens; got != 5 {
-		t.Fatalf("child context reported through parent route: %d", got)
+}
+
+type usagePermissionPolicy struct{ result port.PermissionResult }
+
+func (p usagePermissionPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return p.result
+}
+func (usagePermissionPolicy) Learn(session.SessionID, session.ToolCall) {}
+
+func TestEscapePolicyPreservesInnerAndCheckerUsage(t *testing.T) {
+	root, outside := setupScenario1FS(t)
+	ws, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"path": filepath.Join(outside, "b.txt")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("escape", "Read", args)
+	for _, tc := range []struct {
+		name    string
+		inner   governance.PermissionDecision
+		verdict modelhook.Verdict
+		err     error
+		want    governance.Effect
+		usage   int
+	}{
+		{"inner deny", governance.PermissionDecision{Effect: governance.Deny}, modelhook.Verdict{}, nil, governance.Deny, 2},
+		{"configured ask", governance.PermissionDecision{Effect: governance.Ask, AskProvenance: governance.AskProvenanceConfigured}, modelhook.Verdict{}, nil, governance.Ask, 2},
+		{"safe", governance.PermissionDecision{Effect: governance.Allow}, modelhook.Verdict{Safe: new(true)}, nil, governance.Allow, 5},
+		{"unsafe", governance.PermissionDecision{Effect: governance.Allow}, modelhook.Verdict{Safe: new(false)}, nil, governance.Deny, 5},
+		{"checker error", governance.PermissionDecision{Effect: governance.Allow}, modelhook.Verdict{}, errors.New("checker failed"), governance.Ask, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := usagePermissionPolicy{port.PermissionResult{Decision: tc.inner, Usage: pathCheckerUsage(2)}}
+			policy := newEscapePolicy(inner, PostureAuto, withEscapeGuardrailRoute(pathUsageChecker{
+				result: modelhook.CheckResult{Verdict: tc.verdict, Usage: pathCheckerUsage(3)}, err: tc.err,
+			}))
+			got := policy.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+			if got.Decision.Effect != tc.want || got.Usage.Buckets[session.UsageKindGuardrail].Total.InputTokens != tc.usage {
+				t.Fatalf("result = %+v; want effect %s and usage %d", got, tc.want, tc.usage)
+			}
+		})
 	}
 }

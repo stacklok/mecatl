@@ -85,7 +85,7 @@ func TestBackgroundSubagentCauseSurvivesPostSealEmitRace(t *testing.T) {
 				evs = append(evs, ev)
 			}
 		case <-deadline:
-			r.Cancel(CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("run did not terminate (possible wedge)")
 		}
 		if stop {
@@ -203,7 +203,7 @@ func TestForegroundSubagentCauseAlsoPersistedOnSnapshot(t *testing.T) {
 				endCause = ev.Subagent.Cause
 			}
 		case <-deadline:
-			r.Cancel(CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("run did not terminate (possible wedge)")
 		}
 		if stop {

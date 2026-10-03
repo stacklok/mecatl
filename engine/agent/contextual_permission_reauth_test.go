@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -19,10 +20,10 @@ type changingPermissionPolicy struct {
 	decision governance.PermissionDecision
 }
 
-func (p *changingPermissionPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+func (p *changingPermissionPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.decision
+	return port.PermissionResult{Decision: p.decision}
 }
 
 func (*changingPermissionPolicy) Learn(session.SessionID, session.ToolCall) {}
@@ -104,10 +105,10 @@ type perToolChangingPolicy struct {
 	effects map[string]governance.Effect
 }
 
-func (p *perToolChangingPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+func (p *perToolChangingPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return governance.PermissionDecision{Effect: p.effects[call.Name], Reason: "test policy"}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: p.effects[call.Name], Reason: "test policy"}}
 }
 func (*perToolChangingPolicy) Learn(session.SessionID, session.ToolCall) {}
 func (p *perToolChangingPolicy) set(name string, effect governance.Effect) {
@@ -257,11 +258,11 @@ func TestContextualActionApprovalDoesNotRepeatOriginalPermissionAsk(t *testing.T
 
 type evidencePermissionPolicy struct{}
 
-func (evidencePermissionPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+func (evidencePermissionPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	if call.Name == "Read" {
-		return governance.PermissionDecision{Effect: governance.Deny, Reason: "explicit Read deny"}
+		return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Deny, Reason: "explicit Read deny"}}
 	}
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (evidencePermissionPolicy) Learn(session.SessionID, session.ToolCall) {}
 

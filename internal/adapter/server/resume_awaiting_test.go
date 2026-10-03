@@ -100,8 +100,8 @@ func driveServiceToAwaiting(t *testing.T, svc *server.Service, id session.Sessio
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
-			svc.Persist(context.Background(), id)  // durable awaiting snapshot
-			run.Cancel(agent.CancelCauseRequested) // the parked run "dies"
+			svc.Persist(context.Background(), id) // durable awaiting snapshot
+			run.Cancel()                          // the parked run "dies"
 		}
 	}
 	svc.FinishRun(id, run)

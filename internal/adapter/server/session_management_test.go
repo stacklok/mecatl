@@ -674,7 +674,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	if err := svc.DeleteSession(ctx, live.ID); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("DeleteSession(live) = %v, want ErrFailedPrecondition", err)
 	}
-	run.Cancel(agent.CancelCauseRequested)
+	run.Cancel()
 	for range run.Events() {
 	}
 	svc.FinishRun(live.ID, run)

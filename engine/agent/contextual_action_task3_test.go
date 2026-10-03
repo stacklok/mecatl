@@ -10,15 +10,16 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
 type scenario1Policy struct{ order *[]string }
 
-func (p scenario1Policy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+func (p scenario1Policy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	*p.order = append(*p.order, "permission")
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (scenario1Policy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -116,8 +117,8 @@ func (r *scenario1GrantReviewer) ArmGrant(digest, _ string) {
 
 type noLearnPolicy struct{ learns int }
 
-func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (p *noLearnPolicy) Learn(session.SessionID, session.ToolCall) { p.learns++ }
 
@@ -234,8 +235,8 @@ func (f toolReviewerFunc) Review(ctx context.Context, req agent.ToolReviewReques
 
 type staticAllowPolicy struct{}
 
-func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (staticAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 

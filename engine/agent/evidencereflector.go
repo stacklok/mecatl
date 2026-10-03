@@ -282,81 +282,83 @@ func projectionParts(projected []learning.PartProjection) []session.Content {
 	return parts
 }
 
-//nolint:gocyclo // stream validation and partial-usage returns stay visibly paired
-func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) ([]byte, session.AuxiliaryUsage, error) {
+func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) (output []byte, usage session.AuxiliaryUsage, err error) {
 	callCtx, cancel := context.WithTimeout(ctx, r.limits.Timeout)
 	defer cancel()
 	if err := callCtx.Err(); err != nil {
-		return nil, session.AuxiliaryUsage{}, err
+		return nil, usage, err
 	}
 	seq, err := r.provider.Stream(callCtx, request)
 	if err != nil {
 		if callCtx.Err() != nil {
-			return nil, session.AuxiliaryUsage{}, callCtx.Err()
+			return nil, usage, callCtx.Err()
 		}
-		return nil, session.AuxiliaryUsage{}, fmt.Errorf("%w: %v", ErrReflectionProvider, err)
+		return nil, usage, fmt.Errorf("%w: %v", ErrReflectionProvider, err)
 	}
 
-	var output strings.Builder
+	var text strings.Builder
 	var reported session.Usage
 	reportedTokens := 0
 	done := false
-	result := func() session.AuxiliaryUsage {
-		return auxiliaryUsage(session.UsageKindReflection, r.identity, reported)
-	}
+	defer func() {
+		usage = auxiliaryUsage(session.UsageKindReflection, r.identity, reported)
+	}()
 	for chunk, streamErr := range seq {
 		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
 			reported = reported.Add(*chunk.Usage)
 		}
 		if streamErr != nil {
 			if callCtx.Err() != nil {
-				return nil, result(), callCtx.Err()
+				return nil, usage, callCtx.Err()
 			}
-			return nil, result(), fmt.Errorf("%w: %v", ErrReflectionProvider, streamErr)
+			return nil, usage, fmt.Errorf("%w: %v", ErrReflectionProvider, streamErr)
 		}
 		if done {
 			cancel()
-			return nil, result(), fmt.Errorf("%w: chunk received after terminal stop", ErrReflectionOutput)
+			return nil, usage, fmt.Errorf("%w: chunk received after terminal stop", ErrReflectionOutput)
 		}
-		switch chunk.Kind {
-		case port.ChunkText:
-			if output.Len()+len(chunk.Text) > r.limits.OutputBytes {
-				cancel()
-				return nil, result(), fmt.Errorf("%w: output exceeds %d bytes", ErrReflectionOutput, r.limits.OutputBytes)
-			}
-			output.WriteString(chunk.Text)
-			if r.counter.Count(output.String()) > r.limits.Tokens {
-				cancel()
-				return nil, result(), fmt.Errorf("%w: estimated output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
-			}
-		case port.ChunkUsage:
-			if chunk.Usage != nil && chunk.Usage.OutputTokens > reportedTokens {
-				reportedTokens = chunk.Usage.OutputTokens
-			}
-			if reportedTokens > r.limits.Tokens {
-				cancel()
-				return nil, result(), fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
-			}
-		case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
-			// Reflection output is text-only; provider metadata is harmless and ignored.
-		case port.ChunkDone:
-			if !isBenignReflectionStop(chunk.Stop) {
-				cancel()
-				return nil, result(), fmt.Errorf("%w: non-benign terminal stop %q", ErrReflectionProvider, chunk.Stop)
-			}
-			done = true
-		default:
+		if err := r.validateReflectionChunk(chunk, &text, &reportedTokens, &done); err != nil {
 			cancel()
-			return nil, result(), fmt.Errorf("%w: unexpected reflector chunk kind %d", ErrReflectionOutput, chunk.Kind)
+			return nil, usage, err
 		}
 	}
 	if callCtx.Err() != nil {
-		return nil, result(), callCtx.Err()
+		return nil, usage, callCtx.Err()
 	}
 	if !done {
-		return nil, result(), fmt.Errorf("%w: provider stream ended without a terminal stop", ErrReflectionProvider)
+		return nil, usage, fmt.Errorf("%w: provider stream ended without a terminal stop", ErrReflectionProvider)
 	}
-	return []byte(output.String()), result(), nil
+	return []byte(text.String()), usage, nil
+}
+
+func (r *EvidenceReflector) validateReflectionChunk(chunk port.Chunk, output *strings.Builder, reportedTokens *int, done *bool) error {
+	switch chunk.Kind {
+	case port.ChunkText:
+		if output.Len()+len(chunk.Text) > r.limits.OutputBytes {
+			return fmt.Errorf("%w: output exceeds %d bytes", ErrReflectionOutput, r.limits.OutputBytes)
+		}
+		output.WriteString(chunk.Text)
+		if r.counter.Count(output.String()) > r.limits.Tokens {
+			return fmt.Errorf("%w: estimated output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
+		}
+	case port.ChunkUsage:
+		if chunk.Usage != nil && chunk.Usage.OutputTokens > *reportedTokens {
+			*reportedTokens = chunk.Usage.OutputTokens
+		}
+		if *reportedTokens > r.limits.Tokens {
+			return fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
+		}
+	case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
+		// Reflection output is text-only; provider metadata is harmless and ignored.
+	case port.ChunkDone:
+		if !isBenignReflectionStop(chunk.Stop) {
+			return fmt.Errorf("%w: non-benign terminal stop %q", ErrReflectionProvider, chunk.Stop)
+		}
+		*done = true
+	default:
+		return fmt.Errorf("%w: unexpected reflector chunk kind %d", ErrReflectionOutput, chunk.Kind)
+	}
+	return nil
 }
 
 func isBenignReflectionStop(stop session.StopReason) bool {

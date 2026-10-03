@@ -729,7 +729,7 @@ func TestSubagentStatusWaitRespectsRunCancel(t *testing.T) {
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p2" {
-			r.Cancel(agent.CancelCauseRequested) // cancel the whole run while the status tool is parked
+			r.Cancel() // cancel the whole run while the status tool is parked
 		}
 	})
 	// drainObserving's watchdog fails the test if the park wedges; the run must

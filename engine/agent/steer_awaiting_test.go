@@ -50,7 +50,7 @@ func awaitAskParked(t *testing.T, r *agent.Run) (evs []session.Event, ask *sessi
 				return evs, ev.Ask
 			}
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("run did not reach a permission ask within the deadline (possible wedge)")
 			return nil, nil
 		}
@@ -75,7 +75,7 @@ func drainRest(t *testing.T, r *agent.Run, observe func(session.Event)) []sessio
 				observe(ev)
 			}
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("run did not terminate within the deadline after the ask (possible wedge)")
 			return evs
 		}

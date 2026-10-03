@@ -346,7 +346,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 				last = ev.Result
 			}
 		case <-deadline:
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 			t.Fatalf("run wedged")
 		}
 	}

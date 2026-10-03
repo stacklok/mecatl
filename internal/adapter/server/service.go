@@ -3253,7 +3253,7 @@ func (s *Service) Close() {
 			s.cfg.MutationCapability.Invalidate(id)
 		}
 		if run != nil {
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 		} else if admissionCancel != nil {
 			admissionCancel()
 			// No relay owns a provisional admission. Close its execution slot here so
@@ -3405,7 +3405,7 @@ func (s *Service) Drain() {
 	}
 	s.mu.Unlock()
 	for _, pending := range provisional {
-		s.cancelRegisteredRunState(pending.id, pending.st, nil, true, agent.CancelCauseRequested)
+		s.cancelRegisteredRunState(pending.id, pending.st, nil, true)
 	}
 	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
 	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
@@ -3478,7 +3478,7 @@ func (s *Service) GracefulDrain(ctx context.Context) error {
 			if st.preserveDurable.Load() {
 				s.cfg.MutationCapability.Invalidate(id)
 			}
-			st.run.Cancel(agent.CancelCauseRequested)
+			st.run.Cancel()
 		} else if st.admissionCancel != nil {
 			st.admissionCancel()
 		}
@@ -5673,7 +5673,7 @@ func (s *Service) CancelRun(ctx context.Context, id session.SessionID, expectedR
 		return RunControlAcknowledgement{}, err
 	}
 	st.cancelSignaled = true
-	run.Cancel(agent.CancelCauseRequested)
+	run.Cancel()
 	return RunControlAcknowledgement{RunID: expectedRunID}, nil
 }
 
@@ -6985,7 +6985,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 // internal ctx-watcher cancels the LIVE run (the run is registered in s.runs
 // like any other; this method deregisters it after drain). The caller MUST
 // cancel the passed ctx once it stops draining, or the run can wedge behind a
-// dead relay (mirrors the run.Cancel(agent.CancelCauseRequested) the live relays call on disconnect).
+// dead relay (mirrors the run.Cancel() the live relays call on disconnect).
 func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string) (<-chan session.Event, error) {
 	generation := s.captureRunEntryGeneration(id)
 	return s.approvePlan(ctx, id, targetMode, note, generation)
@@ -7192,7 +7192,7 @@ func (s *Service) cancelLiveRun(id session.SessionID, target *agent.Run, expecte
 	// Set before waking the run. Any permission.ask already in the event buffer
 	// is historical once cancellation wins and must not trigger an awaiting save.
 	st.cancelSignaled = true
-	target.Cancel(agent.CancelCauseRequested)
+	target.Cancel()
 	return nil
 }
 
@@ -7203,10 +7203,10 @@ func (s *Service) cancelLiveRun(id session.SessionID, target *agent.Run, expecte
 // its admission context. expected, when non-nil, prevents a stale relay from
 // cancelling a successor. admissionOnly limits Drain's early gate to provisional
 // entries; active runs are left for GracefulDrain/Close.
-func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, expected *agent.Run, admissionOnly bool, cause agent.CancelCause) {
+func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, expected *agent.Run, admissionOnly bool) {
 	if st == nil {
 		if expected != nil {
-			expected.Cancel(cause)
+			expected.Cancel()
 		}
 		return
 	}
@@ -7218,7 +7218,7 @@ func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, e
 		s.mu.Unlock()
 		st.persistMu.Unlock()
 		if expected != nil && (!current || run != expected) {
-			expected.Cancel(cause)
+			expected.Cancel()
 		}
 		return
 	}
@@ -7229,7 +7229,7 @@ func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, e
 		admissionCancel()
 	}
 	if run != nil {
-		run.Cancel(cause)
+		run.Cancel()
 	}
 }
 
@@ -7237,7 +7237,7 @@ func (s *Service) cancelRegisteredRun(id session.SessionID, run *agent.Run) {
 	s.mu.Lock()
 	st := s.runs[id]
 	s.mu.Unlock()
-	s.cancelRegisteredRunState(id, st, run, false, agent.CancelCauseRequested)
+	s.cancelRegisteredRunState(id, st, run, false)
 }
 
 // CancelChild cancels ONE child (a subagent) of the session's in-flight run,
@@ -8105,12 +8105,12 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 }
 
 // onLeaseLost handles a declared lease loss only when expected remains the
-// current hold. Local mutation capability is invalidated before the owning run
-// is stopped. For a durably parked awaiting run, its exact local ask is withdrawn
-// before cancellation; cancellation can then unwind only in memory and cannot
-// overwrite the durable awaiting handoff point. The lifecycle record remains until
-// its relay drains and FinishRun performs identity-safe removal. A lightweight
-// lost-owner tombstone prevents this stale Service from reacquiring the session.
+// current hold. Local mutation capability is invalidated before any live run is
+// stopped. For a durably parked awaiting run, its exact local ask is withdrawn
+// and the run remains parked at its durable authorization handoff point. The
+// lifecycle record remains until its relay drains and FinishRun performs
+// identity-safe removal. A lightweight lost-owner tombstone prevents this stale
+// Service from reacquiring the session.
 // The successor now owns durable state, so any process-local authorization expiry
 // timer and local broker transaction are also stopped/invalidated here; the
 // durable snapshot itself is never mutated. Do not acquire runEntryMu here: lease
@@ -8145,11 +8145,7 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 			}
 		}
 	}
-	// Revoke the exact run's admission before declaring local loss. The run's
-	// usage mutex serializes this transition with completed review results.
-	if run != nil {
-		run.OwnershipLost()
-	}
+	// Local mutation capability is invalidated before the owning run is stopped.
 	expected.valid = false
 	s.lostOwnership[id] = struct{}{}
 	s.cfg.MutationCapability.Invalidate(id)
@@ -8165,7 +8161,10 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	if leaseCancel != nil {
 		leaseCancel()
 	}
-	s.cancelRegisteredRunState(id, st, nil, false, agent.CancelCauseOwnershipLost)
+	// A parked authorization remains the durable handoff point: Cancel is
+	// intentionally a no-op for its completed run. The service still marks its
+	// local run state cancelled to reject stale controls and relay saves.
+	s.cancelRegisteredRunState(id, st, nil, false)
 	if !preserveAwaiting {
 		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
 		defer releaseCancel()
@@ -8483,7 +8482,7 @@ func (s *Service) LostOwnershipCandidates(ctx context.Context) ([]session.Sessio
 // ReconcileLeaseLossTombstone is StaleRunningCandidates/SettleIfStale's
 // counterpart for the OTHER shape issue #1334 fixes: onLeaseLost drives the
 // session OUT of StateRunning as part of handling the loss — to awaiting via
-// the preserveAwaiting branch, or eventually to cancelled via run.Cancel(agent.CancelCauseOwnershipLost) —
+// the preserveAwaiting branch, or eventually to cancelled via run.Cancel() —
 // so the StateRunning-only staleness sweep above can never rediscover it, and
 // the lostOwnership tombstone (by design a PERMANENT fail-fast for every
 // ordinary caller, see lostOwnership's own doc comment) would otherwise clear
@@ -8596,7 +8595,7 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 	if *promoted {
 		return
 	}
-	s.cancelRegisteredRunState(id, st, nil, true, agent.CancelCauseRequested)
+	s.cancelRegisteredRunState(id, st, nil, true)
 	s.teardownExecution(st)
 	s.removeRunState(id, st)
 }
@@ -8778,7 +8777,7 @@ func (s *Service) startExecutionRenewal(_ session.SessionID, st *runState, run *
 			delay, usable := executionRenewDelay(handle, time.Now())
 			if !usable {
 				s.logDiscoveryError(context.Background(), "execution ownership renewal failed", errors.New("execution grant has insufficient time remaining"))
-				run.Cancel(agent.CancelCauseRequested)
+				run.Cancel()
 				return
 			}
 			timer := time.NewTimer(delay)
@@ -8793,7 +8792,7 @@ func (s *Service) startExecutionRenewal(_ session.SessionID, st *runState, run *
 				if deadlineHandle, ok := handle.(executionRenewalDeadline); ok {
 					remaining = time.Until(deadlineHandle.RenewalDeadline()) / 2
 					if remaining <= 0 {
-						run.Cancel(agent.CancelCauseRequested)
+						run.Cancel()
 						return
 					}
 				}
@@ -8802,7 +8801,7 @@ func (s *Service) startExecutionRenewal(_ session.SessionID, st *runState, run *
 				stop()
 				if err != nil {
 					s.logDiscoveryError(context.Background(), "execution ownership renewal failed", err)
-					run.Cancel(agent.CancelCauseRequested)
+					run.Cancel()
 					return
 				}
 			}

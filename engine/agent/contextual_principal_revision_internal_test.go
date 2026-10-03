@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -49,7 +50,7 @@ type admissionBlockingPolicy struct {
 	release chan struct{}
 }
 
-func (p *admissionBlockingPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+func (p *admissionBlockingPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
 	p.mu.Lock()
 	p.calls++
 	call := p.calls
@@ -59,7 +60,7 @@ func (p *admissionBlockingPolicy) Evaluate(context.Context, session.SessionID, s
 		p.entered <- struct{}{}
 		<-p.release
 	}
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (*admissionBlockingPolicy) Learn(session.SessionID, session.ToolCall) {}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -61,8 +62,8 @@ func (*guardrailUsageReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, _ 
 
 type guardrailUsagePolicy struct{}
 
-func (guardrailUsagePolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (guardrailUsagePolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (guardrailUsagePolicy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -236,7 +237,7 @@ func TestContextualGuardrailUsage_Scenario2_SerialCancellationDrainsCompletedUsa
 		},
 		after: func(req ToolReviewRequest) {
 			if req.Job == ReviewJobInbound {
-				(<-runReady).Cancel(CancelCauseRequested) // completed serial review races requested cancellation
+				(<-runReady).Cancel() // completed serial review races requested cancellation
 			}
 		},
 	}
@@ -288,9 +289,47 @@ func TestContextualGuardrailUsage_Scenario2_LateUsageIsDropped(t *testing.T) {
 	r.recordGuardrailUsageWhileActive(t.Context(), sess, testGuardrailUsage(7))
 	r.recordGuardrailUsageWhileActive(t.Context(), sess, testGuardrailUsage(7))
 	if got := sess.UsageFor(session.UsageKindGuardrail); got != (session.Usage{}) {
-		t.Fatalf("late usage persisted after ownership loss: %+v", got)
+		t.Fatalf("late usage persisted after run end: %+v", got)
 	}
 	if got := diag.count("late auxiliary usage dropped after parent run ended"); got != 1 {
 		t.Fatalf("late-drop diagnostics = %d, want one bounded line", got)
+	}
+}
+
+type permissionUsagePolicy struct{ calls int }
+
+func (p *permissionUsagePolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
+	p.calls++
+	effect := governance.Ask
+	if call.Name == shellSystemTempToolName {
+		effect = governance.Allow
+	}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: effect}, Usage: testGuardrailUsage(1)}
+}
+func (*permissionUsagePolicy) Learn(session.SessionID, session.ToolCall) {}
+
+func TestPermissionEvaluationRecordsEveryResultBeforeDecision(t *testing.T) {
+	policy := &permissionUsagePolicy{}
+	env := memEnv("/ws")
+	eng := NewEngine(Deps{Policy: policy})
+	sess := session.New("permission-usage", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	call := session.NewToolCall("shell", tool.ShellToolName, []byte(`{"command":"pwd","temp_scope":"system"}`))
+	run := &Run{diag: port.NopDiagnostics{}, auxiliaryUsageActive: true}
+	for i := 1; i <= 2; i++ {
+		if d := eng.permissionDecision(t.Context(), run, sess, env, call); d.Effect != governance.Ask {
+			t.Fatalf("evaluation %d effect = %s", i, d.Effect)
+		}
+		if policy.calls != i*2 || sess.UsageFor(session.UsageKindGuardrail).InputTokens != i*2 {
+			t.Fatalf("evaluation %d: calls=%d usage=%+v", i, policy.calls, sess.UsageFor(session.UsageKindGuardrail))
+		}
+	}
+	run.revokeAuxiliaryUsageOwnership()
+	_ = eng.permissionDecision(t.Context(), run, sess, env, call)
+	if got := sess.UsageFor(session.UsageKindGuardrail).InputTokens; got != 4 {
+		t.Fatalf("late usage = %d, want 4", got)
+	}
+	_ = eng.permissionDecision(t.Context(), nil, sess, env, call)
+	if got := sess.UsageFor(session.UsageKindGuardrail).InputTokens; got != 4 {
+		t.Fatalf("nil-run usage = %d, want 4", got)
 	}
 }

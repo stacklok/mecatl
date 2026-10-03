@@ -1255,7 +1255,7 @@ func TestSteer_NeverClosedParked(t *testing.T) {
 	if got := steerEnqueueOutcome(t, r, steerText); got != agent.SteerAccepted {
 		t.Fatalf("enqueue outcome = %q, want %q", got, agent.SteerAccepted)
 	}
-	r.Cancel(agent.CancelCauseRequested)
+	r.Cancel()
 	gate.releaseOnce()
 	evs := drainObserving(t, r, nil)
 	if res := lastResult(t, evs); res.Stop != session.StopCancelled {

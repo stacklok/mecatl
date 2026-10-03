@@ -120,10 +120,10 @@ func TestListDirExternalConfiguredRulesSurviveYolo(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: tc.effect}}, nil)
 			decision := newEscapePolicy(inner, PostureYolo).Evaluate(context.Background(), "s1", session.ModeDefault, call, ws)
-			if decision.Effect != tc.effect {
-				t.Fatalf("configured %s became %s at yolo", tc.effect, decision.Effect)
+			if decision.Decision.Effect != tc.effect {
+				t.Fatalf("configured %s became %s at yolo", tc.effect, decision.Decision.Effect)
 			}
-			if tc.effect == governance.Ask && decision.AskProvenance != governance.AskProvenanceConfigured {
+			if tc.effect == governance.Ask && decision.Decision.AskProvenance != governance.AskProvenanceConfigured {
 				t.Fatal("configured ListDir ask lost ConfiguredAsk provenance")
 			}
 		})

@@ -204,7 +204,7 @@ func TestStartRunContentLeavesLiveRunningSessionAlone(t *testing.T) {
 		t.Fatalf("first StartRunContent: %v", err)
 	}
 	t.Cleanup(func() {
-		run.Cancel(agent.CancelCauseRequested)
+		run.Cancel()
 		drainRun(t, run)
 		svc.FinishRun(sess.ID, run)
 	})

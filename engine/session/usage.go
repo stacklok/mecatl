@@ -6,6 +6,8 @@ import "strings"
 // current writers; readers preserve every non-empty kind for forward compatibility.
 type UsageKind string
 
+const unknownUsageKind UsageKind = "unknown"
+
 const (
 	// UsageKindMain is the reserved normal agent-run accounting bucket.
 	UsageKindMain UsageKind = "main"
@@ -39,8 +41,8 @@ type AuxiliaryUsage struct {
 	Buckets map[UsageKind]TokenUsage
 }
 
-// Merge returns an owned aggregate of a and other. Empty kinds are ignored and
-// each bucket total is derived from its model entries.
+// Merge returns an owned aggregate of a and other. Missing kinds are recorded
+// under unknown; each bucket total is derived from its model entries.
 func (a AuxiliaryUsage) Merge(other AuxiliaryUsage) AuxiliaryUsage {
 	out := AuxiliaryUsage{Buckets: make(map[UsageKind]TokenUsage, len(a.Buckets)+len(other.Buckets))}
 	mergeAuxiliaryUsage(out.Buckets, a.Buckets)
@@ -51,7 +53,7 @@ func (a AuxiliaryUsage) Merge(other AuxiliaryUsage) AuxiliaryUsage {
 func mergeAuxiliaryUsage(out, in map[UsageKind]TokenUsage) {
 	for kind, bucket := range in {
 		if kind == "" {
-			continue
+			kind = unknownUsageKind
 		}
 		merged := out[kind]
 		if merged.Models == nil {
@@ -87,7 +89,7 @@ func modelAttribution(providerID, modelID string) string {
 	return providerID + "/" + modelID
 }
 
-// RecordAuxiliaryUsage adds every valid returned auxiliary bucket to the ledger.
+// RecordAuxiliaryUsage adds every returned auxiliary bucket to the ledger.
 // Bucket totals are derived from their model entries.
 func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
 	if s == nil {
@@ -95,7 +97,7 @@ func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
 	}
 	for kind, bucket := range usage.Buckets {
 		if kind == "" {
-			continue
+			kind = unknownUsageKind
 		}
 		for attribution, value := range bucket.Models {
 			s.recordTokenUsage(kind, attribution, value)
@@ -104,11 +106,11 @@ func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
 }
 
 // RecordTokenUsage adds usage to a canonical bucket under the opaque provider/model
-// attribution. Empty kinds are invalid; all non-empty kinds are preserved so a
-// newer writer's bucket can round-trip through older readers.
+// attribution. Missing kinds are recorded as unknown; all other kinds are
+// preserved so a newer writer's bucket can round-trip through older readers.
 func (s *Session) RecordTokenUsage(kind UsageKind, providerID, modelID string, usage Usage) {
 	if kind == "" {
-		return
+		kind = unknownUsageKind
 	}
 	s.recordTokenUsage(kind, modelAttribution(providerID, modelID), usage)
 }
@@ -137,19 +139,7 @@ func (s *Session) TokenUsageSnapshot() map[UsageKind]TokenUsage {
 // RestoreTokenUsage restores the canonical accounting ledger from trusted persistence.
 func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 	s.tokenUsage = make(map[UsageKind]TokenUsage, len(usage))
-	for kind, bucket := range usage {
-		if kind == "" {
-			continue
-		}
-		models := make(map[string]Usage, len(bucket.Models))
-		for model, value := range bucket.Models {
-			if model == "" {
-				model = unknownModelAttribution
-			}
-			models[model] = models[model].Add(value)
-		}
-		s.tokenUsage[kind] = TokenUsage{Total: sumModelUsage(models), Models: models}
-	}
+	mergeAuxiliaryUsage(s.tokenUsage, usage)
 }
 
 func cloneTokenUsage(in map[UsageKind]TokenUsage) map[UsageKind]TokenUsage {

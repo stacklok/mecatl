@@ -40,7 +40,7 @@ func TestADR_0281_PreToolUseManagedToSystemRequiresAuthorization(t *testing.T) {
 			if !strings.Contains(string(event.Ask.Args), `"temp_scope":"system"`) {
 				t.Fatalf("scope approval did not disclose system scope: %s", event.Ask.Args)
 			}
-			run.Cancel(CancelCauseRequested)
+			run.Cancel()
 		}
 	}
 	if runner.command != "" {
