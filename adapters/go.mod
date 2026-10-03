@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/gofrs/flock v0.13.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0

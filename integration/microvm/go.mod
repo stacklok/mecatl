@@ -39,7 +39,7 @@ require (
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cedar-policy/cedar-go v1.8.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -59,7 +59,7 @@ require (
 	github.com/digitorus/pkcs7 v0.0.0-20250730155240-ffadbf3f398c // indirect
 	github.com/digitorus/timestamp v0.0.0-20250524132541-c45532741eea // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/dlclark/regexp2/v2 v2.1.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
 	github.com/docker/cli v29.7.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
 	github.com/docker/go-connections v0.8.1 // indirect
@@ -72,7 +72,7 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/getsentry/sentry-go v0.49.0 // indirect
 	github.com/getsentry/sentry-go/otel v0.49.0 // indirect
@@ -236,7 +236,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/tiktoken-go/tokenizer v0.8.0 // indirect
+	github.com/tiktoken-go/tokenizer v0.8.1 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/transparency-dev/formats v0.1.1 // indirect
