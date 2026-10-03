@@ -1,13 +1,16 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // TestHelpOpensOnlyOnEmptyInput pins the "?"-is-printable gotcha: "?" opens the
@@ -119,6 +122,159 @@ func TestHelpPreservesGlobalLifecycleKeys(t *testing.T) {
 	})
 }
 
+func TestHelpCardWidthIsTerminalBounded(t *testing.T) {
+	th := aztec()
+	frame := th.Style("askCard").GetHorizontalFrameSize()
+	for _, tc := range []struct{ terminal, want int }{
+		{terminal: 40, want: 40},
+		{terminal: 69, want: 69},
+		{terminal: 100, want: 80},
+		{terminal: 200, want: 160},
+	} {
+		t.Run(fmt.Sprintf("%d columns", tc.terminal), func(t *testing.T) {
+			if got := helpBodyWidth(th, tc.terminal) + frame; got != tc.want {
+				t.Fatalf("card width = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func renderedHelpCardWidth(body string) int {
+	for _, line := range strings.Split(ansi.Strip(body), "\n") {
+		start := strings.Index(line, "┏")
+		if start < 0 {
+			continue
+		}
+		if end := strings.Index(line[start:], "┓"); end >= 0 {
+			return ansi.StringWidth(line[start : start+end+len("┓")])
+		}
+	}
+	return 0
+}
+
+func TestHelpFitsAvailableWidth(t *testing.T) {
+	for _, width := range []int{40, 100} {
+		t.Run(fmt.Sprintf("%d columns", width), func(t *testing.T) {
+			m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: width, Height: 24})
+			wantCardWidth := helpCardWidth(width)
+			bodies := []string{m.renderBody()}
+			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+			bodies = append(bodies, m.renderBody())
+			for _, body := range bodies {
+				if got := renderedHelpCardWidth(body); got != wantCardWidth {
+					t.Fatalf("card width = %d, want %d", got, wantCardWidth)
+				}
+				for _, line := range strings.Split(body, "\n") {
+					if got := ansi.StringWidth(ansi.Strip(line)); got > m.width {
+						t.Fatalf("help line width %d exceeds card width %d: %q", got, m.width, line)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestHelpWrapsNarrowBodyAndNavigatesWrappedRows(t *testing.T) {
+	m := helpModel(t, allOnCaps())
+	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 24})
+	total, window := m.helpScrollGeometry()
+	if total <= window {
+		t.Fatalf("precondition: wrapped help should overflow (total=%d window=%d)", total, window)
+	}
+	for _, line := range strings.Split(m.renderBody(), "\n") {
+		if got := ansi.StringWidth(ansi.Strip(line)); got > m.width {
+			t.Fatalf("help line width %d exceeds card width %d: %q", got, m.width, line)
+		}
+	}
+
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.helpScroll != 1 {
+		t.Fatalf("down should advance one wrapped row, got offset %d", m.helpScroll)
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if want := maxScrollOffset(total, window); m.helpScroll != want {
+		t.Fatalf("end offset = %d, want %d", m.helpScroll, want)
+	}
+	view := m.helpViewport.View(helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings())))
+	if view.Below != 0 {
+		t.Fatalf("end should reveal the final wrapped row, with %d rows still below", view.Below)
+	}
+}
+
+func TestHelpWheelOwnershipAndPhysicalRowBrowsing(t *testing.T) {
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 40, Height: 24})
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
+	m.vp.GotoBottom()
+	m.vp.ScrollUp(5)
+	m.prompt.Rewrite("hidden draft")
+	m.prompt.SelectAll()
+
+	assertHiddenUnchanged := func(beforeConversation int, beforePrompt string, beforeFocused, beforePromptSelection bool) {
+		t.Helper()
+		if got := m.vp.YOffset(); got != beforeConversation {
+			t.Fatalf("wheel leaked to hidden conversation: got %d, want %d", got, beforeConversation)
+		}
+		if m.sel.active {
+			t.Fatal("wheel activated hidden conversation selection")
+		}
+		if got := m.prompt.Value(); got != beforePrompt {
+			t.Fatalf("wheel changed hidden prompt from %q to %q", beforePrompt, got)
+		}
+		if got := m.prompt.Focused(); got != beforeFocused {
+			t.Fatalf("wheel changed hidden prompt focus from %t to %t", beforeFocused, got)
+		}
+		if got := m.prompt.HasSelection(); got != beforePromptSelection {
+			t.Fatalf("wheel changed hidden prompt selection from %t to %t", beforePromptSelection, got)
+		}
+	}
+	beforeConversation := m.vp.YOffset()
+	beforePrompt, beforeFocused, beforePromptSelection := m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+
+	updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != 1 {
+		t.Fatalf("wheel down offset = %d, want one physical row", got)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != 0 {
+		t.Fatalf("wheel at top offset = %d, want consumed endpoint 0", got)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	total, _ := m.helpScrollGeometry()
+	m.helpViewport.Move(bounded.End, total)
+	atEnd := m.helpViewport.Offset()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != atEnd {
+		t.Fatalf("wheel at end offset = %d, want consumed endpoint %d", got, atEnd)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 10, Height: 3})
+	beforeConversation = m.vp.YOffset()
+	beforePrompt, beforeFocused, beforePromptSelection = m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 1000})
+	if total, window := m.helpScrollGeometry(); total > window {
+		t.Fatalf("precondition: tall Help viewport should not overflow (total=%d window=%d)", total, window)
+	}
+	beforeConversation = m.vp.YOffset()
+	beforePrompt, beforeFocused, beforePromptSelection = m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.helpViewport.Offset(); got != 0 {
+		t.Fatalf("wheel without overflow offset = %d, want consumed endpoint 0", got)
+	}
+	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
+}
+
 func TestHelpScrollNavigationAndReset(t *testing.T) {
 	m := helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
@@ -175,8 +331,8 @@ func TestHelpRenderingIsHeightBoundedAndShowsScrollGuidance(t *testing.T) {
 		t.Fatalf("help body is %d lines, exceeds offered viewport height %d", got, limit)
 	}
 
-	initial := stripANSIstr(m.renderBody())
-	for _, want := range []string{"lines ", " of ", "ctrl+f1 or ? close", "ctrl+f2/ctrl+f3 scroll", "ctrl+f4/ctrl+f5 page", "ctrl+f6/ctrl+f7 jump"} {
+	initial := strings.Join(strings.Fields(strings.ReplaceAll(stripANSIstr(m.renderBody()), "┃", "")), "")
+	for _, want := range []string{"lines", "of", "ctrl+f1or?close", "ctrl+f2/ctrl+f3scroll", "ctrl+f4/ctrl+f5page", "ctrl+f6", "ctrl+f7jump"} {
 		if !strings.Contains(initial, want) {
 			t.Fatalf("initial clipped help should show %q:\n%s", want, initial)
 		}
