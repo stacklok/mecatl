@@ -172,7 +172,10 @@ commit in the worktree does not break the session bound to it.
 Press `d` on a row and confirm with `y`. Deleting a session that is running or
 waiting for approval stops it first. The row leaves the window and the stored
 session is removed. Deleting the active session switches to the next row;
-deleting the last one opens a new session.
+deleting the last one opens a new session. An older server cannot stop and
+delete in one step, so `mecatui` cancels the session's run, waits for it to
+end, and then deletes the session. Press `n` or `Esc` to stop waiting and keep
+the session.
 
 For a session in a worktree that the server created, the confirmation also
 offers **delete and remove worktree** (`r`). The server removes the worktree
