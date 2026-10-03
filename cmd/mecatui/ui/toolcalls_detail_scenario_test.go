@@ -213,54 +213,62 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 			}
 			m := newToolcallsInspectorModel(t)
 			m.deps.Theme = th
-			m.conv.addTool("pending", "Read", `{"path":"pending.go"}`)
-			m.conv.addTool("success", "Read", `{"path":"success.go"}`)
-			m.conv.resolveTool("success", "done", false)
-			m.conv.addTool("failure", "Read", `{"path":"failure.go"}`)
-			m.conv.resolveTool("failure", "failed", true)
-			m.conv.addTool("reused", "Read", `{"path":"first.go"}`)
-			m.conv.resolveTool("reused", "first", false)
-			m.conv.addTool("reused", "Read", `{"path":"second.go"}`)
+			m = applyAll(m, client.ToolCallMsg{ID: "lifecycle", Name: "Read", Args: `{"path":"lifecycle.go"}`})
 			m = openToolcallsForTest(t, m)
 			s := toolcallsForTest(t, m)
-			body, _ := s.Render(80, 12)
-			plain := stripANSIstr(body)
-			for _, tc := range []struct {
-				glyph, status, slot string
-			}{
-				{"…", "running", "toolName"},
-				{"✓", "done", "toolOk"},
-				{"✗", "failed", "toolErr"},
-			} {
-				if !strings.Contains(plain, tc.glyph+" "+tc.status) {
-					t.Fatalf("list lacks non-color status %q %q:\n%s", tc.glyph, tc.status, plain)
+			selected := s.entries[s.selected].blockID
+
+			assertList := func(glyph, status, slot string) {
+				t.Helper()
+				body := m.View().Content
+				if plain := stripANSIstr(body); !strings.Contains(plain, glyph+" "+status) {
+					t.Fatalf("list lacks non-color status %q %q:\n%s", glyph, status, plain)
 				}
-				if !strings.Contains(body, th.Style(tc.slot).Render(tc.glyph)) {
-					t.Fatalf("list glyph %q does not use %s: %q", tc.glyph, tc.slot, body)
+				if !strings.Contains(body, th.Style(slot).Render(glyph)) {
+					t.Fatalf("list glyph %q does not use %s: %q", glyph, slot, body)
 				}
-			}
-			if !strings.Contains(plain, "first.go") || !strings.Contains(plain, "second.go") {
-				t.Fatalf("reused call IDs did not retain separate list rows:\n%s", plain)
-			}
-			for _, tc := range []toolcallDetail{
-				{name: "Read", resultReceived: false},
-				{name: "Read", resolved: true, resultReceived: true},
-				{name: "Read", failed: true, resultReceived: true}, // provisional error follows the resolved-card failure semantics.
-			} {
-				glyph, status, slot := toolcallStatus(tc.resolved, tc.failed)
-				styled := strings.Join(s.styledToolcallDetailLines(tc), "\n")
-				if plain := stripANSIstr(styled); !strings.Contains(plain, "Identity · "+glyph+" Read · "+status) {
-					t.Fatalf("detail lacks non-color status %q:\n%s", status, plain)
-				}
-				if !strings.Contains(styled, th.Style(slot).Render(glyph)) || !strings.Contains(styled, th.Style(slot).Render(status)) {
-					t.Fatalf("detail status %q does not use %s: %q", status, slot, styled)
+				if got := toolcallsForTest(t, m).entries[toolcallsForTest(t, m).selected].blockID; got != selected {
+					t.Fatalf("lifecycle update selected block %d, want %d", got, selected)
 				}
 			}
-			narrow, _ := s.Render(24, 8)
-			for _, row := range strings.Split(stripANSIstr(narrow), "\n") {
-				if ansi.StringWidth(row) > 24 {
-					t.Fatalf("narrow status row overflows: %q", row)
+
+			m = applyAll(m, tea.WindowSizeMsg{Width: 46, Height: 30})
+			assertDetail := func(glyph, status, slot string) string {
+				t.Helper()
+				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+				s = toolcallsForTest(t, m)
+				if !s.detail {
+					t.Fatal("Enter did not open the selected call detail")
 				}
+				detail := m.View().Content
+				if s.compact {
+					t.Fatalf("narrow detail unexpectedly used compact fallback: %q", detail)
+				}
+				if plain := stripANSIstr(detail); !strings.Contains(plain, "Identity · "+glyph+" Read · "+status) {
+					t.Fatalf("detail lacks non-color status %q: %q", status, plain)
+				}
+				if !strings.Contains(detail, th.Style(slot).Render(glyph)) || !strings.Contains(detail, th.Style(slot).Render(status)) {
+					t.Fatalf("detail status %q does not use %s: %q", status, slot, detail)
+				}
+				if got := s.entries[s.selected].blockID; got != selected {
+					t.Fatalf("detail selected block %d, want %d", got, selected)
+				}
+				return stripANSIstr(detail)
+			}
+
+			assertList("…", "running", "toolName")
+			assertDetail("…", "running", "toolName")
+			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "provisional failure", Available: true, IsError: true})
+			assertList("✗", "failed", "toolErr")
+			if detail := assertDetail("✗", "failed", "toolErr"); !strings.Contains(detail, "provisional failure") {
+				t.Fatalf("provisional result missing from detail: %q", detail)
+			}
+			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "canonical success"})
+			assertList("✓", "done", "toolOk")
+			if detail := assertDetail("✓", "done", "toolOk"); strings.Contains(detail, "provisional failure") || !strings.Contains(detail, "canonical success") {
+				t.Fatalf("canonical detail lifecycle state: %q", detail)
 			}
 		})
 	}

@@ -697,10 +697,13 @@ func TestMecatuiToolcallsInspector_Scenario5_WheelScrollsListWithoutChangingSele
 	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	m = updated.(Model)
-	_ = m.View()
+	view := stripANSIstr(m.View().Content)
 	s = toolcallsForTest(t, m)
 	if s.selected != 0 {
 		t.Fatalf("Home selected %d, want oldest row", s.selected)
+	}
+	if !strings.Contains(view, s.entries[s.selected].intent) {
+		t.Fatalf("Home left selected row offscreen: %q", view)
 	}
 	var clicked renderedHitRegion
 	for _, region := range m.hits.frame {
