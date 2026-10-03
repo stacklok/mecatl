@@ -144,8 +144,26 @@ describe("mounted delegated activity", () => {
       }
       if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
       if (path === "/api/v1/sessions") {
-        // A direct link can open a saved chat outside the current list page.
-        return json({ complete: true, items: [] });
+        // The inventory proves this direct link is an editable main chat.
+        return json({
+          complete: true,
+          items: [
+            {
+              capabilities: { publicChat: true, publicChatReason: "" },
+              createdAt: "2026-09-24T12:00:00Z",
+              debugTargetSessionId: "",
+              id: "session-a",
+              kind: "main",
+              modelId: "test",
+              state: "idle",
+              title: "Session A",
+              titleProvenance: "",
+              titleRevision: "0",
+              turns: 1,
+              updatedAt: "2026-09-24T12:00:00Z",
+            },
+          ],
+        });
       }
       if (path === "/api/v1/sessions/session-a") {
         return json({
@@ -311,7 +329,7 @@ describe("mounted delegated activity", () => {
     await act(async () =>
       container
         ?.querySelector<HTMLButtonElement>(
-          'aside[aria-label="Session activity"] button[aria-label="Close preview"]',
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
         )
         ?.click(),
     );
@@ -357,9 +375,17 @@ describe("mounted delegated activity", () => {
         return json({
           complete: true,
           items: ["session-a", "session-b"].map((id) => ({
-            capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+            capabilities: {
+              delete: true,
+              deleteReason: "",
+              publicChat: true,
+              publicChatReason: "",
+              rename: true,
+              renameReason: "",
+            },
             createdAt: "2026-09-24T12:00:00Z",
             debugTargetSessionId: "",
+            kind: "main",
             id,
             modelId: "test",
             state: "idle",
@@ -476,9 +502,17 @@ describe("mounted delegated activity", () => {
           complete: true,
           items: [
             {
-              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              capabilities: {
+                delete: true,
+                deleteReason: "",
+                publicChat: true,
+                publicChatReason: "",
+                rename: true,
+                renameReason: "",
+              },
               createdAt: "2026-09-24T12:00:00Z",
               debugTargetSessionId: "",
+              kind: "main",
               id: "session-a",
               modelId: "test",
               state: "idle",
@@ -588,9 +622,17 @@ describe("mounted delegated activity", () => {
           complete: true,
           items: [
             {
-              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              capabilities: {
+                delete: true,
+                deleteReason: "",
+                publicChat: true,
+                publicChatReason: "",
+                rename: true,
+                renameReason: "",
+              },
               createdAt: "2026-09-24T12:00:00Z",
               debugTargetSessionId: "",
+              kind: "main",
               id: "session-a",
               modelId: "test",
               state: "idle",
@@ -715,9 +757,17 @@ describe("mounted delegated activity", () => {
           complete: true,
           items: [
             {
-              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              capabilities: {
+                delete: true,
+                deleteReason: "",
+                publicChat: true,
+                publicChatReason: "",
+                rename: true,
+                renameReason: "",
+              },
               createdAt: "2026-09-24T12:00:00Z",
               debugTargetSessionId: "",
+              kind: "main",
               id: "session-a",
               modelId: "test",
               state: sessionState,
@@ -803,9 +853,17 @@ describe("mounted delegated activity", () => {
             complete: true,
             items: [
               {
-                capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+                capabilities: {
+                  delete: true,
+                  deleteReason: "",
+                  publicChat: true,
+                  publicChatReason: "",
+                  rename: true,
+                  renameReason: "",
+                },
                 createdAt: "2026-09-24T12:00:00Z",
                 debugTargetSessionId: "",
+                kind: "main",
                 id: "session-a",
                 modelId: "test",
                 state: sessionState,
@@ -912,9 +970,17 @@ describe("mounted delegated activity", () => {
           complete: true,
           items: [
             {
-              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              capabilities: {
+                delete: true,
+                deleteReason: "",
+                publicChat: true,
+                publicChatReason: "",
+                rename: true,
+                renameReason: "",
+              },
               createdAt: "2026-09-24T12:00:00Z",
               debugTargetSessionId: "",
+              kind: "main",
               id: "session-a",
               modelId: "test",
               state: sessionState,
@@ -995,12 +1061,9 @@ describe("mounted delegated activity", () => {
     expect(container?.textContent).toContain("Tools: 1");
     expect(document.activeElement?.textContent).toBe("Subagent child-a");
     await act(async () =>
-      (
-        container?.querySelector(
-          'aside[aria-label="Session activity"] button[aria-label="Close preview"]',
-        ) as HTMLButtonElement
-      )?.click(),
+      document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
     );
+    expect(container?.querySelector('aside[aria-label="Session activity"]')).toBeNull();
     expect(document.activeElement).toBe(card);
 
     sessionState = "idle";
@@ -1049,7 +1112,7 @@ describe("mounted delegated activity", () => {
     await act(async () =>
       (
         container?.querySelector(
-          'aside[aria-label="Session activity"] button[aria-label="Close preview"]',
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
         ) as HTMLButtonElement
       )?.click(),
     );
@@ -1076,9 +1139,17 @@ describe("mounted delegated activity", () => {
         return json({
           complete: true,
           items: ["session-a", "session-b"].map((id) => ({
-            capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+            capabilities: {
+              delete: true,
+              deleteReason: "",
+              publicChat: true,
+              publicChatReason: "",
+              rename: true,
+              renameReason: "",
+            },
             createdAt: "2026-09-24T12:00:00Z",
             debugTargetSessionId: "",
+            kind: "main",
             id,
             modelId: "test",
             state: id === "session-a" ? "running" : "idle",
@@ -1181,9 +1252,17 @@ describe("mounted delegated activity", () => {
               complete: true,
               items: [
                 {
-                  capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+                  capabilities: {
+                    delete: true,
+                    deleteReason: "",
+                    publicChat: true,
+                    publicChatReason: "",
+                    rename: true,
+                    renameReason: "",
+                  },
                   createdAt: "2026-09-24T12:00:00Z",
                   debugTargetSessionId: "",
+                  kind: "main",
                   id: "session-a",
                   modelId: "test",
                   state: sessionState,

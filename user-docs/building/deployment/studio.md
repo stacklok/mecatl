@@ -235,6 +235,45 @@ fire history alone does not add a note to the chat. An open, visible chat checks
 saved history while idle, so a short delivery's reply and turns added from
 another client appear even when their live activity was missed.
 
+### Navigate and branch a conversation
+
+In a long chat, use the numbered **Message minimap** beside the transcript to
+jump to a message. Its buttons work with a keyboard and remain available on a
+small screen. Select **Scroll to latest message** when you want to follow new
+messages again.
+
+Select **Reply in thread** under a saved message to open a separate chat in the
+side panel. The thread copies the source chat's full history at the time you
+fork it, including messages after the one you selected. The selected message
+anchors the thread in the source transcript. Each occurrence has its own
+thread, even when two messages have the same text.
+
+Select an image or tool result in the transcript to inspect its preview in the
+same side panel. Select **Canvas** in the chat header to edit Markdown notes and
+switch between **Edit** and **Preview**. Canvas notes stay in this browser for
+your account and the selected chat. Opening or previewing them does not send
+their text to Mecatl.
+
+### Inspect a session
+
+Open **Chat options > Inspect session** to see its kind, state, model, usage,
+and available placement details. **View transcript** shows the saved messages
+in order and identifies an incomplete transcript. **Inspect soul** shows the
+resolved soul for your connection; it is shared across the sessions on that
+connection. Studio explains when any inspection view is unavailable.
+
+The session list has a separate **Inspect-only sessions** group. Opening one
+shows **Session details** and, when permitted, its saved transcript. It has no
+chat composer or run controls. **Copy session ID** appears when permitted.
+
+For a chat with eligible worktrees, select **Choose worktree**, choose a listed
+worktree, and confirm **Fork in selected worktree** or **Clear in selected
+worktree**. Studio opens the new session after the operation; the source chat
+keeps its placement. If the choice has become unavailable, Studio refreshes
+the list so you can choose again. **Debug with AI** first asks you to confirm
+that stored transcript and event evidence will be sent to the model in a separate
+diagnostic chat. The inspected session remains read-only to that debugger.
+
 ## Try it locally with Compose
 
 The repository's `apps/docker-compose.yml` starts a `mecated` container and

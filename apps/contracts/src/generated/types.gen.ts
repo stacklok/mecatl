@@ -377,14 +377,25 @@ export type ListSessionsResponses = {
         complete: boolean;
         items: Array<{
             capabilities: {
+                copyId: boolean;
+                copyIdReason: string;
                 delete: boolean;
                 deleteReason: string;
+                fork: boolean;
+                forkReason: string;
+                inspect: boolean;
+                inspectReason: string;
+                publicChat: boolean;
+                publicChatReason: string;
                 rename: boolean;
                 renameReason: string;
+                viewTranscript: boolean;
+                viewTranscriptReason: string;
             };
             createdAt: string;
             debugTargetSessionId: string;
             id: string;
+            kind: string;
             modelId: string;
             state: string;
             title: string;
@@ -618,12 +629,23 @@ export type GetSessionDetailResponses = {
             modelSelection: boolean;
         };
         id: string;
+        kind: string;
         mode: 'default' | 'plan' | 'acceptEdits';
         model?: {
             id: string;
             providerId: string;
             contextWindow: string;
             reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+        };
+        placement?: {
+            kind: string;
+            label: string;
+            branch: string;
+            revision: string;
+        };
+        relationship?: {
+            debugTargetSessionId?: string;
+            parentSessionId?: string;
         };
         state: string;
         usage: {
@@ -1009,6 +1031,7 @@ export type ForkSessionData = {
             providerId: string;
         };
         reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+        worktreeSelector?: string;
     };
     path: {
         sessionId: string;
@@ -1018,6 +1041,28 @@ export type ForkSessionData = {
 };
 
 export type ForkSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -1033,6 +1078,17 @@ export type ForkSessionErrors = {
      * The request could not be completed.
      */
     500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
         code: string;
         detail: string;
         instance: string;
@@ -1067,7 +1123,9 @@ export type ForkSessionResponses = {
 export type ForkSessionResponse = ForkSessionResponses[keyof ForkSessionResponses];
 
 export type ClearSessionData = {
-    body?: never;
+    body?: {
+        worktreeSelector?: string;
+    };
     path: {
         sessionId: string;
     };
@@ -1076,6 +1134,28 @@ export type ClearSessionData = {
 };
 
 export type ClearSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -1091,6 +1171,17 @@ export type ClearSessionErrors = {
      * The request could not be completed.
      */
     500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
         code: string;
         detail: string;
         instance: string;
@@ -3126,6 +3217,188 @@ export type GetUserMemoryResponses = {
 };
 
 export type GetUserMemoryResponse = GetUserMemoryResponses[keyof GetUserMemoryResponses];
+
+export type GetSoulInspectionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/soul';
+};
+
+export type GetSoulInspectionErrors = {
+    /**
+     * The inspection could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    401: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetSoulInspectionError = GetSoulInspectionErrors[keyof GetSoulInspectionErrors];
+
+export type GetSoulInspectionResponses = {
+    /**
+     * The connection's resolved soul snapshot.
+     */
+    200: {
+        present: boolean;
+        content: string;
+        sizeBytes: string;
+        sha256: string;
+        provenance: 'unspecified' | 'user' | 'project' | 'driver';
+        trusted: boolean;
+        drifted: boolean;
+    };
+};
+
+export type GetSoulInspectionResponse = GetSoulInspectionResponses[keyof GetSoulInspectionResponses];
+
+export type GetSessionWorktreesData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/worktrees';
+};
+
+export type GetSessionWorktreesErrors = {
+    /**
+     * The inspection could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    401: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The inspection could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetSessionWorktreesError = GetSessionWorktreesErrors[keyof GetSessionWorktreesErrors];
+
+export type GetSessionWorktreesResponses = {
+    /**
+     * Eligible choices for the owned source session.
+     */
+    200: {
+        items: Array<{
+            selector: string;
+            kind: string;
+            label: string;
+            branch: string;
+            revision: string;
+            bare: boolean;
+        }>;
+    };
+};
+
+export type GetSessionWorktreesResponse = GetSessionWorktreesResponses[keyof GetSessionWorktreesResponses];
 
 export type GetRuntimeSettingsData = {
     body?: never;

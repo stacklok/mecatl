@@ -2,6 +2,7 @@
 
 import { createRoute, type OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  clearSessionRequestSchema,
   clearSessionResponseSchema,
   compactSessionResponseSchema,
   createSessionRequestSchema,
@@ -22,7 +23,7 @@ import {
   startRunRequestSchema,
   steerRunRequestSchema,
 } from "@mecatl-studio/contracts";
-import { ProtocolError } from "@stacklok-oss/mecatl-sdk";
+import { MecatlError, ProtocolError } from "@stacklok-oss/mecatl-sdk";
 import { streamSSE } from "hono/streaming";
 import type { ActivityLimits } from "../config.js";
 import type { AppEnv } from "../http/env.js";
@@ -284,6 +285,9 @@ const forkSessionRoute = createRoute({
       description: "A successor session forked onto the selected model and effort.",
     },
     409: errorResponse,
+    400: errorResponse,
+    404: errorResponse,
+    501: errorResponse,
     500: errorResponse,
     503: unavailableResponse,
   },
@@ -293,13 +297,22 @@ const clearSessionRoute = createRoute({
   method: "post",
   operationId: "clearSession",
   path: "/api/v1/sessions/{sessionId}/clear",
-  request: { params: sessionParameters },
+  request: {
+    body: {
+      content: { "application/json": { schema: clearSessionRequestSchema } },
+      required: false,
+    },
+    params: sessionParameters,
+  },
   responses: {
     201: {
       content: { "application/json": { schema: clearSessionResponseSchema } },
       description: "An empty-history successor session, replacing this one's conversation.",
     },
     409: errorResponse,
+    400: errorResponse,
+    404: errorResponse,
+    501: errorResponse,
     500: errorResponse,
     503: unavailableResponse,
   },
@@ -618,13 +631,25 @@ export function registerChatRoutes(
   app.openapi(forkSessionRoute, async (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId } = context.req.valid("param");
-    return context.json(await chat.forkSession(sessionId, context.req.valid("json")), 201);
+    const request = context.req.valid("json");
+    try {
+      return context.json(await chat.forkSession(sessionId, request), 201);
+    } catch (error) {
+      if (request.worktreeSelector === undefined) throw error;
+      return successorFailure(context, error);
+    }
   });
 
   app.openapi(clearSessionRoute, async (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId } = context.req.valid("param");
-    return context.json(await chat.clearSession(sessionId), 201);
+    const request = context.req.valid("json") ?? {};
+    try {
+      return context.json(await chat.clearSession(sessionId, request), 201);
+    } catch (error) {
+      if (request.worktreeSelector === undefined) throw error;
+      return successorFailure(context, error);
+    }
   });
 
   app.openapi(retrySessionRoute, async (context) => {
@@ -772,5 +797,65 @@ function invalidPresentation(context: Parameters<typeof problem>[0]) {
     "invalid_authorization_presentation",
     "Authorization page unavailable",
     "The authorization page address was not a valid HTTP(S) URL.",
+  );
+}
+
+/** A selector may occur in an upstream error; selected successor failures use fixed details. */
+function successorFailure(context: Parameters<typeof problem>[0], error: unknown) {
+  if (error instanceof MecatlError) {
+    if (error.code === "authentication" || error.code === "unauthenticated") throw error;
+    if (error.code === "session_not_found" || error.code === "not_found")
+      return problem(
+        context,
+        404,
+        "session_not_found",
+        "Session not found",
+        "The session is unavailable.",
+      );
+    if (error.code === "placement_selector_not_found")
+      return problem(
+        context,
+        404,
+        "placement_selector_not_found",
+        "Worktree unavailable",
+        "Relist eligible worktrees and try again.",
+      );
+    if (error.code === "placement_selector_invalid" || error.code === "invalid_argument")
+      return problem(
+        context,
+        400,
+        "placement_selector_invalid",
+        "Invalid worktree selection",
+        "Relist eligible worktrees and try again.",
+      );
+    if (error.code === "placement_selector_stale" || error.code === "failed_precondition")
+      return problem(
+        context,
+        409,
+        "placement_selector_stale",
+        "Worktree selection expired",
+        "Relist eligible worktrees and try again.",
+      );
+    if (
+      error.code === "placement_unavailable" ||
+      error.code === "transport" ||
+      error.code === "draining"
+    )
+      return unavailable(context);
+    if (error.code === "unimplemented")
+      return problem(
+        context,
+        501,
+        "worktrees_unsupported",
+        "Worktree selection unsupported",
+        "This deployment does not support worktree selection.",
+      );
+  }
+  return problem(
+    context,
+    500,
+    "successor_failed",
+    "Successor failed",
+    "The successor could not be created.",
   );
 }
