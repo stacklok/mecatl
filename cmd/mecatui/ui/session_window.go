@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	teakey "charm.land/bubbles/v2/key"
@@ -27,17 +29,21 @@ import (
 //     background sessions keep draining their Converse streams.
 //   - Bubble Tea program commands (clipboard, raw output, exec, suspend, …) pass
 //     through untagged. A session's tea.Quit is intercepted as a window intent.
-//   - Input (keys, mouse, paste, focus) reaches the active session only; window
-//     size and terminal theme/capability messages reach every session.
+//   - Input (keys, mouse, paste, focus) and tea.ResumeMsg reach the active
+//     session only; window size and terminal theme/capability messages reach
+//     every session. Any other untagged message is dropped (fail closed).
 //
-// Side-effecting Deps hooks (terminal title, status-line source, lifecycle
-// hook) are wrapped per session and forward only while that session is active.
+// The terminal title and status-line source are wrapped per session and
+// forward only while that session is active. The lifecycle hook has one
+// window-wide busy period (windowBusy) and forwards approvals for any session.
 //
 // From the list (Scenarios 5 and 6), n and w start a session through the normal
 // create flow — w with the ADR 0374 NewWorktree intent, offered only when the
 // server advertises create_worktrees — and d deletes a row with stop_active,
 // optionally removing its server-created worktree when the inventory row
-// allows it. A deleted row closes only its own session model.
+// allows it. A server without create_worktrees predates stop_active, so a
+// refused delete there cancels the session's own run and retries a plain
+// delete. A deleted row closes only its own session model.
 
 // Window session row statuses.
 const (
@@ -58,10 +64,10 @@ type requestSessionCreator interface {
 // windowScope identifies one window session to its own Model and to the
 // per-session hook wrappers.
 type windowScope struct {
-	key       int
-	active    *atomic.Int64 // the window's active session key
-	hookOwner *atomic.Int64 // the session whose lifecycle-hook busy period is open
-	cancel    context.CancelFunc
+	key    int
+	active *atomic.Int64 // the window's active session key
+	busy   *windowBusy   // the lifecycle hook's window-wide busy period
+	cancel context.CancelFunc
 }
 
 func (s *windowScope) isActive() bool { return s.active.Load() == int64(s.key) }
@@ -112,36 +118,81 @@ func clearStatusCommandCWD(source customization.Source) {
 	customization.ClearCommandCWD(source)
 }
 
-// scopedLifecycle forwards host lifecycle notifications only for the active
-// session. The host hook has one busy period, so the session that opened it is
-// the one allowed to close it, even if it has since moved to the background.
+// windowBusy is the host lifecycle hook's single busy period, shared by every
+// window session: it opens when the first session becomes busy and closes when
+// the last busy session ends, so overlapping runs never end it early.
+type windowBusy struct {
+	mu      sync.Mutex
+	busy    map[int]bool
+	failed  bool   // a session failed during this busy period
+	message string // the first failure's preview
+}
+
+// begin marks key busy and reports whether that opened the busy period.
+func (b *windowBusy) begin(key int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.busy[key] {
+		return false
+	}
+	opened := len(b.busy) == 0
+	if opened {
+		b.failed, b.message = false, ""
+	}
+	if b.busy == nil {
+		b.busy = map[int]bool{}
+	}
+	b.busy[key] = true
+	return opened
+}
+
+// end marks key idle. closed reports that it was the last busy session; the
+// period then reports failed if any session failed during it, with the first
+// failure's preview, else the last session's preview.
+func (b *windowBusy) end(key int, failed bool, message string) (closed, periodFailed bool, preview string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.busy[key] {
+		return false, false, ""
+	}
+	delete(b.busy, key)
+	if failed && !b.failed {
+		b.failed, b.message = true, message
+	}
+	if len(b.busy) > 0 {
+		return false, false, ""
+	}
+	if b.failed {
+		return true, true, b.message
+	}
+	return true, false, message
+}
+
+// scopedLifecycle maps every window session onto the host hook's one busy
+// period (windowBusy). Approval notifications forward for any session: a
+// background approval is exactly when the host should notify.
 type scopedLifecycle struct {
 	inner LifecycleNotifier
 	scope *windowScope
 }
 
 func (h scopedLifecycle) Start(ctx context.Context, sessionID string) {
-	if h.scope.isActive() {
-		h.scope.hookOwner.Store(int64(h.scope.key))
+	if h.scope.busy.begin(h.scope.key) {
 		h.inner.Start(ctx, sessionID)
 	}
 }
 
 func (h scopedLifecycle) PermissionRequest(ctx context.Context, sessionID, message string) {
-	if h.scope.isActive() {
-		h.inner.PermissionRequest(ctx, sessionID, message)
-	}
+	h.inner.PermissionRequest(ctx, sessionID, message)
 }
 
 func (h scopedLifecycle) PermissionResult(ctx context.Context, sessionID string) {
-	if h.scope.isActive() {
-		h.inner.PermissionResult(ctx, sessionID)
-	}
+	h.inner.PermissionResult(ctx, sessionID)
 }
 
 func (h scopedLifecycle) Stop(ctx context.Context, sessionID string, failed bool, message string) {
-	if h.scope.hookOwner.CompareAndSwap(int64(h.scope.key), 0) {
-		h.inner.Stop(ctx, sessionID, failed, message)
+	if closed, periodFailed, preview := h.scope.busy.end(h.scope.key, failed, message); closed {
+		h.inner.Stop(ctx, sessionID, periodFailed, preview)
 	}
 }
 
@@ -314,6 +365,7 @@ type windowDeleteConfirm struct {
 	checking       bool
 	removeWorktree bool // the row may also remove its server-created worktree
 	busy           bool // DeleteSession is in flight
+	stopping       bool // old-server fallback: waiting for the cancelled run to end
 }
 
 type window struct {
@@ -323,7 +375,7 @@ type window struct {
 	activeKey     int
 	nextKey       int
 	activeCell    *atomic.Int64
-	hookOwner     *atomic.Int64
+	busy          *windowBusy
 	list          *windowListState
 	quitConfirm   *windowQuitConfirm
 	deleteConfirm *windowDeleteConfirm
@@ -345,7 +397,7 @@ func NewWindow(deps Deps) tea.Model {
 		keys:       applyKeyOverrides(defaultKeys(), deps.KeyOverrides),
 		nextKey:    1,
 		activeCell: new(atomic.Int64),
-		hookOwner:  new(atomic.Int64),
+		busy:       new(windowBusy),
 	}
 	key, m := w.buildSession(sessionOpen{})
 	w.sessions = []windowSession{{key: key, model: m}}
@@ -358,7 +410,7 @@ func (w *window) buildSession(open sessionOpen) (int, Model) {
 	key := w.nextKey
 	w.nextKey++
 	deps := w.base
-	deps.window = &windowScope{key: key, active: w.activeCell, hookOwner: w.hookOwner}
+	deps.window = &windowScope{key: key, active: w.activeCell, busy: w.busy}
 	if len(w.sessions) > 0 {
 		deps.Theme = w.activeModel().deps.Theme
 		deps.ThemeAutoDetect = w.base.ThemeAutoDetect && !w.sawBackground
@@ -390,6 +442,13 @@ func (w window) activeModel() Model {
 // ActiveSessionID and ConnectRestartIntent expose the active session to the
 // composition root after the program exits.
 func (w window) ActiveSessionID() string { return w.activeModel().ActiveSessionID() }
+
+// ActiveSessionMsg addresses msg to the active session as if that session's
+// own command had produced it. The window drops untagged session results
+// (fail closed), so a composition test that fabricates one delivers it this way.
+func (w window) ActiveSessionMsg(msg tea.Msg) tea.Msg {
+	return windowSessionMsg{key: w.activeKey, msg: msg}
+}
 
 // ConnectRestartIntent reports the active session's /connect restart request.
 func (w window) ConnectRestartIntent() (ConnectRestartIntent, bool) {
@@ -435,10 +494,23 @@ func (w window) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if windowBroadcastMsg(msg) {
 		return w.broadcast(msg)
 	}
-	if windowInputMsg(msg) && (w.list != nil || w.quitConfirm != nil) {
-		return w, nil // the window overlay owns input
+	if windowInputMsg(msg) {
+		if w.list != nil || w.quitConfirm != nil {
+			return w, nil // the window overlay owns input
+		}
+		return w.updateSession(w.activeKey, msg)
 	}
-	return w.updateSession(w.activeKey, msg)
+	if _, ok := msg.(tea.ResumeMsg); ok {
+		return w.updateSession(w.activeKey, msg) // only the active session can suspend
+	}
+	// Fail closed. Every message a session's command produces arrives tagged
+	// (tagCmd); Bubble Tea's own program messages (clipboard, raw output,
+	// suspend, …) have already been acted on by the program and need no session.
+	// Anything else may be a background session's result whose tagging was lost
+	// — for example, a Bubble Tea upgrade changing the command-list type tagMsg
+	// rewrites — so applying it to the active session would cross sessions. It is
+	// dropped; the ui has no diagnostics port to report it.
+	return w, nil
 }
 
 func (w window) updateSession(key int, msg tea.Msg) (window, tea.Cmd) {
@@ -447,11 +519,17 @@ func (w window) updateSession(key int, msg tea.Msg) (window, tea.Cmd) {
 		return w, nil
 	}
 	updated, cmd := w.sessions[i].model.Update(msg)
+	return w.withModel(i, updated), tagCmd(key, cmd)
+}
+
+// withModel stores a session's updated Model at index i on a copy of the
+// session slice, so earlier window values never observe the change.
+func (w window) withModel(i int, updated tea.Model) window {
 	if m, ok := updated.(Model); ok {
-		w.sessions = append([]windowSession(nil), w.sessions...)
+		w.sessions = slices.Clone(w.sessions)
 		w.sessions[i].model = m
 	}
-	return w, tagCmd(key, cmd)
+	return w
 }
 
 func (w window) broadcast(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -496,6 +574,12 @@ func (w window) onSessionMsg(msg windowSessionMsg) (tea.Model, tea.Cmd) {
 	w, cmd := w.updateSession(msg.key, msg.msg)
 	if i := w.index(msg.key); i >= 0 && w.sessions[i].pending && w.sessions[i].model.sessionID != "" {
 		w.sessions[i].pending = false
+	}
+	if c := w.deleteConfirm; c != nil && c.stopping && c.key == msg.key && !windowStatusActive(w.rowStatus(msg.key)) {
+		next := *c
+		next.stopping = false
+		w.deleteConfirm = &next
+		cmd = tea.Batch(cmd, w.deleteCmd(next, client.DeleteSessionOptions{}, false))
 	}
 	return w, cmd
 }
@@ -562,13 +646,8 @@ func (w window) openSavedPicker() (tea.Model, tea.Cmd) {
 		return w, nil
 	}
 	w.list = nil
-	i := w.index(w.activeKey)
 	updated, cmd := active.openSessions()
-	if m, ok := updated.(Model); ok {
-		w.sessions = append([]windowSession(nil), w.sessions...)
-		w.sessions[i].model = m
-	}
-	return w, tagCmd(w.activeKey, cmd)
+	return w.withModel(w.index(w.activeKey), updated), tagCmd(w.activeKey, cmd)
 }
 
 func (w window) onQuitConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -603,7 +682,7 @@ func (w window) requestQuit() (tea.Model, tea.Cmd) {
 		if s.key == w.activeKey {
 			continue
 		}
-		if status := s.model.windowRowStatus(); status == windowStatusRunning || status == windowStatusNeedsApproval {
+		if windowStatusActive(s.model.windowRowStatus()) {
 			others++
 		}
 	}
@@ -620,7 +699,7 @@ func (w window) quitAll() (tea.Model, tea.Cmd) {
 	w.quitConfirm = nil
 	w.list = nil
 	w.deleteConfirm = nil
-	w.sessions = append([]windowSession(nil), w.sessions...)
+	w.sessions = slices.Clone(w.sessions)
 	for i := range w.sessions {
 		w.sessions[i].model = w.sessions[i].model.quitCleanup()
 		if scope := w.sessions[i].model.deps.window; scope != nil && scope.cancel != nil {
@@ -660,7 +739,7 @@ func (w window) addSession(open sessionOpen) (window, tea.Cmd) {
 	if open.attachID == "" {
 		cmds = append(cmds, m.Init())
 	}
-	w.sessions = append(append([]windowSession(nil), w.sessions...), windowSession{key: key, model: m})
+	w.sessions = append(slices.Clone(w.sessions), windowSession{key: key, model: m})
 	switched, switchCmd := w.switchTo(key)
 	w, _ = switched.(window)
 	return w, tea.Batch(tagCmd(key, tea.Batch(cmds...)), switchCmd)
@@ -677,10 +756,7 @@ func (w window) openSaved(open windowOpenSavedMsg) (tea.Model, tea.Cmd) {
 	w, cmd := w.addSession(sessionOpen{attachID: open.row.ID})
 	i := w.index(w.activeKey)
 	updated, adoptCmd, _ := w.sessions[i].model.adoptAuthoritativeTranscript(open.row, open.transcript, open.snapshot)
-	if m, ok := updated.(Model); ok {
-		w.sessions[i].model = m
-	}
-	return w, tea.Batch(cmd, tagCmd(w.activeKey, adoptCmd))
+	return w.withModel(i, updated), tea.Batch(cmd, tagCmd(w.activeKey, adoptCmd))
 }
 
 // closeSession removes one session, ending only its own stream. The shared
@@ -692,14 +768,14 @@ func (w window) closeSession(key int) (window, tea.Cmd) {
 	}
 	m := w.sessions[i].model.quitCleanup()
 	if scope := m.deps.window; scope != nil {
-		if w.hookOwner.CompareAndSwap(int64(key), 0) && w.base.AgentHook != nil {
-			w.base.AgentHook.Stop(w.base.Ctx, m.sessionID, false, "")
+		if closed, failed, preview := w.busy.end(key, false, ""); closed && w.base.AgentHook != nil {
+			w.base.AgentHook.Stop(w.base.Ctx, m.sessionID, failed, preview)
 		}
 		if scope.cancel != nil {
 			scope.cancel()
 		}
 	}
-	w.sessions = append(append([]windowSession(nil), w.sessions[:i]...), w.sessions[i+1:]...)
+	w.sessions = slices.Delete(slices.Clone(w.sessions), i, i+1)
 	if key != w.activeKey || len(w.sessions) == 0 {
 		return w, nil
 	}
@@ -750,8 +826,10 @@ type windowDeletedMsg struct {
 	key            int
 	label          string
 	removeWorktree bool
-	result         client.DeleteSessionResult
-	err            error
+	// fallback allows the old-server cancel-then-delete retry on refusal.
+	fallback bool
+	result   client.DeleteSessionResult
+	err      error
 }
 
 // windowInventoryPageLimit bounds the inventory pages read to find one row's
@@ -818,6 +896,9 @@ func (w window) onDeleteCaps(msg windowDeleteCapsMsg) (tea.Model, tea.Cmd) {
 func (w window) onDeleteConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	c := *w.deleteConfirm
 	if c.busy {
+		if c.stopping && (msg.Text == "n" || teakey.Matches(msg, w.keys.Close)) {
+			w.deleteConfirm = nil // stop waiting; the session is kept
+		}
 		return w, nil
 	}
 	switch {
@@ -835,15 +916,49 @@ func (w window) onDeleteConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // confirmDelete deletes the row with stop_active, so a running or awaiting
-// session is stopped first (ADR 0374).
+// session is stopped first (ADR 0374). A server without create_worktrees
+// predates stop_active; a plain delete there may fall back to cancel-then-delete.
 func (w window) confirmDelete(c windowDeleteConfirm, removeWorktree bool) (tea.Model, tea.Cmd) {
 	c.busy = true
 	w.deleteConfirm = &c
+	m, _ := w.modelFor(c.key)
+	fallback := !removeWorktree && !m.caps.CreateWorktrees
+	return w, w.deleteCmd(c, client.DeleteSessionOptions{StopActive: true, RemoveWorktree: removeWorktree}, fallback)
+}
+
+func (w window) deleteCmd(c windowDeleteConfirm, opts client.DeleteSessionOptions, fallback bool) tea.Cmd {
 	ctx, deleter := w.base.Ctx, w.base.SessionManagement
-	return w, func() tea.Msg {
-		res, err := deleter.DeleteSession(ctx, c.id, client.DeleteSessionOptions{StopActive: true, RemoveWorktree: removeWorktree})
-		return windowDeletedMsg{key: c.key, label: c.label, removeWorktree: removeWorktree, result: res, err: err}
+	return func() tea.Msg {
+		res, err := deleter.DeleteSession(ctx, c.id, opts)
+		return windowDeletedMsg{key: c.key, label: c.label, removeWorktree: opts.RemoveWorktree, fallback: fallback, result: res, err: err}
 	}
+}
+
+// stopThenDelete is the old-server fallback: the server ignored stop_active and
+// refused deleting an active session, so the window cancels that session's own
+// run and retries a plain delete once it is no longer running or awaiting
+// approval (onSessionMsg). The retry never falls back again.
+func (w window) stopThenDelete(msg windowDeletedMsg) (tea.Model, tea.Cmd) {
+	i := w.index(msg.key)
+	if i < 0 {
+		return w, nil
+	}
+	m := w.sessions[i].model
+	c := windowDeleteConfirm{key: msg.key, id: m.sessionID, label: msg.label, busy: true}
+	if !windowStatusActive(m.windowRowStatus()) {
+		// No run of ours to cancel (another client may own it): retry once.
+		w.deleteConfirm = &c
+		return w, w.deleteCmd(c, client.DeleteSessionOptions{}, false)
+	}
+	c.stopping = true
+	w.deleteConfirm = &c
+	updated, cmd := m.onRunningCancel()
+	return w.withModel(i, updated), tagCmd(msg.key, cmd)
+}
+
+// windowStatusActive reports a running or approval-waiting session.
+func windowStatusActive(status string) bool {
+	return status == windowStatusRunning || status == windowStatusNeedsApproval
 }
 
 // onDeleted removes a deleted row (closing only its own stream) or shows why
@@ -851,6 +966,9 @@ func (w window) confirmDelete(c windowDeleteConfirm, removeWorktree bool) (tea.M
 func (w window) onDeleted(msg windowDeletedMsg) (tea.Model, tea.Cmd) {
 	if c := w.deleteConfirm; c != nil && c.key == msg.key {
 		w.deleteConfirm = nil
+	}
+	if msg.err != nil && msg.fallback && client.IsDeleteRefusedActive(msg.err) {
+		return w.stopThenDelete(msg)
 	}
 	if msg.err != nil {
 		w.list = &windowListState{cursor: max(0, w.index(msg.key)), notice: "could not delete " + msg.label + ": " + terminaltext.SanitizeSingleLine(msg.err.Error())}
@@ -1023,6 +1141,8 @@ func (window) renderDeleteConfirm(m Model, c windowDeleteConfirm) string {
 	}
 	muted := th.Style("muted")
 	switch {
+	case c.stopping:
+		lines = append(lines, windowText(muted, "stopping its run first (this server cannot stop and delete in one step)…  n/esc: stop waiting", width))
 	case c.busy:
 		lines = append(lines, muted.Render("deleting…"))
 	case c.checking:

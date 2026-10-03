@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -80,6 +82,13 @@ func (c *Client) DeleteSession(ctx context.Context, id string, opts DeleteSessio
 		WorktreeRemoved:        resp.GetWorktreeRemoved(),
 		WorktreeRetainedReason: validText(resp.GetWorktreeRetainedReason()),
 	}, nil
+}
+
+// IsDeleteRefusedActive reports a DeleteSession refused with failed
+// precondition — how a server answers a delete of a session that is running or
+// awaiting approval when it does not (or, predating ADR 0374, cannot) stop it.
+func IsDeleteRefusedActive(err error) bool {
+	return grpcstatus.Code(err) == codes.FailedPrecondition
 }
 
 // RenameSessionCmdWithToken correlates an asynchronous rename with a UI request.

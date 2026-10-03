@@ -6,9 +6,22 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
+
+func TestIsDeleteRefusedActive(t *testing.T) {
+	cl := newFakeClient(&fakeSessionManagementClient{deleteErr: status.Error(codes.FailedPrecondition, "session is active or awaiting approval")})
+	_, err := cl.DeleteSession(context.Background(), "s1", DeleteSessionOptions{})
+	if !IsDeleteRefusedActive(err) {
+		t.Fatalf("a wrapped failed-precondition delete must classify as refused-active: %v", err)
+	}
+	if IsDeleteRefusedActive(status.Error(codes.NotFound, "gone")) || IsDeleteRefusedActive(nil) {
+		t.Fatal("other outcomes must not classify as refused-active")
+	}
+}
 
 type fakeSessionManagementClient struct {
 	mecatlv1.HarnessServiceClient

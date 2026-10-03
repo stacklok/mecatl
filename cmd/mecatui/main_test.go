@@ -141,7 +141,7 @@ func TestEmbeddedReadinessCallbacksReachFirstSessionModel(t *testing.T) {
 			}
 
 			composition.MicroVMReadinessFailed(microvmmanager.StagePrepare)
-			model, _ = model.Update(client.ConnectErrMsg{Err: errors.New("placement unavailable: private detail")})
+			model, _ = model.Update(activeSessionMsg(model, client.ConnectErrMsg{Err: errors.New("placement unavailable: private detail")}))
 			view := model.View().Content
 			if !strings.Contains(view, "mecated microvm doctor") || strings.Contains(view, "private detail") {
 				t.Fatalf("app readiness failure did not reach redacted UI remediation:\n%s", view)

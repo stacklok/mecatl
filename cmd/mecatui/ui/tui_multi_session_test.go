@@ -11,6 +11,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/exp/teatest/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
@@ -42,6 +45,13 @@ func (r *heldRecver) Recv() (*mecatlv1.ConverseResponse, error) {
 	resp := r.script[r.idx]
 	r.idx++
 	return resp, nil
+}
+
+// exhausted reports whether every scripted response has been read.
+func (r *heldRecver) exhausted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.idx >= len(r.script)
 }
 
 type windowStream struct {
@@ -688,6 +698,17 @@ func TestTUIMultiSession_Scenario4_QuitConfirmsBackgroundSessions(t *testing.T) 
 	if single.w.quitConfirm != nil {
 		t.Fatal("single-session quit must not ask for confirmation")
 	}
+
+	// A background session awaiting approval also asks for confirmation.
+	awaiting := readyWindow(t, newWindowConv(), nil)
+	asking := awaiting.w.activeKey
+	awaiting.addCreated()
+	awaiting.mutate(asking, func(m *Model) { m.phase = phaseAwaitingApproval })
+	awaiting.press(ctrlC, ctrlC)
+	awaiting.until("quit confirmation for an awaiting session", func(w window) bool { return w.quitConfirm != nil })
+	if awaiting.quit || awaiting.w.quitConfirm.others != 1 {
+		t.Fatalf("an awaiting background session must be confirmed: quit=%v others=%d", awaiting.quit, awaiting.w.quitConfirm.others)
+	}
 }
 
 func TestTUIMultiSession_Scenario4_SessionsPickerAddsToWindow(t *testing.T) {
@@ -779,6 +800,11 @@ func (h *recordingHook) PermissionResult(_ context.Context, id string) { h.recor
 func (h *recordingHook) Stop(_ context.Context, id string, _ bool, _ string) {
 	h.record("stop", id)
 }
+func (h *recordingHook) snapshot() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.events...)
+}
 
 func TestTUIMultiSession_Scenario4_SharedDepsScopedToActive(t *testing.T) {
 	conv := newWindowConv()
@@ -813,13 +839,16 @@ func TestTUIMultiSession_Scenario4_SharedDepsScopedToActive(t *testing.T) {
 	if got := source.take(); len(got) == 0 || got[len(got)-1] != firstHandle {
 		t.Fatalf("switching must re-submit the newly active session: %v", got)
 	}
-	hook.mu.Lock()
-	events := append([]string(nil), hook.events...)
-	hook.mu.Unlock()
-	for _, e := range events {
-		if e == "start:"+d.model(first).sessionID {
-			t.Fatalf("a background session notified the host hook: %v", events)
+	// The background turn.start above and the bravo run share one window busy
+	// period: the host hook sees exactly one Start.
+	starts := 0
+	for _, e := range hook.snapshot() {
+		if strings.HasPrefix(e, "start:") {
+			starts++
 		}
+	}
+	if starts != 1 {
+		t.Fatalf("overlapping busy sessions must open one host busy period, got %d starts", starts)
 	}
 
 	w, _ := d.w.closeSession(first)
@@ -977,6 +1006,9 @@ type windowDeleter struct {
 	opts    []client.DeleteSessionOptions
 	results []client.DeleteSessionResult
 	errs    []error
+	// refuse models a server that predates stop_active: it refuses deleting a
+	// session that is still running or awaiting approval.
+	refuse func(id string) bool
 }
 
 func (*windowDeleter) RenameSession(context.Context, string, string) (client.SessionSnapshot, error) {
@@ -996,6 +1028,9 @@ func (f *windowDeleter) DeleteSession(_ context.Context, id string, opts client.
 	}
 	if n < len(f.errs) {
 		err = f.errs[n]
+	}
+	if f.refuse != nil && f.refuse(id) {
+		err = status.Error(codes.FailedPrecondition, "session is active or awaiting approval")
 	}
 	return res, err
 }
@@ -1149,6 +1184,9 @@ func TestTUIMultiSession_Scenario6_DeleteOffersWorktreeRemoval(t *testing.T) {
 	if view := windowView(d); !strings.Contains(view, "chat deleted, worktree kept") || !strings.Contains(view, "uncommitted") {
 		t.Fatalf("a kept worktree must be reported with its reason:\n%s", view)
 	}
+	if view := windowView(d); strings.Contains(view, "could not delete") {
+		t.Fatalf("the post-stop notice must replace the earlier refusal:\n%s", view)
+	}
 
 	// A clean removal reports that the branch is kept.
 	d.openListAt(third)
@@ -1169,5 +1207,265 @@ func TestTUIMultiSession_Scenario6_DeleteOffersWorktreeRemoval(t *testing.T) {
 		if !o.StopActive || !o.RemoveWorktree {
 			t.Fatalf("worktree deletes must send stop_active and remove_worktree, got %+v", opts)
 		}
+	}
+}
+
+// An old server (no create_worktrees) ignores stop_active and refuses deleting a
+// running session: the window cancels that session's own run, then retries a
+// plain delete.
+func TestTUIMultiSession_Scenario6_OldServerCancelsThenDeletes(t *testing.T) {
+	conv := newWindowConv() // zero capabilities: an old server
+	hold := make(chan struct{})
+	var release sync.Once
+	recv := &heldRecver{script: streamScript("alpha", delta(3, "alpha-one"), delta(4, "alpha-two")), holds: map[int]chan struct{}{4: hold}}
+	send := conv.script("0001-sess-test", recv)
+	send.onSend = func(req *mecatlv1.ConverseRequest) {
+		if req.GetCancel() != nil {
+			release.Do(func() { close(hold) })
+		}
+	}
+	t.Cleanup(func() { release.Do(func() { close(hold) }) })
+	deleter := &windowDeleter{refuse: func(id string) bool { return id == "0001-sess-test" && !recv.exhausted() }}
+	lister := &fakeSessionLister{sessions: []client.SessionListItem{inventoryRow("0001-sess-test", false), inventoryRow("0002-sess-test", false)}}
+	d := readyWindow(t, conv, func(deps *Deps) { deps.SessionManagement = deleter; deps.Sessions = lister })
+	first := d.w.activeKey
+	d.submit("start alpha")
+	d.until("alpha streaming", func(w window) bool {
+		m, _ := w.modelFor(first)
+		return strings.Contains(viewText(m), "alpha-one")
+	})
+	second := d.addCreated()
+
+	d.openListAt(first)
+	d.press(keyText('d'))
+	d.until("delete confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	if view := windowView(d); strings.Contains(view, "remove worktree") {
+		t.Fatalf("an old server must not be offered worktree removal:\n%s", view)
+	}
+	d.press(keyText('y'))
+	d.until("row removed", func(w window) bool { return len(w.sessions) == 1 })
+
+	cancelled := false
+	for _, frame := range send.frames() {
+		if frame.GetCancel() != nil {
+			cancelled = true
+		}
+	}
+	if !cancelled {
+		t.Fatal("the fallback must cancel the session's own run")
+	}
+	ids, opts := deleter.recorded()
+	if len(ids) != 2 || ids[0] != "0001-sess-test" || ids[1] != "0001-sess-test" {
+		t.Fatalf("delete calls = %v, want a refused delete then a retry", ids)
+	}
+	if opts[1] != (client.DeleteSessionOptions{}) {
+		t.Fatalf("the retry must be a plain delete, got %+v", opts[1])
+	}
+	if d.w.activeKey != second {
+		t.Fatalf("deleting a background session must keep the active one, got %d", d.w.activeKey)
+	}
+	if view := windowView(d); !strings.Contains(view, "chat deleted") || strings.Contains(view, "could not delete") {
+		t.Fatalf("the list must confirm the deletion, not the refusal:\n%s", view)
+	}
+}
+
+// A new server that honours stop_active reports a refusal as is, without
+// cancelling the run.
+func TestTUIMultiSession_Scenario6_NewServerRefusalIsShown(t *testing.T) {
+	conv := newWindowConv()
+	conv.caps = client.Capabilities{CreateWorktrees: true}
+	hold := make(chan struct{})
+	defer close(hold)
+	send := conv.script("0001-sess-test", &heldRecver{script: streamScript("alpha", delta(3, "alpha-one"), delta(4, "alpha-two")), holds: map[int]chan struct{}{4: hold}})
+	deleter := &windowDeleter{errs: []error{status.Error(codes.FailedPrecondition, "session lease is held elsewhere")}}
+	d := readyWindow(t, conv, func(deps *Deps) { deps.SessionManagement = deleter })
+	first := d.w.activeKey
+	d.submit("start alpha")
+	d.until("alpha streaming", func(w window) bool {
+		m, _ := w.modelFor(first)
+		return strings.Contains(viewText(m), "alpha-one")
+	})
+	d.addCreated()
+	d.openListAt(first)
+	d.press(keyText('d'))
+	d.until("delete confirmation", func(w window) bool { return w.deleteConfirm != nil && !w.deleteConfirm.checking })
+	d.press(keyText('y'))
+	d.until("refusal shown", func(w window) bool { return w.deleteConfirm == nil && w.list != nil && w.list.notice != "" })
+	d.settle()
+	for _, frame := range send.frames() {
+		if frame.GetCancel() != nil {
+			t.Fatal("a stop_active server's refusal must not cancel the run")
+		}
+	}
+	if ids, _ := deleter.recorded(); len(ids) != 1 || len(d.w.sessions) != 2 {
+		t.Fatalf("a refusal must not retry or remove the row: calls=%v sessions=%d", ids, len(d.w.sessions))
+	}
+}
+
+// An untagged message that is neither input, a terminal fact, nor a program
+// event the Model handles is dropped rather than applied to the active session.
+func TestTUIMultiSession_Scenario4_UntaggedMessagesFailClosed(t *testing.T) {
+	d := readyWindow(t, newWindowConv(), nil)
+	first := d.w.activeKey
+	second := d.addCreated()
+	d.send(client.SessionTitleMsg{Title: "stray result", Revision: 50})
+	if d.model(first).sessionTitle == "stray result" || d.model(second).sessionTitle == "stray result" {
+		t.Fatal("an untagged session result must not reach any session")
+	}
+	reduced := map[int]int{}
+	for _, key := range []int{first, second} {
+		d.mutate(key, func(m *Model) { m.deps.onPhase = func(phase) { reduced[key]++ } })
+	}
+	d.send(tea.ResumeMsg{})
+	if reduced[first] != 0 || reduced[second] != 1 {
+		t.Fatalf("a resume after suspend must reach the active session only: %v", reduced)
+	}
+}
+
+// windowSequenceProbe wraps the window in a real Bubble Tea program and lets a
+// test hand one session a command exactly as updateSession returns it (tagCmd).
+type windowSequenceProbe struct{ w window }
+
+type windowSequenceProbeMsg struct {
+	key int
+	cmd tea.Cmd
+}
+
+func (windowSequenceProbe) Init() tea.Cmd { return nil }
+
+func (p windowSequenceProbe) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if probe, ok := msg.(windowSequenceProbeMsg); ok {
+		return p, tagCmd(probe.key, probe.cmd)
+	}
+	next, cmd := p.w.Update(msg)
+	p.w, _ = next.(window)
+	return p, cmd
+}
+
+func (p windowSequenceProbe) View() tea.View { return p.w.View() }
+
+// A background session's tea.Sequence runs through Bubble Tea's own sequence
+// executor and its results land on that session, not the active one.
+func TestTUIMultiSession_Scenario4_BackgroundSequenceThroughProgram(t *testing.T) {
+	d := readyWindow(t, newWindowConv(), nil)
+	background := d.w.activeKey
+	active := d.addCreated()
+	d.settle()
+
+	title := func(text string, rev uint64) tea.Cmd {
+		return func() tea.Msg { return client.SessionTitleMsg{Title: text, Revision: rev} }
+	}
+	sent := make(chan struct{})
+	tm := teatest.NewTestModel(t, windowSequenceProbe{w: d.w}, teatest.WithInitialTermSize(110, 32))
+	tm.Send(windowSequenceProbeMsg{key: background, cmd: tea.Sequence(
+		title("seq-one", 60),
+		title("seq-two", 61),
+		func() tea.Msg { close(sent); return nil },
+	)})
+	select {
+	case <-sent:
+	case <-time.After(scaleWait(5 * time.Second)):
+		t.Fatal("the sequence never ran")
+	}
+	if err := tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+	final, ok := tm.FinalModel(t, teatest.WithFinalTimeout(scaleWait(3*time.Second))).(windowSequenceProbe)
+	if !ok {
+		t.Fatal("final model is not the probe")
+	}
+	bg, _ := final.w.modelFor(background)
+	fg, _ := final.w.modelFor(active)
+	if bg.sessionTitle != "seq-two" || fg.sessionTitle == "seq-one" || fg.sessionTitle == "seq-two" {
+		t.Fatalf("sequence results must land on the background session: background=%q active=%q", bg.sessionTitle, fg.sessionTitle)
+	}
+}
+
+// Overlapping runs share one host busy period: one Start when the first session
+// becomes busy, a background approval still notifies the host, and one Stop
+// after the last busy session ends.
+func TestTUIMultiSession_Scenario4_HostHookWindowBusyPeriod(t *testing.T) {
+	conv := newWindowConv()
+	toAsk, afterAsk := make(chan struct{}), make(chan struct{})
+	askIndex := 7
+	sendA := conv.script("0001-sess-test", &heldRecver{script: preApprovalScript(), holds: map[int]chan struct{}{askIndex: toAsk, askIndex + 1: afterAsk}})
+	sendA.onSend = func(req *mecatlv1.ConverseRequest) {
+		if req.GetResumeApproval() != nil {
+			close(afterAsk)
+		}
+	}
+	holdB := make(chan struct{})
+	var releaseB sync.Once
+	t.Cleanup(func() { releaseB.Do(func() { close(holdB) }) })
+	conv.script("0002-sess-test", &heldRecver{script: streamScript("bravo", delta(3, "bravo-one"), delta(4, "bravo-two")), holds: map[int]chan struct{}{4: holdB}})
+	hook := &recordingHook{}
+	d := readyWindow(t, conv, func(deps *Deps) { deps.AgentHook = hook })
+	first := d.w.activeKey
+
+	d.submit("write a note")
+	d.until("alpha run streaming", func(w window) bool {
+		m, _ := w.modelFor(first)
+		return strings.Contains(viewText(m), "Reading the greeting file")
+	})
+	second := d.addCreated()
+	d.submit("start bravo")
+	d.until("bravo streaming", func(w window) bool {
+		m, _ := w.modelFor(second)
+		return strings.Contains(viewText(m), "bravo-one")
+	})
+	close(toAsk)
+	d.until("background ask", func(w window) bool { return w.rowStatus(first) == windowStatusNeedsApproval })
+	if events := hook.snapshot(); fmt.Sprint(events) != fmt.Sprint([]string{"start:0001-sess-test", "permission:0001-sess-test"}) {
+		t.Fatalf("a background approval must notify the host within the one busy period: %v", events)
+	}
+
+	d.switchTo(first)
+	d.press(keyText('a'))
+	d.until("alpha run resolved", func(w window) bool {
+		m, _ := w.modelFor(first)
+		return m.phase == phaseIdle && strings.Contains(viewText(m), "Done.")
+	})
+	d.settle()
+	for _, e := range hook.snapshot() {
+		if strings.HasPrefix(e, "stop:") {
+			t.Fatalf("Stop fired while another session was still busy: %v", hook.snapshot())
+		}
+	}
+
+	releaseB.Do(func() { close(holdB) })
+	d.until("bravo finished", func(w window) bool {
+		m, _ := w.modelFor(second)
+		return m.phase == phaseIdle && strings.Contains(viewText(m), "bravo-two")
+	})
+	d.settle()
+	want := []string{"start:0001-sess-test", "permission:0001-sess-test", "result:0001-sess-test", "stop:0002-sess-test"}
+	if got := hook.snapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("host hook events = %v, want %v", got, want)
+	}
+}
+
+// AC4.5 with real terminal messages: mouse and focus reach the active session
+// only.
+func TestTUIMultiSession_Scenario4_MouseAndFocusReachActiveOnly(t *testing.T) {
+	d := readyWindow(t, newWindowConv(), nil)
+	first := d.w.activeKey
+	second := d.addCreated()
+	reduced := map[int]int{}
+	for _, key := range []int{first, second} {
+		d.mutate(key, func(m *Model) { m.deps.onPhase = func(phase) { reduced[key]++ } })
+	}
+	msgs := []tea.Msg{
+		tea.MouseClickMsg{X: 3, Y: 3, Button: tea.MouseLeft},
+		tea.MouseMotionMsg{X: 4, Y: 3, Button: tea.MouseLeft},
+		tea.MouseReleaseMsg{X: 4, Y: 3, Button: tea.MouseLeft},
+		tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelUp},
+		tea.FocusMsg{},
+		tea.BlurMsg{},
+	}
+	for _, msg := range msgs {
+		d.send(msg)
+	}
+	if reduced[first] != 0 || reduced[second] != len(msgs) {
+		t.Fatalf("mouse and focus must reach the active session only: background=%d active=%d, want 0 and %d", reduced[first], reduced[second], len(msgs))
 	}
 }
