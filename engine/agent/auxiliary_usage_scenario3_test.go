@@ -145,92 +145,6 @@ func TestParentCapsRouterAndReviewerUseExecutionLocalReporter(t *testing.T) {
 	}
 }
 
-func TestRunOwnershipLostRevokesUsageWithoutCancelling(t *testing.T) {
-	usage := session.Usage{InputTokens: 5}
-	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider/reviewer": usage}},
-	}}
-	sess := session.New("ownership-lost", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "ws", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
-	cancelled := false
-	run := &Run{auxiliaryUsageActive: true, auxiliaryUsagePending: aux, cancel: func() { cancelled = true }}
-	run.OwnershipLost()
-	run.OwnershipLost()
-	if cancelled {
-		t.Fatal("ownership notification cancelled the run before its pending ask could be retracted")
-	}
-	run.recordCompleteAuxiliaryUsageWhileActive(sess, aux)
-	run.enqueueAuxiliaryUsageWhileActive(t.Context(), aux)
-	run.closeAuxiliaryUsageOwnershipAndDrain(sess)
-	if got := sess.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
-		t.Fatalf("usage accepted after ownership loss: %+v", got)
-	}
-	run.Cancel(CancelCauseRequested)
-	if !cancelled {
-		t.Fatal("explicit cancellation did not stop the run")
-	}
-}
-
-type auxiliaryLockCheckingDiagnostics struct {
-	port.Diagnostics
-	run      *Run
-	unlocked bool
-}
-
-func (d *auxiliaryLockCheckingDiagnostics) Log(context.Context, port.Level, string, ...any) {
-	if d.run.auxiliaryUsageMu.TryLock() {
-		d.unlocked = true
-		d.run.auxiliaryUsageMu.Unlock()
-	}
-}
-
-func TestRunOwnershipLostDoesNotHoldUsageLockDuringDiagnostics(t *testing.T) {
-	sess := session.New("ownership-diagnostic", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "ws", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
-	run := &Run{auxiliaryUsageActive: true}
-	diag := &auxiliaryLockCheckingDiagnostics{Diagnostics: port.NopDiagnostics{}, run: run}
-	run.diag = diag
-	run.OwnershipLost()
-	run.recordCompleteAuxiliaryUsageWhileActive(sess, session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		session.UsageKindGuardrail: {Models: map[string]session.Usage{"provider/model": {InputTokens: 1}}},
-	}})
-	if !diag.unlocked {
-		t.Fatal("late-result diagnostic ran under the usage lock")
-	}
-}
-
-func TestCancelCauseOwnershipLostRevokesAuxiliaryUsage(t *testing.T) {
-	usage := session.Usage{InputTokens: 5}
-	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider/reviewer": usage}},
-	}}
-	for _, tc := range []struct {
-		name  string
-		cause CancelCause
-		keep  bool
-	}{
-		{name: "requested", cause: CancelCauseRequested, keep: true},
-		{name: "ownership_lost", cause: CancelCauseOwnershipLost},
-		{name: "unknown_fails_closed", cause: CancelCause(255)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cancelled := false
-			run := &Run{auxiliaryUsageActive: true, cancel: func() { cancelled = true }}
-			run.auxiliaryUsagePending = aux
-			run.Cancel(tc.cause)
-			if !cancelled {
-				t.Fatal("run context was not cancelled")
-			}
-			sess := session.New("cancel-cause", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "ws", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
-			run.drainPendingAuxiliaryUsage(sess)
-			if got := sess.UsageFor(session.UsageKindAskReviewer); (got == usage) != tc.keep {
-				t.Fatalf("drained usage = %+v, keep=%v", got, tc.keep)
-			}
-			if tc.keep != run.auxiliaryUsageActive {
-				t.Fatalf("auxiliary ownership active = %v, want %v", run.auxiliaryUsageActive, tc.keep)
-			}
-		})
-	}
-}
-
 func TestParallelJudgeUsageStaysPrivateUntilDispatcherDrain(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -654,6 +568,26 @@ func TestAuxiliaryTokenUsage_Scenario3_ComposedRouterRecordsSelectedProviderMode
 	}
 }
 
+func TestRemapAuxiliaryUsageMissingPurposeRetainsSpend(t *testing.T) {
+	spend := session.Usage{InputTokens: 9, OutputTokens: 4}
+	in := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		"": {Models: map[string]session.Usage{"": spend, "provider/model": spend}},
+	}}
+	diag := &auxiliaryRecordingDiagnostics{}
+	out := RemapAuxiliaryUsage(t.Context(), diag, session.UsageKindRouter, in)
+	bucket := out.Buckets[session.UsageKindRouter]
+	if bucket.Total != spend.Add(spend) || bucket.Models["unknown"] != spend || bucket.Models["provider/model"] != spend {
+		t.Fatalf("remapped bucket = %#v", bucket)
+	}
+	if got := diag.count("auxiliary usage missing purpose remapped"); got != 1 {
+		t.Fatalf("missing-purpose warnings = %d, want one for the result", got)
+	}
+	merged := in.Merge(session.AuxiliaryUsage{})
+	if got := RemapAuxiliaryUsage(t.Context(), nil, session.UsageKindRouter, merged).Buckets[session.UsageKindRouter]; got.Total != bucket.Total || !reflect.DeepEqual(got.Models, bucket.Models) {
+		t.Fatalf("remap after merge = %#v, want %#v", got, bucket)
+	}
+}
+
 func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	usage := session.Usage{InputTokens: 7, OutputTokens: 3}
 	injected := session.Usage{InputTokens: 2, OutputTokens: 1}
@@ -698,19 +632,6 @@ func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	if normalized != 1 {
 		t.Fatalf("normalization diagnostics = %v, want one bounded normalization line", diag.msgs)
 	}
-}
-
-type replayingUsageHook struct {
-	usage    session.AuxiliaryUsage
-	reporter port.AuxiliaryUsageReporter
-}
-
-func (h *replayingUsageHook) Run(ctx context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	h.reporter = port.AuxiliaryUsageReporterFromContext(ctx)
-	if h.reporter != nil {
-		h.reporter(h.usage)
-	}
-	return governance.HookOutcome{}, nil
 }
 
 type fixedUsageReviewer struct {
@@ -774,25 +695,6 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	}
 	if got := parent.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
 		t.Fatalf("main usage = %+v, want zero", got)
-	}
-}
-
-func TestGenericHookRunnerCannotReportAuxiliaryUsage(t *testing.T) {
-	usage := session.Usage{InputTokens: 6, OutputTokens: 2}
-	hook := &replayingUsageHook{usage: auxiliaryUsage(session.UsageKindGuardrail,
-		session.ProviderModelID{ProviderID: "provider-g", ModelID: "checker"}, usage)}
-	eng := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Hooks: hook})
-	sess := runningAuxiliaryParent(t, "generic-hook-no-reporter")
-	run := &Run{diag: port.NopDiagnostics{}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
-
-	if blocked, reason := eng.fireSessionStart(t.Context(), run, sess); blocked {
-		t.Fatalf("SessionStart blocked: %s", reason)
-	}
-	if hook.reporter != nil {
-		t.Fatal("generic HookRunner received an AuxiliaryUsageReporter")
-	}
-	if got := sess.UsageFor(session.UsageKindGuardrail); got != (session.Usage{}) {
-		t.Fatalf("generic hook recorded guardrail usage: %+v", got)
 	}
 }
 

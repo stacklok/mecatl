@@ -251,7 +251,7 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 					for _, posture := range []Posture{PostureStrict, PostureTrusted, PostureAuto, PostureYolo} {
 						policy := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture)
 						decision := policy.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
-						if decision.Effect != governance.Deny || !strings.Contains(decision.Reason, "pseudo-filesystem") {
+						if decision.Decision.Effect != governance.Deny || !strings.Contains(decision.Decision.Reason, "pseudo-filesystem") {
 							t.Errorf("%s %s(%q): %+v, want pseudo-fs policy deny", posture, toolName, path, decision)
 						}
 					}
@@ -262,7 +262,7 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 					// Even when approved, the serving workspace must refuse it itself.
 					inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: governance.Ask}}, nil)
 					decision := newEscapePolicy(inner, PostureYolo).Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
-					if decision.Effect != governance.Ask || decision.AskProvenance != governance.AskProvenanceConfigured {
+					if decision.Decision.Effect != governance.Ask || decision.Decision.AskProvenance != governance.AskProvenanceConfigured {
 						t.Fatalf("configured ask for %q = %+v", path, decision)
 					}
 					_, err := ws.ReadDir(t.Context(), path)

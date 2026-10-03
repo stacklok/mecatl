@@ -570,8 +570,8 @@ func TestInvariant_agent_model_discovery_Scenario4_PermissionPostureUnchanged(t 
 	call := session.NewToolCall("id", agentModelDiscoveryToolName, json.RawMessage(`{}`))
 	for name, rules := range map[string][]governance.Rule{"default": defaultRules(), "production": mainRules(Config{})} {
 		decision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "s1", session.ModeDefault, call, nil)
-		if decision.Effect != governance.Ask {
-			t.Errorf("%s permission posture = %v, want unchanged Ask", name, decision.Effect)
+		if decision.Decision.Effect != governance.Ask {
+			t.Errorf("%s permission posture = %v, want unchanged Ask", name, decision.Decision.Effect)
 		}
 	}
 	for _, rule := range mainRules(Config{}) {

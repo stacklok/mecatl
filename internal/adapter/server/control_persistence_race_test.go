@@ -180,7 +180,7 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 			if !tc.marked(st) {
 				t.Fatal("control did not mark the persisted ask before signaling the run")
 			}
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 			for range run.Events() {
 			}
 		})

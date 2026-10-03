@@ -70,11 +70,11 @@ func (r authorizationBlockingReviewer) Review(context.Context, agent.ChildAskRev
 
 type authorizationPolicy struct{ order *[]string }
 
-func (p authorizationPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+func (p authorizationPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
 	if p.order != nil {
 		*p.order = append(*p.order, "permission")
 	}
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (authorizationPolicy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -223,6 +223,13 @@ func TestGenericAuthorizationGateOrderAndEffectiveCall(t *testing.T) {
 	}
 	if protected.aborts != 0 || run.Outcome() != agent.RunOutcomeAuthorizationPending {
 		t.Fatalf("aborts/outcome = %d/%v", protected.aborts, run.Outcome())
+	}
+	run.Cancel() // A closed, durably parked run is not live work to cancel.
+	if run.Outcome() != agent.RunOutcomeAuthorizationPending || sess.State != session.StateAuthorizing {
+		t.Fatalf("parked authorization lost after Cancel: outcome=%v state=%s", run.Outcome(), sess.State)
+	}
+	if _, ok := sess.PendingAuthorization(); !ok {
+		t.Fatal("Cancel removed the durably parked authorization")
 	}
 	for _, event := range events {
 		if event.Type == session.EvResult {

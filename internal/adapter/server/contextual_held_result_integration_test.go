@@ -28,8 +28,8 @@ type heldResultReviewer struct{}
 
 type heldResultAllowPolicy struct{}
 
-func (heldResultAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (heldResultAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 
 func (heldResultAllowPolicy) Learn(session.SessionID, session.ToolCall) {}

@@ -13,7 +13,6 @@ import (
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
-	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -322,7 +321,7 @@ func TestRunEventRecorderBlockedAppendDoesNotBlockPersistOrDrain(t *testing.T) {
 					id := session.SessionID("blocked-append")
 					sess, run, askID := liveAwaitingControlRun(t, id)
 					defer func() {
-						run.Cancel(agent.CancelCauseRequested)
+						run.Cancel()
 						for range run.Events() {
 						}
 					}()
@@ -441,7 +440,7 @@ func TestRunEventRecorderShutdownProjectionIsLifecycleScoped(t *testing.T) {
 		id := session.SessionID("shutdown-preserved")
 		sess, run, askID := liveAwaitingControlRun(t, id)
 		defer func() {
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 			for range run.Events() {
 			}
 		}()
@@ -479,7 +478,7 @@ func TestRunEventRecorderShutdownProjectionIsLifecycleScoped(t *testing.T) {
 		id := session.SessionID("awaiting-save-failed")
 		sess, run, _ := liveAwaitingControlRun(t, id)
 		defer func() {
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 			for range run.Events() {
 			}
 		}()

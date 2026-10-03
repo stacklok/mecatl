@@ -253,9 +253,14 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
-		reflector, _ := agent.NewEvidenceReflector(waitProvider{}, session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, agent.ReflectionLimits{Timeout: time.Millisecond})
-		if _, _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, context.DeadlineExceeded) {
+		partial := session.Usage{InputTokens: 8, OutputTokens: 2}
+		reflector, _ := agent.NewEvidenceReflector(waitProvider{usage: &partial}, session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, agent.ReflectionLimits{Timeout: time.Millisecond})
+		_, usage, err := reflector.Reflect(context.Background(), input)
+		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("error = %v", err)
+		}
+		if got := usage.Buckets[session.UsageKindReflection].Models["test/m"]; got != partial {
+			t.Fatalf("partial usage on timeout = %#v, want %#v", got, partial)
 		}
 	})
 	for _, limits := range []agent.ReflectionLimits{{InputBytes: -1}, {Timeout: -1}, {Candidates: learning.MaxCandidates + 1}} {
@@ -275,12 +280,13 @@ func TestEvidenceReflectorRejectsUnexpectedAndNonBenignStreams(t *testing.T) {
 	input, _ := admittedInput(t)
 	valid := string(modelOutcome(learning.Candidate{Kind: learning.CandidateOperatorFact, Key: "user/style", Value: "concise"}, "m:0"))
 	tests := map[string][]port.Chunk{
-		"tool":         {{Kind: port.ChunkToolCall, ToolCall: new(session.ToolCall)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
-		"unknown":      {{Kind: port.ChunkKind(99)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
-		"error stop":   {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopError}},
-		"cancel stop":  {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopCancelled}},
-		"missing done": {{Kind: port.ChunkText, Text: valid}},
-		"after done":   {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}, {Kind: port.ChunkText, Text: "{}"}},
+		"tool":             {{Kind: port.ChunkToolCall, ToolCall: new(session.ToolCall)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
+		"unknown":          {{Kind: port.ChunkKind(99)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
+		"error stop":       {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopError}},
+		"cancel stop":      {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopCancelled}},
+		"missing done":     {{Kind: port.ChunkText, Text: valid}},
+		"after done":       {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}, {Kind: port.ChunkText, Text: "{}"}},
+		"usage after done": {{Kind: port.ChunkDone, Stop: session.StopEndTurn}, {Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 5}}},
 	}
 	for name, chunks := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -290,6 +296,40 @@ func TestEvidenceReflectorRejectsUnexpectedAndNonBenignStreams(t *testing.T) {
 			}
 			if _, _, err = reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) && !errors.Is(err, agent.ErrReflectionProvider) {
 				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestEvidenceReflectorRetainsPartialUsageOnStreamExits(t *testing.T) {
+	input, _ := admittedInput(t)
+	spend := session.Usage{InputTokens: 5, OutputTokens: 3}
+	usageChunk := port.Chunk{Kind: port.ChunkUsage, Usage: &spend}
+	cases := []struct {
+		name   string
+		turn   mockllm.Turn
+		limits agent.ReflectionLimits
+		want   error
+	}{
+		{"provider error", mockllm.ErrorTurn(errors.New("stream failed"), usageChunk), agent.ReflectionLimits{}, agent.ErrReflectionProvider},
+		{"output bytes", mockllm.ChunksTurn(usageChunk, port.Chunk{Kind: port.ChunkText, Text: strings.Repeat("x", 17)}), agent.ReflectionLimits{OutputBytes: 16}, agent.ErrReflectionOutput},
+		{"output tokens", mockllm.ChunksTurn(usageChunk), agent.ReflectionLimits{Tokens: 2}, agent.ErrReflectionOutput},
+		{"missing done", mockllm.ChunksTurn(usageChunk), agent.ReflectionLimits{}, agent.ErrReflectionProvider},
+		{"malformed response", mockllm.ChunksTurn(usageChunk, port.Chunk{Kind: port.ChunkText, Text: "not json"}, port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}), agent.ReflectionLimits{}, agent.ErrReflectionOutput},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reflector, err := agent.NewEvidenceReflector(mockllm.New(tc.turn), session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, tc.limits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, got, err := reflector.Reflect(t.Context(), input)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			bucket := got.Buckets[session.UsageKindReflection]
+			if bucket.Total != spend || bucket.Models["test/m"] != spend {
+				t.Fatalf("partial usage = %#v, want %#v", bucket, spend)
 			}
 		})
 	}
@@ -320,11 +360,14 @@ func TestEvidenceReflectorAcceptsHarmlessStreamMetadata(t *testing.T) {
 	}
 }
 
-type waitProvider struct{}
+type waitProvider struct{ usage *session.Usage }
 
 func (waitProvider) Capabilities() port.ProviderCapabilities { return port.ProviderCapabilities{} }
-func (waitProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+func (p waitProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	return func(yield func(port.Chunk, error) bool) {
+		if p.usage != nil && !yield(port.Chunk{Kind: port.ChunkUsage, Usage: p.usage}, nil) {
+			return
+		}
 		<-ctx.Done()
 		yield(port.Chunk{}, ctx.Err())
 	}, nil

@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -21,8 +22,8 @@ type permissionReviewPolicy struct {
 	learns     int
 }
 
-func (p *permissionReviewPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Ask, Reason: "test permission ask", AskProvenance: p.provenance}
+func (p *permissionReviewPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "test permission ask", AskProvenance: p.provenance}}
 }
 func (p *permissionReviewPolicy) Learn(session.SessionID, session.ToolCall) { p.learns++ }
 
@@ -171,7 +172,7 @@ func TestPermissionReviewFreshnessAtExecutionAdmission(t *testing.T) {
 						Catalog: catalogWith(t, bash), Policy: policy, ToolReviewer: reviewer, Hooks: hook, Role: "subagent",
 					})
 					run := child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "original task"})
-					t.Cleanup(func() { run.Cancel(agent.CancelCauseRequested) })
+					t.Cleanup(func() { run.Cancel() })
 					<-hook.entered
 					if change != "stable" {
 						agent.RefreshReviewTasksForTest(run, []session.Message{{Role: session.RoleUser, Text: "changed task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
@@ -292,7 +293,7 @@ func TestPermissionReviewCancellationCompletesWithoutConsumerSelfEmission(t *tes
 	})
 	run := child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect"})
 	<-reviewer.entered
-	run.Cancel(agent.CancelCauseRequested)
+	run.Cancel()
 	events := drainWithTimeout(t, run)
 	if len(bash.ran()) != 0 || reviewer.count() != 1 {
 		t.Fatalf("executions=%d reviews=%d", len(bash.ran()), reviewer.count())
@@ -304,8 +305,8 @@ func TestPermissionReviewCancellationCompletesWithoutConsumerSelfEmission(t *tes
 
 type configuredSystemAskPolicy struct{}
 
-func (configuredSystemAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Ask, Reason: "configured system ask", AskProvenance: governance.AskProvenanceConfigured}
+func (configuredSystemAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "configured system ask", AskProvenance: governance.AskProvenanceConfigured}}
 }
 func (configuredSystemAskPolicy) Learn(session.SessionID, session.ToolCall) {}
 

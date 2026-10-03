@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -18,10 +19,10 @@ type repairPolicy struct {
 	effect governance.Effect
 }
 
-func (p *repairPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+func (p *repairPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return governance.PermissionDecision{Effect: p.effect, Reason: "repair policy"}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: p.effect, Reason: "repair policy"}}
 }
 func (*repairPolicy) Learn(session.SessionID, session.ToolCall) {}
 func (p *repairPolicy) set(effect governance.Effect)            { p.mu.Lock(); p.effect = effect; p.mu.Unlock() }

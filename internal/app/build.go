@@ -4561,7 +4561,7 @@ type sessionPermissionPolicies struct {
 	remote   port.PermissionPolicy
 }
 
-func (p sessionPermissionPolicies) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
+func (p sessionPermissionPolicies) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	return p.standard.Evaluate(ctx, id, mode, call, ws)
 }
 func (p sessionPermissionPolicies) Learn(id session.SessionID, call session.ToolCall) {

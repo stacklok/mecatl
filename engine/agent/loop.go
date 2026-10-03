@@ -559,16 +559,6 @@ func (e *Engine) catalogTools() []catalogToolInfo {
 	return out
 }
 
-// CancelCause classifies why a caller is ending a live Run.
-type CancelCause uint8
-
-const (
-	// CancelCauseRequested preserves ordinary cancellation join-and-drain behavior.
-	CancelCauseRequested CancelCause = iota
-	// CancelCauseOwnershipLost revokes run-owned auxiliary admission before cancellation.
-	CancelCauseOwnershipLost
-)
-
 // RunOutcome records why a Run's event stream closed. Its zero value means the
 // run is still active.
 type RunOutcome int32
@@ -1150,26 +1140,12 @@ func (r *Run) autoDenyChildAsk(askID, reason string) {
 // seam, mirroring childDrainCap/childDrainGrace.
 var hardAbortGrace = time.Second
 
-// OwnershipLost records an irreversible loss of the host's authority to accept
-// run-owned auxiliary usage. It atomically closes admission and discards pending
-// usage, but does not cancel the run or undo already admitted work. Hosts call it
-// before invalidating local mutation authority so they can still retract a
-// pending ask before cancelling the run. It is safe to call more than once.
-func (r *Run) OwnershipLost() {
-	r.revokeAuxiliaryUsageOwnership()
-}
-
-// Cancel aborts the in-flight run for the classified cause. Requested cancellation
-// preserves normal child join-and-drain behavior. Ownership loss (and every unknown
-// value) first revokes auxiliary-usage ownership and clears queued usage without
-// mutating the Session, then cancels the run.
-func (r *Run) Cancel(cause CancelCause) {
-	ownershipLost := cause != CancelCauseRequested
-	if ownershipLost {
-		r.OwnershipLost()
-	}
+// Cancel aborts the in-flight run while preserving ordinary child join-and-drain
+// behavior. It is a no-op for an already durably parked authorization, whose
+// resumable handoff point must remain intact.
+func (r *Run) Cancel() {
 	r.closureMu.Lock()
-	if r.Outcome() == RunOutcomeAuthorizationPending && !ownershipLost {
+	if r.Outcome() == RunOutcomeAuthorizationPending {
 		r.closureMu.Unlock()
 		return
 	}

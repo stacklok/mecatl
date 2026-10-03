@@ -41,29 +41,43 @@ func utilityEngineUsage(kind session.UsageKind, identity session.ProviderModelID
 }
 
 // RemapAuxiliaryUsage confines a producer result to the caller-owned purpose while
-// preserving every non-empty model attribution and its reported totals.
+// preserving every reported model attribution and its spend.
 func RemapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage {
 	out := session.AuxiliaryUsage{}
-	unexpected, empty := false, false
+	unexpected, empty, missingPurpose := false, false, false
+	if purpose == "" {
+		purpose = session.UsageKind(unknownAuxiliaryAttribution)
+	}
 	for kind, bucket := range in.Buckets {
-		if kind == "" || kind != purpose {
+		if kind == "" || kind == session.UsageKind(unknownAuxiliaryAttribution) {
+			missingPurpose = true
+		}
+		if kind != purpose {
 			unexpected = true
 		}
 		if len(bucket.Models) == 0 {
 			empty = true
 		}
 		for model, usage := range bucket.Models {
-			if model == "" || usage == (session.Usage{}) {
+			if usage == (session.Usage{}) {
 				empty = true
 				continue
+			}
+			if model == "" {
+				model = unknownAuxiliaryAttribution
+				empty = true
 			}
 			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 				purpose: {Models: map[string]session.Usage{model: usage}},
 			}})
 		}
 	}
-	if (unexpected || empty) && diag != nil {
-		diag.Log(ctx, port.LevelDebug, "auxiliary usage result normalized", "unexpected_bucket", unexpected, "empty_bucket", empty)
+	if diag != nil {
+		if missingPurpose {
+			diag.Log(ctx, port.LevelWarn, "auxiliary usage missing purpose remapped", "purpose", string(purpose))
+		} else if unexpected || empty {
+			diag.Log(ctx, port.LevelDebug, "auxiliary usage result normalized", "unexpected_bucket", unexpected, "empty_bucket", empty)
+		}
 	}
 	return out
 }

@@ -104,7 +104,7 @@ func TestSettleIfStaleSkipsGenuinelyLiveSession(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 	t.Cleanup(func() {
-		run.Cancel(agent.CancelCauseRequested)
+		run.Cancel()
 		for range run.Events() {
 		}
 		svc.FinishRun(sess.ID, run)

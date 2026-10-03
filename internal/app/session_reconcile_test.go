@@ -437,7 +437,7 @@ func TestSweepStaleSessionsClearsLeaseLossTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRun after sweep = %v, want success (the sweep must have cleared the lease-loss tombstone)", err)
 	}
-	run2.Cancel(agent.CancelCauseRequested)
+	run2.Cancel()
 	for range run2.Events() {
 	}
 	svc.FinishRun(sess.ID, run2)

@@ -458,7 +458,7 @@ func TestADR_0294_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	run.Cancel(agent.CancelCauseRequested)
+	run.Cancel()
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)
@@ -505,7 +505,7 @@ func TestADR_0294_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T)
 		if err != nil {
 			t.Fatalf("unsupported lease start: %v", err)
 		}
-		run.Cancel(agent.CancelCauseRequested)
+		run.Cancel()
 		for range run.Events() {
 		}
 		svc.FinishRun(sess.ID, run)
@@ -576,7 +576,7 @@ func TestADR_0294_LeaseRemainsSessionScoped(t *testing.T) {
 	if got := recorder.calls.Load(); got != 1 {
 		t.Fatalf("session-scoped recorder calls = %d, want only session-b", got)
 	}
-	runB.Cancel(agent.CancelCauseRequested)
+	runB.Cancel()
 	for range runB.Events() {
 	}
 	svc.FinishRun(b.ID, runB)

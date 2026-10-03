@@ -29,8 +29,8 @@ import (
 
 type transportAskPolicy struct{}
 
-func (transportAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Ask}
+func (transportAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Ask}}
 }
 func (transportAskPolicy) Learn(session.SessionID, session.ToolCall) {}
 

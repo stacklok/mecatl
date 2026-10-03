@@ -651,8 +651,8 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		}, nil)
 		p := newEscapePolicy(inner, PostureYolo)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Deny {
-			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the posture-relaxed escape Allow", d.Effect)
+		if d.Decision.Effect != governance.Deny {
+			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the posture-relaxed escape Allow", d.Decision.Effect)
 		}
 	})
 
@@ -663,10 +663,10 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		}, nil)
 		p := newEscapePolicy(inner, PostureYolo)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Ask {
-			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Effect)
+		if d.Decision.Effect != governance.Ask {
+			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Decision.Effect)
 		}
-		if d.AskProvenance != governance.AskProvenanceConfigured {
+		if d.Decision.AskProvenance != governance.AskProvenanceConfigured {
 			t.Fatal("ConfiguredAsk = false — the surviving Ask must stay marked configured (the child-ask model honours a configured Ask)")
 		}
 	})
@@ -680,7 +680,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		// roots the policy has already seen — in the loop, Learn only ever
 		// follows an Evaluate of the same call).
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Ask || d.AskProvenance == governance.AskProvenanceConfigured {
+		if d.Decision.Effect != governance.Ask || d.Decision.AskProvenance == governance.AskProvenanceConfigured {
 			t.Fatalf("escape at auto = %+v, want an unconfigured escape Ask", d)
 		}
 		// The loop calls Learn on an allow-always verdict; the wrapper must

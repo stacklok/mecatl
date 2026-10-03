@@ -56,7 +56,7 @@ func drainObserving(t *testing.T, r *agent.Run, observe func(session.Event)) []s
 				observe(ev)
 			}
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("run did not terminate within the deadline (possible wedge)")
 			return evs
 		}
@@ -484,7 +484,7 @@ func TestParentRunCancelNoClientNoteOnStream(t *testing.T) {
 
 	go func() {
 		<-park.started
-		r.Cancel(agent.CancelCauseRequested) // the WHOLE-run cancel: every child dies as today, clientCancelled false
+		r.Cancel() // the WHOLE-run cancel: every child dies as today, clientCancelled false
 	}()
 	evs := drainWithTimeout(t, r)
 

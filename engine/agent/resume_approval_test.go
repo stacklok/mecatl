@@ -40,7 +40,7 @@ func driveToAwaiting(t *testing.T, e *agent.Engine, sess *session.Session, env t
 			// the Cancel, which drives the LIVE session to a cancelled terminal —
 			// exactly the process-death the resume path recovers from.
 			snap, snapErr = sessnap.Of(sess)
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 		}
 	}
 	if askID == "" {
@@ -352,10 +352,10 @@ func captureFirstAsk(t *testing.T, r *agent.Run) session.PendingAsk {
 			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && got == nil {
 				ask := *ev.Ask
 				got = &ask
-				r.Cancel(agent.CancelCauseRequested)
+				r.Cancel()
 			}
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			t.Fatal("timed out waiting for a permission ask (10s); likely a wiring regression")
 		}
 	}

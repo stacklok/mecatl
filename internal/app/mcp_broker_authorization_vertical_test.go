@@ -234,7 +234,7 @@ func drainEvents(ctx context.Context, t *testing.T, run *agent.Run) []session.Ev
 			}
 			events = append(events, event)
 		case <-ctx.Done():
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 			t.Fatalf("timed out draining run events: %v", ctx.Err())
 		}
 	}

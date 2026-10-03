@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -49,8 +50,8 @@ type terminalFailurePolicy struct {
 	job ReviewJob
 }
 
-func (terminalFailurePolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (terminalFailurePolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (terminalFailurePolicy) Learn(session.SessionID, session.ToolCall) {}
 func (p terminalFailurePolicy) GuardrailReviewPolicy(_ string, job ReviewJob, operationalFailure bool) (bool, bool) {

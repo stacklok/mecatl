@@ -22,8 +22,8 @@ import (
 // here even when that fabricated call happens to be unlearnable.
 type spyPolicy struct{ learned []session.ToolCall }
 
-func (*spyPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (*spyPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (p *spyPolicy) Learn(_ session.SessionID, c session.ToolCall) { p.learned = append(p.learned, c) }
 

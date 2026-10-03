@@ -1148,22 +1148,18 @@ func recordValidatedApproval(r *Run, sessionID session.SessionID, ask session.Pe
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
 func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
-	if r == nil {
-		return e.permissionDecisionOwned(ctx, sess, env, c)
+	evaluate := func(c session.ToolCall) governance.PermissionDecision {
+		result := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+		if r != nil {
+			r.recordGuardrailUsageWhileActive(ctx, sess, result.Usage)
+		}
+		return result.Decision
 	}
-	ctx, deactivate := port.WithAuxiliaryUsageReporter(ctx, func(usage session.AuxiliaryUsage) {
-		r.recordGuardrailUsageWhileActive(ctx, sess, usage)
-	})
-	defer deactivate()
-	return e.permissionDecisionOwned(ctx, sess, env, c)
-}
-
-func (e *Engine) permissionDecisionOwned(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
-	ordinary := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+	ordinary := evaluate(c)
 	if !shellSystemScope(c) || ordinary.Effect == governance.Deny {
 		return ordinary
 	}
-	system := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	system := evaluate(session.ToolCall{Name: shellSystemTempToolName})
 	if system.Effect == governance.Deny {
 		return system
 	}

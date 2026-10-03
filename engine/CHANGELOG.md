@@ -352,21 +352,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   provider/model rather than a fabricated `unknown/<model>` identity. Changed
   (breaking, pre-v1 minor).
 
-- **Contextual reviewer usage results** — `agent.ToolReviewer.Review` now returns
-  `session.AuxiliaryUsage`, including partial usage returned with an error. The engine
-  remaps and records completed review usage on the reviewed session while it retains
-  run ownership. `port.AuxiliaryUsageReporter`, `WithAuxiliaryUsageReporter`, and
-  `AuxiliaryUsageReporterFromContext` provide the synchronous request-scoped adapter
-  seam used by the main-session path-escape check. Changed (breaking, pre-v1 minor).
-
-- **Run ownership transition and typed cancellation** — adds idempotent
-  `(*agent.Run).OwnershipLost()` to revoke run-owned auxiliary admission without
-  cancelling, allowing lease-owning hosts to retract a pending ask before
-  cancellation. Adds `agent.CancelCause` with zero-value `CancelCauseRequested`
-  and `CancelCauseOwnershipLost`, and changes `(*agent.Run).Cancel()` to
-  `Cancel(CancelCause)`. Ownership-loss and unknown causes revoke auxiliary
-  admission as a backstop; requested cancellation preserves join-and-drain
-  behavior. Changed (breaking, pre-v1 minor).
+- **Contextual reviewer and permission-evaluation usage results** —
+  `agent.ToolReviewer.Review` now returns `session.AuxiliaryUsage`, including
+  partial usage returned with an error. `port.PermissionPolicy.Evaluate` now
+  returns `port.PermissionResult`, pairing its `governance.PermissionDecision`
+  with `session.AuxiliaryUsage`; the Engine records path-escape checker usage for
+  each evaluation while it owns the run. `session.AuxiliaryUsage` remains a
+  returned-result wrapper, distinct from the durable ledger map. Changed
+  (breaking, pre-v1 minor).
 
 - **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
   `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return

@@ -395,7 +395,7 @@ func drainTeamPinningConcurrency(t *testing.T, r *agent.Run, decide func(ev sess
 				}
 			}
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("team run did not converge within the deadline (possible sequential-drain wedge: a parked member blocked its peers)")
 			return evs
 		}
@@ -563,7 +563,7 @@ func drainWithTimeout(t *testing.T, r *agent.Run) []session.Event {
 			}
 			evs = append(evs, ev)
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			t.Fatalf("run did not terminate within the deadline (possible wedge)")
 			return evs
 		}

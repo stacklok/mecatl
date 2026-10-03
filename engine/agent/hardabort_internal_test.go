@@ -99,7 +99,7 @@ func waitForCondition(t *testing.T, what string, cond func() bool) {
 // The test synchronizes (channel signals + exact state predicates) until the
 // forwarder is GENUINELY parked inside the guarded send and the members have
 // produced strictly more events than the pipeline can hold, then calls
-// run.Cancel(CancelCauseRequested) and asserts the run terminates (drive returns, the session lands
+// run.Cancel() and asserts the run terminates (drive returns, the session lands
 // cancelled — Interrupt-recoverable, identical to a healthy esc-cancel) within
 // a watchdog bound.
 //
@@ -209,7 +209,7 @@ func TestCancelUnwedgesStalledTeamRun(t *testing.T) {
 		return len(r.events) == cap(r.events) && entered.Load() > exited.Load()
 	})
 
-	r.Cancel(CancelCauseRequested)
+	r.Cancel()
 
 	select {
 	case <-driveDone:
@@ -253,7 +253,7 @@ func TestCancelAbortNoChildLeakAfterSeal(t *testing.T) {
 		Subagent: &session.SubagentPayload{ChildID: "subagent-x", Stop: session.StopCancelled}})
 	<-entered // the child emit is inside the guarded send (buffer full → it parks)
 
-	r.Cancel(CancelCauseRequested)
+	r.Cancel()
 
 	select {
 	case ok := <-delivered:

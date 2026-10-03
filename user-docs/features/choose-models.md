@@ -362,6 +362,12 @@ These mechanisms are independent:
   up to three early genuine prompts; it never delays or changes the chat. Its
   token usage is stored separately as `session_title`, not charged to the chat's
   displayed usage or run budget.
+- **Auxiliary model calls** record provider-reported tokens in separate canonical
+  session-usage buckets. A returned result without a purpose is recorded as
+  `unknown` when its purpose cannot be determined. Model attribution is
+  independent: it is `unknown` only when the provider or model is unavailable.
+  These buckets do not change the chat's displayed usage or run budget, except
+  that the router bucket retains its internal spend limit.
 - **Router categories** select a model for a plain delegated Subagent, an
   unpinned named specialist (including `mode: "read-write"`), a Parallel branch,
   or an undefined team member from the task description. A taxonomy enables the

@@ -354,7 +354,7 @@ func drainApproving(r *agent.Run, v session.ApprovalVerdict, observe func(sessio
 				r.Approve(ev.Ask.AskID, v)
 			}
 		case <-deadline:
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 			return evs
 		}
 	}

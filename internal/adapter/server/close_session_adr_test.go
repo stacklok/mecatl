@@ -119,7 +119,7 @@ func TestADR_0294_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
 			if fixture.closed.Load() != 0 || fixture.lease.releaseCount() != 0 || !fixture.svc.IsLive(fixture.sessionID) {
 				t.Fatalf("rejected close changed ownership: engine closes=%d lease releases=%d live=%t", fixture.closed.Load(), fixture.lease.releaseCount(), fixture.svc.IsLive(fixture.sessionID))
 			}
-			run.Cancel(agent.CancelCauseRequested)
+			run.Cancel()
 			for range run.Events() {
 			}
 			fixture.svc.FinishRun(fixture.sessionID, run)

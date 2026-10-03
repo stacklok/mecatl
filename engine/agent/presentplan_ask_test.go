@@ -247,7 +247,7 @@ func TestResumePlanApprovalAfterRestartExecutesAndFlips(t *testing.T) {
 				t.Fatal("the awaiting plan ask must carry plan origin")
 			}
 			snap, snapErr = sessnap.Of(sess)
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 		}
 	}
 	if askID == "" {
@@ -312,7 +312,7 @@ func TestResumePlanApprovalDenyIteratesTerminates(t *testing.T) {
 				t.Fatal("the awaiting plan ask must carry plan origin")
 			}
 			snap, snapErr = sessnap.Of(sess)
-			r.Cancel(agent.CancelCauseRequested)
+			r.Cancel()
 		}
 	}
 	if askID == "" {
