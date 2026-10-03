@@ -61,8 +61,9 @@ the module boundary; `task test` does. Focused engine test:
   reattachment, no public paths or cwd-based inference. Server-created worktrees
   come only from the boolean `new_worktree` intent; local worktree refs persist
   `Revision: "worktree-v1"` and reattach by path (a legacy hex HEAD revision also
-  reattaches by path; anything else fails closed). No-FS children stay
-  file-less. Skills expose logical assets, not extra workspace or execution roots.
+  reattaches by path; anything else fails closed). No-FS sessions and their
+  children stay file-less. Skills expose logical assets, not extra workspace or
+  execution roots.
 - Fence untrusted content with the canonical governance fences and keep child
   isolation. MCP is streaming-HTTP only; never spawn stdio MCP servers. Post-tool
   hooks cannot undo execution: enforce incoming-result checks by rewriting the

@@ -120,7 +120,9 @@ other revision fails closed. Ownership is derived, never persisted: a worktree i
 server-created when its symlink-resolved path sits under the managed root and git lists
 it. `DeleteSession{stop_active}` stops an active session after the run-entry lock and
 real lease are held; `remove_worktree` removes only a clean, unshared server-created
-worktree under a per-path lock, never with `--force`, and keeps the branch. See
+worktree under a per-path lock, never with `--force`, and keeps the branch. The one
+forced removal is create-failure rollback, which discards only the worktree that the
+failing create just added. See
 [ADR 0374](../adr/0374-server-created-session-worktrees.md).
 
 ### Multi-replica affinity, correlation, and single-writer enforcement
