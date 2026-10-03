@@ -25,8 +25,8 @@ import (
 // location and naming: every worktree lives directly under the managed root on
 // its own mecatl/<name> branch, created from the configured root's HEAD.
 const (
-	managedWorktreeNamePrefix   = "mecatl-"
-	managedWorktreeBranchPrefix = "mecatl/"
+	managedWorktreeNamePrefix   = server.ManagedWorktreeNamePrefix
+	managedWorktreeBranchPrefix = server.ManagedWorktreeBranchPrefix
 	maxManagedWorktreeAttempts  = 5
 	managedWorktreeGitTimeout   = 30 * time.Second
 )
@@ -87,16 +87,7 @@ func randomManagedWorktreeName() (string, error) {
 }
 
 func validManagedWorktreeName(name string) bool {
-	suffix, ok := strings.CutPrefix(name, managedWorktreeNamePrefix)
-	if !ok || len(suffix) != 8 {
-		return false
-	}
-	for _, c := range suffix {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
+	return server.ValidManagedWorktreeName(name)
 }
 
 // runHardenedGit runs one git subcommand in dir with the forker's scrubbed,
@@ -107,7 +98,10 @@ func runHardenedGit(ctx context.Context, dir string, args ...string) (string, er
 	ctx, cancel := context.WithTimeout(ctx, managedWorktreeGitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) // #nosec G204 -- fixed git subcommands over server-generated arguments.
-	cmd.Env = gitSafeEnvironment()
+	// GIT_OPTIONAL_LOCKS=0 keeps read-only calls (status, worktree list) from
+	// taking index.lock for an opportunistic refresh, so they never contend with
+	// an agent's own git in the worktree.
+	cmd.Env = append(gitSafeEnvironment(), "GIT_OPTIONAL_LOCKS=0")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -193,8 +187,8 @@ func (p *localPlacementProvider) bindNewWorktree(ctx context.Context) (server.Pl
 		return server.PlacementBinding{}, err
 	}
 	// Display metadata names the new worktree and its branch, never its path. The
-	// server's display sanitizer drops slash-bearing values, so the slash-free
-	// worktree name is the label that reaches clients.
+	// server's display sanitizer admits the slash-bearing mecatl/<name> branch
+	// only in exactly this server-generated shape.
 	name := filepath.Base(path)
 	binding.Metadata.Label = name
 	binding.Metadata.Branch = managedWorktreeBranchPrefix + name
@@ -257,26 +251,50 @@ func (p *localPlacementProvider) RemoveWorktree(ctx context.Context, req server.
 	return nil
 }
 
+// WorktreeServerCreated implements the cheap listing-time half of
+// server.PlacementWorktreeRemover: the path-shape checks of
+// serverCreatedWorktree only (Lstat and EvalSymlinks), with no git. Delete
+// re-derives ownership authoritatively through WorktreeOwnership.
+func (p *localPlacementProvider) WorktreeServerCreated(_ context.Context, req server.PlacementReattachRequest) (bool, error) {
+	if req.Scope != p.scope {
+		return false, server.ErrPlacementNotFound
+	}
+	_, ok := p.managedWorktreePath(req.Ref)
+	return ok, nil
+}
+
 // serverCreatedWorktree reports whether ref names a worktree this provider
-// created (ADR 0374 Decision 3): the ref's path is not a symlink, its resolved
-// form is a direct child of the resolved managed root, and git lists it as a
-// worktree of the configured repository. Ownership is derived, never persisted.
+// created (ADR 0374 Decision 3): the path shape of managedWorktreePath holds and
+// git lists it as a worktree of the configured repository. Ownership is
+// derived, never persisted.
 func (p *localPlacementProvider) serverCreatedWorktree(ctx context.Context, ref session.EnvironmentRef) bool {
-	if p.creator == nil || ref.Kind != session.EnvKindLocal || ref.ID == "" || ref.ID == p.root {
-		return false
-	}
-	managed, err := filepath.EvalSymlinks(p.creator.managedRoot)
-	if err != nil {
-		return false
-	}
-	info, err := os.Lstat(ref.ID)
-	if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
-		return false
-	}
-	resolved, err := filepath.EvalSymlinks(ref.ID)
-	if err != nil || filepath.Dir(resolved) != managed {
+	resolved, ok := p.managedWorktreePath(ref)
+	if !ok {
 		return false
 	}
 	_, listed := p.listedWorktree(ctx, resolved)
 	return listed
+}
+
+// managedWorktreePath returns ref's resolved path when it has the shape of a
+// server-created worktree, without running git: the ref's path is not a
+// symlink, is a directory, and its resolved form is a direct child of the
+// resolved managed root.
+func (p *localPlacementProvider) managedWorktreePath(ref session.EnvironmentRef) (string, bool) {
+	if p.creator == nil || ref.Kind != session.EnvKindLocal || ref.ID == "" || ref.ID == p.root {
+		return "", false
+	}
+	managed, err := filepath.EvalSymlinks(p.creator.managedRoot)
+	if err != nil {
+		return "", false
+	}
+	info, err := os.Lstat(ref.ID)
+	if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(ref.ID)
+	if err != nil || filepath.Dir(resolved) != managed {
+		return "", false
+	}
+	return resolved, true
 }

@@ -985,7 +985,7 @@ type Service struct {
 	// it is separate from runEntryMu because engine rebuilds may already hold that
 	// run-entry lock.
 	brokerAttachments map[session.SessionID]brokercontract.Attachment
-	brokerMu          keyedMutex
+	brokerMu          keyedMutex[session.SessionID]
 	// authorizationExpiry is Service-owned and guarded by mu.
 	authorizationExpiry map[session.SessionID]*authorizationExpiry
 	// beforeAuthorizationContinuationStart is an inert test synchronization seam.
@@ -1078,7 +1078,7 @@ type Service struct {
 	// not reentrant; a per-session lock also keeps unrelated sessions' resumes
 	// concurrent. The keyedMutex frees a key once no caller holds it, so it never grows
 	// unbounded.
-	resumeMu keyedMutex
+	resumeMu keyedMutex[session.SessionID]
 
 	// runEntryMu serializes the per-session RUN-ENTRY critical section (ADR 0030
 	// Layer 3, the use-after-close guard): the engine-resolve (engineAndEnvironmentFor,
@@ -1093,7 +1093,7 @@ type Service struct {
 	// (a keyedMutex, freed when no caller holds a key) so unrelated sessions never
 	// serialize; lock order is resumeMu → runEntryMu (resumeFromAwaiting takes both;
 	// StartRunContent takes only runEntryMu) so the two never deadlock.
-	runEntryMu keyedMutex
+	runEntryMu keyedMutex[session.SessionID]
 
 	// replayedApprovals tracks the session ids whose learned-rule store has already
 	// been repopulated from the durable EventLog this process lifetime (cloud-native
@@ -1151,7 +1151,7 @@ type Service struct {
 	// holds the key) so all three are strictly ordered relative to one
 	// another for the same id: exactly one of loss-handling, trial-reconcile,
 	// or close-teardown runs at a time, never interleaved mid-flight.
-	leaseLossMu keyedMutex
+	leaseLossMu keyedMutex[session.SessionID]
 
 	// leaseDisabled is set (once) when Config.SessionLease reports
 	// ErrLeaseUnsupported: the seam never works on this backend, so the run-entry
@@ -1427,9 +1427,9 @@ func (st *runState) recordExactApprovalContext(ctx context.Context, askID string
 // holder unlocks. It is used to make the awaiting-approval resume decision atomic per
 // session (see Service.resumeMu): only one ResumeApproval is ever spawned for a given
 // awaiting session even under concurrent Approve calls.
-type keyedMutex struct {
+type keyedMutex[K comparable] struct {
 	mu    sync.Mutex
-	locks map[session.SessionID]*keyedMutexEntry
+	locks map[K]*keyedMutexEntry
 }
 
 type keyedMutexEntry struct {
@@ -1441,10 +1441,10 @@ type keyedMutexEntry struct {
 // drops the key when no other caller holds it. The pattern is: ref under the guard,
 // then block on the per-key mutex OUTSIDE the guard (so distinct keys never serialize
 // and the guard is never held across the contended wait).
-func (k *keyedMutex) lock(key session.SessionID) func() {
+func (k *keyedMutex[K]) lock(key K) func() {
 	k.mu.Lock()
 	if k.locks == nil {
-		k.locks = make(map[session.SessionID]*keyedMutexEntry)
+		k.locks = make(map[K]*keyedMutexEntry)
 	}
 	e, ok := k.locks[key]
 	if !ok {

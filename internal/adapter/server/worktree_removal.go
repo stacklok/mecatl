@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -17,6 +16,10 @@ import (
 // defaultStopActiveTimeout bounds how long DeleteSession{stop_active} waits for
 // a cancelled live run to settle before failing with nothing deleted.
 const defaultStopActiveTimeout = 10 * time.Second
+
+// worktreeRemoveTimeout bounds the cancel-detached worktree removal that runs
+// after the session is deleted.
+const worktreeRemoveTimeout = 30 * time.Second
 
 // Retained-worktree reasons reported by DeleteSessionResult when the session
 // was deleted but its worktree was kept.
@@ -55,15 +58,7 @@ type DeleteSessionResult struct {
 // same path. It is process-wide because several Services in one process share
 // one filesystem. Entries are reference-counted and deleted when unused, so the
 // map is bounded by in-flight operations.
-var worktreePathLocks = struct {
-	mu sync.Mutex
-	m  map[string]*worktreePathLock
-}{m: map[string]*worktreePathLock{}}
-
-type worktreePathLock struct {
-	mu   sync.Mutex
-	refs int
-}
+var worktreePathLocks keyedMutex[string]
 
 // worktreePathKey is the symlink-resolved path, falling back to the cleaned
 // path once the directory is gone.
@@ -76,25 +71,7 @@ func worktreePathKey(path string) string {
 
 // lockWorktreePath takes the per-path lock for path and returns its release.
 func lockWorktreePath(path string) func() {
-	key := worktreePathKey(path)
-	worktreePathLocks.mu.Lock()
-	entry := worktreePathLocks.m[key]
-	if entry == nil {
-		entry = &worktreePathLock{}
-		worktreePathLocks.m[key] = entry
-	}
-	entry.refs++
-	worktreePathLocks.mu.Unlock()
-	entry.mu.Lock()
-	return func() {
-		entry.mu.Unlock()
-		worktreePathLocks.mu.Lock()
-		entry.refs--
-		if entry.refs == 0 {
-			delete(worktreePathLocks.m, key)
-		}
-		worktreePathLocks.mu.Unlock()
-	}
+	return worktreePathLocks.lock(worktreePathKey(path))
 }
 
 func (s *Service) stopActiveTimeout() time.Duration {
@@ -173,14 +150,25 @@ func (s *Service) DeleteSessionWithOptions(ctx context.Context, id session.Sessi
 		return DeleteSessionResult{}, err
 	}
 	if removal != nil && result.WorktreeRetainedReason == "" {
-		if err := removal.remover.RemoveWorktree(ctx, removal.req); err != nil {
-			s.logPlacementProviderError(ctx, "remove session worktree", err)
+		// The chat is already deleted: a client that disconnects now must not
+		// abort the removal halfway, so it runs cancel-detached and bounded.
+		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), worktreeRemoveTimeout)
+		err := removal.remover.RemoveWorktree(removeCtx, removal.req)
+		cancel()
+		if err != nil {
+			s.logWorktreeProviderError(ctx, "remove session worktree", err)
 			result.WorktreeRetainedReason = WorktreeRetainedRemoveFailed
 		} else {
 			result.WorktreeRemoved = true
 		}
 	}
 	return result, nil
+}
+
+// logWorktreeProviderError logs a raw PlacementWorktreeRemover failure through
+// the placement diagnostic path, with the cause path-redacted.
+func (s *Service) logWorktreeProviderError(ctx context.Context, operation string, err error) {
+	s.logPlacementProviderError(context.WithoutCancel(ctx), operation, sanitizePlacementProviderError(err))
 }
 
 // stopForDelete cancels the exact registered lifecycle, if any, and waits for
@@ -230,7 +218,7 @@ func (s *Service) beginWorktreeRemoval(ctx context.Context, sess *session.Sessio
 	}
 	ownership, err := remover.WorktreeOwnership(ctx, r.req)
 	if err != nil {
-		s.logPlacementProviderError(ctx, "check session worktree ownership", err)
+		s.logWorktreeProviderError(ctx, "check session worktree ownership", err)
 		return refuse(errWorktreeRemovalUnavailable)
 	}
 	if !ownership.ServerCreated {
@@ -255,13 +243,19 @@ func (s *Service) beginWorktreeRemoval(ctx context.Context, sess *session.Sessio
 func (r *worktreeRemoval) recheck(ctx context.Context) string {
 	shared, err := r.s.worktreeSharedByOthers(ctx, r.self, r.req.Ref)
 	if err != nil {
+		r.s.logDiscoveryError(context.WithoutCancel(ctx), "rescan worktree sharing", err)
 		return WorktreeRetainedRemoveFailed
 	}
 	if shared {
 		return WorktreeRetainedShared
 	}
 	ownership, err := r.remover.WorktreeOwnership(ctx, r.req)
-	if err != nil || !ownership.ServerCreated {
+	if err != nil {
+		r.s.logWorktreeProviderError(ctx, "recheck session worktree ownership", err)
+		return WorktreeRetainedRemoveFailed
+	}
+	if !ownership.ServerCreated {
+		r.s.logWorktreeProviderError(ctx, "recheck session worktree ownership", errors.New("worktree is no longer server-created"))
 		return WorktreeRetainedRemoveFailed
 	}
 	if !ownership.Clean {
@@ -346,7 +340,8 @@ func (s *Service) confirmSelectedWorktree(ctx context.Context, owner *session.Pr
 
 // annotateRemoveWorktree fills capabilities.remove_worktree for one inventory
 // page. The sharing scan runs at most once per page, and only when a row is a
-// server-created worktree; the ownership check runs per local-ref main row.
+// server-created worktree. Per row only the cheap WorktreeServerCreated check
+// runs; cleanliness is never checked while listing (ADR 0374 Decision 4).
 func (s *Service) annotateRemoveWorktree(ctx context.Context, rows []SessionSummary, metas []port.SessionDiscoveryMeta) {
 	remover, ok := s.cfg.PlacementProvider.(PlacementWorktreeRemover)
 	deletable := sessionDeleteSupported(s.cfg.Store)
@@ -367,11 +362,11 @@ func (s *Service) annotateRemoveWorktree(ctx context.Context, rows []SessionSumm
 			row.Reasons.RemoveWorktree = CapabilityReasonNotServerCreated
 			continue
 		}
-		ownership, err := remover.WorktreeOwnership(ctx, PlacementReattachRequest{Ref: ref, Principal: meta.Owner.Clone(), Scope: s.cfg.PlacementScope, BindingID: meta.ID})
+		serverCreated, err := remover.WorktreeServerCreated(ctx, PlacementReattachRequest{Ref: ref, Principal: meta.Owner.Clone(), Scope: s.cfg.PlacementScope, BindingID: meta.ID})
 		if err != nil {
 			continue
 		}
-		if !ownership.ServerCreated {
+		if !serverCreated {
 			row.Reasons.RemoveWorktree = CapabilityReasonNotServerCreated
 			continue
 		}

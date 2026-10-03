@@ -171,8 +171,15 @@ type WorktreeOwnership struct {
 // DeleteSessionRequest.remove_worktree (ADR 0374 Decision 4). RemoveWorktree
 // removes only a server-created worktree, never forcibly, and keeps its branch.
 // A provider without it makes worktree removal unavailable.
+//
+// WorktreeOwnership is the authoritative delete-time verdict and may run git
+// (worktree listing and a cleanliness check). WorktreeServerCreated is the
+// cheap listing-time projection behind SessionInventoryCapabilities.remove_worktree:
+// it must not run git or inspect worktree contents, so it may report true for a
+// path that the delete-time WorktreeOwnership later refuses.
 type PlacementWorktreeRemover interface {
 	WorktreeOwnership(ctx context.Context, req PlacementReattachRequest) (WorktreeOwnership, error)
+	WorktreeServerCreated(ctx context.Context, req PlacementReattachRequest) (bool, error)
 	RemoveWorktree(ctx context.Context, req PlacementReattachRequest) error
 }
 
@@ -883,9 +890,41 @@ func canonicalPlacementMetadata(binding PlacementBinding) session.PlacementMetad
 	return session.PlacementMetadata{
 		Kind:     sanitizePlacementDisplay(string(binding.Ref.Kind), maxPlacementKindRunes),
 		Label:    sanitizePlacementDisplay(binding.Metadata.Label, maxPlacementNameRunes),
-		Branch:   sanitizePlacementDisplay(binding.Metadata.Branch, maxPlacementNameRunes),
+		Branch:   sanitizePlacementBranch(binding.Metadata.Branch),
 		Revision: sanitizePlacementDisplay(binding.Metadata.Revision, maxPlacementIdentityRunes),
 	}
+}
+
+// Server-created worktree naming (ADR 0374 Decision 1): directory
+// mecatl-<8 lowercase hex> on branch mecatl/<directory name>.
+const (
+	ManagedWorktreeNamePrefix   = "mecatl-"
+	ManagedWorktreeBranchPrefix = "mecatl/"
+)
+
+// ValidManagedWorktreeName reports whether name is a server-generated worktree
+// name: ManagedWorktreeNamePrefix followed by exactly 8 lowercase hex digits.
+func ValidManagedWorktreeName(name string) bool {
+	suffix, ok := strings.CutPrefix(name, ManagedWorktreeNamePrefix)
+	if !ok || len(suffix) != 8 {
+		return false
+	}
+	for _, c := range suffix {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizePlacementBranch is sanitizePlacementDisplay for branch names, with one
+// narrow exemption from the slash ban: exactly the server-generated
+// mecatl/<ValidManagedWorktreeName> branch, which can name no path.
+func sanitizePlacementBranch(value string) string {
+	if name, ok := strings.CutPrefix(value, ManagedWorktreeBranchPrefix); ok && ValidManagedWorktreeName(name) {
+		return value
+	}
+	return sanitizePlacementDisplay(value, maxPlacementNameRunes)
 }
 
 func sanitizePlacementDisplay(value string, maxRunes int) string {

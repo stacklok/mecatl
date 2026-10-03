@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,14 +58,33 @@ type tmsRemover struct {
 	dirty         atomic.Bool
 	removeErr     error
 	removes       atomic.Int64
+	// ownershipCalls counts the delete-time WorktreeOwnership (cleanliness)
+	// checks; onOwnership, when set, scripts the error of call n (1-based).
+	ownershipCalls atomic.Int64
+	onOwnership    func(n int64) error
+	// removeCtxErr / removeHasDeadline record the context RemoveWorktree saw.
+	removeCtxErr      error
+	removeHasDeadline bool
 }
 
 func (p *tmsRemover) WorktreeOwnership(context.Context, server.PlacementReattachRequest) (server.WorktreeOwnership, error) {
+	n := p.ownershipCalls.Add(1)
+	if p.onOwnership != nil {
+		if err := p.onOwnership(n); err != nil {
+			return server.WorktreeOwnership{}, err
+		}
+	}
 	return server.WorktreeOwnership{ServerCreated: p.serverCreated, Clean: !p.dirty.Load()}, nil
 }
 
-func (p *tmsRemover) RemoveWorktree(context.Context, server.PlacementReattachRequest) error {
+func (p *tmsRemover) WorktreeServerCreated(context.Context, server.PlacementReattachRequest) (bool, error) {
+	return p.serverCreated, nil
+}
+
+func (p *tmsRemover) RemoveWorktree(ctx context.Context, _ server.PlacementReattachRequest) error {
 	p.removes.Add(1)
+	p.removeCtxErr = ctx.Err()
+	_, p.removeHasDeadline = ctx.Deadline()
 	return p.removeErr
 }
 
@@ -166,6 +186,31 @@ func TestTUIMultiSession_Scenario3_StopActiveDeletesRunningSession(t *testing.T)
 		assertTMSDeleted(t, f.store, id)
 	})
 
+	t.Run("holds the session lease while it stops and deletes", func(t *testing.T) {
+		lease := newTMSLease()
+		f := newTMSStopFixture(t, tmsLeaseConfig(lease))
+		id, _ := f.startBlockedRun(t, true)
+		if got := lease.acquiredFor(id); got != 1 {
+			t.Fatalf("run entry acquired the lease %d times, want 1", got)
+		}
+		lease.mu.Lock()
+		lease.onRelease = func(released session.SessionID) bool {
+			_, err := f.store.Load(context.Background(), released)
+			return errors.Is(err, port.ErrSessionNotFound)
+		}
+		lease.mu.Unlock()
+		if _, err := f.svc.DeleteSessionWithOptions(t.Context(), id, server.DeleteSessionOptions{StopActive: true}); err != nil {
+			t.Fatalf("DeleteSession{stop_active} with a lease: %v", err)
+		}
+		assertTMSDeleted(t, f.store, id)
+		if lease.releasedFor(id) == 0 {
+			t.Fatal("stop-and-delete never released the session lease")
+		}
+		if lease.releasedEarly(id) {
+			t.Fatal("the session lease was released while the session was still stored")
+		}
+	})
+
 	t.Run("run that does not end in time deletes nothing", func(t *testing.T) {
 		f := newTMSStopFixture(t, server.Config{StopActiveTimeout: 50 * time.Millisecond})
 		id, run := f.startBlockedRun(t, false) // never deregisters
@@ -216,8 +261,12 @@ func TestTUIMultiSession_Scenario3_StopActiveDeletesAwaitingSession(t *testing.T
 				t.Fatal(err)
 			}
 			tmsPark(t, f.store, sess, tc.awaiting)
-			// A fresh process over the same store: nothing is live here.
-			restarted, err := newPlacementTestService(server.Config{Engine: noopTMSEngine(), Store: f.store})
+			// A fresh process over the same store: nothing is live here, so the
+			// delete itself must acquire the configured session lease.
+			lease := newTMSLease()
+			cfg := tmsLeaseConfig(lease)
+			cfg.Engine, cfg.Store = noopTMSEngine(), f.store
+			restarted, err := newPlacementTestService(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,10 +277,17 @@ func TestTUIMultiSession_Scenario3_StopActiveDeletesAwaitingSession(t *testing.T
 			if got := assertTMSStored(t, f.store, sess.ID); got.State != tc.want {
 				t.Fatalf("refused delete changed state to %s", got.State)
 			}
+			before := lease.acquiredFor(sess.ID)
 			if _, err := restarted.DeleteSessionWithOptions(t.Context(), sess.ID, server.DeleteSessionOptions{StopActive: true}); err != nil {
 				t.Fatalf("DeleteSession{stop_active}: %v", err)
 			}
 			assertTMSDeleted(t, f.store, sess.ID)
+			if lease.acquiredFor(sess.ID) != before+1 {
+				t.Fatalf("stop_active delete acquired the lease %d times, want 1", lease.acquiredFor(sess.ID)-before)
+			}
+			if lease.releasedFor(sess.ID) == 0 {
+				t.Fatal("stop_active delete never released the lease it acquired")
+			}
 		})
 	}
 }
@@ -424,4 +480,192 @@ func TestTUIMultiSession_Scenario3_HTTPDeleteBody(t *testing.T) {
 		t.Fatalf("unknown field = %d %q, want 400", code, raw)
 	}
 	assertTMSStored(t, f.store, refused)
+}
+
+func newTMSRemoverFixture(t *testing.T, provider *tmsRemover, cfg server.Config) *tmsStopFixture {
+	t.Helper()
+	provider.testPlacementProvider = testPlacementProvider{root: "/ws", firstBind: &atomic.Bool{}}
+	cfg.PlacementProvider, cfg.PlacementScope = provider, "test"
+	return newTMSStopFixture(t, cfg)
+}
+
+// TestTUIMultiSession_Scenario3_InventoryRunsNoCleanlinessCheck pins that the
+// inventory projection never runs the delete-time WorktreeOwnership
+// (cleanliness) check, however many server-created rows a page holds.
+func TestTUIMultiSession_Scenario3_InventoryRunsNoCleanlinessCheck(t *testing.T) {
+	provider := &tmsRemover{serverCreated: true}
+	f := newTMSRemoverFixture(t, provider, server.Config{})
+	const rows = 5
+	for range rows {
+		if _, err := f.svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := f.svc.ListSessionPage(t.Context(), server.ListSessionsPageRequest{PageSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Sessions) != rows {
+		t.Fatalf("listed %d rows, want %d", len(page.Sessions), rows)
+	}
+	for _, row := range page.Sessions {
+		// Every fixture session binds the same ref, so each row is shared.
+		if row.Reasons.RemoveWorktree != server.CapabilityReasonShared {
+			t.Fatalf("row %s reason = %q, want shared", row.SessionID, row.Reasons.RemoveWorktree)
+		}
+	}
+	if got := provider.ownershipCalls.Load(); got != 0 {
+		t.Fatalf("listing %d server-created rows ran %d cleanliness checks, want 0", rows, got)
+	}
+}
+
+// TestTUIMultiSession_Scenario3_RemovalOutlivesRequestCancel pins that once the
+// chat is deleted, worktree removal runs on a cancel-detached, bounded context.
+func TestTUIMultiSession_Scenario3_RemovalOutlivesRequestCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	provider := &tmsRemover{serverCreated: true}
+	// The second ownership call is the post-stop re-check; the client goes away
+	// right after it, before delete and removal.
+	provider.onOwnership = func(n int64) error {
+		if n == 2 {
+			cancel()
+		}
+		return nil
+	}
+	f := newTMSRemoverFixture(t, provider, server.Config{})
+	sess, err := f.svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.svc.DeleteSessionWithOptions(ctx, sess.ID, server.DeleteSessionOptions{RemoveWorktree: true})
+	if err != nil {
+		t.Fatalf("DeleteSession{remove_worktree}: %v", err)
+	}
+	if !result.WorktreeRemoved || provider.removes.Load() != 1 {
+		t.Fatalf("result = %+v removes = %d, want removed once", result, provider.removes.Load())
+	}
+	if provider.removeCtxErr != nil || !provider.removeHasDeadline {
+		t.Fatalf("RemoveWorktree ctx err=%v deadline=%v, want live and bounded", provider.removeCtxErr, provider.removeHasDeadline)
+	}
+	assertTMSDeleted(t, f.store, sess.ID)
+}
+
+// TestTUIMultiSession_Scenario3_RecheckFailureIsLogged pins that a post-stop
+// re-check failure reported as remove_failed also reaches the operator log,
+// path-redacted.
+func TestTUIMultiSession_Scenario3_RecheckFailureIsLogged(t *testing.T) {
+	provider := &tmsRemover{serverCreated: true}
+	provider.onOwnership = func(n int64) error {
+		if n == 2 {
+			return errors.New("git status failed in /private/worktree")
+		}
+		return nil
+	}
+	diag := &capturingDiag{}
+	f := newTMSRemoverFixture(t, provider, server.Config{Diagnostics: diag})
+	sess, err := f.svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.svc.DeleteSessionWithOptions(t.Context(), sess.ID, server.DeleteSessionOptions{RemoveWorktree: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorktreeRemoved || result.WorktreeRetainedReason != server.WorktreeRetainedRemoveFailed || provider.removes.Load() != 0 {
+		t.Fatalf("result = %+v removes = %d, want kept with remove_failed", result, provider.removes.Load())
+	}
+	logged := diag.String()
+	if !strings.Contains(logged, "recheck session worktree ownership") {
+		t.Fatalf("re-check failure not logged:\n%s", logged)
+	}
+	if strings.Contains(logged, "/private/worktree") {
+		t.Fatalf("re-check diagnostic leaks a path:\n%s", logged)
+	}
+}
+
+// tmsLease is a granting fakeLease that records per-session acquires and
+// releases. onRelease, when set, reports whether a release is in order (the
+// session is already deleted); an out-of-order release is remembered.
+type tmsLease struct {
+	*fakeLease
+	mu        sync.Mutex
+	acquired  map[session.SessionID]int
+	released  map[session.SessionID]int
+	early     map[session.SessionID]bool
+	onRelease func(session.SessionID) bool
+}
+
+func newTMSLease() *tmsLease {
+	l := &tmsLease{acquired: map[session.SessionID]int{}, released: map[session.SessionID]int{}, early: map[session.SessionID]bool{}}
+	l.fakeLease = &fakeLease{
+		acquireHook: func(id session.SessionID, _ string) {
+			l.mu.Lock()
+			l.acquired[id]++
+			l.mu.Unlock()
+		},
+		releaseHook: func(lease port.Lease) error {
+			l.mu.Lock()
+			check := l.onRelease
+			l.released[lease.SessionID]++
+			l.mu.Unlock()
+			if check != nil && !check(lease.SessionID) {
+				l.mu.Lock()
+				l.early[lease.SessionID] = true
+				l.mu.Unlock()
+			}
+			return nil
+		},
+	}
+	return l
+}
+
+func (l *tmsLease) acquiredFor(id session.SessionID) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.acquired[id]
+}
+
+func (l *tmsLease) releasedFor(id session.SessionID) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.released[id]
+}
+
+func (l *tmsLease) releasedEarly(id session.SessionID) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.early[id]
+}
+
+func tmsLeaseConfig(lease port.SessionLease) server.Config {
+	return server.Config{SessionLease: lease, LeaseOwner: "owner-test", LeaseTTL: time.Hour, LeaseRenewInterval: time.Minute}
+}
+
+// TestTUIMultiSession_Scenario3_HTTPOptionalBodyIsBounded pins the size cap of
+// the optional JSON body shared by the delete, clear, and fork routes: an
+// oversized body is refused with 413 and changes nothing.
+func TestTUIMultiSession_Scenario3_HTTPOptionalBodyIsBounded(t *testing.T) {
+	f := newTMSStopFixture(t, server.Config{})
+	srv := httptest.NewServer(server.NewHTTPHandler(f.svc))
+	defer srv.Close()
+	sess, err := f.svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A syntactically valid object whose string value alone exceeds the cap, so
+	// only the size limit can refuse it.
+	oversized := `{"title":"` + strings.Repeat("x", 1<<20) + `"}`
+	for _, route := range []string{"delete", "clear", "fork"} {
+		resp, err := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/"+route, "application/json", strings.NewReader(oversized))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Fatalf("%s with a 1 MiB body = %d %q, want 413", route, resp.StatusCode, raw)
+		}
+	}
+	assertTMSStored(t, f.store, sess.ID)
 }

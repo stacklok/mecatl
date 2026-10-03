@@ -376,8 +376,12 @@ func TestInvariant_placement_storage_errors_are_content_free(t *testing.T) {
 func TestInvariant_successor_selector_presence_and_json_are_strict(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(`{} {}`))
 	var body successorBody
-	if err := decodeOptionalStrictJSON(req, &body); err == nil {
+	rec := httptest.NewRecorder()
+	if decodeOptionalStrictJSON(rec, req, &body) {
 		t.Fatal("second JSON document was accepted")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("second JSON document status = %d, want 400", rec.Code)
 	}
 
 	svc := &Service{}

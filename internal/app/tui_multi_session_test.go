@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -37,7 +36,7 @@ import (
 
 func tmsGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := isolatedGitCommand(t, dir, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -331,10 +330,11 @@ func TestTUIMultiSession_Scenario2_CreateSessionInNewWorktree(t *testing.T) {
 		t.Fatalf("managed root entries = %v, want one mecatl-<hex8> worktree", entries)
 	}
 	name := entries[0].Name()
-	// The label names the new worktree; the slash-bearing branch is dropped by
-	// the pinned display sanitizer (TestInvariant_placement_display_rejects_path_like_metadata).
-	if created.Placement.Label != name {
-		t.Fatalf("placement metadata = %+v, want label %q", created.Placement, name)
+	// The label names the new worktree and the branch reaches the client: the
+	// display sanitizer exempts exactly the server-generated mecatl/<name> shape
+	// (TestInvariant_placement_display_rejects_path_like_metadata).
+	if created.Placement.Label != name || created.Placement.Branch != "mecatl/"+name {
+		t.Fatalf("placement metadata = %+v, want label %q and branch %q", created.Placement, name, "mecatl/"+name)
 	}
 	if strings.Contains(string(raw), managed) || strings.Contains(string(raw), tmsResolved(t, managed)) || strings.Contains(string(raw), state) || strings.Contains(string(raw), base) {
 		t.Fatalf("create response carries a server path: %s", raw)
@@ -351,6 +351,15 @@ func TestTUIMultiSession_Scenario2_CreateSessionInNewWorktree(t *testing.T) {
 	}
 	if sess.EnvironmentRef.Revision != localWorktreePlacementRevision || tmsResolved(t, sess.EnvironmentRef.ID) != tmsResolved(t, filepath.Join(managed, name)) {
 		t.Fatalf("session ref = %+v, want the new worktree with %q", sess.EnvironmentRef, localWorktreePlacementRevision)
+	}
+	// The persisted display metadata (what GetSession and mecatui's session list
+	// render) carries the branch too.
+	got, err := server.NewHarnessServer(built.Service).GetSession(context.Background(), &mecatlv1.GetSessionRequest{SessionId: created.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch := got.GetSession().GetPlacement().GetBranch(); branch != "mecatl/"+name {
+		t.Fatalf("GetSession placement branch = %q, want %q", branch, "mecatl/"+name)
 	}
 	run, err := built.Service.StartRun(context.Background(), sess.ID, "hello")
 	if err != nil {
@@ -638,9 +647,10 @@ func TestTUIMultiSession_Scenario2_ConcurrentAndCollidingCreates(t *testing.T) {
 // TestTUIMultiSession_Scenario2_FreshEnrollmentProvenance proves a worktree
 // session is created through the ordinary fresh-root path: the same root
 // authority, kind, and relationship as a default fresh create, with nothing
-// carried from another session. See the final report: the ADR 0358 ledger
-// accessor is not present on this branch, so the proof asserts the fresh-root
-// seam that ledger will be stamped at.
+// carried from another session. The ADR 0358 ledger accessor
+// (Session.WorkspaceEnrollmentBrokerKeys, commit 75230db71) has not landed on
+// this branch, so this proof asserts the fresh-root seam that ledger is stamped
+// at; once it lands, assert (nil, true) here.
 func TestTUIMultiSession_Scenario2_FreshEnrollmentProvenance(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	ctx := context.Background()
@@ -678,6 +688,9 @@ func TestTUIMultiSession_ServerCreatedWorktreeOwnership(t *testing.T) {
 	if ok := provider.serverCreatedWorktree(ctx, binding.Ref); !ok {
 		t.Fatal("created worktree is not reported as server-created")
 	}
+	if ok, err := provider.WorktreeServerCreated(ctx, server.PlacementReattachRequest{Ref: binding.Ref, Scope: "test"}); !ok || err != nil {
+		t.Fatalf("cheap check on the created worktree = (%v, %v), want true", ok, err)
+	}
 	if ok := provider.serverCreatedWorktree(ctx, tmsSiblingRef(t, provider, sibling, localWorktreePlacementRevision)); ok {
 		t.Fatal("a user worktree outside the managed root is reported as server-created")
 	}
@@ -692,8 +705,12 @@ func TestTUIMultiSession_ServerCreatedWorktreeOwnership(t *testing.T) {
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
-		if ok := provider.serverCreatedWorktree(ctx, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: link, Revision: localWorktreePlacementRevision}); ok {
+		linkRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: link, Revision: localWorktreePlacementRevision}
+		if ok := provider.serverCreatedWorktree(ctx, linkRef); ok {
 			t.Fatalf("symlink %s -> %s reported as server-created", name, target)
+		}
+		if ok, _ := provider.WorktreeServerCreated(ctx, server.PlacementReattachRequest{Ref: linkRef, Scope: "test"}); ok {
+			t.Fatalf("cheap check reports symlink %s -> %s as server-created", name, target)
 		}
 	}
 

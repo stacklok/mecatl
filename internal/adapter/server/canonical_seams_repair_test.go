@@ -480,4 +480,17 @@ func TestInvariant_placement_display_rejects_path_like_metadata(t *testing.T) {
 	if got := sanitizePlacementDisplay("feature-name", maxPlacementNameRunes); got != "feature-name" {
 		t.Fatalf("safe display = %q", got)
 	}
+	// Branches: only the exact server-generated mecatl/<name> shape is exempt
+	// from the slash ban.
+	if got := sanitizePlacementBranch("mecatl/mecatl-0123abcd"); got != "mecatl/mecatl-0123abcd" {
+		t.Fatalf("server-created branch display = %q", got)
+	}
+	for _, value := range []string{"feature/x", "mecatl/feature", "mecatl/mecatl-0123ABCD", "mecatl/mecatl-0123abcd/x", "mecatl/mecatl-0123abc", "mecatl/../mecatl-0123abcd", "/mecatl/mecatl-0123abcd", " mecatl/mecatl-0123abcd", "mecatl\\mecatl-0123abcd"} {
+		if got := sanitizePlacementBranch(value); got != "" {
+			t.Errorf("sanitizePlacementBranch(%q) = %q, want empty", value, got)
+		}
+	}
+	if got := sanitizePlacementBranch("main"); got != "main" {
+		t.Fatalf("plain branch display = %q", got)
+	}
 }

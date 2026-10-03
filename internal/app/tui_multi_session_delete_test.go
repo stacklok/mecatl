@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -352,5 +353,63 @@ func TestTUIMultiSession_Scenario3_InventoryReportsRemoveWorktree(t *testing.T) 
 		if row.Capabilities.RemoveWorktree || row.Reasons.RemoveWorktree != server.CapabilityReasonUnavailable {
 			t.Fatalf("row %s without a remover = (%v, %q)", row.SessionID, row.Capabilities.RemoveWorktree, row.Reasons.RemoveWorktree)
 		}
+	}
+}
+
+type tmsCountingLister struct {
+	server.WorktreeLister
+	calls atomic.Int64
+}
+
+func (l *tmsCountingLister) List(ctx context.Context, root string) ([]server.Worktree, error) {
+	l.calls.Add(1)
+	return l.WorktreeLister.List(ctx, root)
+}
+
+// TestTUIMultiSession_Scenario3_InventoryRunsNoGitPerRow pins that listing a
+// page of server-created worktree rows runs no git at all — in particular no
+// `git status` cleanliness check — and that cleanliness is checked at delete.
+func TestTUIMultiSession_Scenario3_InventoryRunsNoGitPerRow(t *testing.T) {
+	ctx := context.Background()
+	f := newTMSRemovalFixture(t)
+	const rows = 4
+	sessions := make([]*session.Session, rows)
+	for i := range sessions {
+		sessions[i] = f.worktreeSession(t)
+	}
+	var gitCalls, statusCalls atomic.Int64
+	realGit := f.provider.creator.git
+	f.provider.creator.git = func(ctx context.Context, dir string, args ...string) (string, error) {
+		gitCalls.Add(1)
+		if len(args) > 0 && args[0] == "status" {
+			statusCalls.Add(1)
+		}
+		return realGit(ctx, dir, args...)
+	}
+	lister := &tmsCountingLister{WorktreeLister: f.provider.worktrees}
+	f.provider.worktrees = lister
+
+	resp, err := server.NewHarnessServer(f.svc).ListSessions(ctx, &mecatlv1.ListSessionsRequest{PageSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removable := 0
+	for _, row := range resp.GetSessions() {
+		if row.GetCapabilities().GetRemoveWorktree() {
+			removable++
+		}
+	}
+	if removable != rows {
+		t.Fatalf("removable rows = %d, want %d", removable, rows)
+	}
+	if gitCalls.Load() != 0 || lister.calls.Load() != 0 {
+		t.Fatalf("listing %d rows ran git %d times and worktree list %d times, want 0", rows, gitCalls.Load(), lister.calls.Load())
+	}
+
+	if _, err := f.delete(t, sessions[0].ID, false); err != nil {
+		t.Fatalf("delete with remove_worktree: %v", err)
+	}
+	if statusCalls.Load() == 0 {
+		t.Fatal("delete removed the worktree without a cleanliness check")
 	}
 }

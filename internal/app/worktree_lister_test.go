@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,7 +28,7 @@ func wtWriteFile(t *testing.T, path, content string) {
 
 func wtRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := isolatedGitCommand(t, dir, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -51,8 +50,7 @@ func wtCommit(t *testing.T, dir string) {
 // wtHead returns the trimmed HEAD SHA of the repo at dir.
 func wtHead(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
-	out, err := cmd.Output()
+	out, err := isolatedGitCommand(t, dir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("git rev-parse HEAD: %v", err)
 	}
