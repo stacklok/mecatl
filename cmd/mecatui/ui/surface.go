@@ -164,9 +164,22 @@ func (m *Model) closeModal() {
 	m.metrics.clear()
 }
 
-// setResolvedSessionModel applies server-authoritative model information. A model-ID
-// change replaces the complete identity and updates an open plan review; a
-// same-model update may only raise the known context window.
+func (m *Model) replaceResolvedSessionModel(resolved client.ResolvedModel) bool {
+	if m.resolvedSessionModel == resolved {
+		return false
+	}
+	if m.resolvedSessionModel.ModelID != resolved.ModelID {
+		if s := approvalSurfaceFor(m); s != nil && isPlanAsk(s.ask.Tool) {
+			s.modelID = resolved.ModelID
+		}
+	}
+	m.resolvedSessionModel = resolved
+	return true
+}
+
+// setResolvedSessionModel applies legacy model information when presence is unknown.
+// A model-ID change replaces the complete identity; a same-model update may
+// only raise the known context window.
 func (m *Model) setResolvedSessionModel(resolved client.ResolvedModel) (changed bool) {
 	if resolved.ModelID != "" && resolved.ModelID != m.resolvedSessionModel.ModelID {
 		m.resolvedSessionModel = resolved

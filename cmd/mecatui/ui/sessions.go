@@ -312,19 +312,24 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	} else {
 		m.contextUnknown = true
 	}
-	m.sessionTitle = row.Title
-	m.sessionTitleProvenance = row.TitleProvenance
-	m.sessionTitleRevision = row.TitleRevision
-	m.sessionState = row.State
-	m.sessionCreatedAt = row.CreatedAt
+	if snapshot.TitleMetadataPresent {
+		m.sessionTitle = snapshot.Title
+		m.sessionTitleProvenance = snapshot.TitleProvenance
+		m.sessionTitleRevision = snapshot.TitleRevision
+	} else {
+		m.sessionTitle = row.Title
+		m.sessionTitleProvenance = row.TitleProvenance
+	}
+	m.sessionState = snapshot.State
+	m.sessionCreatedAt = snapshot.CreatedAt
 	m.sessionModifiedAt = row.ModifiedAt
-	m.activePlacement = row.Placement
+	m.activePlacement = snapshot.Placement
 	m.conv = loaded
 	m.restartedThisRun = true
 	m.closeModal()
 	m.browsingStartupSessions = false
 	m.phase = phaseIdle
-	m.statusMsg = "continuing chat " + terminaltext.Sanitize(row.Title) + " — type to add a turn"
+	m.statusMsg = "continuing chat " + terminaltext.Sanitize(m.sessionTitle) + " — type to add a turn"
 	cmd := m.prompt.Focus()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)

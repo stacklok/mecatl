@@ -1183,16 +1183,12 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 		return m, nil, true
 	}
 	m.caps = mergeSessionCapabilities(m.caps, msg.Capabilities, msg.ServerCapabilitiesPresent)
-	// Legacy title metadata does not replace a known label. An explicit empty
-	// title, however, is authoritative and clears the display.
+	// A completed snapshot establishes a new revision baseline. Revision ordering
+	// applies to subsequent live events, not to a replacement server snapshot.
 	if msg.TitleMetadataPresent {
-		if msg.Title == "" {
-			m.sessionTitle = ""
-			m.sessionTitleProvenance = ""
-			m.sessionTitleRevision = msg.TitleRevision
-		} else {
-			m, _ = m.adoptTitle(msg.Title, msg.TitleProvenance, msg.TitleRevision)
-		}
+		m.sessionTitle = msg.Title
+		m.sessionTitleProvenance = msg.TitleProvenance
+		m.sessionTitleRevision = msg.TitleRevision
 	}
 	// Mode update: apply when the refetch carries a mode (the plan-approval
 	// refresh path). On the footer-heal path Mode is the same as m.activeMode
@@ -1205,12 +1201,19 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	m.sessionCreatedAt = msg.CreatedAt
 	m.activePlacement = msg.Placement
-	if occupancy := msg.ContextOccupancy; msg.AdoptContextOccupancy && m.startupAdopted && occupancy != nil {
+	if msg.MainUsagePresent {
+		m.usage = msg.Usage
+	}
+	if occupancy := msg.ContextOccupancy; occupancy != nil && (msg.MainUsagePresent || msg.AdoptContextOccupancy && m.startupAdopted) {
 		m.contextTokens = occupancy.InputTokens
 		m.contextUnknown = false
 		m.contextEstimated = occupancy.Estimated
 	}
-	if (&m).setResolvedSessionModel(msg.Resolved) {
+	if msg.ResolvedModelPresent {
+		if (&m).replaceResolvedSessionModel(msg.Resolved) {
+			m.refreshView()
+		}
+	} else if (&m).setResolvedSessionModel(msg.Resolved) {
 		m.refreshView()
 	}
 	if msg.AdoptContextOccupancy && m.startupAdopted && m.resolvedSessionModel.ContextWindow == 0 && msg.StartupResumeRefreshAttempt < startupResumeRefreshRetries {

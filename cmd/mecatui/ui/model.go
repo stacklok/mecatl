@@ -1147,6 +1147,10 @@ func New(deps Deps) Model {
 		m.sessionID = resume.Row.ID
 		m.sessionTitle = resume.Row.Title
 		m.sessionTitleProvenance = resume.Row.TitleProvenance
+		if resume.Snapshot.TitleMetadataPresent {
+			m.sessionTitle = resume.Snapshot.Title
+			m.sessionTitleProvenance = resume.Snapshot.TitleProvenance
+		}
 		m.sessionTitleRevision = resume.Snapshot.TitleRevision
 		m.sessionState = resume.Snapshot.State
 		m.sessionCreatedAt = resume.Snapshot.CreatedAt
@@ -1165,7 +1169,7 @@ func New(deps Deps) Model {
 		m.conv = conversationFromTranscript(resume.Transcript.Messages)
 		m.startupAdopted = true
 		m.restartedThisRun = true
-		m.statusMsg = "continuing chat " + terminaltext.Sanitize(resume.Row.Title) + " — type to add a turn"
+		m.statusMsg = "continuing chat " + terminaltext.Sanitize(m.sessionTitle) + " — type to add a turn"
 		if resume.Pending != nil {
 			m.pendingRecoveryGeneration++
 			recoveryCtx, recoveryCancel := context.WithCancel(deps.Ctx)

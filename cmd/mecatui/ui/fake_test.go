@@ -328,7 +328,9 @@ func (c *fakeConv) GetSession(_ context.Context, id string) (client.SessionSnaps
 	if mode == "" {
 		mode = client.ModeDefaultString
 	}
-	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved, Title: c.getSessionTitle, Capabilities: c.getSessionCaps}, nil
+	globalCaps := c.getSessionCaps
+	globalCaps.Image, globalCaps.Audio, globalCaps.SessionMediaPresent = false, false, false
+	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved, Title: c.getSessionTitle, TitleMetadataPresent: c.getSessionTitle != "", Capabilities: c.getSessionCaps, ServerCapabilitiesPresent: globalCaps != (client.Capabilities{})}, nil
 }
 
 func (c *fakeConv) SetMode(_ context.Context, _ string, mode string) (string, error) {
