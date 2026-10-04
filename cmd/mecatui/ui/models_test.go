@@ -1713,50 +1713,6 @@ func TestToolhiveProviderReachesStatusSnapshot(t *testing.T) {
 	}
 }
 
-// TestHeaderGatewayAvailableSegment (N1): a muted "<provider-id> gateway
-// available" segment renders when an AvailableNotDefault status exists and the
-// active provider is NOT the gateway. It is the mutually-exclusive sibling of
-// the "via ToolHive gateway" segment (active case): when the gateway IS the
-// active default, availableNotDefaultStatus returns false so ONLY the "via"
-// segment renders — never both.
-func TestHeaderGatewayAvailableSegment(t *testing.T) {
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
-	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
-
-	// Active provider is openai (key-driven); toolhive is available-but-not-default.
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.modelCatalog.statuses = gatewayStatuses()
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "toolhive gateway available") {
-		t.Errorf("header should show the 'gateway available' segment when an AvailableNotDefault status exists and the active provider is not the gateway, got:\n%s", header)
-	}
-	// The active-case "via ToolHive gateway" segment must NOT also render.
-	if strings.Contains(header, "via ToolHive gateway") {
-		t.Errorf("the 'via ToolHive gateway' segment must NOT render alongside the 'available' segment, got:\n%s", header)
-	}
-
-	// Now make the gateway the ACTIVE default: AvailableNotDefault flips false, so
-	// the 'available' segment disappears and the 'via' segment renders instead.
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
-	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
-	header = stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "gateway available") {
-		t.Errorf("the 'available' segment must NOT render when the gateway IS the active default, got:\n%s", header)
-	}
-	if !strings.Contains(header, "via ToolHive gateway") {
-		t.Errorf("the 'via ToolHive gateway' segment should render when the gateway is active, got:\n%s", header)
-	}
-
-	// No statuses (byte-identical pre-feature path): neither segment renders.
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.modelCatalog.statuses = nil
-	header = stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "gateway available") || strings.Contains(header, "via ToolHive gateway") {
-		t.Errorf("neither gateway segment should render with no statuses, got:\n%s", header)
-	}
-}
-
 // TestProviderRouteReachesStatusSnapshot proves routed downstream provider state is
 // submitted to the selected source and cleared at the next-turn boundary.
 func TestProviderRouteReachesStatusSnapshot(t *testing.T) {

@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
+ session sess-test-00
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ▸ Chats    Scheduled runs    Child runs    Other
 
@@ -36,5 +36,5 @@ r: retry  esc: close
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected
 ? help · / commands · ctrl+c quit

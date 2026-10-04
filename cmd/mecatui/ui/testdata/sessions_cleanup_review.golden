@@ -1,4 +1,4 @@
- mecatui  ·  session connecting…  ·  mode default
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────
   Chats    Scheduled runs    Child runs    Other  ▸ Maintenance
 
@@ -36,5 +36,5 @@ enter: delete these sessions  esc: back
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⣾  connecting…                                                              ctx 0 · ↑0 ↓0 cache 0%
+ ⣾  connecting…
 ? help · / commands · ctrl+c quit

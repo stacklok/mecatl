@@ -73,29 +73,6 @@ func TestPctString(t *testing.T) {
 	}
 }
 
-func TestRenderUsageFacets(t *testing.T) {
-	got := renderUsageFacets(client.Usage{
-		InputTokens:      7903,
-		OutputTokens:     345,
-		CacheReadTokens:  6955,
-		CacheWriteTokens: 1200,
-	})
-	for _, want := range []string{"↑7.9K", "↓345", "⊕1.2K", "cache 88%"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("expected %q in facets %q", want, got)
-		}
-	}
-}
-
-// TestRenderUsageFacetsOmitsZeroCacheWrite keeps the segment scannable: the
-// cache-write facet is hidden when zero.
-func TestRenderUsageFacetsOmitsZeroCacheWrite(t *testing.T) {
-	got := renderUsageFacets(client.Usage{InputTokens: 100, OutputTokens: 10, CacheReadTokens: 50})
-	if strings.Contains(got, "⊕") {
-		t.Errorf("zero cache-write should be omitted, got %q", got)
-	}
-}
-
 // stripANSIstr is a string convenience over stripANSI for assertions.
 func stripANSIstr(s string) string { return string(stripANSI([]byte(s))) }
 

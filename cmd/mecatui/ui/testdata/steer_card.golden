@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mode default
+ session sess-test-00
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ▌ you
  │ first
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⣾  thinking…                                                                ctx 0 · ↑0 ↓0 cache 0%
+ ⣾  thinking…
 enter queue · ctrl+u clear · esc cancel · ? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+c quit

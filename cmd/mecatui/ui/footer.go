@@ -9,41 +9,17 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// Context-meter pressure thresholds, as a fraction of the context window. The
-// bands echo the corpus guidance that compaction triggers around 70–80% full:
-// stay "ok" comfortably below it, "warn" approaching it, "danger" once over.
+// Context pressure thresholds and glyphs also serve team roster meters.
 const (
 	ctxWarnFraction   = 0.60
 	ctxDangerFraction = 0.85
-	ctxBarWidth       = 8 // glyph cells in the meter bar
+	ctxBarWidth       = 8
+	ctxGlyphOk        = "▒"
+	ctxGlyphWarn      = "▓"
+	ctxGlyphDanger    = "█"
+	ctxGlyphEmpty     = "░"
+	ctxDangerMark     = " ⚠"
 )
-
-// Per-band fill glyphs. Pressure is encoded in the GLYPH (not just colour) so it
-// survives ANSI stripping and is legible to red/green-colourblind users: the
-// filled cells grow heavier with pressure — medium shade when ok, dark shade
-// when warning, full block in the danger band. The empty glyph is the light
-// shade (distinct from every fill glyph, and from the footer's "·" separator).
-const (
-	ctxGlyphOk     = "▒"
-	ctxGlyphWarn   = "▓"
-	ctxGlyphDanger = "█"
-	ctxGlyphEmpty  = "░" // unfilled cells
-)
-
-// ctxDangerMark is appended to the percentage in the danger band — a non-colour
-// textual cue so "over budget" reads even with ANSI stripped.
-const ctxDangerMark = " ⚠"
-
-// teamLiveGlyph leads the footer team-summary segment when a team is LIVE. It is a
-// STATIC literal (the issue mockup's "⟳"), deliberately NOT the animated m.sp
-// spinner — the footer team segment is an advertisement, not a per-frame activity
-// indicator, so it must not force the model to re-render every tick.
-const teamLiveGlyph = "⟳"
-
-// teamFooterIDLimit caps the rune-length of the team id shown in the full footer
-// segment so a long id can't blow out the footer width before fitFooter even tiers
-// it. Rune-safe via truncate.
-const teamFooterIDLimit = 16
 
 // humanizeTokens renders a token count compactly: < 1000 verbatim, thousands as
 // "7.9K", millions as "1.2M". One decimal place, trailing ".0" trimmed
@@ -134,8 +110,7 @@ func ctxGlyph(frac float64) string {
 	}
 }
 
-// ctxLabel is the bar-less percentage label, with the danger ⚠ cue appended in
-// the danger band. Used as the lowest-fidelity context tier ("ctx 92% ⚠").
+// ctxLabel formats the percentage with the non-colour danger cue.
 func ctxLabel(frac float64) string {
 	label := pctString(frac)
 	if frac >= ctxDangerFraction {
@@ -144,63 +119,18 @@ func ctxLabel(frac float64) string {
 	return label
 }
 
-// renderContextMeter renders the FULL-fidelity context segment for a known
-// numerator. renderContextMeterState additionally handles legacy snapshots where
-// the numerator is honestly unknown.
+// renderContextMeter formats context for the team roster subhead.
 func renderContextMeter(th theme.Theme, used, window int64) string {
-	return renderContextMeterState(th, used, window, true, false)
-}
-
-func renderContextMeterState(th theme.Theme, used, window int64, known, estimated bool) string {
-	if !known {
-		if window <= 0 {
-			return "ctx ?"
-		}
-		return "ctx ?/" + humanizeTokens(window)
-	}
 	if used < 0 {
 		used = 0
 	}
-	prefix := ""
-	if estimated {
-		prefix = "~"
-	}
 	if window <= 0 {
-		return "ctx " + prefix + humanizeTokens(used)
+		return "ctx " + humanizeTokens(used)
 	}
 	frac := ctxFraction(used, window)
 	style := th.Style(ctxPressureSlot(frac))
 	meter := style.Render(ctxBar(frac) + " " + ctxLabel(frac))
-	return "ctx " + meter + " · " + prefix + humanizeTokens(used) + "/" + humanizeTokens(window)
-}
-
-// renderContextMeterCompact is the mid-fidelity tier: the coloured per-band bar +
-// label, WITHOUT the used/total suffix, e.g. "ctx ▓▓▓▓▓▓░░ 70%". Unknown window
-// degrades to the bare size, identical to the full tier.
-func renderContextMeterCompact(th theme.Theme, used, window int64) string {
-	if used < 0 {
-		used = 0
-	}
-	if window <= 0 {
-		return "ctx " + humanizeTokens(used)
-	}
-	frac := ctxFraction(used, window)
-	style := th.Style(ctxPressureSlot(frac))
-	return "ctx " + style.Render(ctxBar(frac)+" "+ctxLabel(frac))
-}
-
-// renderContextMeterMinimal is the lowest-fidelity tier: no bar — just the
-// coloured percentage (+ ⚠ in danger), e.g. "ctx 70%". Unknown window degrades
-// to the bare size.
-func renderContextMeterMinimal(th theme.Theme, used, window int64) string {
-	if used < 0 {
-		used = 0
-	}
-	if window <= 0 {
-		return "ctx " + humanizeTokens(used)
-	}
-	frac := ctxFraction(used, window)
-	return "ctx " + th.Style(ctxPressureSlot(frac)).Render(ctxLabel(frac))
+	return "ctx " + meter + " · " + humanizeTokens(used) + "/" + humanizeTokens(window)
 }
 
 // ctxBar builds the meter bar: filled cells use the per-band glyph, the rest the
@@ -345,22 +275,6 @@ func stopReasonLabel(stop string) (text, slot string) {
 	}
 }
 
-// renderUsageFacets renders the session-total facets surfaced from ALL usage
-// fields: input/output token arrows, the previously-dropped cache-WRITE total
-// (⊕), and the cache-hit rate. Format: "↑7.9K ↓345 ⊕1.2K cache 88%". The cache
-// write is omitted when zero to keep the segment scannable. The ↑/↓/⊕ facets
-// are SESSION-CUMULATIVE totals (m.usage); the ctx meter beside them is CURRENT
-// occupancy (the latest turn's prompt size) — two different axes, deliberately.
-func renderUsageFacets(u client.Usage) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "↑%s ↓%s", humanizeTokens(u.InputTokens), humanizeTokens(u.OutputTokens))
-	if u.CacheWriteTokens > 0 {
-		fmt.Fprintf(&b, " ⊕%s", humanizeTokens(u.CacheWriteTokens))
-	}
-	fmt.Fprintf(&b, " cache %s", pctString(cacheHitRate(u)))
-	return b.String()
-}
-
 // teamWorkingCounts classifies a team's member lanes into (working, total). total
 // is the lane count; working is the number of lanes NOT idle (genuinely in a turn).
 // It reuses the EXACT same !ln.idle predicate that teamLaneState uses for the
@@ -377,96 +291,4 @@ func teamWorkingCounts(lanes []teamLane) (working, total int) {
 		}
 	}
 	return working, total
-}
-
-// teamFooterFull is the richest footer team-summary tier:
-// "⟳ team-<id> · k/N working · <agents> agents". The id is sanitized and rune-safe
-// truncated; when it is empty (team.start missed) the id-less medium form is used
-// instead of showing a bare "team-". The segment carries the spinner (accent) slot
-// so the live team reads as active without animation. agentsMark is the LIVE Agents
-// chord (issue #457) so an override propagates to the footer affordance.
-func teamFooterFull(th theme.Theme, teamID string, working, total int, agentsMark string) string {
-	id := truncate(terminaltext.Sanitize(teamID), teamFooterIDLimit)
-	if id == "" {
-		return th.Style("spinner").Render(teamFooterMedium(teamID, working, total, agentsMark))
-	}
-	seg := fmt.Sprintf("%s %s · %d/%d working · %s agents", teamLiveGlyph, id, working, total, agentsMark)
-	return th.Style("spinner").Render(seg)
-}
-
-// teamFooterMedium drops the id and the "agents" word: "⟳ k/N working · <agents>".
-// It carries no theme styling itself so it composes when called from
-// teamFooterFull (which styles the whole segment); fitFooter styles standalone uses.
-// agentsMark is the LIVE Agents chord (issue #457).
-func teamFooterMedium(_ string, working, total int, agentsMark string) string {
-	return fmt.Sprintf("%s %d/%d working · %s", teamLiveGlyph, working, total, agentsMark)
-}
-
-// teamFooterCompact is the poorest team tier: "⟳ k/N" — just the glyph + counts.
-func teamFooterCompact(working, total int) string {
-	return fmt.Sprintf("%s %d/%d", teamLiveGlyph, working, total)
-}
-
-// subagentFleetGlyph leads the footer fleet-summary segment when ≥1 subagent has run
-// this session. Like teamLiveGlyph it is a STATIC literal (the F2 mockup's gear),
-// deliberately NOT the animated spinner — the segment is a peripheral discoverability
-// cue, not a per-frame activity indicator, so it must not force a re-render every tick.
-const subagentFleetGlyph = "⛭"
-
-// subagentRunGlyph / subagentDoneGlyph are the running / done count markers on the
-// fleet footer segment, matching the Subagents-tab roster vocabulary (◐ in flight,
-// ✓ finished) so the footer and the overlay never use a different glyph for the same
-// state. They are glyph-not-colour cues so they read with ANSI stripped.
-const (
-	subagentRunGlyph  = "◐"
-	subagentDoneGlyph = "✓"
-)
-
-// subagentFooterFull is the richest fleet footer tier:
-// "⛭ subagents 3◐ 1✓ · <agents>". It is shown whenever ≥1 subagent has STARTED this
-// session (running+done > 0), so the parallel case is discoverable even before the
-// overlay is opened — the missing "3/4 done" peripheral cue. It carries the spinner
-// (accent) slot so the live fleet reads as active without animation. agentsMark is
-// the LIVE Agents chord (issue #457) so an override propagates.
-func subagentFooterFull(th theme.Theme, running, done int, agentsMark string) string {
-	seg := fmt.Sprintf("%s subagents %d%s %d%s · %s", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
-	return th.Style("spinner").Render(seg)
-}
-
-// subagentFooterMedium drops the "subagents" word: "⛭ 3◐ 1✓ · <agents>". It carries no
-// theme styling itself so it composes when styled by the caller (view.go).
-// agentsMark is the LIVE Agents chord (issue #457).
-func subagentFooterMedium(running, done int, agentsMark string) string {
-	return fmt.Sprintf("%s %d%s %d%s · %s", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
-}
-
-// subagentFooterCompact is the poorest fleet tier: "⛭ 3◐ 1✓" — glyph + counts only.
-func subagentFooterCompact(running, done int) string {
-	return fmt.Sprintf("%s %d%s %d%s", subagentFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
-}
-
-// parallelFleetGlyph leads the footer Parallel-summary segment when ≥1 Parallel run has
-// started this session. Like subagentFleetGlyph / teamLiveGlyph it is a STATIC literal (a
-// fork glyph distinct from ⛭ subagents and ⟳ team), deliberately NOT the animated spinner.
-const parallelFleetGlyph = "⑂"
-
-// parallelFooterFull is the richest Parallel footer tier: "⑂ parallel 1◐ 2✓ · <agents>".
-// Like the fleet segment it is shown whenever ≥1 Parallel run has STARTED this session
-// (running+done > 0) and reuses the ◐/✓ count vocabulary so footer + overlay agree.
-// agentsMark is the LIVE Agents chord (issue #457) so an override propagates.
-func parallelFooterFull(th theme.Theme, running, done int, agentsMark string) string {
-	seg := fmt.Sprintf("%s parallel %d%s %d%s · %s", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
-	return th.Style("spinner").Render(seg)
-}
-
-// parallelFooterMedium drops the "parallel" word: "⑂ 1◐ 2✓ · <agents>". It carries no theme
-// styling itself so it composes when styled by the caller (view.go). agentsMark is the
-// LIVE Agents chord (issue #457).
-func parallelFooterMedium(running, done int, agentsMark string) string {
-	return fmt.Sprintf("%s %d%s %d%s · %s", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph, agentsMark)
-}
-
-// parallelFooterCompact is the poorest Parallel tier: "⑂ 1◐ 2✓" — glyph + counts only.
-func parallelFooterCompact(running, done int) string {
-	return fmt.Sprintf("%s %d%s %d%s", parallelFleetGlyph, running, subagentRunGlyph, done, subagentDoneGlyph)
 }

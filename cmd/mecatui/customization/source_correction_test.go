@@ -36,7 +36,7 @@ func TestStatusLine_DefaultTemplatesExposeLegacyDisplayAtoms(t *testing.T) {
 		Model:   Model{ProviderID: "openai", DisplayName: "GPT-5", Route: "azure"},
 		Server:  ServerTarget{DisplayTarget: "server.example", ConnectionMode: "connect"},
 		Usage:   Usage{Input: UsageAtom{Raw: 4_000, Human: "4K"}, Output: UsageAtom{Raw: 1_000, Human: "1K"}, CacheWrite: UsageAtom{Raw: 500, Human: "500"}, CacheReadPercent: 75},
-		Context: Context{Used: ContextAtom{Raw: 7_000, Human: "7K"}, Window: ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 70},
+		Context: Context{Used: ContextAtom{Raw: 7_000, Human: "7K"}, Window: ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 70, Known: true},
 		Delegation: Delegation{
 			Parallel:  DelegationSummary{Running: 1, Finished: 2},
 			Subagents: DelegationSummary{Running: 3, Finished: 4},
@@ -87,7 +87,7 @@ func TestStatusLine_DefaultHeaderOmitsEmbeddedServerTarget(t *testing.T) {
 func TestStatusLine_DefaultFooterSheddingPreservesContextPriority(t *testing.T) {
 	input := Input{
 		Usage:      Usage{Input: UsageAtom{Raw: 4_000, Human: "4K"}, Output: UsageAtom{Raw: 1_000, Human: "1K"}, CacheReadPercent: 75},
-		Context:    Context{Used: ContextAtom{Raw: 7_000, Human: "7K"}, Window: ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 70},
+		Context:    Context{Used: ContextAtom{Raw: 7_000, Human: "7K"}, Window: ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 70, Known: true},
 		Delegation: Delegation{Parallel: DelegationSummary{Running: 1, Finished: 2}, Subagents: DelegationSummary{Running: 3, Finished: 4}, Team: LiveTeam{ID: "abc", Working: 1, Total: 2}},
 	}
 	cases := []struct {

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -53,6 +52,7 @@ func TestContextMeterTracksLatestTurnNotCumulative(t *testing.T) {
 	}
 
 	// The cache-hit facet is cumulative cache-read / cumulative input: 1100/2200 = 50%.
+	m = stockStatusFrame(t, m)
 	footer := stripANSIstr(m.renderFooter())
 	if !strings.Contains(footer, "cache 50%") {
 		t.Errorf("expected cumulative cache-hit rate 50%% in footer:\n%s", footer)
@@ -216,31 +216,6 @@ func TestTeamOverlayF6MidRunEndToEnd(t *testing.T) {
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "agents · 2 members") || !strings.Contains(body, "[lead]") {
 		t.Errorf("the rendered overlay should show the live roster, got:\n%s", body)
-	}
-}
-
-// TestHeaderTruncatesLongModel asserts a long model id is capped in the header.
-// The model segment renders from the EFFECTIVE model the server resolved (echoed on
-// SessionReadyMsg), so the test drives a create response with a long resolved id —
-// the header shows it (no model segment while still connecting, by design).
-func TestHeaderTruncatesLongModel(t *testing.T) {
-	long := "anthropic/claude-opus-4-8-with-a-really-long-suffix-2026"
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{},
-		resolvedModel: client.ResolvedModel{ProviderID: "anthropic", ModelID: long}}
-	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Session: conv, Conv: conv, Ctx: context.Background()})
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 200, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001", ResolvedModel: client.ResolvedModel{ProviderID: "anthropic", ModelID: long}},
-	)
-	header := stripANSIstr(m.renderHeader())
-	if strings.Contains(header, long) {
-		t.Errorf("long model id should be truncated in header:\n%q", header)
-	}
-	if !strings.Contains(header, "…") {
-		t.Errorf("truncated model should carry an ellipsis:\n%q", header)
-	}
-	if !strings.Contains(header, "anthropic/claude") {
-		t.Errorf("truncation should keep the model prefix:\n%q", header)
 	}
 }
 

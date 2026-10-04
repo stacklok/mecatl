@@ -78,7 +78,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 	m.conv.addUser("settled conversation")
 	m.refreshView()
 	m = typeRune(t, m, '/')
-	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 18})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 17})
 	frame := m.View().Content
 	if rows := lipglossHeight(frame); rows > m.height {
 		t.Fatalf("short frame height = %d, offered %d vp=%d visible=%t:\n%s", rows, m.height, m.vp.Height(), m.paletteVisible(), ansi.Strip(frame))
@@ -325,7 +325,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 		{Name: "beta", Description: "second"},
 	}})
 	paged = typeRune(t, paged, '/')
-	paged = applyAll(paged, tea.WindowSizeMsg{Width: 24, Height: 21})
+	paged = applyAll(paged, tea.WindowSizeMsg{Width: 24, Height: 19})
 	_ = paged.View()
 	paged.palette.list.SetCursor(8) // alpha follows the eight built-ins.
 	paged.keys = applyKeyOverrides(paged.keys, map[string][]string{"ScrollU": {"p"}, "ScrollD": {"n"}})

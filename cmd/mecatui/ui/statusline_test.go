@@ -94,6 +94,7 @@ func TestStatusLine_Scenario2_HeaderSystemIndicatorsSurviveOverride(t *testing.T
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.width = 100
 	m.generatedStatusLine.Header = customization.Render(`<header><accent>CUSTOM</accent></header>`, nil).Header
+	m.deps.StatusSource = &statusSourceFake{changed: make(chan struct{})}
 	m.caps.Posture = postureAuto
 	m.conv.recordFileChange("changed.go")
 	header := stripANSIstr(m.renderHeader())
