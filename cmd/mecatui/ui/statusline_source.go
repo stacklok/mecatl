@@ -208,12 +208,17 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 	case phaseFatal:
 		state = statusFailed
 	}
+	usage := customization.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent}
+	if m.usageUnknown {
+		usage.Input.Human, usage.Output.Human = "?", "?"
+		usage.CacheRead.Human, usage.CacheWrite.Human = "?", "?"
+	}
 	return customization.Input{
 		Version: customization.ProtocolVersion,
 		Server:  customization.ServerTarget{DisplayTarget: m.deps.Server, ConnectionMode: m.deps.ConnectionMode},
 		Session: customization.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
 		Model:   customization.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
-		Usage:   customization.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
+		Usage:   usage,
 		Context: customization.Context{Used: contextOccupancyAtom(m.contextTokens, contextKnown, m.contextEstimated), Window: contextAtom(window), Percent: contextPercent, Known: contextKnown, Estimated: m.contextEstimated}, Workspace: workspace,
 		MainAgent:  customization.MainAgent{State: state, Activity: activity, Approval: approval},
 		Delegation: m.statusDelegation(),

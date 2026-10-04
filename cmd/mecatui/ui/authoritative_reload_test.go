@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -104,6 +106,44 @@ func TestMecatuiAuthoritativeReload_Scenario1_LegacyAndExplicitAbsence(t *testin
 			}
 		})
 	}
+	legacy := client.SessionSnapshot{TitleMetadataPresent: true, Title: "legacy"}
+	legacyRow := client.SessionListItem{ID: "legacy", Kind: client.SessionKindMain}
+	t.Run("startup missing ledger is unknown", func(t *testing.T) {
+		model := New(Deps{Resume: &client.ResumeSelection{Row: legacyRow, Snapshot: legacy}, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true})
+		if !model.usageUnknown || strings.Contains(stripANSIstr(model.renderFooter()), "↑0") || model.statusLineInput(time.Time{}).Usage.Input.Human != "?" {
+			t.Fatalf("startup claimed confirmed zero: unknown=%t footer=%q", model.usageUnknown, stripANSIstr(model.renderFooter()))
+		}
+	})
+	t.Run("interactive same session retains event usage", func(t *testing.T) {
+		model := newSessionsModel(t, newSessionsConv(), &fakeSessionLister{}, &fakeSessionTranscriptLoader{})
+		model.sessionID = legacyRow.ID
+		model.usage = client.Usage{InputTokens: 17}
+		adopted, _, ok := model.adoptAuthoritativeTranscript(legacyRow, conversation{}, legacy)
+		if !ok {
+			t.Fatal("adoption rejected")
+		}
+		got := adopted.(Model)
+		if got.usage.InputTokens != 17 || got.usageUnknown {
+			t.Fatalf("same-session legacy usage lost: usage=%+v unknown=%t", got.usage, got.usageUnknown)
+		}
+		model.usage = client.Usage{}
+		adopted, _, ok = model.adoptAuthoritativeTranscript(legacyRow, conversation{}, legacy)
+		if !ok || !adopted.(Model).usageUnknown {
+			t.Fatal("no event-derived usage must not claim a confirmed zero")
+		}
+	})
+	t.Run("interactive new session missing ledger is unknown", func(t *testing.T) {
+		model := newSessionsModel(t, newSessionsConv(), &fakeSessionLister{}, &fakeSessionTranscriptLoader{})
+		model.usage = client.Usage{InputTokens: 17}
+		adopted, _, ok := model.adoptAuthoritativeTranscript(legacyRow, conversation{}, legacy)
+		if !ok {
+			t.Fatal("adoption rejected")
+		}
+		got := adopted.(Model)
+		if !got.usageUnknown || got.usage.InputTokens != 0 || strings.Contains(stripANSIstr(got.renderFooter()), "↑0") {
+			t.Fatalf("new-session legacy usage claimed zero or carried old session: usage=%+v unknown=%t footer=%q", got.usage, got.usageUnknown, stripANSIstr(got.renderFooter()))
+		}
+	})
 }
 
 func TestMecatuiAuthoritativeReload_Scenario3_AdoptionUsesSnapshot(t *testing.T) {

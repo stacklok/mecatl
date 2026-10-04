@@ -15,6 +15,7 @@ type snapshotReply struct {
 	session     string
 	feedGen     uint64
 	liveEpoch   uint64
+	titleEpoch  uint64
 	modeIntent  uint64
 	titleIntent uint64
 	msg         client.ResolvedModelMsg
@@ -84,7 +85,7 @@ func (m *Model) refreshSessionCmd() tea.Cmd {
 func (m *Model) refreshSessionWithCmd(cmd tea.Cmd) tea.Cmd {
 	m.reloadSeq++
 	m.reloadRetryScheduled = false
-	reply := snapshotReply{seq: m.reloadSeq, session: m.sessionID, feedGen: m.reloadFeedGen, liveEpoch: m.reloadLiveEpoch, modeIntent: m.modeIntentSeq, titleIntent: m.titleRenameRequestToken}
+	reply := snapshotReply{seq: m.reloadSeq, session: m.sessionID, feedGen: m.reloadFeedGen, liveEpoch: m.reloadLiveEpoch, titleEpoch: m.reloadTitleEpoch, modeIntent: m.modeIntentSeq, titleIntent: m.titleRenameRequestToken}
 	return func() tea.Msg {
 		reply.msg = cmd().(client.ResolvedModelMsg)
 		return reply
@@ -103,25 +104,14 @@ func (m Model) onSnapshotReply(reply snapshotReply) (tea.Model, tea.Cmd) {
 		return m, (&m).startReconnect(nil)
 	}
 	bufferedResults := reloadBufferedResults(m.reloadEvents)
-	// A result in the replacement feed can be the only terminal fact. Install
-	// just the title baseline, then replay the result exactly once against the
-	// previously confirmed usage and refetch its cumulative total after settlement.
-	if bufferedResults > 0 {
-		m.applySnapshotTitleAfterBufferedResults(reply, bufferedResults)
-	} else if reply.liveEpoch != m.reloadLiveEpoch {
-		if m.phase != phaseRunning && m.phase != phaseAwaitingApproval && m.deps.Session != nil {
-			return m, (&m).refreshSessionCmd()
-		}
-		m.reloadNeedRefresh = true
-		return m, nil
-	} else {
-		// The server can commit the run before its terminal reaches this UI.
-		// Neither its ledger nor its occupancy can be ordered against that result
-		// until the run settles and a fresh GetSession completes.
-		return m.applyCurrentSnapshot(reply, m.phase == phaseRunning || m.phase == phaseAwaitingApproval)
+	if bufferedResults == 0 && reply.liveEpoch != m.reloadLiveEpoch && m.phase == phaseIdle && m.deps.Session != nil {
+		return m, (&m).refreshSessionCmd()
 	}
-	m.reloadApplied = reply.seq
-	return m.replayReloadEvents(nil, !reply.msg.MainUsagePresent)
+	// A run update during GetSession cannot order cumulative counters against
+	// the response. Release the feed after installing non-counter metadata;
+	// settle the run before refetching those counters.
+	deferCounters := bufferedResults > 0 || reply.liveEpoch != m.reloadLiveEpoch || m.phase == phaseRunning || m.phase == phaseAwaitingApproval
+	return m.applyCurrentSnapshot(reply, deferCounters, bufferedResults > 0 && !reply.msg.MainUsagePresent)
 }
 
 func (m Model) ignoreSnapshotReply(reply snapshotReply) bool {
@@ -169,18 +159,7 @@ func reloadBufferedResults(events []tea.Msg) uint64 {
 	return count
 }
 
-func (m *Model) applySnapshotTitleAfterBufferedResults(reply snapshotReply, bufferedResults uint64) {
-	m.reloadNeedRefresh = true
-	// If something besides these buffered results changed the projection during
-	// fetch, leave even the title for the next authoritative fetch.
-	if reply.liveEpoch+bufferedResults == m.reloadLiveEpoch && reply.msg.TitleMetadataPresent && reply.titleIntent == m.titleRenameRequestToken {
-		m.sessionTitle = reply.msg.Title
-		m.sessionTitleProvenance = reply.msg.TitleProvenance
-		m.sessionTitleRevision = reply.msg.TitleRevision
-	}
-}
-
-func (m Model) applyCurrentSnapshot(reply snapshotReply, deferCounters bool) (tea.Model, tea.Cmd) {
+func (m Model) applyCurrentSnapshot(reply snapshotReply, deferCounters, legacyUsage bool) (tea.Model, tea.Cmd) {
 	m.reloadNeedRefresh = deferCounters
 	if deferCounters {
 		reply.msg.MainUsagePresent = false
@@ -197,13 +176,13 @@ func (m Model) applyCurrentSnapshot(reply snapshotReply, deferCounters bool) (te
 	if reply.modeIntent != m.modeIntentSeq {
 		reply.msg.Mode = ""
 	}
-	if reply.titleIntent != m.titleRenameRequestToken {
+	if reply.titleIntent != m.titleRenameRequestToken || reply.titleEpoch != m.reloadTitleEpoch {
 		reply.msg.TitleMetadataPresent = false
 	}
 	var cmd tea.Cmd
 	m, cmd, _ = m.onResolvedModelMsg(reply.msg)
 	m.reloadApplied = reply.seq
-	return m.replayReloadEvents(cmd, false)
+	return m.replayReloadEvents(cmd, legacyUsage)
 }
 
 func (m *Model) refreshAfterSettledRun() tea.Cmd {

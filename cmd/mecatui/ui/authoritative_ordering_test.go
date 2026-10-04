@@ -189,7 +189,7 @@ func TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace(t *testing.T) {
 	m.reloadSeq = 2
 	m.reloadFeedGen = 7
 	m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "duplicate in feed", Revision: 6}})
-	m = applyAll(m, snapshotReply{seq: 2, session: m.sessionID, feedGen: 7, liveEpoch: m.reloadLiveEpoch, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "included by snapshot", TitleRevision: 6}})
+	m = applyAll(m, snapshotReply{seq: 2, session: m.sessionID, feedGen: 7, liveEpoch: m.reloadLiveEpoch, titleEpoch: m.reloadTitleEpoch, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "included by snapshot", TitleRevision: 6}})
 	if m.sessionTitle != "included by snapshot" {
 		t.Fatalf("event already included by snapshot reapplied: %q", m.sessionTitle)
 	}
@@ -459,6 +459,61 @@ func TestMecatuiAuthoritativeReload_Scenario2_LiveOnlyResultDuringFetch(t *testi
 	}
 }
 
+func TestMecatuiAuthoritativeReload_Scenario2_TurnEndDuringFetchDoesNotParkFeed(t *testing.T) {
+	for _, park := range []bool{false, true} {
+		name := "running"
+		if park {
+			name = "awaiting approval"
+		}
+		t.Run(name, func(t *testing.T) {
+			m := modeTestModel(t, &fakeConv{})
+			m.phase, m.liveGen, m.reloadFeedGen = phaseRunning, 7, 7
+			m.reloadPending, m.reloadSession = true, m.sessionID
+			m.usage = client.Usage{InputTokens: 30}
+			m.contextTokens = 20
+			m.resolvedSessionModel.ContextWindow = 64000
+			fetch := (&m).refreshSessionCmd()
+			m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 12}})
+			if park {
+				m = applyAll(m, client.PermissionAskMsg{AskID: "parked", Tool: "Write", Args: `{"path":"note.txt"}`, Reason: "approval required"})
+				if m.phase != phaseAwaitingApproval {
+					t.Fatalf("ask did not park run: %v", m.phase)
+				}
+			}
+			before := len(m.conv.testBlocks())
+			m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "live", Revision: 5}})
+			m = applyAll(m, liveMsg{gen: 7, msg: client.DeliveryNoteMsg{ScheduleName: "job", FireID: "fire-1", Text: fencedDeliveryText("job", "fire-1")}})
+			if len(m.conv.testBlocks()) != before || m.sessionTitle == "live" {
+				t.Fatal("feed exposed events before snapshot")
+			}
+			reply := fetch().(snapshotReply)
+			reply.msg = client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "snapshot", TitleRevision: 4, Mode: "plan", State: "awaiting", MainUsagePresent: true, Usage: client.Usage{InputTokens: 42}, ContextOccupancy: &client.ContextOccupancy{InputTokens: 12}}
+			m = applyAll(m, reply)
+			if m.reloadPending || !m.reloadNeedRefresh || m.sessionTitle != "live" || m.activeMode != "plan" || m.sessionState != "awaiting" || m.usage.InputTokens != 30 || m.contextTokens != 12 || len(m.conv.testBlocks()) != before+1 {
+				t.Fatalf("parked feed not released without counter rollback: pending=%t deferred=%t seq=%d applied=%d feed=%d/%d title=%q mode=%q usage=%+v occupancy=%d blocks=%d", m.reloadPending, m.reloadNeedRefresh, m.reloadSeq, m.reloadApplied, m.reloadFeedGen, m.liveGen, m.sessionTitle, m.activeMode, m.usage, m.contextTokens, len(m.conv.testBlocks()))
+			}
+			m = applyAll(m, liveMsg{gen: 7, msg: client.DeliveryNoteMsg{ScheduleName: "job", FireID: "fire-2", Text: fencedDeliveryText("job", "fire-2")}})
+			if len(m.conv.testBlocks()) != before+2 || (park && m.phase != phaseAwaitingApproval) {
+				t.Fatalf("new delivery blocked while ask parked: blocks=%d phase=%v", len(m.conv.testBlocks()), m.phase)
+			}
+		})
+	}
+	t.Run("turn update alone retains snapshot title", func(t *testing.T) {
+		m := modeTestModel(t, &fakeConv{})
+		m.phase, m.liveGen, m.reloadFeedGen = phaseRunning, 7, 7
+		m.reloadPending, m.reloadSession = true, m.sessionID
+		m.resolvedSessionModel.ContextWindow = 64000
+		fetch := (&m).refreshSessionCmd()
+		m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 12}})
+		reply := fetch().(snapshotReply)
+		reply.msg = client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "server", TitleRevision: 3, MainUsagePresent: true, Usage: client.Usage{InputTokens: 42}}
+		m = applyAll(m, reply)
+		if m.reloadPending || m.sessionTitle != "server" || !m.reloadNeedRefresh || m.usage.InputTokens != 0 {
+			t.Fatalf("turn update obscured server title or installed uncertain ledger: title=%q pending=%t deferred=%t usage=%+v", m.sessionTitle, m.reloadPending, m.reloadNeedRefresh, m.usage)
+		}
+	})
+}
+
 func TestMecatuiAuthoritativeReload_Scenario2_StreamSettlesWithoutResult(t *testing.T) {
 	for _, terminal := range []struct {
 		name string
@@ -475,8 +530,11 @@ func TestMecatuiAuthoritativeReload_Scenario2_StreamSettlesWithoutResult(t *test
 			m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "live", Revision: 2}})
 			m.reloadLiveEpoch++ // a current turn update while the fetch was in flight
 			m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "old", TitleRevision: 1}})
-			if !m.reloadNeedRefresh || !m.reloadPending {
-				t.Fatal("in-flight run did not defer metadata reconciliation")
+			if !m.reloadNeedRefresh || m.reloadPending {
+				t.Fatalf("in-flight run did not defer metadata reconciliation: pending=%t deferred=%t seq=%d applied=%d phase=%v", m.reloadPending, m.reloadNeedRefresh, m.reloadSeq, m.reloadApplied, m.phase)
+			}
+			if m.sessionTitle != "live" {
+				t.Fatalf("current live title blocked before settlement: %q", m.sessionTitle)
 			}
 			mm, cmd := m.Update(terminal.msg)
 			m = mm.(Model)
@@ -490,7 +548,7 @@ func TestMecatuiAuthoritativeReload_Scenario2_StreamSettlesWithoutResult(t *test
 					fetched = true
 				}
 			}
-			if !fetched || m.reloadPending || m.sessionTitle != "live" {
+			if !fetched || m.reloadPending || m.sessionTitle != "settled" {
 				t.Fatalf("barrier stuck after stream settled: fetched=%t pending=%t title=%q", fetched, m.reloadPending, m.sessionTitle)
 			}
 		})

@@ -908,6 +908,8 @@ type Model struct {
 
 	// usage accumulates across the session for the footer.
 	usage client.Usage
+	// A legacy snapshot without a main ledger cannot confirm a lifetime zero.
+	usageUnknown bool
 
 	// contextTokens is the CURRENT context occupancy, the numerator of the
 	// footer context meter: fed from each TurnEndMsg.Usage.InputTokens (the
@@ -979,6 +981,7 @@ type Model struct {
 	reloadOverflow         bool
 	reloadEvents           []tea.Msg
 	reloadLiveEpoch        uint64
+	reloadTitleEpoch       uint64
 	reloadNeedRefresh      bool
 	reloadMainUsagePresent bool
 	reloadRetryAttempt     int
@@ -1160,6 +1163,7 @@ func New(deps Deps) Model {
 		}
 	}
 	if resume := deps.Resume; resume != nil {
+		m.usageUnknown = !resume.Snapshot.MainUsagePresent
 		m.phase = phaseIdle
 		m.sessionID = resume.Row.ID
 		m.sessionTitle = resume.Row.Title
@@ -1250,6 +1254,7 @@ func (m Model) resetSessionDerived() Model {
 	m.admissionSubmission = nil
 	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}
+	m.usageUnknown = false
 	m.contextTokens = 0
 	m.contextUnknown = false
 	m.contextEstimated = false

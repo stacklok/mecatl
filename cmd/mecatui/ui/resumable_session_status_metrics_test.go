@@ -14,6 +14,7 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeRestoresStatus(t *
 	resume := &client.ResumeSelection{
 		Row: client.SessionListItem{ID: "resumed-main", Title: "Restored chat"},
 		Snapshot: client.SessionSnapshot{
+			MainUsagePresent: true,
 			ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
 			Usage:            client.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000},
 			ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
@@ -102,6 +103,7 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeSubmitsSnapshotSta
 	resume := &client.ResumeSelection{
 		Row: client.SessionListItem{ID: "resumed-main", Title: "Restored chat"},
 		Snapshot: client.SessionSnapshot{
+			MainUsagePresent: true,
 			ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
 			Usage:            client.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000},
 			ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
@@ -161,6 +163,7 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupRefreshSubmitsPersistedO
 
 func TestResumableSessionStatusMetrics_Scenario3_SessionSwitchRestoresStatus(t *testing.T) {
 	adopted := client.SessionSnapshot{
+		MainUsagePresent: true,
 		ResolvedModel:    client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b", ContextWindow: 200_000},
 		Usage:            client.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000},
 		ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},

@@ -1147,10 +1147,12 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd := m.onTitleRenamed(msg)
 		if mm.sessionTitle != m.sessionTitle || mm.sessionTitleRevision != m.sessionTitleRevision {
 			mm.reloadLiveEpoch++
+			mm.reloadTitleEpoch++
 		}
 		return mm, cmd, true
 	case client.SessionTitleMsg:
 		m.reloadLiveEpoch++
+		m.reloadTitleEpoch++
 		return m.onSessionTitle(msg), nil, true
 	case client.CommandsMsg:
 		// Slash-command discovery landed: store the set (a failure degrades quietly
@@ -1245,6 +1247,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	m.activePlacement = msg.Placement
 	if msg.MainUsagePresent {
 		m.usage = msg.Usage
+		m.usageUnknown = false
 	}
 	if occupancy := msg.ContextOccupancy; occupancy != nil && (!msg.AdoptContextOccupancy || m.startupAdopted) {
 		m.contextTokens = occupancy.InputTokens
@@ -4014,6 +4017,7 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case client.SessionTitleMsg:
 		m.reloadLiveEpoch++
+		m.reloadTitleEpoch++
 		mm := m.onSessionTitle(msg)
 		return mm, mm.waitLiveCmd()
 	default:

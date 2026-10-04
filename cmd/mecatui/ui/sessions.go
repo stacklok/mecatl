@@ -299,6 +299,7 @@ func (m Model) loadSessionTranscript(row client.SessionListItem, inspect bool) (
 }
 
 func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded conversation, snapshot client.SessionSnapshot) (tea.Model, tea.Cmd, bool) {
+	priorUsage, sameSession, priorUnknown := m.usage, m.sessionID == row.ID, m.usageUnknown
 	m = m.endRun("")
 	m = m.resetSession()
 	m = m.bindSessionID(row.ID)
@@ -307,6 +308,10 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	(&m).setResolvedSessionModel(snapshot.ResolvedModel)
 	m.activeMode = client.ModeString(client.ModeFromString(snapshot.Mode))
 	m.usage = snapshot.Usage
+	m.usageUnknown = !snapshot.MainUsagePresent
+	if m.usageUnknown && sameSession {
+		m.usage, m.usageUnknown = priorUsage, priorUnknown || priorUsage == (client.Usage{})
+	}
 	if occupancy := snapshot.ContextOccupancy; occupancy != nil {
 		m.contextTokens = occupancy.InputTokens
 		m.contextEstimated = occupancy.Estimated
