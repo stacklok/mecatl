@@ -432,7 +432,11 @@ func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *sessio
 		// Non-held assessments have a final, non-asking inbound disposition.
 		// Resolve it before publishing: principal revision changes can replace
 		// even an otherwise clean payload with a synthetic safe error.
-		result, _, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
+		// Even a clean early availability must leave usage in the private record
+		// until the canonical dispatcher drain accounts for it in call order.
+		assessment := p.record.assessment
+		assessment.usage = session.AuxiliaryUsage{}
+		result, _, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, assessment)
 		// A stale binding can withhold a clean assessment. Do not let a
 		// PostToolUse annotation quote the unreleased original in that case.
 		if originalReleased {
@@ -454,11 +458,15 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 		p := &pending[i]
 		r.recordCompleteAuxiliaryUsageWhileActive(sess, p.record.auxiliaryUsage)
 		r.drainPendingAuxiliaryUsage(sess)
+		if p.available {
+			r.recordGuardrailUsageWhileActive(ctx, sess, p.record.assessment.usage)
+		}
 		var result session.ToolResult
 		var originalReleased bool
 		if cancelled || ctx.Err() != nil {
 			cancelled = true
-			// A clean result may already have consumed its usage when published.
+			// Clean early availability is accounted for above; unresolved
+			// assessments still return their usage on cancellation.
 			if !p.available {
 				r.recordGuardrailUsageWhileActive(ctx, sess, p.record.assessment.usage)
 			}

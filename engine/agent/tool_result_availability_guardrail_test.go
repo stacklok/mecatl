@@ -296,16 +296,16 @@ func testAvailabilityUnattendedHold(t *testing.T) {
 	}
 }
 
-type selectiveAvailabilityReviewer struct{}
+type selectiveAvailabilityReviewer struct{ usage session.AuxiliaryUsage }
 
 func (selectiveAvailabilityReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _ bool) (bool, bool) {
 	return job == agent.ReviewJobInbound, true
 }
-func (selectiveAvailabilityReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (reviewer selectiveAvailabilityReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	if req.EffectiveCall.ID == "clean" {
-		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
+		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, reviewer.usage, nil
 	}
-	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, nil
+	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, reviewer.usage, nil
 }
 
 func TestADR_0370_Scenario2_ExactReleasedAvailability(t *testing.T) {
@@ -519,7 +519,11 @@ func TestADR_0370_Scenario2_CleanSiblingBypassesHeldPresentation(t *testing.T) {
 		}
 	}()
 	sess := newSession(t, session.Limits{})
-	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("held-one", "Read", `{}`), toolCall("clean", "Read", `{}`), toolCall("held-two", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: selectiveAvailabilityReviewer{}, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+	reviewUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
+	reviewer := selectiveAvailabilityReviewer{usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindGuardrail: {Models: map[string]session.Usage{"provider/model": reviewUsage}},
+	}}}
+	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("held-one", "Read", `{}`), toolCall("clean", "Read", `{}`), toolCall("held-two", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: reviewer, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
 	for range 3 {
 		select {
 		case <-started:
@@ -529,6 +533,9 @@ func TestADR_0370_Scenario2_CleanSiblingBypassesHeldPresentation(t *testing.T) {
 	}
 	close(gates["clean"])
 	events := awaitBatchEvent(t, run, session.EvToolResultAvailable, "clean")
+	if got := sess.UsageFor(session.UsageKindGuardrail); got != (session.Usage{}) {
+		t.Fatalf("early availability accounted out of order: %+v", got)
+	}
 	for _, ev := range events {
 		if ev.Type == session.EvPermissionAsk || ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID != "clean" {
 			t.Fatalf("premature sibling decision: %+v", ev)
@@ -562,5 +569,8 @@ func TestADR_0370_Scenario2_CleanSiblingBypassesHeldPresentation(t *testing.T) {
 	}
 	if !reflect.DeepEqual(asks, []session.ToolCallID{"held-one", "held-two"}) || !reflect.DeepEqual(canonical, []session.ToolCallID{"held-one", "clean", "held-two"}) || available["held-one"] != 1 || available["held-two"] != 1 || available["clean"] != 1 {
 		t.Fatalf("asks=%v canonical=%v available=%v", asks, canonical, available)
+	}
+	if want, got := reviewUsage.Add(reviewUsage).Add(reviewUsage), sess.UsageFor(session.UsageKindGuardrail); got != want {
+		t.Fatalf("canonical drain usage = %+v, want %+v", got, want)
 	}
 }
