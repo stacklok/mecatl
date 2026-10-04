@@ -12,6 +12,65 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+func TestMecatuiAuthoritativeReload_Scenario2_SnapshotResultOrdering(t *testing.T) {
+	for _, order := range []string{"snapshot first", "result first", "legacy missing ledger"} {
+		t.Run(order, func(t *testing.T) {
+			conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{MainUsagePresent: true, Usage: client.Usage{InputTokens: 40}}}}
+			m := modeTestModel(t, conv)
+			m.phase = phaseRunning
+			m.usage = client.Usage{InputTokens: 30}
+			m.contextTokens = 20
+			m.reloadSeq = 1
+			m.liveGen, m.reloadFeedGen = 7, 7
+			result := client.ResultMsg{Stop: stopError, Error: "run failed", Usage: client.Usage{InputTokens: 10}}
+			stale := snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, MainUsagePresent: true, Usage: client.Usage{InputTokens: 40}, ContextOccupancy: &client.ContextOccupancy{InputTokens: 5}}}
+			switch order {
+			case "snapshot first":
+				// GetSession already counted the still-running run, but the UI has not received its terminal.
+				m = applyAll(m, stale)
+				if m.usage.InputTokens != 30 || m.contextTokens != 20 {
+					t.Fatalf("in-flight snapshot installed uncertain counters: usage=%+v occupancy=%d", m.usage, m.contextTokens)
+				}
+				mm, reconcile := m.Update(result)
+				m = mm.(Model)
+				if reconcile == nil {
+					t.Fatal("settled run did not schedule authoritative reconciliation")
+				}
+				var fetched bool
+				for _, event := range flattenBatch(reconcile) {
+					if reply, ok := event.(snapshotReply); ok {
+						m = applyAll(m, reply)
+						fetched = true
+					}
+				}
+				if !fetched {
+					t.Fatal("settled run did not fetch cumulative usage")
+				}
+			case "result first":
+				m = applyAll(m, result)
+				mm, retry := m.Update(stale)
+				m = mm.(Model)
+				if retry == nil || m.usage.InputTokens != 40 || m.contextTokens != 20 {
+					t.Fatalf("stale snapshot did not fence result and occupancy: usage=%+v occupancy=%d retry=%t", m.usage, m.contextTokens, retry != nil)
+				}
+				m = applyAll(m, retry())
+			case "legacy missing ledger":
+				m.reloadPending, m.reloadSession = true, m.sessionID
+				m = applyAll(m, liveMsg{gen: 7, msg: result})
+				stale.msg.MainUsagePresent = false
+				m = applyAll(m, stale)
+				if m.usage.InputTokens != 40 {
+					t.Fatalf("buffered result disappeared without main ledger: usage=%+v", m.usage)
+				}
+				return
+			}
+			if m.usage.InputTokens != 40 {
+				t.Fatalf("run usage double-counted or lost: usage=%+v", m.usage)
+			}
+		})
+	}
+}
+
 func TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace(t *testing.T) {
 	opened := &reconnectLiveStreamer{}
 	bound := modeTestModel(t, &fakeConv{})

@@ -115,10 +115,13 @@ func (m Model) onSnapshotReply(reply snapshotReply) (tea.Model, tea.Cmd) {
 		m.reloadNeedRefresh = true
 		return m, nil
 	} else {
-		return m.applyCurrentSnapshot(reply)
+		// The server can commit the run before its terminal reaches this UI.
+		// Neither its ledger nor its occupancy can be ordered against that result
+		// until the run settles and a fresh GetSession completes.
+		return m.applyCurrentSnapshot(reply, m.phase == phaseRunning || m.phase == phaseAwaitingApproval)
 	}
 	m.reloadApplied = reply.seq
-	return m.replayReloadEvents(nil)
+	return m.replayReloadEvents(nil, !reply.msg.MainUsagePresent)
 }
 
 func (m Model) ignoreSnapshotReply(reply snapshotReply) bool {
@@ -177,8 +180,12 @@ func (m *Model) applySnapshotTitleAfterBufferedResults(reply snapshotReply, buff
 	}
 }
 
-func (m Model) applyCurrentSnapshot(reply snapshotReply) (tea.Model, tea.Cmd) {
-	m.reloadNeedRefresh = false
+func (m Model) applyCurrentSnapshot(reply snapshotReply, deferCounters bool) (tea.Model, tea.Cmd) {
+	m.reloadNeedRefresh = deferCounters
+	if deferCounters {
+		reply.msg.MainUsagePresent = false
+		reply.msg.ContextOccupancy = nil
+	}
 	// A newer operator intent must remain pending after the fetch.
 	if reply.modeIntent != m.modeIntentSeq {
 		reply.msg.Mode = ""
@@ -189,7 +196,7 @@ func (m Model) applyCurrentSnapshot(reply snapshotReply) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m, cmd, _ = m.onResolvedModelMsg(reply.msg)
 	m.reloadApplied = reply.seq
-	return m.replayReloadEvents(cmd)
+	return m.replayReloadEvents(cmd, false)
 }
 
 func (m *Model) refreshAfterSettledRun() tea.Cmd {
@@ -200,7 +207,7 @@ func (m *Model) refreshAfterSettledRun() tea.Cmd {
 	return m.refreshSessionCmd()
 }
 
-func (m Model) replayReloadEvents(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+func (m Model) replayReloadEvents(cmd tea.Cmd, legacyUsage bool) (tea.Model, tea.Cmd) {
 	m.reloadRetryAttempt = 0
 	m.reloadRetryScheduled = false
 	if m.reloadPending {
@@ -210,10 +217,9 @@ func (m Model) replayReloadEvents(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 			case client.SessionTitleMsg:
 				m = m.onSessionTitle(title)
 			default:
-				// A result must settle the run, but its incremental usage may
-				// already be in GetSession or Converse. The follow-up snapshot
-				// supplies the cumulative ledger exactly once.
-				if result, ok := event.(client.ResultMsg); ok {
+				// A present cumulative ledger may already contain this result.
+				// Without that ledger, retain the incremental legacy fallback.
+				if result, ok := event.(client.ResultMsg); ok && !legacyUsage {
 					result.Usage = client.Usage{}
 					event = result
 				}
