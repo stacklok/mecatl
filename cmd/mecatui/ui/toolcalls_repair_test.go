@@ -176,6 +176,64 @@ func TestMecatuiToolcallsInspector_Scenario4_RenderedPaginationAndStyle(t *testi
 	}
 }
 
+func TestMecatuiToolcallsInspector_DetailActivationIntentRefreshesSelectedCall(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m = addToolcallsForTest(t, m, 2)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+
+	if _, handled, _ := s.HandleMsg(surfaceHitMsg{}); !handled || s.takeSurfaceIntent() != nil {
+		t.Fatal("invalid hit emitted a detail intent")
+	}
+	if _, handled, _ := s.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown}); !handled || s.takeSurfaceIntent() != nil {
+		t.Fatal("navigation emitted a detail intent")
+	}
+	if _, handled, _ := s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}); !handled {
+		t.Fatal("Enter was not handled")
+	}
+	intent, ok := s.takeSurfaceIntent().(toolcallsDetailIntent)
+	if !ok || intent.blockID != s.entries[s.selected].blockID || s.takeSurfaceIntent() != nil {
+		t.Fatalf("Enter detail intent = %#v", intent)
+	}
+	if _, _, _ = s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}); s.takeSurfaceIntent() != nil {
+		t.Fatal("Enter in detail emitted a second intent")
+	}
+
+	keyboard := newToolcallsInspectorModel(t)
+	keyboard.conv.addTool("keyboard", "Read", `{"path":"keyboard.go"}`)
+	keyboard = openToolcallsForTest(t, keyboard)
+	updated, _ := keyboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	keyboard = updated.(Model)
+	if detail := toolcallsForTest(t, keyboard).detailEntry; detail == nil || detail.callID != "keyboard" || !strings.Contains(ansi.Strip(keyboard.View().Content), "Path: keyboard.go") {
+		t.Fatalf("keyboard detail did not refresh the selected call: %#v", detail)
+	}
+
+	clicked := newToolcallsInspectorModel(t)
+	clicked.conv.addTool("first", "Read", `{"path":"first.go"}`)
+	clicked.conv.addTool("second", "Read", `{"path":"clicked.go"}`)
+	clicked = openToolcallsForTest(t, clicked)
+	_ = clicked.View()
+	s = toolcallsForTest(t, clicked)
+	target := s.entries[1].blockID
+	regionIndex := -1
+	for i, candidate := range clicked.hits.frame {
+		if s.hitItems[candidate.id] == target {
+			regionIndex = i
+			break
+		}
+	}
+	if regionIndex < 0 {
+		t.Fatal("clicked call has no hit region")
+	}
+	region := clicked.hits.frame[regionIndex]
+	x, y := clicked.metrics.localToGlobal(region.rect.x0, region.rect.y0)
+	updated, _ = clicked.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	clicked = updated.(Model)
+	if detail := toolcallsForTest(t, clicked).detailEntry; detail == nil || detail.callID != "second" || !strings.Contains(ansi.Strip(clicked.View().Content), "Path: clicked.go") {
+		t.Fatalf("clicked detail did not refresh the selected call: %#v", detail)
+	}
+}
+
 func TestMecatuiToolcallsInspector_Scenario5_NormalResizeStaleHitAndNoMouse(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.deps.NoAltScreen = false

@@ -14,19 +14,9 @@ the agent without waiting for the current run to finish. Assistant text streams
 as it arrives. Tool calls appear as compact cards; Edit and Write cards include
 their diff.
 
-Use `/toolcalls` to browse the current session's tool calls, including calls still
-running. Click a visible call to inspect its complete arguments and received result, or
-select one with the navigation keys shown in the browser and press `enter`. The detail
-separates call identity and status, arguments, result or error text, structured content,
-and resource details when present. In Read results, numbered file lines have space
-between the line number and content. Other result text keeps its original spacing.
-Scroll long details with the displayed keys; press `esc` to return to the list, then
-`esc` again to close it. The browser also works when you reopen a session's
-transcript.
-
-In the conversation, `ctrl+t` expands or collapses tool details across the
-conversation, regardless of which card is selected. Use `/toolcalls` to read one
-call's full result without expanding the other cards.
+Use `/toolcalls` to inspect calls in the current session, even during a run or
+when revisiting its transcript. `ctrl+t` expands tool details across the
+conversation; `/toolcalls` focuses on one call at a time.
 
 ## Attach a local file
 

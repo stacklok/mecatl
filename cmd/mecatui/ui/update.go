@@ -2498,9 +2498,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		m = mm.(Model)
 		cmd = tea.Batch(cmd, intentCmd)
 	}
-	if toolcalls, ok := m.modal.(*toolcallsState); ok && toolcalls.detail && toolcalls.detailEntry == nil {
-		m.syncToolcalls()
-	}
 	if closed {
 		m.closeModal()
 		return m, tea.Batch(cmd, m.prompt.Focus()), true
@@ -2531,9 +2528,6 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m = mm.(Model)
 		cmd = tea.Batch(cmd, intentCmd)
-	}
-	if toolcalls, ok := m.modal.(*toolcallsState); ok && toolcalls.detail && toolcalls.detailEntry == nil {
-		m.syncToolcalls()
 	}
 	if closed {
 		m.closeModal()
@@ -2634,6 +2628,12 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 	}
 	if model, cmd, handled, stopSurfaceDispatch := m.applySessionsSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
+	}
+	if detail, ok := intent.(toolcallsDetailIntent); ok {
+		if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].blockID == detail.blockID {
+			s.refreshDetail(&m.conv.scrollback)
+		}
+		return m, nil, false
 	}
 	return m, nil, false
 }

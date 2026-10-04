@@ -49,6 +49,12 @@ type toolcallDetail struct {
 	resultReceived       bool
 }
 
+type toolcallsDetailIntent struct {
+	blockID scrollback.BlockID
+}
+
+func (toolcallsDetailIntent) isSurfaceIntent() {}
+
 type toolcallsState struct {
 	open        bool
 	deps        surfaceDeps
@@ -56,6 +62,7 @@ type toolcallsState struct {
 	selected    int
 	detail      bool
 	detailEntry *toolcallDetail
+	intent      surfaceIntent
 	window      *bounded.Viewport
 	width       int
 	anchor      int
@@ -69,6 +76,13 @@ type toolcallsState struct {
 
 func (*toolcallsState) modalPlacement() modalPlacement { return modalPlacementFill }
 func (*toolcallsState) Close()                         {}
+
+func (s *toolcallsState) takeSurfaceIntent() surfaceIntent {
+	intent := s.intent
+	s.intent = nil
+	return intent
+}
+
 func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	hit, ok := msg.(surfaceHitMsg)
 	if !ok || !s.open || s.compact || s.detail {
@@ -86,6 +100,7 @@ func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 				s.listFollow = i == len(s.entries)-1
 			}
 			s.detail = true
+			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
 			s.window = new(bounded.Viewport)
 			s.width = 0
 			s.anchor = 0
@@ -772,6 +787,7 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	case bubbleskey.Matches(msg, s.deps.keys.Choose):
 		if !s.detail {
 			s.detail = true
+			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
 			s.window = new(bounded.Viewport)
 			s.width = 0
 			s.anchor = 0
