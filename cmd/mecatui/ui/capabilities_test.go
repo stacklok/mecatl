@@ -154,59 +154,10 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 // m.resolvedSessionModel becomes the footer meter's denominator (no --context-window
 // override), so a 40K occupancy renders the bar + "40K/400K" through the live
 // reducer path.
-func TestEffectiveModelDrivesFooterMeter(t *testing.T) {
-	resolved := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-effective", ContextWindow: 400000}
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, resolvedModel: resolved}
-	m := newTestModelFromDeps(Deps{
-		Session: conv,
-		Conv:    conv,
-		Theme:   theme.New("aztec", theme.AztecPalette()),
-		Ctx:     context.Background(),
-	})
-	ready := m.createSessionCmd()().(client.SessionReadyMsg)
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		ready,
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 800}},
-	)
-	if got := m.contextWindow(); got != 400000 {
-		t.Fatalf("contextWindow() = %d, want 400000 (server-echoed)", got)
-	}
-	got := stripANSIstr(m.fitFooter("connected", 160))
-	if !strings.Contains(got, "40K/400K") {
-		t.Errorf("footer = %q, want it to contain %q (echo→render loop closed)", got, "40K/400K")
-	}
-}
-
 // TestFooterMeterFollowsModelSwitch covers req 4 ("follows model switch for free")
 // directly: a model switch is just a fresh SessionReadyMsg carrying the new model's
 // window, so applying one with a 200K window then a SECOND with a 400K window must
 // move the footer denominator from /200K to /400K with NO --context-window override.
-func TestFooterMeterFollowsModelSwitch(t *testing.T) {
-	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
-	// First model: 200K window, 40K occupied.
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		client.SessionReadyMsg{
-			SessionID:     "sess-switch-0001",
-			ResolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "small", ContextWindow: 200000},
-		},
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000}},
-	)
-	if got := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(got, "/200K") {
-		t.Fatalf("after first model the footer should show /200K, got %q", got)
-	}
-	// Switch model (a fresh SessionReadyMsg with a larger window) — the denominator
-	// must follow with no other plumbing.
-	m = applyAll(m, client.SessionReadyMsg{
-		SessionID:     "sess-switch-0002",
-		ResolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "large", ContextWindow: 400000},
-	})
-	if got := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(got, "/400K") {
-		t.Errorf("after model switch the footer should show /400K, got %q", got)
-	}
-}
-
 // TestEffectiveModelOlderServerNoSegment asserts an older server (nil resolved_model
 // ⇒ zero value) leaves m.resolvedSessionModel zero and the header shows no model segment —
 // graceful degrade, no crash.

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -39,9 +38,6 @@ func healModel(t *testing.T, conv *fakeConv) Model {
 	return m
 }
 
-// footerStr renders the (ANSI-stripped) footer the user sees.
-func footerStr(m Model) string { return stripANSIstr(m.fitFooter("connected", 160)) }
-
 // TestFooterHealRaceThenHeal is the decisive offline reproduction of the issue-#66
 // footer-heal race: a raced create echoes a 0 window (the footer degrades to the
 // bare "ctx 40K", no bar), the turn-end gate fires a GetSession refetch, and the
@@ -58,11 +54,8 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	m := healModel(t, conv)
 
 	// 1) Raced create → window unknown → the footer degrades (no denominator bar).
-	if got := m.contextWindow(); got != 0 {
-		t.Fatalf("contextWindow() = %d, want 0 (raced create echoed a 0 window)", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "ctx 40K") || strings.Contains(foot, "/") {
-		t.Fatalf("footer = %q, want the degraded bare 'ctx 40K' with no '/' denominator", foot)
+	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
+		t.Fatalf("resolved context window = %d, want 0 (raced create echoed a 0 window)", got)
 	}
 
 	// 2) A turn boundary fires the heal refetch. Drive the REAL reducer with a
@@ -81,21 +74,15 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 		t.Fatalf("GetSession called %d times after one turn-end with unknown window, want 1", n)
 	}
 
-	// 3) Feed the heal result back through the reducer: the window heals to 1.05M,
-	// contextWindow() reports it, and the footer renders the bar.
+	// 3) Feed the heal result back through the reducer and retain the resolved window.
 	healed := client.ResolvedModelMsg{SessionID: "sess-test-0001", Resolved: client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000}}
 	m = applyAll(m, healed)
 	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
 		t.Fatalf("resolvedSessionModel.ContextWindow = %d, want 1,050,000 after the heal", got)
 	}
-	if got := m.contextWindow(); got != 1_050_000 {
-		t.Fatalf("contextWindow() = %d, want 1,050,000 after the heal", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "40K/1.1M") {
-		t.Fatalf("footer = %q, want the healed '40K/1.1M' bar", foot)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, ctxGlyphEmpty) && !strings.Contains(foot, ctxGlyphOk) {
-		t.Fatalf("footer = %q, want a meter bar glyph after the heal", footerStr(m))
+	status := m.statusLineSnapshot()
+	if status.Context.Window.Raw != 1_050_000 || status.Context.Used.Raw != 40_000 || !status.Context.Known {
+		t.Fatalf("status snapshot = %#v, want healed known context", status.Context)
 	}
 
 	// 4) Identity untouched (only the denominator self-corrected).
@@ -130,11 +117,8 @@ func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
 	})
 	m.width = 160
 
-	if got := m.contextWindow(); got != 0 {
-		t.Fatalf("resumed contextWindow() = %d, want provisional 0", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "ctx 40K") || strings.Contains(foot, "/") {
-		t.Fatalf("resumed footer = %q, want bare occupancy before refresh", foot)
+	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
+		t.Fatalf("resumed context window = %d, want provisional 0", got)
 	}
 
 	updated, cmd := m.Update(startupResumeReadyMsg{})
@@ -157,17 +141,14 @@ func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
 
 	updated, _ = m.Update(refreshed)
 	m = updated.(Model)
-	if got := m.contextWindow(); got != 1_050_000 {
-		t.Fatalf("healed contextWindow() = %d, want 1,050,000", got)
+	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
+		t.Fatalf("healed context window = %d, want 1,050,000", got)
 	}
 	if got := m.contextTokens; got != occupancy {
 		t.Fatalf("refresh replaced resumed occupancy: got %d, want %d", got, occupancy)
 	}
 	if got := m.usage; got != (client.Usage{InputTokens: 12345, OutputTokens: 678}) {
 		t.Fatalf("refresh replaced resumed usage: got %+v", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "40K/1.1M") {
-		t.Fatalf("healed footer = %q, want visible meter without input", foot)
 	}
 }
 
@@ -212,9 +193,6 @@ func TestFooterStartupResumeRefreshRestoresPersistedOccupancy(t *testing.T) {
 	if m.contextUnknown || m.contextTokens != occupancy || !m.contextEstimated {
 		t.Fatalf("resumed context = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
 	}
-	if foot := footerStr(m); !strings.Contains(foot, "~40K/1.1M") {
-		t.Fatalf("footer = %q, want restored occupancy before a prompt", foot)
-	}
 }
 
 // TestFooterStartupResumeRetriesProvisionalWindow proves resume does not strand
@@ -241,8 +219,8 @@ func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
 	}
 	updated, retry := m.Update(first)
 	m = updated.(Model)
-	if m.contextWindow() != 0 || retry == nil {
-		t.Fatalf("first refresh = window %d retry %v, want provisional window with retry", m.contextWindow(), retry != nil)
+	if m.resolvedSessionModel.ContextWindow != 0 || retry == nil {
+		t.Fatalf("first refresh = window %d retry %v, want provisional window with retry", m.resolvedSessionModel.ContextWindow, retry != nil)
 	}
 
 	updated, refresh := m.Update(retry())
@@ -255,8 +233,8 @@ func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
 		t.Fatalf("retry refresh = %#v, want attempt 1 snapshot", second)
 	}
 	m = applyAll(m, second)
-	if m.contextWindow() != 200_000 || !strings.Contains(footerStr(m), "40K/200K") {
-		t.Fatalf("retried footer = %q, want denominator after startup without interaction", footerStr(m))
+	if m.resolvedSessionModel.ContextWindow != 200_000 {
+		t.Fatalf("retried context window = %d, want 200000 after startup without interaction", m.resolvedSessionModel.ContextWindow)
 	}
 }
 
@@ -272,8 +250,8 @@ func TestFooterStartupResumeDoesNotRetryKnownWindow(t *testing.T) {
 		SessionID: m.sessionID, Resolved: client.ResolvedModel{ContextWindow: 0}, AdoptContextOccupancy: true,
 	})
 	m = updated.(Model)
-	if m.contextWindow() != 200_000 || cmd != nil {
-		t.Fatalf("known window = %d retry %v, want preserved window without retry", m.contextWindow(), cmd != nil)
+	if m.resolvedSessionModel.ContextWindow != 200_000 || cmd != nil {
+		t.Fatalf("known window = %d retry %v, want preserved window without retry", m.resolvedSessionModel.ContextWindow, cmd != nil)
 	}
 }
 

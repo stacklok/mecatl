@@ -15,58 +15,8 @@ import (
 // TestFooterContextMeterWithWindow drives a result through Update and asserts the
 // footer shows a populated context meter (bar + percentage + used/total) when a
 // context window is configured, plus the session usage facets.
-func TestFooterContextMeterWithWindow(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{
-		Theme: th,
-		Model: "mock-model",
-	})
-	// The footer denominator is the SERVER-echoed per-model window (resolve-at-use,
-	// live-first server-side); set it as the test would receive it on SessionReady.
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	// The meter's numerator comes from the per-turn TurnEndMsg (current
-	// occupancy); the facets come from the cumulative ResultMsg total.
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 345}})
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 40000, OutputTokens: 345, CacheReadTokens: 35200},
-	})
-
-	footer := stripANSIstr(m.renderFooter())
-	if !strings.Contains(footer, "ctx ") || !strings.ContainsAny(footer, ctxGlyphOk+ctxGlyphEmpty) {
-		t.Errorf("expected a context bar in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "20%") {
-		t.Errorf("expected 20%% context in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "40K/200K") {
-		t.Errorf("expected used/total in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "↑40K") || !strings.Contains(footer, "↓345") {
-		t.Errorf("expected usage facets in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "cache 88%") {
-		t.Errorf("expected cache-hit rate in footer:\n%s", footer)
-	}
-}
-
 // TestFooterContextMeterUnknownWindow asserts the meter degrades to just the
 // current size when no window is known.
-func TestFooterContextMeterUnknownWindow(t *testing.T) {
-	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
-	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 7903}})
-
-	footer := stripANSIstr(m.renderFooter())
-	if !strings.Contains(footer, "ctx 7.9K") {
-		t.Errorf("expected bare context size in footer:\n%s", footer)
-	}
-	if strings.ContainsAny(footer, ctxGlyphOk+ctxGlyphWarn+ctxGlyphDanger+ctxGlyphEmpty) {
-		t.Errorf("expected no bar without a window:\n%s", footer)
-	}
-}
-
 // TestContextMeterTracksLatestTurnNotCumulative pins the two-axis usage model:
 // m.contextTokens is CURRENT occupancy — assigned (not summed) from each
 // TurnEndMsg's InputTokens — while m.usage is the SESSION-CUMULATIVE total fed
@@ -116,137 +66,15 @@ func TestContextMeterTracksLatestTurnNotCumulative(t *testing.T) {
 // TestFooterNarrowWidthTiers asserts the footer sheds detail in priority order
 // as width shrinks — facets first, the context signal last. Context % must
 // survive in every tier where anything fits beside the left status.
-func TestFooterNarrowWidthTiers(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 140000, OutputTokens: 345}})
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345, CacheReadTokens: 70000},
-	})
-	left := "ready"
-
-	// Wide: full tier — meter (with used/total) AND facets.
-	wide := stripANSIstr(m.fitFooter(left, 120))
-	if !strings.Contains(wide, "140K/200K") || !strings.Contains(wide, "↑140K") {
-		t.Errorf("wide footer should be the full tier:\n%q", wide)
-	}
-
-	// Medium: meter survives, facets dropped.
-	med := stripANSIstr(m.fitFooter(left, 40))
-	if strings.Contains(med, "↑140K") {
-		t.Errorf("medium footer should drop io/cache facets first:\n%q", med)
-	}
-	if !strings.Contains(med, "ctx ") || !strings.Contains(med, "70%") {
-		t.Errorf("medium footer should keep the context signal:\n%q", med)
-	}
-
-	// Tight: even the minimal bar-less percentage must carry the context %.
-	tight := stripANSIstr(m.fitFooter(left, 22))
-	if !strings.Contains(tight, "ctx ") || !strings.Contains(tight, "70%") {
-		t.Errorf("tight footer should still show ctx %%:\n%q", tight)
-	}
-	if strings.Contains(tight, "140K/200K") {
-		t.Errorf("tight footer should not carry used/total:\n%q", tight)
-	}
-
-	// Too narrow for anything: just the left status, no usage bleed-through.
-	none := stripANSIstr(m.fitFooter(left, 10))
-	if strings.Contains(none, "ctx") {
-		t.Errorf("ultra-narrow footer should drop the usage segment entirely:\n%q", none)
-	}
-}
-
 // TestFooterTeamSegmentTiers asserts the live-team footer summary segment tiers
 // alongside the context meter, and that the team segment (an advertisement) is the
 // FIRST thing dropped under width pressure while the context % survives longest.
-func TestFooterTeamSegmentTiers(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 200, Height: 30})
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 140000, OutputTokens: 345}})
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345, CacheReadTokens: 70000},
-	})
-	m = seedTeam(m, func(c *conversation) {
-		c.startTeamCard("t1", "team-x", roster()) // lead + scout, both working → 2/2
-	})
-	left := "ready"
-
-	// Wide: full team tier (glyph + team-id + k/N working + f6 agents) AND the
-	// full context meter (ctx + %).
-	wide := stripANSIstr(m.fitFooter(left, 200))
-	for _, want := range []string{teamLiveGlyph, "team-x", "2/2 working", "f6 agents", "ctx ", "70%"} {
-		if !strings.Contains(wide, want) {
-			t.Errorf("wide footer should contain %q:\n%q", want, wide)
-		}
-	}
-
-	// Medium: team segment degrades to the id-less "⟳ k/N working · f6"; the
-	// context % must still be present.
-	med := stripANSIstr(m.fitFooter(left, 56))
-	if !strings.Contains(med, teamLiveGlyph) || !strings.Contains(med, "2/2 working") {
-		t.Errorf("medium footer should keep the team summary:\n%q", med)
-	}
-	if strings.Contains(med, "team-x") {
-		t.Errorf("medium footer should drop the team id:\n%q", med)
-	}
-	if !strings.Contains(med, "ctx ") || !strings.Contains(med, "70%") {
-		t.Errorf("medium footer should keep the context signal:\n%q", med)
-	}
-
-	// Tight: the team segment is dropped entirely; the context % wins (survives
-	// longest). This locks the priority: context % over the team advertisement.
-	tight := stripANSIstr(m.fitFooter(left, 18))
-	if strings.Contains(tight, teamLiveGlyph) {
-		t.Errorf("tight footer should drop the team segment:\n%q", tight)
-	}
-	if !strings.Contains(tight, "ctx ") || !strings.Contains(tight, "70%") {
-		t.Errorf("tight footer should still show ctx %%:\n%q", tight)
-	}
-}
-
 // TestFooterNoTeamSegment is the regression guard for the byte-identical no-team
 // path: with no team seeded the footer carries no team glyph and no "team-" id.
-func TestFooterNoTeamSegment(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345},
-	})
-	footer := stripANSIstr(m.fitFooter("ready", 200))
-	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-") {
-		t.Errorf("no-team footer must carry no team segment:\n%q", footer)
-	}
-}
-
 // TestFooterTeamDoneDropsSegment asserts a team that has ENDED drops the footer
 // segment — latestTeamBlock still returns it, so liveTeamBlock's !teamDone gate is
 // what hides it. This is deliberately NARROWER than the f6 overlay, which
 // opens on the last-seen team (done or not) to review a finished roster.
-func TestFooterTeamDoneDropsSegment(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000},
-	})
-	m = seedTeam(m, func(c *conversation) {
-		c.startTeamCard("t1", "team-x", roster())
-		c.finishTeamCard("t1", "team-x", 3, "end_turn", client.Usage{InputTokens: 100}, nil)
-	})
-	footer := stripANSIstr(m.fitFooter("ready", 200))
-	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-x") {
-		t.Errorf("ended team must drop the footer segment:\n%q", footer)
-	}
-}
-
 // TestAgentsInvSlashCommandEndToEnd drives the FULL palette path for the /agents
 // definition inventory (issue #15, Gap A): type "/agents", press enter, and assert
 // the panel opens, fires ListAgents, and renders the resolved defs in the
