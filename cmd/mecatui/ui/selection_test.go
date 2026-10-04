@@ -187,10 +187,10 @@ func TestConvTopRowMatchesRenderedBodyTop(t *testing.T) {
 // cross-check is not vacuous.
 func TestConvTopRowTracksWrappedHeader(t *testing.T) {
 	m, _ := selModel(t)
-	m.deps.Model = "openrouter/anthropic/claude-3.5-sonnet-20241022-extended"
-	m.deps.Mode = "acceptEdits"
-	m.deps.Server = "some-long-host.example.internal:50051"
-	// Resize NARROW so the joined identity line exceeds the width and wraps.
+	// The renderer-owned debug disclosure wraps at a narrow width; this exercises
+	// measured layout without relying on the removed legacy identity formatter.
+	m.deps.DebugTarget = "debug-target"
+	// Resize NARROW so the mandatory disclosure wraps.
 	mm, _ := m.onResize(tea.WindowSizeMsg{Width: 40, Height: 30})
 	m = mm.(Model)
 
@@ -262,11 +262,9 @@ func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
 	// pre-top-pad layout — the inputRailPadTop row.)
 	const taH, footerH, spacerH, totalH = 5, 2, 1, 30
 
-	// Wrapping case: long deps at a narrow width.
+	// Wrapping case: the renderer-owned debug disclosure at a narrow width.
 	m, _ := selModel(t)
-	m.deps.Model = "openrouter/anthropic/claude-3.5-sonnet-20241022-extended"
-	m.deps.Mode = "acceptEdits"
-	m.deps.Server = "some-long-host.example.internal:50051"
+	m.deps.DebugTarget = "debug-target"
 	mm, _ := m.onResize(tea.WindowSizeMsg{Width: 40, Height: totalH})
 	m = mm.(Model)
 	wrappedHeader := lipgloss.Height(m.renderHeader())

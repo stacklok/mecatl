@@ -114,12 +114,10 @@ func TestSessionReadyDefaultCapsAllFalse(t *testing.T) {
 	}
 }
 
-// TestEffectiveModelInHeaderFromTurnZero asserts the effective model the server
-// resolved (echoed on SessionReadyMsg) lands in m.resolvedSessionModel AND renders in the
-// header from turn zero — and that NO model segment shows while still connecting (no
-// create response yet). It also covers the older-server nil-resolved-model graceful
-// degrade: zero value ⇒ still no segment, no crash.
-func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
+// TestEffectiveModelFromTurnZero asserts the effective model the server resolved
+// (echoed on SessionReadyMsg) lands in m.resolvedSessionModel and in the canonical
+// status snapshot. Before the create response, no model fact is submitted.
+func TestEffectiveModelFromTurnZero(t *testing.T) {
 	resolved := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-effective", ContextWindow: 400000}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, resolvedModel: resolved}
 	m := newTestModelFromDeps(Deps{
@@ -129,11 +127,11 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 		Ctx:     context.Background(),
 	})
 
-	// While connecting (before the create response), the header shows NO model
-	// segment — the server owns the value and the ui must not guess it.
+	// While connecting (before the create response), the source has no model fact
+	// to render — the server owns the value and the UI must not guess it.
 	connecting := applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	if strings.Contains(connecting.renderHeader(), "gpt-5-effective") {
-		t.Fatalf("connecting header shows a model segment, want none:\n%s", connecting.renderHeader())
+	if got := connecting.statusLineSnapshot().Model; got.ID != "" || got.ProviderID != "" {
+		t.Fatalf("connecting status model = %+v, want empty", got)
 	}
 
 	ready := m.createSessionCmd()().(client.SessionReadyMsg)
@@ -144,8 +142,8 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 	if got.resolvedSessionModel != resolved {
 		t.Fatalf("m.resolvedSessionModel = %+v, want %+v", got.resolvedSessionModel, resolved)
 	}
-	if !strings.Contains(got.renderHeader(), "gpt-5-effective") {
-		t.Fatalf("header missing the effective model id from turn zero:\n%s", got.renderHeader())
+	if snapshot := got.statusLineSnapshot(); snapshot.Model.ProviderID != "openai" || snapshot.Model.ID != "gpt-5-effective" || snapshot.Model.ContextWindow.Raw != 400000 {
+		t.Fatalf("status snapshot model = %+v, want resolved model", snapshot.Model)
 	}
 }
 
