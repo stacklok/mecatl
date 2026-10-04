@@ -150,14 +150,14 @@ func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("startup resume did not schedule resolved-model refresh")
 	}
-	var refreshed client.ResolvedModelMsg
+	var refreshed snapshotReply
 	for _, msg := range flattenBatch(cmd) {
-		if result, ok := msg.(client.ResolvedModelMsg); ok {
+		if result, ok := msg.(snapshotReply); ok {
 			refreshed = result
 		}
 	}
-	if refreshed.SessionID != sessionID {
-		t.Fatalf("refresh session = %q, want %q", refreshed.SessionID, sessionID)
+	if refreshed.msg.SessionID != sessionID {
+		t.Fatalf("refresh session = %q, want %q", refreshed.msg.SessionID, sessionID)
 	}
 	if n := conv.getSessionCalls(); n != 1 {
 		t.Fatalf("GetSession called %d times during startup resume, want 1", n)
@@ -202,13 +202,13 @@ func TestFooterStartupResumeRefreshRestoresPersistedOccupancy(t *testing.T) {
 
 	updated, cmd := m.Update(startupResumeReadyMsg{})
 	m = updated.(Model)
-	var refreshed client.ResolvedModelMsg
+	var refreshed snapshotReply
 	for _, msg := range flattenBatch(cmd) {
-		if result, ok := msg.(client.ResolvedModelMsg); ok {
+		if result, ok := msg.(snapshotReply); ok {
 			refreshed = result
 		}
 	}
-	if refreshed.SessionID != sessionID || refreshed.ContextOccupancy == nil || refreshed.ContextOccupancy.InputTokens != occupancy {
+	if refreshed.msg.SessionID != sessionID || refreshed.msg.ContextOccupancy == nil || refreshed.msg.ContextOccupancy.InputTokens != occupancy {
 		t.Fatalf("startup refresh = %#v, want persisted occupancy for %q", refreshed, sessionID)
 	}
 
@@ -235,9 +235,9 @@ func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
 
 	updated, cmd := m.Update(startupResumeReadyMsg{})
 	m = updated.(Model)
-	var first client.ResolvedModelMsg
+	var first snapshotReply
 	for _, msg := range flattenBatch(cmd) {
-		if result, ok := msg.(client.ResolvedModelMsg); ok {
+		if result, ok := msg.(snapshotReply); ok {
 			first = result
 		}
 	}
@@ -252,8 +252,8 @@ func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
 	if refresh == nil {
 		t.Fatal("retry tick did not request the session snapshot")
 	}
-	second, ok := refresh().(client.ResolvedModelMsg)
-	if !ok || second.StartupResumeRefreshAttempt != 1 {
+	second, ok := refresh().(snapshotReply)
+	if !ok || second.msg.StartupResumeRefreshAttempt != 1 {
 		t.Fatalf("retry refresh = %#v, want attempt 1 snapshot", second)
 	}
 	m = applyAll(m, second)

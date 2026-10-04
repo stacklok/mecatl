@@ -145,9 +145,9 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupRefreshSubmitsPersistedO
 	if got := source.inputCount(); got != 1 {
 		t.Fatalf("startup status submissions = %d, want 1", got)
 	}
-	var refreshed client.ResolvedModelMsg
+	var refreshed snapshotReply
 	for _, msg := range flattenBatch(cmd) {
-		if result, ok := msg.(client.ResolvedModelMsg); ok {
+		if result, ok := msg.(snapshotReply); ok {
 			refreshed = result
 		}
 	}

@@ -170,9 +170,9 @@ func TestSessionTitleGeneration_Scenario4_ClientReconnectReconcilesTitle(t *test
 	if cmd == nil {
 		t.Fatal("reconnect did not refetch the authoritative session metadata")
 	}
-	msg, ok := cmd().(client.ResolvedModelMsg)
+	msg, ok := cmd().(snapshotReply)
 	if !ok {
-		t.Fatalf("reconnect command = %T, want title refetch", cmd())
+		t.Fatalf("reconnect command = %T, want ordered title refetch", cmd())
 	}
 	m = applyAll(m, msg)
 	if m.sessionTitle != "Authoritative" {

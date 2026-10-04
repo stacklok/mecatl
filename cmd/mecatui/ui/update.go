@@ -390,6 +390,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveMsg:
 		return m.updateLiveMsg(msg)
 
+	case snapshotReply:
+		return m.onSnapshotReply(msg)
+
+	case modeReply:
+		if msg.session != m.sessionID || msg.intent != m.modeIntentSeq {
+			return m, nil
+		}
+		return m.onModeChanged(msg.msg), nil
+
 	case mcpAuthorizationPollTickMsg:
 		return m.applyMCPAuthorizationPollTick(msg)
 
@@ -560,7 +569,13 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
 	if m.sessionID != "" && m.deps.Session != nil {
-		cmd = tea.Batch(cmd, client.RefreshStartupResumeCmd(m.deps.Ctx, m.deps.Session, m.sessionID))
+		if m.liveCh != nil {
+			m.reloadPending = true
+			m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
+			m.reloadEvents = nil
+			m.reloadOverflow = false
+		}
+		cmd = tea.Batch(cmd, (&m).refreshSessionWithCmd(client.RefreshStartupResumeCmd(m.deps.Ctx, m.deps.Session, m.sessionID)))
 	}
 	if m.workspaceEnrollmentActive() {
 		m.enrollment = workspaceEnrollmentState{}
@@ -639,7 +654,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// title — it still may raise the footer window denominator, which is the
 	// existing footer-heal path's concern.)
 	if m.sessionID != "" && m.deps.Session != nil {
-		heal := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+		heal := (&m).refreshSessionCmd()
 		cmd = tea.Batch(cmd, heal)
 	}
 	// Arm the live subscription for the active session so fire-result
@@ -723,7 +738,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if msg.sessionID != m.sessionID || !m.startupAdopted || m.deps.Session == nil {
 			return m, nil, true
 		}
-		return m, client.RefreshStartupResumeRetryCmd(m.deps.Ctx, m.deps.Session, msg.sessionID, msg.attempt), true
+		cmd := (&m).refreshSessionWithCmd(client.RefreshStartupResumeRetryCmd(m.deps.Ctx, m.deps.Session, msg.sessionID, msg.attempt))
+		return m, cmd, true
 	case reconnectMsg:
 		// Live-feed reconnect loop msgs (issue #387): degraded-state markers and
 		// the catch-up event msgs ride the reconnect channel. Handled here (a
@@ -1107,8 +1123,12 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case client.SessionRenamedMsg:
 		mm, cmd := m.onTitleRenamed(msg)
+		if mm.sessionTitle != m.sessionTitle || mm.sessionTitleRevision != m.sessionTitleRevision {
+			mm.reloadLiveEpoch++
+		}
 		return mm, cmd, true
 	case client.SessionTitleMsg:
+		m.reloadLiveEpoch++
 		return m.onSessionTitle(msg), nil, true
 	case client.CommandsMsg:
 		// Slash-command discovery landed: store the set (a failure degrades quietly
@@ -1302,6 +1322,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// feeds only this meter, never the cumulative ↑/↓/⊕ totals or any token budget,
 		// which stay on provider truth) — this guard is belt-and-braces for the edge
 		// where even the estimate is zero.
+		m.reloadLiveEpoch++
 		if msg.Usage.InputTokens > 0 {
 			m.contextTokens = msg.Usage.InputTokens
 			m.contextUnknown = false
@@ -1328,7 +1349,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// server-side resolver with --context-window-override; the gate remains purely
 		// "session live AND window still unknown".
 		if m.sessionID != "" && m.resolvedSessionModel.ContextWindow == 0 {
-			refresh := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+			refresh := (&mm).refreshSessionCmd()
 			return mm, tea.Batch(cmd, refresh)
 		}
 		return mm, cmd
@@ -1803,6 +1824,7 @@ func (m Model) notifyHookFailed(reason string) {
 // totals, surfaces a terminal error, ends the run, and drains any queued prompts.
 // Extracted from updateStreamEvent's switch to keep that dispatcher flat.
 func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
+	m.reloadLiveEpoch++
 	// A terminal result is a server-side run fact, so this prompt cannot be replayed
 	// by a later unrelated control response.
 	m.promptRecovery = nil
@@ -1883,7 +1905,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		// The result lands as a ResolvedModelMsg on the update goroutine
 		// while the execution run is in progress; the ResolvedModelMsg arm
 		// applies both mode + model from the session snapshot (issue #206).
-		refresh := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+		refresh := (&pm).refreshSessionCmd()
 		dm, drainCmd := pm.drainQueue(msg.Stop)
 		return dm, tea.Batch(pm.refreshCmd(), modeCmd, proceedCmd, drainCmd, refresh)
 	}
@@ -1892,7 +1914,13 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
 		skillChanges = client.ListSkillChangesCmd(m.deps.Ctx, lifecycle, m.deps.Workspace)
 	}
-	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed(), skillChanges)
+	var reconcile tea.Cmd
+	if settled, ok := mm.(Model); ok && settled.reloadNeedRefresh && settled.deps.Session != nil && settled.phase != phaseRunning && settled.phase != phaseAwaitingApproval {
+		settled.reloadNeedRefresh = false
+		reconcile = (&settled).refreshSessionCmd()
+		mm = settled
+	}
+	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed(), skillChanges, reconcile)
 }
 
 // noticeLine renders the muted-notice text for a transient advisory message
@@ -2671,8 +2699,9 @@ func (m Model) switchMode(mode string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.pendingMode = mode
+	m.modeIntentSeq++
 	m.statusMsg = m.deps.Theme.Style("muted").Render("switching mode to " + mode + "…")
-	return m, client.SetModeCmd(m.deps.Ctx, m.deps.Session, m.sessionID, mode)
+	return m, m.setModeIntentCmd(mode)
 }
 
 func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
@@ -2680,7 +2709,7 @@ func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
 		return m
 	}
 	requested := client.ModeString(client.ModeFromString(msg.Requested))
-	if m.pendingMode != "" && requested != m.pendingMode {
+	if m.pendingMode == "" || requested != m.pendingMode {
 		return m
 	}
 	if msg.Err != nil {
@@ -2693,6 +2722,7 @@ func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
 		return m
 	}
 	m.activeMode = mode
+	m.reloadLiveEpoch++
 	m.pendingMode = ""
 	m.statusMsg = m.deps.Theme.Style("success").Render("mode " + mode)
 	return m
@@ -2702,7 +2732,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 	if m.pendingMode == "" || m.sessionID == "" {
 		return nil
 	}
-	return client.SetModeCmd(m.deps.Ctx, m.deps.Session, m.sessionID, m.pendingMode)
+	return m.setModeIntentCmd(m.pendingMode)
 }
 
 // onQuitKey implements the graceful double-press ctrl+c (issue #17): a second press
@@ -3906,21 +3936,51 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 	if sm.gen != m.liveGen {
 		return m, nil // stale reader — drop, do not re-arm
 	}
+	if m.reloadPending && sm.gen == m.reloadFeedGen {
+		switch sm.msg.(type) {
+		case client.StreamErrMsg, client.StreamClosedMsg:
+		case client.ResultMsg:
+			m.reloadLiveEpoch++
+			return m, m.waitLiveCmd()
+		default:
+			if len(m.reloadEvents) == reloadEventBufferLimit {
+				m.reloadOverflow = true
+				m.reloadNeedRefresh = false
+				m.reloadPending = false
+				m.reloadEvents = nil
+				m.reloadSeq++ // invalidate the unfinished snapshot
+				m.disarmLiveFeed()
+				cmd := (&m).startReconnect(nil)
+				return m, cmd
+			}
+			m.reloadEvents = append(m.reloadEvents, sm.msg)
+			return m, m.waitLiveCmd()
+		}
+	}
 	switch msg := sm.msg.(type) {
 	case client.StreamErrMsg:
+		m.reloadPending = false
+		m.reloadEvents = nil
+		m.reloadSeq++
 		if msg.AuthReason != "" {
 			return m.reduceLiveAuthRecovery(msg.AuthReason)
 		}
 		m.liveContinuityAttempt++
 		m.liveCh = nil
 		m.liveStop = nil
-		return m, (&m).startReconnect(msg.Err)
+		cmd := (&m).startReconnect(msg.Err)
+		return m, cmd
 	case client.StreamClosedMsg:
+		m.reloadPending = false
+		m.reloadEvents = nil
+		m.reloadSeq++
 		m.liveContinuityAttempt++
 		m.liveCh = nil
 		m.liveStop = nil
-		return m, (&m).startReconnect(nil)
+		cmd := (&m).startReconnect(nil)
+		return m, cmd
 	case client.SessionTitleMsg:
+		m.reloadLiveEpoch++
 		mm := m.onSessionTitle(msg)
 		return mm, mm.waitLiveCmd()
 	default:
@@ -4045,10 +4105,17 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		// it opened) and clear its channel so the gen bump invalidates any
 		// stale reader.
 		(&m).disarmReconnect()
-		// Re-arm the live reader off a FRESH live channel.
+		// Open the replacement feed before requesting its snapshot. Hold events
+		// from this generation until the snapshot establishes their baseline.
 		liveCmd := (&m).armLiveFeed()
 		if m.deps.Session != nil && m.sessionID != "" {
-			return m, tea.Batch(liveCmd, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID))
+			m.reloadPending = true
+			m.reloadSession = m.sessionID
+			m.reloadFeedGen = m.liveGen
+			m.reloadEvents = nil
+			m.reloadOverflow = false
+			refresh := (&m).refreshSessionCmd()
+			return m, tea.Batch(liveCmd, refresh)
 		}
 		return m, liveCmd
 	case client.StreamClosedMsg, client.StreamErrMsg:

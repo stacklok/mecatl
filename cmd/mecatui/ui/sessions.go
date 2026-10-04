@@ -158,7 +158,8 @@ func (m Model) openSessionDetails() (tea.Model, tea.Cmd) {
 	m.sessionDetailsOpen = true
 	m.prompt.Blur()
 	if m.deps.Session != nil {
-		return m, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+		cmd := (&m).refreshSessionCmd()
+		return m, cmd
 	}
 	return m, nil
 }
@@ -335,9 +336,17 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 		cmd = tea.Batch(cmd, contextCmd)
 	}
 	m.refreshView()
+	liveCmd := (&m).armLiveFeed()
 	if m.deps.Session != nil {
-		cmd = tea.Batch(cmd, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, row.ID))
+		if m.liveCh != nil {
+			m.reloadPending = true
+			m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
+			m.reloadEvents = nil
+			m.reloadOverflow = false
+		}
+		cmd = tea.Batch(cmd, liveCmd, (&m).refreshSessionCmd())
+	} else {
+		cmd = tea.Batch(cmd, liveCmd)
 	}
-	cmd = tea.Batch(cmd, (&m).armLiveFeed())
 	return m, cmd, true
 }

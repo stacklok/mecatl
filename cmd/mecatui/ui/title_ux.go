@@ -16,7 +16,8 @@ func (m Model) onTitleRenamed(msg client.SessionRenamedMsg) (Model, tea.Cmd) {
 	}
 	if msg.Err != nil {
 		if m.deps.Session != nil {
-			return m, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, msg.SessionID)
+			cmd := (&m).refreshSessionCmd()
+			return m, cmd
 		}
 		return m, nil
 	}
