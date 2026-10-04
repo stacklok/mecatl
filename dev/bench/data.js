@@ -290809,6 +290809,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790857589795,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "990c5d63d9dcf7c935a4cbc20687ad5afb68cfc5",
+          "message": "Implement mecatui tool-call inspector (#2061)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T15:17:52-07:00",
+          "tree_id": "bd4b0d09cd6700d9607481d9c441e12df83de1cb",
+          "url": "https://github.com/stacklok/mecatl/commit/990c5d63d9dcf7c935a4cbc20687ad5afb68cfc5"
+        },
+        "date": 1791153012062,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3323,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -380907,6 +380946,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791153009132,
+  "lastUpdate": 1791153013195,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
