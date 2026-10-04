@@ -138,7 +138,7 @@ type parentCaps struct {
 	// recordAuxiliaryUsage returns utility work to the parent dispatcher. The
 	// dispatcher installs it only for one child-capable tool execution and stages
 	// reports privately until that execution record reaches ordered drain.
-	recordAuxiliaryUsage func(session.AuxiliaryUsage)
+	recordAuxiliaryUsage auxiliaryUsageReporter
 	// hardAbort is the parent Run's explicit unwedge signal (Run.hardAbort, fired
 	// a short grace after Run.Cancel — see hardAbortGrace), handed down so a delegation tool's own
 	// internal forwarding sends (the team supervisor's member→evCh forward) can give

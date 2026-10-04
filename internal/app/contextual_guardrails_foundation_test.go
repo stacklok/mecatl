@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -32,6 +33,38 @@ func TestADR_0363_ContextualGuardrails_Scenario1_ApprovalOriginReplay(t *testing
 	replay(context.Background(), sess)
 	if len(spy.learned) != 1 || spy.learned[0].ID != call.ID {
 		t.Fatalf("learned = %+v, want only explicit permission-origin call", spy.learned)
+	}
+}
+
+func TestGuardrailsDisabledSuppressesCheckerBuildersWithConfiguredSlot(t *testing.T) {
+	cfg := Config{
+		UseMock:            true,
+		GuardrailsDisabled: true,
+		GuardrailsEscape:   true,
+		GuardrailsModel:    "other-checker",
+		ModelSlots:         map[string]string{slotGuardrail: "checker"},
+		ModelAliases:       map[string]string{"checker": "checker-model"},
+	}
+	provider := mockllm.New()
+	reg := &providerRegistry{defaultID: "mock", entries: map[string]providerEntry{"mock": {provider: provider}}}
+	if _, _, _, configured, err := resolveGuardrailBinding(cfg, reg); err != nil || configured {
+		t.Fatalf("disabled guardrail binding: configured=%v, err=%v", configured, err)
+	}
+
+	if reviewer := buildGuardrailsActionReviewer(cfg, reg, provider, "mock", nil); reviewer != nil {
+		t.Fatalf("ToolReviewer = %T, want nil when guardrails are disabled", reviewer)
+	}
+	if checker := buildGuardrailsEscapeChecker(cfg, reg, provider); checker != nil {
+		t.Fatalf("escape checker = %T, want nil when guardrails are disabled", checker)
+	}
+	if coverage := guardrailCoverageFor(cfg, nil); coverage.Enabled {
+		t.Fatalf("guardrail coverage = %+v, want disabled", coverage)
+	}
+	diag := &capturingDiag{}
+	cfg.Diagnostics = diag
+	logGuardrailsPosture(cfg)
+	if !diag.has("guardrails: OFF") || !diag.has("kill-switch") {
+		t.Fatalf("posture lines = %v, want kill-switch OFF", diag.lines)
 	}
 }
 

@@ -624,6 +624,9 @@ func buildGuardrailsReviewer(cfg Config, provReg *providerRegistry, provider por
 }
 
 func guardrailsCheckerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) (agent.Deps, bool) {
+	if cfg.GuardrailsDisabled {
+		return agent.Deps{}, false
+	}
 	var providerID, resolved string
 	var configured bool
 	if cfg.guardrailConfigured {

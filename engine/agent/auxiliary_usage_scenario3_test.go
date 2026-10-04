@@ -50,7 +50,7 @@ type blockingParallelJudgeUsageTool struct {
 	usage    session.AuxiliaryUsage
 	readOnly bool
 	err      error
-	retained chan<- func(session.AuxiliaryUsage)
+	retained chan<- auxiliaryUsageReporter
 }
 
 func (*blockingParallelJudgeUsageTool) Spec() tool.ToolSpec {
@@ -61,7 +61,7 @@ func (*blockingParallelJudgeUsageTool) Execute(context.Context, session.ToolCall
 	return session.ToolResult{}, errors.New("parent capabilities were not supplied")
 }
 func (t *blockingParallelJudgeUsageTool) ExecuteWithParent(_ context.Context, call session.ToolCall, _ tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
-	caps.recordAuxiliaryUsage(t.usage)
+	caps.recordAuxiliaryUsage.reportAuxiliaryUsage(t.usage)
 	if t.retained != nil {
 		t.retained <- caps.recordAuxiliaryUsage
 	}
@@ -307,7 +307,7 @@ func TestParentCapsAuxiliaryCallbackQueuesWhileOwnershipActive(t *testing.T) {
 	toolRelease := make(chan struct{})
 	close(toolRelease)
 	toolEntered := make(chan struct{}, 1)
-	retained := make(chan func(session.AuxiliaryUsage), 1)
+	retained := make(chan auxiliaryUsageReporter, 1)
 	hookEntered := make(chan struct{}, 1)
 	hookRelease := make(chan struct{})
 	catalog := tool.NewCatalog()
@@ -329,7 +329,7 @@ func TestParentCapsAuxiliaryCallbackQueuesWhileOwnershipActive(t *testing.T) {
 	<-toolEntered
 	callback := <-retained
 	<-hookEntered
-	callback(returned)
+	callback.reportAuxiliaryUsage(returned)
 	if got := sess.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
 		t.Fatalf("late active callback mutated parent before dispatcher drain: %+v", got)
 	}
@@ -348,7 +348,7 @@ func TestParentCapsAuxiliaryCallbackDropsAfterOwnershipCloses(t *testing.T) {
 	}}
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
-	retained := make(chan func(session.AuxiliaryUsage), 1)
+	retained := make(chan auxiliaryUsageReporter, 1)
 	diag := &auxiliaryRecordingDiagnostics{}
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(&blockingParallelJudgeUsageTool{entered: entered, release: release, usage: returned, retained: retained})
@@ -371,7 +371,7 @@ func TestParentCapsAuxiliaryCallbackDropsAfterOwnershipCloses(t *testing.T) {
 	close(release)
 	<-done
 
-	callback(returned)
+	callback.reportAuxiliaryUsage(returned)
 	if got := sess.UsageFor(session.UsageKindParallelJudge); got != usage {
 		t.Fatalf("retained callback changed closed parent usage: %+v", got)
 	}
@@ -416,7 +416,7 @@ func TestCompletionObserverPersistsPendingParentCapsUsage(t *testing.T) {
 	toolRelease := make(chan struct{})
 	close(toolRelease)
 	toolEntered := make(chan struct{}, 1)
-	retained := make(chan func(session.AuxiliaryUsage), 1)
+	retained := make(chan auxiliaryUsageReporter, 1)
 	observerEntered := make(chan struct{}, 1)
 	observerRelease := make(chan struct{})
 	store := memstore.New()
@@ -439,7 +439,7 @@ func TestCompletionObserverPersistsPendingParentCapsUsage(t *testing.T) {
 	<-toolEntered
 	callback := <-retained
 	<-observerEntered
-	callback(returned)
+	callback.reportAuxiliaryUsage(returned)
 	close(observerRelease)
 	<-done
 	loaded, err := store.Load(t.Context(), sess.ID)

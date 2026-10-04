@@ -1913,6 +1913,33 @@ func authorityWorkspaceResource(path string, env tool.Environment) (*port.Author
 	}, nil
 }
 
+// auxiliaryUsageReporter routes producer spend through the owning run or execution record.
+type auxiliaryUsageReporter interface {
+	reportAuxiliaryUsage(session.AuxiliaryUsage)
+}
+
+type toolAuxiliaryUsageReporter struct {
+	run    *Run
+	mu     sync.Mutex
+	active bool
+	usage  session.AuxiliaryUsage
+}
+
+func (s *toolAuxiliaryUsageReporter) reportAuxiliaryUsage(usage session.AuxiliaryUsage) {
+	s.mu.Lock()
+	if s.active {
+		s.usage = s.usage.Merge(usage)
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.run.enqueueAuxiliaryUsageWhileActive(context.Background(), usage)
+}
+
+func (r *Run) reportAuxiliaryUsage(usage session.AuxiliaryUsage) {
+	r.enqueueAuxiliaryUsageWhileActive(context.Background(), usage)
+}
+
 // timeExecute runs the tool and reports its elapsed wall time as (Clock.Now −
 // start), where start is the execution-start anchor the caller already read from
 // the injected Clock (so queued and took share one clock read and never
@@ -1949,23 +1976,13 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	case childCapableTool:
 		// Child-capable tools may execute in read-batch workers. Keep their returned
 		// auxiliary usage private until the dispatcher drains this execution record.
-		var usageMu sync.Mutex
-		usageActive := true
-		reportUsage := func(usage session.AuxiliaryUsage) {
-			usageMu.Lock()
-			if usageActive {
-				auxiliaryUsage = auxiliaryUsage.Merge(usage)
-				usageMu.Unlock()
-				return
-			}
-			usageMu.Unlock()
-			r.enqueueAuxiliaryUsageWhileActive(context.Background(), usage)
-		}
-		caps := e.parentCaps(r, sess, turnIdx, reportUsage)
+		usageState := &toolAuxiliaryUsageReporter{run: r, active: true}
+		caps := e.parentCaps(r, sess, turnIdx, usageState)
 		res, err = ct.ExecuteWithParent(ctx, c, env, emit, caps)
-		usageMu.Lock()
-		usageActive = false
-		usageMu.Unlock()
+		usageState.mu.Lock()
+		usageState.active = false
+		auxiliaryUsage = usageState.usage
+		usageState.mu.Unlock()
 	case observableTool:
 		res, err = ct.ExecuteObserved(ctx, c, env, emit)
 	default:
@@ -1992,10 +2009,8 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 // (gauntlet #7: an ASK with a tool name + clamped command + static-framed reason, never
 // transcript content). diag is the parent run's run-scoped diagnostics for the headless
 // auto-deny operator line.
-func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporters ...func(session.AuxiliaryUsage)) parentCaps {
-	reportUsage := func(usage session.AuxiliaryUsage) {
-		r.enqueueAuxiliaryUsageWhileActive(context.Background(), usage)
-	}
+func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporters ...auxiliaryUsageReporter) parentCaps {
+	var reportUsage auxiliaryUsageReporter = r
 	if len(reporters) > 0 && reporters[0] != nil {
 		reportUsage = reporters[0]
 	}
@@ -2069,7 +2084,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 			ctx, cancel := context.WithTimeout(detachedRunContext(r.ctx), askReviewTimeout)
 			defer cancel()
 			review, usage, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
-			reportUsage(RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindAskReviewer, usage))
+			reportUsage.reportAuxiliaryUsage(RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindAskReviewer, usage))
 			switch {
 			case errors.Is(err, ErrNotReviewable):
 				// ABSTENTION: the reviewer cannot judge THIS ask. Fall through to the
@@ -2197,9 +2212,9 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 
 // foldClassifierUsage confines classifier spend to the router purpose before
 // returning it to the parent dispatcher's private usage collector.
-func foldClassifierUsage(diag port.Diagnostics, report func(session.AuxiliaryUsage)) func(session.AuxiliaryUsage) {
+func foldClassifierUsage(diag port.Diagnostics, report auxiliaryUsageReporter) func(session.AuxiliaryUsage) {
 	return func(u session.AuxiliaryUsage) {
-		report(RemapAuxiliaryUsage(context.Background(), diag, session.UsageKindRouter, u))
+		report.reportAuxiliaryUsage(RemapAuxiliaryUsage(context.Background(), diag, session.UsageKindRouter, u))
 	}
 }
 
