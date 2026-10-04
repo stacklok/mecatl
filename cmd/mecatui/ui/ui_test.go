@@ -214,6 +214,9 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
 
 func stripANSI(b []byte) []byte { return ansiRE.ReplaceAll(b, nil) }
 
+// stripANSIstr is a string convenience over stripANSI for assertions.
+func stripANSIstr(s string) string { return string(stripANSI([]byte(s))) }
+
 // ev wraps an Event for a script.
 func ev(e *mecatlv1.Event) *mecatlv1.ConverseResponse {
 	return &mecatlv1.ConverseResponse{Event: e}

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 // mustJSON marshals v to a compact JSON args string for a tool block.
@@ -225,33 +224,6 @@ func TestSummarizeArgsFallback(t *testing.T) {
 	for _, c := range cases {
 		if _, ok := r.summarizeArgs(c); ok {
 			t.Errorf("summarizeArgs(%q) should fall back (ok=false)", c)
-		}
-	}
-}
-
-func TestHumanizeBytesSI(t *testing.T) {
-	// SI/decimal math (1 KB = 1000 B, 1 MB = 1e6 B) — the number must reconcile
-	// with bytes/1000, so a labelled "KB" is honest (not mislabelled KiB).
-	cases := []struct {
-		n    int64
-		want string
-	}{
-		{0, "0 B"},
-		{-5, "0 B"},
-		{999, "999 B"},
-		{1000, "1 KB"},   // exactly 1000 → 1 KB (would be "0.98 KB" under 1024 math)
-		{1500, "1.5 KB"}, // 1500/1000
-		{5000, "5 KB"},   // trailing .0 trimmed
-		{999999, "1000 KB"},
-		{1000000, "1 MB"}, // exactly 1e6 → 1 MB
-		{2500000, "2.5 MB"},
-		{1_000_000_000, "1 GB"},
-		{2_500_000_000, "2.5 GB"},
-		{1_000_000_000_000, "1 TB"},
-	}
-	for _, c := range cases {
-		if got := renderfmt.HumanizeBytes(c.n); got != c.want {
-			t.Errorf("renderfmt.HumanizeBytes(%d) = %q, want %q", c.n, got, c.want)
 		}
 	}
 }

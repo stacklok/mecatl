@@ -414,6 +414,26 @@ func TestTurnEndStatLine(t *testing.T) {
 	}
 }
 
+// TestTurnStatCacheReachesScrollback is the integration guard for the per-turn cache
+// facet: a TurnEndMsg carrying a material cache rate, driven through the REAL update
+// path (TurnEndMsg → addTurnStat(renderfmt.TurnStatLine) → blockTurnStat → renderBlockFresh),
+// must surface "% cached" in the rendered conversation scrollback. TestTurnStatLine
+// tests the formatter in isolation; this proves the string actually reaches a rendered
+// block (the renderfmt.TrivialTurn gate, the conversation append, and the block render all wired).
+func TestTurnStatCacheReachesScrollback(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+		// Non-trivial tokens (so the stat line is not suppressed) with an 88% cache rate.
+		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1500, OutputTokens: 300, CacheReadTokens: 1320}, DurationMs: 4100},
+	)
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	if !strings.Contains(got, "88% cached") {
+		t.Errorf("rendered scrollback missing the per-turn cache facet %q; got %q", "88% cached", got)
+	}
+}
+
 // TestTurnEndTrivialSuppressed asserts a near-empty turn (tiny tokens, sub-second
 // or no duration) produces NO stat line, so a long run isn't littered.
 func TestTurnEndTrivialSuppressed(t *testing.T) {
