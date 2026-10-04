@@ -51,17 +51,15 @@ func newLiveDeliveryModel(t *testing.T, fl *fakeLiveStreamer) Model {
 		NoAltScreen: true,
 	}
 	m := newTestModelFromDeps(deps)
-	m = applyAll(
-		m,
-		tea.WindowSizeMsg{Width: 100, Height: 40},
-		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{}},
-	)
-	// Arm the live feed — the applySessionReady path fires armLiveFeed, but the
-	// tea.Cmd it returns needs to be fed. Feed it so the liveCh/liveGen/liveArmed
-	// are populated.
-	cmd := m.armLiveFeed()
-	if cmd != nil {
-		m = feedCmd(t, m, cmd)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	mm, cmd := m.Update(client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{}})
+	m = mm.(Model)
+	// Install the initial authoritative snapshot before exercising steady-state
+	// delivery; the binding feed is held behind this snapshot barrier.
+	for _, msg := range flattenBatch(cmd) {
+		if reply, ok := msg.(snapshotReply); ok {
+			m = applyAll(m, reply)
+		}
 	}
 	return m
 }

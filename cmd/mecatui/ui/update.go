@@ -653,15 +653,19 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// the title is always "" server-side too, so the refetch is a no-op for the
 	// title — it still may raise the footer window denominator, which is the
 	// existing footer-heal path's concern.)
+	// Arm the replacement feed synchronously before starting GetSession. Live
+	// events wait for the snapshot baseline, just as they do on reconnect.
+	liveCmd := (&m).armLiveFeed()
 	if m.sessionID != "" && m.deps.Session != nil {
+		if m.liveCh != nil {
+			m.reloadPending = true
+			m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
+			m.reloadEvents = nil
+			m.reloadOverflow = false
+		}
 		heal := (&m).refreshSessionCmd()
-		cmd = tea.Batch(cmd, heal)
-	}
-	// Arm the live subscription for the active session so fire-result
-	// delivery notes render as delivery cards with no operator input.
-	// Batched with the kitty/heal cmds so the live feed opens while the
-	// session is loading.
-	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
+		cmd = tea.Batch(cmd, liveCmd, heal)
+	} else {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
 	// Seed the CLI prompt on the FIRST session bind only: set the textarea value,
@@ -1049,7 +1053,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if len(m.queued) > 0 {
 				m.queuePaused = stopError
 			}
-			return m, tea.Batch(m.refreshCmd(), m.armLiveFeed()), true
+			reconcile := (&m).refreshAfterSettledRun()
+			return m, tea.Batch(m.refreshCmd(), m.armLiveFeed(), reconcile), true
 		}
 		// A transport error has no semantic commit fact. Restore only an
 		// unmodified text-only draft; a server-confirmed enrollment rejection is
@@ -1064,7 +1069,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = m.endRun(stopError)
 		liveCmd := m.armLiveFeed()
 		mm, drainCmd := m.drainQueue(stopError)
-		return mm, tea.Batch(m.refreshCmd(), drainCmd, liveCmd), true
+		settled := mm.(Model)
+		reconcile := (&settled).refreshAfterSettledRun()
+		return settled, tea.Batch(m.refreshCmd(), drainCmd, liveCmd, reconcile), true
 	case clipboardResultMsg:
 		mm, cmd := m.onClipboardResult(msg)
 		return mm, cmd, true
@@ -1110,7 +1117,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			modeCmd := m.retryPendingModeCmd()
 			liveCmd := m.armLiveFeed()
 			mm, drainCmd := m.drainQueue("closed")
-			return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, liveCmd), true
+			settled := mm.(Model)
+			reconcile := (&settled).refreshAfterSettledRun()
+			return settled, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, liveCmd, reconcile), true
 		}
 		if m.phase == phaseAuthorizing {
 			// A parked run's Converse stream closes before its authorization
@@ -1868,7 +1877,8 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		// A genuine end: the run stopped and waits for a manual /retry.
 		m.notifyHookStop(msg)
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
-		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
+		reconcile := (&m).refreshAfterSettledRun()
+		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed(), reconcile)
 	}
 	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
 		// NOT a genuine end: an automatic retry run starts now, so no Superset
@@ -3939,9 +3949,6 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 	if m.reloadPending && sm.gen == m.reloadFeedGen {
 		switch sm.msg.(type) {
 		case client.StreamErrMsg, client.StreamClosedMsg:
-		case client.ResultMsg:
-			m.reloadLiveEpoch++
-			return m, m.waitLiveCmd()
 		default:
 			if len(m.reloadEvents) == reloadEventBufferLimit {
 				m.reloadOverflow = true
@@ -3954,6 +3961,9 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			m.reloadEvents = append(m.reloadEvents, sm.msg)
+			if _, ok := sm.msg.(client.ResultMsg); ok {
+				m.reloadLiveEpoch++
+			}
 			return m, m.waitLiveCmd()
 		}
 	}
