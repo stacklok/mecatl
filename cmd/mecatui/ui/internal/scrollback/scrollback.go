@@ -64,10 +64,9 @@ type BlockMetadata struct {
 }
 
 type card struct {
-	id               BlockID
-	revision         uint64
-	argumentRevision uint64
-	payload          PayloadSnapshot
+	id       BlockID
+	revision uint64
+	payload  PayloadSnapshot
 }
 
 // Conversation is an ordered, mutable logical conversation document. It owns its
@@ -86,7 +85,7 @@ type Conversation struct {
 // the conversation until a selected detail requests a detached snapshot.
 type ToolCallMetadata struct {
 	ID                      BlockID
-	ArgumentRevision        uint64
+	Revision                uint64
 	CallID, Name, Arguments string
 	Resolved, Failed        bool
 	Stop                    string
@@ -118,7 +117,7 @@ func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
 	default:
 		return ToolCallMetadata{}, false
 	}
-	return ToolCallMetadata{ID: card.id, ArgumentRevision: card.argumentRevision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Resolved: resolved, Failed: failed, Stop: stop}, true
+	return ToolCallMetadata{ID: card.id, Revision: card.revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Resolved: resolved, Failed: failed, Stop: stop}, true
 }
 
 // Len returns the number of ordinary cards in the conversation. It excludes the

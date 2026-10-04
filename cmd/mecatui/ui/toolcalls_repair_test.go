@@ -49,7 +49,7 @@ func TestMecatuiToolcallsInspector_Scenario4_DeepArgumentsLinear(t *testing.T) {
 	}
 }
 
-func TestMecatuiToolcallsInspector_Scenario4_ListIntentCachedAcrossResults(t *testing.T) {
+func TestMecatuiToolcallsInspector_Scenario4_ListIntentRefreshesWithCardRevision(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	content := strings.Repeat("write payload", 20000)
 	m.conv.addTool("write", "Write", `{"path":"first","content":"`+content+`"}`)
@@ -58,7 +58,12 @@ func TestMecatuiToolcallsInspector_Scenario4_ListIntentCachedAcrossResults(t *te
 	if got := s.entries[0].intent; got != "Write first" {
 		t.Fatalf("initial intent: %q", got)
 	}
+	initialRevision := s.entries[0].revision
 	m.conv.resolveTool("write", "first result", false)
+	m.syncToolcalls()
+	if got := s.entries[0]; got.revision != initialRevision+1 || got.intent != "Write first" || !got.resolved {
+		t.Fatalf("result lifecycle entry = %+v", got)
+	}
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
@@ -67,22 +72,24 @@ func TestMecatuiToolcallsInspector_Scenario4_ListIntentCachedAcrossResults(t *te
 	}
 	runtime.ReadMemStats(&after)
 	if used := after.TotalAlloc - before.TotalAlloc; used > 100000 {
-		t.Fatalf("historical payload copied during result sync: %d bytes", used)
+		t.Fatalf("historical payload copied during stable result sync: %d bytes", used)
 	}
 	m.conv.addTool("pending", "Write", `{"path":"before"}`)
 	m.syncToolcalls()
 	selected := s.entries[s.selected].blockID
+	pendingRevision := s.entries[1].revision
 	if !m.conv.scrollback.Tools().ReconcileUnresolved(scrollback.ToolCall{ID: "pending", Name: "Write", Arguments: `{"path":"after"}`}) {
 		t.Fatal("reconcile failed")
 	}
 	m.syncToolcalls()
-	if s.entries[1].intent != "Write after" || s.entries[s.selected].blockID != selected {
+	if got := s.entries[1]; got.revision != pendingRevision+1 || got.intent != "Write after" || s.entries[s.selected].blockID != selected {
 		t.Fatalf("reconciled entry or selection stale: %+v", s.entries)
 	}
+	reconciledRevision := s.entries[1].revision
 	m.conv.resolveTool("pending", "done", false)
 	m.syncToolcalls()
-	if s.entries[1].intent != "Write after" {
-		t.Fatalf("result changed cached intent: %+v", s.entries[1])
+	if got := s.entries[1]; got.revision != reconciledRevision+1 || got.intent != "Write after" || !got.resolved {
+		t.Fatalf("result lifecycle changed reconciled entry: %+v", got)
 	}
 }
 
@@ -173,6 +180,9 @@ func TestMecatuiToolcallsInspector_Scenario5_NormalResizeStaleHitAndNoMouse(t *t
 	m := newToolcallsInspectorModel(t)
 	m.deps.NoAltScreen = false
 	m = addToolcallsForTest(t, m, 5)
+	m.conv.addTool("reused", "Read", `{"path":"before-reuse.go"}`)
+	m.conv.resolveTool("reused", "before reuse", false)
+	m.conv.addTool("reused", "Read", `{"path":"after-reuse.go"}`)
 	m = openToolcallsForTest(t, m)
 	_ = m.View()
 	stale := m.hits.frame[0].id
@@ -183,17 +193,40 @@ func TestMecatuiToolcallsInspector_Scenario5_NormalResizeStaleHitAndNoMouse(t *t
 	if s.compact || len(m.hits.frame) == 0 {
 		t.Fatal("normal resize lost live row hits")
 	}
-	s.selected = len(s.entries) - 1
+	target := s.entries[len(s.entries)-1].blockID
+	s.selected = 0
 	updated, _ = m.Update(surfaceHitMsg{ID: stale})
 	m = updated.(Model)
-	if s.selected != len(s.entries)-1 {
+	if s.selected != 0 {
 		t.Fatal("stale normal-size hit selected a row")
 	}
-	fresh := m.hits.frame[0]
-	updated, _ = m.Update(surfaceHitMsg{ID: fresh.id})
+	fresh := -1
+	for i, region := range m.hits.frame {
+		if s.hitItems[region.id] == target {
+			fresh = i
+			break
+		}
+	}
+	if fresh < 0 {
+		t.Fatal("reused-ID call has no fresh click target")
+	}
+	x, y := m.metrics.localToGlobal(m.hits.frame[fresh].rect.x0, m.hits.frame[fresh].rect.y0)
+	updated, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	m = updated.(Model)
-	if s.selected == len(s.entries)-1 {
-		t.Fatal("fresh resized row hit did not select")
+	if s.selected != len(s.entries)-1 || s.entries[s.selected].blockID != target {
+		t.Fatalf("click selected unstable block: selected=%d entries=%#v", s.selected, s.entries)
+	}
+	if !s.detail {
+		t.Fatal("fresh resized row click did not open detail")
+	}
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Arguments:") || !strings.Contains(plain, "Path: after-reuse.go") || strings.Contains(plain, "call unavailable") {
+		t.Fatalf("clicked call detail = %q", plain)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	if s.detail {
+		t.Fatal("Escape did not return fresh resized row hit to the list")
 	}
 	m.deps.NoMouse = true
 	if view := m.View(); view.MouseMode != 0 {
@@ -201,7 +234,7 @@ func TestMecatuiToolcallsInspector_Scenario5_NormalResizeStaleHitAndNoMouse(t *t
 	}
 	before := s.selected
 	region := m.hits.frame[len(m.hits.frame)-1]
-	x, y := m.metrics.localToGlobal(region.rect.x0, region.rect.y0)
+	x, y = m.metrics.localToGlobal(region.rect.x0, region.rect.y0)
 	updated, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	m = updated.(Model)
 	if s.selected != before {

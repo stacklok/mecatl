@@ -101,7 +101,7 @@ func TestToolCallMetadataAtDoesNotExposeResultPayload(t *testing.T) {
 	if allocs := testing.AllocsPerRun(100, func() { _, _ = c.ToolCallMetadataAt(0) }); allocs != 0 {
 		t.Fatalf("metadata enumerator cloned result: %.0f allocations", allocs)
 	}
-	if got.CallID != "read" || got.Name != "Read" || got.Arguments != `{"path":"x"}` || !got.Resolved || !got.Failed {
+	if got.ID != 1 || got.Revision != 1 || got.CallID != "read" || got.Name != "Read" || got.Arguments != `{"path":"x"}` || !got.Resolved || !got.Failed {
 		t.Fatalf("metadata = %#v", got)
 	}
 }

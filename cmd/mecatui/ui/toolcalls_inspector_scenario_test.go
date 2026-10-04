@@ -727,17 +727,23 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.
 	if s.list.CursorID() != fmt.Sprintf("%d", wantBlock) {
 		t.Fatalf("click did not reveal selected block %d", wantBlock)
 	}
-	if s.detail {
-		t.Fatal("click opened detail instead of leaving the list open")
+	if !s.detail {
+		t.Fatal("click did not open detail")
 	}
 	if got := m.vp.YOffset(); got != beforeConversation {
 		t.Fatalf("click moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.detail || s.entries[s.selected].blockID != wantBlock {
+		t.Fatalf("Escape did not return click-activated detail to its selected list row: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
 	}
 	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	s = toolcallsForTest(t, m)
 	if !s.detail || s.entries[s.selected].blockID != wantBlock {
-		t.Fatalf("Enter did not open clicked call detail: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
+		t.Fatalf("Enter did not open selected call detail: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
 	}
 }
 
@@ -920,6 +926,9 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits(t *testi
 		if got := toolcallsForTest(t, m).selected; got != before {
 			t.Fatalf("non-row click at %v selected %d, want %d", point, got, before)
 		}
+		if toolcallsForTest(t, m).detail {
+			t.Fatalf("non-row click at %v opened detail", point)
+		}
 	}
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 10})
 	m = updated.(Model)
@@ -979,6 +988,9 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits(t *testi
 	reused = updated.(Model)
 	if got := toolcallsForTest(t, reused).entries[toolcallsForTest(t, reused).selected].blockID; got != wantBlock {
 		t.Fatalf("reused ID click selected block %d, want later block %d", got, wantBlock)
+	}
+	if !toolcallsForTest(t, reused).detail {
+		t.Fatal("reused ID click did not open the selected call detail")
 	}
 }
 

@@ -33,13 +33,13 @@ func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
 }
 
 type toolcallEntry struct {
-	blockID          scrollback.BlockID
-	argumentRevision uint64
-	index            int
-	name             string
-	intent           string
-	resolved         bool
-	failed           bool
+	blockID  scrollback.BlockID
+	revision uint64
+	index    int
+	name     string
+	intent   string
+	resolved bool
+	failed   bool
 }
 
 type toolcallDetail struct {
@@ -85,6 +85,11 @@ func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 				s.list.SetCursor(i)
 				s.listFollow = i == len(s.entries)-1
 			}
+			s.detail = true
+			s.window = new(bounded.Viewport)
+			s.width = 0
+			s.anchor = 0
+			s.follow = false
 			return nil, true, false
 		}
 	}
@@ -139,6 +144,29 @@ func toolcallStatus(resolved, failed bool) (glyph, text, style string) {
 	}
 }
 
+type toolcallPresentation struct {
+	intentAction string
+	intentKeys   []string
+	argumentKeys []string
+}
+
+const toolSourceArg = "source"
+
+var toolcallPresentations = map[string]toolcallPresentation{
+	"Read":             {intentAction: "Read", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "offset", "limit"}},
+	"ListDir":          {intentAction: "List", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "depth"}},
+	"Glob":             {intentAction: "Find", intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
+	"Grep":             {intentAction: "Search", intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
+	toolEditName:       {intentAction: "Edit", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "old_string", "new_string"}},
+	toolWriteName:      {intentAction: "Write", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "content"}},
+	"Copy":             {intentAction: "Copy", intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
+	"Move":             {intentAction: "Move", intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
+	"Remove":           {intentAction: "Remove", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg}},
+	"Shell":            {intentAction: "Run", intentKeys: []string{"command"}, argumentKeys: []string{"command"}},
+	"WebFetch":         {intentAction: "Fetch", intentKeys: []string{toolURLArg}, argumentKeys: []string{toolURLArg}},
+	"FetchMcpResource": {intentAction: "Fetch", intentKeys: []string{"uri"}, argumentKeys: []string{"uri"}},
+}
+
 func toolcallArgumentLines(name, arguments string) []string {
 	rows := toolcallArgumentRows(name, arguments)
 	lines := make([]string, len(rows))
@@ -160,21 +188,8 @@ func toolcallArgumentRows(name, arguments string) []toolcallDetailRow {
 		return []toolcallDetailRow{{text: "Original arguments: " + terminaltext.Sanitize(arguments), label: "Original arguments:", kind: toolcallArgument}}
 	}
 
-	known := map[string][]string{
-		"Read":             {toolPathArg, "offset", "limit"},
-		"ListDir":          {toolPathArg, "depth"},
-		"Glob":             {"pattern", toolPathArg},
-		"Grep":             {"pattern", toolPathArg},
-		toolEditName:       {toolPathArg, "old_string", "new_string"},
-		toolWriteName:      {toolPathArg, "content"},
-		"Copy":             {"source", "destination"},
-		"Move":             {"source", "destination"},
-		"Remove":           {toolPathArg},
-		"Shell":            {"command"},
-		"WebFetch":         {toolURLArg},
-		"FetchMcpResource": {"uri"},
-	}
-	ordered := append([]string(nil), known[name]...)
+	presentation := toolcallPresentations[name]
+	ordered := append([]string(nil), presentation.argumentKeys...)
 	seen := make(map[string]bool, len(ordered))
 	for _, key := range ordered {
 		seen[key] = true
@@ -268,30 +283,12 @@ func argumentSummary(raw json.RawMessage) string {
 }
 
 func toolcallIntent(name string, fields map[string]json.RawMessage) string {
-	value := func(key string) string { return argumentSummary(fields[key]) }
-	switch name {
-	case "Read":
-		return "Read " + value(toolPathArg)
-	case "ListDir":
-		return "List " + value(toolPathArg)
-	case "Glob":
-		return "Find " + value("pattern")
-	case "Grep":
-		return "Search " + value("pattern")
-	case toolEditName:
-		return "Edit " + value(toolPathArg)
-	case toolWriteName:
-		return "Write " + value(toolPathArg)
-	case "Copy", "Move":
-		return name + " " + value("source") + " → " + value("destination")
-	case "Remove":
-		return "Remove " + value(toolPathArg)
-	case "Shell":
-		return "Run " + value("command")
-	case "WebFetch":
-		return "Fetch " + value(toolURLArg)
-	case "FetchMcpResource":
-		return "Fetch " + value("uri")
+	if presentation, ok := toolcallPresentations[name]; ok {
+		values := make([]string, len(presentation.intentKeys))
+		for i, key := range presentation.intentKeys {
+			values[i] = argumentSummary(fields[key])
+		}
+		return presentation.intentAction + " " + strings.Join(values, " → ")
 	}
 	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task"} {
 		if raw, ok := fields[key]; ok {
@@ -351,11 +348,11 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 			continue
 		}
 		intent := cached[metadata.ID].intent
-		if old, ok := cached[metadata.ID]; !ok || old.argumentRevision != metadata.ArgumentRevision {
+		if old, ok := cached[metadata.ID]; !ok || old.revision != metadata.Revision {
 			intent = ansi.Truncate(terminaltext.SanitizeSingleLine(toolcallIntentFor(metadata.Name, metadata.Arguments)), 120, "…")
 		}
 		entries = append(entries, toolcallEntry{
-			blockID: metadata.ID, argumentRevision: metadata.ArgumentRevision, index: i,
+			blockID: metadata.ID, revision: metadata.Revision, index: i,
 			name:     ansi.Truncate(terminaltext.SanitizeSingleLine(metadata.Name), 120, "…"),
 			intent:   intent,
 			resolved: metadata.Resolved,

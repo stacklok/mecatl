@@ -2532,6 +2532,9 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = mm.(Model)
 		cmd = tea.Batch(cmd, intentCmd)
 	}
+	if toolcalls, ok := m.modal.(*toolcallsState); ok && toolcalls.detail && toolcalls.detailEntry == nil {
+		m.syncToolcalls()
+	}
 	if closed {
 		m.closeModal()
 		return m, tea.Batch(cmd, m.prompt.Focus()), true
