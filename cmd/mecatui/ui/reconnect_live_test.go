@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,14 +65,32 @@ func deliveryEv(schedule, fire string) *mecatlv1.Event {
 // (a live feed that stays open so the re-arm does not immediately re-drop). It
 // records opens + last id.
 type reconnectLiveStreamer struct {
-	mu      sync.Mutex
-	failN   int
-	opens   atomic.Int32
-	lastID  string
-	succCtx context.Context // ctx bound to the blocking successful stream
+	mu          sync.Mutex
+	failN       int
+	opens       atomic.Int32
+	lastID      string
+	succCtx     context.Context // ctx bound to the blocking successful stream
+	rearmEvents <-chan *mecatlv1.Event
 }
 
-func (f *reconnectLiveStreamer) StreamSessionLive(_ context.Context, id string) (*client.EventStream, error) {
+type channelEventStream struct {
+	ctx    context.Context
+	events <-chan *mecatlv1.Event
+}
+
+func (s *channelEventStream) Recv() (*mecatlv1.Event, error) {
+	select {
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	case event, ok := <-s.events:
+		if !ok {
+			return nil, io.EOF
+		}
+		return event, nil
+	}
+}
+
+func (f *reconnectLiveStreamer) StreamSessionLive(ctx context.Context, id string) (*client.EventStream, error) {
 	f.mu.Lock()
 	f.lastID = id
 	f.mu.Unlock()
@@ -84,6 +103,9 @@ func (f *reconnectLiveStreamer) StreamSessionLive(_ context.Context, id string) 
 	// Probe / re-arm opens: fail the first `failN` of these, then block.
 	if int(n-1) <= f.failN {
 		return nil, errors.New("live stream unavailable")
+	}
+	if n > 2 && f.rearmEvents != nil {
+		return client.NewEventStream(&channelEventStream{ctx: ctx, events: f.rearmEvents}), nil
 	}
 	return client.NewEventStream(&blockingEventStream{ctx: f.succCtx}), nil
 }

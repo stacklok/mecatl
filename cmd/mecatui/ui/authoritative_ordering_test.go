@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
 func TestMecatuiAuthoritativeReload_Scenario2_IdleResultReconcileRetries(t *testing.T) {
@@ -140,6 +142,104 @@ func TestMecatuiAuthoritativeReload_Scenario2_SnapshotResultOrdering(t *testing.
 				t.Fatalf("run usage double-counted or lost: usage=%+v", m.usage)
 			}
 		})
+	}
+}
+
+func TestMecatuiAuthoritativeReload_Scenario2_ReconnectClientLoopSnapshotAndLiveTitle(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	titleEvents := make(chan *mecatlv1.Event, 2)
+	live := &reconnectLiveStreamer{succCtx: ctx, rearmEvents: titleEvents}
+	replay := &fakeSessionReplayer{stream: client.NewFakeEventStream(deliveryEv("nightly", "gap-1"))}
+	m := newReconnectModel(t, ctx, live, replay)
+	defer joinReconnectForCleanup(&m)()
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "server", TitleRevision: 4, State: "idle", MainUsagePresent: true, Usage: client.Usage{InputTokens: 77}}}, getSessionErr: errors.New("temporarily unavailable")}
+	m.deps.Session = conv
+	m.sessionTitle, m.sessionTitleRevision = "old", 9
+	m.reloadRetryTimer = func(delay time.Duration, msg snapshotRetryMsg) tea.Cmd {
+		if delay != 500*time.Millisecond {
+			t.Errorf("retry delay = %v", delay)
+		}
+		return func() tea.Msg { return msg }
+	}
+
+	closed := runCmdTimeout(t, m.waitLiveCmd())
+	if event, ok := closed.(liveMsg); !ok {
+		t.Fatalf("first live reader = %T, want liveMsg", closed)
+	} else if _, ok := event.msg.(client.StreamClosedMsg); !ok {
+		t.Fatalf("first live reader = %T, want StreamClosedMsg", event.msg)
+	}
+	mm, next := m.Update(closed)
+	m = mm.(Model)
+	var batch tea.BatchMsg
+	var sawCatchup, sawReconnected bool
+	for i := 0; i < 4 && batch == nil; i++ {
+		if next == nil {
+			t.Fatal("reconnect loop stopped before probe succeeded")
+		}
+		msg := runCmdTimeout(t, next)
+		if event, ok := msg.(reconnectMsg); ok {
+			switch event.msg.(type) {
+			case client.DeliveryNoteMsg:
+				sawCatchup = true
+			case client.LiveReconnectedMsg:
+				sawReconnected = true
+			}
+		}
+		mm, next = m.Update(msg)
+		m = mm.(Model)
+		if sawReconnected {
+			if next == nil {
+				t.Fatal("reconnect did not arm replacement reader and snapshot")
+			}
+			batch, _ = next().(tea.BatchMsg)
+		}
+	}
+	if !sawReconnected || !sawCatchup || len(m.conv.testBlocks()) != 1 || len(batch) != 2 || live.opens.Load() != 3 || conv.getSessionCalls() != 0 || !m.reloadPending {
+		t.Fatalf("reconnect did not reopen feed before fetching: connected=%t catchup=%t blocks=%d batch=%d opens=%d calls=%d pending=%t", sawReconnected, sawCatchup, len(m.conv.testBlocks()), len(batch), live.opens.Load(), conv.getSessionCalls(), m.reloadPending)
+	}
+	titleEvents <- &mecatlv1.Event{Type: "session.title", Title: &mecatlv1.SessionTitle{Title: "from live feed", Revision: 5}}
+	feedMsg := runCmdTimeout(t, batch[0])
+	if event, ok := feedMsg.(liveMsg); !ok {
+		t.Fatalf("replacement live reader = %T", feedMsg)
+	} else if title, ok := event.msg.(client.SessionTitleMsg); !ok || title.Title != "from live feed" || title.Revision != 5 {
+		t.Fatalf("replacement feed title = %#v", event.msg)
+	}
+	m = applyAll(m, feedMsg)
+	if m.sessionTitle != "old" || len(m.reloadEvents) != 1 {
+		t.Fatalf("replacement event escaped snapshot barrier: title=%q buffered=%d", m.sessionTitle, len(m.reloadEvents))
+	}
+	failed := batch[1]()
+	if reply, ok := failed.(snapshotReply); !ok || reply.msg.Err == nil || conv.getSessionCalls() != 1 {
+		t.Fatalf("GetSession did not fail through command: reply=%#v calls=%d", failed, conv.getSessionCalls())
+	}
+	mm, retry := m.Update(failed)
+	m = mm.(Model)
+	if retry == nil || !m.reloadPending || m.sessionTitle != "old" {
+		t.Fatalf("failure released feed or lost confirmed title: pending=%t title=%q", m.reloadPending, m.sessionTitle)
+	}
+	conv.mu.Lock()
+	conv.getSessionErr = nil
+	conv.mu.Unlock()
+	mm, fetch := m.Update(retry())
+	m = mm.(Model)
+	if fetch == nil {
+		t.Fatal("retry did not issue GetSession")
+	}
+	m = applyAll(m, fetch())
+	if conv.getSessionCalls() != 2 || m.reloadPending || m.sessionTitle != "from live feed" || m.sessionTitleRevision != 5 || m.sessionState != "idle" || m.usage.InputTokens != 77 {
+		t.Fatalf("snapshot and buffered source title not reconciled: calls=%d pending=%t title=%q/%d state=%q usage=%+v", conv.getSessionCalls(), m.reloadPending, m.sessionTitle, m.sessionTitleRevision, m.sessionState, m.usage)
+	}
+	titleEvents <- &mecatlv1.Event{Type: "session.title", Title: &mecatlv1.SessionTitle{Title: "later live title", Revision: 6}}
+	later := runCmdTimeout(t, m.waitLiveCmd())
+	if event, ok := later.(liveMsg); !ok {
+		t.Fatalf("later live reader = %T", later)
+	} else if title, ok := event.msg.(client.SessionTitleMsg); !ok || title.Title != "later live title" {
+		t.Fatalf("later live title = %#v", event.msg)
+	}
+	m = applyAll(m, later)
+	if m.sessionTitle != "later live title" || m.sessionTitleRevision != 6 {
+		t.Fatalf("post-snapshot live title not visible: %q/%d", m.sessionTitle, m.sessionTitleRevision)
 	}
 }
 
