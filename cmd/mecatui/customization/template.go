@@ -179,16 +179,16 @@ type templateContext struct {
 // It emits only trusted StatusML markup; user-derived values remain escaped in
 // templateContext. The UI resolves its semantic token through the active theme.
 func contextMeter(input templateContext) templateText {
+	if !input.Known {
+		if input.Window.Raw > 0 {
+			return templateText("<text>ctx ?/" + string(input.Window.Human) + "</text>")
+		}
+		return templateText("<text>ctx ?</text>")
+	}
 	if input.Window.Raw <= 0 {
 		return templateText("<text>ctx " + string(input.Used.Human) + "</text>")
 	}
-	percent := input.Percent
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
+	percent := clampedContextPercent(input.Percent)
 	var token, fill string
 	switch {
 	case percent >= 85:
@@ -203,7 +203,7 @@ func contextMeter(input templateContext) templateText {
 		filled = 8
 	}
 	bar := strings.Repeat(fill, filled) + strings.Repeat("░", 8-filled)
-	label := "ctx " + bar + " " + strconv.Itoa(percent) + "%"
+	label := "ctx " + bar + " " + contextPercentLabel(input, percent)
 	if percent >= 85 {
 		label += " ⚠"
 	}
@@ -211,6 +211,9 @@ func contextMeter(input templateContext) templateText {
 }
 
 func contextMeterCompact(input templateContext) templateText {
+	if !input.Known {
+		return templateText("<text>ctx ?</text>")
+	}
 	if input.Window.Raw <= 0 {
 		return templateText("<text>ctx " + string(input.Used.Human) + "</text>")
 	}
@@ -218,7 +221,7 @@ func contextMeterCompact(input templateContext) templateText {
 	token, fill := contextPressure(percent)
 	filled := (percent*8 + 50) / 100
 	bar := strings.Repeat(fill, filled) + strings.Repeat("░", 8-filled)
-	label := "ctx " + bar + " " + strconv.Itoa(percent) + "%"
+	label := "ctx " + bar + " " + contextPercentLabel(input, percent)
 	if percent >= 85 {
 		label += " ⚠"
 	}
@@ -226,12 +229,15 @@ func contextMeterCompact(input templateContext) templateText {
 }
 
 func contextMeterMinimal(input templateContext) templateText {
+	if !input.Known {
+		return templateText("<text>ctx ?</text>")
+	}
 	if input.Window.Raw <= 0 {
 		return templateText("<text>ctx " + string(input.Used.Human) + "</text>")
 	}
 	percent := clampedContextPercent(input.Percent)
 	token, _ := contextPressure(percent)
-	label := "ctx " + strconv.Itoa(percent) + "%"
+	label := "ctx " + contextPercentLabel(input, percent)
 	if percent >= 85 {
 		label += " ⚠"
 	}
@@ -246,6 +252,14 @@ func clampedContextPercent(percent int) int {
 		return 100
 	}
 	return percent
+}
+
+func contextPercentLabel(input templateContext, percent int) string {
+	prefix := ""
+	if input.Estimated {
+		prefix = "~"
+	}
+	return prefix + strconv.Itoa(percent) + "%"
 }
 
 func contextPressure(percent int) (token, fill string) {

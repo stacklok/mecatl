@@ -133,7 +133,7 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 			Input:  customization.UsageAtom{Human: "4K"},
 			Output: customization.UsageAtom{Human: "1K"},
 		},
-		Context:  customization.Context{Used: customization.ContextAtom{Raw: 2_000, Human: "2K"}, Window: customization.ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 20},
+		Context:  customization.Context{Used: customization.ContextAtom{Raw: 2_000, Human: "2K"}, Window: customization.ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 20, Known: true},
 		Terminal: customization.Terminal{HeaderAvailCols: 80, FooterAvailCols: 80},
 	})
 	select {
