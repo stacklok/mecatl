@@ -2615,6 +2615,17 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 	}
 }
 
+func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
+	detail, ok := intent.(toolcallsDetailIntent)
+	if !ok {
+		return false
+	}
+	if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].blockID == detail.blockID {
+		s.refreshDetail(&m.conv.scrollback)
+	}
+	return true
+}
+
 // applySurfaceIntent applies a drained surface intent synchronously in the same
 // Tea Update. Returned commands still run asynchronously. stopSurfaceDispatch
 // tells the caller to skip common dispatch post-processing after a root-owned
@@ -2629,10 +2640,7 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 	if model, cmd, handled, stopSurfaceDispatch := m.applySessionsSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
 	}
-	if detail, ok := intent.(toolcallsDetailIntent); ok {
-		if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].blockID == detail.blockID {
-			s.refreshDetail(&m.conv.scrollback)
-		}
+	if m.applyToolcallsSurfaceIntent(intent) {
 		return m, nil, false
 	}
 	return m, nil, false
