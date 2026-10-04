@@ -104,13 +104,20 @@ func (m Model) onSnapshotReply(reply snapshotReply) (tea.Model, tea.Cmd) {
 		return m, (&m).startReconnect(nil)
 	}
 	bufferedResults := reloadBufferedResults(m.reloadEvents)
+	bufferedTurn := false
+	for _, event := range m.reloadEvents {
+		if _, ok := event.(client.TurnEndMsg); ok {
+			bufferedTurn = true
+			break
+		}
+	}
 	if bufferedResults == 0 && reply.liveEpoch != m.reloadLiveEpoch && m.phase == phaseIdle && m.deps.Session != nil {
 		return m, (&m).refreshSessionCmd()
 	}
 	// A run update during GetSession cannot order cumulative counters against
 	// the response. Release the feed after installing non-counter metadata;
 	// settle the run before refetching those counters.
-	deferCounters := bufferedResults > 0 || reply.liveEpoch != m.reloadLiveEpoch || m.phase == phaseRunning || m.phase == phaseAwaitingApproval
+	deferCounters := m.reloadNeedRefresh || bufferedResults > 0 || bufferedTurn || reply.liveEpoch != m.reloadLiveEpoch || m.phase == phaseRunning || m.phase == phaseAwaitingApproval
 	return m.applyCurrentSnapshot(reply, deferCounters, bufferedResults > 0 && !reply.msg.MainUsagePresent)
 }
 
@@ -166,7 +173,7 @@ func (m Model) applyCurrentSnapshot(reply snapshotReply, deferCounters, legacyUs
 		reply.msg.ContextOccupancy = nil
 	} else {
 		m.reloadMainUsagePresent = reply.msg.MainUsagePresent
-		if m.reloadPending && reply.msg.ContextOccupancy == nil {
+		if m.reloadPending && m.liveCh != nil && reply.msg.ContextOccupancy == nil {
 			m.contextTokens = 0
 			m.contextEstimated = false
 			m.contextUnknown = true

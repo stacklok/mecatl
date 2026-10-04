@@ -325,6 +325,32 @@ func TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace(t *testing.T) {
 }
 
 func TestMecatuiAuthoritativeReload_Scenario2_FailedFetchPreservesState(t *testing.T) {
+	t.Run("startup resume without live feed retries", func(t *testing.T) {
+		conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "recovered"}}, getSessionErr: errors.New("temporarily unavailable")}
+		m := modeTestModel(t, conv)
+		m.sessionTitle = "confirmed"
+		m.contextTokens, m.contextUnknown = 42, false
+		m.reloadRetryTimer = func(_ time.Duration, msg snapshotRetryMsg) tea.Cmd { return func() tea.Msg { return msg } }
+		mm, _ := m.finishStartupResume()
+		m = mm.(Model)
+		if !m.reloadPending {
+			t.Fatal("resume without a live feed did not hold its initial fetch for retry")
+		}
+		fetch := (&m).refreshSessionCmd()
+		mm, retry := m.Update(fetch())
+		m = mm.(Model)
+		if retry == nil || m.sessionTitle != "confirmed" || m.contextTokens != 42 {
+			t.Fatalf("failed resume lost confirmed facts or retry: retry=%t title=%q occupancy=%d", retry != nil, m.sessionTitle, m.contextTokens)
+		}
+		conv.getSessionErr = nil
+		mm, fetch = m.Update(retry())
+		m = mm.(Model)
+		m = applyAll(m, fetch())
+		if m.reloadPending || m.sessionTitle != "recovered" || m.contextUnknown || m.contextTokens != 42 {
+			t.Fatalf("successful legacy resume lost confirmed occupancy: pending=%t title=%q unknown=%t occupancy=%d", m.reloadPending, m.sessionTitle, m.contextUnknown, m.contextTokens)
+		}
+	})
+
 	t.Run("actual GetSession failure retries and recovers", func(t *testing.T) {
 		conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "recovered", Mode: "plan"}}, getSessionErr: errors.New("temporarily unavailable")}
 		m := modeTestModel(t, conv)
@@ -556,6 +582,42 @@ func TestMecatuiAuthoritativeReload_Scenario2_LiveOnlyResultDuringFetch(t *testi
 	m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "stale", TitleRevision: 2}})
 	if m.sessionTitle != "current" {
 		t.Fatalf("result replay rolled back newer title: %q", m.sessionTitle)
+	}
+}
+
+func TestMecatuiAuthoritativeReload_Scenario2_BufferedIdleTurnReconcilesOccupancy(t *testing.T) {
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{ContextOccupancy: &client.ContextOccupancy{InputTokens: 80}}}}
+	m := modeTestModel(t, conv)
+	m.phase, m.liveGen, m.reloadFeedGen = phaseIdle, 7, 7
+	m.reloadPending, m.reloadSession, m.reloadSeq = true, m.sessionID, 1
+	m.contextTokens = 5
+	m.resolvedSessionModel.ContextWindow = 64000
+	m = applyAll(m, liveMsg{gen: 7, msg: client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 12}}})
+	mm, cmd := m.Update(snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, ContextOccupancy: &client.ContextOccupancy{InputTokens: 80}}})
+	m = mm.(Model)
+	if m.reloadPending || !m.reloadNeedRefresh || m.contextTokens != 12 {
+		t.Fatalf("buffered turn was not replayed or deferred: pending=%t deferred=%t occupancy=%d", m.reloadPending, m.reloadNeedRefresh, m.contextTokens)
+	}
+	for _, event := range flattenBatch(cmd) {
+		if _, ok := event.(snapshotReply); ok {
+			t.Fatal("refetched occupancy before the buffered run settled")
+		}
+	}
+	m = applyAll(m, (&m).refreshSessionCmd()())
+	if m.contextTokens != 12 || !m.reloadNeedRefresh {
+		t.Fatalf("intervening metadata refresh discarded unsettled turn: occupancy=%d deferred=%t", m.contextTokens, m.reloadNeedRefresh)
+	}
+	mm, cmd = m.Update(liveMsg{gen: 7, msg: client.ResultMsg{Stop: "end_turn"}})
+	m = mm.(Model)
+	var reconciled bool
+	for _, event := range flattenBatch(cmd) {
+		if reply, ok := event.(snapshotReply); ok {
+			m = applyAll(m, reply)
+			reconciled = true
+		}
+	}
+	if !reconciled || m.contextTokens != 80 {
+		t.Fatalf("settled turn did not restore authoritative occupancy: fetched=%t occupancy=%d", reconciled, m.contextTokens)
 	}
 }
 

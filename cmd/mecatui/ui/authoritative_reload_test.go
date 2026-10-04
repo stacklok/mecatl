@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -60,12 +62,17 @@ func TestMecatuiAuthoritativeReload_Scenario1_ReplacesSuppliedSessionFacts(t *te
 
 func TestMecatuiAuthoritativeReload_Scenario1_LegacyAndExplicitAbsence(t *testing.T) {
 	m := titleModel(t, &titleRenamer{})
+	m.sessionTitle, m.sessionTitleRevision = "confirmed title", 3
 	m.contextTokens, m.contextEstimated, m.contextUnknown = 99, true, false
 	m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 1
+	m.liveCh = make(chan tea.Msg)
 	m.reloadPending, m.reloadSession = true, m.sessionID
 	m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID}})
 	if !m.contextUnknown || m.contextTokens != 0 || m.contextEstimated {
 		t.Fatalf("nil authoritative occupancy = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
+	}
+	if m.sessionTitle != "confirmed title" || m.sessionTitleRevision != 3 {
+		t.Fatalf("absent legacy title metadata erased confirmed title: %q/%d", m.sessionTitle, m.sessionTitleRevision)
 	}
 
 	m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 2
@@ -73,6 +80,19 @@ func TestMecatuiAuthoritativeReload_Scenario1_LegacyAndExplicitAbsence(t *testin
 	m = applyAll(m, snapshotReply{seq: 2, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, ContextOccupancy: &client.ContextOccupancy{}}})
 	if m.contextUnknown || m.contextTokens != 0 || m.contextEstimated {
 		t.Fatalf("present zero authoritative occupancy = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
+	}
+
+	// A legacy snapshot has no resolved-model presence bit. It must preserve
+	// known compatible facts, but must not invent a model from a zero value.
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "known", ModelID: "known-model", ReasoningEffort: "high", ContextWindow: 128000}
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: "active"})
+	if got := m.resolvedSessionModel; got != (client.ResolvedModel{ProviderID: "known", ModelID: "known-model", ReasoningEffort: "high", ContextWindow: 128000}) {
+		t.Fatalf("missing legacy resolved model erased confirmed value: %+v", got)
+	}
+	m.resolvedSessionModel = client.ResolvedModel{}
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: m.sessionID})
+	if m.resolvedSessionModel != (client.ResolvedModel{}) {
+		t.Fatalf("missing legacy resolved model invented an identity: %+v", m.resolvedSessionModel)
 	}
 
 	row := client.SessionListItem{ID: "next-main", Kind: client.SessionKindMain}
@@ -179,12 +199,25 @@ func assertAdoptedSnapshot(t *testing.T, m Model, row client.SessionListItem, sn
 }
 
 func TestMecatuiAuthoritativeReload_Scenario3_PreservesViewAndRecovery(t *testing.T) {
-	m := titleModel(t, &titleRenamer{})
+	m := scrollModel(t)
 	m.prompt.Rewrite("unsent draft")
 	m.queued = []string{"queued prompt"}
 	m.conv.addUser("recorded conversation")
-	m.conversationView.mode = anchored
+	m.refreshView()
+	m.vp.SetYOffset(10)
+	m.conversationView.observe(m.vp)
+	if m.conversationView.mode != anchored || m.vp.YOffset() == 0 {
+		t.Fatalf("scroll setup = mode %v offset %d, want anchored non-zero offset", m.conversationView.mode, m.vp.YOffset())
+	}
+	beforeOffset := m.vp.YOffset()
+	beforeAnchor, ok := m.conversationView.frame.observedAnchorForRow(beforeOffset, towardStart)
+	if !ok || beforeAnchor.blockID == 0 {
+		t.Fatalf("scroll setup anchor = %#v, ok=%t", beforeAnchor, ok)
+	}
 	m.sessionDetailsOpen = true
+	modal := &placementTestSurface{body: "open modal"}
+	m.modal = modal
+	m.prompt.Focus()
 	m.phase = phaseAwaitingApproval
 	pending := &pendingApprovalRecovery{approval: client.PendingApproval{SessionID: m.sessionID, RunID: "run", AskID: "ask"}}
 	m.pendingRecovery = pending
@@ -195,16 +228,25 @@ func TestMecatuiAuthoritativeReload_Scenario3_PreservesViewAndRecovery(t *testin
 		State:                "awaiting",
 		TitleMetadataPresent: true,
 		Title:                "server title",
+		ResolvedModelPresent: true,
+		Resolved:             client.ResolvedModel{ProviderID: "server", ModelID: "server-model", ContextWindow: 64000},
 	})
 
-	if m.prompt.Value() != "unsent draft" || len(m.queued) != 1 || m.queued[0] != "queued prompt" {
-		t.Fatalf("reload discarded draft or queue: draft=%q queued=%v", m.prompt.Value(), m.queued)
+	if m.prompt.Value() != "unsent draft" || !m.prompt.Focused() || len(m.queued) != 1 || m.queued[0] != "queued prompt" {
+		t.Fatalf("reload discarded draft, focus, or queue: draft=%q focused=%t queued=%v", m.prompt.Value(), m.prompt.Focused(), m.queued)
 	}
-	if got := m.conv.testBlocks(); len(got) != 1 || testCardText(got[0]) != "recorded conversation" {
+	if got := m.conv.testBlocks(); len(got) != 3 || testCardText(got[2]) != "recorded conversation" {
 		t.Fatalf("reload changed recorded conversation: %+v", got)
 	}
-	if m.conversationView.mode != anchored || !m.sessionDetailsOpen {
-		t.Fatalf("reload reset reading position or navigation: view=%v details=%t", m.conversationView.mode, m.sessionDetailsOpen)
+	if m.conversationView.mode != anchored || m.vp.YOffset() != beforeOffset {
+		t.Fatalf("reload reset reading offset: mode=%v offset=%d, want anchored/%d", m.conversationView.mode, m.vp.YOffset(), beforeOffset)
+	}
+	afterAnchor, ok := m.conversationView.frame.observedAnchorForRow(m.vp.YOffset(), towardEnd)
+	if !ok || afterAnchor != beforeAnchor {
+		t.Fatalf("reload changed reading anchor: got %#v ok=%t, want %#v", afterAnchor, ok, beforeAnchor)
+	}
+	if !m.sessionDetailsOpen || m.modal != modal {
+		t.Fatalf("reload reset navigation or modal: details=%t modal=%p want=%p", m.sessionDetailsOpen, m.modal, modal)
 	}
 	if m.pendingRecovery != pending || m.phase != phaseAwaitingApproval {
 		t.Fatalf("reload discarded pending approval recovery: recovery=%p phase=%v", m.pendingRecovery, m.phase)

@@ -343,12 +343,10 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.refreshView()
 	liveCmd := (&m).armLiveFeed()
 	if m.deps.Session != nil {
-		if m.liveCh != nil {
-			m.reloadPending = true
-			m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
-			m.reloadEvents = nil
-			m.reloadOverflow = false
-		}
+		m.reloadPending = true
+		m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
+		m.reloadEvents = nil
+		m.reloadOverflow = false
 		cmd = tea.Batch(cmd, liveCmd, (&m).refreshSessionCmd())
 	} else {
 		cmd = tea.Batch(cmd, liveCmd)

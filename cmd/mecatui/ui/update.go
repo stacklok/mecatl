@@ -582,12 +582,10 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
 	if m.sessionID != "" && m.deps.Session != nil {
-		if m.liveCh != nil {
-			m.reloadPending = true
-			m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
-			m.reloadEvents = nil
-			m.reloadOverflow = false
-		}
+		m.reloadPending = true
+		m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
+		m.reloadEvents = nil
+		m.reloadOverflow = false
 		cmd = tea.Batch(cmd, (&m).refreshSessionWithCmd(client.RefreshStartupResumeCmd(m.deps.Ctx, m.deps.Session, m.sessionID)))
 	}
 	if m.workspaceEnrollmentActive() {
@@ -670,12 +668,10 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// events wait for the snapshot baseline, just as they do on reconnect.
 	liveCmd := (&m).armLiveFeed()
 	if m.sessionID != "" && m.deps.Session != nil {
-		if m.liveCh != nil {
-			m.reloadPending = true
-			m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
-			m.reloadEvents = nil
-			m.reloadOverflow = false
-		}
+		m.reloadPending = true
+		m.reloadSession, m.reloadFeedGen = m.sessionID, m.liveGen
+		m.reloadEvents = nil
+		m.reloadOverflow = false
 		heal := (&m).refreshSessionCmd()
 		cmd = tea.Batch(cmd, liveCmd, heal)
 	} else {
