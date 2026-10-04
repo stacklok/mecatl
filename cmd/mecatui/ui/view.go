@@ -143,7 +143,7 @@ func (m Model) renderHeader() string {
 	if tail == "" {
 		tail = m.changedFilesIndicator()
 	}
-	badge, badgeW, _ := m.postureBadgeRender()
+	badge, badgeW := m.postureBadgeRender()
 	available := m.statusHeaderAvailable(badge, badgeW, tail)
 	if surface := m.generatedStatusLine.Header; m.deps.StatusSource != nil && surface.Present && statusSurfaceFits(surface, available) && statusSpansText(surface.Spans) != "" {
 		generated := renderStatusSurface(m.deps.Theme, surface, available, false)
@@ -208,7 +208,7 @@ const yoloBoltPrefix = "⚡️ "
 // postureBadgeRender builds the right-aligned operator-posture chrome badge — the STYLED
 // string ready to drop into the header AND its visible (plain) cell width for the
 // fit/shed math. It surfaces the SERVER-WIDE automation posture (m.caps.Posture) for the
-// allow-all tiers ONLY — strict/trusted/unknown render NO badge (present=false), so the
+// allow-all tiers ONLY — strict/trusted/unknown render NO badge, so the
 // steady-state frame and the goldens stay byte-identical. It is DISTINCT from the
 // per-session `mode` segment.
 //
@@ -222,26 +222,26 @@ const yoloBoltPrefix = "⚡️ "
 // Padding(0,1) adds 2 cells lipgloss.Width(yoloPillText) does count (the text already
 // carries its spaces), so the pill's visible width is lipgloss.Width(yoloPillText)+2; the
 // optional bolt prefix adds lipgloss.Width(yoloBoltPrefix) (⚡️ width-2 + space).
-func (m Model) postureBadgeRender() (styled string, plainWidth int, present bool) {
+func (m Model) postureBadgeRender() (styled string, plainWidth int) {
 	switch m.caps.Posture {
 	case postureAuto:
-		return m.deps.Theme.Style("warning").Render(autoBadgeText), lipgloss.Width(autoBadgeText), true
+		return m.deps.Theme.Style("warning").Render(autoBadgeText), lipgloss.Width(autoBadgeText)
 	case postureYolo:
 		pill := m.deps.Theme.Style("dangerPill").Render(yoloPillText)
 		// The pill's visible width = its text cells + the 2 padding cells the style adds.
 		w := lipgloss.Width(yoloPillText) + 2
 		if m.emojiOK {
 			// PLAIN bolt prefix (no style) so VTE shows its natural emoji colour.
-			return yoloBoltPrefix + pill, lipgloss.Width(yoloBoltPrefix) + w, true
+			return yoloBoltPrefix + pill, lipgloss.Width(yoloBoltPrefix) + w
 		}
-		return pill, w, true
+		return pill, w
 	case postureStrict, postureTrusted:
 		// The non-allow-all tiers carry no badge — the steady-state frame stays
 		// byte-identical (the goldens are captured at strict).
-		return "", 0, false
+		return "", 0
 	default:
 		// Unknown / older-server posture: no badge.
-		return "", 0, false
+		return "", 0
 	}
 }
 
@@ -828,10 +828,6 @@ func (m Model) renderFatalAtHeight(height int) string {
 	}
 	return card
 }
-
-// maxModelLen caps the model name shown in the header so a long provider-scoped
-// id (e.g. "anthropic/claude-opus-4-...") can't blow out the header width.
-const maxModelLen = 24
 
 // effortHeaderSuffix returns the reasoning-effort token to show beside the model in
 // the header, or "" when nothing should render (ADR 0055). It hides the unset state

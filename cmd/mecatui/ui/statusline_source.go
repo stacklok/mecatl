@@ -137,7 +137,7 @@ type statusLineGeometry struct {
 // It uses renderer-owned header safety/navigation and footer activity lanes, but
 // does not render or submit anything.
 func (m Model) statusLineGeometry() statusLineGeometry {
-	badge, badgeWidth, _ := m.postureBadgeRender()
+	badge, badgeWidth := m.postureBadgeRender()
 	tail := m.scrollIndicator()
 	if tail == "" {
 		tail = m.changedFilesIndicator()
