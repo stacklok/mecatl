@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -434,6 +435,19 @@ func driveTo(t *testing.T, th theme.Theme) Model {
 	return m
 }
 
+// stockStatusFrame installs the shipped status source on an already-built model,
+// submits its canonical snapshot, and reduces the source listener result.
+func stockStatusFrame(t *testing.T, m Model) Model {
+	t.Helper()
+	source := customization.NewDefaultSource(0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	m.deps.StatusSource = source
+	source.Submit(m.statusLineSnapshot())
+
+	updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	return updated.(Model)
+}
+
 // applyAll feeds a sequence of msgs to a Model, discarding commands.
 func applyAll(m Model, msgs ...tea.Msg) Model {
 	for _, msg := range msgs {
@@ -460,10 +474,28 @@ func askFrameMsgs() []tea.Msg {
 	}
 }
 
+// TestStockStatusFixture proves the reusable golden fixture consumes a source
+// notification through the listener/reducer, while ordinary models retain the
+// deliberate nil-source baseline.
+func TestStockStatusFixture(t *testing.T) {
+	baseline := driveTo(t, theme.New("aztec", theme.AztecPalette()))
+	if baseline.deps.StatusSource != nil || baseline.generatedStatusLine.Header.Present || baseline.generatedStatusLine.Footer.Present {
+		t.Fatalf("nil-source baseline = source:%T result:%#v", baseline.deps.StatusSource, baseline.generatedStatusLine)
+	}
+
+	m := stockStatusFrame(t, baseline)
+	if !m.generatedStatusLine.Header.Present || statusSpansText(m.generatedStatusLine.Header.Spans) == "" {
+		t.Fatalf("generated header = %#v", m.generatedStatusLine.Header)
+	}
+	if !m.generatedStatusLine.Footer.Present || statusSpansText(m.generatedStatusLine.Footer.Spans) == "" {
+		t.Fatalf("generated footer = %#v", m.generatedStatusLine.Footer)
+	}
+}
+
 // TestViewGoldenStripped locks the awaiting-approval frame (ANSI stripped) — the
 // readable structural golden a reviewer can eyeball.
 func TestViewGoldenStripped(t *testing.T) {
-	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
+	m := stockStatusFrame(t, driveTo(t, theme.New("aztec", theme.AztecPalette())))
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "view_stripped.golden", got)
 }
@@ -471,7 +503,7 @@ func TestViewGoldenStripped(t *testing.T) {
 // TestViewGoldenAztecANSI locks the same frame WITH ANSI so an Aztec palette
 // regression (a changed escape) is caught.
 func TestViewGoldenAztecANSI(t *testing.T) {
-	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
+	m := stockStatusFrame(t, driveTo(t, theme.New("aztec", theme.AztecPalette())))
 	got := []byte(m.View().Content)
 	compareGolden(t, "view_aztec_ansi.golden", got)
 }
