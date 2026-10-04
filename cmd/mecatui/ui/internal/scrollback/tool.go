@@ -23,9 +23,10 @@ type ToolCall struct {
 // ToolResult describes a resolved tool call. IsError records an error result;
 // Artifacts are detached when stored or returned in a snapshot.
 type ToolResult struct {
-	Body      string
-	IsError   bool
-	Artifacts []Artifact
+	Body              string
+	StructuredContent string
+	IsError           bool
+	Artifacts         []Artifact
 }
 
 // ToolCardSnapshot is the detached payload for a tool call. Resolved distinguishes
@@ -81,7 +82,11 @@ func (t ToolCards) ReconcileUnresolved(call ToolCall) bool {
 		return true
 	}
 	payload.Call = updated
-	return c.replace(i, payload)
+	if c.replace(i, payload) {
+		c.cards[i].argumentRevision++
+		return true
+	}
+	return false
 }
 
 // Finish records a terminal lifecycle projection before the tool result arrives.

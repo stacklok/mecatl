@@ -10,6 +10,13 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
+const (
+	toolEditName  = "Edit"
+	toolWriteName = "Write"
+	toolPathArg   = "path"
+	toolURLArg    = "url"
+)
+
 // toolCardPresentation is the renderer-owned immutable presentation input for an
 // ordinary typed tool snapshot. It deliberately does not enter ui.block, whose
 // remaining tool shape exists only for legacy delegation presentation helpers.

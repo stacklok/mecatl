@@ -87,6 +87,25 @@ func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
 	}
 }
 
+func TestToolCallMetadataAtDoesNotExposeResultPayload(t *testing.T) {
+	var c Conversation
+	c.Tools().Add(ToolCall{ID: "read", Name: "Read", Arguments: `{"path":"x"}`})
+	if !c.Tools().Resolve("read", ToolResult{IsError: true, Artifacts: []Artifact{{Data: []byte("binary")}}}) {
+		t.Fatal("resolve tool")
+	}
+
+	got, ok := c.ToolCallMetadataAt(0)
+	if !ok {
+		t.Fatal("tool metadata missing")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _, _ = c.ToolCallMetadataAt(0) }); allocs != 0 {
+		t.Fatalf("metadata enumerator cloned result: %.0f allocations", allocs)
+	}
+	if got.CallID != "read" || got.Name != "Read" || got.Arguments != `{"path":"x"}` || !got.Resolved || !got.Failed {
+		t.Fatalf("metadata = %#v", got)
+	}
+}
+
 func TestToolLifecycle(t *testing.T) {
 	var c Conversation
 	call := ToolCall{ID: "read", Name: "Read", Artifacts: []Artifact{{Data: []byte("request")}}}

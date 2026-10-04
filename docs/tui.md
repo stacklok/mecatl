@@ -51,12 +51,21 @@ wheel events into the conversation.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Let the surface own item semantics and activation.
-For list-and-detail browsers, use a bounded list for stable item selection and a
-separate bounded viewport for long detail. Preserve the selected item and list
-window when returning from detail; size both controls against the current
-measured body instead of storing an independent row budget. The saved-memory
-browser demonstrates list/detail ownership; Sessions demonstrates the
-conversation-region fill placement for content that needs more room. Fill
+Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
+`toolErr`. Keep a readable `running`, `done`, or `failed` label with each glyph
+so status does not depend on color.
+
+For list-and-detail browsers, use a bounded list for stable item selection and
+a separate bounded viewport for long detail. In wheel-enabled inventories,
+wheel scrolling moves the list window independently of selection. Keyboard
+navigation and clicking a row select and reveal it. Preserve the selected item
+and list window when returning from detail; size both controls against the
+current measured body instead of storing an independent row budget. Keep
+detail scrolling within that viewport: follow appended result lines only while
+its reader is at the bottom, and keep the reader's position when new content
+arrives off-tail.
+The saved-memory browser demonstrates list/detail ownership; Sessions demonstrates
+the conversation-region fill placement for content that needs more room. Fill
 surfaces use only the offered conversation region and keep the frame's header,
 prompt, and footer.
 

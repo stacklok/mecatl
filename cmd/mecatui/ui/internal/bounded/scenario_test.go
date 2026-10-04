@@ -137,6 +137,23 @@ func TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable(t *te
 	}
 }
 
+func TestViewportSetOffsetPreservesNonTailPosition(t *testing.T) {
+	var viewport Viewport
+	viewport.SetGeometry(20, 3, 0, Clip)
+	viewport.SetOffset(5, 20)
+	if got := viewport.Offset(); got != 5 {
+		t.Fatalf("non-tail offset = %d, want 5", got)
+	}
+	viewport.SetOffset(100, 20)
+	if got := viewport.Offset(); got != 17 {
+		t.Fatalf("clamped offset = %d, want 17", got)
+	}
+	viewport.SetOffset(-1, 20)
+	if got := viewport.Offset(); got != 0 {
+		t.Fatalf("negative offset = %d, want 0", got)
+	}
+}
+
 func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t *testing.T) {
 	var viewport Viewport
 	viewport.SetGeometry(12, 2, 0, Clip)

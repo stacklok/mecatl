@@ -254,12 +254,7 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 	case client.ToolCallMsg:
 		c.addTool(msg.ID, msg.Name, msg.Args)
 	case client.ToolResultMsg:
-		resolved := false
-		if msg.Available {
-			resolved = c.resolveAvailableTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
-		} else {
-			resolved = c.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
-		}
+		resolved := c.resolveToolResult(msg)
 		if !resolved {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
@@ -1204,7 +1199,7 @@ func conversationFromTranscript(messages []client.ConversationMessage) conversat
 			}
 		case "tool":
 			if message.ToolResult != nil {
-				out.resolveTool(message.ToolResult.CallID, message.ToolResult.Content, message.ToolResult.IsError, message.ToolResult.Blocks...)
+				out.resolveToolResult(client.ToolResultMsg{CallID: message.ToolResult.CallID, Content: message.ToolResult.Content, IsError: message.ToolResult.IsError, Blocks: message.ToolResult.Blocks, StructuredContent: message.ToolResult.StructuredContent})
 			}
 		}
 	}
@@ -1216,7 +1211,7 @@ func stateBadge(state string) string {
 		return "▶"
 	case "completed":
 		return "✓"
-	case teamStopReasonCancelled, "failed":
+	case teamStopReasonCancelled, statusFailed:
 		return "✗"
 	case "awaiting":
 		return "⏸"

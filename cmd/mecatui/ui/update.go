@@ -1338,19 +1338,16 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if p, ok := mutatedPath(msg.Name, msg.Args); ok {
 			m.conv.recordFileChange(p)
 		}
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolResultMsg:
-		resolved := false
-		if msg.Available {
-			resolved = m.conv.resolveAvailableTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
-		} else {
-			resolved = m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
-		}
+		resolved := m.conv.resolveToolResult(msg)
 		if !resolved {
 			m.conv.addNotice("orphan tool result for " + msg.CallID)
 		}
 		m.activeTool = m.conv.latestPendingToolName()
 		m.toolProgress = ""
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolProgressMsg:
 		// Transient advisory line from a long-running tool: show it beside the
@@ -1456,18 +1453,21 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySubagent(msg)
 		if msg.Kind == client.SubagentEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.TeamMsg:
 		m.applyTeam(msg)
 		if msg.Kind == client.TeamEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.ParallelMsg:
 		m.applyParallel(msg)
 		if msg.Kind == client.ParallelEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.ModelRetryMsg:
@@ -2497,6 +2497,9 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		}
 		m = mm.(Model)
 		cmd = tea.Batch(cmd, intentCmd)
+	}
+	if toolcalls, ok := m.modal.(*toolcallsState); ok && toolcalls.detail && toolcalls.detailEntry == nil {
+		m.syncToolcalls()
 	}
 	if closed {
 		m.closeModal()

@@ -564,7 +564,7 @@ func isPlanAsk(tool string) bool {
 // classifies as diff-capable (it falls back to JSON args in the card, but the
 // ask's FLAVOUR is the diff surface).
 func isDiffCapableAskTool(tool string) bool {
-	return tool == "Edit" || tool == "Write"
+	return tool == toolEditName || tool == toolWriteName
 }
 
 // known reports whether askID is already visible (the modal head), queued, or

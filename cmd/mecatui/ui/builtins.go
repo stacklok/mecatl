@@ -139,6 +139,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runFailedStepRetry,
 		},
 		{
+			name: "toolcalls",
+			desc: "browse tool calls in this session",
+			run:  Model.runToolcalls,
+		},
+		{
 			name: "diagnostics",
 			desc: "send a concise client and server diagnostics report",
 			run:  Model.runDiagnostics,
@@ -643,7 +648,7 @@ type builtinName struct {
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
-	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
+	{name: "retry", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
 	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},

@@ -65,15 +65,15 @@ const (
 // the remaining keys alphabetical after them. Map iteration order is random, so
 // this ordering is what makes the collapsed card render stable (golden-safe).
 var argPriorityKeys = []string{
-	"owner", "repo", "method", "number", "title", "path",
-	"query", "state", "branch", "name", "url", "limit", "page",
+	"owner", "repo", "method", "number", "title", toolPathArg,
+	"query", "state", "branch", "name", toolURLArg, "limit", "page",
 }
 
 // resultProminentKeys are the fields a large JSON result summary surfaces, in
 // render order — the handful a human scans a tool result for (where it landed,
 // what it is, its status).
 var resultProminentKeys = []string{
-	"html_url", "url", "id", "number", "sha", "status", "state",
+	"html_url", toolURLArg, "id", "number", "sha", "status", "state",
 }
 
 // renderer turns conversation blocks into the viewport string. It owns the
@@ -1478,7 +1478,7 @@ func teamLaneState(ln *teamLane, teamDone bool) string {
 		// the opposite of what the supervisor reported.
 		return "done (retried)"
 	case teamDone:
-		return "done"
+		return statusDone
 	case ln.idle:
 		return "idle"
 	}
@@ -1680,7 +1680,7 @@ func oneLine(s string) string {
 func subagentStopLabel(stop string) string {
 	switch stop {
 	case "end_turn", "":
-		return "done"
+		return statusDone
 	case "max_tool_calls":
 		return "max-tools"
 	case "max_turns":
@@ -1824,13 +1824,13 @@ func (r *renderer) renderChangedFiles(paths []string) string {
 // ("", false) so a garbled call never pollutes the changed-files set.
 func mutatedPath(name, rawArgs string) (string, bool) {
 	switch name {
-	case "Edit":
+	case toolEditName:
 		var args editDiffArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" {
 			return "", false
 		}
 		return args.Path, true
-	case "Write":
+	case toolWriteName:
 		var args writeDiffArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" {
 			return "", false
@@ -1855,9 +1855,9 @@ func (r *renderer) renderToolDiff(name, rawArgs string, expand bool) (string, bo
 // applying its independently styled rows.
 func (r *renderer) renderToolDiffAtWidth(name, rawArgs string, expand bool, bodyWidth int) (string, bool) {
 	switch name {
-	case "Edit":
+	case toolEditName:
 		return r.renderEditDiff(rawArgs, expand, bodyWidth)
-	case "Write":
+	case toolWriteName:
 		return r.renderWriteDiff(rawArgs, expand, bodyWidth)
 	default:
 		return "", false

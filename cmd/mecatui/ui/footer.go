@@ -292,6 +292,11 @@ const slotCtxWarn = "ctxWarn"
 // so the literal does not trip goconst's min-occurrences across the switch arms.
 const slotMuted = "muted"
 
+const (
+	statusDone   = "done"
+	statusFailed = "failed"
+)
+
 // stopReasonLabel maps a run's terminal stop reason (client.ResultMsg.Stop, the
 // proto Result.stop / session.StopReason vocabulary) to the human footer status
 // text and the theme style slot it should carry. The non-error LIMIT stops
@@ -306,7 +311,7 @@ const slotMuted = "muted"
 func stopReasonLabel(stop string) (text, slot string) {
 	switch stop {
 	case "end_turn", "":
-		return "done", slotMuted
+		return statusDone, slotMuted
 	case "max_turns":
 		return "stopped · turn limit", slotCtxWarn
 	case "max_tool_calls":
