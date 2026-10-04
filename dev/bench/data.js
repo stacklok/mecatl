@@ -262450,6 +262450,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790857584684,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "990c5d63d9dcf7c935a4cbc20687ad5afb68cfc5",
+          "message": "Implement mecatui tool-call inspector (#2061)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T15:17:52-07:00",
+          "tree_id": "bd4b0d09cd6700d9607481d9c441e12df83de1cb",
+          "url": "https://github.com/stacklok/mecatl/commit/990c5d63d9dcf7c935a4cbc20687ad5afb68cfc5"
+        },
+        "date": 1791153007939,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -380873,6 +380907,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791153005208,
+  "lastUpdate": 1791153009132,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
