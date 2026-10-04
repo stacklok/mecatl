@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -16,6 +18,49 @@ type snapshotReply struct {
 	modeIntent  uint64
 	titleIntent uint64
 	msg         client.ResolvedModelMsg
+}
+
+type snapshotRetryMsg struct {
+	seq     uint64
+	session string
+	feedGen uint64
+}
+
+// Use the live reconnect loop's 500ms-to-30s bounded exponential schedule.
+func snapshotRetryDelay(attempt int) time.Duration {
+	delay := 500 * time.Millisecond
+	for i := 1; i < attempt && delay < 30*time.Second; i++ {
+		delay *= 2
+	}
+	if delay > 30*time.Second {
+		return 30 * time.Second
+	}
+	return delay
+}
+
+func (m Model) snapshotRetryCmd(reply snapshotRetryMsg) tea.Cmd {
+	delay := snapshotRetryDelay(m.reloadRetryAttempt)
+	if m.reloadRetryTimer != nil {
+		return m.reloadRetryTimer(delay, reply)
+	}
+	return func() tea.Msg {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return reply
+		case <-m.deps.Ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (m Model) onSnapshotRetry(msg snapshotRetryMsg) (tea.Model, tea.Cmd) {
+	if !m.reloadPending || !m.reloadRetryScheduled || msg.seq != m.reloadSeq || msg.session != m.sessionID || msg.feedGen != m.liveGen || msg.session != m.reloadSession {
+		return m, nil
+	}
+	m.reloadRetryScheduled = false
+	return m, (&m).refreshSessionCmd()
 }
 
 type modeReply struct {
@@ -38,6 +83,7 @@ func (m *Model) refreshSessionCmd() tea.Cmd {
 
 func (m *Model) refreshSessionWithCmd(cmd tea.Cmd) tea.Cmd {
 	m.reloadSeq++
+	m.reloadRetryScheduled = false
 	reply := snapshotReply{seq: m.reloadSeq, session: m.sessionID, feedGen: m.reloadFeedGen, liveEpoch: m.reloadLiveEpoch, modeIntent: m.modeIntentSeq, titleIntent: m.titleRenameRequestToken}
 	return func() tea.Msg {
 		reply.msg = cmd().(client.ResolvedModelMsg)
@@ -50,8 +96,18 @@ func (m Model) onSnapshotReply(reply snapshotReply) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if reply.msg.Err != nil {
-		// Retain the feed barrier for the failed-fetch retry owner (task 04).
-		return m, nil
+		if !m.reloadPending || m.reloadRetryScheduled {
+			return m, nil
+		}
+		if reply.feedGen != m.liveGen || m.reloadOverflow || reply.session != m.reloadSession {
+			m.reloadPending = false
+			m.reloadEvents = nil
+			m.disarmLiveFeed()
+			return m, (&m).startReconnect(nil)
+		}
+		m.reloadRetryAttempt++
+		m.reloadRetryScheduled = true
+		return m, m.snapshotRetryCmd(snapshotRetryMsg{seq: reply.seq, session: reply.session, feedGen: reply.feedGen})
 	}
 	if m.reloadPending && (reply.feedGen != m.liveGen || m.reloadOverflow || reply.session != m.reloadSession) {
 		m.reloadPending = false
@@ -114,6 +170,8 @@ func (m *Model) refreshAfterSettledRun() tea.Cmd {
 }
 
 func (m Model) replayReloadEvents(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m.reloadRetryAttempt = 0
+	m.reloadRetryScheduled = false
 	if m.reloadPending {
 		m.reloadPending = false
 		for _, event := range m.reloadEvents {

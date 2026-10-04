@@ -390,6 +390,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveMsg:
 		return m.updateLiveMsg(msg)
 
+	case snapshotRetryMsg:
+		return m.onSnapshotRetry(msg)
+
 	case snapshotReply:
 		return m.onSnapshotReply(msg)
 
@@ -2750,6 +2753,9 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	m.reloadPending = false
+	m.reloadRetryScheduled = false
+	m.reloadSeq++
 	m.admissionSubmission = nil
 	(&m).retirePendingApprovalRecovery()
 	if m.cancelRun != nil {
@@ -4124,6 +4130,8 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 			m.reloadFeedGen = m.liveGen
 			m.reloadEvents = nil
 			m.reloadOverflow = false
+			m.reloadRetryAttempt = 0
+			m.reloadRetryScheduled = false
 			refresh := (&m).refreshSessionCmd()
 			return m, tea.Batch(liveCmd, refresh)
 		}

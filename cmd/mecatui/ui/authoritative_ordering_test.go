@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -80,6 +83,96 @@ func TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace(t *testing.T) {
 	disconnected = applyAll(disconnected, snapshotReply{seq: 4, session: disconnected.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: disconnected.sessionID, TitleMetadataPresent: true, Title: "disconnected"}})
 	if cmd == nil || !disconnected.liveReconnecting || disconnected.sessionTitle == "disconnected" {
 		t.Fatalf("second disconnect accepted incomplete snapshot: reconnect=%t title=%q", disconnected.liveReconnecting, disconnected.sessionTitle)
+	}
+}
+
+func TestMecatuiAuthoritativeReload_Scenario2_FailedFetchPreservesState(t *testing.T) {
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "server", TitleRevision: 4, Mode: "plan"}}}
+	m := modeTestModel(t, conv)
+	m.sessionTitle, m.sessionTitleRevision, m.activeMode = "confirmed", 3, "default"
+	m.usage = client.Usage{InputTokens: 10}
+	m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 1
+	m.reloadPending, m.reloadSession = true, m.sessionID
+	var delays []time.Duration
+	m.reloadRetryTimer = func(delay time.Duration, msg snapshotRetryMsg) tea.Cmd {
+		delays = append(delays, delay)
+		return func() tea.Msg { return msg }
+	}
+	m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "live", Revision: 5}})
+	mm, retry := m.Update(snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "partial", Mode: "ask", MainUsagePresent: true, Usage: client.Usage{InputTokens: 99}, Err: errors.New("fetch failed")}})
+	m = mm.(Model)
+	if retry == nil || len(delays) != 1 || delays[0] != 500*time.Millisecond || !strings.Contains(stripANSIstr(m.renderFooter()), "metadata not synchronized") {
+		t.Fatalf("failure did not schedule bounded retry or display degraded state: cmd=%t delays=%v footer=%q", retry != nil, delays, m.idleFooterLeft())
+	}
+	if m.sessionTitle != "confirmed" || m.activeMode != "default" || m.usage.InputTokens != 10 || !m.reloadPending || len(m.reloadEvents) != 1 {
+		t.Fatalf("failed fetch adopted partial state or released barrier: title=%q mode=%q usage=%+v pending=%t events=%d", m.sessionTitle, m.activeMode, m.usage, m.reloadPending, len(m.reloadEvents))
+	}
+	mm, fetch := m.Update(retry())
+	m = mm.(Model)
+	if fetch == nil || m.reloadSeq != 2 {
+		t.Fatalf("retry timer did not issue a new fetch: cmd=%t seq=%d", fetch != nil, m.reloadSeq)
+	}
+	mm, retry2 := m.Update(snapshotReply{seq: 2, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, Title: "partial again", Err: errors.New("still unavailable")}})
+	m = mm.(Model)
+	if retry2 == nil || len(delays) != 2 || delays[1] != time.Second || m.sessionTitle != "confirmed" || !m.reloadPending {
+		t.Fatalf("second fetch did not back off and preserve confirmed state: delays=%v title=%q pending=%t", delays, m.sessionTitle, m.reloadPending)
+	}
+	mm, fetch = m.Update(retry2())
+	m = mm.(Model)
+	if fetch == nil || m.reloadSeq != 3 {
+		t.Fatalf("second retry did not fetch: cmd=%t seq=%d", fetch != nil, m.reloadSeq)
+	}
+	m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "later", Revision: 6}})
+	m = applyAll(m, fetch())
+	if m.reloadPending || m.sessionTitle != "later" || m.sessionTitleRevision != 6 || m.activeMode != "plan" || strings.Contains(stripANSIstr(m.renderFooter()), "not synchronized") {
+		t.Fatalf("success did not install snapshot then replay buffered events: title=%q/%d mode=%q pending=%t footer=%q", m.sessionTitle, m.sessionTitleRevision, m.activeMode, m.reloadPending, m.idleFooterLeft())
+	}
+	// A later failure must not duplicate its timer; a session switch cancels it.
+	m.reloadPending, m.reloadSession, m.reloadFeedGen = true, m.sessionID, 7
+	m.reloadSeq = 4
+	mm, retry = m.Update(snapshotReply{seq: 4, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, Err: errors.New("again")}})
+	m = mm.(Model)
+	mm, duplicate := m.Update(snapshotReply{seq: 4, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, Err: errors.New("duplicate")}})
+	m = mm.(Model)
+	if retry == nil || duplicate != nil || len(delays) != 3 || delays[2] != 500*time.Millisecond || snapshotRetryDelay(100) != 30*time.Second {
+		t.Fatalf("retry timer duplicated, not reset, or unbounded: delays=%v", delays)
+	}
+	m = m.resetSession()
+	mm, stale := m.Update(retry())
+	m = mm.(Model)
+	if stale != nil || m.reloadPending || m.sessionTitle == "server" {
+		t.Fatalf("old-session retry escaped reset: cmd=%t pending=%t title=%q", stale != nil, m.reloadPending, m.sessionTitle)
+	}
+
+	for _, exit := range []string{"disconnect", "quit"} {
+		t.Run(exit, func(t *testing.T) {
+			m := modeTestModel(t, &fakeConv{})
+			m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 1
+			m.reloadPending, m.reloadSession = true, m.sessionID
+			m.reloadRetryTimer = func(_ time.Duration, msg snapshotRetryMsg) tea.Cmd { return func() tea.Msg { return msg } }
+			mm, retry := m.Update(snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, Err: errors.New("failed")}})
+			m = mm.(Model)
+			if retry == nil {
+				t.Fatal("no retry to cancel")
+			}
+			if exit == "disconnect" {
+				m.deps.LiveStream = &reconnectLiveStreamer{}
+				mm, reconnect := m.Update(liveMsg{gen: 7, msg: client.StreamClosedMsg{}})
+				m = mm.(Model)
+				defer m.disarmReconnect()
+				if reconnect == nil || !m.liveReconnecting {
+					t.Fatal("second feed failure did not re-enter reconnection")
+				}
+			} else {
+				mm, _ = m.quitNow()
+				m = mm.(Model)
+			}
+			mm, fetch := m.Update(retry())
+			m = mm.(Model)
+			if fetch != nil || m.reloadPending {
+				t.Fatalf("abandoned retry still fetched: cmd=%t pending=%t", fetch != nil, m.reloadPending)
+			}
+		})
 	}
 }
 

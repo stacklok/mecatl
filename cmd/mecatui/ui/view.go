@@ -440,6 +440,9 @@ func (m Model) renderFooter() string {
 		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
 	}
 	left := m.footerActivity()
+	if m.reloadPending && m.reloadRetryAttempt > 0 {
+		left = m.deps.Theme.Style("ctxWarn").Render("session metadata not synchronized (retrying)…") + " · " + left
+	}
 
 	// The full decompressed chord list now lives in the "?" help overlay, so the
 	// footer leads with its two entry points and carries only the most useful prompt
