@@ -377,31 +377,41 @@ func (m Model) blockClearPendingInput(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	}
 }
 
+func (m Model) updateReloadOrderingMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case streamMsg:
+		model, cmd := m.onStreamMsg(msg)
+		return model, cmd, true
+	case liveMsg:
+		model, cmd := m.updateLiveMsg(msg)
+		return model, cmd, true
+	case snapshotRetryMsg:
+		model, cmd := m.onSnapshotRetry(msg)
+		return model, cmd, true
+	case snapshotReply:
+		model, cmd := m.onSnapshotReply(msg)
+		return model, cmd, true
+	case modeReply:
+		if msg.session != m.sessionID || msg.intent != m.modeIntentSeq {
+			return m, nil, true
+		}
+		model, cmd := m.onModeChanged(msg.msg), tea.Cmd(nil)
+		return model, cmd, true
+	default:
+		return m, nil, false
+	}
+}
+
 // update is the body of the Elm reducer (see Update, which wraps it with the
 // test-only onPhase observer).
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, cmd, handled := m.blockClearPendingInput(msg); handled {
 		return mm, cmd
 	}
+	if mm, cmd, handled := m.updateReloadOrderingMsg(msg); handled {
+		return mm, cmd
+	}
 	switch msg := msg.(type) {
-	case streamMsg:
-		return m.onStreamMsg(msg)
-
-	case liveMsg:
-		return m.updateLiveMsg(msg)
-
-	case snapshotRetryMsg:
-		return m.onSnapshotRetry(msg)
-
-	case snapshotReply:
-		return m.onSnapshotReply(msg)
-
-	case modeReply:
-		if msg.session != m.sessionID || msg.intent != m.modeIntentSeq {
-			return m, nil
-		}
-		return m.onModeChanged(msg.msg), nil
-
 	case mcpAuthorizationPollTickMsg:
 		return m.applyMCPAuthorizationPollTick(msg)
 
@@ -1832,6 +1842,26 @@ func (m Model) notifyHookFailed(reason string) {
 	m.deps.AgentHook.Stop(m.deps.Ctx, m.sessionID, true, reason)
 }
 
+func (m Model) applyResultDuringClear(msg client.ResultMsg) (tea.Model, tea.Cmd, bool) {
+	if m.clearPending == nil {
+		return m, nil, false
+	}
+	// The terminal facts still belong in the source projection, but Clear owns
+	// what happens next. Settle only: no queued prompt, failed-step retry,
+	// pending-mode retry, plan continuation, live-feed rearm, or other source run.
+	m.notifyHookStop(msg)
+	m = m.endRun(msg.Stop)
+	m.failedStepRetryRun = false
+	m.failedStepRetryAuthoritative = false
+	m.clearPending.sourceSettled = true
+	m.phase = phaseConnecting
+	if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
+		settled.refreshView()
+		return settled, tea.Batch(settled.refreshCmd(), focusCmd), true
+	}
+	return m, m.refreshCmd(), true
+}
+
 // applyResult handles a terminal ResultMsg: it folds the run's usage into the running
 // totals, surfaces a terminal error, ends the run, and drains any queued prompts.
 // Extracted from updateStreamEvent's switch to keep that dispatcher flat.
@@ -1853,21 +1883,8 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 			m.conv.addError(rejection)
 		}
 	}
-	if m.clearPending != nil {
-		// The terminal facts still belong in the source projection, but Clear owns
-		// what happens next. Settle only: no queued prompt, failed-step retry,
-		// pending-mode retry, plan continuation, live-feed rearm, or other source run.
-		m.notifyHookStop(msg)
-		m = m.endRun(msg.Stop)
-		m.failedStepRetryRun = false
-		m.failedStepRetryAuthoritative = false
-		m.clearPending.sourceSettled = true
-		m.phase = phaseConnecting
-		if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
-			settled.refreshView()
-			return settled, tea.Batch(settled.refreshCmd(), focusCmd)
-		}
-		return m, m.refreshCmd()
+	if mm, cmd, handled := m.applyResultDuringClear(msg); handled {
+		return mm, cmd
 	}
 	retryDeferred := m.failedStepRetryRun && !m.failedStepRetryAuthoritative
 	m = m.endRun(msg.Stop)

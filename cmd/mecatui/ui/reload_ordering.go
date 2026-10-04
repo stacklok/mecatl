@@ -92,73 +92,104 @@ func (m *Model) refreshSessionWithCmd(cmd tea.Cmd) tea.Cmd {
 }
 
 func (m Model) onSnapshotReply(reply snapshotReply) (tea.Model, tea.Cmd) {
-	if reply.session != m.sessionID || reply.msg.SessionID != m.sessionID || reply.seq != m.reloadSeq || reply.seq <= m.reloadApplied {
+	if m.ignoreSnapshotReply(reply) {
 		return m, nil
 	}
 	if reply.msg.Err != nil {
-		if !m.reloadPending || m.reloadRetryScheduled {
-			return m, nil
-		}
-		if reply.feedGen != m.liveGen || m.reloadOverflow || reply.session != m.reloadSession {
-			m.reloadPending = false
-			m.reloadEvents = nil
-			m.disarmLiveFeed()
-			return m, (&m).startReconnect(nil)
-		}
-		m.reloadRetryAttempt++
-		m.reloadRetryScheduled = true
-		return m, m.snapshotRetryCmd(snapshotRetryMsg{seq: reply.seq, session: reply.session, feedGen: reply.feedGen})
+		return m.handleSnapshotFailure(reply)
 	}
-	if m.reloadPending && (reply.feedGen != m.liveGen || m.reloadOverflow || reply.session != m.reloadSession) {
-		m.reloadPending = false
-		m.reloadEvents = nil
-		m.reloadOverflow = false
-		m.reloadNeedRefresh = false
-		m.disarmLiveFeed()
-		cmd := (&m).startReconnect(nil)
-		return m, cmd
+	if m.reloadRequiresReconnect(reply) {
+		m.resetIncompleteReload()
+		return m, (&m).startReconnect(nil)
 	}
-	bufferedResults := 0
-	for _, event := range m.reloadEvents {
-		if _, ok := event.(client.ResultMsg); ok {
-			bufferedResults++
-		}
-	}
+	bufferedResults := reloadBufferedResults(m.reloadEvents)
 	// A result in the replacement feed can be the only terminal fact. Install
 	// just the title baseline, then replay the result exactly once against the
 	// previously confirmed usage and refetch its cumulative total after settlement.
 	if bufferedResults > 0 {
-		m.reloadNeedRefresh = true
-		// If something besides these buffered results changed the projection
-		// during fetch, leave even the title for the next authoritative fetch.
-		if reply.liveEpoch+uint64(bufferedResults) == m.reloadLiveEpoch && reply.msg.TitleMetadataPresent && reply.titleIntent == m.titleRenameRequestToken {
-			m.sessionTitle = reply.msg.Title
-			m.sessionTitleProvenance = reply.msg.TitleProvenance
-			m.sessionTitleRevision = reply.msg.TitleRevision
-		}
+		m.applySnapshotTitleAfterBufferedResults(reply, bufferedResults)
 	} else if reply.liveEpoch != m.reloadLiveEpoch {
 		if m.phase != phaseRunning && m.phase != phaseAwaitingApproval && m.deps.Session != nil {
-			cmd := (&m).refreshSessionCmd()
-			return m, cmd
+			return m, (&m).refreshSessionCmd()
 		}
 		m.reloadNeedRefresh = true
 		return m, nil
 	} else {
-		m.reloadNeedRefresh = false
-		// A newer operator intent must remain pending after the fetch.
-		if reply.modeIntent != m.modeIntentSeq {
-			reply.msg.Mode = ""
-		}
-		if reply.titleIntent != m.titleRenameRequestToken {
-			reply.msg.TitleMetadataPresent = false
-		}
-		var cmd tea.Cmd
-		m, cmd, _ = m.onResolvedModelMsg(reply.msg)
-		m.reloadApplied = reply.seq
-		return m.replayReloadEvents(cmd)
+		return m.applyCurrentSnapshot(reply)
 	}
 	m.reloadApplied = reply.seq
 	return m.replayReloadEvents(nil)
+}
+
+func (m Model) ignoreSnapshotReply(reply snapshotReply) bool {
+	return reply.session != m.sessionID || reply.msg.SessionID != m.sessionID || reply.seq != m.reloadSeq || reply.seq <= m.reloadApplied
+}
+
+func (m Model) handleSnapshotFailure(reply snapshotReply) (tea.Model, tea.Cmd) {
+	if !m.reloadPending || m.reloadRetryScheduled {
+		return m, nil
+	}
+	if m.reloadRequiresReconnect(reply) {
+		m.resetFailedReload()
+		return m, (&m).startReconnect(nil)
+	}
+	m.reloadRetryAttempt++
+	m.reloadRetryScheduled = true
+	return m, m.snapshotRetryCmd(snapshotRetryMsg{seq: reply.seq, session: reply.session, feedGen: reply.feedGen})
+}
+
+func (m Model) reloadRequiresReconnect(reply snapshotReply) bool {
+	return m.reloadPending && (reply.feedGen != m.liveGen || m.reloadOverflow || reply.session != m.reloadSession)
+}
+
+func (m *Model) resetFailedReload() {
+	m.reloadPending = false
+	m.reloadEvents = nil
+	m.disarmLiveFeed()
+}
+
+func (m *Model) resetIncompleteReload() {
+	m.reloadPending = false
+	m.reloadEvents = nil
+	m.reloadOverflow = false
+	m.reloadNeedRefresh = false
+	m.disarmLiveFeed()
+}
+
+func reloadBufferedResults(events []tea.Msg) uint64 {
+	var count uint64
+	for _, event := range events {
+		if _, ok := event.(client.ResultMsg); ok {
+			count++
+		}
+	}
+	return count
+}
+
+func (m *Model) applySnapshotTitleAfterBufferedResults(reply snapshotReply, bufferedResults uint64) {
+	m.reloadNeedRefresh = true
+	// If something besides these buffered results changed the projection during
+	// fetch, leave even the title for the next authoritative fetch.
+	if reply.liveEpoch+bufferedResults == m.reloadLiveEpoch && reply.msg.TitleMetadataPresent && reply.titleIntent == m.titleRenameRequestToken {
+		m.sessionTitle = reply.msg.Title
+		m.sessionTitleProvenance = reply.msg.TitleProvenance
+		m.sessionTitleRevision = reply.msg.TitleRevision
+	}
+}
+
+func (m Model) applyCurrentSnapshot(reply snapshotReply) (tea.Model, tea.Cmd) {
+	m.reloadNeedRefresh = false
+	// A newer operator intent must remain pending after the fetch.
+	if reply.modeIntent != m.modeIntentSeq {
+		reply.msg.Mode = ""
+	}
+	if reply.titleIntent != m.titleRenameRequestToken {
+		reply.msg.TitleMetadataPresent = false
+	}
+	var cmd tea.Cmd
+	m, cmd, _ = m.onResolvedModelMsg(reply.msg)
+	m.reloadApplied = reply.seq
+	return m.replayReloadEvents(cmd)
 }
 
 func (m *Model) refreshAfterSettledRun() tea.Cmd {
