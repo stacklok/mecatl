@@ -621,7 +621,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 	}
 }
 
-func TestMecatuiToolcallsInspector_Scenario5_WheelScrollsListWithoutChangingSelection(t *testing.T) {
+func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.deps.NoAltScreen = false
 	m = addToolcallsForTest(t, m, 125)
@@ -726,6 +726,18 @@ func TestMecatuiToolcallsInspector_Scenario5_WheelScrollsListWithoutChangingSele
 	}
 	if s.list.CursorID() != fmt.Sprintf("%d", wantBlock) {
 		t.Fatalf("click did not reveal selected block %d", wantBlock)
+	}
+	if s.detail {
+		t.Fatal("click opened detail instead of leaving the list open")
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("click moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if !s.detail || s.entries[s.selected].blockID != wantBlock {
+		t.Fatalf("Enter did not open clicked call detail: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
 	}
 }
 
