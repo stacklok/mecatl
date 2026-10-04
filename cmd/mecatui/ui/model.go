@@ -971,19 +971,20 @@ type Model struct {
 	liveReconnectErr      string
 	// Snapshot responses are ordered by issuance, not completion. While installing
 	// a replacement feed, its events wait for the matching snapshot baseline.
-	reloadSeq            uint64
-	reloadApplied        uint64
-	reloadSession        string
-	reloadFeedGen        uint64
-	reloadPending        bool
-	reloadOverflow       bool
-	reloadEvents         []tea.Msg
-	reloadLiveEpoch      uint64
-	reloadNeedRefresh    bool
-	reloadRetryAttempt   int
-	reloadRetryScheduled bool
-	reloadRetryTimer     func(time.Duration, snapshotRetryMsg) tea.Cmd
-	modeIntentSeq        uint64
+	reloadSeq              uint64
+	reloadApplied          uint64
+	reloadSession          string
+	reloadFeedGen          uint64
+	reloadPending          bool
+	reloadOverflow         bool
+	reloadEvents           []tea.Msg
+	reloadLiveEpoch        uint64
+	reloadNeedRefresh      bool
+	reloadMainUsagePresent bool
+	reloadRetryAttempt     int
+	reloadRetryScheduled   bool
+	reloadRetryTimer       func(time.Duration, snapshotRetryMsg) tea.Cmd
+	modeIntentSeq          uint64
 
 	// seenFireIDs is the per-session delivery-note dedup set (issue #387): a
 	// fire-result delivery note that arrives BOTH via the durable catch-up AND the
@@ -1334,6 +1335,7 @@ func (m Model) resetSessionDerived() Model {
 	m.reloadEvents = nil
 	m.reloadOverflow = false
 	m.reloadNeedRefresh = false
+	m.reloadMainUsagePresent = false
 	m.reloadRetryAttempt = 0
 	m.reloadRetryScheduled = false
 	return m

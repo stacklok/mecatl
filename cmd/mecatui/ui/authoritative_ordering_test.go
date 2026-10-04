@@ -12,6 +12,47 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+func TestMecatuiAuthoritativeReload_Scenario2_IdleSnapshotBeforeLiveResult(t *testing.T) {
+	for _, ledger := range []bool{true, false} {
+		t.Run(map[bool]string{true: "main ledger", false: "legacy missing ledger"}[ledger], func(t *testing.T) {
+			conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{MainUsagePresent: ledger, Usage: client.Usage{InputTokens: 40}}}}
+			m := modeTestModel(t, conv)
+			m.phase = phaseIdle // remote run committed before the UI received any of its events
+			m.usage = client.Usage{InputTokens: 30}
+			m.liveGen, m.reloadFeedGen = 7, 7
+			m.reloadPending, m.reloadSession, m.reloadSeq = true, m.sessionID, 1
+			m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, MainUsagePresent: ledger, Usage: client.Usage{InputTokens: 40}}})
+			if m.reloadPending {
+				t.Fatal("snapshot barrier was not released")
+			}
+			result := client.ResultMsg{Stop: stopError, Error: "remote run failed", Usage: client.Usage{InputTokens: 10}, RetryDispositionPresent: true, RetryDisposition: client.RetryDispositionRetryable}
+			mm, cmd := m.Update(liveMsg{gen: 7, msg: result})
+			m = mm.(Model)
+			if m.usage.InputTokens != 40 || m.phase != phaseIdle || !strings.Contains(stripANSIstr(m.statusMsg), "/retry") || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "remote run failed") {
+				t.Fatalf("live terminal duplicated usage or lost outcome: usage=%+v phase=%v status=%q blocks=%v", m.usage, m.phase, m.statusMsg, m.conv.testBlocks())
+			}
+			if ledger {
+				var fetched bool
+				for _, event := range flattenBatch(cmd) {
+					if reply, ok := event.(snapshotReply); ok {
+						m = applyAll(m, reply)
+						fetched = true
+					}
+				}
+				if !fetched || m.usage.InputTokens != 40 {
+					t.Fatalf("no post-terminal authoritative reconciliation: fetched=%t usage=%+v", fetched, m.usage)
+				}
+			}
+			// A subsequent owned run must still count its own result normally.
+			m.phase = phaseRunning
+			m = applyAll(m, liveMsg{gen: 7, msg: client.ResultMsg{Usage: client.Usage{InputTokens: 5}}})
+			if m.usage.InputTokens != 45 {
+				t.Fatalf("later run lost its increment: usage=%+v", m.usage)
+			}
+		})
+	}
+}
+
 func TestMecatuiAuthoritativeReload_Scenario2_SnapshotResultOrdering(t *testing.T) {
 	for _, order := range []string{"snapshot first", "result first", "legacy missing ledger"} {
 		t.Run(order, func(t *testing.T) {

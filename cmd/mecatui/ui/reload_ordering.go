@@ -185,6 +185,8 @@ func (m Model) applyCurrentSnapshot(reply snapshotReply, deferCounters bool) (te
 	if deferCounters {
 		reply.msg.MainUsagePresent = false
 		reply.msg.ContextOccupancy = nil
+	} else {
+		m.reloadMainUsagePresent = reply.msg.MainUsagePresent
 	}
 	// A newer operator intent must remain pending after the fetch.
 	if reply.modeIntent != m.modeIntentSeq {

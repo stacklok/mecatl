@@ -4017,6 +4017,15 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		mm := m.onSessionTitle(msg)
 		return mm, mm.waitLiveCmd()
 	default:
+		// An idle live-only terminal may already be included in the last
+		// authoritative ledger. Settle it without guessing at an increment, then
+		// fetch the cumulative total again. Legacy snapshots have no ledger to
+		// reconcile against, so keep their incremental fallback.
+		if result, ok := msg.(client.ResultMsg); ok && m.phase == phaseIdle && m.reloadMainUsagePresent && m.deps.Session != nil {
+			m.reloadNeedRefresh = true
+			result.Usage = client.Usage{}
+			msg = result
+		}
 		// A real event from the current reader proves the feed is healthy. Do not
 		// let replay/catch-up events or probe success reset this sequence.
 		m.liveContinuityAttempt = 0
