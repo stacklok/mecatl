@@ -439,13 +439,35 @@ func driveTo(t *testing.T, th theme.Theme) Model {
 // submits its canonical snapshot, and reduces the source listener result.
 func stockStatusFrame(t *testing.T, m Model) Model {
 	t.Helper()
+	return statusFrameWithInput(t, m, m.statusLineSnapshot())
+}
+
+func statusFrameWithInput(t *testing.T, m Model, input customization.Input) Model {
+	t.Helper()
 	source := customization.NewDefaultSource(0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	m.deps.StatusSource = source
-	source.Submit(m.statusLineSnapshot())
+	source.Submit(input)
 
 	updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
 	return updated.(Model)
+}
+
+// goldenStatusFrame exercises the shipped templates with representative, fixed
+// status input while leaving each golden's conversation and UI state intact.
+func goldenStatusFrame(t *testing.T, m Model) Model {
+	t.Helper()
+	input := m.statusLineSnapshot()
+	input.Session.Title = "Golden session"
+	input.Model.ProviderID = "fixture"
+	input.Model.DisplayName = "fixture-model"
+	input.Model.Route = "default"
+	input.Context = customization.Context{
+		Used:    customization.ContextAtom{Raw: 2048, Human: "2K"},
+		Window:  customization.ContextAtom{Raw: 4096, Human: "4K"},
+		Percent: 50, Known: true,
+	}
+	return statusFrameWithInput(t, m, input)
 }
 
 // applyAll feeds a sequence of msgs to a Model, discarding commands.
@@ -495,7 +517,7 @@ func TestStockStatusFixture(t *testing.T) {
 // TestViewGoldenStripped locks the awaiting-approval frame (ANSI stripped) — the
 // readable structural golden a reviewer can eyeball.
 func TestViewGoldenStripped(t *testing.T) {
-	m := stockStatusFrame(t, driveTo(t, theme.New("aztec", theme.AztecPalette())))
+	m := goldenStatusFrame(t, driveTo(t, theme.New("aztec", theme.AztecPalette())))
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "view_stripped.golden", got)
 }
@@ -503,7 +525,7 @@ func TestViewGoldenStripped(t *testing.T) {
 // TestViewGoldenAztecANSI locks the same frame WITH ANSI so an Aztec palette
 // regression (a changed escape) is caught.
 func TestViewGoldenAztecANSI(t *testing.T) {
-	m := stockStatusFrame(t, driveTo(t, theme.New("aztec", theme.AztecPalette())))
+	m := goldenStatusFrame(t, driveTo(t, theme.New("aztec", theme.AztecPalette())))
 	got := []byte(m.View().Content)
 	compareGolden(t, "view_aztec_ansi.golden", got)
 }

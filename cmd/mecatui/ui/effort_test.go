@@ -445,6 +445,7 @@ func TestEffortPickerGolden(t *testing.T) {
 	if m.effort.view != effortPanel {
 		t.Fatalf("view = %v, want effortPanel", m.effort.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "effort_picker.golden", got)
 }

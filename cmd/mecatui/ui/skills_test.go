@@ -807,6 +807,7 @@ func TestSkillsPanelScrollGolden(t *testing.T) {
 	}
 	_ = m.View()
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills_scroll.golden", got)
 }
@@ -820,6 +821,7 @@ func TestSkillsPanelGolden(t *testing.T) {
 	if st := skillsStateOf(t, m); st.view != skillsPanel {
 		t.Fatalf("view = %v, want skillsPanel", st.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills.golden", got)
 }
@@ -831,6 +833,7 @@ func TestSkillsPanelFilteredGolden(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeSkillsFilter(t, m, "deep")
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills_filtered.golden", got)
 }
@@ -842,6 +845,7 @@ func TestSkillsPanelNomatchGolden(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeSkillsFilter(t, m, "zzzzz")
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills_nomatch.golden", got)
 }

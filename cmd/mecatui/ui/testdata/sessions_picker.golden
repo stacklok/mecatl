@@ -1,4 +1,4 @@
- session sess-test-00
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ▸ Chats    Scheduled runs    Child runs    Other
 
@@ -36,5 +36,5 @@ enter: continue  y: copy ID  v: view  f: fork  r: rename  d: delete  tab: switch
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

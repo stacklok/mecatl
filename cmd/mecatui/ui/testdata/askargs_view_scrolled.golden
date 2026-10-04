@@ -1,4 +1,4 @@
- session sess-test-00
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 echo step-xxxxa-
 echo step-xxxxb-y
@@ -25,5 +25,5 @@ scroll: ↑/↓ · pgup/pgdn · home/end · mouse wheel · r raw|pretty · esc b
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⚠ awaiting approval
+ ⚠ awaiting approval                                      ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

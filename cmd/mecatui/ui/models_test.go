@@ -1768,6 +1768,7 @@ func TestModelsPickerGolden(t *testing.T) {
 	if modelsSurface(t, m).view != modelsPanel {
 		t.Fatalf("view = %v, want modelsPanel", modelsSurface(t, m).view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models.golden", got)
 }
@@ -1798,6 +1799,7 @@ func TestModelsPickerDisabledGolden(t *testing.T) {
 	m := newModelsModel(t, &fakeModels{}, &fakeStore{}, client.Capabilities{ModelSelection: false}, client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_disabled.golden", got)
 }
@@ -1815,6 +1817,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	rendered := stripANSI([]byte(m.View().Content))
 	for _, want := range []string{"openai-codex", "manual token rejected", "auth.yaml", "restart"} {
 		if !bytes.Contains(rendered, []byte(want)) {
@@ -1835,6 +1838,7 @@ func TestOpenAICodexHealthyStatusDoesNotImplyOrgGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	rendered := stripANSI([]byte(m.View().Content))
 	if !bytes.Contains(rendered, []byte("openai-codex · GPT-5")) {
 		t.Fatalf("healthy Codex model missing from picker:\n%s", rendered)
@@ -1850,6 +1854,7 @@ func TestModelsPickerEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, &fakeModels{}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_empty.golden", got)
 }
@@ -1862,6 +1867,7 @@ func TestModelsPickerFilteredGolden(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "gpt")
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_filtered.golden", got)
 }
@@ -1877,6 +1883,7 @@ func TestModelsPickerScrolledGolden(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	if !bytes.Contains(got, []byte("↑ 26 items")) {
 		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
@@ -1891,6 +1898,7 @@ func TestModelsPickerNoMatchGolden(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "zzzzz")
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_nomatch.golden", got)
 }
@@ -1906,6 +1914,7 @@ func TestModelsPickerToolhiveUnreachableGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_toolhive_unreachable.golden", got)
 }
@@ -1920,6 +1929,7 @@ func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_gateway_empty.golden", got)
 }
@@ -1937,6 +1947,7 @@ func TestModelsPickerMixedDeploymentEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_mixed_deployment_empty.golden", got)
 }
@@ -1951,6 +1962,7 @@ func TestModelsPickerGlobalDefaultGolden(t *testing.T) {
 	m.modelCatalog.globalDefault = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_global_default.golden", got)
 }

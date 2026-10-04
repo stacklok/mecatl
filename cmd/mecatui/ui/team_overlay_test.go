@@ -639,6 +639,7 @@ func TestAgentsRosterStoppedGolden(t *testing.T) {
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_stopped.golden", got)
@@ -1400,6 +1401,7 @@ func TestAgentsRosterGolden(t *testing.T) {
 	if m.team.view != teamRoster {
 		t.Fatalf("view = %v, want teamRoster", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster.golden", got)
@@ -1430,6 +1432,7 @@ func TestAgentsRosterMidRunIdleGolden(t *testing.T) {
 	if m.team.view != teamRoster {
 		t.Fatalf("view = %v, want teamRoster", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_midrun_idle.golden", got)
@@ -1448,6 +1451,7 @@ func TestAgentsTasksView(t *testing.T) {
 	if m.team.view != teamTasks {
 		t.Fatalf("view = %v, want teamTasks", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_tasks.golden", got)
 }
@@ -1464,6 +1468,7 @@ func TestAgentsFindingsView(t *testing.T) {
 	if m.team.view != teamFindings {
 		t.Fatalf("view = %v, want teamFindings", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_findings.golden", got)
 }
@@ -1484,6 +1489,7 @@ func TestAgentsRosterWindowedGolden(t *testing.T) {
 		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_windowed.golden", got)
@@ -1504,6 +1510,7 @@ func TestAgentsFocusGolden(t *testing.T) {
 	if m.team.view != teamFocus || m.team.member != "scout" {
 		t.Fatalf("focus = %v/%q, want focus/scout", m.team.view, m.team.member)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_focus.golden", got)
 }
@@ -1582,6 +1589,7 @@ func TestAgentsFocusWindowedGolden(t *testing.T) {
 	if m.team.view != teamFocus {
 		t.Fatalf("view = %v, want teamFocus", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_focus_windowed.golden", got)
 }

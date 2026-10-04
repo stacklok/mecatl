@@ -366,6 +366,7 @@ func TestAgentsInvPanelGolden(t *testing.T) {
 	if m.agentsInv.view != agentsInvPanel {
 		t.Fatalf("view = %v, want agentsInvPanel", m.agentsInv.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "agents_inventory.golden", got)
 }
@@ -376,6 +377,7 @@ func TestAgentsInvPanelEmptyNotEnabledGolden(t *testing.T) {
 	m := newAgentsInvModel(t, &fakeAgents{}, client.Capabilities{Agents: false})
 	mm, cmd := m.runAgentsInv()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "agents_inventory_empty_disabled.golden", got)
 }
@@ -386,6 +388,7 @@ func TestAgentsInvPanelEmptyEnabledGolden(t *testing.T) {
 	m := newAgentsInvModel(t, &fakeAgents{}, client.Capabilities{Agents: true})
 	mm, cmd := m.runAgentsInv()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "agents_inventory_empty_enabled.golden", got)
 }
@@ -544,6 +547,7 @@ func TestAgentsInvPanelScrollGolden(t *testing.T) {
 	}
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "agents_inventory_scroll.golden", got)
 }

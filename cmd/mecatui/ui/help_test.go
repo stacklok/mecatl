@@ -72,6 +72,7 @@ func qmark() tea.KeyPressMsg { return tea.KeyPressMsg{Code: '?', Text: "?"} }
 // mcp/commands/skills rows carry [not enabled]; memory/teams/shell are available.
 func TestHelpOverlayEmbeddedGolden(t *testing.T) {
 	m := helpModel(t, embeddedCaps())
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "help_embedded.golden", got)
 }
@@ -81,6 +82,7 @@ func TestHelpOverlayEmbeddedGolden(t *testing.T) {
 // memory prose lines.
 func TestHelpOverlayAllOnGolden(t *testing.T) {
 	m := helpModel(t, allOnCaps())
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "help_all_on.golden", got)
 }

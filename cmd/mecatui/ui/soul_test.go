@@ -300,6 +300,7 @@ func TestSoulPanelGolden(t *testing.T) {
 	if s := soulActive(m); s == nil || s.view != soulPanel {
 		t.Fatalf("modal surface = %v, want a *soulState at soulPanel", m.modal)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul.golden", got)
 }
@@ -310,6 +311,7 @@ func TestSoulPanelEmptyDisabledGolden(t *testing.T) {
 	m := newSoulModel(t, &fakeSoul{}, client.Capabilities{Soul: false})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_empty_disabled.golden", got)
 }
@@ -320,6 +322,7 @@ func TestSoulPanelEmptyEnabledGolden(t *testing.T) {
 	m := newSoulModel(t, &fakeSoul{}, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_empty_enabled.golden", got)
 }
@@ -337,6 +340,7 @@ func TestSoulPanelProjectGolden(t *testing.T) {
 	m := newSoulModel(t, project, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_project.golden", got)
 }

@@ -148,6 +148,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	m = mm.(Model)
 	m.agentsTab = tabSubagents
 	m.subagents = subagentState{view: subagentFocus, child: "sub-child"}
+	m = goldenStatusFrame(t, m)
 	views["Subagent focus"] = stripANSIstr(m.View().Content)
 	m.subagents = subagentState{view: subagentFocus, child: "accepted-child"}
 	views["accepted Subagent focus"] = stripANSIstr(m.View().Content)

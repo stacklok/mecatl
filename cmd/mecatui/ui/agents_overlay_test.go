@@ -935,6 +935,7 @@ func TestSubagentRosterGolden(t *testing.T) {
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_roster.golden", got)
@@ -952,6 +953,7 @@ func TestSubagentFocusGolden(t *testing.T) {
 	if m.subagents.view != subagentFocus {
 		t.Fatalf("expected subagentFocus, got %v", m.subagents.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_focus.golden", got)
@@ -987,6 +989,7 @@ func TestSubagentRosterBackgroundGolden(t *testing.T) {
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_roster_background.golden", got)
@@ -1005,6 +1008,7 @@ func TestSubagentFocusBackgroundGolden(t *testing.T) {
 	if m.subagents.view != subagentFocus || m.subagents.child != "explorer-f8a6" {
 		t.Fatalf("expected focus on the background child, got view=%v child=%q", m.subagents.view, m.subagents.child)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_focus_background.golden", got)
@@ -1256,6 +1260,7 @@ func TestAgentsTeamsTabGolden(t *testing.T) {
 	if m.agentsTab != tabTeams {
 		t.Fatalf("expected Teams tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "agents_teams_tab.golden", got)
@@ -1291,6 +1296,7 @@ func TestParallelRosterGolden(t *testing.T) {
 	if m.agentsTab != tabParallel {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "parallel_roster.golden", got)
@@ -1348,6 +1354,7 @@ func TestParallelGroupFocusGolden(t *testing.T) {
 	if m.parallel.view != parallelGroupView {
 		t.Fatalf("expected parallelGroupView, got %v", m.parallel.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "parallel_group_focus.golden", got)

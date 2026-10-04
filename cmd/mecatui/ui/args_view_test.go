@@ -590,6 +590,7 @@ func TestWheelScrollsConversationWithoutModal(t *testing.T) {
 // TestAskArgsViewPrettyGolden locks the full-screen args view's pretty frame.
 func TestAskArgsViewPrettyGolden(t *testing.T) {
 	m := openArgsView(t, shellAskModel(t, longShellArgs))
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_view_pretty.golden", got)
 }
@@ -598,6 +599,7 @@ func TestAskArgsViewPrettyGolden(t *testing.T) {
 func TestAskArgsViewRawGolden(t *testing.T) {
 	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_view_raw.golden", got)
 }
@@ -613,6 +615,7 @@ func TestAskArgsViewScrolledGolden(t *testing.T) {
 	if approvalSurfaceOf(t, m).argsVP.YOffset() != 2 {
 		t.Fatalf("the tall fixture must admit YOffset 2, got %d — the golden would be vacuous", approvalSurfaceOf(t, m).argsVP.YOffset())
 	}
+	m = goldenStatusFrame(t, m)
 	got := string(stripANSI([]byte(m.View().Content)))
 	prettyGolden, err := os.ReadFile(filepath.Join("testdata", "askargs_view_pretty.golden")) //nolint:gosec // test golden
 	if err != nil {
@@ -661,6 +664,7 @@ func tallShellCommandLines(n int) []string {
 // Shell ask (the wrapped, capped mini-viewport + hint).
 func TestAskArgsModalLongShellGolden(t *testing.T) {
 	m := shellAskModel(t, longShellArgs)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_modal_longshell.golden", got)
 }

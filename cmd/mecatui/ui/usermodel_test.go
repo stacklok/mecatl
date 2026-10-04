@@ -178,16 +178,19 @@ func TestUserModelDetailHistoryScrollKeepsExactData(t *testing.T) {
 
 func TestUserModelPanelGolden(t *testing.T) {
 	m, _ := openedUserModel(t, newUserModelModel(t, sampleUserModel(), client.Capabilities{UserModel: true}))
+	m = goldenStatusFrame(t, m)
 	compareGolden(t, "usermodel.golden", stripANSI([]byte(m.View().Content)))
 }
 func TestUserModelPanelEmptyDisabledGolden(t *testing.T) {
 	m := newUserModelModel(t, &fakeUserModel{}, client.Capabilities{})
 	s := &userModelState{deps: (&m).surfaceDeps(), list: &bounded.List{}, viewport: &bounded.Viewport{}}
 	m.modal = s
+	m = goldenStatusFrame(t, m)
 	compareGolden(t, "usermodel_empty_disabled.golden", stripANSI([]byte(m.View().Content)))
 }
 func TestUserModelPanelEmptyEnabledGolden(t *testing.T) {
 	m, _ := openedUserModel(t, newUserModelModel(t, &fakeUserModel{}, client.Capabilities{UserModel: true}))
+	m = goldenStatusFrame(t, m)
 	compareGolden(t, "usermodel_empty_enabled.golden", stripANSI([]byte(m.View().Content)))
 }
 
