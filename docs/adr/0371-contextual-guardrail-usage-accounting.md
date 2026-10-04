@@ -4,7 +4,7 @@
 - Date: 2026-09-25
 - Scope: contextual-review result contract and session-owned auxiliary usage
 - Supersedes: ADR 0354 decision 2 for contextual `ToolReviewer` results and decision 4 for guardrail-hook reporting; path-escape usage is returned through `PermissionPolicy.Evaluate`, not a reporter callback
-- Superseded by: none
+- Superseded by: ADR 0373 for decision 6's reflection accounting only
 
 ## Context
 
