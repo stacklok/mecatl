@@ -166,7 +166,11 @@ provenance.
 Automatic titles require the server operator to configure a compatible
 `models.slots.title` binding. Without it, the server makes no title-generation
 model call. Generated titles use up to three early prompts after a successful
-exchange and have separately recorded `session_title` token usage.
+exchange and have separately recorded `session_title` token usage. If the live
+connection drops, `mecatui` reloads the server's stored session details before
+resuming title updates. The displayed title can change to match the stored
+record; an unsent draft stays in the editor. A footer warning reports when
+session details cannot yet be refreshed and clears after a successful retry.
 
 ## Start with empty model history
 
