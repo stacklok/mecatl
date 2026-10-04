@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -51,7 +54,14 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 			{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000},
 		},
 	}
+	source := customization.NewDefaultSource(0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	m := healModel(t, conv)
+	m.deps.StatusSource = source
+	m.contextEstimated = true
+	m.submitStatusLine()
+	updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
 
 	// 1) Raced create → window unknown → the footer degrades (no denominator bar).
 	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
@@ -61,7 +71,7 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	// 2) A turn boundary fires the heal refetch. Drive the REAL reducer with a
 	// TurnEndMsg and assert it emits a command (the RefreshResolvedModelCmd batched
 	// alongside afterEvent's cmd).
-	mm, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 100}})
+	mm, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 100}, Estimated: true})
 	m = mm.(Model)
 	if cmd == nil {
 		t.Fatal("TurnEndMsg with an unknown window emitted no command — the heal refetch did not fire")
@@ -74,15 +84,18 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 		t.Fatalf("GetSession called %d times after one turn-end with unknown window, want 1", n)
 	}
 
-	// 3) Feed the heal result back through the reducer and retain the resolved window.
+	// 3) Feed the heal result through the real reducer, then let the configured
+	// source publish and the UI listener apply the refreshed surface.
 	healed := client.ResolvedModelMsg{SessionID: "sess-test-0001", Resolved: client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000}}
 	m = applyAll(m, healed)
 	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
 		t.Fatalf("resolvedSessionModel.ContextWindow = %d, want 1,050,000 after the heal", got)
 	}
-	status := m.statusLineSnapshot()
-	if status.Context.Window.Raw != 1_050_000 || status.Context.Used.Raw != 40_000 || !status.Context.Known {
-		t.Fatalf("status snapshot = %#v, want healed known context", status.Context)
+	updated, _ = m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
+	footer := stripANSIstr(m.renderFooter())
+	if !m.generatedStatusLine.Footer.Present || !strings.Contains(footer, "~40K/1.1M") || !strings.Contains(footer, "~") {
+		t.Fatalf("healed stock footer = %q, want source-rendered estimated occupancy with healed denominator", footer)
 	}
 
 	// 4) Identity untouched (only the denominator self-corrected).

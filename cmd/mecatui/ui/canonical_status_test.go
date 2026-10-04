@@ -26,20 +26,31 @@ func canonicalFrame(source customization.Source, width int) Model {
 }
 
 func TestCanonicalStatus_Scenario1_StockSourceOwnsSurfaces(t *testing.T) {
-	for _, width := range []int{120, 48} {
-		source := customization.NewDefaultSource(0)
-		t.Cleanup(func() { _ = source.Close(context.Background()) })
-		m := canonicalFrame(source, width)
-		source.Submit(m.statusLineSnapshot())
-		updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
-		m = updated.(Model)
-		header, footer := stripANSIstr(m.renderHeader()), stripANSIstr(m.renderFooter())
-		if !m.generatedStatusLine.Header.Present || !m.generatedStatusLine.Footer.Present || !strings.Contains(header, "canonical-model") || !strings.Contains(footer, "ctx") {
-			t.Fatalf("width %d stock surfaces: header %q footer %q result %#v", width, header, footer, m.generatedStatusLine)
-		}
-		if strings.Count(header, "canonical-model") != 1 || strings.Count(footer, "ctx") != 1 || lipgloss.Width(strings.Split(header, "\n")[0]) > width || lipgloss.Width(strings.Split(footer, "\n")[1]) > width {
-			t.Fatalf("width %d duplicate or oversized renderer content: %q / %q", width, header, footer)
-		}
+	for _, tc := range []struct {
+		name, wantFooter, absentFooter string
+		width                          int
+	}{
+		{name: "wide full", width: 120, wantFooter: "100K/200K"},
+		{name: "narrow compact", width: 48, wantFooter: "ctx", absentFooter: "100K/200K"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := customization.NewDefaultSource(0)
+			t.Cleanup(func() { _ = source.Close(context.Background()) })
+			m := canonicalFrame(source, tc.width)
+			source.Submit(m.statusLineSnapshot())
+			updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+			m = updated.(Model)
+			header, footer := stripANSIstr(m.renderHeader()), stripANSIstr(m.renderFooter())
+			if !m.generatedStatusLine.Header.Present || !m.generatedStatusLine.Footer.Present || !strings.Contains(header, "canonical-model") || !strings.Contains(footer, tc.wantFooter) {
+				t.Fatalf("width %d stock surfaces: header %q footer %q result %#v", tc.width, header, footer, m.generatedStatusLine)
+			}
+			if tc.absentFooter != "" && strings.Contains(footer, tc.absentFooter) {
+				t.Fatalf("width %d retained wide footer content %q: %q", tc.width, tc.absentFooter, footer)
+			}
+			if strings.Count(header, "canonical-model") != 1 || strings.Count(footer, "ctx") != 1 || lipgloss.Width(strings.Split(header, "\n")[0]) > tc.width || lipgloss.Width(strings.Split(footer, "\n")[1]) > tc.width {
+				t.Fatalf("width %d duplicate or oversized renderer content: %q / %q", tc.width, header, footer)
+			}
+		})
 	}
 }
 

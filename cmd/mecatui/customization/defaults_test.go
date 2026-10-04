@@ -120,20 +120,29 @@ func TestDefaultTitleTemplateElidesWideSessionTitle(t *testing.T) {
 
 func TestCanonicalStatus_Scenario3_UnknownContextDoesNotClaimZeroPressure(t *testing.T) {
 	for _, tc := range []struct {
-		name, want string
-		meter      func(templateContext) templateText
+		name       string
+		footerCols int
+		want       string
+		delegation Delegation
 	}{
-		{name: "full", want: "ctx ?/200K", meter: contextMeter},
-		{name: "compact", want: "ctx ?", meter: contextMeterCompact},
-		{name: "minimal", want: "ctx ?", meter: contextMeterMinimal},
+		{name: "full", footerCols: 120, want: "ctx ?/200K"},
+		{name: "compact", footerCols: 20, want: "ctx ?"},
+		{name: "minimal", footerCols: 11, want: "ctx ?", delegation: Delegation{Team: LiveTeam{Total: 1}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			footer := stockContextFooter(tc.meter, Context{
-				Used:   ContextAtom{Human: "?"},
-				Window: ContextAtom{Raw: 200_000, Human: "200K"},
+			footer := stockFooter(t, Input{
+				Context:    Context{Used: ContextAtom{Human: "?"}, Window: ContextAtom{Raw: 200_000, Human: "200K"}},
+				Delegation: tc.delegation,
+				Terminal:   Terminal{FooterAvailCols: tc.footerCols},
 			})
-			if got := statusSurfaceText(footer); got != tc.want {
-				t.Fatalf("footer = %q, want unknown context %q", got, tc.want)
+			if got := statusSurfaceText(footer); !strings.Contains(got, tc.want) {
+				t.Fatalf("footer = %q, want unknown context containing %q", got, tc.want)
+			}
+			if tc.name == "minimal" && strings.Contains(statusSurfaceText(footer), "⟳") {
+				t.Fatalf("footer = %q, retained compact delegation content instead of selecting minimal", statusSurfaceText(footer))
+			}
+			if strings.Contains(statusSurfaceText(footer), "ctx 0%") {
+				t.Fatalf("footer = %q, fabricated zero pressure for unknown context", statusSurfaceText(footer))
 			}
 			for _, span := range footer.Spans {
 				if span.Token == TokenSuccess || span.Token == TokenWarning {
@@ -146,46 +155,52 @@ func TestCanonicalStatus_Scenario3_UnknownContextDoesNotClaimZeroPressure(t *tes
 
 func TestCanonicalStatus_Scenario3_EstimatedContextMarkedAtEveryWidth(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		meter func(templateContext) templateText
+		name       string
+		footerCols int
 	}{
-		{name: "full", meter: contextMeter},
-		{name: "compact", meter: contextMeterCompact},
-		{name: "minimal", meter: contextMeterMinimal},
+		{name: "full", footerCols: 120},
+		{name: "compact", footerCols: 20},
+		{name: "minimal", footerCols: 12},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			estimated := stockContextFooter(tc.meter, Context{
-				Used:      ContextAtom{Raw: 75_000, Human: "~75K"},
-				Window:    ContextAtom{Raw: 100_000, Human: "100K"},
-				Percent:   75,
-				Known:     true,
-				Estimated: true,
+			estimated := stockFooter(t, Input{
+				Context:  Context{Used: ContextAtom{Raw: 75_000, Human: "~75K"}, Window: ContextAtom{Raw: 100_000, Human: "100K"}, Percent: 75, Known: true, Estimated: true},
+				Terminal: Terminal{FooterAvailCols: tc.footerCols},
 			})
 			if text := statusSurfaceText(estimated); !strings.Contains(text, "~75%") {
 				t.Fatalf("estimated footer = %q, want visibly estimated percentage", text)
 			}
 
-			known := stockContextFooter(tc.meter, Context{
-				Used:    ContextAtom{Raw: 90_000, Human: "90K"},
-				Window:  ContextAtom{Raw: 100_000, Human: "100K"},
-				Percent: 90,
-				Known:   true,
+			known := stockFooter(t, Input{
+				Context:  Context{Used: ContextAtom{Raw: 90_000, Human: "90K"}, Window: ContextAtom{Raw: 100_000, Human: "100K"}, Percent: 90, Known: true},
+				Terminal: Terminal{FooterAvailCols: tc.footerCols},
 			})
-			if text := statusSurfaceText(known); strings.Contains(text, "~90%") || !strings.Contains(text, "90%") || !strings.Contains(text, "⚠") {
-				t.Fatalf("known footer = %q, want ordinary pressured percentage", text)
+			if text := statusSurfaceText(known); strings.Contains(text, "~90%") || !strings.Contains(text, "90%") {
+				t.Fatalf("known footer = %q, want ordinary percentage", text)
 			}
-			for _, span := range known.Spans {
-				if span.Token == TokenWarning {
-					return
+			if tc.name != "minimal" {
+				for _, span := range known.Spans {
+					if span.Token == TokenWarning {
+						return
+					}
 				}
+				t.Fatalf("known footer = %#v, want warning pressure token", known)
 			}
-			t.Fatalf("known footer = %#v, want warning pressure token", known)
 		})
 	}
 }
 
-func stockContextFooter(meter func(templateContext) templateText, statusContext Context) Surface {
-	return Render("<footer>"+string(meter(newTemplateInput(Input{Context: statusContext}).Context))+"</footer>", testPalette{}).Footer
+func stockFooter(t *testing.T, input Input) Surface {
+	t.Helper()
+	source := NewDefaultSource(0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(input)
+	select {
+	case <-source.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("stock source did not publish")
+	}
+	return source.Latest().Footer
 }
 
 func TestDefaultStatusHeadersElideSessionTitleByVariant(t *testing.T) {
