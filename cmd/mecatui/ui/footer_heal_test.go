@@ -42,10 +42,10 @@ func healModel(t *testing.T, conv *fakeConv) Model {
 }
 
 // TestFooterHealRaceThenHeal is the decisive offline reproduction of the issue-#66
-// footer-heal race: a raced create echoes a 0 window (the footer degrades to the
-// bare "ctx 40K", no bar), the turn-end gate fires a GetSession refetch, and the
+// footer-heal race: a raced create echoes a 0 window (the footer initially
+// degrades to bare "ctx ~35K"), the turn-end gate fires a GetSession refetch, and the
 // server's healed live window (1.05M) raises the denominator so the footer renders
-// the "40K/1.0M" bar — WITHOUT a model switch or restart.
+// estimated occupancy against the rounded 1.1M window — WITHOUT a model switch or restart.
 func TestFooterHealRaceThenHeal(t *testing.T) {
 	conv := &fakeConv{
 		recv: &fakeRecver{}, send: &fakeSender{},
@@ -58,6 +58,7 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	m := healModel(t, conv)
 	m.deps.StatusSource = source
+	m.contextTokens = 35_000 // turn-end changes occupancy and publishes a distinct pre-heal result
 	m.contextEstimated = true
 	m.submitStatusLine()
 	updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
@@ -66,6 +67,9 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	// 1) Raced create → window unknown → the footer degrades (no denominator bar).
 	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
 		t.Fatalf("resolved context window = %d, want 0 (raced create echoed a 0 window)", got)
+	}
+	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "ctx ~35K") || strings.Contains(footer, "/1.1M") {
+		t.Fatalf("pre-heal stock footer = %q, want estimated occupancy without a denominator", footer)
 	}
 
 	// 2) A turn boundary fires the heal refetch. Drive the REAL reducer with a
@@ -83,6 +87,13 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	if n := conv.getSessionCalls(); n != 1 {
 		t.Fatalf("GetSession called %d times after one turn-end with unknown window, want 1", n)
 	}
+	// Settle the turn-end source notification before applying the heal. Otherwise
+	// the next listener wake can observe the old result and falsely pass/fail.
+	updated, _ = m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
+	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "ctx ~40K") || strings.Contains(footer, "/1.1M") {
+		t.Fatalf("turn-end stock footer = %q, want pre-heal estimated occupancy", footer)
+	}
 
 	// 3) Feed the heal result through the real reducer, then let the configured
 	// source publish and the UI listener apply the refreshed surface.
@@ -94,7 +105,7 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	updated, _ = m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
 	m = updated.(Model)
 	footer := stripANSIstr(m.renderFooter())
-	if !m.generatedStatusLine.Footer.Present || !strings.Contains(footer, "~40K/1.1M") || !strings.Contains(footer, "~") {
+	if !m.generatedStatusLine.Footer.Present || !strings.Contains(footer, "~40K/1.1M") || !strings.Contains(footer, "~3%") {
 		t.Fatalf("healed stock footer = %q, want source-rendered estimated occupancy with healed denominator", footer)
 	}
 

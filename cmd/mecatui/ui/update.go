@@ -1211,7 +1211,6 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	if (&m).setResolvedSessionModel(msg.Resolved) {
 		m.refreshView()
-		m.submitStatusLine()
 	}
 	if msg.AdoptContextOccupancy && m.startupAdopted && m.resolvedSessionModel.ContextWindow == 0 && msg.StartupResumeRefreshAttempt < startupResumeRefreshRetries {
 		return m, m.startupResumeRefreshRetryCmd(msg.StartupResumeRefreshAttempt + 1), true

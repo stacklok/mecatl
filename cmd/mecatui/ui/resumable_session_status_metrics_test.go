@@ -154,8 +154,8 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupRefreshSubmitsPersistedO
 	updated, _ = m.Update(refreshed)
 	m = updated.(Model)
 	input, ok := source.lastInput()
-	if m.contextTokens != 40_000 || !m.contextEstimated || !ok || source.inputCount() != 3 || input.Context.Used.Raw != 40_000 || !input.Context.Known || !input.Context.Estimated || input.Context.Window.Raw != 200_000 {
-		t.Fatalf("refreshed startup status = %#v (count=%d), want persisted occupancy after the healed denominator was resubmitted", input, source.inputCount())
+	if m.contextTokens != 40_000 || !m.contextEstimated || !ok || source.inputCount() != 2 || input.Context.Used.Raw != 40_000 || !input.Context.Known || !input.Context.Estimated || input.Context.Window.Raw != 200_000 {
+		t.Fatalf("refreshed startup status = %#v (count=%d), want persisted occupancy after the healed denominator was submitted once", input, source.inputCount())
 	}
 }
 
