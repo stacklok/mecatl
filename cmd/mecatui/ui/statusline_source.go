@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 type statusLineChangedMsg struct {
@@ -58,11 +59,11 @@ func (m Model) statusLineWaitCmd() tea.Cmd {
 }
 
 func usageAtom(raw int64) customization.UsageAtom {
-	return customization.UsageAtom{Raw: raw, Human: humanizeTokens(raw)}
+	return customization.UsageAtom{Raw: raw, Human: renderfmt.HumanizeTokens(raw)}
 }
 
 func contextAtom(raw int64) customization.ContextAtom {
-	return customization.ContextAtom{Raw: raw, Human: humanizeTokens(raw)}
+	return customization.ContextAtom{Raw: raw, Human: renderfmt.HumanizeTokens(raw)}
 }
 
 func contextOccupancyAtom(raw int64, known, estimated bool) customization.ContextAtom {

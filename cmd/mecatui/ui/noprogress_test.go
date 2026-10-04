@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -55,13 +56,13 @@ func TestCompactionStillScrollbackNotice(t *testing.T) {
 
 // TestNoProgressTerminalStopStillShown confirms the durable terminal signal survives the
 // scrollback removal: the terminal no-progress stop is rendered by the footer's
-// stopReasonLabel as "stopped · no progress", independent of any scrollback notice.
+// renderfmt.StopReasonLabel as "stopped · no progress", independent of any scrollback notice.
 func TestNoProgressTerminalStopStillShown(t *testing.T) {
-	text, slot := stopReasonLabel("no_progress")
+	text, slot := renderfmt.StopReasonLabel("no_progress")
 	if text != "stopped · no progress" {
 		t.Errorf("terminal no-progress footer label = %q, want %q", text, "stopped · no progress")
 	}
-	if slot != slotCtxWarn {
-		t.Errorf("terminal no-progress slot = %q, want %q", slot, slotCtxWarn)
+	if slot != "ctxWarn" {
+		t.Errorf("terminal no-progress slot = %q, want %q", slot, "ctxWarn")
 	}
 }

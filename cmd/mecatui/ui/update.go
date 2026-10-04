@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -1304,8 +1305,8 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.contextEstimated = msg.Estimated
 		}
 		m.conv.endReasoningStream()
-		if !trivialTurn(msg) {
-			m.conv.addTurnStat(turnStatLine(msg))
+		if !renderfmt.TrivialTurn(msg) {
+			m.conv.addTurnStat(renderfmt.TurnStatLine(msg))
 		}
 		mm, cmd := m.afterEvent()
 		// Footer context-meter self-heal (issue #66): if the meter's denominator is
@@ -4229,7 +4230,7 @@ func (m Model) endRun(stop string) Model {
 	// cursor-blink cmd we don't thread back here; the next keypress re-arms the blink.
 	_ = m.prompt.Focus()
 	if stop != "" {
-		text, slot := stopReasonLabel(stop)
+		text, slot := renderfmt.StopReasonLabel(stop)
 		m.statusMsg = m.deps.Theme.Style(slot).Render(text)
 	}
 	m.refreshView()
@@ -4972,7 +4973,7 @@ func (m Model) resumeQueue() (tea.Model, tea.Cmd) {
 // done or merely hit a SIZE bound, so feeding the next staged prompt simply
 // continues the work the user lined up:
 //
-//   - ""        — treated as a clean end_turn throughout (cf. stopReasonLabel).
+//   - ""        — treated as a clean end_turn throughout (cf. renderfmt.StopReasonLabel).
 //   - end_turn  — the model finished without requesting more tools.
 //   - max_turns / max_tool_calls / budget — the run hit a per-run budget. The model was
 //     healthy; it just ran out of room. A queued follow-up ("continue", or the next
@@ -4988,7 +4989,7 @@ func (m Model) resumeQueue() (tea.Model, tea.Cmd) {
 //   - error / "closed" — the run broke or the stream ended abnormally.
 //
 // The vocabulary is the session.StopReason set plus the "closed" StreamClosed
-// sentinel; stopReasonLabel renders the same set for the footer.
+// sentinel; renderfmt.StopReasonLabel renders the same set for the footer.
 func shouldDrain(stop string) bool {
 	switch stop {
 	case "", "end_turn", "max_turns", "max_tool_calls", "budget":

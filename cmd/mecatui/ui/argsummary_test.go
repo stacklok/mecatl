@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 // mustJSON marshals v to a compact JSON args string for a tool block.
@@ -249,8 +250,8 @@ func TestHumanizeBytesSI(t *testing.T) {
 		{1_000_000_000_000, "1 TB"},
 	}
 	for _, c := range cases {
-		if got := humanizeBytes(c.n); got != c.want {
-			t.Errorf("humanizeBytes(%d) = %q, want %q", c.n, got, c.want)
+		if got := renderfmt.HumanizeBytes(c.n); got != c.want {
+			t.Errorf("renderfmt.HumanizeBytes(%d) = %q, want %q", c.n, got, c.want)
 		}
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -1436,8 +1437,8 @@ func teamLaneLine(ln *teamLane, nameW int, teamDone bool) string {
 		teamMutCue(ln),
 		name,
 		teamLaneState(ln, teamDone),
-		humanizeTokens(ln.usage.InputTokens),
-		humanizeTokens(ln.usage.OutputTokens))
+		renderfmt.HumanizeTokens(ln.usage.InputTokens),
+		renderfmt.HumanizeTokens(ln.usage.OutputTokens))
 }
 
 // teamMutCue is the PERSISTENT per-member mutating cue (stable roster metadata): a
@@ -1704,25 +1705,6 @@ func subagentStopLabel(stop string) string {
 	default:
 		return terminaltext.Sanitize(stop)
 	}
-}
-
-// humanizeDuration renders a millisecond wall-clock duration compactly: sub-second
-// as "Nms", under a minute as "N.Ns", else "Nm Ns". A non-positive duration (no
-// clock) renders as "0ms".
-func humanizeDuration(ms int64) string {
-	if ms <= 0 {
-		return "0ms"
-	}
-	if ms < 1000 {
-		return strconv.FormatInt(ms, 10) + "ms"
-	}
-	secs := float64(ms) / 1000.0
-	if secs < 60 {
-		return trimDecimal(secs) + "s"
-	}
-	m := int64(secs) / 60
-	s := int64(secs) % 60
-	return strconv.FormatInt(m, 10) + "m " + strconv.FormatInt(s, 10) + "s"
 }
 
 // resultBody renders a tool result body with the legacy logical-line cap for
@@ -2151,7 +2133,7 @@ func summarizeStringValue(s string) string {
 		preview += "…"
 	}
 	preview = terminaltext.Sanitize(preview)
-	return fmt.Sprintf("%s / %s · %q", humanizeBytes(int64(len(s))), plural(lines, "line"), preview)
+	return fmt.Sprintf("%s / %s · %q", renderfmt.HumanizeBytes(int64(len(s))), plural(lines, "line"), preview)
 }
 
 // summarizeArrayValue renders a JSON array value and reports whether it collapsed:
@@ -2208,30 +2190,6 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimRight(s, "\r")
-}
-
-// humanizeBytes renders a byte count compactly: bytes verbatim under 1 KB, then
-// "N.N KB"/"N.N MB"/"N.N GB"/"N.N TB" with one decimal (trailing ".0" trimmed).
-// Sibling of the humanizeTokens/humanizeDuration formatters; used for the
-// collapsed long-string arg row size signal AND the session-storage byte
-// counts (which can run into the GB range). The math is SI/decimal (1 KB =
-// 1000 B, 1 MB = 1e6 B, …) so a human-facing size reconciles with how
-// file/content sizes are reported everywhere — the labels stay "KB"/"MB"/…
-// (honest, not mislabelled KiB/MiB).
-func humanizeBytes(n int64) string {
-	if n < 0 {
-		n = 0
-	}
-	const unit = 1000
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for value := n / unit; value >= unit && exp < 3; value /= unit {
-		div *= unit
-		exp++
-	}
-	return trimDecimal(float64(n)/float64(div)) + " " + [...]string{"KB", "MB", "GB", "TB"}[exp]
 }
 
 // parseMCPName splits an MCP tool name "mcp__<server>__<tool>" into its server

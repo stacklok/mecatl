@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -1311,7 +1312,7 @@ func subagentRosterDetails(ln *subagentLane) string {
 	details = append(details,
 		subagentLaneState(ln),
 		plural(ln.toolCount, "tool"),
-		"↑"+humanizeTokens(ln.usage.InputTokens)+" ↓"+humanizeTokens(ln.usage.OutputTokens))
+		"↑"+renderfmt.HumanizeTokens(ln.usage.InputTokens)+" ↓"+renderfmt.HumanizeTokens(ln.usage.OutputTokens))
 	return strings.Join(details, " · ")
 }
 
@@ -1763,7 +1764,7 @@ func parallelBranchDetails(br *parallelBranch) string {
 	if routed := delegationModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model, br.routingDecision); routed != "" {
 		parts = append(parts, routed)
 	}
-	parts = append(parts, parallelBranchState(br), plural(br.toolCount, "tool"), "↑"+humanizeTokens(br.usage.InputTokens)+" ↓"+humanizeTokens(br.usage.OutputTokens))
+	parts = append(parts, parallelBranchState(br), plural(br.toolCount, "tool"), "↑"+renderfmt.HumanizeTokens(br.usage.InputTokens)+" ↓"+renderfmt.HumanizeTokens(br.usage.OutputTokens))
 	return strings.Join(parts, " · ")
 }
 
@@ -1781,7 +1782,7 @@ func parallelBranchState(br *parallelBranch) string {
 	if br.done {
 		state := parallelBranchStopLabel(br)
 		if br.durationMs > 0 {
-			state += " · " + humanizeDuration(br.durationMs)
+			state += " · " + renderfmt.HumanizeDuration(br.durationMs)
 		}
 		return state
 	}
@@ -1818,7 +1819,7 @@ func parallelBranchLine(br *parallelBranch) string {
 	if br.done {
 		state = parallelBranchStopLabel(br)
 		if br.durationMs > 0 {
-			state += " · " + humanizeDuration(br.durationMs)
+			state += " · " + renderfmt.HumanizeDuration(br.durationMs)
 		}
 	} else if br.current != "" {
 		state = truncate(terminaltext.Sanitize(br.current), maxTraceToolNameLen) + "…"
@@ -1830,8 +1831,8 @@ func parallelBranchLine(br *parallelBranch) string {
 	return fmt.Sprintf("%s %s · %s%s · %s · %s · ↑%s ↓%s",
 		glyph, terminaltext.Sanitize(label), goal, routed, state,
 		plural(br.toolCount, "tool"),
-		humanizeTokens(br.usage.InputTokens),
-		humanizeTokens(br.usage.OutputTokens))
+		renderfmt.HumanizeTokens(br.usage.InputTokens),
+		renderfmt.HumanizeTokens(br.usage.OutputTokens))
 }
 
 // parallelBranchStopLabel labels a finished branch: "failed" (with the stop reason when

@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 type sessionsTab int
@@ -248,8 +249,8 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 		c.appendReasoning(msg.Text)
 	case client.TurnEndMsg:
 		c.endReasoningStream()
-		if !trivialTurn(msg) {
-			c.addTurnStat(turnStatLine(msg))
+		if !renderfmt.TrivialTurn(msg) {
+			c.addTurnStat(renderfmt.TurnStatLine(msg))
 		}
 	case client.ToolCallMsg:
 		c.addTool(msg.ID, msg.Name, msg.Args)
@@ -1371,10 +1372,10 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 			h := *st.health
 			bytesText, reclaimable := unavailableText, unavailableText
 			if h.CurrentBytesAvailable {
-				bytesText = humanizeBytes(h.CurrentBytes)
+				bytesText = renderfmt.HumanizeBytes(h.CurrentBytes)
 			}
 			if h.ReclaimableBytesAvailable {
-				reclaimable = humanizeBytes(h.ReclaimableBytes)
+				reclaimable = renderfmt.HumanizeBytes(h.ReclaimableBytes)
 			}
 			last, next := unavailableText, unavailableText
 			if h.LastSweepAvailable {
@@ -1429,7 +1430,7 @@ func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
 		th.Style("errorText").Render("Preview session cleanup — DESTRUCTIVE"), "",
 		fmt.Sprintf("Will delete: %d  Chats: %d  Child runs: %d  Scheduled runs: %d", eligible.Total, cleanupKindCount(eligible, "main"), cleanupKindCount(eligible, "subagent", "parallel_branch", "team_member"), cleanupKindCount(eligible, "scheduled")),
 		fmt.Sprintf("Protected: %d  Unknown: %d  Live: %d  Awaiting approval: %d", protected.Total, cleanupKindCount(protected, "unknown"), protected.ByReason["live"], protected.ByState["awaiting"]),
-		"Estimated space freed: " + humanizeBytes(plan.EstimatedBytes),
+		"Estimated space freed: " + renderfmt.HumanizeBytes(plan.EstimatedBytes),
 		"Unknown, active, live, and awaiting sessions are protected and will not be deleted.", "",
 		"Type CLEAN UP to permanently delete the sessions shown above. This cannot be undone:", st.cleanupConfirm.View(), "",
 		th.Style("muted").Render(hk.choose + ": delete these sessions  " + hk.closeOnly + ": back"),

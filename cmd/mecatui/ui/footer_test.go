@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 func TestHumanizeTokens(t *testing.T) {
@@ -29,8 +30,8 @@ func TestHumanizeTokens(t *testing.T) {
 		{-5, "0"},
 	}
 	for _, c := range cases {
-		if got := humanizeTokens(c.in); got != c.want {
-			t.Errorf("humanizeTokens(%d) = %q, want %q", c.in, got, c.want)
+		if got := renderfmt.HumanizeTokens(c.in); got != c.want {
+			t.Errorf("renderfmt.HumanizeTokens(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -47,9 +48,9 @@ func TestCacheHitRate(t *testing.T) {
 		{"88pct", client.Usage{InputTokens: 1500, CacheReadTokens: 1320}, 0.88},
 	}
 	for _, c := range cases {
-		got := cacheHitRate(c.u)
+		got := renderfmt.CacheHitRate(c.u)
 		if diff := got - c.want; diff > 1e-9 || diff < -1e-9 {
-			t.Errorf("%s: cacheHitRate = %v, want %v", c.name, got, c.want)
+			t.Errorf("%s: renderfmt.CacheHitRate = %v, want %v", c.name, got, c.want)
 		}
 	}
 }
@@ -67,8 +68,36 @@ func TestPctString(t *testing.T) {
 		{-0.2, "0%"},
 	}
 	for _, c := range cases {
-		if got := pctString(c.in); got != c.want {
-			t.Errorf("pctString(%v) = %q, want %q", c.in, got, c.want)
+		if got := renderfmt.PctString(c.in); got != c.want {
+			t.Errorf("renderfmt.PctString(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestHumanizeDuration(t *testing.T) {
+	for _, tc := range []struct {
+		ms   int64
+		want string
+	}{
+		{-1, "0ms"}, {840, "840ms"}, {2000, "2s"}, {4100, "4.1s"}, {60000, "1m 0s"},
+	} {
+		if got := renderfmt.HumanizeDuration(tc.ms); got != tc.want {
+			t.Errorf("HumanizeDuration(%d) = %q, want %q", tc.ms, got, tc.want)
+		}
+	}
+}
+
+func TestRenderContextMeterPlain(t *testing.T) {
+	for _, tc := range []struct {
+		used, window int64
+		want         string
+	}{
+		{-1, 0, "ctx 0"},
+		{40_000, 200_000, "ctx ▒▒░░░░░░ 20% · 40K/200K"},
+		{190_000, 200_000, "ctx ████████ 95% ⚠ · 190K/200K"},
+	} {
+		if got := renderfmt.RenderContextMeterPlain(tc.used, tc.window); got != tc.want {
+			t.Errorf("RenderContextMeterPlain(%d, %d) = %q, want %q", tc.used, tc.window, got, tc.want)
 		}
 	}
 }
@@ -119,15 +148,15 @@ func TestTurnStatLine(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := turnStatLine(client.TurnEndMsg{Usage: c.usage, DurationMs: c.durationMs})
+			got := renderfmt.TurnStatLine(client.TurnEndMsg{Usage: c.usage, DurationMs: c.durationMs})
 			for _, sub := range c.wantSubs {
 				if !strings.Contains(got, sub) {
-					t.Errorf("turnStatLine = %q, want it to contain %q", got, sub)
+					t.Errorf("renderfmt.TurnStatLine = %q, want it to contain %q", got, sub)
 				}
 			}
 			for _, sub := range c.absentSubs {
 				if strings.Contains(got, sub) {
-					t.Errorf("turnStatLine = %q, must NOT contain %q", got, sub)
+					t.Errorf("renderfmt.TurnStatLine = %q, must NOT contain %q", got, sub)
 				}
 			}
 		})
@@ -136,10 +165,10 @@ func TestTurnStatLine(t *testing.T) {
 
 // TestTurnStatCacheReachesScrollback is the integration guard for the per-turn cache
 // facet: a TurnEndMsg carrying a material cache rate, driven through the REAL update
-// path (TurnEndMsg → addTurnStat(turnStatLine) → blockTurnStat → renderBlockFresh),
+// path (TurnEndMsg → addTurnStat(renderfmt.TurnStatLine) → blockTurnStat → renderBlockFresh),
 // must surface "% cached" in the rendered conversation scrollback. TestTurnStatLine
 // tests the formatter in isolation; this proves the string actually reaches a rendered
-// block (the trivialTurn gate, the conversation append, and the block render all wired).
+// block (the renderfmt.TrivialTurn gate, the conversation append, and the block render all wired).
 func TestTurnStatCacheReachesScrollback(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m,
@@ -270,19 +299,19 @@ func TestStopReasonLabel(t *testing.T) {
 		{"some_future_reason", "some_future_reason", "muted"},
 	}
 	for _, c := range cases {
-		text, slot := stopReasonLabel(c.stop)
+		text, slot := renderfmt.StopReasonLabel(c.stop)
 		if text != c.text {
-			t.Errorf("stopReasonLabel(%q) text = %q, want %q", c.stop, text, c.text)
+			t.Errorf("renderfmt.StopReasonLabel(%q) text = %q, want %q", c.stop, text, c.text)
 		}
 		if slot != c.slot {
-			t.Errorf("stopReasonLabel(%q) slot = %q, want %q", c.stop, slot, c.slot)
+			t.Errorf("renderfmt.StopReasonLabel(%q) slot = %q, want %q", c.stop, slot, c.slot)
 		}
 	}
 }
 
 // TestResultMsgStopReachesFooter is the end-to-end regression guard for the stop
 // reason wiring (issue #81 Part 5): a terminal client.ResultMsg{Stop} must drive
-// applyResult → endRun → stopReasonLabel → m.statusMsg, and the rendered footer
+// applyResult → endRun → renderfmt.StopReasonLabel → m.statusMsg, and the rendered footer
 // must show the human label. It covers the explicit-mapped reasons and an unknown
 // passthrough. structured_output is now explicitly phrased ("stopped · schema
 // unmet") so the raw underscore'd token never leaks even though it is a
@@ -314,7 +343,7 @@ func TestResultMsgStopReachesFooter(t *testing.T) {
 // byte is stripped before it reaches the footer (it is rendered via lipgloss,
 // which would otherwise pass the escape through).
 func TestStopReasonLabelSanitizesUnknown(t *testing.T) {
-	text, _ := stopReasonLabel("evil\x1b[2Jreason")
+	text, _ := renderfmt.StopReasonLabel("evil\x1b[2Jreason")
 	if strings.ContainsRune(text, 0x1b) {
 		t.Errorf("unknown stop reason should be sanitized, got %q", text)
 	}

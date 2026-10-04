@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 // centerCard frames body in the askCard style and centers it over the
@@ -604,7 +605,7 @@ func (m Model) renderQueue() string {
 	muted := th.Style("muted")
 	var b strings.Builder
 	if m.queuePaused != "" {
-		reason, _ := stopReasonLabel(m.queuePaused)
+		reason, _ := renderfmt.StopReasonLabel(m.queuePaused)
 		b.WriteString(th.Style("ctxWarn").Render(fmt.Sprintf("⏸ %d queued · paused: %s", n, reason)))
 	} else {
 		// The edit hint only applies when EditBack is actionable, which

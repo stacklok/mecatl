@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 // teamView is the active agent-team overlay (none = closed). The overlay is a
@@ -40,6 +41,18 @@ type teamState struct {
 	aggregate string // teamBlockIdentity of the focused team
 	roster    *bounded.List
 	detail    *bounded.Viewport
+}
+
+// teamWorkingCounts classifies a team's member lanes into (working, total). total
+// is the lane count; working is the number of lanes NOT idle (genuinely in a turn).
+func teamWorkingCounts(lanes []teamLane) (working, total int) {
+	total = len(lanes)
+	for i := range lanes {
+		if !lanes[i].idle {
+			working++
+		}
+	}
+	return working, total
 }
 
 func newTeamState() teamState {
@@ -349,9 +362,9 @@ func teamRosterWork(ln *teamLane, teamDone bool) string {
 }
 
 func teamRosterRuntime(ln *teamLane) string {
-	parts := []string{"↑" + humanizeTokens(ln.usage.InputTokens) + " ↓" + humanizeTokens(ln.usage.OutputTokens)}
+	parts := []string{"↑" + renderfmt.HumanizeTokens(ln.usage.InputTokens) + " ↓" + renderfmt.HumanizeTokens(ln.usage.OutputTokens)}
 	if ln.ctxWindow > 0 {
-		parts = append(parts, renderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
+		parts = append(parts, renderfmt.RenderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
 	}
 	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
 		parts = append(parts, routed)
@@ -362,19 +375,6 @@ func teamRosterRuntime(ln *teamLane) string {
 // teamRosterLine remains the compact, unstyled form used by the essential fallback.
 func teamRosterLine(_ theme.Theme, ln *teamLane, nameW int, teamDone bool) string {
 	return teamRosterTitle(ln, nameW, teamDone) + " · " + teamRosterWork(ln, teamDone) + " · " + teamRosterRuntime(ln)
-}
-
-// renderContextMeterPlain is the ANSI-free representation required before generic
-// roster wrapping; renderContextMeter's styled bar must not be sanitized as raw text.
-func renderContextMeterPlain(used, window int64) string {
-	if used < 0 {
-		used = 0
-	}
-	if window <= 0 {
-		return "ctx " + humanizeTokens(used)
-	}
-	frac := ctxFraction(used, window)
-	return "ctx " + ctxBar(frac) + " " + ctxLabel(frac) + " · " + humanizeTokens(used) + "/" + humanizeTokens(window)
 }
 
 // maxTeamRoleLen caps how many runes of a member's role show on a roster row so
@@ -394,8 +394,8 @@ func teamRosterSubhead(b *teamOverlaySnapshot) string {
 	}
 	line := fmt.Sprintf("%s · ↑%s ↓%s · stop:%s",
 		plural(b.teamRounds, "round"),
-		humanizeTokens(b.teamUsage.InputTokens),
-		humanizeTokens(b.teamUsage.OutputTokens),
+		renderfmt.HumanizeTokens(b.teamUsage.InputTokens),
+		renderfmt.HumanizeTokens(b.teamUsage.OutputTokens),
 		subagentStopLabel(b.teamStop))
 	if n := teamStoppedCount(b); n > 0 {
 		line += fmt.Sprintf(" · %d stopped", n)
@@ -443,7 +443,7 @@ func prepareTeamFocusAt(th theme.Theme, b *teamOverlaySnapshot, member string, d
 	// known (same gating as the roster row: no window → no meter).
 	subhead := teamLaneLine(ln, 0, b.teamDone)
 	if ln.ctxWindow > 0 {
-		subhead += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
+		subhead += " · " + renderfmt.RenderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
 	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
 	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {

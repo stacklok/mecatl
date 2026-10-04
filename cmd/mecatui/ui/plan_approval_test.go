@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -188,12 +189,12 @@ func TestPlanAskDenyThenIterateTerminalReturnsToIdle(t *testing.T) {
 }
 
 func TestStopPlanApprovedFooterLabel(t *testing.T) {
-	text, slot := stopReasonLabel("plan_approved")
+	text, slot := renderfmt.StopReasonLabel("plan_approved")
 	if text != "plan approved · executing" {
-		t.Errorf("stopReasonLabel(plan_approved) text = %q, want 'plan approved · executing'", text)
+		t.Errorf("renderfmt.StopReasonLabel(plan_approved) text = %q, want 'plan approved · executing'", text)
 	}
 	if slot != "muted" {
-		t.Errorf("stopReasonLabel(plan_approved) slot = %q, want 'muted'", slot)
+		t.Errorf("renderfmt.StopReasonLabel(plan_approved) slot = %q, want 'muted'", slot)
 	}
 }
 

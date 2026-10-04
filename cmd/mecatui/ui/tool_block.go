@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -302,11 +303,11 @@ func (r *renderer) subagentPresentationLiveLine(p subagentCardPresentation) stri
 	if p.current != "" {
 		current = terminaltext.Sanitize(p.current)
 	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace", current, humanizeTokens(p.usage.InputTokens), humanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.expandTools)
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace", current, renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.expandTools)
 }
 
 func subagentPresentationResolvedLine(p subagentCardPresentation) string {
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s", humanizeDuration(p.durationMS), humanizeTokens(p.usage.InputTokens), humanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), subagentStopLabel(p.stop))
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s", renderfmt.HumanizeDuration(p.durationMS), renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), subagentStopLabel(p.stop))
 }
 
 func (r *renderer) renderTeamPresentation(p teamCardPresentation, expand bool, bodyWidth int) string {
@@ -360,7 +361,7 @@ func (r *renderer) teamPresentationHeader(p teamCardPresentation, expand bool) s
 }
 
 func teamPresentationResolvedLine(p teamCardPresentation) string {
-	line := fmt.Sprintf("team · %s · ↑%s ↓%s · stop:%s", plural(p.rounds, "round"), humanizeTokens(p.usage.InputTokens), humanizeTokens(p.usage.OutputTokens), subagentStopLabel(p.stop))
+	line := fmt.Sprintf("team · %s · ↑%s ↓%s · stop:%s", plural(p.rounds, "round"), renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), subagentStopLabel(p.stop))
 	stopped := 0
 	for _, lane := range p.lanes {
 		if lane.stopped {
