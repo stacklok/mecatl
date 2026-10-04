@@ -87,3 +87,39 @@ func assertAdoptedSnapshot(t *testing.T, m Model, row client.SessionListItem, sn
 		t.Fatalf("adopted = id %q title %q/%q/%d state %q created %d modified %d placement %+v model %+v usage %+v occupancy %d", m.sessionID, m.sessionTitle, m.sessionTitleProvenance, m.sessionTitleRevision, m.sessionState, m.sessionCreatedAt, m.sessionModifiedAt, m.activePlacement, m.resolvedSessionModel, m.usage, m.contextTokens)
 	}
 }
+
+func TestMecatuiAuthoritativeReload_Scenario3_PreservesViewAndRecovery(t *testing.T) {
+	m := titleModel(t, &titleRenamer{})
+	m.prompt.Rewrite("unsent draft")
+	m.queued = []string{"queued prompt"}
+	m.conv.addUser("recorded conversation")
+	m.conversationView.mode = anchored
+	m.sessionDetailsOpen = true
+	m.phase = phaseAwaitingApproval
+	pending := &pendingApprovalRecovery{approval: client.PendingApproval{SessionID: m.sessionID, RunID: "run", AskID: "ask"}}
+	m.pendingRecovery = pending
+
+	m = applyAll(m, client.ResolvedModelMsg{
+		SessionID:            m.sessionID,
+		Mode:                 "ask",
+		State:                "awaiting",
+		TitleMetadataPresent: true,
+		Title:                "server title",
+	})
+
+	if m.prompt.Value() != "unsent draft" || len(m.queued) != 1 || m.queued[0] != "queued prompt" {
+		t.Fatalf("reload discarded draft or queue: draft=%q queued=%v", m.prompt.Value(), m.queued)
+	}
+	if got := m.conv.testBlocks(); len(got) != 1 || testCardText(got[0]) != "recorded conversation" {
+		t.Fatalf("reload changed recorded conversation: %+v", got)
+	}
+	if m.conversationView.mode != anchored || !m.sessionDetailsOpen {
+		t.Fatalf("reload reset reading position or navigation: view=%v details=%t", m.conversationView.mode, m.sessionDetailsOpen)
+	}
+	if m.pendingRecovery != pending || m.phase != phaseAwaitingApproval {
+		t.Fatalf("reload discarded pending approval recovery: recovery=%p phase=%v", m.pendingRecovery, m.phase)
+	}
+	if m.activeMode != client.ModeString(client.ModeFromString("ask")) {
+		t.Fatalf("confirmed permission mode not visible: %q", m.activeMode)
+	}
+}
