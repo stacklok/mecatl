@@ -46,12 +46,35 @@ func TestAuxiliaryTokenUsage_Scenario2_CompactionRecordsSelectedModel(t *testing
 }
 
 type usageReturningObserver struct {
-	usage session.AuxiliaryUsage
+	usage     session.AuxiliaryUsage
+	onObserve func()
 }
 
 func (usageReturningObserver) Observe(context.Context, learning.Trajectory) error { return nil }
 func (o usageReturningObserver) ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error) {
+	if o.onObserve != nil {
+		o.onObserve()
+	}
 	return o.usage, nil
+}
+
+func TestAuxiliaryTokenUsage_UtilityEngineUsageNestedUsageReachesOwnerWithDistinctAttribution(t *testing.T) {
+	utilityIdentity := session.ProviderModelID{ProviderID: "provider-u", ModelID: "utility"}
+	mainUsage := session.Usage{InputTokens: 7, OutputTokens: 2}
+	compactionUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
+	env := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "workspace", Revision: "r1"}
+	utility := session.New("utility", session.ModeDefault, env, session.Limits{}, time.Unix(0, 0))
+	utility.RecordTokenUsage(session.UsageKindMain, "wrong", "identity", mainUsage)
+	utility.RecordTokenUsage(session.UsageKindCompaction, "provider-c", "summary", compactionUsage)
+
+	returned := agent.UtilityEngineUsage(session.UsageKindGuardrail, utilityIdentity, utility)
+	owner := session.New("owner", session.ModeDefault, env, session.Limits{}, time.Unix(0, 0))
+	owner.RecordAuxiliaryUsage(agent.RemapAuxiliaryUsage(t.Context(), nil, session.UsageKindGuardrail, returned))
+
+	bucket := owner.TokenUsageSnapshot()[session.UsageKindGuardrail]
+	if want := mainUsage.Add(compactionUsage); bucket.Total != want || bucket.Models["provider-u/utility"] != mainUsage || bucket.Models["provider-c/summary"] != compactionUsage || len(bucket.Models) != 2 {
+		t.Fatalf("owner utility usage = %#v, want main and nested usage with distinct attributions", bucket)
+	}
 }
 
 func TestAuxiliaryTokenUsage_Scenario2_ReflectionRecordsSelectedModel(t *testing.T) {
@@ -76,25 +99,35 @@ func TestAuxiliaryTokenUsage_Scenario2_ReflectionRecordsSelectedModel(t *testing
 		t.Fatalf("reflection usage = %#v, want %#v attributed to selected model", got, want)
 	}
 
-	store := memstore.New()
-	persistedUsage := session.Usage{InputTokens: 5, OutputTokens: 1}
+	store := &saveCountingStore{inner: memstore.New()}
+	diagnostics := newRecordingDiag()
+	observedUsage := session.Usage{InputTokens: 5, OutputTokens: 1}
+	var savesAtObservation int32
 	observer := usageReturningObserver{usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		session.UsageKindMain: {Models: map[string]session.Usage{"provider-r/reflection-model": persistedUsage}},
-	}}}
+		session.UsageKindReflection: {Models: map[string]session.Usage{"provider-r/reflection-model": observedUsage}},
+	}}, onObserve: func() { savesAtObservation = store.saves.Load() }}
 	owned := newSession(t, session.Limits{})
 	eng := newEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Store: store,
-		LearningMode: learning.Auto, LearningObserver: observer,
+		Diagnostics: diagnostics, LearningMode: learning.Auto, LearningObserver: observer,
 	})
 	for range eng.Run(t.Context(), owned, agent.MemEnv("/ws"), agent.RunRequest{Text: "reflect"}).Events() {
+	}
+	if savesAtObservation == 0 || store.saves.Load() != savesAtObservation {
+		t.Fatalf("reflection added a session save: before=%d after=%d", savesAtObservation, store.saves.Load())
+	}
+	if line, ok := diagnostics.findLine("reflection usage dropped"); !ok || len(line.args) < 2 || line.args[len(line.args)-2] != "bucket_count" || line.args[len(line.args)-1] != 1 {
+		t.Fatalf("missing structured reflection usage diagnostic: %+v, found=%t", line, ok)
 	}
 	reloaded, loadErr := store.Load(t.Context(), owned.ID)
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	persistedBucket := reloaded.TokenUsageSnapshot()[session.UsageKindReflection]
-	if persistedBucket.Models["provider-r/reflection-model"] != persistedUsage {
-		t.Fatalf("persisted automatic reflection usage = %#v, want %#v", persistedBucket, persistedUsage)
+	if got := reloaded.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+		t.Fatalf("automatic reflection persisted usage: %+v", got)
+	}
+	if got := owned.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+		t.Fatalf("automatic reflection mutated live session: %+v", got)
 	}
 	if reloaded.UsageFor(session.UsageKindMain) != (session.Usage{}) {
 		t.Fatalf("automatic reflection injected main usage: %+v", reloaded.UsageFor(session.UsageKindMain))

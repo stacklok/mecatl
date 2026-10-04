@@ -113,9 +113,15 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 	}
 	coordinator := newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
 	t.Cleanup(coordinator.Close)
-	provider := mockllm.New(mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/workflow","value":"Use the established workflow","description":"Established workflow preference","evidence":["m:0"]}]}`))
+	diag := newCapturingDiagnostics()
+	provider := mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
+		{Kind: port.ChunkText, Text: `{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/workflow","value":"Use the established workflow","description":"Established workflow preference","evidence":["m:0"]}]}`},
+		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 7, OutputTokens: 2}},
+		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	}})
 	cfg := Config{
-		Model: "mock", LearningMode: learning.Review, LearningSensitivity: learning.Balanced,
+		Diagnostics: diag,
+		Model:       "mock", LearningMode: learning.Review, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: defaultLearningAutomaticConfig(), attemptRepository: orderedAttempts,
 		automaticAdmissionLedger: ledger, learningSourceStore: sources,
 		PlacementProvider: appTestPlacementProvider{root: trajectory.Workspace}, PlacementScope: "test",
@@ -161,6 +167,16 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 	}
 	if record.State != learning.AttemptCompleted || record.Outcome != learning.AttemptOutcomeSucceeded || record.ProposalID == "" {
 		t.Fatalf("weighted durable attempt = %+v, want completed success with downstream proposal link", record)
+	}
+	if got := strings.Join(diag.capturedStrings(), "\n"); !strings.Contains(got, "detached recovery reflection usage dropped") || !strings.Contains(got, "bucket_count1") {
+		t.Fatalf("recovered reflection did not report bounded usage discard: %s", got)
+	}
+	loadedSource, err := sources.Load(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loadedSource.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+		t.Fatalf("recovered reflection wrote source usage: %+v", got)
 	}
 	if record.Provenance.Class != learning.AdmissionWeighted {
 		t.Fatalf("weighted durable attempt class = %q, want %q", record.Provenance.Class, learning.AdmissionWeighted)

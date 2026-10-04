@@ -448,7 +448,10 @@ func (r *contextualToolReviewer) reviewAttempt(ctx context.Context, req agent.To
 		}
 	}
 	usage := agent.RemapAuxiliaryUsage(ctx, r.diagnostics, session.UsageKindGuardrail,
-		guardrailAttemptUsage(r.checkerProviderID, r.checkerModelID, sess))
+		agent.UtilityEngineUsage(session.UsageKindGuardrail, session.ProviderModelID{
+			ProviderID: r.checkerProviderID,
+			ModelID:    r.checkerModelID,
+		}, sess))
 	if err := state.err(); err != nil {
 		var classified agent.GuardrailReviewFailure
 		if errors.As(err, &classified) {
@@ -478,26 +481,6 @@ func (r *contextualToolReviewer) reviewAttempt(ctx context.Context, req agent.To
 		return agent.ToolReviewResult{}, false, reviewFailureRecoverable(err), usage, err
 	}
 	return result, true, false, usage, nil
-}
-
-func guardrailAttemptUsage(providerID, modelID string, sess *session.Session) session.AuxiliaryUsage {
-	var out session.AuxiliaryUsage
-	for kind, bucket := range sess.TokenUsageSnapshot() {
-		if kind == session.UsageKindMain {
-			providerID = strings.Join(strings.Fields(providerID), " ")
-			modelID = strings.Join(strings.Fields(modelID), " ")
-			attribution := "unknown"
-			if providerID != "" && modelID != "" {
-				attribution = providerID + "/" + modelID
-			}
-			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-				session.UsageKindGuardrail: {Total: bucket.Total, Models: map[string]session.Usage{attribution: bucket.Total}},
-			}})
-			continue
-		}
-		out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{kind: bucket}})
-	}
-	return out
 }
 
 func lastAssistantText(sess *session.Session) string {

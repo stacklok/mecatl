@@ -47,7 +47,7 @@ func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (stri
 	// and its own (non-existent) asks auto-deny — no nesting, no surfacing.
 	run := engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: prompt})
 	final, stop := drainChild(run, childPosture{role: "guardrail-checker"})
-	usage := utilityEngineUsage(session.UsageKindGuardrail, engine.deps.ProviderModel, sess)
+	usage := UtilityEngineUsage(session.UsageKindGuardrail, engine.deps.ProviderModel, sess)
 	if stop == session.StopError || stop == session.StopCancelled {
 		return "", usage, fmt.Errorf("guardrail checker run did not complete (stop %q)", stop)
 	}

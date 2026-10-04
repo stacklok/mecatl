@@ -42,22 +42,22 @@ func TestMissingPurposeUsagePreservedAcrossMergeRecordAndRestore(t *testing.T) {
 	known := Usage{InputTokens: 3}
 	input := AuxiliaryUsage{Buckets: map[UsageKind]TokenUsage{
 		"":               {Total: Usage{InputTokens: 999}, Models: map[string]Usage{"": missing}},
-		unknownUsageKind: {Models: map[string]Usage{"unknown": known}},
+		usageKindUnknown: {Models: map[string]Usage{"unknown": known}},
 	}}
 	merged := input.Merge(AuxiliaryUsage{})
 	want := missing.Add(known)
-	if got := merged.Buckets[unknownUsageKind]; got.Total != want || got.Models["unknown"] != want {
+	if got := merged.Buckets[usageKindUnknown]; got.Total != want || got.Models["unknown"] != want {
 		t.Fatalf("merged unknown bucket = %#v, want %#v", got, want)
 	}
 	s := newTestSession(Limits{})
 	s.RecordAuxiliaryUsage(input)
 	s.RecordTokenUsage("", "provider", "model", known)
-	if got := s.UsageFor(unknownUsageKind); got != want.Add(known) {
+	if got := s.UsageFor(usageKindUnknown); got != want.Add(known) {
 		t.Fatalf("recorded unknown usage = %#v", got)
 	}
 	restored := newTestSession(Limits{})
 	restored.RestoreTokenUsage(input.Buckets)
-	if got := restored.TokenUsageSnapshot()[unknownUsageKind]; got.Total != want || got.Models["unknown"] != want {
+	if got := restored.TokenUsageSnapshot()[usageKindUnknown]; got.Total != want || got.Models["unknown"] != want {
 		t.Fatalf("restored unknown bucket = %#v, want %#v", got, want)
 	}
 	if got := restored.UsageFor(UsageKindMain); got != (Usage{}) {
@@ -108,10 +108,10 @@ func TestAuxiliaryTokenUsage_PreservesOpaqueKindRoundTrip(t *testing.T) {
 	if got := restored.TokenUsageSnapshot()[opaque]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("opaque bucket = %#v, want %#v", got, want)
 	}
-	if got := restored.UsageFor(unknownUsageKind); got != (Usage{InputTokens: 100}) {
+	if got := restored.UsageFor(usageKindUnknown); got != (Usage{InputTokens: 100}) {
 		t.Fatalf("unknown-purpose spend = %#v, want 100 input tokens", got)
 	}
-	if got := restored.TokenUsageSnapshot()[unknownUsageKind].Models["provider/model"]; got != (Usage{InputTokens: 100}) {
+	if got := restored.TokenUsageSnapshot()[usageKindUnknown].Models["provider/model"]; got != (Usage{InputTokens: 100}) {
 		t.Fatalf("unknown-purpose model usage = %#v", got)
 	}
 	if _, ok := restored.TokenUsageSnapshot()[""]; ok {

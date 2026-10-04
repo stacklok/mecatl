@@ -863,7 +863,7 @@ func TestUtilityEngineUsageReturnsActualTier4CompactionToCallerOwner(t *testing.
 		t.Fatalf("utility tier-4 usage = %+v, want %+v", got, compactionUsage)
 	}
 
-	returned := utilityEngineUsage(session.UsageKindRouter, utilityIdentity, utility)
+	returned := UtilityEngineUsage(session.UsageKindRouter, utilityIdentity, utility)
 	owned := RemapAuxiliaryUsage(t.Context(), port.NopDiagnostics{}, session.UsageKindRouter, returned)
 	bucket := owned.Buckets[session.UsageKindRouter]
 	wantTotal := mainUsage.Add(compactionUsage)

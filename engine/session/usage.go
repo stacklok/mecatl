@@ -6,9 +6,9 @@ import "strings"
 // current writers; readers preserve every non-empty kind for forward compatibility.
 type UsageKind string
 
-const unknownUsageKind UsageKind = "unknown"
-
 const (
+	usageKindUnknown UsageKind = "unknown"
+
 	// UsageKindMain is the reserved normal agent-run accounting bucket.
 	UsageKindMain UsageKind = "main"
 	// UsageKindSessionTitle is the server-owned title-generator accounting bucket.
@@ -53,7 +53,7 @@ func (a AuxiliaryUsage) Merge(other AuxiliaryUsage) AuxiliaryUsage {
 func mergeAuxiliaryUsage(out, in map[UsageKind]TokenUsage) {
 	for kind, bucket := range in {
 		if kind == "" {
-			kind = unknownUsageKind
+			kind = usageKindUnknown
 		}
 		merged := out[kind]
 		if merged.Models == nil {
@@ -97,7 +97,7 @@ func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
 	}
 	for kind, bucket := range usage.Buckets {
 		if kind == "" {
-			kind = unknownUsageKind
+			kind = usageKindUnknown
 		}
 		for attribution, value := range bucket.Models {
 			s.recordTokenUsage(kind, attribution, value)
@@ -110,7 +110,7 @@ func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
 // preserved so a newer writer's bucket can round-trip through older readers.
 func (s *Session) RecordTokenUsage(kind UsageKind, providerID, modelID string, usage Usage) {
 	if kind == "" {
-		kind = unknownUsageKind
+		kind = usageKindUnknown
 	}
 	s.recordTokenUsage(kind, modelAttribution(providerID, modelID), usage)
 }

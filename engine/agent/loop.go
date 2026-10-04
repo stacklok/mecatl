@@ -3032,9 +3032,9 @@ func (r *Run) enqueueAuxiliaryUsageWhileActive(_ context.Context, usage session.
 	r.auxiliaryUsageMu.Unlock()
 }
 
-func (r *Run) recordCompleteAuxiliaryUsageWhileActive(sess *session.Session, usage session.AuxiliaryUsage) bool {
+func (r *Run) recordCompleteAuxiliaryUsageWhileActive(sess *session.Session, usage session.AuxiliaryUsage) {
 	if r == nil || len(usage.Buckets) == 0 {
-		return false
+		return
 	}
 	r.auxiliaryUsageMu.Lock()
 	if !r.auxiliaryUsageActive {
@@ -3043,11 +3043,10 @@ func (r *Run) recordCompleteAuxiliaryUsageWhileActive(sess *session.Session, usa
 		if warn {
 			r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
 		}
-		return false
+		return
 	}
 	sess.RecordAuxiliaryUsage(usage)
 	r.auxiliaryUsageMu.Unlock()
-	return true
 }
 
 func (r *Run) recordGuardrailUsageWhileActive(ctx context.Context, sess *session.Session, usage session.AuxiliaryUsage) {
@@ -3563,12 +3562,11 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 	}
 	if observer, ok := e.deps.LearningObserver.(auxiliaryUsageObserver); ok {
 		auxUsage, err := observer.ObserveWithUsage(ctx, tr)
-		auxUsage = RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindReflection, auxUsage)
-		if r.recordCompleteAuxiliaryUsageWhileActive(sess, auxUsage) {
-			e.save(ctx, r, sess)
+		if len(auxUsage.Buckets) > 0 {
+			r.diag.Log(ctx, port.LevelDebug, "reflection usage dropped", "bucket_count", len(auxUsage.Buckets))
 		}
 		if err != nil {
-			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory usage observer failed", "error", err)
+			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory usage observer failed")
 		}
 		return
 	}

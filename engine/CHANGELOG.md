@@ -39,6 +39,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   plan-originated ask and reports ordinary asks without changing them.
   `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
 
+- **Utility-engine usage aggregation** — adds `agent.UtilityEngineUsage`, which
+  reattributes a utility engine's main call to its caller-provided purpose while
+  preserving nested auxiliary buckets and their exact model attributions for the
+  owning caller to normalize. Added (minor).
+
 - **Auxiliary-usage purpose normalization** — adds `agent.RemapAuxiliaryUsage`,
   allowing owner-side adapters to retain producer-reported model totals while
   confining the returned result to their authorized auxiliary-purpose bucket.
