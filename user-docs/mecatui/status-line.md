@@ -19,7 +19,9 @@ With no `status_customization:` entry, `mecatui` uses its shipped responsive
 templates. The header includes the active session title at every width and the
 remote target in its full variant. Keyboard help, the header
 posture/scroll/changed-file indicators, and the footer activity lane remain part
-of the client interface; customization cannot remove them.
+of the client interface; customization cannot remove them. In a debug session,
+the header also keeps a `⚠ DEBUG target` cue ahead of generated content and a
+privacy disclosure below it, even if a custom header is empty.
 
 ## Choose a source
 
@@ -95,6 +97,11 @@ that matches the status template variant:
 - `contextMeter .Context` for `full`
 - `contextMeterCompact .Context` for `compact`
 - `contextMeterMinimal .Context` for `minimal`
+
+All three functions display `ctx ?` when occupancy is unknown instead of
+presenting a zero-percent pressure reading. When the occupancy is estimated,
+they mark the percentage with `~`. The full variant also shows the known context
+window when occupancy is unknown.
 
 For example, this footer uses the corresponding meter at each width:
 
