@@ -111,6 +111,12 @@ func TestBuiltinFloorPermissionReviewRunsOnChildLoopAndAllowsOnce(t *testing.T) 
 	if got := sess.TokenUsageSnapshot()[session.UsageKindGuardrail].Models["provider/permission-review"]; got.InputTokens != 6 {
 		t.Fatalf("substitution-floor permission usage = %+v, want two reviews attributed to provider/permission-review", got)
 	}
+	if got := sess.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Fatalf("permission review leaked into main usage: %+v", got)
+	}
+	if got := sess.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("permission review leaked into router usage: %+v", got)
+	}
 	for _, ev := range events {
 		if ev.Type == session.EvPermissionAsk {
 			t.Fatal("accepted permission review surfaced an ordinary permission ask")

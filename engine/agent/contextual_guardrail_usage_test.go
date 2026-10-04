@@ -93,7 +93,15 @@ func runGuardrailUsageSession(t *testing.T, reviewer ToolReviewer, calls ...sess
 	for _, call := range calls {
 		cat.MustRegister(guardrailUsageTool{name: call.Name, readOnly: true})
 	}
-	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: cat, Policy: guardrailUsagePolicy{}, ToolReviewer: reviewer})
+	callChunks := make([]port.Chunk, 0, len(calls)+2)
+	for _, call := range calls {
+		callChunks = append(callChunks, mockllm.ToolCallChunk(call))
+	}
+	callChunks = append(callChunks, mockllm.UsageChunk(session.Usage{InputTokens: 11, OutputTokens: 2}), mockllm.DoneChunk(session.StopEndTurn))
+	eng := NewEngine(Deps{LLM: mockllm.New(
+		mockllm.ChunksTurn(callChunks...),
+		mockllm.ChunksTurn(mockllm.TextChunk("done"), mockllm.UsageChunk(session.Usage{InputTokens: 7, OutputTokens: 3}), mockllm.DoneChunk(session.StopEndTurn)),
+	), Catalog: cat, Policy: guardrailUsagePolicy{}, ToolReviewer: reviewer})
 	env := memEnv("/ws")
 	sess := session.New("guardrail-usage", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
 	for range eng.Run(t.Context(), sess, env, RunRequest{Text: "inspect"}).Events() {
@@ -109,6 +117,9 @@ func TestContextualGuardrailUsage_Scenario1_ReviewsRecordOnReviewedSession(t *te
 	}
 	if got := sess.TokenUsageSnapshot()[session.UsageKindGuardrail].Models["provider/guardrail-model"]; got.InputTokens != 6 {
 		t.Fatalf("guardrail model usage = %+v, want action + inbound attributed to provider/guardrail-model", got)
+	}
+	if got := sess.UsageFor(session.UsageKindMain); got != (session.Usage{InputTokens: 18, OutputTokens: 5}) {
+		t.Fatalf("main usage = %+v, want only the two main model calls", got)
 	}
 	if got := sess.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
 		t.Fatalf("reviewer usage leaked into router: %+v", got)
