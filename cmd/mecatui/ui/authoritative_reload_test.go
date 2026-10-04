@@ -44,6 +44,16 @@ func TestMecatuiAuthoritativeReload_Scenario1_ReplacesSuppliedSessionFacts(t *te
 	if m.usage != (client.Usage{InputTokens: 120, OutputTokens: 20}) || m.contextTokens != 35 || m.contextUnknown || !m.contextEstimated {
 		t.Fatalf("usage/occupancy = %+v %d unknown=%t estimated=%t", m.usage, m.contextTokens, m.contextUnknown, m.contextEstimated)
 	}
+
+	// A legacy snapshot can supply occupancy without a main usage bucket.
+	// The former is canonical, while the latter must retain its known value.
+	m = applyAll(m, client.ResolvedModelMsg{
+		SessionID: "active", Usage: client.Usage{InputTokens: 999},
+		ContextOccupancy: &client.ContextOccupancy{InputTokens: 17},
+	})
+	if m.usage != (client.Usage{InputTokens: 120, OutputTokens: 20}) || m.contextTokens != 17 || m.contextUnknown || m.contextEstimated {
+		t.Fatalf("missing usage with present occupancy = usage %+v occupancy %d unknown=%t estimated=%t", m.usage, m.contextTokens, m.contextUnknown, m.contextEstimated)
+	}
 }
 
 func TestMecatuiAuthoritativeReload_Scenario3_AdoptionUsesSnapshot(t *testing.T) {

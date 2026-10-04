@@ -1204,7 +1204,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.MainUsagePresent {
 		m.usage = msg.Usage
 	}
-	if occupancy := msg.ContextOccupancy; occupancy != nil && (msg.MainUsagePresent || msg.AdoptContextOccupancy && m.startupAdopted) {
+	if occupancy := msg.ContextOccupancy; occupancy != nil && (!msg.AdoptContextOccupancy || m.startupAdopted) {
 		m.contextTokens = occupancy.InputTokens
 		m.contextUnknown = false
 		m.contextEstimated = occupancy.Estimated
