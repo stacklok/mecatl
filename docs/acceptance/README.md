@@ -313,6 +313,9 @@ PR after verification. There is no cleanup or status-only PR.
   responsive header/footer templates or one local command over a shared status
   input and theme-integrated StatusML; present chrome is the default templates.
   Status: draft.
+- [Mecatui canonical status surfaces](mecatui-canonical-status-surfaces.md) — removes
+  duplicate no-source status generators, preserves minimal session identity and
+  mandatory debug chrome, and makes stock context readings truthful. Status: proposed.
 - [Mecatui diagnostic-log retention](mecatui-diaglog-retention.md) — startup
   retention of a bounded recent tail for the default and override diagnostic
   sinks, with atomic failure preservation and fail-closed path handling. Status:
