@@ -4,7 +4,7 @@
 **Work classification:** Bounded — removing duplicate presentation paths also changes the no-source UI and composes debug safety chrome with generated header content; these observable choices need an acceptance contract but do not change the status-source boundary.
 **Decision record:** None — preserve the renderer/source ownership recorded in historical [ADR 0247](../adr/0247-mecatui-status-line.md) and the current [ADR 0289 command boundary](../adr/0289-hardened-status-command-boundary.md); neither changes, so no new durable architecture decision is needed.
 **Phase:** mecatui presentation cleanup
-**Status:** in-progress, 2026-10-04. Approved by merged Plan / Interface PR #2070; implementation underway.
+**Status:** landed, 2026-10-04. Implementation candidate verified; authoritative when its PR merges.
 **Delivery:** Split. The no-source and debug behavior plus removal of old tests deserve a separate behavioral review before implementation.
 **Expected tasks:** deferred to orchestration.
 

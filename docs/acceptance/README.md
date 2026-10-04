@@ -316,7 +316,8 @@ PR after verification. There is no cleanup or status-only PR.
   Status: draft.
 - [Mecatui canonical status surfaces](mecatui-canonical-status-surfaces.md) — removes
   duplicate no-source status generators, preserves minimal session identity and
-  mandatory debug chrome, and makes stock context readings truthful. Status: proposed.
+  mandatory debug chrome, and makes stock context readings truthful. Status: landed
+  in this implementation candidate; authoritative on merge.
 - [Mecatui diagnostic-log retention](mecatui-diaglog-retention.md) — startup
   retention of a bounded recent tail for the default and override diagnostic
   sinks, with atomic failure preservation and fail-closed path handling. Status:
