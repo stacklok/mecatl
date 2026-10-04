@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -78,6 +79,32 @@ func TestCanonicalStatus_Scenario1_NoSourceMinimalIdentity(t *testing.T) {
 	}
 }
 
+func TestCanonicalStatus_Scenario1_NoSourceDebugKeepsBothIdentities(t *testing.T) {
+	m := canonicalFrame(nil, 120)
+	m.sessionID = "debug-session-1234567890\x1b[31m"
+	m.deps.DebugTarget = "target-session-1234567890\x1b[31m"
+	m.sessionTitle = "source identity"
+	cue := "⚠ DEBUG target " + client.SessionHandle(m.deps.DebugTarget)
+	handle := "session " + client.SessionHandle(m.sessionID)
+
+	t.Run("no source", func(t *testing.T) {
+		header := stripANSIstr(m.renderHeader())
+		if i, j := strings.Index(header, cue), strings.Index(header, handle); i < 0 || j <= i || strings.Contains(header, "[31m") || strings.Contains(header, "canonical-model") {
+			t.Fatalf("debugger and target identities: %q", header)
+		}
+		if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "ctx") || !strings.Contains(footer, "help") {
+			t.Fatalf("nil-source footer: %q", footer)
+		}
+	})
+	t.Run("source backed", func(t *testing.T) {
+		m = stockStatusFrame(t, m)
+		header := stripANSIstr(m.renderHeader())
+		if i, j := strings.Index(header, cue), strings.Index(header, "source identity"); i < 0 || j <= i || strings.Contains(header, handle) {
+			t.Fatalf("debug prefix and stock identity: %q", header)
+		}
+	})
+}
+
 func TestCanonicalStatus_Scenario2_DebugWarningPrecedesGeneratedHeader(t *testing.T) {
 	for _, sourceKind := range []string{"stock", "configured"} {
 		m := canonicalFrame(&statusSourceFake{changed: make(chan struct{}, 1)}, 120)
@@ -152,6 +179,35 @@ func TestCanonicalStatus_Scenario2_DebugDisclosureSurvivesMissingSourceAndFatal(
 				}
 			}
 		}
+	}
+}
+
+func TestCanonicalStatus_Scenario2_DebugCommandSourceReceivesReservedWidth(t *testing.T) {
+	m := canonicalFrame(nil, 120)
+	m.deps.DebugTarget = "target-1234567890"
+	m.caps.Posture = postureAuto
+	m.conv.recordFileChange("changed.go")
+	cue := "⚠ DEBUG target " + client.SessionHandle(m.deps.DebugTarget)
+	budget := m.width - 2 - lipgloss.Width(cue) - 5 - lipgloss.Width(autoBadgeText) - 2 - lipgloss.Width("✎ 1 file") - headerGapPad
+	if budget <= 0 {
+		t.Fatalf("no command header budget: %d", budget)
+	}
+	identity := strings.Repeat("x", budget)
+	// Match the exact JSON field received on stdin, not a renderer-local width.
+	script := fmt.Sprintf(`read -r input; case "$input" in *'"HeaderAvailCols":%d,'*) printf '<status><header><text>%s</text></header></status>' ;; *) printf '<status><header><text>wrong-budget</text></header></status>' ;; esac`, budget, identity)
+	source := customization.NewCommandSource(customization.Command{Path: "/bin/sh", Args: []string{"-c", script}, LaunchDir: t.TempDir()})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	m.deps.StatusSource = source
+	m.submitStatusLine()
+	updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
+	header := stripANSIstr(m.renderHeader())
+	first := strings.Split(header, "\n")[0]
+	if i, j := strings.Index(first, cue), strings.Index(first, identity); i < 0 || j <= i || !strings.Contains(first, autoBadgeText) || !strings.Contains(first, "✎ 1 file") || strings.Contains(header, "wrong-budget") || lipgloss.Width(first) > m.width {
+		t.Fatalf("command source width %d displaced debug warning or indicator: %q (surface %#v)", budget, header, m.generatedStatusLine.Header)
+	}
+	if !m.generatedStatusLine.Header.Present || !statusSurfaceFits(m.generatedStatusLine.Header, budget) || !strings.Contains(header, "PRIVACY:") {
+		t.Fatalf("command source did not fit beside mandatory debug chrome: %#v / %q", m.generatedStatusLine.Header, header)
 	}
 }
 

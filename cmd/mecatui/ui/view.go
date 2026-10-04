@@ -133,7 +133,11 @@ func (m Model) renderHeader() string {
 		line = "session " + handle
 	}
 	if m.deps.DebugTarget != "" {
-		line = m.debugHeaderTarget()
+		if line != "" {
+			line = m.debugHeaderTarget() + "  ·  " + line
+		} else {
+			line = m.debugHeaderTarget()
+		}
 	}
 	tail := m.scrollIndicator()
 	if tail == "" {
