@@ -1,0 +1,100 @@
+# Mecatui quieter conversation tool calls — acceptance plan
+
+**Contract:** human-reviewed/v2
+**Work classification:** Bounded — a client-local presentation and keybinding change needs an observable UI contract but does not change server authority, persistence, or module boundaries.
+**Decision record:** None — the existing typed scrollback, inspector, and keymap establish the necessary boundaries; this plan chooses how their current presentation is used, not a durable system architecture.
+**Phase:** issue #1361, second slice: quiet settled calls and direct inspection
+**Status:** draft, 2026-10-04. Based on hands-on review after the landed `/toolcalls` inspector and the operator's 2026-10-04 direction; an error-details key decision remains for plan review.
+**Delivery:** Split. Replacing the global detail gesture and changing conversation density deserve behavioral/interface review before implementation.
+**Expected tasks:** deferred to orchestration
+**Issue:** [stacklok/mecatl#1361](https://github.com/stacklok/mecatl/issues/1361).
+
+The main conversation shows an active bordered tool card while a call is still in flight, then one quiet, borderless line for a settled top-level call, including an Edit, Write, Subagent, Team, or failed call. The one-line content mirrors the `/toolcalls` list: status glyph and readable label, tool name, and the same human-readable action/target intent. The list and conversation use **one UI-local semantic projection** of current scrollback, with only viewport, selection, and styling chrome allowed to differ. The existing inspector keeps complete received call arguments and results; no duplicate history is introduced. See [the landed inspector contract](mecatui-toolcalls-inspector.md) and [typed scrollback](../../cmd/mecatui/ui/internal/scrollback/scrollback.go).
+
+`ctrl+t` opens `/toolcalls` from the main conversation rather than expanding every tool card. `f9` becomes a separate rebindable reasoning-summary expansion action; it expands no tool results. This does not alter approval decisions or their context-local detail gesture. The owning public documentation for this user-facing change is [mecatui keybindings](../../user-docs/mecatui/keybindings.md); amend that page in the implementation PR, not this unshipped plan. Existing [TUI contributor guidance](../tui.md#conversation-and-feedback) and [logical conversation anchors](../adr/0301-logical-conversation-anchors.md) constrain layout, selection, and scrolling.
+
+## Human decisions
+
+- [x] Default density and statuses — Decision: show running tool calls as bordered cards; show settled successful and failed top-level calls as one borderless line, retaining the existing green/red glyphs plus non-color status words. A call is not claimed to have succeeded merely because it finished before the result was received.
+- [x] Shared one-line language — Decision: conversation summaries use the same status, tool name, and sanitized intent projection as inspector list rows. Share the semantic projection instead of duplicating tool-specific intent switches; list cursor, geometry, and styling remain view-specific.
+- [x] Detail gestures — Decision: in the main conversation, the configured `ctrl+t`-default shortcut opens the existing `/toolcalls` inspector; `f9` defaults to a separate rebindable, reasoning-only global expand/collapse action. Approval surfaces continue to own their existing configured `ctrl+t`-default shortcut and full-args/diff/plan views.
+- [x] Existing keymap overrides — Decision: `Toolcalls` is the canonical remappable action (default `ctrl+t`), `ExpandReasoning` is a new remappable action (default `f9`). Existing `ExpandTools` overrides remain an accepted, deprecated alias for `Toolcalls` so their chord still opens inspection; specifying both `ExpandTools` and `Toolcalls` in one effective configuration is rejected explicitly. Neither name restores bulk tool expansion. The active shortcut is shown in help and approval hints.
+- [x] Edits and delegation — Decision: settled Edit/Write calls get the same single-line treatment; complete arguments remain in `/toolcalls`, and existing changed-files/approval surfaces remain separate. A live Subagent/Team card keeps its current bounded activity; detailed child activity remains in the F6 Agents view, not fabricated in the top-level inspector.
+- [ ] Permanent error detail after removing global expansion — Today `ctrl+t` also reveals a permanent provider-error card's raw payload, which `/toolcalls` does not contain. Choose an explicit, bounded and safe way to retain or intentionally retire that non-tool diagnostic before implementation; do not silently leave a `ctrl+t` hint that opens the wrong surface.
+
+## Interface contract
+
+- **gRPC / protobuf:** None — consume the existing live tool, result, delegation, and reasoning events and session transcript; no new RPC or wire fields.
+- **Exported Go APIs / interfaces:** None — only private mecatui packages and UI-local presentation types change; no engine or SDK exports.
+- **Tool schemas:** None — `/toolcalls` remains a client command, not a model-facing tool.
+- **CLI / config:** `keymap.Toolcalls` (default `ctrl+t`) is the main-conversation inspector-open binding; `keymap.ExpandReasoning` (default `f9`) toggles only reasoning stanzas. `keymap.ExpandTools` stays accepted as a legacy alias for `Toolcalls` with the same operator-selected chords and an error when both action names are configured. Both effective actions participate in collision and global-key validation; existing `--keymap Action=chord` and `keymap:` settings mechanisms work for both. Keep `/toolcalls` unchanged and available while idle or running. The approval modal keeps its existing context-local configured `ctrl+t`-default action, which follows the active `Toolcalls` chord. No other flag or settings key is added.
+- **Events / persistence:** None — no new event or stored field; the canonical scrollback remains the sole source for both views. Reasoning summary reload is tracked separately in [#2079](https://github.com/stacklok/mecatl/issues/2079).
+- **Security / authority:** None — the inspector and line render only the current session's received display-safe payload, with terminal controls sanitized and width/height bounded. No new tool execution, permission grant, child call inventory, cross-session read, or link dereference; approval focus and decision ownership remain unchanged.
+- **Compatibility / migration:** Existing `ExpandTools` settings continue to load as an alias but their behavior intentionally changes from expand-all to open-inspector. Existing tool-card global expansion is retired; reasoning gets a dedicated toggle. `/toolcalls` list/detail and current transcript rehydration continue to work. Rebinds and contextual approval help must reflect actual chords; update the owning public keybindings/usage content in the implementation PR and run `task site:build`.
+
+## In scope — 4 scenarios, in implementation order
+
+### Scenario 1 — read one tool call consistently in the conversation and inspector
+
+Use the existing [inspector intent/status projection](../../cmd/mecatui/ui/toolcalls.go), [tool-card renderer](../../cmd/mecatui/ui/tool_block.go), and [typed scrollback snapshots](../../cmd/mecatui/ui/internal/scrollback/tool.go) rather than creating a second interpretation of tool arguments. Formatting after semantic projection may differ for the inspector cursor/gutter and the conversation width. Preserve stable block identity and renderer-owned cache/provenance [invariants](../tui.md#conversation-and-feedback) and [ADR 0301's logical reading-anchor boundary](../adr/0301-logical-conversation-anchors.md).
+
+**Acceptance:**
+- AC1.1: While a normal call is pending, it retains a bordered, bounded card with readable action/target and pending state. Once its canonical result is received, the same scrollback block becomes a single borderless line with `✓ done · <tool> · <intent>` (or `✗ failed · <tool> · <intent>` for errors); inspector list and conversation report the same semantic status and intent for that block at matched width, with only gutter/styling differences.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity`
+- AC1.2: Read, Grep, Shell, Edit/Write, an MCP tool, delegated Subagent/Team, unknown tool names, and malformed or hostile arguments receive a useful one-line summary without an invented target. Both surfaces agree on semantic status and intent, and narrow widths never print terminal controls or spill a second line; full received details remain reachable in `/toolcalls` even after settlement.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety`
+- AC1.3: A terminal lifecycle notice before an authoritative result does not claim success; a provisional result and later canonical result reconcile on the same block without duplicating a line. A terminal failure without a result is visibly failed and inspectable for what is actually received; concurrent calls settle independently. Session resume renders restored completed calls as lines and unresolved calls as pending without inventing lost results.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume`
+
+### Scenario 2 — browse details without inflating the conversation
+
+The local inspector is already available through `/toolcalls` during idle and running phases; keep its existing [list/detail navigation](mecatui-toolcalls-inspector.md#scenario-1---find-a-call-in-the-current-conversation) and [modal ownership](../tui.md#layout-and-navigation). The main shortcut is an alternative entry, not a conversation-wide expand mode; [ADR 0301](../adr/0301-logical-conversation-anchors.md) protects the hidden conversation's reading position.
+
+**Acceptance:**
+- AC2.1: Pressing the configured `Toolcalls` chord in the main conversation while idle or running opens the current-session inspector with the same empty-state, selection, and detail behavior as `/toolcalls`. It leaves the hidden conversation's reading position, prompt draft, and received stream intact; closing returns to the same context, including on narrow screens and `--no-mouse`.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario2_InspectorShortcutAndFocus`
+- AC2.2: When a permission modal is active, its existing `ctrl+t`-default detail/full-args behavior still takes precedence over the inspector shortcut; other modal/help/overlay owners keep their keys, and the shortcut never approves a tool. Rebinding the shortcut changes its help and approval hints and does not leak a keypress into the prompt.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario2_ContextualShortcutAndOverrides`
+
+### Scenario 3 — expand reasoning summaries, not tool cards
+
+Assistant reasoning is a separate [assistant-card region](../../cmd/mecatui/ui/render.go) and its model-produced text is explicitly a lossy summary, not authoritative chain of thought. Its current caveat and visible one-line collapsed header remain. The new key action is separately rebindable through the [keymap validator](../../cmd/mecatui/keymap/validator.go); follow the [TUI client boundary](../tui.md#client-boundary) and the [AGENTS.md](../../AGENTS.md) effective-payload constraint.
+
+**Acceptance:**
+- AC3.1: `f9` (or the overridden `ExpandReasoning` chord) toggles all available reasoning-summary stanzas between the existing collapsed header and the expanded, caveated summary, including during streaming. It does not expand any tool result, Edit/Write diff, Subagent/Team trace, or approval modal. A turn with no summary remains unchanged.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario3_ReasoningOnlyToggle`
+- AC3.2: Rebinding `Toolcalls` and `ExpandReasoning` through either keymap source validates collisions, shows the live active chords in help and collapsed-reasoning hints, and never advertises the removed expand-all action. Legacy `ExpandTools` rebinds open the inspector at their existing chord; conflicting old/new action definitions fail validation with an actionable error.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario3_RebindAndLegacyAlias`
+
+### Scenario 4 — preserve long-run readability and non-tool diagnostics
+
+Conversation frames are used for logical reading anchors and selection, not just pixels; changing row counts must preserve the [renderer provenance contract](../../cmd/mecatui/ui/rendered_frame.go) and [ADR 0301](../adr/0301-logical-conversation-anchors.md). Permanent provider-error detail currently shares the global expansion gesture; resolve the human decision above before declaring this scenario complete.
+
+**Acceptance:**
+- AC4.1: At narrow and wide terminal widths, 100+ sequential settled calls take one line each rather than bordered multi-row cards, while a live call retains its bounded card and ordinary assistant/user/notice spacing remains readable. Scrolling back, selecting/copying text, resizing, and restoring auto-follow preserve the same logical block and semantic reading position despite cards shrinking during a run.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection`
+- AC4.2: After replacing global expansion, no non-tool error advertises a nonexistent shortcut or silently loses access to diagnostics that the old shortcut exposed; the agreed error-detail treatment remains sanitized, bounded, and visibly distinct from a failed tool call.
+  - verify: `TestMecatuiQuieterToolCalls_Scenario4_ErrorDetailAccess`
+- AC4.3: The owning [public keybindings page](../../user-docs/mecatui/keybindings.md) and current TUI usage page describe `ctrl+t`, rebindable `f9`, one-line settled calls, approval precedence, and how to inspect details without presenting separately tracked summary reload as shipped.
+  - verify: inspection — compare shipped interactions to the owning pages; run `task docs` and `task site:build`
+
+## Out of scope
+
+| Item | Defer-to | Decision |
+|---|---|---|
+| Grouping consecutive settled calls into a single aggregate row | Later #1361 checkpoint | Try one-line-per-call first on short and 100+ call transcripts; grouping needs a separate reviewed interaction. |
+| Click a conversation call to jump directly to its inspector detail | Later #1361 optional slice | Do not compromise native terminal selection, inline mode, or `--no-mouse`. |
+| Render inspector results by content kind (diff, Markdown, Shell, JSON) | [#2066](https://github.com/stacklok/mecatl/issues/2066) | Do not block compact cards on a separate result-styling feature. |
+| Persist/reload reasoning summaries | [#2079](https://github.com/stacklok/mecatl/issues/2079) | Preserve the currently received summary; this phase does not change storage. |
+| UI-package structural refactor | [#2077](https://github.com/stacklok/mecatl/issues/2077) | Reuse the smallest semantic projection already in the UI; do not add a generic widget framework. |
+
+## Definition of done
+
+1. Focused offline tests prove scenario parity, key ownership, status ordering, hostile text, transcript rehydration, and rendered-frame/selection behavior. Review fixed-size narrow/wide examples and a long real run before accepting the result.
+2. The implementation candidate passes `task lint`, `task test:race`, `task docs`, `task site:build`, `task ac-trace-strict`, and the offline demo's tool/ask/approval/result flow.
+3. The implementation PR cites this merged Plan / Interface PR and baseline, updates the owning public pages, and passes `/panel-review` with no ship blockers. Only a human merges.
+
+## Deferred decisions and known risks
+
+- Inspector list cursor and bounded row width are distinct from the conversation frame; compare *semantic one-line projection* before applying view-specific clipping, rather than trying to share styled ANSI strings or copying results into an inspector-side store.
+- Rendering must distinguish an available provisional result, an authoritative result, and a terminal lifecycle notice; the current compact metadata reports resolved/failed but does not itself certify a canonical result.
