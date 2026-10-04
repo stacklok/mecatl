@@ -195,6 +195,7 @@ func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) 
 func StripLoneCodeFence(s string) string
 func TeamStop(o TeamOutcome) session.StopReason
 func TightenTeamTokenBudget(serverBudget int, request int) int
+func UtilityEngineUsage(kind session.UsageKind, identity session.ProviderModelID, sess *session.Session) session.AuxiliaryUsage
 func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error
 func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
 func WithAgentModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption

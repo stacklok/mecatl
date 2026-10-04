@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -361,5 +362,8 @@ func TestAuxiliaryTokenUsage_Scenario2_DetachedReflectionUsageIsDropped(t *testi
 	}
 	if got := diagnostics.countContaining("detached reflection usage dropped"); got != 1 {
 		t.Fatalf("drop diagnostics = %d, want exactly one", got)
+	}
+	if got := strings.Join(diagnostics.capturedStrings(), "\n"); !strings.Contains(got, "bucket_count1") {
+		t.Fatalf("missing structured usage count: %s", got)
 	}
 }

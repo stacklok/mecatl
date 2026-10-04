@@ -233,7 +233,7 @@ func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewReques
 	// Zero-capability posture: the reviewer is non-interactive and its own asks
 	// (it is tool-less, so none should exist) auto-deny — no nesting, no surfacing.
 	final, stop := drainChild(run, childPosture{role: "ask-reviewer"})
-	usage := utilityEngineUsage(session.UsageKindAskReviewer, a.identity, sess)
+	usage := UtilityEngineUsage(session.UsageKindAskReviewer, a.identity, sess)
 	if stop == session.StopError || stop == session.StopCancelled {
 		return ChildAskReview{}, usage, fmt.Errorf("ask reviewer run did not complete (stop %q)", stop)
 	}

@@ -191,7 +191,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			}
 			outcome, usage, reflectErr := reflector.ReflectProjection(reflectCtx, projection)
 			if len(usage.Buckets) > 0 {
-				cfg.diag().Log(reflectCtx, port.LevelDebug, "detached recovery reflection usage dropped", "attempt_id", item.Record.ID)
+				cfg.diag().Log(reflectCtx, port.LevelDebug, "detached recovery reflection usage dropped", "attempt_id", item.Record.ID, "bucket_count", len(usage.Buckets))
 			}
 			return outcome, reflectErr
 		},

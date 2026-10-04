@@ -25,10 +25,13 @@ type recordingObserver struct {
 	sess  *session.Session
 }
 
-type usageErrorObserver struct{ recordingObserver }
+type usageErrorObserver struct {
+	recordingObserver
+	usage session.AuxiliaryUsage
+}
 
 func (o *usageErrorObserver) ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error) {
-	return session.AuxiliaryUsage{}, o.err
+	return o.usage, o.err
 }
 
 func (o *recordingObserver) Observe(_ context.Context, tr learning.Trajectory) error {
@@ -244,15 +247,34 @@ func TestLearningObserverErrorIsDiagnostic(t *testing.T) {
 
 func TestLearningUsageObserverErrorHasDistinctDiagnostic(t *testing.T) {
 	diag := newRecordingDiag()
-	observer := &usageErrorObserver{recordingObserver: recordingObserver{err: errors.New("observe failed")}}
+	partial := session.Usage{InputTokens: 4, OutputTokens: 1}
+	observer := &usageErrorObserver{
+		recordingObserver: recordingObserver{err: errors.New("observe failed")},
+		usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+			session.UsageKindReflection: {Total: partial, Models: map[string]session.Usage{"provider/model": partial}},
+		}},
+	}
+	sess := newSession(t, session.Limits{})
 	e := newEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Diagnostics: diag,
 		LearningMode: learning.Auto, LearningObserver: observer,
 	})
-	for range e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"}).Events() {
+	for range e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"}).Events() {
 	}
-	if _, ok := diag.findLine("completed-trajectory usage observer failed"); !ok {
-		t.Fatal("usage observer failure was not reported through a distinct diagnostic")
+	if line, ok := diag.findLine("completed-trajectory usage observer failed"); !ok {
+		t.Fatal("usage observer failure was not reported")
+	} else {
+		for _, attr := range line.args {
+			if attr == "error" || attr == observer.err || attr == observer.err.Error() {
+				t.Fatalf("observer failure diagnostic leaked error details: %+v", line)
+			}
+		}
+	}
+	if line, ok := diag.findLine("reflection usage dropped"); !ok || len(line.args) < 2 || line.args[len(line.args)-2] != "bucket_count" || line.args[len(line.args)-1] != 1 {
+		t.Fatalf("missing bounded partial-usage drop diagnostic: %+v, found=%t", line, ok)
+	}
+	if got := sess.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+		t.Fatalf("failed observer wrote reflection usage: %+v", got)
 	}
 }
 

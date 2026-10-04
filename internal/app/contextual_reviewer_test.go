@@ -221,7 +221,7 @@ func TestGuardrailAttemptUsageUsesCanonicalProviderModelAttribution(t *testing.T
 			sess := session.New("guardrail-attribution", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "workspace", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
 			sess.RecordTokenUsage(session.UsageKindMain, tc.providerID, tc.modelID, usage)
 
-			got := guardrailAttemptUsage(tc.providerID, tc.modelID, sess).Buckets[session.UsageKindGuardrail]
+			got := agent.UtilityEngineUsage(session.UsageKindGuardrail, session.ProviderModelID{ProviderID: tc.providerID, ModelID: tc.modelID}, sess).Buckets[session.UsageKindGuardrail]
 			if got.Models[tc.want] != usage || len(got.Models) != 1 {
 				t.Fatalf("guardrail attribution = %#v, want %s", got.Models, tc.want)
 			}

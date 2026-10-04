@@ -10,7 +10,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -19,7 +18,7 @@ import (
 // This uses the extracted result seam called directly by Build's ReflectSession
 // closure. A full Build would add unrelated provider, catalog, placement, and
 // background-worker setup without getting closer to the lifecycle-error branch.
-func TestExplicitReflectionLifecycleErrorRetainsUsageThroughService(t *testing.T) {
+func TestExplicitReflectionLifecycleErrorDropsUsageWithoutSessionWrite(t *testing.T) {
 	usage := session.Usage{InputTokens: 12, OutputTokens: 4}
 	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 		session.UsageKindReflection: {
@@ -61,8 +60,9 @@ func TestExplicitReflectionLifecycleErrorRetainsUsageThroughService(t *testing.T
 		return receipt, resultErr
 	}
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: childPermPolicy(Config{})})
+	diagnostics := &recordingDiag{}
 	svc, err := newTestServerService(server.Config{
-		Engine: engine, Store: store, ReflectSession: reflector, Diagnostics: port.NopDiagnostics{},
+		Engine: engine, Store: store, ReflectSession: reflector, Diagnostics: diagnostics,
 		MutationCapability: server.NewSessionMutationCapability(false),
 	})
 	if err != nil {
@@ -77,16 +77,17 @@ func TestExplicitReflectionLifecycleErrorRetainsUsageThroughService(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	bucket := persisted.TokenUsageSnapshot()[session.UsageKindReflection]
-	if bucket.Total != usage || bucket.Models["reflection-provider/reflection-model"] != usage {
-		t.Fatalf("persisted lifecycle-error usage = %#v, want exact reflection attribution %+v", bucket, usage)
+	if got := persisted.TokenUsageSnapshot(); len(got) != 0 {
+		t.Fatalf("lifecycle-error reflection persisted usage: %#v", got)
 	}
 	projected, err := server.NewHarnessServer(svc).GetSession(t.Context(), &mecatlv1.GetSessionRequest{SessionId: string(id)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := projected.GetSession().GetTokenUsage()[string(session.UsageKindReflection)].GetModels()["reflection-provider/reflection-model"]
-	if got.GetInputTokens() != int64(usage.InputTokens) || got.GetOutputTokens() != int64(usage.OutputTokens) {
-		t.Fatalf("projected lifecycle-error usage = %+v, want %+v", got, usage)
+	if got := projected.GetSession().GetTokenUsage(); len(got) != 0 {
+		t.Fatalf("lifecycle-error reflection projected usage: %#v", got)
+	}
+	if !diagnostics.has("reflection usage dropped") {
+		t.Fatalf("missing reflection usage drop diagnostic: %#v", diagnostics.messages())
 	}
 }

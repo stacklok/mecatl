@@ -500,7 +500,7 @@ func (c *reflectionCoordinator) run(item queuedReflection) {
 	ctx, cancel := context.WithTimeout(c.ctx, c.cfg.Timeout)
 	outcome, usage, err := item.job.reflector.Reflect(ctx, item.job.input)
 	if len(usage.Buckets) > 0 {
-		c.cfg.Diagnostics.Log(ctx, port.LevelDebug, "detached reflection usage dropped", "job_id", item.id)
+		c.cfg.Diagnostics.Log(ctx, port.LevelDebug, "detached reflection usage dropped", "job_id", item.id, "bucket_count", len(usage.Buckets))
 	}
 	if err == nil {
 		if outcome.Kind == learning.OutcomeAbstained {

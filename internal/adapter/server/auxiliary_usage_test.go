@@ -94,12 +94,26 @@ func (*auxiliaryUsageLease) Renew(context.Context, port.Lease) (port.Lease, erro
 }
 func (*auxiliaryUsageLease) Release(context.Context, port.Lease) error { return nil }
 
-type auxiliaryUsageDiagnostics struct{ messages []string }
+type auxiliaryUsageDiagnostics struct {
+	messages []string
+	attrs    [][]any
+}
 
-func (d *auxiliaryUsageDiagnostics) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+func (d *auxiliaryUsageDiagnostics) Log(_ context.Context, _ port.Level, msg string, attrs ...any) {
 	d.messages = append(d.messages, msg)
+	d.attrs = append(d.attrs, attrs)
 }
 func (d *auxiliaryUsageDiagnostics) With(...any) port.Diagnostics { return d }
+func (d *auxiliaryUsageDiagnostics) hasAttr(key string, value any) bool {
+	for _, attrs := range d.attrs {
+		for i := 0; i+1 < len(attrs); i += 2 {
+			if attrs[i] == key && attrs[i+1] == value {
+				return true
+			}
+		}
+	}
+	return false
+}
 func (d *auxiliaryUsageDiagnostics) count(fragment string) int {
 	n := 0
 	for _, message := range d.messages {
@@ -131,45 +145,72 @@ func TestReflectSessionOwnershipLossCannotOverwriteSuccessor(t *testing.T) {
 		return ReflectionReceipt{Disposition: "completed", Usage: aux}, nil
 	}
 
-	t.Run("current owner persists through existing capability", func(t *testing.T) {
+	t.Run("current owner reads once without accounting save", func(t *testing.T) {
 		store := &auxiliaryUsageStore{SessionStore: memstore.New()}
 		id := session.SessionID("current-owner")
 		if err := store.Save(t.Context(), completedAuxiliaryUsageSession(t, id)); err != nil {
 			t.Fatal(err)
 		}
-		store.saves = 0
+		store.saves, store.loads = 0, 0
+		diagnostics := &auxiliaryUsageDiagnostics{}
 		svc := &Service{cfg: Config{
-			Store: store, ReflectSession: reflector, Diagnostics: port.NopDiagnostics{},
+			Store: store, ReflectSession: reflector, Diagnostics: diagnostics,
 			MutationCapability: NewSessionMutationCapability(false),
 		}}
 		if _, err := svc.ReflectSession(t.Context(), id); err != nil {
 			t.Fatal(err)
 		}
-		if store.saves != 1 {
-			t.Fatalf("accounting saves = %d, want one", store.saves)
+		if store.loads != 1 || store.saves != 0 {
+			t.Fatalf("reflection loaded=%d saved=%d, want 1,0", store.loads, store.saves)
 		}
-		persisted, err := store.Load(t.Context(), id)
+		if diagnostics.count("reflection usage dropped") != 1 || !diagnostics.hasAttr("bucket_count", 1) {
+			t.Fatalf("drop diagnostics = %#v attrs=%#v, want one structured record", diagnostics.messages, diagnostics.attrs)
+		}
+		persisted, err := store.SessionStore.Load(t.Context(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := persisted.UsageFor(session.UsageKindReflection); got != usage {
-			t.Fatalf("persisted reflection usage = %+v, want %+v", got, usage)
-		}
-		projected := toProtoSession(persisted, ResolvedModel{}, nil, port.ProviderCapabilities{})
-		if got := projected.GetTokenUsage()[string(session.UsageKindReflection)].GetModels()["server-provider/server-model"]; got.GetInputTokens() != int64(usage.InputTokens) || got.GetOutputTokens() != int64(usage.OutputTokens) {
-			t.Fatalf("projected persisted reflection usage = %+v, want %+v", got, usage)
+		if got := persisted.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+			t.Fatalf("persisted reflection usage = %+v, want none", got)
 		}
 	})
 
-	t.Run("current owner persists returned usage on reflection error", func(t *testing.T) {
+	t.Run("reflection does not wait for session mutation lock", func(t *testing.T) {
+		store := memstore.New()
+		id := session.SessionID("lock-independent")
+		if err := store.Save(t.Context(), completedAuxiliaryUsageSession(t, id)); err != nil {
+			t.Fatal(err)
+		}
+		svc := &Service{cfg: Config{Store: store, ReflectSession: reflector, Diagnostics: port.NopDiagnostics{}}}
+		unlock := svc.runEntryMu.lock(id)
+		result := make(chan error, 1)
+		go func() {
+			_, err := svc.ReflectSession(t.Context(), id)
+			result <- err
+		}()
+		select {
+		case err := <-result:
+			unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			unlock()
+			<-result
+			t.Fatal("reflection waited for the session mutation lock")
+		}
+	})
+
+	t.Run("error path does not persist partial usage", func(t *testing.T) {
 		store := &auxiliaryUsageStore{SessionStore: memstore.New()}
 		id := session.SessionID("current-owner-error")
 		if err := store.Save(t.Context(), completedAuxiliaryUsageSession(t, id)); err != nil {
 			t.Fatal(err)
 		}
-		store.saves = 0
+		store.saves, store.loads = 0, 0
+		diagnostics := &auxiliaryUsageDiagnostics{}
 		svc := &Service{cfg: Config{
-			Store: store, Diagnostics: port.NopDiagnostics{}, MutationCapability: NewSessionMutationCapability(false),
+			Store: store, Diagnostics: diagnostics, MutationCapability: NewSessionMutationCapability(false),
 			ReflectSession: func(context.Context, *session.Session) (ReflectionReceipt, error) {
 				return ReflectionReceipt{Usage: aux}, ErrUnavailable
 			},
@@ -177,14 +218,15 @@ func TestReflectSessionOwnershipLossCannotOverwriteSuccessor(t *testing.T) {
 		if _, err := svc.ReflectSession(t.Context(), id); !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("ReflectSession error = %v, want unavailable", err)
 		}
-		persisted, err := store.Load(t.Context(), id)
+		if store.loads != 1 || store.saves != 0 || diagnostics.count("reflection usage dropped") != 1 || !diagnostics.hasAttr("bucket_count", 1) {
+			t.Fatalf("error reflection loaded=%d saved=%d diagnostics=%#v attrs=%#v", store.loads, store.saves, diagnostics.messages, diagnostics.attrs)
+		}
+		persisted, err := store.SessionStore.Load(t.Context(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		projected := toProtoSession(persisted, ResolvedModel{}, nil, port.ProviderCapabilities{})
-		got := projected.GetTokenUsage()[string(session.UsageKindReflection)].GetModels()["server-provider/server-model"]
-		if got.GetInputTokens() != int64(usage.InputTokens) || got.GetOutputTokens() != int64(usage.OutputTokens) {
-			t.Fatalf("error-path projected reflection usage = %+v, want %+v", got, usage)
+		if got := persisted.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+			t.Fatalf("error-path persisted reflection usage = %+v, want none", got)
 		}
 	})
 
@@ -207,8 +249,8 @@ func TestReflectSessionOwnershipLossCannotOverwriteSuccessor(t *testing.T) {
 		if lease.acquires != 0 || store.loads != 1 || store.saves != 0 {
 			t.Fatalf("detached accounting acquired=%d loaded=%d saved=%d, want 0,1,0", lease.acquires, store.loads, store.saves)
 		}
-		if diagnostics.count("reflection usage dropped") != 1 {
-			t.Fatalf("drop diagnostics = %#v, want one bounded message", diagnostics.messages)
+		if diagnostics.count("reflection usage dropped") != 1 || !diagnostics.hasAttr("bucket_count", 1) {
+			t.Fatalf("drop diagnostics = %#v attrs=%#v, want one structured record", diagnostics.messages, diagnostics.attrs)
 		}
 	})
 
@@ -252,60 +294,41 @@ func TestReflectSessionOwnershipLossCannotOverwriteSuccessor(t *testing.T) {
 		if got := persisted.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
 			t.Fatalf("late reflection usage overwrote successor state: %+v", got)
 		}
-		if diagnostics.count("reflection usage dropped") != 1 {
-			t.Fatalf("drop diagnostics = %#v, want one bounded message", diagnostics.messages)
+		if diagnostics.count("reflection usage dropped") != 1 || !diagnostics.hasAttr("bucket_count", 1) {
+			t.Fatalf("drop diagnostics = %#v attrs=%#v, want one structured record", diagnostics.messages, diagnostics.attrs)
 		}
 	})
 }
 
 func TestAuxiliaryTokenUsage_Scenario2_ReflectionRecordsSelectedModel(t *testing.T) {
-	reflectionUsage := session.Usage{InputTokens: 5, OutputTokens: 2}
-	secondModelUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
-	injectedUsage := session.Usage{InputTokens: 13, OutputTokens: 8}
-	reflector := func(context.Context, *session.Session) (ReflectionReceipt, error) {
-		return ReflectionReceipt{Disposition: "completed", Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-			session.UsageKindReflection: {Models: map[string]session.Usage{
-				"reflection-provider/reflection-model": reflectionUsage,
-				"second-provider/second-model":         secondModelUsage,
-			}},
-			session.UsageKindMain:   {Models: map[string]session.Usage{"injected/main": injectedUsage}},
-			session.UsageKindRouter: {Models: map[string]session.Usage{"injected/router": injectedUsage}},
-		}}}, nil
-	}
+	usage := session.Usage{InputTokens: 5, OutputTokens: 2}
 	store := &auxiliaryUsageStore{SessionStore: memstore.New()}
 	id := session.SessionID("reflection-usage-purpose")
 	if err := store.Save(t.Context(), completedAuxiliaryUsageSession(t, id)); err != nil {
 		t.Fatal(err)
 	}
+	store.saves, store.loads = 0, 0
+	diagnostics := &auxiliaryUsageDiagnostics{}
 	svc := &Service{cfg: Config{
-		Store: store, ReflectSession: reflector, Diagnostics: port.NopDiagnostics{},
+		Store: store, Diagnostics: diagnostics,
+		ReflectSession: func(context.Context, *session.Session) (ReflectionReceipt, error) {
+			return ReflectionReceipt{Disposition: "completed", Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				session.UsageKindReflection: {Total: usage, Models: map[string]session.Usage{"reflection-provider/reflection-model": usage}},
+			}}}, nil
+		},
 		MutationCapability: NewSessionMutationCapability(false),
 	}}
 	if _, err := svc.ReflectSession(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	persisted, err := store.Load(t.Context(), id)
+	if store.loads != 1 || store.saves != 0 || diagnostics.count("reflection usage dropped") != 1 || !diagnostics.hasAttr("bucket_count", 1) {
+		t.Fatalf("reflection loaded=%d saved=%d diagnostics=%#v attrs=%#v", store.loads, store.saves, diagnostics.messages, diagnostics.attrs)
+	}
+	persisted, err := store.SessionStore.Load(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := persisted.TokenUsageSnapshot()
-	reflection := ledger[session.UsageKindReflection]
-	if got, want := reflection.Models["reflection-provider/reflection-model"], reflectionUsage; got != want {
-		t.Fatalf("reflection model usage = %+v, want %+v", got, want)
-	}
-	if got, want := reflection.Models["second-provider/second-model"], secondModelUsage; got != want {
-		t.Fatalf("second reflection model usage = %+v, want %+v", got, want)
-	}
-	if got, want := reflection.Models["injected/main"], injectedUsage; got != want {
-		t.Fatalf("remapped main model usage = %+v, want %+v", got, want)
-	}
-	if got, want := reflection.Models["injected/router"], injectedUsage; got != want {
-		t.Fatalf("remapped router model usage = %+v, want %+v", got, want)
-	}
-	if got, want := reflection.Total, reflectionUsage.Add(secondModelUsage).Add(injectedUsage).Add(injectedUsage); got != want {
-		t.Fatalf("reflection total = %+v, want %+v", got, want)
-	}
-	if len(ledger) != 1 {
-		t.Fatalf("usage ledger = %#v, want reflection only", ledger)
+	if got := persisted.TokenUsageSnapshot(); len(got) != 0 {
+		t.Fatalf("reflection changed source usage ledger: %#v", got)
 	}
 }
