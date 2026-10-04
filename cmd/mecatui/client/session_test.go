@@ -177,3 +177,34 @@ func TestSnapshotFromProjectsMainUsageAndOptionalContextOccupancy(t *testing.T) 
 		t.Fatalf("legacy snapshot = %+v", legacy)
 	}
 }
+
+func TestMecatuiAuthoritativeReload_Scenario1_LegacyAndExplicitAbsence(t *testing.T) {
+	presentClient := newSessionCapabilitiesClient(t, &sessionCapabilitiesServer{
+		global: &mecatlv1.ServerCapabilities{},
+		snapshot: &mecatlv1.Session{
+			TitleMetadata: &mecatlv1.SessionTitle{},
+			ResolvedModel: &mecatlv1.ResolvedModel{},
+			TokenUsage: map[string]*mecatlv1.TokenUsage{
+				"main": {Total: &mecatlv1.Usage{}},
+			},
+			LatestContextOccupancy: &mecatlv1.ContextOccupancy{},
+			SessionCapabilities:    &mecatlv1.SessionCapabilities{},
+		},
+	})
+	msg, ok := RefreshResolvedModelCmd(t.Context(), presentClient, "session")().(ResolvedModelMsg)
+	if !ok || msg.Err != nil {
+		t.Fatalf("present refresh = %#v", msg)
+	}
+	if !msg.TitleMetadataPresent || !msg.ResolvedModelPresent || !msg.MainUsagePresent || msg.ContextOccupancy == nil || !msg.ServerCapabilitiesPresent || !msg.Capabilities.SessionMediaPresent {
+		t.Fatalf("present zero-value snapshot lost presence: %+v", msg)
+	}
+
+	legacyClient := newSessionCapabilitiesClient(t, &sessionCapabilitiesServer{snapshot: &mecatlv1.Session{}})
+	msg, ok = RefreshResolvedModelCmd(t.Context(), legacyClient, "session")().(ResolvedModelMsg)
+	if !ok || msg.Err != nil {
+		t.Fatalf("legacy refresh = %#v", msg)
+	}
+	if msg.TitleMetadataPresent || msg.ResolvedModelPresent || msg.MainUsagePresent || msg.ContextOccupancy != nil || msg.ServerCapabilitiesPresent || msg.Capabilities.SessionMediaPresent {
+		t.Fatalf("legacy snapshot claimed supplied fields: %+v", msg)
+	}
+}

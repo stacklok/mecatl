@@ -22,25 +22,37 @@ type SessionSnapshot struct {
 	Placement     Placement
 	CreatedAt     int64
 	ResolvedModel ResolvedModel
+	// ResolvedModelPresent distinguishes an omitted legacy model from a supplied
+	// zero-valued resolved model.
+	ResolvedModelPresent bool
 	// Usage is the canonical cumulative main-session ledger. It is distinct from
 	// ContextOccupancy, which is only the latest context-meter display state.
 	Usage Usage
 	// AuxiliaryUsage is the sum of every non-main canonical usage bucket (title
 	// generation, compaction, reflection, routing, reviewers, guardrails, judges).
 	AuxiliaryUsage Usage
+	// MainUsagePresent distinguishes a missing legacy main ledger from a supplied
+	// zero total.
+	MainUsagePresent bool
 	// ContextOccupancy is nil when a legacy or pre-turn snapshot has no known
 	// context-meter numerator.
 	ContextOccupancy *ContextOccupancy
 	Title            string
 	TitleProvenance  string
 	TitleRevision    uint64
+	// TitleMetadataPresent distinguishes a missing legacy message from an explicit
+	// empty title that clears the label.
+	TitleMetadataPresent bool
 	// Capabilities is the server's feature-advertisement snapshot from the Session
 	// proto (the SAME global value CreateSessionResponse carries), with per-session
 	// media overlaid when SessionCapabilities is present. A client that reloads or
 	// switches to a persisted session (continue, /effort fork, /clear successor)
-	// reads this to re-derive its affordances. An older server (nil fields) yields
-	// the zero value, which the consumer treats as "keep current caps".
+	// reads this to re-derive its affordances. ServerCapabilitiesPresent distinguishes
+	// a legacy missing global advertisement from an explicit all-false value.
 	Capabilities Capabilities
+	// ServerCapabilitiesPresent distinguishes an omitted legacy global response from
+	// an explicit all-false advertisement.
+	ServerCapabilitiesPresent bool
 }
 
 // ContextOccupancy is the optional latest context-meter display value from a
@@ -74,27 +86,32 @@ func auxiliaryUsageFrom(buckets map[string]*mecatlv1.TokenUsage) Usage {
 }
 
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
-	return snapshotFromWithGlobalCapabilities(s, Capabilities{})
+	return snapshotFromWithGlobalCapabilities(s, Capabilities{}, false)
 }
 
-func snapshotFromWithGlobalCapabilities(s *mecatlv1.Session, global Capabilities) SessionSnapshot {
+func snapshotFromWithGlobalCapabilities(s *mecatlv1.Session, global Capabilities, serverCapabilitiesPresent bool) SessionSnapshot {
 	if s == nil {
-		return SessionSnapshot{Mode: ModeDefaultString}
+		return SessionSnapshot{Mode: ModeDefaultString, ServerCapabilitiesPresent: serverCapabilitiesPresent}
 	}
+	mainUsage := s.GetTokenUsage()["main"]
 	return SessionSnapshot{
-		Mode:             ModeString(s.GetMode()),
-		State:            s.GetState(),
-		Turns:            s.GetTurns(),
-		Placement:        placementFrom(s.GetPlacement()),
-		CreatedAt:        s.GetCreatedAtUnix(),
-		ResolvedModel:    resolvedModelFrom(s.GetResolvedModel()),
-		Usage:            usageFrom(s.GetTokenUsage()["main"].GetTotal()),
-		AuxiliaryUsage:   auxiliaryUsageFrom(s.GetTokenUsage()),
-		ContextOccupancy: contextOccupancyFrom(s.GetLatestContextOccupancy()),
-		Title:            titleFromProto(s),
-		TitleProvenance:  titleProvenanceFromProto(s),
-		TitleRevision:    s.GetTitleMetadata().GetRevision(),
-		Capabilities:     capabilitiesWithSessionMediaFrom(global, s.GetSessionCapabilities()),
+		Mode:                      ModeString(s.GetMode()),
+		State:                     s.GetState(),
+		Turns:                     s.GetTurns(),
+		Placement:                 placementFrom(s.GetPlacement()),
+		CreatedAt:                 s.GetCreatedAtUnix(),
+		ResolvedModel:             resolvedModelFrom(s.GetResolvedModel()),
+		ResolvedModelPresent:      s.GetResolvedModel() != nil,
+		Usage:                     usageFrom(mainUsage.GetTotal()),
+		AuxiliaryUsage:            auxiliaryUsageFrom(s.GetTokenUsage()),
+		MainUsagePresent:          mainUsage != nil,
+		ContextOccupancy:          contextOccupancyFrom(s.GetLatestContextOccupancy()),
+		Title:                     titleFromProto(s),
+		TitleProvenance:           titleProvenanceFromProto(s),
+		TitleRevision:             s.GetTitleMetadata().GetRevision(),
+		TitleMetadataPresent:      s.GetTitleMetadata() != nil,
+		Capabilities:              capabilitiesWithSessionMediaFrom(global, s.GetSessionCapabilities()),
+		ServerCapabilitiesPresent: serverCapabilitiesPresent,
 	}
 }
 
@@ -123,14 +140,15 @@ func (c *Client) GetSession(ctx context.Context, id string) (SessionSnapshot, er
 	if err != nil {
 		return SessionSnapshot{}, fmt.Errorf("get session: %w", err)
 	}
-	global, err := c.compatibilityCapabilities(ctx)
+	global, serverCapabilitiesPresent, err := c.compatibilityCapabilities(ctx)
 	if err != nil {
 		// Servers predating GetCompatibilityInfo still support session resume. Their
 		// session media snapshot remains authoritative; absent global bits degrade
 		// safely to false rather than making resume fail.
 		global = Capabilities{}
+		serverCapabilitiesPresent = false
 	}
-	return snapshotFromWithGlobalCapabilities(resp.GetSession(), global), nil
+	return snapshotFromWithGlobalCapabilities(resp.GetSession(), global, serverCapabilitiesPresent), nil
 }
 
 // SetMode asks the server to change the session's permission posture and returns
@@ -180,6 +198,14 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel
+	// ResolvedModelPresent distinguishes a missing legacy model from a supplied
+	// zero-valued resolved model.
+	ResolvedModelPresent bool
+	// Usage is the cumulative main-session ledger from the same snapshot as Resolved.
+	Usage Usage
+	// MainUsagePresent distinguishes a missing legacy main ledger from a supplied
+	// zero total.
+	MainUsagePresent bool
 	// ContextOccupancy is the persisted latest context-meter display state from
 	// the same authoritative snapshot as Resolved.
 	ContextOccupancy *ContextOccupancy
@@ -200,9 +226,15 @@ type ResolvedModelMsg struct {
 	TitleProvenance string
 	// TitleRevision orders authoritative title metadata updates; zero is legacy.
 	TitleRevision uint64
+	// TitleMetadataPresent distinguishes a missing legacy title message from a
+	// supplied empty title.
+	TitleMetadataPresent bool
 	// Capabilities is the server's feature-advertisement snapshot. See the struct doc.
 	Capabilities Capabilities
-	Err          error
+	// ServerCapabilitiesPresent distinguishes an omitted legacy global capability
+	// response from an explicit all-false response.
+	ServerCapabilitiesPresent bool
+	Err                       error
 }
 
 // SessionGetter is the narrow subset of *Client that RefreshResolvedModelCmd needs.
@@ -261,9 +293,9 @@ func refreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string, ad
 	return func() tea.Msg {
 		snap, err := g.GetSession(ctx, id)
 		return ResolvedModelMsg{
-			SessionID: id, Resolved: snap.ResolvedModel, ContextOccupancy: snap.ContextOccupancy, AdoptContextOccupancy: adoptContextOccupancy, StartupResumeRefreshAttempt: startupResumeRefreshAttempt, Mode: snap.Mode,
+			SessionID: id, Resolved: snap.ResolvedModel, ResolvedModelPresent: snap.ResolvedModelPresent, Usage: snap.Usage, MainUsagePresent: snap.MainUsagePresent, ContextOccupancy: snap.ContextOccupancy, AdoptContextOccupancy: adoptContextOccupancy, StartupResumeRefreshAttempt: startupResumeRefreshAttempt, Mode: snap.Mode,
 			State: snap.State, Placement: snap.Placement, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, TitleProvenance: snap.TitleProvenance, TitleRevision: snap.TitleRevision, Capabilities: snap.Capabilities, Err: err,
+			Title: snap.Title, TitleProvenance: snap.TitleProvenance, TitleRevision: snap.TitleRevision, TitleMetadataPresent: snap.TitleMetadataPresent, Capabilities: snap.Capabilities, ServerCapabilitiesPresent: snap.ServerCapabilitiesPresent, Err: err,
 		}
 	}
 }

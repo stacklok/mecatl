@@ -108,8 +108,13 @@ func TestResolvedModelMediaOverlay(t *testing.T) {
 			want: client.Capabilities{Teams: true, Memory: true, Audio: true, SessionMediaPresent: true},
 		},
 		{
+			name: "present all-false global snapshot clears capabilities",
+			msg:  client.ResolvedModelMsg{SessionID: "session", ServerCapabilitiesPresent: true, Capabilities: client.Capabilities{SessionMediaPresent: true}},
+			want: client.Capabilities{SessionMediaPresent: true},
+		},
+		{
 			name: "global snapshot replaces capabilities",
-			msg:  client.ResolvedModelMsg{SessionID: "session", Capabilities: client.Capabilities{MCP: true}},
+			msg:  client.ResolvedModelMsg{SessionID: "session", ServerCapabilitiesPresent: true, Capabilities: client.Capabilities{MCP: true}},
 			want: client.Capabilities{MCP: true},
 		},
 		{

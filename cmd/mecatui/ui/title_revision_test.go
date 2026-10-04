@@ -17,11 +17,24 @@ func TestViewLeavesWindowTitleEmpty(t *testing.T) {
 func TestTitleRevisionSnapshotRejectsDelayedLiveEvent(t *testing.T) {
 	m := titleModel(t, &titleRenamer{})
 	m, _, _ = m.onResolvedModelMsg(client.ResolvedModelMsg{
-		SessionID: "active", Title: "snapshot", TitleProvenance: "operator", TitleRevision: 3,
+		SessionID: "active", Title: "snapshot", TitleProvenance: "operator", TitleRevision: 3, TitleMetadataPresent: true,
 	})
 	m = m.onSessionTitle(client.SessionTitleMsg{Title: "delayed event", Provenance: "generated", Revision: 2})
 	if m.sessionTitle != "snapshot" || m.sessionTitleRevision != 3 {
 		t.Fatalf("title/revision = %q/%d, want snapshot/3", m.sessionTitle, m.sessionTitleRevision)
+	}
+}
+
+func TestTitleRevisionLegacyAbsenceAndExplicitEmptySnapshot(t *testing.T) {
+	m := titleModel(t, &titleRenamer{})
+	m, _, _ = m.onResolvedModelMsg(client.ResolvedModelMsg{SessionID: "active", Title: "legacy value", TitleRevision: 9})
+	if m.sessionTitle != "Fallback" || m.sessionTitleRevision != 0 {
+		t.Fatalf("legacy title metadata replaced local state: %q/%d", m.sessionTitle, m.sessionTitleRevision)
+	}
+
+	m, _, _ = m.onResolvedModelMsg(client.ResolvedModelMsg{SessionID: "active", TitleMetadataPresent: true})
+	if m.sessionTitle != "" || m.sessionTitleProvenance != "" {
+		t.Fatalf("explicit empty title did not clear title/provenance: %q/%q", m.sessionTitle, m.sessionTitleProvenance)
 	}
 }
 

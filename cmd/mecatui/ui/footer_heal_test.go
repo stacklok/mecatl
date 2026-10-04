@@ -427,9 +427,10 @@ func TestSessionCapabilitiesSnapshotUpdatesMediaWithoutLosingGlobals(t *testing.
 	preserved.SessionMediaPresent = true
 
 	tests := []struct {
-		name string
-		caps client.Capabilities
-		want client.Capabilities
+		name                      string
+		caps                      client.Capabilities
+		serverCapabilitiesPresent bool
+		want                      client.Capabilities
 	}{
 		{
 			name: "explicit false",
@@ -452,9 +453,10 @@ func TestSessionCapabilitiesSnapshotUpdatesMediaWithoutLosingGlobals(t *testing.
 			want: func() client.Capabilities { c := preserved; c.Image = true; c.Audio = true; return c }(),
 		},
 		{
-			name: "full snapshot replaces globals",
-			caps: client.Capabilities{SessionMediaPresent: true, Image: true, SlashCommands: true},
-			want: client.Capabilities{SessionMediaPresent: true, Image: true, SlashCommands: true},
+			name:                      "full snapshot replaces globals",
+			caps:                      client.Capabilities{SessionMediaPresent: true, Image: true, SlashCommands: true},
+			serverCapabilitiesPresent: true,
+			want:                      client.Capabilities{SessionMediaPresent: true, Image: true, SlashCommands: true},
 		},
 		{
 			name: "legacy absent snapshot",
@@ -469,8 +471,9 @@ func TestSessionCapabilitiesSnapshotUpdatesMediaWithoutLosingGlobals(t *testing.
 			m := healModel(t, conv)
 			m.caps = seed
 			m = applyAll(m, client.ResolvedModelMsg{
-				SessionID:    "sess-test-0001",
-				Capabilities: tt.caps,
+				SessionID:                 "sess-test-0001",
+				Capabilities:              tt.caps,
+				ServerCapabilitiesPresent: tt.serverCapabilitiesPresent,
 			})
 			if m.caps != tt.want {
 				t.Fatalf("capabilities = %+v, want %+v", m.caps, tt.want)

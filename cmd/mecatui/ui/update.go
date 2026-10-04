@@ -735,7 +735,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if msg.token != m.modelSwitchRequestToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
 			return m, m.closeSessionCmd(msg.targetID), true
 		}
-		caps := mergeSessionCapabilities(m.caps, msg.snapshot.Capabilities)
+		caps := mergeSessionCapabilities(m.caps, msg.snapshot.Capabilities, msg.snapshot.ServerCapabilitiesPresent)
 		resolved := msg.snapshot.ResolvedModel
 		if resolved == (client.ResolvedModel{}) {
 			resolved = m.resolvedSessionModel
@@ -1146,26 +1146,18 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 }
 
 // mergeSessionCapabilities preserves the known server-wide capability snapshot when
-// a compatible response contains only the selected session's media capabilities.
-func mergeSessionCapabilities(current, incoming client.Capabilities) client.Capabilities {
-	if incoming == (client.Capabilities{}) {
+// a legacy response omitted it, while applying explicit session-media state.
+func mergeSessionCapabilities(current, incoming client.Capabilities, serverCapabilitiesPresent bool) client.Capabilities {
+	if serverCapabilitiesPresent {
+		return incoming
+	}
+	if !incoming.SessionMediaPresent {
 		return current
 	}
-	mediaOnly := incoming.SessionMediaPresent
-	image, audio := incoming.Image, incoming.Audio
-	incoming.SessionMediaPresent = false
-	incoming.Image = false
-	incoming.Audio = false
-	if mediaOnly && incoming == (client.Capabilities{}) {
-		current.Image = image
-		current.Audio = audio
-		current.SessionMediaPresent = true
-		return current
-	}
-	incoming.Image = image
-	incoming.Audio = audio
-	incoming.SessionMediaPresent = mediaOnly
-	return incoming
+	current.Image = incoming.Image
+	current.Audio = incoming.Audio
+	current.SessionMediaPresent = true
+	return current
 }
 
 // onResolvedModelMsg handles the ResolvedModelMsg from a GetSession refetch
@@ -1190,10 +1182,18 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.Err != nil || msg.SessionID != m.sessionID {
 		return m, nil, true
 	}
-	m.caps = mergeSessionCapabilities(m.caps, msg.Capabilities)
-	// The snapshot is authoritative after reconnect/session adoption, so unlike the
-	// old first-prompt seed it may replace a local title.
-	m, _ = m.adoptTitle(msg.Title, msg.TitleProvenance, msg.TitleRevision)
+	m.caps = mergeSessionCapabilities(m.caps, msg.Capabilities, msg.ServerCapabilitiesPresent)
+	// Legacy title metadata does not replace a known label. An explicit empty
+	// title, however, is authoritative and clears the display.
+	if msg.TitleMetadataPresent {
+		if msg.Title == "" {
+			m.sessionTitle = ""
+			m.sessionTitleProvenance = ""
+			m.sessionTitleRevision = msg.TitleRevision
+		} else {
+			m, _ = m.adoptTitle(msg.Title, msg.TitleProvenance, msg.TitleRevision)
+		}
+	}
 	// Mode update: apply when the refetch carries a mode (the plan-approval
 	// refresh path). On the footer-heal path Mode is the same as m.activeMode
 	// (or empty from an older server), so this is a benign no-op.

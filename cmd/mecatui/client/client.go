@@ -468,17 +468,17 @@ func withoutSessionAffinity(ctx context.Context) context.Context {
 }
 
 // compatibilityCapabilities reads the sole server-wide capability source.
-func (c *Client) compatibilityCapabilities(ctx context.Context) (Capabilities, error) {
+func (c *Client) compatibilityCapabilities(ctx context.Context) (Capabilities, bool, error) {
 	resp, err := c.svc.GetCompatibilityInfo(withoutSessionAffinity(ctx), &mecatlv1.GetCompatibilityInfoRequest{})
 	if err != nil {
-		return Capabilities{}, fmt.Errorf("get compatibility info: %w", err)
+		return Capabilities{}, false, fmt.Errorf("get compatibility info: %w", err)
 	}
-	return capabilitiesFrom(resp.GetCapabilities()), nil
+	return capabilitiesFrom(resp.GetCapabilities()), resp.GetCapabilities() != nil, nil
 }
 
 // createSession is the shared CreateSession proto call and response unwrap body.
 func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (string, Capabilities, ResolvedModel, error) {
-	caps, err := c.compatibilityCapabilities(ctx)
+	caps, _, err := c.compatibilityCapabilities(ctx)
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, err
 	}
