@@ -4,7 +4,7 @@
 - Date: 2026-09-23
 - Scope: engine auxiliary-model call result contracts and ownership-safe accounting
 - Supersedes: ADR 0350 decision 4
-- Superseded by: ADR 0371 for decision 2's contextual reviewer result and decision 4's guardrail-hook reporter (generic `HookRunner` no longer installs it; only the main-session path-escape permission evaluation does)
+- Superseded by: ADR 0371 for decision 2's contextual reviewer result and decision 4's guardrail-hook reporter (generic `HookRunner` no longer installs it; only the main-session path-escape permission evaluation does); ADR 0373 for decision 4's reflection accounting
 
 ## Context
 

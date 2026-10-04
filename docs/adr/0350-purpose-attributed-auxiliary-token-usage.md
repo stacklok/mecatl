@@ -4,7 +4,7 @@
 - Date: 2026-09-22
 - Scope: canonical durable accounting of session-associated auxiliary LLM calls
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR 0373 for reflection session accounting only
 
 ## Context
 
