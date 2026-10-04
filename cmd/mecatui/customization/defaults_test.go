@@ -124,10 +124,11 @@ func TestCanonicalStatus_Scenario3_UnknownContextDoesNotClaimZeroPressure(t *tes
 		footerCols int
 		want       string
 		delegation Delegation
+		wantTeam   bool
 	}{
 		{name: "full", footerCols: 120, want: "ctx ?/200K"},
-		{name: "compact", footerCols: 20, want: "ctx ?"},
-		{name: "minimal", footerCols: 11, want: "ctx ?", delegation: Delegation{Team: LiveTeam{Total: 1}}},
+		{name: "compact", footerCols: 20, want: "ctx ?", delegation: Delegation{Team: LiveTeam{Working: 1, Total: 1}}, wantTeam: true},
+		{name: "minimal", footerCols: 11, want: "ctx ?", delegation: Delegation{Team: LiveTeam{Working: 1, Total: 1}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			footer := stockFooter(t, Input{
@@ -135,13 +136,18 @@ func TestCanonicalStatus_Scenario3_UnknownContextDoesNotClaimZeroPressure(t *tes
 				Delegation: tc.delegation,
 				Terminal:   Terminal{FooterAvailCols: tc.footerCols},
 			})
-			if got := statusSurfaceText(footer); !strings.Contains(got, tc.want) {
+			got := statusSurfaceText(footer)
+			if !strings.Contains(got, tc.want) {
 				t.Fatalf("footer = %q, want unknown context containing %q", got, tc.want)
 			}
-			if tc.name == "minimal" && strings.Contains(statusSurfaceText(footer), "⟳") {
-				t.Fatalf("footer = %q, retained compact delegation content instead of selecting minimal", statusSurfaceText(footer))
+			if tc.wantTeam {
+				if !strings.Contains(got, "⟳ 1/1") || strings.Contains(got, "working") {
+					t.Fatalf("footer = %q, want compact team cue without the full team ratio", got)
+				}
+			} else if strings.Contains(got, "⟳") {
+				t.Fatalf("footer = %q, retained compact delegation content instead of selecting minimal", got)
 			}
-			if strings.Contains(statusSurfaceText(footer), "ctx 0%") {
+			if strings.Contains(got, "ctx 0%") {
 				t.Fatalf("footer = %q, fabricated zero pressure for unknown context", statusSurfaceText(footer))
 			}
 			for _, span := range footer.Spans {

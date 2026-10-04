@@ -31,7 +31,7 @@ func TestCanonicalStatus_Scenario1_StockSourceOwnsSurfaces(t *testing.T) {
 		width                          int
 	}{
 		{name: "wide full", width: 120, wantFooter: "100K/200K"},
-		{name: "narrow compact", width: 48, wantFooter: "ctx", absentFooter: "100K/200K"},
+		{name: "narrow compact", width: 48, wantFooter: "ctx ▒▒▒▒░░░░ 50%", absentFooter: "100K/200K"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := customization.NewDefaultSource(0)
