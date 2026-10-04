@@ -67,7 +67,9 @@ sequences, or links. Use StatusML tags in the template itself.
 Template fields have the same shape as the command JSON below. `Clock.Now` is a
 time value and supports `{{.Clock.Now.Format "15:04"}}`. The `Human` members are
 preformatted display values; use each `Raw` member when a template needs an
-exact count.
+exact count. For example, `<header><text>{{.Model.ProviderLabel}}</text></header>`
+shows the provider-qualified model identity; use `.Model.FriendlyName` when a
+human-readable catalog name is preferable.
 
 ### Common template functions
 
@@ -125,14 +127,17 @@ refreshes it.
 
 |JSON path|Type|Meaning|
 |-|-|-|
-|`Version`|integer|Status input protocol version (currently `4`).|
+|`Version`|integer|Status input protocol version (currently `5`).|
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
 |`Session.Handle`|string|Short displayed session ID, available to custom status and terminal-title templates. Use `/session` to copy the full ID.|
 |`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
 |`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
-|`Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route`|strings|Provider/model routing identifiers, display label, and observed downstream route.|
+|`Model.ProviderID`, `Model.ID`|strings|Exact provider and model routing identifiers for the resolved session.|
+|`Model.ProviderLabel`|string|Display identity from the resolved pair, `provider-id/model-id`. Uses the raw model ID if provider evidence is unavailable; empty when the model ID is unknown. Model IDs containing `/` retain that slash. The shipped full and compact headers show this label.|
+|`Model.FriendlyName`|string|Human-readable name from the matching provider/model inventory entry, falling back to the raw model ID. Available to custom templates and commands.|
+|`Model.Route`|string|Observed downstream route, separate from model identity.|
 |`Model.ContextWindow.{Raw,Human}`|integer, string|Resolved context capacity as exact and display-ready values.|
 |`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|
 |`Usage.CacheReadPercent`|integer|`CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero.|

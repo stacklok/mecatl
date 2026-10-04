@@ -261,8 +261,8 @@ func (m Model) headerModelLabel() string {
 	if m.phase == phaseConnecting {
 		return ""
 	}
-	if rm := m.resolvedSessionModel; rm.ModelID != "" {
-		return qualifiedModelLabel(rm.ProviderID, rm.ModelID)
+	if label := m.statusModel().ProviderLabel; label != "" {
+		return terminaltext.Sanitize(label)
 	}
 	if sel := m.createModelSelection; sel.ModelID != "" {
 		return qualifiedModelLabel(sel.ProviderID, sel.ModelID)
