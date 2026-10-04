@@ -56,6 +56,56 @@ func TestMecatuiAuthoritativeReload_Scenario1_ReplacesSuppliedSessionFacts(t *te
 	}
 }
 
+func TestMecatuiAuthoritativeReload_Scenario1_LegacyAndExplicitAbsence(t *testing.T) {
+	m := titleModel(t, &titleRenamer{})
+	m.contextTokens, m.contextEstimated, m.contextUnknown = 99, true, false
+	m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 1
+	m.reloadPending, m.reloadSession = true, m.sessionID
+	m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID}})
+	if !m.contextUnknown || m.contextTokens != 0 || m.contextEstimated {
+		t.Fatalf("nil authoritative occupancy = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
+	}
+
+	m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 2
+	m.reloadPending, m.reloadSession = true, m.sessionID
+	m = applyAll(m, snapshotReply{seq: 2, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, ContextOccupancy: &client.ContextOccupancy{}}})
+	if m.contextUnknown || m.contextTokens != 0 || m.contextEstimated {
+		t.Fatalf("present zero authoritative occupancy = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
+	}
+
+	row := client.SessionListItem{ID: "next-main", Kind: client.SessionKindMain}
+	global := client.Capabilities{MCP: true, SlashCommands: true}
+	for _, tt := range []struct {
+		name     string
+		snapshot client.SessionSnapshot
+		want     client.Capabilities
+	}{
+		{
+			name:     "legacy globals retain confirmed controls with explicit text-only media",
+			snapshot: client.SessionSnapshot{Capabilities: client.Capabilities{SessionMediaPresent: true}},
+			want:     client.Capabilities{MCP: true, SlashCommands: true, SessionMediaPresent: true},
+		},
+		{
+			name:     "present all-false globals clear controls",
+			snapshot: client.SessionSnapshot{ServerCapabilitiesPresent: true},
+			want:     client.Capabilities{},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			model := newSessionsModel(t, newSessionsConv(), &fakeSessionLister{}, &fakeSessionTranscriptLoader{})
+			model.caps = global
+			adopted, _, ok := model.adoptAuthoritativeTranscript(row, conversation{}, tt.snapshot)
+			if !ok {
+				t.Fatal("adoption was rejected")
+			}
+			got := adopted.(Model)
+			if got.caps != tt.want {
+				t.Fatalf("adopted capabilities = %+v, want %+v", got.caps, tt.want)
+			}
+		})
+	}
+}
+
 func TestMecatuiAuthoritativeReload_Scenario3_AdoptionUsesSnapshot(t *testing.T) {
 	row := client.SessionListItem{ID: "next-main", Kind: client.SessionKindMain, Title: "stale", TitleRevision: 99, State: "running", CreatedAt: 10, ModifiedAt: 11, Placement: client.Placement{Label: "stale"}}
 	snap := client.SessionSnapshot{TitleMetadataPresent: true, Title: "canonical", TitleProvenance: "operator", TitleRevision: 2, State: "idle", CreatedAt: 20, Placement: client.Placement{Label: "canonical"}, Mode: "ask", ResolvedModelPresent: true, ResolvedModel: client.ResolvedModel{ProviderID: "new", ModelID: "new", ContextWindow: 64000}, MainUsagePresent: true, Usage: client.Usage{InputTokens: 120}, ContextOccupancy: &client.ContextOccupancy{InputTokens: 30}}

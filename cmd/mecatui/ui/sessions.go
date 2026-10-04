@@ -303,7 +303,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m = m.resetSession()
 	m = m.bindSessionID(row.ID)
 	m.freshSessionBinding = false
-	m.caps = snapshot.Capabilities
+	m.caps = mergeSessionCapabilities(m.caps, snapshot.Capabilities, snapshot.ServerCapabilitiesPresent)
 	(&m).setResolvedSessionModel(snapshot.ResolvedModel)
 	m.activeMode = client.ModeString(client.ModeFromString(snapshot.Mode))
 	m.usage = snapshot.Usage

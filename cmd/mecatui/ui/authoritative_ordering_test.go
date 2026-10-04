@@ -145,33 +145,40 @@ func TestMecatuiAuthoritativeReload_Scenario2_SnapshotResultOrdering(t *testing.
 
 func TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace(t *testing.T) {
 	opened := &reconnectLiveStreamer{}
-	bound := modeTestModel(t, &fakeConv{})
-	bound.deps.LiveStream = opened
-	bound.liveReconGen = 1
-	mm, fetch := bound.updateReconnectMsg(reconnectMsg{gen: 1, msg: client.LiveReconnectedMsg{}})
-	bound = mm.(Model)
-	defer bound.disarmLiveFeed()
-	if opened.opens.Load() == 0 || fetch == nil || !bound.reloadPending {
-		t.Fatalf("replacement feed not opened before snapshot fetch: opens=%d pending=%t fetch=%t", opened.opens.Load(), bound.reloadPending, fetch != nil)
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "snapshot", TitleRevision: 4}}}
+	m := modeTestModel(t, conv)
+	m.deps.LiveStream = opened
+	m.liveReconGen = 1
+	mm, reload := m.Update(reconnectMsg{gen: 1, msg: client.LiveReconnectedMsg{}})
+	m = mm.(Model)
+	defer m.disarmLiveFeed()
+	batch, ok := reload().(tea.BatchMsg)
+	if !ok || len(batch) != 2 || opened.opens.Load() == 0 || !m.reloadPending {
+		t.Fatalf("replacement feed not opened before snapshot fetch: batch=%T/%d opens=%d pending=%t", reload(), len(batch), opened.opens.Load(), m.reloadPending)
+	}
+	m = applyAll(m, liveMsg{gen: m.liveGen, msg: client.SessionTitleMsg{Title: "new", Revision: 5}})
+	if m.sessionTitle == "new" {
+		t.Fatal("feed event became visible before snapshot")
+	}
+	m = applyAll(m, batch[1]())
+	if conv.getSessionCalls() != 1 || m.sessionTitle != "new" || m.sessionTitleRevision != 5 || m.reloadPending {
+		t.Fatalf("actual snapshot fetch did not install then replay live title: calls=%d title=%q/%d pending=%t", conv.getSessionCalls(), m.sessionTitle, m.sessionTitleRevision, m.reloadPending)
 	}
 
-	m := titleModel(t, &titleRenamer{})
+	m = titleModel(t, &titleRenamer{})
 	m.liveGen = 7
 	m.reloadFeedGen = 7
 	m.reloadPending = true
 	m.reloadSession = m.sessionID
-	m.reloadSeq = 1
+	m.reloadSeq++
 	m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "new", Revision: 5}})
 	m = applyAll(m, liveMsg{gen: 7, msg: client.DeliveryNoteMsg{ScheduleName: "job", FireID: "fire-1", Text: fencedDeliveryText("job", "fire-1")}})
 	if len(m.conv.testBlocks()) != 0 {
 		t.Fatal("feed delivery became visible before snapshot")
 	}
-	if m.sessionTitle == "new" {
-		t.Fatal("feed event became visible before snapshot")
-	}
-	m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "snapshot", TitleRevision: 4}})
-	if m.sessionTitle != "new" || m.sessionTitleRevision != 5 || len(m.conv.testBlocks()) != 1 {
-		t.Fatalf("buffered feed event lost: title=%q/%d blocks=%d", m.sessionTitle, m.sessionTitleRevision, len(m.conv.testBlocks()))
+	m = applyAll(m, snapshotReply{seq: m.reloadSeq, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, TitleMetadataPresent: true, Title: "snapshot", TitleRevision: 4}})
+	if len(m.conv.testBlocks()) != 1 {
+		t.Fatalf("buffered feed event lost: blocks=%d", len(m.conv.testBlocks()))
 	}
 	m = applyAll(m, liveMsg{gen: 7, msg: client.SessionTitleMsg{Title: "late duplicate", Revision: 5}})
 	m = applyAll(m, liveMsg{gen: 6, msg: client.SessionTitleMsg{Title: "retired", Revision: 9}})
@@ -218,6 +225,35 @@ func TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace(t *testing.T) {
 }
 
 func TestMecatuiAuthoritativeReload_Scenario2_FailedFetchPreservesState(t *testing.T) {
+	t.Run("actual GetSession failure retries and recovers", func(t *testing.T) {
+		conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "recovered", Mode: "plan"}}, getSessionErr: errors.New("temporarily unavailable")}
+		m := modeTestModel(t, conv)
+		m.sessionTitle, m.activeMode = "confirmed", "default"
+		m.liveGen, m.reloadFeedGen = 7, 7
+		m.reloadPending, m.reloadSession = true, m.sessionID
+		var delays []time.Duration
+		m.reloadRetryTimer = func(delay time.Duration, msg snapshotRetryMsg) tea.Cmd {
+			delays = append(delays, delay)
+			return func() tea.Msg { return msg }
+		}
+		fetch := (&m).refreshSessionCmd()
+		mm, retry := m.Update(fetch())
+		m = mm.(Model)
+		if retry == nil || conv.getSessionCalls() != 1 || m.sessionTitle != "confirmed" || len(delays) != 1 || delays[0] != 500*time.Millisecond {
+			t.Fatalf("failed GetSession did not preserve state and schedule bounded retry: calls=%d title=%q delays=%v", conv.getSessionCalls(), m.sessionTitle, delays)
+		}
+		conv.getSessionErr = nil
+		mm, fetch = m.Update(retry())
+		m = mm.(Model)
+		if fetch == nil {
+			t.Fatal("retry timer did not issue GetSession")
+		}
+		m = applyAll(m, fetch())
+		if conv.getSessionCalls() != 2 || m.reloadPending || m.sessionTitle != "recovered" || m.activeMode != "plan" {
+			t.Fatalf("recovery GetSession was not installed: calls=%d pending=%t title=%q mode=%q", conv.getSessionCalls(), m.reloadPending, m.sessionTitle, m.activeMode)
+		}
+	})
+
 	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{TitleMetadataPresent: true, Title: "server", TitleRevision: 4, Mode: "plan"}}}
 	m := modeTestModel(t, conv)
 	m.sessionTitle, m.sessionTitleRevision, m.activeMode = "confirmed", 3, "default"
