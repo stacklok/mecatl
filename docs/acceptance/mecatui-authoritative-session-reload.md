@@ -15,7 +15,7 @@ The owning living guide is [Developing the mecatui terminal UI](../tui.md#client
 
 ## Human decisions
 
-None — the operator has chosen server-authoritative reload, preservation of view state, and the batch order; this plan fixes their observable boundaries without introducing a new server contract.
+- [x] Defer retry of a failed post-settlement counter refetch after feed release to #2076. — Decision: Joe authorized amending #2071 to ship first and fix #2076 next; initial authoritative fetch retries remain in this batch.
 
 ## Interface contract
 
@@ -50,7 +50,7 @@ A reconnect includes catch-up, an authorized snapshot, and a new live subscripti
   - verify: `TestMecatuiAuthoritativeReload_Scenario2_SnapshotLiveRace`
 - AC2.2: Out-of-order same-session snapshot responses and stale mode-change/rename completions cannot replace a newer server-confirmed state or clear a newer operator intent.
   - verify: `TestMecatuiAuthoritativeReload_Scenario2_StaleResponses`
-- AC2.3: If the authoritative fetch fails, the client keeps its last confirmed state, shows that session metadata is not synchronized, and retries metadata fetch with the existing bounded reconnect backoff until success or session switch/exit; a second feed failure re-enters reconnection. No partial snapshot is adopted.
+- AC2.3: If the initial authoritative reconnect, resume, or adoption fetch fails while the feed barrier is held, the client keeps its last confirmed state, shows that session metadata is not synchronized, and retries metadata fetch with the existing bounded reconnect backoff until success or session switch/exit; a second feed failure re-enters reconnection. No partial snapshot is adopted. Retry of a failed post-settlement counter refetch after the feed barrier has been released is deferred to [#2076](https://github.com/stacklok/mecatl/issues/2076); this criterion does not require that retry in this implementation.
   - verify: `TestMecatuiAuthoritativeReload_Scenario2_FailedFetchPreservesState`
 
 ### Scenario 3 - Client view and run recovery survive a session reload
@@ -68,6 +68,7 @@ Reload updates session facts without replacing the user's unsent draft, queued p
 | Item | Defer-to | Decision |
 |---|---|---|
 | Earlier title generation, provisional live events, and crash/restart title policy | [issue #2072](https://github.com/stacklok/mecatl/issues/2072) | Batch 2 depends on this reload. |
+| Retry after a failed post-settlement counter refetch once the feed barrier has been released | [issue #2076](https://github.com/stacklok/mecatl/issues/2076) | This batch makes the refetch after the run settles; #2076 adds failure retry after #2071 merges. |
 | New transcript/event-log delivery or a generic client-state reset | Separate work | Existing durable replay and view-state ownership remain. |
 | Changing server storage, permissions, or public wire fields | Separate contract | This plan reconciles existing authorized snapshots. |
 
