@@ -12,6 +12,37 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+func TestMecatuiAuthoritativeReload_Scenario2_IdleResultReconcileRetries(t *testing.T) {
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{MainUsagePresent: true, Usage: client.Usage{InputTokens: 40}}}}
+	m := modeTestModel(t, conv)
+	m.phase = phaseIdle
+	m.usage = client.Usage{InputTokens: 40}
+	m.liveGen, m.reloadFeedGen, m.reloadSeq = 7, 7, 1
+	m.reloadPending, m.reloadSession = true, m.sessionID
+	m = applyAll(m, snapshotReply{seq: 1, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, MainUsagePresent: true, Usage: m.usage}})
+	var delays []time.Duration
+	m.reloadRetryTimer = func(delay time.Duration, msg snapshotRetryMsg) tea.Cmd {
+		delays = append(delays, delay)
+		return func() tea.Msg { return msg }
+	}
+	mm, _ := m.Update(liveMsg{gen: 7, msg: client.ResultMsg{Stop: stopError, Error: "failed", Usage: client.Usage{InputTokens: 10}}})
+	m = mm.(Model)
+	mm, retry := m.Update(snapshotReply{seq: m.reloadSeq, session: m.sessionID, feedGen: 7, msg: client.ResolvedModelMsg{SessionID: m.sessionID, Err: errors.New("temporarily unavailable")}})
+	m = mm.(Model)
+	if retry == nil || len(delays) != 1 || delays[0] != 500*time.Millisecond || !m.reloadPending || m.usage.InputTokens != 40 {
+		t.Fatalf("failed reconciliation lost confirmed usage or retry: usage=%+v pending=%t delays=%v retry=%t", m.usage, m.reloadPending, delays, retry != nil)
+	}
+	mm, fetch := m.Update(retry())
+	m = mm.(Model)
+	if fetch == nil {
+		t.Fatal("retry did not issue a fetch")
+	}
+	m = applyAll(m, fetch())
+	if m.reloadPending || m.usage.InputTokens != 40 {
+		t.Fatalf("retry did not reconcile usage: pending=%t usage=%+v", m.reloadPending, m.usage)
+	}
+}
+
 func TestMecatuiAuthoritativeReload_Scenario2_IdleSnapshotBeforeLiveResult(t *testing.T) {
 	for _, ledger := range []bool{true, false} {
 		t.Run(map[bool]string{true: "main ledger", false: "legacy missing ledger"}[ledger], func(t *testing.T) {

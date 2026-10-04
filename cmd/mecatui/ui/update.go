@@ -4017,12 +4017,14 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		mm := m.onSessionTitle(msg)
 		return mm, mm.waitLiveCmd()
 	default:
+		reconcileLiveResult := false
 		// An idle live-only terminal may already be included in the last
 		// authoritative ledger. Settle it without guessing at an increment, then
 		// fetch the cumulative total again. Legacy snapshots have no ledger to
 		// reconcile against, so keep their incremental fallback.
 		if result, ok := msg.(client.ResultMsg); ok && m.phase == phaseIdle && m.reloadMainUsagePresent && m.deps.Session != nil {
 			m.reloadNeedRefresh = true
+			reconcileLiveResult = true
 			result.Usage = client.Usage{}
 			msg = result
 		}
@@ -4037,7 +4039,15 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		// draining. DeliveryNoteMsg → addDelivery renders the delivery card.
 		mm, cmd := m.updateStreamEvent(msg)
 		if m2, ok := mm.(Model); ok {
+			if reconcileLiveResult && m2.reloadSeq != m.reloadSeq {
+				// Keep subsequent feed events behind this reconciliation, so a
+				// failed fetch uses the existing bounded snapshot retry path.
+				m2.reloadPending = true
+				m2.reloadSession = m2.sessionID
+				m2.reloadFeedGen = m2.liveGen
+			}
 			cmd = tea.Batch(cmd, m2.waitLiveCmd())
+			mm = m2
 		}
 		return mm, cmd
 	}
