@@ -4,7 +4,7 @@
 **Work classification:** Bounded — the server already owns session truth; this change reconciles the terminal client's reconnect, startup-resume, and interactive-adoption projections without changing server authority, persistence, or public APIs.
 **Decision record:** None — server-owned metadata and snapshot rehydration are established by [the mecatui client boundary](../tui.md#client-boundary); this plan changes only the client's reload policy and local ordering.
 **Phase:** batch 1, authoritative session reconciliation before early title generation
-**Status:** proposed, 2026-10-03. Requested by the directing operator for [issue #2071](https://github.com/stacklok/mecatl/issues/2071).
+**Status:** in-progress, 2026-10-03. Approved by merged [Plan / Interface PR #2073](https://github.com/stacklok/mecatl/pull/2073); implementation underway for [issue #2071](https://github.com/stacklok/mecatl/issues/2071).
 **Delivery:** Split. Several asynchronous session workflows and their ordering need an independent interface and behavior review.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#2071](https://github.com/stacklok/mecatl/issues/2071).
