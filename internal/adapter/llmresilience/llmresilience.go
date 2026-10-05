@@ -5,9 +5,10 @@
 //
 // The load-bearing correctness rule is no replay after semantic visibility.
 // Leading whitespace-only text, reasoning/replay metadata, phase, provider route,
-// and tool calls are tentative and remain buffered in wire order. Usage is also
-// buffered but is accounting, not semantic visibility: discarded attempts add it
-// to the eventual success or terminal error without exposing their content. The
+// and tool calls are tentative and remain buffered in semantic wire order. Usage
+// is accounting, not semantic visibility: already observed usage (including
+// discarded attempts) is emitted before buffered semantics so cancellation cannot
+// lose it. Discarded attempts never expose their content. The
 // first text delta that makes cumulative text non-whitespace flushes the semantic
 // buffer and commits the attempt; after it escapes, a failure is terminal. A clean
 // ChunkDone instead flushes the whole tentative turn, including pure-tool-call
@@ -750,9 +751,7 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		if err == nil {
 			// Stream reached a semantic boundary. Breaker success is recorded only by
 			// wrap after clean completion; visible output alone is not provider health.
-			if discardedUsage != (session.Usage{}) {
-				head.buffered = append([]port.Chunk{{Kind: port.ChunkUsage, Usage: &discardedUsage}}, head.buffered...)
-			}
+			head.discardedUsage = head.discardedUsage.Add(discardedUsage)
 			return p.wrap(head, diagnostic), nil
 		}
 		if head != nil {
@@ -964,6 +963,7 @@ func (p *resilientProvider) pumpAttempt(
 			result.progress = session.StreamProgressComplete
 			return result, nil
 		}
+		result.discardedUsage = result.discardedUsage.Add(discardedChunkUsage(chunk))
 		if cerr != nil {
 			failure := establishmentFailure(cerr)
 			stopEstTimer()
@@ -992,7 +992,6 @@ func (p *resilientProvider) pumpAttempt(
 			}
 			return result, cause
 		}
-		result.discardedUsage = result.discardedUsage.Add(discardedChunkUsage(chunk))
 		if chunk.Kind == port.ChunkDone {
 			result.buffered = append(result.buffered, chunk)
 			result.progress = session.StreamProgressComplete
@@ -1216,19 +1215,45 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 				result.stop()
 			}
 		}
+		if result.discardedUsage != (session.Usage{}) {
+			if !yield(port.Chunk{Kind: port.ChunkUsage, Usage: &result.discardedUsage}, nil) {
+				cleanupRemaining()
+				return
+			}
+		}
 		for _, buffered := range result.buffered {
+			if err := diagnostic.ctx.Err(); err != nil {
+				cleanupRemaining()
+				yield(port.Chunk{}, err)
+				return
+			}
+			if buffered.Kind == port.ChunkUsage {
+				continue // already included in the accounting prefix
+			}
 			if !yield(buffered, nil) {
 				cleanupRemaining()
 				return
 			}
 		}
+		if err := diagnostic.ctx.Err(); err != nil {
+			cleanupRemaining()
+			yield(port.Chunk{}, err)
+			return
+		}
 		switch result.progress {
 		case session.StreamProgressComplete:
-			p.recordSuccess()
+			if diagnostic.ctx.Err() == nil {
+				p.recordSuccess()
+			}
 			return
 		case session.StreamProgressVisible:
 			if !yield(result.chunk, nil) {
 				cleanupRemaining()
+				return
+			}
+			if err := diagnostic.ctx.Err(); err != nil {
+				cleanupRemaining()
+				yield(port.Chunk{}, err)
 				return
 			}
 			if result.remaining == nil {
@@ -1248,9 +1273,13 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 					consumed = false
 					return false
 				}
+				if diagnostic.ctx.Err() != nil {
+					consumed = false
+					return false
+				}
 				return err == nil
 			})
-			if clean && consumed {
+			if clean && consumed && diagnostic.ctx.Err() == nil {
 				p.recordSuccess()
 			}
 		case session.StreamProgressUnknown, session.StreamProgressPrecommit:
