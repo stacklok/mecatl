@@ -8,7 +8,7 @@
 **Delivery:** Split. Discovery, Anthropic fallback, and Responses request behavior span separate adapters and compatibility cases that merit plan/interface review before implementation.
 **Expected tasks:** 3
 **Issue:** [stacklok/mecatl#2084](https://github.com/stacklok/mecatl/issues/2084); the Claude 5 fallback slice overlaps [community PR #2100](https://github.com/stacklok/mecatl/pull/2100).
-**Plan PR:** Not opened; this local proposed plan awaits separate authorization for branch/PR side effects.
+**Plan PR:** [stacklok/mecatl#2118](https://github.com/stacklok/mecatl/pull/2118)
 **Approved baseline:** Absent until plan approval.
 
 A reasoning-capable model that supplies summarized thinking should make that summary available as display-only reasoning without conflating it with signed or encrypted replay state. Authenticated model listings that omit capability fields must not silently disable thinking; a supported Responses endpoint must be asked for summaries rather than relying on an upstream default. The owning living guide is [provider architecture](../architecture/providers.md); the public [model-selection guide](../../user-docs/features/choose-models.md) owns the operator-facing caveat that summaries depend on provider/model support and may not appear on every turn. Update those pages only with verified implemented behavior, in the implementation PR.
