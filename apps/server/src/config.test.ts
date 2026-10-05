@@ -4,6 +4,16 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError, studioConfigFromEnvironment } from "./config.js";
 
 describe("Studio configuration", () => {
+  it("accepts only 1 to enable experimental Writer", () => {
+    expect(studioConfigFromEnvironment({}).experimentalWriter).toBe(false);
+    expect(
+      studioConfigFromEnvironment({ STUDIO_EXPERIMENTAL_WRITER: "1" }).experimentalWriter,
+    ).toBe(true);
+    expect(() => studioConfigFromEnvironment({ STUDIO_EXPERIMENTAL_WRITER: "true" })).toThrow(
+      ConfigurationError,
+    );
+  });
+
   it("binds loopback by default and every interface only inside the image or when STUDIO_HOST says so", () => {
     expect(studioConfigFromEnvironment({}).host).toBe("127.0.0.1");
     expect(

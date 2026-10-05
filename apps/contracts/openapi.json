@@ -822,6 +822,9 @@
                     "mock": {
                       "type": "boolean"
                     },
+                    "experimentalWriter": {
+                      "type": "boolean"
+                    },
                     "sdkVersion": {
                       "type": "string"
                     },
@@ -10218,6 +10221,520 @@
           },
           "503": {
             "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/writer/observe": {
+      "post": {
+        "operationId": "observeWriter",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "document": {
+                    "type": "object",
+                    "properties": {
+                      "content": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "content",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "providerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "providerId"
+                    ]
+                  },
+                  "checkpoint": {
+                    "type": "object",
+                    "properties": {
+                      "content": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "content",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "observations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "dismissed",
+                            "discussed"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        },
+                        "selected": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "revision",
+                        "status",
+                        "text"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 12
+                  },
+                  "discussion": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "assistant"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "text"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 12
+                  }
+                },
+                "required": [
+                  "document",
+                  "observations",
+                  "discussion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed Writer response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "silent"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "observe"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        },
+                        "quote": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "text"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Writer unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/writer/discuss": {
+      "post": {
+        "operationId": "discussWriter",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "document": {
+                    "type": "object",
+                    "properties": {
+                      "content": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "content",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "providerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "providerId"
+                    ]
+                  },
+                  "checkpoint": {
+                    "type": "object",
+                    "properties": {
+                      "content": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "content",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "observations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "dismissed",
+                            "discussed"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        },
+                        "selected": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "revision",
+                        "status",
+                        "text"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 12
+                  },
+                  "discussion": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "assistant"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "text"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 12
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "document",
+                  "observations",
+                  "discussion",
+                  "message"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed Writer response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Writer unavailable.",
             "content": {
               "application/problem+json": {
                 "schema": {

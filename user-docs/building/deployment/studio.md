@@ -74,7 +74,55 @@ set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts**
 from **Settings > About**. The page lists the current browser bindings and
 features enabled by the connected deployment.
 
-### Inspect delegated activity
+## Try the Writer experiment
+
+:::caution[Experimental]
+
+Writer is a Spike for evaluating occasional thought questions while you write.
+It is not production-ready. Enable it by setting `STUDIO_EXPERIMENTAL_WRITER=1`
+on the Studio container or local Studio process, then open **Writer** from the
+workspace navigation. The default is off, and the value must be exactly `1`.
+
+:::
+
+Use Writer with non-sensitive text that you wrote yourself. The document stays
+only in its current browser tab, so select **Download .md** before leaving the
+route. Reloading or closing a tab with content prompts for confirmation; route
+departure loses the document. Writer has no save, resume, cross-tab or
+cross-device synchronization, collaboration, or automatic editing.
+
+Write Markdown in the highlighted document surface. Use **H1**, **B**, and **I**
+to toggle formatting (or Ctrl/⌘+Alt+1, Ctrl/⌘+B, and Ctrl/⌘+I), with **Undo** and
+**Redo** for author edits. Choose a provider/model from the deployment's model
+inventory, or leave **Deployment default** selected. Filter the list by model
+name, ID, or provider; models hidden in your browser's **Models** settings stay
+hidden here. The same choice applies to subsequent observations and discussions.
+
+After a pause in typing, Writer can show a question about an unclear claim,
+assumption, contradiction, or missing idea. Silence is a valid response. Each
+question names the revision it analyzed and remains available even if you have
+continued editing. The status shows when it is waiting for typing, analyzing,
+cooling down, or last checked without an observation. Select **Pause** to stop
+automatic observations, **Dismiss** to set aside a question, or **Discuss** to
+ask about it, even while automatic observations are paused. Discussion never
+changes the document. Ask explicitly if you want wording suggestions. A failed
+analysis needs a manual retry. If Writer becomes
+unavailable, requests stop and your draft remains in the open tab.
+
+Writer sends the current document and bounded recent context through Studio to
+the connected Mecatl deployment and the selected provider (or the deployment
+default). Its temporary no-filesystem plan sessions use the deployment's existing
+tool policy. Writer can use external research tools when relevant, including
+WebSearch, WebFetch, and configured MCP tools. It asks for source citations and
+limits search queries, but it is not a no-egress boundary. Existing Mecatl
+provider policy, durable events, and audit behavior apply; deletion after a
+successful request does not guarantee zero retention. Do not use Writer for
+sensitive content.
+
+For limits, failure behavior, and manual trial stop conditions, see the
+[Writer experiment design](https://github.com/stacklok/mecatl/blob/main/docs/experimental/writer.md).
+
+## Inspect delegated activity
 
 When a run delegates work, its transcript shows an activity card for each
 observed Subagent, Parallel group, or Team member. Select a card to open that
@@ -341,6 +389,7 @@ acts as one principal, so the image refuses to start unless you also set
 |`STUDIO_ACTIVITY_REPLAY_MAX`|`2000`|Durable events one reattach replays before it tells the browser to read the transcript for older history. Live events are never bounded.|
 |`STUDIO_ACTIVITY_MAX_STREAMS`|`4`|Concurrent activity streams one chat admits per replica.|
 |`STUDIO_ALLOW_UNAUTHENTICATED`|unset|Set to `1` to run a static-token or no-authentication target inside the image.|
+|`STUDIO_EXPERIMENTAL_WRITER`|unset|Set to `1` to expose the experimental Writer workspace and API.|
 |`STUDIO_LOG_LEVEL`|`info`|One of `debug`, `info`, `warn`, or `error`. Logs are JSON lines on standard error.|
 
 For local development outside a container, the

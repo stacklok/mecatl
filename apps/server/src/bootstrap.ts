@@ -78,6 +78,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     return {
       app: createApp({
         activity: config.activity,
+        experimentalWriter: config.experimentalWriter,
         ...(authentication === undefined ? {} : { authentication }),
         logger,
         runtime,

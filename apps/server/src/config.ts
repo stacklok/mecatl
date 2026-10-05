@@ -33,6 +33,8 @@ export interface ActivityLimits {
 export interface StudioConfig {
   /** Bounds on durable activity replay (see docs/acceptance/studio-chat.md). */
   readonly activity: ActivityLimits;
+  /** Enables experimental Writer routes and runtime discovery only when set to 1. */
+  readonly experimentalWriter: boolean;
   /** Inside the released image, allow static-token or no-auth runtimes. */
   readonly allowUnauthenticated: boolean;
   /** Set by the Dockerfile; refuses spawn/mock modes and gates unauthenticated runtimes. */
@@ -82,6 +84,7 @@ export function studioConfigFromEnvironment(
       replayMax: parseInteger(environment, "STUDIO_ACTIVITY_REPLAY_MAX", 2_000, 1, 1_000_000),
     },
     allowUnauthenticated: flag(environment, "STUDIO_ALLOW_UNAUTHENTICATED"),
+    experimentalWriter: flag(environment, "STUDIO_EXPERIMENTAL_WRITER"),
     host: parseHost(environment.STUDIO_HOST, image),
     image,
     logLevel: parseLogLevel(environment.STUDIO_LOG_LEVEL),

@@ -58,6 +58,7 @@ export const runtimeResponseSchema = z.object({
   deployment: z.string().optional(),
   features: z.array(z.string()),
   mock: z.boolean(),
+  experimentalWriter: z.boolean().optional(),
   sdkVersion: z.string().optional(),
   source: z.enum(["external", "local"]),
   studioBuildId: z.string().optional(),

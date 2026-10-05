@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
+import { useQuery } from "@tanstack/react-query";
 import { Outlet } from "@tanstack/react-router";
 import { ShortcutProvider } from "../../features/shortcuts/shortcut-provider";
 import { TooltipProvider } from "../ui/tooltip";
@@ -8,6 +10,7 @@ import { GlobalStatusSlot } from "./global-status-slot";
 import { TopNav } from "./top-nav";
 
 export function WorkspaceShell() {
+  const runtime = useQuery(getRuntimeOptions());
   return (
     <ShortcutProvider>
       <TooltipProvider>
@@ -22,7 +25,9 @@ export function WorkspaceShell() {
             <div className="shrink-0" data-shell-transient-status="">
               <ConnectionStatusBanner placement="transient" />
             </div>
-            <TopNav />
+            <TopNav
+              experimentalWriter={!runtime.isError && runtime.data?.experimentalWriter === true}
+            />
             <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden rounded-t-xl bg-background text-foreground min-[500px]:mx-3 min-[500px]:mb-3 min-[500px]:rounded-[20px]">
               <Outlet />
             </main>

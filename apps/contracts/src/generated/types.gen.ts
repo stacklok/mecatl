@@ -327,6 +327,7 @@ export type GetRuntimeResponses = {
         deployment?: string;
         features: Array<string>;
         mock: boolean;
+        experimentalWriter?: boolean;
         sdkVersion?: string;
         source: 'external' | 'local';
         studioBuildId?: string;
@@ -3349,3 +3350,145 @@ export type GetStorageHealthResponses = {
 };
 
 export type GetStorageHealthResponse = GetStorageHealthResponses[keyof GetStorageHealthResponses];
+
+export type ObserveWriterData = {
+    body?: {
+        document: {
+            content: string;
+            revision: number;
+        };
+        model?: {
+            id: string;
+            providerId: string;
+        };
+        checkpoint?: {
+            content: string;
+            revision: number;
+        };
+        observations: Array<{
+            revision: number;
+            status: 'active' | 'dismissed' | 'discussed';
+            text: string;
+            selected?: boolean;
+        }>;
+        discussion: Array<{
+            role: 'user' | 'assistant';
+            text: string;
+        }>;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/writer/observe';
+};
+
+export type ObserveWriterErrors = {
+    /**
+     * Invalid input.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * Writer unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ObserveWriterError = ObserveWriterErrors[keyof ObserveWriterErrors];
+
+export type ObserveWriterResponses = {
+    /**
+     * Completed Writer response.
+     */
+    200: {
+        status: 'silent';
+    } | {
+        status: 'observe';
+        text: string;
+        quote?: string;
+        reason?: string;
+    };
+};
+
+export type ObserveWriterResponse = ObserveWriterResponses[keyof ObserveWriterResponses];
+
+export type DiscussWriterData = {
+    body?: {
+        document: {
+            content: string;
+            revision: number;
+        };
+        model?: {
+            id: string;
+            providerId: string;
+        };
+        checkpoint?: {
+            content: string;
+            revision: number;
+        };
+        observations: Array<{
+            revision: number;
+            status: 'active' | 'dismissed' | 'discussed';
+            text: string;
+            selected?: boolean;
+        }>;
+        discussion: Array<{
+            role: 'user' | 'assistant';
+            text: string;
+        }>;
+        message: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/writer/discuss';
+};
+
+export type DiscussWriterErrors = {
+    /**
+     * Invalid input.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * Writer unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type DiscussWriterError = DiscussWriterErrors[keyof DiscussWriterErrors];
+
+export type DiscussWriterResponses = {
+    /**
+     * Completed Writer response.
+     */
+    200: {
+        text: string;
+    };
+};
+
+export type DiscussWriterResponse = DiscussWriterResponses[keyof DiscussWriterResponses];

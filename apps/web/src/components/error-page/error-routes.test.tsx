@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: Apache-2.0
 
-import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
+import { getAuthSessionOptions, getRuntimeOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -52,6 +52,7 @@ async function mountProductionRoute(path: string) {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   client.setQueryData(getAuthSessionOptions().queryKey, { mode: "none", status: "disabled" });
+  client.setQueryData<unknown>(getRuntimeOptions().queryKey, { experimentalWriter: false });
   const router = createRouter({
     ...studioRouterOptions,
     history: createMemoryHistory({ initialEntries: [path] }),

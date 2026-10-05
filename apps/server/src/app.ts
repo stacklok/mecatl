@@ -37,6 +37,7 @@ import { type MecatlRuntime, RuntimeNotReadyError } from "./mecatl/runtime.js";
 import { createMecatlScheduleService, type ScheduleService } from "./mecatl/schedules.js";
 import { createMecatlSettingsService, type SettingsService } from "./mecatl/settings.js";
 import { createMecatlStorageService, type StorageService } from "./mecatl/storage.js";
+import { createMecatlWriterService, type WriterService } from "./mecatl/writer.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
@@ -44,6 +45,7 @@ import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
+import { registerWriterRoutes } from "./routes/writer.js";
 import { readInstalledSdkVersion } from "./sdk-version.js";
 
 const sdkVersion = readInstalledSdkVersion();
@@ -90,6 +92,8 @@ export interface AppDependencies {
   readonly activity?: ActivityLimits;
   readonly authentication?: AuthenticationService;
   readonly chat?: ChatService;
+  readonly experimentalWriter?: boolean;
+  readonly writer?: WriterService;
   readonly schedules?: ScheduleService;
   readonly knowledge?: KnowledgeService;
   readonly settings?: SettingsService;
@@ -137,6 +141,17 @@ export function createApp(dependencies: AppDependencies = {}) {
     sameOriginPresentation(security),
   );
   app.use("/api/v1/*", requestBodyLimit());
+  if (!dependencies.experimentalWriter) {
+    app.use("/api/v1/writer/*", async (context) =>
+      problem(context, 404, "not_found", "Not found", "No route matches this request."),
+    );
+    app.use("/workspace/writer", async (context) =>
+      problem(context, 404, "not_found", "Not found", "No route matches this request."),
+    );
+    app.use("/workspace/writer/*", async (context) =>
+      problem(context, 404, "not_found", "Not found", "No route matches this request."),
+    );
+  }
 
   registerAuthRoutes(app, authentication, runtime);
 
@@ -200,6 +215,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       return context.json(
         {
           ...runtime.snapshot(),
+          ...(dependencies.experimentalWriter ? { experimentalWriter: true } : {}),
           ...(sdkVersion === undefined ? {} : { sdkVersion }),
           ...(studioBuildId === undefined ? {} : { studioBuildId }),
         },
@@ -266,6 +282,13 @@ export function createApp(dependencies: AppDependencies = {}) {
           () => snapshotOrUndefined()?.capabilities.storageHealth ?? false,
         ));
   registerStorageRoutes(app, storage);
+  registerWriterRoutes(
+    app,
+    dependencies.experimentalWriter
+      ? (dependencies.writer ??
+          (runtime === undefined ? undefined : createMecatlWriterService(runtime.client)))
+      : undefined,
+  );
 
   if (dependencies.webDist !== undefined) app.use("*", spaHandler(dependencies.webDist));
 
