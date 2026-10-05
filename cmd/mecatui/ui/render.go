@@ -94,7 +94,7 @@ type renderer struct {
 
 	// marks carries the LIVE chord markings derived from the model's keyMap at
 	// construction (keyMarkings). The inline-card affordances that reference
-	// rebindable actions — the ExpandTools chord ("ctrl+t" by default) in the
+	// rebindable actions — the Toolcalls chord ("ctrl+t" by default) in the
 	// reasoning/subagent/team headers and the collapse/rollup markers, and the
 	// Agents chord ("f6") in the team "+N more" roll-up — read them off
 	// here so an override propagates to those affordances (issue #457, the
@@ -255,7 +255,7 @@ const assistantBodyHang = 2
 
 // newRenderer builds a renderer for a theme, seeded with the LIVE chord
 // markings (hk) so inline-card affordances that reference rebindable actions
-// (ExpandTools/Agents) reflect any override (issue #457). With default keys hk
+// (Toolcalls/Agents) reflect any override (issue #457). With default keys hk
 // resolves to exactly the literals the affordances used to hardcode, so the
 // goldens stay byte-identical.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
@@ -784,7 +784,7 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 	style := r.th.Style("reasoning")
 	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
-	expandMark := r.marks.expandTools
+	expandMark := r.marks.toolcalls
 	if !expand {
 		if p.ReasoningStreaming {
 			return style.Render("reasoning…")
@@ -1256,7 +1256,7 @@ func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason
 // totals, a running tool count, and the expand-tools trace affordance. No elapsed clock
 // and no heartbeat ticker, so the line changes only when the tool actually changes
 // (ADR 0079 AC3.1). The tool name is sanitized (server-derived). The trace chord
-// reads the LIVE ExpandTools marking (r.marks.expandTools) so an override propagates
+// reads the LIVE Toolcalls marking (r.marks.toolcalls) so an override propagates
 // (issue #457).
 
 // subagentResolvedLine is the muted one-line summary shown once the child run has
@@ -1401,7 +1401,7 @@ func teamLaneOrder(lanes []teamLane) []int {
 // and the expand-tools affordance, whose verb tracks the toggle (trace when collapsed,
 // collapse when expanded). The round count is carried only on team.end, so it is
 // shown on the resolved line rather than fabricated live. The chord reads the LIVE
-// ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
+// Toolcalls marking (r.marks.toolcalls) so an override propagates (issue #457).
 
 // teamNameWidth is the column width member BARE names are padded to on the
 // collapsed lane lines: the longest shown bare name, capped at maxTeamNameWidth,
@@ -1724,7 +1724,7 @@ func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) st
 	if bodyWidth > 0 {
 		body = ansi.Hardwrap(body, bodyWidth, true)
 	}
-	return truncateLinesTailMark(body, maxToolResultLines, "", r.marks.expandTools)
+	return truncateLinesTailMark(body, maxToolResultLines, "", r.marks.toolcalls)
 }
 
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
@@ -2028,17 +2028,17 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 // arg roll-up and a line-capped result/diff don't show two different "there's
 // more" idioms. n>0 names the hidden-key count ("+K more keys"); n==0 (a pure
 // per-value collapse, no key overflow) shows just the expand hint. The chord
-// reads the LIVE ExpandTools marking (r.marks.expandTools) so an override
+// reads the LIVE Toolcalls marking (r.marks.toolcalls) so an override
 // propagates (issue #457).
 func (r *renderer) argRollupMarker(n int) string {
 	if n <= 0 {
-		return "  … " + r.marks.expandTools + " expand"
+		return "  … " + r.marks.toolcalls + " expand"
 	}
 	noun := "keys"
 	if n == 1 {
 		noun = "key"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.expandTools + " expand"
+	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.toolcalls + " expand"
 }
 
 // sortedArgKeys returns obj's keys in deterministic render order: the keys in
@@ -2360,15 +2360,15 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // when a tool result or diff side is line-capped. The verb matches the footer
 // help line's collapsed-state hint ("<expand> expand") — the expand/collapse pair
 // is used consistently across help line, keybinding help, and this marker. The
-// chord reads the LIVE ExpandTools marking (r.marks.expandTools) so an override
+// chord reads the LIVE Toolcalls marking (r.marks.toolcalls) so an override
 // propagates (issue #457).
 func (r *renderer) collapseMarker(n int) string {
-	return collapseMarkerMark(n, r.marks.expandTools)
+	return collapseMarkerMark(n, r.marks.toolcalls)
 }
 
 // truncateLinesTailMark is the free-function core of truncateLinesTail, taking the
 // expand chord explicitly so non-renderer callers (the MCP resource preview, which
-// has no *renderer) can thread the LIVE ExpandTools marking through (issue #457).
+// has no *renderer) can thread the LIVE Toolcalls marking through (issue #457).
 func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) string {
 	s = terminaltext.Sanitize(strings.TrimRight(s, "\n"))
 	if s == "" {

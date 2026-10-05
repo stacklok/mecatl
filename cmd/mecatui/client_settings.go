@@ -328,8 +328,8 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 	return out
 }
 
-// applyKeyOverridesToDeps parses and validates CLI/YAML keymap overrides and applies them to deps.
-// Lives in package main to avoid adding imports to main.go; this file imports keymap.
+// applyKeyOverridesToDeps normalizes aliases per client/CLI source, then parses,
+// validates, and applies the merged keymap overrides to deps.
 //
 // TWO layers merge PER ACTION (a higher layer rebinds only the actions it
 // names), lowest to highest precedence:
@@ -342,6 +342,13 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
 	clientMap := splitKeymap(settings.Keymap)
 	cliMap := keyOverridesFromConfig(cfg)
+	var err error
+	if clientMap, err = keymap.NormalizeAliases(clientMap); err != nil {
+		return fmt.Errorf("keymap: client settings: %w", err)
+	}
+	if cliMap, err = keymap.NormalizeAliases(cliMap); err != nil {
+		return fmt.Errorf("keymap: CLI overrides: %w", err)
+	}
 	merged := mergeKeymaps(clientMap, cliMap)
 	if cfg.debugKeymap {
 		fmt.Fprintf(os.Stderr, "mecatui keymap (client YAML): %v\n", clientMap)

@@ -27,9 +27,9 @@ func TestPermanentErrorBlockRendersSummary(t *testing.T) {
 	}
 }
 
-func TestPermanentErrorBlockUsesLiveExpandToolsChord(t *testing.T) {
+func TestPermanentErrorBlockUsesLiveToolcallsChord(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()), func(deps *Deps) {
-		deps.KeyOverrides = map[string][]string{"ExpandTools": {"ctrl+f11"}}
+		deps.KeyOverrides = map[string][]string{"Toolcalls": {"ctrl+f11"}}
 	})
 	c := &conversation{}
 	c.addPermanentError("invalid request")

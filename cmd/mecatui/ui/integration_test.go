@@ -238,8 +238,8 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	}
 }
 
-// TestExpandToolsToggle asserts ctrl+t flips the global expand flag.
-func TestExpandToolsToggle(t *testing.T) {
+// TestToolcallsToggle asserts ctrl+t flips the global expand flag.
+func TestToolcallsToggle(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	if m.expandTools {

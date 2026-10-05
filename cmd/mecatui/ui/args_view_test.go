@@ -211,7 +211,7 @@ func TestArgsViewEscReturnsToModal(t *testing.T) {
 }
 
 // TestArgsViewCtrlTClosesView pins the OTHER close key: ctrl+t inside the args
-// view toggles back to the modal (onExpandToolsKey's argsViewOpen branch), with
+// view toggles back to the modal (onToolcallsKey's argsViewOpen branch), with
 // the modal rendering again — like esc, and without touching expandTools.
 func TestArgsViewCtrlTClosesView(t *testing.T) {
 	m := shellAskModel(t, longShellArgs)

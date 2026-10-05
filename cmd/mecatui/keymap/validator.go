@@ -18,45 +18,46 @@ type Resolved struct {
 
 // validActions is the public action name contract (keyMap struct field names as strings).
 var validActions = map[string]struct{}{
-	"Submit":           {},
-	"Newline":          {},
-	"Cancel":           {},
-	"ClearPrompt":      {},
-	"EditBack":         {},
-	"Paste":            {},
-	"SelectAll":        {},
-	"CopySelection":    {},
-	"Quit":             {},
-	"QuitD":            {},
-	"Suspend":          {},
-	"Allow":            {},
-	"AllowAlways":      {},
-	"Deny":             {},
-	"ScrollU":          {},
-	"ScrollD":          {},
-	"ScrollTop":        {},
-	"ScrollBottom":     {},
-	"ModeSwitch":       {},
-	"MCPPanel":         {},
-	"Resources":        {},
-	"Prompts":          {},
-	"Up":               {},
-	"Down":             {},
-	"Choose":           {},
-	"Close":            {},
-	"Refresh":          {},
-	"Tasks":            {},
-	"Findings":         {},
-	"JumpTop":          {},
-	"JumpEnd":          {},
-	"Agents":           {},
-	"NextTab":          {},
-	"CancelChild":      {},
-	"ExpandTools":      {},
-	"Help":             {},
-	"Effort":           {},
-	"SetGlobalDefault": {},
-	"RawArgs":          {},
+	"Submit":             {},
+	"Newline":            {},
+	"Cancel":             {},
+	"ClearPrompt":        {},
+	"EditBack":           {},
+	"Paste":              {},
+	"SelectAll":          {},
+	"CopySelection":      {},
+	"Quit":               {},
+	"QuitD":              {},
+	"Suspend":            {},
+	"Allow":              {},
+	"AllowAlways":        {},
+	"Deny":               {},
+	"ScrollU":            {},
+	"ScrollD":            {},
+	"ScrollTop":          {},
+	"ScrollBottom":       {},
+	"ModeSwitch":         {},
+	"MCPPanel":           {},
+	"Resources":          {},
+	"Prompts":            {},
+	"Up":                 {},
+	"Down":               {},
+	"Choose":             {},
+	"Close":              {},
+	"Refresh":            {},
+	"Tasks":              {},
+	"Findings":           {},
+	"JumpTop":            {},
+	"JumpEnd":            {},
+	"Agents":             {},
+	"Toolcalls":          {},
+	"ExpandConversation": {},
+	"NextTab":            {},
+	"CancelChild":        {},
+	"Help":               {},
+	"Effort":             {},
+	"SetGlobalDefault":   {},
+	"RawArgs":            {},
 }
 
 // scope membership per action.
@@ -66,13 +67,31 @@ var (
 		"Suspend": {},
 		"ScrollU": {}, "ScrollD": {}, "ScrollTop": {}, "ScrollBottom": {},
 		"ModeSwitch": {}, "MCPPanel": {}, "Resources": {}, "Prompts": {},
-		"Agents": {}, "ExpandTools": {}, "Help": {}, "Effort": {},
+		"Agents": {}, "Toolcalls": {}, "ExpandConversation": {}, "Help": {}, "Effort": {},
 	}
 	overlayInternal = map[string]struct{}{
 		"Up": {}, "Down": {}, "Choose": {}, "Close": {}, "Refresh": {}, "Tasks": {}, "Findings": {},
 		"JumpTop": {}, "JumpEnd": {}, "NextTab": {}, "CancelChild": {}, "RawArgs": {},
 	}
 )
+
+// NormalizeAliases returns a copy of one keymap source with the deprecated
+// ExpandTools input alias renamed to Toolcalls. A source cannot name both.
+func NormalizeAliases(in map[string][]string) (map[string][]string, error) {
+	if _, hasAlias := in["ExpandTools"]; hasAlias {
+		if _, hasCanonical := in["Toolcalls"]; hasCanonical {
+			return nil, fmt.Errorf("ExpandTools and Toolcalls cannot both be set in one source")
+		}
+	}
+	out := make(map[string][]string, len(in))
+	for action, chords := range in {
+		if action == "ExpandTools" {
+			action = "Toolcalls"
+		}
+		out[action] = append([]string(nil), chords...)
+	}
+	return out, nil
+}
 
 // Parse normalises the input map, rejecting unknown action names and empty chords.
 func Parse(in map[string][]string) (Resolved, error) {
@@ -158,6 +177,11 @@ func Validate(res Resolved) error {
 			}
 		}
 	}
+	// 3d) Toolcalls is live in the approval modal, so its effective binding must
+	// not shadow any effective verdict binding. Defaults participate too.
+	if err := validateToolcallsVerdicts(res); err != nil {
+		return err
+	}
 	// 4) Approval consistency: Deny must not collide with Allow/AllowAlways/Submit/Cancel.
 	deny := res.ByAction["Deny"]
 	for _, a := range []string{"Allow", "AllowAlways", "Submit", "Cancel"} {
@@ -173,6 +197,27 @@ func Validate(res Resolved) error {
 	// a chord would arm one and confirm the other (an armed ctrl+c confirmed by
 	// ctrl+d) — the two quit keys must never share a chord.
 	return rejectPairOverlap(res.ByAction["Quit"], res.ByAction["QuitD"], "Quit", "QuitD")
+}
+
+func validateToolcallsVerdicts(res Resolved) error {
+	toolcalls := res.ByAction["Toolcalls"]
+	if len(toolcalls) == 0 {
+		toolcalls = []string{"ctrl+t"}
+	}
+	for verdict, defaults := range map[string][]string{
+		"Allow":       {"a", "y", "enter"},
+		"AllowAlways": {"w"},
+		"Deny":        {"d", "n", "esc"},
+	} {
+		chords := res.ByAction[verdict]
+		if len(chords) == 0 {
+			chords = defaults
+		}
+		if err := rejectPairOverlap(toolcalls, chords, "Toolcalls", verdict); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // isBarePrintableRune reports true for a single-rune chord (length==1).

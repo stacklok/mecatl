@@ -155,7 +155,7 @@ func (m Model) applyApprovalSurfaceIntent(intent surfaceIntent) (model tea.Model
 		m.addApprovalNotice(intent.ask, intent.notice)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, nil)
 		return model, cmd, true, stopSurfaceDispatch
-	case setExpandToolsIntent:
+	case setToolcallsIntent:
 		m.expandTools = intent.expand
 		return m, nil, true, false
 	default:

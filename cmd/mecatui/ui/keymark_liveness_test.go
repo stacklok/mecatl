@@ -33,7 +33,7 @@ func overrideAll() map[string][]string {
 		"Prompts":          {"ctrl+f8"},
 		"Agents":           {"ctrl+f9"},
 		"ModeSwitch":       {"ctrl+f10"},
-		"ExpandTools":      {"ctrl+f11"},
+		"Toolcalls":        {"ctrl+f11"},
 		"Help":             {"ctrl+f12"},
 		"Quit":             {"ctrl+f13"},
 		"ScrollU":          {"ctrl+f14"},
@@ -73,11 +73,11 @@ func remderRenderer() *renderer {
 // reference rebindable chords read the LIVE markings (issue #457): the
 // reasoning header, the subagent live line, the team header, the team "+N more"
 // roll-up, and the collapse/arg-rollup markers must each carry the overridden
-// ExpandTools/Agents chord and NOT the default. Each subtest builds the card via
+// Toolcalls/Agents chord and NOT the default. Each subtest builds the card via
 // the same renderer path the model uses (remderRenderer) so the seam is real.
 func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	const (
-		wantExpand = "ctrl+f11" // overridden ExpandTools
+		wantExpand = "ctrl+f11" // overridden Toolcalls
 		wantAgents = "ctrl+f9"  // overridden Agents
 	)
 	t.Run("reasoning collapsed/expanded header", func(t *testing.T) {

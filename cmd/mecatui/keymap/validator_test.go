@@ -63,8 +63,8 @@ func TestValidateOverlayCollision(t *testing.T) {
 
 func TestValidateGlobalCollision(t *testing.T) {
 	res, err := Parse(map[string][]string{
-		"Agents":      {"ctrl+a"},
-		"ExpandTools": {"ctrl+a"},
+		"Agents":    {"ctrl+a"},
+		"Toolcalls": {"ctrl+a"},
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -223,5 +223,76 @@ func TestValidateRawArgsRefreshRebindDisjoint(t *testing.T) {
 				t.Fatal("validate should reject the RawArgs/Refresh overlap")
 			}
 		})
+	}
+}
+
+func TestNormalizeAliases(t *testing.T) {
+	in := map[string][]string{"ExpandTools": {"ctrl+f4"}}
+	got, err := NormalizeAliases(in)
+	if err != nil {
+		t.Fatalf("normalize aliases: %v", err)
+	}
+	if got["Toolcalls"][0] != "ctrl+f4" || len(got) != 1 {
+		t.Fatalf("normalized aliases = %#v, want Toolcalls only", got)
+	}
+	got["Toolcalls"][0] = "changed"
+	if in["ExpandTools"][0] != "ctrl+f4" {
+		t.Fatalf("NormalizeAliases mutated input: %#v", in)
+	}
+	if _, err := NormalizeAliases(map[string][]string{"ExpandTools": {"ctrl+t"}, "Toolcalls": {"ctrl+f4"}}); err == nil {
+		t.Fatal("both alias and canonical action in one source must fail")
+	}
+}
+
+func TestToolcallsValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   map[string][]string
+		ok   bool
+	}{
+		{"defaults", map[string][]string{}, true},
+		{"toolcalls overlaps rebound allow", map[string][]string{"Toolcalls": {"ctrl+t"}, "Allow": {"ctrl+t"}}, false},
+		{"toolcalls overlaps default allow", map[string][]string{"Toolcalls": {"enter"}}, false},
+		{"toolcalls overlaps default deny", map[string][]string{"Toolcalls": {"esc"}}, false},
+		{"toolcalls overlaps default always allow", map[string][]string{"Toolcalls": {"w"}}, false},
+		{"toolcalls has safe chord", map[string][]string{"Toolcalls": {"ctrl+f4"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(res); (err == nil) != tc.ok {
+				t.Fatalf("validate = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestExpandConversationGlobalValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   map[string][]string
+		ok   bool
+	}{
+		{"bare rune", map[string][]string{"ExpandConversation": {"x"}}, false},
+		{"global collision", map[string][]string{"ExpandConversation": {"ctrl+f9"}, "Agents": {"ctrl+f9"}}, false},
+		{"safe function key", map[string][]string{"ExpandConversation": {"f9"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(res); (err == nil) != tc.ok {
+				t.Fatalf("validate = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestParseRejectsUnnormalizedExpandTools(t *testing.T) {
+	if _, err := Parse(map[string][]string{"ExpandTools": {"ctrl+t"}}); err == nil {
+		t.Fatal("un-normalized legacy alias must be rejected")
 	}
 }

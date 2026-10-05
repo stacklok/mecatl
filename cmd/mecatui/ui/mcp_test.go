@@ -506,13 +506,13 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 // resource's body exceeds the line cap (maxToolResultLines), renderResourcePreview
 // (reached via Render → renderResourcePreview) must cap the body at the limit and
 // emit the "+N more lines · <expand> expand" collapse marker carrying the LIVE
-// ExpandTools chord. It is narrow and deterministic — it drives the free-function
+// Toolcalls chord. It is narrow and deterministic — it drives the free-function
 // path directly, so it covers the cap + collapse marker the function-primitive
 // golden does NOT (the golden's fixture body is two lines, under the cap).
 func TestMCPResourcePreviewCollapse(t *testing.T) {
 	th := aztec()
 	hk := defaultHelpKeys()
-	expandMark := hk.expandTools
+	expandMark := hk.toolcalls
 	// A body of maxToolResultLines+5 lines trips the cap; the marker names the
 	// 5 dropped lines and the live expand chord.
 	var sb strings.Builder

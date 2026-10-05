@@ -2302,8 +2302,8 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// ctrl+t is a global render toggle (full vs capped tool output); it works in
 	// any phase and never feeds the textarea.
-	if key.Matches(msg, m.keys.ExpandTools) {
-		return m.onExpandToolsKey()
+	if key.Matches(msg, m.keys.Toolcalls) {
+		return m.onToolcallsKey()
 	}
 
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
@@ -2409,14 +2409,14 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	return m, true
 }
 
-// onExpandToolsKey is the ctrl+t handler, extracted from onKey so onKey stays
+// onToolcallsKey is the ctrl+t handler, extracted from onKey so onKey stays
 // under the cyclomatic cap. ctrl+t is a global render toggle (full vs capped
 // tool output); inside the permission modal it ROUTES by ask type (issue #488):
 // a non-diff, non-plan ask opens/closes the full-screen ask-args view INSTEAD
 // of toggling expandTools; a plan ask or an Edit/Write (diff-capable) ask keeps
 // the in-modal expand behavior byte-for-byte. Approval emits a semantic toggle
 // intent for the latter; Model owns the global expandTools effect.
-func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
+func (m Model) onToolcallsKey() (tea.Model, tea.Cmd) {
 	m.expandTools = !m.expandTools
 	m.refreshView()
 	return m, nil

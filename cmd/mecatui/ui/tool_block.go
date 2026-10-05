@@ -303,7 +303,7 @@ func (r *renderer) subagentPresentationLiveLine(p subagentCardPresentation) stri
 	if p.current != "" {
 		current = terminaltext.Sanitize(p.current)
 	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace", current, renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.expandTools)
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace", current, renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.toolcalls)
 }
 
 func subagentPresentationResolvedLine(p subagentCardPresentation) string {
@@ -353,9 +353,9 @@ func (r *renderer) renderTeamPresentation(p teamCardPresentation, expand bool, b
 }
 
 func (r *renderer) teamPresentationHeader(p teamCardPresentation, expand bool) string {
-	verb := r.marks.expandTools + " trace"
+	verb := r.marks.toolcalls + " trace"
 	if expand {
-		verb = r.marks.expandTools + " collapse"
+		verb = r.marks.toolcalls + " collapse"
 	}
 	return "team · " + plural(len(p.lanes), "member") + " · " + verb
 }
