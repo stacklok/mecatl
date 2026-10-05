@@ -263166,6 +263166,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791158493387,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "157fe84aa17942d3e67c98c0d7f7d7070bee7b01",
+          "message": "Implement canonical mecatui status surfaces (#2075)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T17:16:59-07:00",
+          "tree_id": "355c001a91fc16a9b9dbbb3a023217b523a74f31",
+          "url": "https://github.com/stacklok/mecatl/commit/157fe84aa17942d3e67c98c0d7f7d7070bee7b01"
+        },
+        "date": 1791160162897,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -381895,6 +381929,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791160160041,
+  "lastUpdate": 1791160164275,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
