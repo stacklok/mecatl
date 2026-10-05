@@ -266388,6 +266388,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791198234511,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b9cd7a40c8a5a8555355af0eb0328f25dc7326d1",
+          "message": "[Implementation] Quiet benign guardrail notices (#1958)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T15:01:31+03:00",
+          "tree_id": "9be0cc4afe14f1fe19e722836f3f1b977088d49a",
+          "url": "https://github.com/stacklok/mecatl/commit/b9cd7a40c8a5a8555355af0eb0328f25dc7326d1"
+        },
+        "date": 1791202412477,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -386494,6 +386528,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791202409644,
+  "lastUpdate": 1791202413699,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
