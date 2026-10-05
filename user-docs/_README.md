@@ -145,9 +145,6 @@ Start with the applicable implementation source:
 - command flag registration, configuration schemas, handlers, and adapters for
   deployed behavior
 
-The files under `docs/usage/` are compatibility pointers for historical links,
-not an authoring surface. Update the owning `user-docs/` page instead.
-
 Generated reference pages are exceptions to direct editing:
 
 - For `reference/configuration.md`, change the configuration schema or

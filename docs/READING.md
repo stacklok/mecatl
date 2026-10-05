@@ -36,6 +36,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | [Local microVM environments](architecture/microvm-environments.md) | How does the opt-in local runtime preserve environment affinity, isolate paths and credentials, verify artifacts, govern guest egress, recover lifecycle state, and report readiness? | [ports](architecture/ports.md) |
 | [Parallelism](architecture/parallelism.md) | How does fork-join parallelism (the Parallel tool) work? How are team-member workspaces isolated? What is worktree binding? | [subagents & teams](architecture/subagents-and-teams.md) |
 | [Extensibility](architecture/extensibility.md) | What MCP, skills, progressive disclosure, and engine-as-library seams exist? | [ports](architecture/ports.md) |
+| [Resource lifetimes](architecture/resource-lifetimes.md) | Which resources outlive a call, who owns and cleans them up, and what survives a restart? | [observability](architecture/observability.md) |
 | [Deployment & hardening](architecture/deployment-and-hardening.md) | How is the server hardened (auth, rate limiting, health, graceful shutdown)? How do workspace trust, the posture ladder, and permission/bash governance work? | [API surface](architecture/api-surface.md) |
 
 ### After the architecture pages
@@ -45,7 +46,6 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 - [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
 - [User-docs authoring contract](../user-docs/_README.md) and [style guide](../user-docs/_STYLE.md) — where public documentation lives and how it is written.
 - Design notes: [design principles](design/principles.md) and [contextual guardrails capacity](design/contextual-guardrails-capacity.md).
-- Legacy redirect stubs that point into `user-docs/`: [usage index](usage.md), [configuration](usage/configuration.md), [gRPC API](usage/grpc-api.md), [HTTP/SSE API](usage/http-sse-api.md), [mecak8s](usage/mecak8s.md), [model routing](usage/model-routing.md), [skills, soul, and user model](usage/skills-soul-usermodel.md).
 
 ---
 

@@ -47,7 +47,8 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
 3. **Pre-turn stop guard**: announce any newly-finished background children
    (one harness-note user message, ids + stop labels only, family-aware across
    the delegation families and background-Shell jobs; [subagents & teams](subagents-and-teams.md));
-   drain the fire-result delivery queue (ADR 0075) and the **steer inbox**
+   drain the fire-result delivery queue (fenced, untrusted harness notes
+   reporting the outcome of each fire of a schedule this session created) and the **steer inbox**
    (below) — the Step 2a boundary injections,
    `engine/agent/loop.go` (`runBoundaryInjections`); then, if
    `sess.StopReason()` trips, `ctx` is cancelled, or the run **token budget**
@@ -81,7 +82,7 @@ The loop terminates the session in exactly one of `Complete`/`Stop`/`Cancel`/
 `Fail` and emits exactly one terminal `result` event carrying cumulative usage.
 The `result` payload includes typed retry disposition and stream-progress facts.
 A `permanent` disposition identifies a provider rejection for which replaying the
-same request cannot help (ADR 0239). A
+same request cannot help. A
 session recovered after such a failure emits a one-time `recover_notice` advisory
 before the first turn.
 
@@ -206,8 +207,7 @@ arguments or credentials. Composition chooses one evaluator at startup:
 
 A Cedar policy cannot grant a capability absent from the carried set. An
 unavailable evaluator is a distinct fail-closed execution error, not an implicit
-switch to `noop`. See ADR 0234 for
-the decision; operator configuration is documented in the public permissions
+switch to `noop`. Operator configuration is documented in the public permissions
 guide.
 
 ## Permission pause / resume
@@ -270,9 +270,9 @@ keyed by session id so the verdict reaches the right run
 ## Plan-approval gate
 
 Plan mode (`session.ModePlan`) gains a structured approval gate
-(ADR 0069) that reuses the permission-ask
+that reuses the permission-ask
 machinery above. The shape is the same as the guardrail approve-once
-(ADR 0062): a tool call refined into an
+([hooks & guardrails](hooks-and-guardrails.md)): a tool call refined into an
 askable ask, a serialized provenance marker, and a verdict tail.
 
 - **The PresentPlan signalling tool** (`engine/agent/presentplan.go`
@@ -314,7 +314,9 @@ askable ask, a serialized provenance marker, and a verdict tail.
   terminal; `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the
   terminal boundary (after `Stop` → `StateCompleted`, where `SetMode` is legal —
   the `Running`/`Awaiting` rejection invariant is preserved). The plan→execute
-  model swap rides the existing ADR 0030 Layer 3 run-entry rebuild.
+  model swap happens at the next run entry: when `Session.Mode` differs from the
+  mode the engine was built for, the server rebuilds the engine and re-resolves
+  the model slot for the new mode, so an in-flight turn never changes model.
 - **Cross-process resume.** `PendingAsk.PlanOriginated` is serialized
   (`json:"plan_originated,omitempty"`, sibling of `HookOriginated`); the
   awaiting-resume path (`resolvePendingCall`) keys the plan-flip branch on it —
@@ -337,7 +339,7 @@ askable ask, a serialized provenance marker, and a verdict tail.
 ## Steer-while-running
 
 A **steer** is an operator-supplied message injected into an *in-flight* run
-(issue #512, ADR 0232): it takes effect at
+(issue #512): it takes effect at
 a turn boundary after the current streamed response and its tool batch settle —
 never mid-stream, never aborting an in-flight model call — and enters through
 gRPC `Converse` controls or unary HTTP controls. The pieces:
@@ -363,8 +365,7 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   The drained steer is recorded as an ordinary user continuation through
   `RecordUserPromptWithParts` (plus the log-only `EvUserPrompt`), persisted, then
   echoed to the client as `EvSteer` carrying the committed text and media parts —
-  the engine is the sole authority on what landed. This multimodal extension is
-  specified by ADR 0251.
+  the engine is the sole authority on what landed.
 - **Capability gate.** `ServerCapabilities.steer` says the multimodal inbox is
   enabled. Mecatui uses native steer when it is true and otherwise retains all
   mid-run text and media in its local merge queue; this supports runtime feature
@@ -402,8 +403,8 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   terminal outcome is reported inline as the `steer.outcome` ack
   (`promoted=true`) — never an orphaned relay, never an ack after close.
 - **The unary HTTP control pair** (`internal/adapter/server/http.go`).
-  `POST /v1/sessions/{id}/steer` and `POST
-  /v1/sessions/{id}/cancel-steer` call the same Service owners as gRPC. HTTP
+  `POST /v1/sessions/{id}/controls/steer` and `POST
+  /v1/sessions/{id}/controls/cancel-steer` call the same Service owners as gRPC. HTTP
   stays deterministically unary when a terminal-race steer promotes: the JSON
   acknowledgement carries the new `run_id`, while a request-detached relay
   records and drains that run in the background before deregistering it. The
@@ -421,16 +422,16 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   truncated. `TestSteerMessageIDIsAtomicWithDrainedBundle` pins the critical
   drain, enqueue, and projection ordering.
 - **Fidelity.** The inbox is in-memory and best-effort: a pending (un-drained)
-  steer is lost with its run on a crash — reset-by-design, inventoried in
-  ADR 0027 (List 1 / List 2). Only a steer that
+  steer is lost with its run on a crash — reset-by-design, with no restart
+  recovery. Only a steer that
   reached a boundary and was recorded survives, as ordinary conversation
   history.
 
 Awaiting-ask runs hold the steer parked: the loop is suspended in
 `PauseForApproval`, and the resumed run's first Step 2a drains it (the steer is
-purely additive — the ask still requires an explicit verdict). Steer-to-child
-(subagent / team / parallel) and ACP steer are deferred (ADR 0232). HTTP steer
-is specified by ADR 0252.
+purely additive — the ask still requires an explicit verdict). Steer targets
+only a root run over gRPC or HTTP; steering a child (subagent / team /
+parallel) and steering over ACP are not supported.
 
 ## Follow-on reading
 

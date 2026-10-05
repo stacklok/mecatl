@@ -23,7 +23,7 @@ new path. Operators can select `temporary_storage.mode: system` to
 restore inherited/configured system temporary storage; this disables managed
 allocation and reaping and leaves existing managed data for explicit inspection or
 removal. Managed mode is available on Linux and macOS; other platforms must use
-`system` mode. See ADR 0281.
+`system` mode.
 
 **Portable memory contract.** `tool.MemoryStore` is one mandatory lifecycle/CAS
 contract: create-only or exact-version Remember, Inspect, Recall, List, exact-version
@@ -48,18 +48,13 @@ a POST is being sent is different: delivery may be ambiguous, so the operation
 is not replayed and the model receives a normalized unavailable result that
 states its outcome is unknown. A structured JSON-RPC 400/404 or HTTP
 429/502/503/504 is likewise a one-call failure: the live session is retained
-and the operation is never replayed automatically. See
-ADR 0056,
-ADR 0223, and
-ADR 0309. The client also holds the
+and the operation is never replayed automatically. The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
 `notifications/{tools,prompts,resources}/list_changed` enter the same serialized,
 bounded reconciler as explicit refresh and ToolHive-only jittered polling. The
 reconciler retains source last-known-good state, builds complete immutable
 candidates, and atomically publishes one runtime revision. Root operations pin
-that revision; displaced runtimes close after their pins drain. See
-ADR 0057 and
-ADR 0355.
+that revision; displaced runtimes close after their pins drain.
 
 Automatic reconciliation changes current availability but never widens durable
 session authority. `Service.RefreshMcpSources` owner-checks an eligible idle or
@@ -75,11 +70,10 @@ A dedicated debug session can borrow only direct tools from explicitly named, al
 connected server-global MCP servers. It persists the names and the exact initial tool-name
 ceiling, excludes resource/query meta-tools and all inline/client configuration, and fails
 closed if the current direct tool set differs at all on restart. Every selected call,
-including an outbound read and a tool marked read-only, requires a fresh interactive approval;
-deny remains absolute, headless denies, and approval is never learned. This is the hardened
-GitHub-like draft-then-publish boundary in
-ADR 0257, not a general MCP permission
-exception.
+including an outbound read and a tool marked read-only, requires a fresh interactive approval,
+because even an outbound read can disclose target-derived data; deny remains absolute,
+headless denies, and approval is never learned. This hardening applies only to debug
+sessions and is not a general MCP permission exception.
 
 The adapter optionally owns an authorization-code `OAuthController` when an embedding
 supplies `ServerConfig.OAuth`. One official SDK handler, durable credential source,
@@ -120,11 +114,7 @@ OAuth remains unavailable to per-session/inline/discovered MCP, and DCR remains
 unsupported. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
 cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
 Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
-headers retain their existing origin-scoped behavior. See ADR 0219
-for the constrained dependency profile, ADR 0220
-for controller ownership, ADR 0112 for the
-opt-in host runtime, and ADR 0113 for profile
-and command wiring.
+headers retain their existing origin-scoped behavior.
 
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
 `tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,
@@ -250,9 +240,7 @@ own adapters. The exported identifiers of the **seven core packages** (`session`
 public surface, governed by [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md)
 and the `api-compat` gate (`internal/apicheck`); the `engine/adapter/*` reference
 adapters (`mockllm`, `memfs`, `nofs`, `memstore`, …) ship for offline tests and
-sane defaults and carry **no** stability promise. See
-ADR 0036 (the module carve) and
-ADR 0037 (the contract).
+sane defaults and carry **no** stability promise.
 
 ### Seam summary
 

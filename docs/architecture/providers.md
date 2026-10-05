@@ -13,8 +13,6 @@
 > This section walks one adapter end-to-end. It is **not** the whole LLM story:
 > mecatl is provider-agnostic, with the native Anthropic Messages API as a peer
 > adapter and a per-session provider/model registry — see the [multi-provider](#multi-provider--registry-per-session-routing--model-inventory) section below.
-> The deeper design brief for this adapter is
-> `docs/adr/0017-openai-responses-api.md`.
 
 `Provider` implements `port.LLMProvider` over `POST /v1/responses` using
 `github.com/openai/openai-go/v3`. It owns its own conversation state
@@ -41,8 +39,7 @@
   packs the ordered `(id, blob)` list into the opaque `Message.Reasoning` STRING
   (`reasoning.go`) — the same envelope discipline as the anthropic adapter — and
   replays one input item per entry, each under its own id. Fusing the blobs
-  under a single id is what the provider rejects as `invalid_encrypted_content`;
-  see ADR 0101.
+  under a single id is what the provider rejects as `invalid_encrypted_content`.
 - A rejected replay (`invalid_encrypted_content`) is REPAIRED once per request,
   pre-commit only: `Stream` retries with `withoutEncryptedReasoning` — the
   reasoning envelopes removed, visible history, tool calls/results, phase markers
@@ -56,8 +53,7 @@ directly from recorded fixtures by `decodeSSE` in tests):
   projected in serial SSE arrival order, even when item, output, or content
   identities differ. Those provider identities are deliberately discarded at the
   adapter boundary; the engine concatenates the chunks into the one
-  `Message.Text` string without synthetic separators or text-part metadata
-  (ADR 0302).
+  `Message.Text` string without synthetic separators or text-part metadata.
 - `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` →
   `ChunkReasoning` (the DISPLAY summary)
 - `response.output_item.done` (reasoning) → BUFFERED into `streamState.reasoning`
@@ -96,8 +92,7 @@ an absent or invalid value without failing inference. Provider clients never hol
 identity globally, so concurrent sessions cannot cross-stamp. The active field remains the
 only client/server affinity hint; the root field is outbound-only. Neither field grants
 authentication, authorization, tracing, idempotency, provider state, safety/user identity,
-or cache identity. See ADR 0216 and
-ADR 0360.
+or cache identity.
 
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,
@@ -242,9 +237,7 @@ entries — all the same Responses wire protocol) carries the guard as well as t
 `opencode` slot. The Responses adapter additionally fails a stream CLOSED
 (`errTruncatedStream`, wrapping `io.ErrUnexpectedEOF`) when it ends with no
 terminal event, so a truncated turn is never promoted to a successful
-`StopEndTurn`. See
-`docs/adr/0067-openai-chat-completions-adapter.md`
-for the transport rationale; `provider/ssefilter/ssefilter.go` owns frame filtering.
+`StopEndTurn`. `provider/ssefilter/ssefilter.go` owns frame filtering.
 `buildProvider` returns the registry **and** its default provider so the shared engine
 + every child/fork/team engine keep receiving the single default provider exactly as
 before (the default path is byte-identical). A composition-only `providerConstructor`
@@ -256,7 +249,7 @@ mocks; production leaves it nil.
 Operator-local `settings.yaml` may declare first-class `providers.<id>` entries with an
 HTTPS base URL, required default model, one wire flavor (`openai-responses`,
 `openai-chat-completions`, or `anthropic-messages`), and either `auth.method: none`
-or `api_key` (ADR 0238). `provider_overrides` changes only the base URLs of the
+or `api_key`. `provider_overrides` changes only the base URLs of the
 eligible built-ins; it does not turn a built-in into a custom provider. Custom IDs cannot
 collide with any built-in or the reserved offline `mock` ID.
 
@@ -277,7 +270,7 @@ envelopes, and refuse redirects. Inference uses the same redirect-refusing trans
 a redirect never forwards a request body or credentials to its target. That transport
 policy is retained when default or live-model capability reminting rebuilds an adapter.
 
-**OpenRouter downstream-provider routing (issue #480, ADR 0210).** OpenRouter is a
+**OpenRouter downstream-provider routing (issue #480).** OpenRouter is a
 *meta-provider* — one model id is served by several **downstream** inference
 providers (Anthropic, Amazon Bedrock, Google Vertex, …) that OpenRouter
 load-balances across on price. mecatl exposes both halves: **steering** via the
@@ -294,10 +287,9 @@ carries them and no other entry can leak the `provider` body key or the
 prompt-cache prefix untouched. The routed downstream echoes back as
 `port.ChunkProviderRoute` (parsed from the terminal `response.completed` raw JSON's
 `openrouter_metadata`, fail-empty) → the client-visible `session.EvProviderRoute`
-(`"provider.route"`), absent on a cache hit — never fabricated. See
-`docs/adr/0210-openrouter-downstream-provider-steering.md`.
+(`"provider.route"`), absent on a cache hit — never fabricated.
 
-**Intent-driven availability (issue #262, ADR 0064; ADR 0334).** Every provider above
+**Intent-driven availability (issue #262).** Every provider above
 is **key-driven** — available iff a credential resolves. One ToolHive gateway identity
 instead registers two **intent-driven**, protocol-specific entries: `toolhive` uses
 OpenAI Responses (`GET /v1/models`, `POST /v1/responses`) and
@@ -317,14 +309,17 @@ safe provider ID/state/hint metadata, never an endpoint, credential, or raw
 listing error/body. `intentDriven` alone controls the TUI's `org` tier and gateway
 availability notices. The two bounded Build-time probes start concurrently under one
 ≤1.5s deadline and drive ONLY startup diagnostics, initial live-model snapshots, and
-default-model eligibility — never registration itself. See
-`docs/adr/0064-toolhive-llm-gateway-provider.md` and
-`docs/adr/0334-toolhive-protocol-specific-providers.md` for the designs
-(including the accepted sole+probe-down boot deviation) and
-`internal/adapter/openaicompat` / `internal/adapter/toolhivellm` for the two-layer leaf
-split (protocol-generic lister + the one ToolHive-aware config reader).
+default-model eligibility — never registration itself. When a ToolHive entry is the
+sole provider it is the default provider even if its probe fails, because Build cannot
+construct the shared engine without one and a down gateway must not stop the server
+from booting. In that case the default model starts empty, the startup diagnostic names the
+remediation, and a later successful live listing heals it. A probe that succeeds but
+lists zero models for the default ToolHive provider instead fails Build with the
+actionable `errToolhiveNoModels`. `internal/adapter/openaicompat` holds the
+protocol-generic lister and `internal/adapter/toolhivellm` the one ToolHive-aware
+config reader.
 
-**DIRECT mode (issue #265, ADR 0102).** Both gateway entries can talk DIRECTLY to the
+**DIRECT mode (issue #265).** Both gateway entries can talk DIRECTLY to the
 real `gateway_url` with no local proxy hop: mecatl imports ToolHive as a Go library (one
 file, `internal/adapter/toolhivellm/tokensource.go`, the package's sole toolhive-importing
 file alongside the stdlib-only `detect*.go`) and builds an in-process OIDC token source
@@ -350,8 +345,7 @@ reference is persisted; errors are sanitised via `llm.SanitizeTokenError`). Tool
 own `thv llm setup` command runs the interactive OIDC flow; a headless `mecated` cache
 miss surfaces an actionable error naming `thv llm setup` or the
 `--toolhive-llm-mode proxy` escape hatch. `tls_skip_verify` is NOT honored in direct mode (upstream
-gap) — a self-signed gateway must use `--toolhive-llm-mode proxy`. See
-`docs/adr/0102-toolhive-direct-mode.md` for the full design.
+gap) — a self-signed gateway must use `--toolhive-llm-mode proxy`.
 
 **Per-session routing (`sessionEngineFactory`).** `CreateSession` carries an OPTIONAL
 `provider_id`/`model_id` selector, expressed at the server boundary as the NEUTRAL
@@ -522,17 +516,18 @@ every child routes through `engineDepsForProvider` so it never contaminates the
 parent's compactor/counter. Composition-only — the registry never reaches the child
 engine (a bare `port.LLMProvider` is handed down).
 
-**Full design: see `docs/adr/0016-multi-provider.md`** (registry, catalog-as-data, DTO
-neutrality, selection primitive, per-session engine, capability intersection,
-disclosure posture + per-client key custody, per-sub-agent provider, and the P0→P3
-phasing).
+**Disclosure posture.** Provider API keys stay server-side. Composition resolves
+them, the provider registry holds them inside the provider adapters, and no key or
+credentialed URL is placed on a wire, proto message, log line, or client-visible
+field. Clients select a provider by its opaque `provider_id` and a model by its
+`model_id`.
 
 ## Model resolution — aliases + per-slot models
 
 Model selection layers **on top of** the provider routing above, all in composition
 (the domain/agent only ever sees a concrete model string).
 
-**Aliases are the spine (ADR 0030).** A
+**Aliases are the spine.** A
 short semantic name (`cheap`/`fast`/`reasoning`, or the Claude-Code-style
 `sonnet`/`opus`/`haiku`) maps to a concrete provider model id through the operator's
 `ModelAliases` map (`--model-alias name=id`, or the `models.aliases` YAML map), then the
@@ -560,7 +555,7 @@ token-counter) is swapped — the engine's own Model / TokenCounter / PromptConf
 ContextWindow stay on the session model. For `ask-reviewer` the slot **supersedes the
 model** of `--subagent-ask-reviewer`, but that flag stays the **on/off gate** (a slot
 alone never enables the reviewer). For `guardrail` the slot **supersedes the model**
-of `--guardrails-model` AND **enables** guardrails (ADR 0046 — configure = enable); the
+of `--guardrails-model` AND **enables** guardrails (configuring the slot is enough); the
 flag is no longer the sole enable gate.
 
 Posture is **fail-soft** and the default is **byte-identical**: with no slot configured
@@ -593,7 +588,7 @@ guard) — is **promoted** to a per-session engine (CASE 2). Both go through the
 `buildAndRegisterSessionEngine` helper. `resolved_model` re-emits the new model on the
 next `GetSession`/turn echo after the rebuild (a `SetMode` response still carries the
 pre-rebuild model — the model is fixed per turn). With no plan slot, a mode flip changes
-nothing. See ADR 0030 Layer 3.
+nothing.
 
 **Project-overridable model config, capped by an operator allowlist (Phase 4).** A
 **trusted** project's `.mecatl/settings.yaml` may re-bind `models.default` / `models.slots`
@@ -633,25 +628,21 @@ canonicalization are always operator-only.
 **Out of scope (this slice):** the allowlist caps **config-file** bindings only — a per-def
 `AgentDef.Model` literal and the per-session API selector
 (`CreateSessionRequest.model_id`) are not capped here. The operator's OWN bindings are
-never capped (the operator is authoritative). See
-ADR 0030.
+never capped (the operator is authoritative).
 
 ## The semantic model router (Phase 5)
 
-The **semantic model router** (ADR 0031, enable
-model ADR 0042, extended by
-ADR 0034) picks which model a delegation runs
-on, **per task**, from an operator-defined menu. ADR 0031 shipped it for the `Subagent`
-family; ADR 0034 extended it to **agent-team members** and **Parallel branches** — the same
-operator taxonomy and enable model govern all three. It is the Phase-5 realisation of ADR
-0030's deferred "Layer 3b" — built as a sibling of the headless ask reviewer and the
-guardrail checker, not as new architecture.
+The **semantic model router** picks which model a delegation runs on, **per task**,
+from an operator-defined menu. It covers `Subagent` delegations, **agent-team members**,
+and **Parallel branches** — the same operator taxonomy and enable model govern all
+three. It is built as a sibling of the headless ask reviewer and the guardrail checker,
+not as new architecture.
 
-**Taxonomy enables; a kill-switch disables (ADR 0042).** The operator defines categories
+**Taxonomy enables; a kill-switch disables.** The operator defines categories
 in the user-global `settings.yaml` `models.router:` subtree — each a `name`, a one-line
 `description` the classifier reads, and a `model` selector (alias / slot / concrete id).
 **Defining a non-empty taxonomy ENABLES the router** — the guardrails-parity model
-(configure = enable), replacing ADR 0031's flag-to-enable gate. To keep the taxonomy but
+(configure = enable); no flag is needed. To keep the taxonomy but
 turn routing off, set `disabled: true` in the subtree or pass
 `--subagent-model-router=false` (the two combine into `cfg.RouterDisabled`); a bare
 `--subagent-model-router` / `=true` is a harmless no-op (it still parses but neither
@@ -661,7 +652,7 @@ enables nor disables — the router stays governed by the taxonomy). A project-t
 `router` model slot (default `cheap` tier; an operator `classifier-slot`
 overrides) as a tiny one-turn call.
 
-**Jev backend (ADR 0352).** An operator can instead set `backend: jev`. Composition
+**Jev backend.** An operator can instead set `backend: jev`. Composition
 constructs one `internal/adapter/jevrouter` Typesafe client and one eight-slot
 semaphore per Build, then shares them across the shared and per-session engine
 paths. Jev receives the delegated task as System One state and one fixed Choice
@@ -708,8 +699,7 @@ same-provider** (the engine layer stays model-string-only; the chosen model is n
 `inherit`) > fork/resume > **router** > `--subagent-model` default > session model. The
 router fills the gap; it never overrides pinned intent.
 
-**Named agent-defs too (issue #286, ADR 0066,
-extended for writable specialists by ADR 0242).**
+**Named agent-defs too (issue #286), including writable specialists.**
 A delegation to a named `agent` that declared **no `model:`** (expressed no model intent) is
 ROUTABLE in read-only or `mode:"read-write"`: the router classifies it and rebuilds the def's
 SCOPED engine (its catalog/prompt/hooks) on the picked model. The writable path retains its
@@ -769,9 +759,9 @@ Subagent and Team cards (including completed Subagents) and all three F6 focus p
 its `delegation` view without reconstructing it from display fields.
 
 The structured miss/gate half of this observability surface is described below under the
-per-delegation routing-reason surface (ADR 0083).
+per-delegation routing-reason surface.
 
-**Team members + Parallel branches (ADR 0034).** The same router governs the other two
+**Team members + Parallel branches.** The same router governs the other two
 delegation families, reusing the one typed `parentCaps.routeDecision` closure the dispatcher binds per
 run (so a mixed turn shares ONE breaker / miss-counter / classifier-usage fold across all
 families). The per-family seam respects each family's engine lifetime:
@@ -797,7 +787,7 @@ and rendered by mecatui (the f6 Teams roster row and the Parallel group-focus br
 row). Bare metadata only — a category label + a model id, never member/branch content
 (gauntlet #7).
 
-**The per-delegation model surface (ADR 0035, issue #112).** The routed cue only answers
+**The per-delegation model surface (issue #112).** The routed cue only answers
 "the router chose this"; it is empty for the common cases (router off, inherited/default,
 agent-def-pinned, per-call `model` override). A generic `model` field now rides ALL three
 delegation payloads — `Subagent` (field 13), `TeamMemberSpec` (field 7), `Parallel`
@@ -809,7 +799,7 @@ and is bare metadata (a model id, never child content), gauntlet-#7 safe. When r
 as a `model:` line), else `model: <id>` for the plain case. The gRPC `RunTeam` direct path
 emits no EvTeamStart roster, so the only roster projection site is the in-process Team tool.
 
-**The routing-reason surface (ADR 0083, issue #397).** The `model` field answers "what did
+**The routing-reason surface (issue #397).** The `model` field answers "what did
 it run on" but not "why didn't the router fire". A bounded `routing_reason` now rides all
 three delegation-start events — `Subagent` (field 18), `TeamMemberSpec` (field 8),
 `Parallel` (field 25) — EMPTY on a routed hit, otherwise a bare-metadata gate/miss constant

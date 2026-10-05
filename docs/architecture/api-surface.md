@@ -19,7 +19,7 @@ reach the right run.
   OPTIONAL per-session `provider_id` / `model_id` selector (multi-provider Phase 0; see [multi-provider](providers.md))
   AND an OPTIONAL `profile` (enum-as-string: `""` = default, `"no-fs"`).
 
-  Placement is server-owned (ADR 0291).
+  Placement is server-owned.
   Create has no workspace/cwd/placement-id/selector field: omitted profile binds the
   trusted deployment default and `"no-fs"` binds explicit attenuation. Every session
   receives a valid exact `EnvironmentRef{Kind,ID,Revision}` before persistence. Public
@@ -52,8 +52,7 @@ reach the right run.
   permission posture through `Service.SetMode`; mid-turn changes are rejected by
   the session aggregate as `InvalidArgument`, so clients that want "next prompt"
   semantics defer and retry once idle. **`resolved_model` is fixed per TURN, not
-  per session**: when an operator has bound a `plan` model slot (ADR 0030
-  Layer 3, the opusplan pattern), a plan↔execute mode switch re-resolves the
+  per session**: when an operator has bound a `plan` model slot (the opusplan pattern), a plan↔execute mode switch re-resolves the
   effective model **between turns** at the run-entry seam (within the same
   provider). The `SetMode` response still echoes the pre-rebuild model (the model
   is fixed for the current turn); a client re-reads the new model from `GetSession`
@@ -136,10 +135,14 @@ a `session.Content` part, or a loud `codeInvalidParams` — never a silent drop 
 routed through the single `session.NewContent`/`ValidateMediaParts` choke
 point and gated on `Service.ProviderCapabilities()`. (This is the harness
 speaking an editor protocol delivered over its own stdin/stdout; the project's
-no-stdio rule is about MCP servers, which are never `os/exec`-spawned.) The
-design decisions behind this adapter — framing, the per-session client MCP
-mount, fs/\* delegation, and learned permissions — are recorded in
-ADR 0001 — the ACP adapter.
+no-stdio rule is about MCP servers, which are never `os/exec`-spawned.) Messages
+are newline-delimited JSON, one object per line, capped at 16 MiB per frame. MCP servers
+supplied in `session/new` or `session/load` are mounted per session only when they
+use streaming HTTP; stdio and SSE entries are rejected. When the client advertises
+both `fs.readTextFile` and `fs.writeTextFile`, file reads and writes go through the
+editor's buffers (`fs/read_text_file` / `fs/write_text_file`); otherwise the session
+uses its own filesystem workspace. An `allow_always` permission reply approves the
+call and records a narrow per-session rule for the same tool and exact pattern.
 
 > **The wire is one surface; the engine library is another.** The proto/HTTP/ACP
 > surface above is the way a *client process* drives mecatl. An *embedding Go
@@ -148,8 +151,7 @@ ADR 0001 — the ACP adapter.
 > `governance`, `tool`, `prompt`, `port`, `team`, `agent`). That surface is
 > governed by [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) and the
 > `api-compat` freshness gate (`internal/apicheck`, `task api:check`), which fails
-> CI on any unflagged change to the committed `engine/api/*.txt` baselines (#114,
-> ADR 0037). See
+> CI on any unflagged change to the committed `engine/api/*.txt` baselines (#114). See
 > [extensibility](extensibility.md) for the engine-as-library framing.
 
 ## Prerequisites

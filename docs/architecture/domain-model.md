@@ -100,7 +100,7 @@ non-zero defaults. Three derived predicates:
   not a faithful witness — persistence must use `RecordedStopReason()`.
 
 `PermissionMode`: `default`, `plan` (read-only toolset enforced), `acceptEdits`. A
-plan-mode run gains a structured approval gate (ADR 0069): once the model has presented a
+plan-mode run gains a structured approval gate: once the model has presented a
 complete plan it calls the `PresentPlan` signalling tool, which the dispatcher intercepts
 and surfaces as a `PlanOriginated` permission ask; the operator approves (→ flip to
 `default`/`acceptEdits` and execute) or iterates (→ stay in `plan`). See
@@ -167,8 +167,7 @@ emits session-correlated, diagnostics-only lifecycle records for submission, adm
 claim, generator selection/completion, and conditional commit loss. Completion records
 only outcome, provider/model attribution, token counts, and on failure a stable class
 plus stage; it never records prompt sources, provider error text, credentials, or model
-output. See ADR 0308
-and ADR 0307.
+output.
 
 ### Event taxonomy (`engine/session/event.go`)
 
@@ -208,7 +207,7 @@ kind).
 
 The three DELEGATION families (`subagent.*` / `team.*` / `parallel.*`) project child-loop
 lifecycle events and differ in AGGREGATION shape — flat fleet vs coordinating roster vs
-fan-out group. As of ADR 0079 they converge on a TWO-TIER model: all three families project
+fan-out group. They converge on a TWO-TIER model: all three families project
 the same BOUNDED PREVIEWS — capped and control-byte-scrubbed (the shared `clampPreview` in
 `engine/agent/teamtool.go`), client-only — through the single `drainChildObserved`
 chokepoint, so a Subagent or a Parallel branch is watchable at the same fidelity as a Team

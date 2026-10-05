@@ -14,8 +14,7 @@ window once per use through one provider/model-exact precedence chain: the globa
 metadata, the models.dev catalog, then the 128K fallback. Alias and slot routing happen
 first, so configuration keys are final provider/model IDs; the same resolver feeds
 compaction, engine introspection, session echoes, model listings, per-session engines,
-and provider-bound children. The operator-owned exact-map decision is recorded in
-ADR 0207.
+and provider-bound children.
 
 The Service gates an unresolved context window after resolving the actual shared,
 per-session, or mode-routed engine. Its callback runs before prompt recording,
@@ -54,9 +53,7 @@ The typed rejection is gRPC `Unavailable` with ErrorInfo domain
 no new prompt or turn and does not consume pending approval/retry data. Existing
 terminal-state reopening/history repair and session-lifetime lease retention still
 apply. Cancellation ends the caller's wait, not the owner's fetch. Another request
-can recover after cooldown without opening the picker. The before-execution boundary
-is recorded in ADR 0342; provider-local
-ownership and policy are described in ADR 0362.
+can recover after cooldown without opening the picker.
 
 The engine resolver always returns a positive scalar, using 128000 defensively.
 The server echo resolver returns 0 when admission is blocked; a wired zero replaces
@@ -156,8 +153,7 @@ lack the notice or archive.
 The operation is exposed as gRPC `CompactSession` and bodyless HTTP
 `POST /v1/sessions/{id}/compact`. `ServerCapabilities.manual_compaction` lets clients
 hide it when talking to an older server. Mecatui uses that bit for its bare `/compact`
-built-in; the command is local control flow and never becomes model input. These
-additive decisions are recorded in ADR 0276.
+built-in; the command is local control flow and never becomes model input.
 
 ## Prerequisites
 

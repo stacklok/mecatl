@@ -2,7 +2,7 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
-**What this covers:** server hardening (auth/mTLS, rate limiting, health, graceful shutdown), multi-replica single-writer enforcement (session leasing), permission & bash governance (deny-dominant resolution, posture ladder, workspace trust), the project authority set, and supply-chain scanning.
+**What this covers:** server hardening (auth/mTLS, rate limiting, health, graceful shutdown), multi-replica single-writer enforcement (session leasing), permission & bash governance (deny-dominant resolution, posture ladder, workspace trust), command-runner secret scrubbing and operator credential grants, the project authority set, and supply-chain scanning.
 
 **Prerequisites:** [the API surface](api-surface.md) — the servers being hardened.
 
@@ -19,7 +19,7 @@ and `cmd/mecated` wires the knobs:
   its server cert/key paths so Kubernetes projected-Secret `..data` swaps are
   observed. It publishes only a fully parsed, matching pair through
   `tls.Config.GetCertificate`; a bad rotation retains the last valid pair, while
-  the client CA remains restart-required (ADR 0240).
+  the client CA remains restart-required.
 - **Redis credential reload** — when mecak8s receives any Redis CA, username, or
   password file, it watches the lexical parent directories and transactionally re-reads
   the complete configured set. A bounded single-flight worker constructs and probes a
@@ -27,7 +27,7 @@ and `cmd/mecated` wires the knobs:
   it. Every store/schedule/migration operation leases one client generation, so displaced
   clients close only after in-flight work and migration locks release them. Invalid
   candidates retain the last valid generation; no configured files means no watcher or
-  reload goroutine (ADR 0240).
+  reload goroutine.
 - **Rate limiting** — per-client + global token-bucket (`--rate-limit` /
   `--rate-burst`), bounded and idle-evicting. With OIDC enabled, a separate
   pre-validation rejected-token bucket protects JWT/JWKS validation. It is keyed
@@ -40,16 +40,20 @@ and `cmd/mecated` wires the knobs:
   defaults to `0.0.0.0:8082` and serves only kubelet's `GET /drain`; the normal
   HTTP/SSE API listener has no drain route. The chart omits this port from the
   Service, protecting normal Service/gateway traffic, but direct Pod-IP access
-  remains an operator-enforced NetworkPolicy or mesh-isolation residual (ADR 0290).
+  remains an operator-enforced NetworkPolicy or mesh-isolation residual.
 - **mecak8s secure real-provider transport** — three postures: in-pod TLS + OIDC,
   edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream=true`, ClusterIP-only h2c),
   and the explicit unsafe bypass. The upstream value is an operator attestation the chart
   cannot verify, and edge mode puts caller bearer tokens on the pod network in cleartext:
   restricting backend reachability to the gateway or mesh is the load-bearing control,
-  and the chart ships no NetworkPolicy to do it. Full operator contract in
-  ADR 0278.
+  and the chart ships no NetworkPolicy to do it. The gateway must forward the caller's
+  original `Authorization: Bearer` token (never a forwarded-identity substitute) and
+  expose only the gRPC route, never `/drain`, `/healthz`, or `/readyz`. The chart stamps
+  the attestation as chart-owned pod annotations (`mecatl.stacklok.com/tls-terminated-upstream`
+  or `mecatl.stacklok.com/unsafe-real-provider`) that `podAnnotations` cannot override.
+  Operator steps are in the [mecak8s deployment guide](../../user-docs/building/deployment/mecak8s.md).
 - **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.
-- **Daemon config file (`daemon.yaml`, ADR 0088)** — the serve-time topology
+- **Daemon config file (`daemon.yaml`)** — the serve-time topology
   slice (gRPC/HTTP/metrics listen addresses, TLS cert/key/CA paths,
   rate-limit/burst) is optionally carried by a small, strict, versioned YAML
   file loaded ONLY when `mecated serve --config PATH` is supplied explicitly
@@ -105,8 +109,7 @@ The Build-owned key and selectors are not persisted and no registry/map exists; 
 requires relisting. Schedules persist an already-resolved exact ref plus owner/scope;
 delegation derives or server-forks the parent Environment and artifact handles cannot be
 replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future remote
-placement provider uses the same private Bind/Reattach contract. See
-ADR 0291.
+placement provider uses the same private Bind/Reattach contract.
 
 ### Multi-replica affinity, correlation, and single-writer enforcement
 
@@ -164,7 +167,7 @@ routing, EndpointSlice removal, or production timing. The Helm chart
 creates no Gateway, Route, `BackendTrafficPolicy`, certificate, or affinity policy. A
 separate infrastructure rollout must supply and live-validate those controls, including
 authenticated admission, request/header bounds, and client/IP/principal rate limits
-before affinity is enabled. See ADR 0294.
+before affinity is enabled.
 
 ### Permission & bash governance details (`engine/governance`)
 
@@ -204,8 +207,7 @@ mirrored `AudienceSubagent` rule that binds children (`childRules`), loosening o
 `Ask` are preserved exactly at **every** tier including `yolo`. The one extra step at
 `yolo`: child command-substitution auto-runs too (`WithLooseSubstitution` extended to
 children) — at `auto`/`trusted`/`strict` a child's `$(...)` still resolves through the
-[subagents & teams](subagents-and-teams.md) child-ask model. See `docs/adr/0022-allow-all-posture.md` and the CLAUDE.md "CONFIG
-axis" / "Posture ladder" notes.
+[subagents & teams](subagents-and-teams.md) child-ask model.
 
 For Shell, `bash.go` splits compound lines (`SplitCommands`, honouring quotes and
 splitting on `&&`, `||`, `;`, `|`, a bare `&`, and newlines) and evaluates
@@ -223,6 +225,43 @@ additionally auto-approves read-only plus a minimal worktree-safe verb set —
 the [subagents & teams](subagents-and-teams.md) 4-step child-ask model.
 `ReadOnlyShell` classifies a command line as read-only for plan-mode gating and
 is deliberately a SEPARATE, unchanged classifier.
+
+### Command-runner environment and credential grants
+
+Every command runner starts from the process environment minus secrets
+(`internal/adapter/envscrub`): all `MECATL_*` names, the provider, web-search, and
+forge credentials the harness knows (`DenyExact`), and secret-shaped names
+(`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_PASSWD`, `AWS_*`, `AZURE_*`,
+`GOOGLE_APPLICATION_CREDENTIALS`). The rest of the toolchain environment survives.
+
+An operator can deliberately restore named external CLI credentials with the
+operator-only `command_runner.environment.inherit` list in the user-global
+`settings.yaml` (`internal/adapter/permconfig`); a project-tier `command_runner:` block
+is ignored with a warning. Composition (`internal/app/command_runner.go`) applies the
+grant through `envscrub.ScrubWithInherited`, which restores only names that are present,
+listed, and not reserved. Which runners see a grant:
+
+| Runner | Granted names |
+| --- | --- |
+| Built-in main Shell runner, including local alternate-placement roots (`buildCommandRunnerForRoot`) | Yes |
+| Direct-write Subagent (`directWriteCommandRunner`, the parent's main runner) | Yes, by construction; this is not an isolation boundary |
+| Hardened child runners: read-only and isolated force-copy Subagents, Team members, Parallel branches (`newHardenedRunnerForRoot`) | No: `gitenv.Scrub(envscrub.Scrub(...))` |
+| Internal Git: fork-time and dirty-overlay Git (`internal/adapter/forker`), Git snapshots, worktree discovery | No: same unconditional scrub |
+| MicroVM manager operations (`internal/adapter/microvmmanager`) | No: `envscrub.Scrub` |
+| Custom placement providers | Not rewritten; the provider owns its complete `tool.Environment` |
+
+Harness credentials are never restorable: every `MECATL_*` name (including server and
+driver auth tokens), the provider and web-search keys in `envscrub.NonOverridableExact`,
+every environment name an operator credential reference points at
+(`Resolver.OperatorCredentialEnvironmentNames`: the credential-store key and MCP
+static-bearer/OAuth references), and `MCP_<SERVER>_TOKEN` for each configured MCP server.
+A grant names variables, never values; an absent granted name produces a name-only
+warning at startup.
+
+The scrub is name-based environment hygiene, not an OS sandbox. A granted credential is
+ambient authority for every main-shell command that permissions allow; it does not
+protect same-user files or processes. Operators who need stronger isolation use a
+dedicated OS identity or a container or VM sandbox.
 
 ### Workspace trust (`internal/app/trust.go`, `internal/adapter/workspacetrust`)
 
@@ -302,7 +341,6 @@ skipped. Trust is **monotonic-positive**: it only ever *grants* admission of a
 project's ALLOWs/soul — it never overrides a Deny or a configured Ask (those remain
 deny-dominant in the evaluator). A missing/malformed/unparseable `settings.yaml`
 **or** `trust.yaml` fails safe to untrusted (a corrupt config never grants trust).
-See `docs/adr/0023-workspace-trust.md`.
 
 ## Prerequisites
 

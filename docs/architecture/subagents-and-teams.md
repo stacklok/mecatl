@@ -27,7 +27,7 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
    **On `resume`** (a Subagent call carrying `resume: <agentId>`) it instead RELOADS the
    persisted child by that id and recovers its terminal state — `completed` → `Reopen()`,
    `cancelled` → `Interrupt()` (history-repair), `failed` → `Recover()` (history-repair;
-   ADR 0200, issue #318 — matching the main session's `failed → Recover → idle` seam, since
+   issue #318 — matching the main session's `failed → Recover → idle` seam, since
    a long-running direct-write child accumulates applied mutations and discarding it costs
    more than a main session's transcript). Only a NON-terminal state — a snapshot still
    recorded `running` — is refused. It then
@@ -48,7 +48,7 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
 4. **Drains the child's entire Event stream inside `Execute`**
    (`drainChildObserved` — the single redaction chokepoint all three delegation
    families share), relaying only the REDACTED, bounded-preview
-   `subagent.start/tool/end` projection (ADR 0079; [the domain model](domain-model.md)) and **returning only the final
+   `subagent.start/tool/end` projection ([the domain model](domain-model.md#event-taxonomy-enginesessioneventgo)) and **returning only the final
    summary string** as one `ToolResult` (gauntlet #7) — no child transcript
    ever enters the parent conversation.
 
@@ -74,7 +74,7 @@ whether earlier edits survived. A writable resume uses the edits-survived note
 only when the prior valid `EnvironmentRef` exactly equals the parent's ref,
 including `Revision`; a path match alone is insufficient. Read-only resumes use
 a fresh throwaway environment. EVERY terminal is resumable, `failed`
-included (ADR 0200): a failed child recovers through `session.Session.Recover`, and its
+included: a failed child recovers through `session.Session.Recover`, and its
 error result carries a store-gated resume hint so the model can discover the path — the
 hint states what actually carries over (conversation yes, workspace no). A direct-write
 child's failure/timeout instead carries ONE combined resume-or-discard decision that names
@@ -89,7 +89,7 @@ main loop records tool results unfenced anyway, and the read-only explorer sandb
 no new untrusted ingress; re-fencing would also bust the byte-stable prompt-cache
 prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
 `model`/`agent`/`resume`; a forked child runs on the parent's engine).
-`mode: "read-write"` (ADR 0077, superseding 0040's writable path; closed set
+`mode: "read-write"` (closed set
 `{"","read-only","read-write"}`, default read-only) runs the child DIRECTLY against
 the REAL parent workspace with Edit/Write — NO fork, NO copy, NO merge-back. Its
 Edit/Write/Shell mutate the real tree IN PLACE, exactly as the main agent does, and
@@ -101,7 +101,7 @@ same-provider named specialist is eligible for semantic routing: the routed engi
 its scoped catalog/prompt/skills, Edit/Write authority, MAIN runner, and per-definition limits.
 Pinned definitions, `fork`, and `resume` bypass routing; inline MCP remains unsupported on
 this per-call writable path, and an unavailable routed target falls back to the ordinary
-writable specialist with truthful routing metadata (ADR 0242). The result text honestly notes the edits landed directly (review with `git
+writable specialist with truthful routing metadata. The result text honestly notes the edits landed directly (review with `git
 diff`/`git status`); a crashed/cancelled child can leave PARTIAL edits behind
 (recoverable via git — the accepted direct-write trade-off). When
 neither `agent` nor `model` pins one, a def-less child runs on the global
@@ -110,7 +110,7 @@ id or a `--model-alias` name, resolved same-provider; precedence `def.Model >
 --subagent-model > parent model`, empty inheriting the parent's). None of
 these widen `port.LLMRequest` — they are `subagentArgs`/`RunRequest`/factory concerns.
 
-**Background, SubagentStatus & per-child cancel (`docs/adr/0015-background-subagents.md`).**
+**Background, SubagentStatus & per-child cancel.**
 `background: true` DETACHES the child, RUN-scoped: the call returns an immediate
 started-result (agentId trailer first) and a goroutine owns fork → drive → persist →
 result-stash in the parent `Run`'s **child-run registry** (`childRunRegistry` — every
@@ -141,10 +141,9 @@ without enforcement, owner comparisons are omitted. `delegation` projects typed 
 pruned children remain visible only as content-free tombstones, including across same-ID
 recreation, and retained child
 transcripts are read through revalidated scope handles. This keeps unrelated session IDs
-unprobeable and makes retention gaps explicit (ADR 0258).
+unprobeable and makes retention gaps explicit.
 
-**Background Shell jobs ride the same registry as a NON-delegation family**
-(`docs/adr/0201-background-bash.md`). A `background: true` call on the `Shell`
+**Background Shell jobs ride the same registry as a NON-delegation family.** A `background: true` call on the `Shell`
 tool registers a `bash-cmd` entry (`bashcmd-<callID>` — a bare process, NO child
 session/engine, no `subagent.*` events, no InspectSubagent/resume), returns the
 job id immediately, and detaches the drive; the run-scoped cancel-at-end drain,
@@ -171,14 +170,14 @@ security boundary:
   does not edit the project). A `mode:"read-write"` call instead runs the SEPARATE
   `writableChildEngine` (`buildWritableSubagentChildEngine`: the explorer surface +
   **Edit/Write**, over the REAL parent workspace + the MAIN session's command runner
-  `buildCommandRunner` — main-session parity, NO fork — ADR 0077); it is NOT isolated
+  `buildCommandRunner` — main-session parity, NO fork); it is NOT isolated
   (`isolated:false`, so the A2 isolation auto-approve does not apply to its Shell) and
   git is the rollback. A `read-write`+`agent` call routes through
   `agentWritableFactory` (`buildAgentWritableEngineFactory`) on the definition's resolved
   model, or—when the definition is unpinned and same-provider—through
   `agentWritableModelFactory` (the routed half of `buildAgentWritableEngineFactories`) on the semantic
   router's pick. Both rebuild the specialist with `allowMutating=true` over the MAIN runner,
-  preserving its prompt/skills/catalog and per-def limits (ADR 0058/0239). A routed factory
+  preserving its prompt/skills/catalog and per-def limits. A routed factory
   decline falls back to the ordinary writable specialist and reports the unavailable target
   rather than claiming the routed model ran. Per-def Subagent engines keep Shell via `scopedToolNamesMode`'s
   `allowShell` and share the one read-only `SubagentTool` forker. With no runner
@@ -192,12 +191,12 @@ security boundary:
   shared base the parent's other read-only calls race over; the only shared surface is
   the `.git` object DB/refs (git-locked; config-driven code-exec vectors neutralised via
   `gitenv`).
-  A `mode:"read-write"` call WILL mutate the parent IN PLACE during its run (direct-write,
-  ADR 0077), so it declares `MutatesParent(call)==true` and the dispatcher runs it
+  A `mode:"read-write"` call WILL mutate the parent IN PLACE during its run (direct-write),
+  so it declares `MutatesParent(call)==true` and the dispatcher runs it
   **alone, mutate-serial** — never batched with a sibling read it could tear.
   `MutatesParent` is decoupled from any merger (there is none); the
   `parentMutatingCaller` seam and the `SerializingMerger` are reused only by Parallel's
-  single-branch merge (ADR 0040).
+  single-branch merge.
 - `WithMaxConcurrentChildren` (default 8; `WithMaxConcurrentSubagentShells` is a
   deprecated alias) sizes the **child concurrency gate**, acquired at the top of
   `run()` for ALL children (forking and forker-less) — Subagent is read-parallel, so

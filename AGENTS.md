@@ -47,6 +47,8 @@ the module boundary; `task test` does. Focused engine test:
 - Generated files change only via `task generate`, never by hand.
 - Engine exported API changes need `task api:update`, the API snapshots, and a
   classified `engine/CHANGELOG.md` entry.
+- A new resource that outlives a call adds a row to
+  [`docs/architecture/resource-lifetimes.md`](docs/architecture/resource-lifetimes.md).
 - Markdown changes run `task docs`. User-facing changes update the owning
   `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
 

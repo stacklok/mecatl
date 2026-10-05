@@ -35,8 +35,7 @@ if shutdown began concurrently. Shutdown drains
 both currently retained winners and eviction cleanups detached before closure, without
 holding the reaper lock during filesystem work; it does not wait for a later `Preserve`.
 A crash remains a residual and does not sweep them at startup. A SINGLE-BRANCH `join=first`/`join=judge` winner is auto-merged back
-into the parent workspace BY DEFAULT (no flag; see
-ADR 0039): the winner's diff is applied via
+into the parent workspace BY DEFAULT (no flag): the winner's diff is applied via
 `tool.EnvironmentMerger` (the `forker.Merger` adapter — `git diff --no-textconv HEAD`
 from the fork piped to `git apply` in the parent, plus untracked-file copy; the
 merge refuses `.gitattributes`-touching patches and runs `--no-textconv` to close
@@ -78,7 +77,7 @@ HEAD` gives the read-only child a CLEAN tree — `git status`/`git diff` and the
 tools would see no changes even when the operator has uncommitted work, hiding the
 in-progress changes an explorer is usually dispatched to review. **The read-only
 worktree forkers carry `forker.WithDirtyOverlay()`** (the Subagent child forker and
-the team `roForker`; see ADR 0033) which,
+the team `roForker`) which,
 after the worktree is created and only when the parent is dirty (`git status
 --porcelain` probe), mirrors the parent's uncommitted state into it: applies `git
 diff --no-ext-diff --binary HEAD` (tracked edits + staged + deletions; `--binary`
@@ -101,7 +100,7 @@ under `MemberSessionID(teamID, member)` (`team-<teamID>-<member>`, collision-fre
 concurrent teams); the parent catalog's read-only **`InspectMember`** tool pulls ONE
 member's bounded transcript on demand (PULL — never auto-injected). A `team.findings`
 event projects the ledger onto the stream, mirroring `team.tasks`. The stream projection
-is the ADR-0079 tier-2 superset: `team.member` forwards only capped member message/tool
+is the tier-2 superset of the shared delegation projection ([the domain model](domain-model.md)): `team.member` forwards only capped member message/tool
 previews (the tier-1 bounded previews Subagent/Parallel now share; never a `permission.ask`),
 and the Team-unique structures add task/finding snapshots (capped value types), the mutating
 cue, the context meter, and `team.end` aggregate usage plus closed-enum
@@ -120,7 +119,7 @@ the current round and the lead's synthesis still complete, and members are never
 individually stopped. It surfaces via `TeamOutcome.BudgetExhausted` plus a `StopBudget`
 team stop.
 
-## Worktree placement — server-owned existing worktrees (ADR 0291)
+## Worktree placement — server-owned existing worktrees
 
 The fork seam above creates ephemeral internal environments for isolation. Operator-facing
 worktree selection is a different, source-session-scoped capability. Clients cannot pass a

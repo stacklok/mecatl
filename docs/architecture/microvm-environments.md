@@ -8,7 +8,7 @@
 **Prerequisites:** [the ports](ports.md), especially `tool.Environment`, `Workspace`, bound
 `CommandRunner`, and durable `EnvironmentRef` reattachment.
 
-**Follow-on:** [the operator runbook](../usage/microvm-environments.md).
+**Follow-on:** [the operator runbook](../../user-docs/building/deployment/microvm-environments.md).
 
 The backend is opt-in and lives outside the engine. Root composition talks to local
 microvmd; go-microvm/libkrun and artifact machinery do not enter the importable engine.
@@ -289,4 +289,4 @@ schedules borrow their exact logical attachment, while independent schedules all
 attachment and persist a trusted ownership bit. Every fire reattaches that ref. Delete disables
 first, preserves a claimed/running record for scheduler recovery, and removes only the owned
 logical attachment; dirty state remains exact-reattachable and the repository VM/rootfs and
-siblings are never deleted. See ADR 0368.
+siblings are never deleted.

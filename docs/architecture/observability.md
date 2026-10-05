@@ -52,7 +52,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   the audit (`ToolCallRecorder`) and the event stream (`EventSink`). `engine/` + `internal/`
   take this port and NEVER touch global slog; the `slogdiag` adapter is the only
   slog bridge and composition picks the sink per binary. The ban is `forbidigo`-
-  guarded. See `docs/adr/0020-diagnostics.md`. The `mecated` and `mecak8s`
+  guarded. The `mecated` and `mecak8s`
   command roots share an exact `--log-level` flag (`debug`, `info`, `warn`, or
   `error`; default `info`). Each root installs its configured stderr logger as
   the global `slog` default and wraps that same logger with `slogdiag`, so
@@ -160,10 +160,9 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   > runtime/latency/profile state as reduced numeric summaries (slow-turns,
   > profile rankings, FlightRecorder summaries). All of it is **live**. The MCP
   > surface is fail-closed to loopback (it is unauthenticated and can embed
-  > goroutine-derived names/timing). See `docs/adr/0018-perf-observability.md` (the
-  > decided direction) and the [Go performance measurement & observability
-  > survey](../perf-measurement-survey.md) (the technique reference behind that
-  > decision).
+  > goroutine-derived names/timing). See the [Go performance measurement &
+  > observability survey](../perf-measurement-survey.md) for the measurement
+  > techniques behind it.
 - **SessionStore** — `memstore` (default, in-memory), `jsonlstore`
   (one atomically replaced current snapshot at
   `<dir>/sid-v1/<versioned-token>.session.json`, with append-only `.tools.jsonl`
@@ -286,10 +285,10 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   that round-trips a `Session` by driving the public state machine on restore
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It
   captures the terminal reason via `RecordedStopReason()` for exact round-trips,
-  and (cloud-native Phase 1) the per-session profile, the opaque provider/model
+  and the per-session profile, the opaque provider/model
   selector pair, the title/provenance and title-generation metadata, and the
   canonical auxiliary `token_usage` ledger. A restarted process rebuilds the SAME
-  engine and the `MaxRunTokens` budget continues across restart (see `docs/adr/0027-cloud-native.md`).
+  engine and the `MaxRunTokens` budget continues across restart.
   A store may additionally implement the optional **`port.PrunableStore`**
   (`List`/`Delete`; `ErrPruneUnsupported` otherwise) — the retention MECHANISM.
   Automatic retention consumes `SessionMetadataPager`, and stale-session
@@ -322,7 +321,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   error because EventLog errors can follow a durable write; retry would duplicate folded
   text. Memory remains bounded, one warning is emitted per recorder, and later boundary/result
   appends continue. A process crash or failed append can lose a chunk; the completed snapshot
-  remains authoritative. See ADR 0243. `jsonlstore` triples as
+  remains authoritative. `jsonlstore` triples as
   `SessionStore`+`ToolCallRecorder`+`EventLog` (a `.events.jsonl` sidecar);
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
@@ -347,9 +346,8 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   fail-closed `unknown`. That third consumer carries a documented
   **replay-fidelity limitation**: the opaque assistant-replay fields
   (`Message.Reasoning`/`ProviderPhase`, `ToolCall.ItemID`) are not on the stream,
-  so a pure fold is byte-identical-replay faithful only for plain-chat providers
-  (ADR 0038). See `docs/adr/0027-cloud-native.md` Phase 3 and the
-  `eventlogconformance` suite.
+  so a pure fold is byte-identical-replay faithful only for plain-chat providers.
+  See the `eventlogconformance` suite.
 
   A dedicated debug session is a fourth bounded consumer of the same durable facts. Its
   target-bound `InspectSession` projections expose compaction archives, content-free request
@@ -358,8 +356,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   `SessionLineageReader` plus typed-event fallback; retained descendants receive opaque
   incarnation-bound, revalidated handles, while pruned snapshots remain content-free
   tombstones keyed separately from a later same-ID incarnation. Event-log
-  retention and scan limits are reported rather than inferred. See
-  ADR 0256.
+  retention and scan limits are reported rather than inferred.
 
   > **Two `Load` implementations, one port.** mecatl's own adapters (memstore,
   > jsonlstore, the remote driver) implement `Load` by **snapshot-deserialize**
@@ -386,8 +383,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   `flocklease` beneath the store root, then composition falls back to a
   store-provided lease (`internal/app` (`buildSessionLease`)). Other stores remain
   nil/single-writer-by-affinity. The
-  conformance contract is `leaseconformance`. See `docs/adr/0027-cloud-native.md`
-  Phase 4.
+  conformance contract is `leaseconformance`.
 
 ### Remote store + source drivers (`adapters/grpcdriver`)
 
@@ -407,10 +403,6 @@ source and its dependency graph are unchanged. See the
 [adapter compatibility policy](../../adapters/COMPATIBILITY.md) for the separate
 Go API and protobuf wire contracts, pending initial releases, and standalone
 candidate proof.
-
-> Design rationale — the port/driver pattern, the per-seam lifecycle and
-> failure-posture decisions, the deferrals, and the workspace-driver sketch —
-> lives in `docs/adr/0005-driver-seams.md`.
 
 The session and memory stores have a **wire seam**: an operator can point
 either at a remote, operator-run **driver process** speaking the
@@ -564,8 +556,8 @@ line on each retry and per-attempt-timeout, and INFO on the idle-stall terminal
 and retry exhaustion. Every line is metadata-only (the wrapper sees only
 `port.LLMRequest` + errors, never prompt text; error strings are clamped). This
 is an **ADAPTER seam** and is deliberately OUTSIDE the agent loop's three-line
-diagnostic budget (that budget governs the loop's run-scoped sink, not adapters
-— see `docs/adr/0020-diagnostics.md`); the wrapper is per-provider and logs
+diagnostic budget (that budget governs the loop's run-scoped sink, not adapters);
+the wrapper is per-provider and logs
 provider-level lifecycle, not session-correlated lines.
 
 Auto-resume complements this: `GetSession`/`Approve`/`Cancel` fall back to
