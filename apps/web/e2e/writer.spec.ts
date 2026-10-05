@@ -59,17 +59,29 @@ test("Writer stays author-owned through observation, discussion, and undo", asyn
   await expect(page.getByRole("menuitem", { name: "One" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(modelPicker).toHaveText("One");
+  await page.getByRole("button", { name: "Add brief" }).click();
+  await page
+    .getByRole("textbox", { name: /Writing brief/ })
+    .fill("Audience: maintainers; focus on assumptions");
+  await page.getByRole("button", { name: "Apply brief" }).click();
+  await editor.click();
   await editor.fill("First draft");
+  await expect(editor).toHaveText("First draft");
+  await page.getByRole("button", { name: "Read this now" }).click();
   await expect.poll(() => offlineBff.requestsFor("POST", "/api/v1/writer/observe").length).toBe(1);
   const observe = offlineBff.requestsFor("POST", "/api/v1/writer/observe")[0];
   expect(observe?.postDataJSON()).toMatchObject({
     document: { content: "First draft", revision: 1 },
     model: { id: "one", providerId: "offline" },
+    brief: "Audience: maintainers; focus on assumptions",
   });
   await expect(page.getByText("What evidence supports this assumption?")).toBeVisible();
   await expect(editor).toHaveText("First draft");
-  await page.getByRole("button", { name: "Discuss", exact: true }).click();
+  await page.getByRole("button", { name: "Open thread" }).click();
+  // CodeMirror groups nearby author edits into one undo event.
+  await page.waitForTimeout(600);
   await editor.fill("Second draft");
+  await expect(editor).toHaveText("Second draft");
   await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Why?");
   await page.getByRole("textbox", { name: "Message Mecatl" }).press("Enter");
   await expect.poll(() => offlineBff.requestsFor("POST", "/api/v1/writer/discuss").length).toBe(1);
@@ -80,9 +92,55 @@ test("Writer stays author-owned through observation, discussion, and undo", asyn
     message: "Why?",
   });
   await expect(page.getByText("Keep your own voice.")).toBeVisible();
+  await page.getByRole("textbox", { name: /Author decision/ }).fill("Costs outside scope");
+  await page.getByRole("button", { name: "Confirm decision" }).click();
+  await page.getByRole("button", { name: "Addressed" }).click();
+  await page.getByRole("button", { name: "Quiet · on request" }).click();
+  await page.getByRole("button", { name: "Read this now" }).click();
+  await expect.poll(() => offlineBff.requestsFor("POST", "/api/v1/writer/observe").length).toBe(2);
+  expect(offlineBff.requestsFor("POST", "/api/v1/writer/observe")[1]?.postDataJSON()).toMatchObject(
+    {
+      brief: "Audience: maintainers; focus on assumptions",
+      observations: [{ status: "addressed", decision: "Costs outside scope" }],
+    },
+  );
   await expect(editor).toHaveText("Second draft");
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(editor).toHaveText("First draft");
+});
+
+test("Reveal passage scrolls to the first of reversed quotes only on author request", async ({
+  offlineBff,
+  page,
+}) => {
+  offlineBff.json("GET", "/api/v1/auth/session", {
+    account: "offline-writer",
+    mode: "oidc",
+    status: "authenticated",
+  });
+  offlineBff.json("GET", "/api/v1/status", { connection: "reachable", signInRequired: false });
+  offlineBff.json("GET", "/api/v1/runtime", { experimentalWriter: true });
+  offlineBff.json("GET", "/api/v1/settings/runtime", { modelsSupported: false, models: [] });
+  offlineBff.json("GET", "/api/v1/storage/health", { status: "healthy" });
+  offlineBff.json("GET", "/api/v1/sessions", { complete: true, items: [] });
+  offlineBff.json("POST", "/api/v1/writer/observe", {
+    status: "observe",
+    text: "How do these sections relate?",
+    quotes: ["Later", "First"],
+  });
+
+  await page.goto("/workspace/writer");
+  const editor = page.getByRole("textbox", { name: "Writer document" });
+  await editor.fill(`First\n${"intervening line\n".repeat(80)}Later`);
+  await editor.press("ControlOrMeta+Home");
+  const scroller = page.locator(".cm-scroller");
+  const before = await scroller.evaluate((node) => node.scrollTop);
+  await page.getByRole("button", { name: "Read this now" }).click();
+  await expect(page.getByText("How do these sections relate?")).toBeVisible();
+  await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBe(before);
+  await page.getByRole("button", { name: "Reveal passage" }).click();
+  await expect(page.locator(".cm-writer-passage")).toHaveCount(2);
+  await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(before);
 });
 
 test("Writer draws one empty-editor caret on the placeholder line in light and dark themes", async ({

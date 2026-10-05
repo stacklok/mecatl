@@ -10,9 +10,15 @@ const documentSchema = z.strictObject({
 
 const observationSchema = z.strictObject({
   revision: z.number().int().nonnegative().safe(),
-  status: z.enum(["active", "dismissed", "discussed"]),
+  status: z.enum(["open", "addressed", "not-relevant"]),
   text: z.string().min(1).max(1_000),
+  decision: z.string().trim().min(1).max(500).optional(),
   selected: z.boolean().optional(),
+});
+
+const decisionSchema = z.strictObject({
+  text: z.string().min(1).max(1_000),
+  decision: z.string().trim().min(1).max(500),
 });
 
 const discussionEntrySchema = z.strictObject({
@@ -25,7 +31,9 @@ const writerContextSchema = z
     document: documentSchema,
     model: sessionModelSelectionSchema.optional(),
     checkpoint: documentSchema.optional(),
+    brief: z.string().trim().max(2_000).optional(),
     observations: z.array(observationSchema).max(12),
+    decisions: z.array(decisionSchema).max(100).optional(),
     discussion: z.array(discussionEntrySchema).max(12),
   })
   .refine(
@@ -52,6 +60,7 @@ export const observeWriterResponseSchema = z.discriminatedUnion("status", [
     status: z.literal("observe"),
     text: z.string().trim().min(1).max(1_000),
     quote: z.string().max(500).optional(),
+    quotes: z.array(z.string().min(1).max(500)).min(1).max(3).optional(),
     reason: z.string().max(500).optional(),
   }),
 ]);

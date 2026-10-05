@@ -3365,11 +3365,17 @@ export type ObserveWriterData = {
             content: string;
             revision: number;
         };
+        brief?: string;
         observations: Array<{
             revision: number;
-            status: 'active' | 'dismissed' | 'discussed';
+            status: 'open' | 'addressed' | 'not-relevant';
             text: string;
+            decision?: string;
             selected?: boolean;
+        }>;
+        decisions?: Array<{
+            text: string;
+            decision: string;
         }>;
         discussion: Array<{
             role: 'user' | 'assistant';
@@ -3418,6 +3424,7 @@ export type ObserveWriterResponses = {
         status: 'observe';
         text: string;
         quote?: string;
+        quotes?: Array<string>;
         reason?: string;
     };
 };
@@ -3438,11 +3445,17 @@ export type DiscussWriterData = {
             content: string;
             revision: number;
         };
+        brief?: string;
         observations: Array<{
             revision: number;
-            status: 'active' | 'dismissed' | 'discussed';
+            status: 'open' | 'addressed' | 'not-relevant';
             text: string;
+            decision?: string;
             selected?: boolean;
+        }>;
+        decisions?: Array<{
+            text: string;
+            decision: string;
         }>;
         discussion: Array<{
             role: 'user' | 'assistant';

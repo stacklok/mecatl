@@ -10324,6 +10324,10 @@
                     ],
                     "additionalProperties": false
                   },
+                  "brief": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
                   "observations": {
                     "type": "array",
                     "items": {
@@ -10336,15 +10340,20 @@
                         "status": {
                           "type": "string",
                           "enum": [
-                            "active",
-                            "dismissed",
-                            "discussed"
+                            "open",
+                            "addressed",
+                            "not-relevant"
                           ]
                         },
                         "text": {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 1000
+                        },
+                        "decision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
                         },
                         "selected": {
                           "type": "boolean"
@@ -10358,6 +10367,30 @@
                       "additionalProperties": false
                     },
                     "maxItems": 12
+                  },
+                  "decisions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        },
+                        "decision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "decision"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 100
                   },
                   "discussion": {
                     "type": "array",
@@ -10435,6 +10468,16 @@
                         "quote": {
                           "type": "string",
                           "maxLength": 500
+                        },
+                        "quotes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500
+                          },
+                          "minItems": 1,
+                          "maxItems": 3
                         },
                         "reason": {
                           "type": "string",
@@ -10595,6 +10638,10 @@
                     ],
                     "additionalProperties": false
                   },
+                  "brief": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
                   "observations": {
                     "type": "array",
                     "items": {
@@ -10607,15 +10654,20 @@
                         "status": {
                           "type": "string",
                           "enum": [
-                            "active",
-                            "dismissed",
-                            "discussed"
+                            "open",
+                            "addressed",
+                            "not-relevant"
                           ]
                         },
                         "text": {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 1000
+                        },
+                        "decision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
                         },
                         "selected": {
                           "type": "boolean"
@@ -10629,6 +10681,30 @@
                       "additionalProperties": false
                     },
                     "maxItems": 12
+                  },
+                  "decisions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        },
+                        "decision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "decision"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 100
                   },
                   "discussion": {
                     "type": "array",

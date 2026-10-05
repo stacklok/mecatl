@@ -24,7 +24,9 @@ const requests: Array<{
     model?: { id: string; providerId: string };
   };
 }> = [];
-let answer: { status: "observe"; text: string } | { status: "silent" } = {
+let answer:
+  | { status: "observe"; text: string; quote?: string; quotes?: string[] }
+  | { status: "silent" } = {
   status: "observe",
   text: "What evidence supports this assumption?",
 };
@@ -74,6 +76,7 @@ afterEach(() => {
   discussionFailure = false;
   runtimeRequests = 0;
   requests.length = 0;
+  window.localStorage.clear();
   answer = { status: "observe", text: "What evidence supports this assumption?" };
   vi.unstubAllGlobals();
 });
@@ -206,7 +209,7 @@ it("uses the selected inventory model for observation and discussion", async () 
   act(() => view.dispatch({ changes: { from: 0, insert: "Draft" } }));
   await screen.findByText("What evidence supports this assumption?", {}, { timeout: 3500 });
   expect(requests[0]?.body.model).toEqual({ id: "one", providerId: "provider" });
-  fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Message Mecatl" }), "Why?");
   await userEvent.keyboard("{Enter}");
   await waitFor(() =>
@@ -277,9 +280,9 @@ it("sends author edits via the generated SDK, never inserts model text, and supp
   expect(requests.map((r) => r.body.document?.content)).toEqual(["Opening"]);
   expect(await screen.findByText("What evidence supports this assumption?")).toBeTruthy();
   expect(editor.textContent).toBe("Opening");
-  fireEvent.click(screen.getByRole("button", { name: "Pause" }));
-  fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
-  expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Message Mecatl" }));
+  fireEvent.click(screen.getByRole("button", { name: "Quiet · on request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Message Mecatl" }));
   act(() => view.dispatch({ changes: { from: 7, insert: " updated" }, userEvent: "input.type" }));
   await userEvent.type(screen.getByRole("textbox", { name: /message|prompt/i }), "How?");
   await userEvent.keyboard("{Enter}");
@@ -289,7 +292,7 @@ it("sends author edits via the generated SDK, never inserts model text, and supp
     observations: [
       {
         revision: 1,
-        status: "active",
+        status: "open",
         text: "What evidence supports this assumption?",
         selected: true,
       },
@@ -317,7 +320,7 @@ it("dismisses an observation without changing the document", async () => {
     }),
   );
   await screen.findByText("What evidence supports this assumption?", {}, { timeout: 3500 });
-  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  fireEvent.click(screen.getByRole("button", { name: "Not relevant" }));
   expect(screen.getByText("No open observations.")).toBeTruthy();
   expect(editor.textContent).toBe("Draft");
 });
@@ -329,13 +332,13 @@ it("recovers observation after a failed discussion is dismissed without losing t
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Draft" } }));
   await screen.findByText("What evidence supports this assumption?", {}, { timeout: 3500 });
-  fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
   discussionFailure = true;
   await userEvent.type(screen.getByRole("textbox", { name: "Message Mecatl" }), "Why?");
   await userEvent.keyboard("{Enter}");
   await screen.findByText(/Discussion failed/);
-  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-  expect(screen.queryByRole("region", { name: "Discussion" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Not relevant" }));
+  expect(screen.getByRole("region", { name: "Discussion" })).toBeTruthy();
   act(() => view.dispatch({ changes: { from: 5, insert: " revised" } }));
   answer = { status: "silent" };
   fireEvent.click(screen.getByRole("button", { name: "Retry analysis" }));
@@ -345,6 +348,131 @@ it("recovers observation after a failed discussion is dismissed without losing t
   );
   expect(editor.textContent).toBe("Draft revised");
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("uses a brief, explicit pause/read, revisitable decisions, and cautious quote reveal", async () => {
+  answer = { status: "observe", text: "Why the expense?", quote: "Costs" } as typeof answer;
+  mount(true);
+  fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
+    target: { value: "Audience: operators" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
+  expect(requests).toHaveLength(0);
+  const editor = screen.getByRole("textbox", { name: "Writer document" });
+  const view = EditorView.findFromDOM(editor as HTMLElement);
+  if (!view) throw new Error("CodeMirror did not mount");
+  act(() => view.dispatch({ changes: { from: 0, insert: "Costs are unknown." } }));
+  fireEvent.click(screen.getByRole("button", { name: "Quiet · on request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("Why the expense?");
+  expect(requests[0]?.body).toMatchObject({ brief: "Audience: operators" });
+  act(() => view.dispatch({ selection: { anchor: 4 } }));
+  fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
+  expect(view.state.selection.main.anchor).toBe(4);
+  expect(editor.querySelector(".cm-writer-passage")?.textContent).toBe("Costs");
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Author decision/ }), {
+    target: { value: "Costs outside scope" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
+  fireEvent.click(screen.getByRole("button", { name: "Addressed" }));
+  expect(screen.getByText("History · 1 closed threads").closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: /Ask Writer · general/ }));
+  fireEvent.click(screen.getByText("History · 1 closed threads"));
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  expect((screen.getByRole("textbox", { name: /Author decision/ }) as HTMLInputElement).value).toBe(
+    "Costs outside scope",
+  );
+  act(() => view.dispatch({ changes: { from: 0, to: 5, insert: "Price" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
+  expect(screen.getByText(/Earlier draft \/ changed/)).toBeTruthy();
+});
+
+it("reveals reversed passages in a mounted editor, requesting scroll only on click without changing selection or undo", async () => {
+  answer = { status: "observe", text: "How do these sections relate?", quotes: ["Later", "First"] };
+  mount(true);
+  const editor = screen.getByRole("textbox", { name: "Writer document" });
+  const view = EditorView.findFromDOM(editor as HTMLElement);
+  if (!view) throw new Error("CodeMirror did not mount");
+  const text = `First\n${"intervening line\n".repeat(80)}Later`;
+  act(() => view.dispatch({ changes: { from: 0, insert: text }, selection: { anchor: 3 } }));
+  await screen.findByText("How do these sections relate?", {}, { timeout: 3500 });
+  expect(editor.querySelectorAll(".cm-writer-passage")).toHaveLength(0);
+  const dispatch = vi.spyOn(view, "dispatch");
+  fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
+  const effects = dispatch.mock.calls.flatMap(([spec]) => spec?.effects ?? []);
+  expect(effects).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        value: expect.objectContaining({
+          range: expect.objectContaining({ anchor: text.indexOf("Later") }),
+        }),
+      }),
+    ]),
+  );
+  expect(view.state.selection.main.anchor).toBe(3);
+  expect(view.state.doc.toString()).toBe(text);
+  expect(editor.querySelectorAll(".cm-writer-passage")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("");
+});
+
+it("keeps Ask Writer available while an automatic observation is running", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mount(true);
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", async (request: Request) => {
+    if (new URL(request.url).pathname.endsWith("/writer/observe")) await gate;
+    return original(request);
+  });
+  const view = EditorView.findFromDOM(
+    screen.getByRole("textbox", { name: "Writer document" }) as HTMLElement,
+  );
+  if (!view) throw new Error("CodeMirror did not mount");
+  act(() => view.dispatch({ changes: { from: 0, insert: "Draft during analysis" } }));
+  await screen.findByText(/Analyzing revision/, {}, { timeout: 3500 });
+  expect(screen.getByRole("textbox", { name: "Message Mecatl" })).not.toHaveProperty(
+    "disabled",
+    true,
+  );
+  await userEvent.type(screen.getByRole("textbox", { name: "Message Mecatl" }), "Why?");
+  await userEvent.keyboard("{Enter}");
+  release();
+  await waitFor(() => expect(requests.some(({ path }) => path.endsWith("/discuss"))).toBe(true));
+});
+
+it("keeps a local draft only after opt-in, restores it, and forgets only on confirmation", async () => {
+  window.localStorage.setItem("studio.account", "alice");
+  const lock = {
+    request: async (_key: string, _options: unknown, callback: () => boolean) => callback(),
+  };
+  Object.defineProperty(navigator, "locks", { configurable: true, value: lock });
+  const first = mount(true);
+  const editor = screen.getByRole("textbox", { name: "Writer document" });
+  const view = EditorView.findFromDOM(editor as HTMLElement);
+  if (!view) throw new Error("CodeMirror did not mount");
+  act(() => view.dispatch({ changes: { from: 0, insert: "Saved draft" } }));
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+  await screen.findByText("Saved in this browser");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toContain("Saved draft");
+  first.unmount();
+  mount(true);
+  expect(screen.getByRole("textbox", { name: "Writer document" }).textContent).toBe("Saved draft");
+  const confirm = vi.fn().mockReturnValue(false);
+  window.confirm = confirm;
+  fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
+  expect(window.localStorage.getItem("studio.writer.recovery")).not.toBeNull();
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
+  await screen.findByText("Clear · not saved in this browser");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+  Reflect.deleteProperty(window, "confirm");
+  Reflect.deleteProperty(navigator, "locks");
 });
 
 it("keeps silent analysis invisible", async () => {

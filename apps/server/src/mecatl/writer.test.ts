@@ -17,7 +17,7 @@ import { createMecatlWriterService, WriterResponseError } from "./writer.js";
 const input: ObserveWriterRequest = {
   document: { content: "A hypothesis might fail.", revision: 2 },
   checkpoint: { content: "A hypothesis will succeed.", revision: 1 },
-  observations: [{ revision: 1, status: "dismissed", text: "Earlier thought" }],
+  observations: [{ revision: 1, status: "not-relevant", text: "Earlier thought" }],
   discussion: [{ role: "user", text: "Why?" }],
 };
 
@@ -160,6 +160,55 @@ describe("Writer SDK query boundary", () => {
       ).rejects.toBeInstanceOf(WriterResponseError);
       expect(fake.deleted).toHaveBeenCalledOnce();
     }
+  });
+
+  it("forwards author brief and confirmed decisions as bounded data and verifies every quote", async () => {
+    const fake = harness(
+      JSON.stringify({
+        status: "observe",
+        text: "What changed?",
+        quotes: ["A hypothesis", "might fail"],
+      }),
+    );
+    const request = {
+      ...input,
+      brief: "Audience: operators",
+      observations: [
+        {
+          revision: 1,
+          status: "not-relevant" as const,
+          text: "Earlier thought",
+          decision: "Costs outside scope",
+        },
+      ],
+      decisions: [
+        { text: "An older observation outside the last twelve", decision: "Costs outside scope" },
+      ],
+    };
+    await expect(
+      fake.service.observe(request, new AbortController().signal),
+    ).resolves.toMatchObject({
+      quotes: ["A hypothesis", "might fail"],
+    });
+    expect(fake.run.mock.calls[0]?.[0]).toContain(JSON.stringify({ mode: "observe", ...request }));
+    expect(fake.run.mock.calls[0]?.[0]).toContain(
+      "including older decisions outside the recent observations",
+    );
+    const invalid = harness(
+      JSON.stringify({ status: "observe", text: "Question", quotes: ["not in document"] }),
+    );
+    await expect(
+      invalid.service.observe(request, new AbortController().signal),
+    ).rejects.toBeInstanceOf(WriterResponseError);
+  });
+
+  it("checks an unchanged draft when the brief changed and the checkpoint is omitted", async () => {
+    const fake = harness("SILENT");
+    await fake.service.observe(
+      { ...input, checkpoint: undefined, brief: "Focus on evidence" },
+      new AbortController().signal,
+    );
+    expect(fake.create).toHaveBeenCalledOnce();
   });
 
   it("surfaces cleanup errors rather than returning model text", async () => {

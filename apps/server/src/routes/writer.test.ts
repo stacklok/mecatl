@@ -8,7 +8,7 @@ import { csrfHeaders, fakeRuntime } from "../testing/fakes.js";
 const input: ObserveWriterRequest = {
   document: { content: "A new thought", revision: 2 },
   checkpoint: { content: "An old thought", revision: 1 },
-  observations: [{ revision: 1, status: "active", text: "What changed?" }],
+  observations: [{ revision: 1, status: "open", text: "What changed?" }],
   discussion: [{ role: "user", text: "I wonder" }],
 };
 
@@ -46,7 +46,12 @@ describe("Writer routes", () => {
       { ...input, checkpoint: { content: "not the same", revision: 2 } },
       { ...input, checkpoint: { content: "next", revision: 3 } },
       { ...input, observations: Array(13).fill(input.observations[0]) },
+      { ...input, decisions: Array(101).fill({ text: "Why?", decision: "No" }) },
+      { ...input, decisions: [{ text: "Why?", decision: "" }] },
+      { ...input, decisions: [{ text: "x".repeat(1001), decision: "No" }] },
       { ...input, discussion: Array(13).fill(input.discussion[0]) },
+      { ...input, brief: "x".repeat(2_001) },
+      { ...input, observations: [{ ...input.observations[0], decision: "x".repeat(501) }] },
       { ...input, model: { id: "", providerId: "provider" } },
       { ...input, model: { id: "model", providerId: "" } },
     ]) {

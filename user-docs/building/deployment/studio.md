@@ -85,29 +85,42 @@ workspace navigation. The default is off, and the value must be exactly `1`.
 
 :::
 
-Use Writer with non-sensitive text that you wrote yourself. The document stays
-only in its current browser tab, so select **Download .md** before leaving the
-route. Reloading or closing a tab with content prompts for confirmation; route
-departure loses the document. Writer has no save, resume, cross-tab or
-cross-device synchronization, collaboration, or automatic editing.
+Use Writer with non-sensitive text that you wrote yourself. Write Markdown in the
+highlighted document surface. Use **H1**, **B**, and **I** to toggle formatting
+(or Ctrl/⌘+Alt+1, Ctrl/⌘+B, and Ctrl/⌘+I); **Undo** and **Redo** affect only your
+edits. Choose a provider/model from the deployment's model inventory, or leave
+**Deployment default** selected. Filter by model name, ID, or provider; models
+hidden in your browser's **Models** settings remain hidden. The choice applies
+to subsequent checks and discussions.
 
-Write Markdown in the highlighted document surface. Use **H1**, **B**, and **I**
-to toggle formatting (or Ctrl/⌘+Alt+1, Ctrl/⌘+B, and Ctrl/⌘+I), with **Undo** and
-**Redo** for author edits. Choose a provider/model from the deployment's model
-inventory, or leave **Deployment default** selected. Filter the list by model
-name, ID, or provider; models hidden in your browser's **Models** settings stay
-hidden here. The same choice applies to subsequent observations and discussions.
+Select **Add brief** above the document if you want to describe its audience,
+purpose, or the feedback you want. Apply, edit, or clear this optional brief at
+any time. Changing it does not immediately analyze or edit your draft; select
+**Read this now** to check the current text against the new brief. Writer waits
+for meaningful edits and a quiet interval between automatic checks, including
+when the last check was silent. Choose **Quiet · on request** to stop automatic
+checks, or **On request · turn on** to resume. **Read this now** and **Ask Writer**
+work while automatic checks are paused and before any observation appears.
 
-After a pause in typing, Writer can show a question about an unclear claim,
-assumption, contradiction, or missing idea. Silence is a valid response. Each
-question names the revision it analyzed and remains available even if you have
-continued editing. The status shows when it is waiting for typing, analyzing,
-cooling down, or last checked without an observation. Select **Pause** to stop
-automatic observations, **Dismiss** to set aside a question, or **Discuss** to
-ask about it, even while automatic observations are paused. Discussion never
-changes the document. Ask explicitly if you want wording suggestions. A failed
-analysis needs a manual retry. If Writer becomes
-unavailable, requests stop and your draft remains in the open tab.
+Open observations remain in the active list. **Addressed** and **Not relevant** move threads into collapsed **History**; expand it to revisit or reopen them. Select **Open thread** to revisit a question and its conversation. Discussion alone does not close it. The general conversation is separate from these threads. Confirm an optional author decision on a thread if you want future checks to consider it. Up to 100 decisions stay in context even when their observations are old; clear one before adding another at the limit. Writer does not infer such decisions. A quote under an observation can be revealed in the current document: **Reveal passage** scrolls to the first match without moving the caret or changing undo history; automatic feedback never scrolls. Missing or repeated passages are marked as earlier-draft/changed rather than linked to a guessed location.
+Writer never edits your text. Ask explicitly if you want wording suggestions.
+If a request fails, retry it manually; if Writer becomes unavailable, your
+current tab remains editable.
+
+The draft stays in this tab until you choose **Save locally (opt in)**. With
+browser storage and Web Locks available under a verified signed-in Studio
+account, Writer then saves your draft, applied brief, threads, and decisions
+together. Check **Saved in this browser** before leaving. **Saving…** and
+**Save failed** do not indicate a recoverable copy; if storage is blocked, full,
+invalid, or changed in another tab, download the draft before leaving. A
+recovered draft opens only for the same account on the same browser origin;
+recovery itself does not check the draft until your next edit or **Read this now**.
+Studio's existing account cleanup clears it on sign-out or account change.
+**Forget local draft** asks for confirmation, removes the saved copy, and stops
+future saves without clearing the current tab. It refuses to delete a copy changed
+by another tab. **Download .md** is independent of recovery. Browser-local storage
+is not a backup or cross-device sync; route departure loses anything not saved or
+downloaded.
 
 Writer sends the current document and bounded recent context through Studio to
 the connected Mecatl deployment and the selected provider (or the deployment
