@@ -359,26 +359,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 
 	// Human permission and pre-hook waits are complete. Prepare each sibling
 	// serially, launching its private checker before preparing the next.
-	var reviewWG sync.WaitGroup
-	for i := range prepared {
-		if ctx.Err() != nil {
-			break
-		}
-		p := &prepared[i]
-		if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
-			continue
-		}
-		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, p.call.Name, ReviewJobAction, false); applies {
-			assessment := e.prepareActionAssessment(ctx, r, sess, env, p.call)
-			p.assessment = &assessment
-			reviewWG.Add(1)
-			go func(a *actionReviewAssessment) {
-				defer reviewWG.Done()
-				assessAction(ctx, r, a)
-			}(p.assessment)
-		}
-	}
-	reviewWG.Wait()
+	e.fanOutReadBatchActionAssessments(ctx, r, sess, env, prepared)
 	if ctx.Err() != nil {
 		r.recordCompletedActionUsage(ctx, sess, prepared)
 		return out, true
@@ -435,6 +416,31 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 
 	e.armReadBatchGrants(ctx, r, sess, env, toRun, out)
 	return out, cancelled
+}
+
+// fanOutReadBatchActionAssessments starts every eligible private action review,
+// then joins them before the ordered decision drain begins.
+func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, prepared []readBatchPending) {
+	var reviewWG sync.WaitGroup
+	for i := range prepared {
+		if ctx.Err() != nil {
+			break
+		}
+		p := &prepared[i]
+		if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
+			continue
+		}
+		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, p.call.Name, ReviewJobAction, false); applies {
+			assessment := e.prepareActionAssessment(ctx, r, sess, env, p.call)
+			p.assessment = &assessment
+			reviewWG.Add(1)
+			go func(a *actionReviewAssessment) {
+				defer reviewWG.Done()
+				assessAction(ctx, r, a)
+			}(p.assessment)
+		}
+	}
+	reviewWG.Wait()
 }
 
 func (e *Engine) clearReadBatchActions(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, out map[session.ToolCallID]session.ToolResult) ([]readBatchPending, bool) {
