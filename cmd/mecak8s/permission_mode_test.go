@@ -54,7 +54,7 @@ func k8sDeprecationWarnings(t *testing.T, argv ...string) []string {
 	return out
 }
 
-func TestADR_0365_DeprecatedAliasesStillResolve(t *testing.T) {
+func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
 	for _, tc := range []struct{ posture, token string }{
 		{"strict", "default"}, {"trusted", "trusted"}, {"auto", "auto"}, {"yolo", "yolo"},
 	} {
@@ -79,7 +79,7 @@ func TestADR_0365_DeprecatedAliasesStillResolve(t *testing.T) {
 	}
 }
 
-func TestADR_0365_AliasCombinationsStillResolve(t *testing.T) {
+func TestADR_0375_AliasCombinationsStillResolve(t *testing.T) {
 	// Headless root: no token grants project trust, so strict plus explicit trust
 	// (today: trusted posture, TrustProject) must keep resolving as it does today.
 	posture, mode, ac := k8sPair(t, "--posture", "strict", "--trust-project")
@@ -96,7 +96,7 @@ func TestADR_0365_AliasCombinationsStillResolve(t *testing.T) {
 	}
 }
 
-func TestADR_0365_DefaultsReproduceCurrentBehaviour(t *testing.T) {
+func TestADR_0375_DefaultsReproduceCurrentBehaviour(t *testing.T) {
 	posture, mode, ac := k8sPair(t)
 	if posture != app.PostureAuto || mode != session.ModeDefault {
 		t.Fatalf("default mecak8s = (%s, %s), want (auto, default)", posture, mode)
@@ -112,7 +112,7 @@ func TestADR_0365_DefaultsReproduceCurrentBehaviour(t *testing.T) {
 	}
 }
 
-func TestADR_0365_BareMecak8sRefusesWithoutCheckerChoice(t *testing.T) {
+func TestADR_0375_BareMecak8sRefusesWithoutCheckerChoice(t *testing.T) {
 	build := func(argv ...string) error {
 		cfg, err := parseFlags(argv)
 		if err != nil {
@@ -139,7 +139,7 @@ func TestADR_0365_BareMecak8sRefusesWithoutCheckerChoice(t *testing.T) {
 	}
 }
 
-func TestADR_0365_PermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
+func TestADR_0375_PermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
 	_, err := parseFlags([]string{"--permission-mode", "auto", "--posture", "auto"})
 	if err == nil || !strings.Contains(err.Error(), "pass only --permission-mode") {
 		t.Fatalf("--permission-mode with --posture err = %v, want a pass-one startup error", err)

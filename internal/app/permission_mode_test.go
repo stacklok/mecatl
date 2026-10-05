@@ -15,7 +15,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
-// permissionModeCfg is the offline Build fixture for the ADR 0365 tests: an
+// permissionModeCfg is the offline Build fixture for the ADR 0375 tests: an
 // explicit --permission-mode token over the mock provider.
 func permissionModeCfg(t *testing.T, token string, diag port.Diagnostics) Config {
 	t.Helper()
@@ -41,7 +41,7 @@ func builtDefaultSessionMode(t *testing.T, built *Built) session.PermissionMode 
 	return sess.Mode
 }
 
-func TestADR_0365_TokenTableResolvesExactPairs(t *testing.T) {
+func TestADR_0375_TokenTableResolvesExactPairs(t *testing.T) {
 	want := map[string]struct {
 		posture Posture
 		mode    session.PermissionMode
@@ -96,7 +96,7 @@ func TestADR_0365_TokenTableResolvesExactPairs(t *testing.T) {
 	}
 }
 
-func TestADR_0365_TrustedKeepsCurrentMeaning(t *testing.T) {
+func TestADR_0375_TrustedKeepsCurrentMeaning(t *testing.T) {
 	cfg := permissionModeCfg(t, "trusted", port.NopDiagnostics{})
 	legacy := Config{Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true, Posture: PostureTrusted, PostureFlagSet: true}
 	for name, c := range map[string]Config{"token": cfg, "--posture trusted": legacy} {
@@ -114,7 +114,7 @@ func TestADR_0365_TrustedKeepsCurrentMeaning(t *testing.T) {
 	}
 }
 
-func TestADR_0365_TrustedAcceptEditsIsNameable(t *testing.T) {
+func TestADR_0375_TrustedAcceptEditsIsNameable(t *testing.T) {
 	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "trusted-accept-edits", port.NopDiagnostics{}))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -128,7 +128,7 @@ func TestADR_0365_TrustedAcceptEditsIsNameable(t *testing.T) {
 	}
 }
 
-func TestADR_0365_AllowAllTokenRequiresChecker(t *testing.T) {
+func TestADR_0375_AllowAllTokenRequiresChecker(t *testing.T) {
 	for _, token := range []string{"auto", "yolo"} {
 		_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, token, port.NopDiagnostics{}))
 		if err == nil {
@@ -157,7 +157,7 @@ func TestADR_0365_AllowAllTokenRequiresChecker(t *testing.T) {
 	}
 }
 
-func TestADR_0365_CheckerRefusalNamesEveryFix(t *testing.T) {
+func TestADR_0375_CheckerRefusalNamesEveryFix(t *testing.T) {
 	_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "auto", port.NopDiagnostics{}))
 	if err == nil {
 		t.Fatal("auto with no checker must refuse")
@@ -169,7 +169,7 @@ func TestADR_0365_CheckerRefusalNamesEveryFix(t *testing.T) {
 	}
 }
 
-func TestADR_0365_GateFreeTokenStatesCheckerIsAdvisoryOnly(t *testing.T) {
+func TestADR_0375_GateFreeTokenStatesCheckerIsAdvisoryOnly(t *testing.T) {
 	properties := []string{"pre-tool veto", "approve-once human ask", "fail-closed"}
 
 	_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "yolo", port.NopDiagnostics{}))
@@ -201,7 +201,7 @@ func TestADR_0365_GateFreeTokenStatesCheckerIsAdvisoryOnly(t *testing.T) {
 	}
 }
 
-func TestADR_0365_NonAllowAllTokensRequireNoChecker(t *testing.T) {
+func TestADR_0375_NonAllowAllTokensRequireNoChecker(t *testing.T) {
 	for _, token := range []string{"plan", "default", "accept-edits", "trusted", "trusted-accept-edits"} {
 		built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, token, port.NopDiagnostics{}))
 		if err != nil {
@@ -211,7 +211,7 @@ func TestADR_0365_NonAllowAllTokensRequireNoChecker(t *testing.T) {
 	}
 }
 
-func TestADR_0365_StartupLineNamesCheckerState(t *testing.T) {
+func TestADR_0375_StartupLineNamesCheckerState(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  Config
@@ -251,7 +251,7 @@ func headlessCfg(t *testing.T, token string, diag port.Diagnostics) Config {
 	return cfg
 }
 
-func TestADR_0365_HeadlessTrustTokenRefused(t *testing.T) {
+func TestADR_0375_HeadlessTrustTokenRefused(t *testing.T) {
 	for _, token := range []string{"trusted", "trusted-accept-edits"} {
 		_, err := buildIsolated(t, context.Background(), headlessCfg(t, token, port.NopDiagnostics{}))
 		if err == nil {
@@ -265,7 +265,7 @@ func TestADR_0365_HeadlessTrustTokenRefused(t *testing.T) {
 	}
 }
 
-func TestADR_0365_HeadlessTrustTokenAcceptsEveryTrustSource(t *testing.T) {
+func TestADR_0375_HeadlessTrustTokenAcceptsEveryTrustSource(t *testing.T) {
 	t.Run("explicit --trust-project", func(t *testing.T) {
 		cfg := headlessCfg(t, "trusted", port.NopDiagnostics{})
 		cfg.TrustProject = true
@@ -289,7 +289,7 @@ func TestADR_0365_HeadlessTrustTokenAcceptsEveryTrustSource(t *testing.T) {
 	})
 }
 
-func TestADR_0365_HeadlessAllowAllStartsWithoutTrust(t *testing.T) {
+func TestADR_0375_HeadlessAllowAllStartsWithoutTrust(t *testing.T) {
 	for _, token := range []string{"auto", "yolo"} {
 		rec := slogdiagBuffer(t)
 		cfg := headlessCfg(t, token, rec.diag)
@@ -308,7 +308,7 @@ func TestADR_0365_HeadlessAllowAllStartsWithoutTrust(t *testing.T) {
 	}
 }
 
-func TestADR_0365_InteractiveTrustTokenGrantsTrust(t *testing.T) {
+func TestADR_0375_InteractiveTrustTokenGrantsTrust(t *testing.T) {
 	withTrustEnv(t, trustSettingsEnv(t.TempDir(), nil))
 	rec := slogdiagBuffer(t)
 	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "trusted", rec.diag))
@@ -324,7 +324,7 @@ func TestADR_0365_InteractiveTrustTokenGrantsTrust(t *testing.T) {
 	}
 }
 
-func TestADR_0365_AllowAllNarratesSubagentAsymmetry(t *testing.T) {
+func TestADR_0375_AllowAllNarratesSubagentAsymmetry(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	cfg := permissionModeCfg(t, "auto", rec.diag)
 	cfg.GuardrailsDisabled = true
@@ -347,7 +347,7 @@ func headlessAllowAll(t *testing.T, diag port.Diagnostics) Config {
 	return cfg
 }
 
-func TestADR_0365_HeadlessAllowAllDefaultsReviewerOn(t *testing.T) {
+func TestADR_0375_HeadlessAllowAllDefaultsReviewerOn(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	built, err := buildIsolated(t, context.Background(), headlessAllowAll(t, rec.diag))
 	if err != nil {
@@ -375,7 +375,7 @@ func TestADR_0365_HeadlessAllowAllDefaultsReviewerOn(t *testing.T) {
 	}
 }
 
-func TestADR_0365_ReviewerDefaultIsOptOutAndNarrated(t *testing.T) {
+func TestADR_0375_ReviewerDefaultIsOptOutAndNarrated(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	built, err := buildIsolated(t, context.Background(), headlessAllowAll(t, rec.diag))
 	if err != nil {
@@ -405,7 +405,7 @@ func TestADR_0365_ReviewerDefaultIsOptOutAndNarrated(t *testing.T) {
 	}
 }
 
-func TestADR_0365_ReviewerDefaultDegradesToTodayBehaviour(t *testing.T) {
+func TestADR_0375_ReviewerDefaultDegradesToTodayBehaviour(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	cfg := resolveAskReviewerDefault(Config{Posture: PostureAuto, Diagnostics: rec.diag})
 	if cfg.askReviewerDefaultOn {
@@ -419,7 +419,7 @@ func TestADR_0365_ReviewerDefaultDegradesToTodayBehaviour(t *testing.T) {
 	}
 }
 
-func TestADR_0365_ReviewerDefaultIsConfinedToHeadlessAllowAll(t *testing.T) {
+func TestADR_0375_ReviewerDefaultIsConfinedToHeadlessAllowAll(t *testing.T) {
 	for name, cfg := range map[string]Config{
 		"interactive auto": {Posture: PostureAuto, Interactive: true, Model: "m"},
 		"headless strict":  {Posture: PostureStrict, Model: "m"},
@@ -432,7 +432,7 @@ func TestADR_0365_ReviewerDefaultIsConfinedToHeadlessAllowAll(t *testing.T) {
 	}
 }
 
-func TestADR_0365_ReviewerAndCheckerNarratedSeparately(t *testing.T) {
+func TestADR_0375_ReviewerAndCheckerNarratedSeparately(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	cfg := headlessCfg(t, "auto", rec.diag)
 	cfg.GuardrailsModel = "mock-checker"
@@ -456,7 +456,7 @@ func TestADR_0365_ReviewerAndCheckerNarratedSeparately(t *testing.T) {
 	}
 }
 
-func TestADR_0365_StartupLineReportsTokenBothHalvesCheckerAndReviewer(t *testing.T) {
+func TestADR_0375_StartupLineReportsTokenBothHalvesCheckerAndReviewer(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "trusted-accept-edits", rec.diag))
 	if err != nil {
@@ -482,7 +482,7 @@ func TestADR_0365_StartupLineReportsTokenBothHalvesCheckerAndReviewer(t *testing
 	}
 }
 
-func TestADR_0365_PermissionModeIsOperatorTierOnly(t *testing.T) {
+func TestADR_0375_PermissionModeIsOperatorTierOnly(t *testing.T) {
 	operatorFile := func(t *testing.T, token string) string {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "operator.yaml")
@@ -574,7 +574,7 @@ func TestADR_0365_PermissionModeIsOperatorTierOnly(t *testing.T) {
 }
 
 // TestInvariant_NoWireOrDomainSurfaceChanged pins that the vocabulary added no
-// session-selectable value (ADR 0365 decision 3): the domain keeps its three
+// session-selectable value (ADR 0375 decision 3): the domain keeps its three
 // modes with their strings, the proto enum keeps its four values, and an old
 // snapshot's mode string still round-trips. `task api:check` covers the engine
 // API surface itself.
@@ -598,10 +598,10 @@ func TestInvariant_NoWireOrDomainSurfaceChanged(t *testing.T) {
 	}
 }
 
-// TestADR_0365_AuthoritativePostureFoldsPermissionModeKey pins that the cmd
+// TestADR_0375_AuthoritativePostureFoldsPermissionModeKey pins that the cmd
 // fast paths (root refusal, pre-launch WARN) see an operator-YAML-only
 // permissionMode: allow-all token, not only an explicit flag.
-func TestADR_0365_AuthoritativePostureFoldsPermissionModeKey(t *testing.T) {
+func TestADR_0375_AuthoritativePostureFoldsPermissionModeKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "operator.yaml")
 	if err := os.WriteFile(path, []byte("permissionMode: yolo\n"), 0o600); err != nil {
 		t.Fatal(err)

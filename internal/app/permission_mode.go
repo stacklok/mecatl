@@ -12,7 +12,7 @@ import (
 )
 
 // permission_mode.go is the COMPOSITION-LAYER named permission-mode vocabulary
-// (ADR 0365). A token is an operator shorthand that writes an exact pair of
+// (ADR 0375). A token is an operator shorthand that writes an exact pair of
 // EXISTING values: the process-wide Posture and the default session
 // PermissionMode (server.Config.DefaultMode). It introduces no third source of
 // permission state: the table below is the whole mechanism, and it is a lookup,
@@ -31,7 +31,7 @@ type PermissionModeToken struct {
 	SessionMode session.PermissionMode
 }
 
-// permissionModeTable is the ADR 0365 contract. Redundant products (an
+// permissionModeTable is the ADR 0375 contract. Redundant products (an
 // accept-edits variant of auto or yolo) are deliberately absent: allow-all
 // already permits edits.
 var permissionModeTable = []PermissionModeToken{
@@ -120,7 +120,7 @@ func foldPermissionMode(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
-// checkerRefusal is the allow-all admission gate (ADR 0365 decision 4). A
+// checkerRefusal is the allow-all admission gate (ADR 0375 decision 4). A
 // posture that waives the built-in mutate-ask floor leaves the guardrails
 // checker as the only inspection of tool content, so starting one with no
 // checker and no explicit kill-switch is refused. It keys on the RESOLVED
@@ -143,7 +143,7 @@ func checkerRefusal(cfg Config, checkerConfigured bool) error {
 // refusal and the startup line so they cannot disagree.
 const yoloCheckerAdvisoryNote = "At yolo a configured checker is observability-only: it has no pre-tool veto, no approve-once human ask, and no fail-closed on checker failure, so a checker outage looks the same as a clean result"
 
-// headlessTrustRefusal is the headless admission gate (ADR 0365 decision 5).
+// headlessTrustRefusal is the headless admission gate (ADR 0375 decision 5).
 // It runs AFTER resolveTrust, so any legitimate trust source satisfies it, and
 // applies only to the trust-naming posture: trust is not auto's or yolo's
 // defining increment, so those WARN instead (narrateWithheldTrust).
@@ -184,7 +184,7 @@ func (cfg Config) resolvedPermissionModeName() string {
 	return fmt.Sprintf("posture %s with session mode %s", cfg.Posture, mode)
 }
 
-// The three checker states the startup line reports (ADR 0365 AC2.6).
+// The three checker states the startup line reports (ADR 0375 AC2.6).
 const (
 	checkerEnforcing = "enforcing"
 	checkerAdvisory  = "advisory"
@@ -192,7 +192,7 @@ const (
 )
 
 // checkerState reports the guardrails checker as exactly one of three named
-// states (ADR 0365 AC2.6), plus the reason when it is disabled.
+// states (ADR 0375 AC2.6), plus the reason when it is disabled.
 func checkerState(cfg Config, configured bool) (state, reason string) {
 	switch {
 	case cfg.GuardrailsDisabled:
@@ -227,7 +227,7 @@ func reviewerState(cfg Config) string {
 
 // narratePermissionMode is the ONE build-once line reporting the resolved token,
 // both halves it set with their lifetimes, and the checker and reviewer states
-// as separately scannable items (ADR 0365 AC5.6). The reviewer and the checker
+// as separately scannable items (ADR 0375 AC5.6). The reviewer and the checker
 // are different mechanisms and are named separately; neither is described in
 // the other's terms.
 func narratePermissionMode(cfg Config, checkerConfigured bool) {
@@ -265,7 +265,7 @@ func isAskReviewerOptOut(s string) bool {
 }
 
 // resolveAskReviewerDefault decides whether the headless subagent ask reviewer
-// is on by default (ADR 0365 decision 6): headless (no human approver), an
+// is on by default (ADR 0375 decision 6): headless (no human approver), an
 // allow-all posture, no explicit reviewer model, and no explicit opt-out. It
 // resolves its model through the existing ask-reviewer slot with the
 // parent-model fallback; when neither resolves, behaviour stays today's
