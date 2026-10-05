@@ -567,3 +567,109 @@ func TestReviewEvidencePathsSkipsListDirDirectoryOperand(t *testing.T) {
 		t.Fatalf("Read review evidence paths = %v, want [file]", paths)
 	}
 }
+
+type conflictingReadEvidenceProvider struct {
+	mu                        sync.Mutex
+	readResult                *session.ToolResult
+	mainCalls, reviewCalls    int
+	handle, version, reviewID string
+	evidence                  string
+}
+
+var conflictingReadEvidencePattern = regexp.MustCompile(`"Handle":"([^"]+)","Kind":"text_file","Display":"services/a.ts","Version":"([^"]+)"`)
+
+func (*conflictingReadEvidenceProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *conflictingReadEvidenceProvider) Stream(_ context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var chunks []port.Chunk
+	if strings.Contains(req.System.Render(), contextualReviewerSystemPrompt) {
+		p.reviewCalls++
+		for _, message := range req.Messages {
+			if match := conflictingReadEvidencePattern.FindStringSubmatch(message.Text); len(match) == 3 {
+				p.handle, p.version = match[1], match[2]
+			}
+			if match := reviewIDPattern.FindStringSubmatch(message.Text); len(match) == 2 {
+				p.reviewID = match[1]
+			}
+			if message.ToolResult != nil {
+				p.evidence += message.ToolResult.Content
+			}
+		}
+		if p.handle != "" && p.evidence == "" {
+			args, _ := json.Marshal(map[string]string{"review_id": p.reviewID, "handle": p.handle, "version": p.version})
+			chunks = toolCallChunks(session.NewToolCall("read-evidence", readReviewEvidenceToolName, args))
+		} else {
+			args, _ := json.Marshal(map[string]any{"assessment": "acceptable", "concerns": []any{}, "evidence": []any{map[string]any{"handle": p.handle, "version": p.version, "supports": []string{"call"}}}, "missing_evidence": []any{}})
+			chunks = toolCallChunks(session.NewToolCall("submit-review", submitReviewAssessmentToolName, args))
+		}
+	} else if p.mainCalls == 0 {
+		p.mainCalls++
+		chunks = toolCallChunks(session.NewToolCall("read-conflict", "Read", json.RawMessage(`{"path":"website/a.ts","Path":"services/a.ts"}`)))
+	} else {
+		p.mainCalls++
+		for _, message := range req.Messages {
+			if message.ToolResult != nil && message.ToolResult.CallID == "read-conflict" {
+				result := *message.ToolResult
+				p.readResult = &result
+			}
+		}
+		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		for _, chunk := range chunks {
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}, nil
+}
+
+func TestBuildContextualEvidenceMatchesBuiltinReadPathDecoding(t *testing.T) {
+	ctx := context.Background()
+	cfg := guardrailE2ECfg(t, false, PostureYolo, "")
+	cfg.GuardrailsRules = []GuardrailRule{{Match: "Read", Phases: []string{"pre"}, Mode: "block"}}
+	if err := os.MkdirAll(cfg.Workspace+"/website", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.Workspace+"/services", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for path, marker := range map[string]string{
+		"website/a.ts":  "WEBSITE_READ_MARKER",
+		"services/a.ts": "SERVICES_READ_MARKER",
+	} {
+		if err := os.WriteFile(cfg.Workspace+"/"+path, []byte(marker), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	provider := &conflictingReadEvidenceProvider{}
+	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRunContent(ctx, sess.ID, "read the service", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(sess.ID, run)
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if provider.readResult == nil || provider.readResult.IsError || !strings.Contains(provider.readResult.Content, "SERVICES_READ_MARKER") || strings.Contains(provider.readResult.Content, "WEBSITE_READ_MARKER") {
+		t.Fatalf("main Read result=%+v", provider.readResult)
+	}
+	if provider.reviewCalls < 2 || !strings.Contains(provider.evidence, "SERVICES_READ_MARKER") || strings.Contains(provider.evidence, "WEBSITE_READ_MARKER") {
+		t.Fatalf("review calls=%d evidence=%q", provider.reviewCalls, provider.evidence)
+	}
+}

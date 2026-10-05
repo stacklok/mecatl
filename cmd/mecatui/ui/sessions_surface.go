@@ -221,6 +221,7 @@ func (s *sessionsState) openTranscript(row client.SessionListItem, inspect bool)
 	s.transcript = conversation{}
 	s.snapshot = client.SessionSnapshot{}
 	s.transcriptRend = nil
+	s.transcriptExpand = false
 	s.transcriptStuck = true
 	s.view = sessionsTranscript
 	s.transcriptSurfaceRequestToken++
@@ -345,6 +346,8 @@ type sessionsState struct {
 	transcriptVP                  viewport.Model
 	transcriptRend                *renderer
 	transcriptStuck               bool
+	transcriptExpand              bool
+	showBenignHookNotices         bool
 	transcriptRequestToken        uint64
 	transcriptSurfaceRequestToken uint64
 	pager                         client.SessionPager
@@ -372,11 +375,12 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 		s.compact = false
 		if s.transcriptRend == nil {
 			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks)
+			s.transcriptRend.showBenignGuardrails = s.showBenignHookNotices
 		}
 		s.transcriptRend.setWidth(width)
 		s.transcriptVP.SetWidth(width)
 		s.transcriptVP.SetHeight(height)
-		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, false))
+		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, s.transcriptExpand))
 		if s.transcriptStuck {
 			s.transcriptVP.GotoBottom()
 		}
@@ -388,6 +392,10 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if s.view == sessionsTranscript {
+		if key.Matches(msg, s.deps.keys.ExpandTools) {
+			s.transcriptExpand = !s.transcriptExpand
+			return nil, true, false
+		}
 		if key.Matches(msg, s.deps.keys.Close) {
 			s.closeTranscript()
 			s.intent = sessionsPhaseIntent{phase: sessionsIntentPhaseIdle}
@@ -830,6 +838,7 @@ func (s *sessionsState) handleTranscriptLoaded(msg sessionTranscriptLoadedMsg) {
 	s.transcript = conversationFromTranscript(msg.transcript.Messages)
 	s.snapshot = msg.snapshot
 	s.transcriptRend = nil
+	s.transcriptExpand = false
 	s.transcriptStuck = true
 	if !s.inspect {
 		s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript, snapshot: s.snapshot}
