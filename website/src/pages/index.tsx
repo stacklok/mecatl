@@ -44,9 +44,10 @@ const capabilities: HomepageItem[] = [
 ];
 
 const deployments: {label: string; desc: React.ReactNode; link: string}[] = [
-  {label: 'Use Mecatl', desc: <>Work with an agent locally or connect <code>mecatui</code> to your team's service.</>, link: '/docs/mecatui'},
-  {label: 'Deploy and operate', desc: <>Start with <code>mecated</code>, then run a shared deployment with <code>mecak8s</code>.</>, link: '/docs/operating'},
-  {label: 'Build with the Go engine', desc: 'Embed the agent loop in your application, or connect a client through the SDK and APIs.', link: '/docs/building'},
+  {label: 'Local or remote', desc: <>Run locally with <code>mecatui</code>, or connect to <code>mecated</code> over gRPC or HTTP/SSE.</>, link: '/docs/mecatui'},
+  {label: 'Cloud-native', desc: <><code>mecak8s</code>: stateless pods, Redis-backed state, and multi-replica coordination.</>, link: '/docs/operating/mecak8s'},
+  {label: 'CI', desc: <>Use <code>mecatequi</code> to turn one prompt into a patch and a pass/fail result for your pipeline.</>, link: '/docs/building/ci/mecatequi'},
+  {label: 'Embed', desc: 'Import the engine directly into your Go project.', link: '/docs/building/embed-engine'},
 ];
 
 const delay = (ms: number) => ({'--d': `${ms}ms`}) as React.CSSProperties;
@@ -167,7 +168,7 @@ function DeploymentOptions() {
     <section className={`${styles.section} ${styles.alt}`} data-plx-section="">
       <div className={styles.wrap}>
         <header className={styles.head}>
-          <h2 className={styles.title} data-reveal="">Start with your work</h2>
+          <h2 className={styles.title} data-reveal="">Four deployment options to get you started</h2>
         </header>
         <ul className={styles.deployList}>
           {deployments.map((deployment, i) => (
