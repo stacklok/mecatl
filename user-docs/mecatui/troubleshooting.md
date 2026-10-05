@@ -12,8 +12,8 @@ Start by identifying whether you are running embedded `mecatui` or
 `mecatui connect ADDRESS`. The first owns a local server; the second only
 displays and controls the server it reaches.
 
-Expand an error card with your configured `ExpandTools` keybinding to see its
-complete sanitized message.
+Press `f9` (or your configured `ExpandConversation` binding) to show a
+permanent error card's complete sanitized message.
 
 ## Embedded startup says no provider is available
 

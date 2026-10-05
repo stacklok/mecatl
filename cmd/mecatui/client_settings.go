@@ -328,26 +328,8 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 	return out
 }
 
-// normalizeKeymapAliases applies deprecated input aliases within one source before
-// client settings and CLI overrides are merged.
-func normalizeKeymapAliases(in map[string][]string) (map[string][]string, error) {
-	if _, hasAlias := in["ExpandTools"]; hasAlias {
-		if _, hasCanonical := in["Toolcalls"]; hasCanonical {
-			return nil, fmt.Errorf("ExpandTools and Toolcalls cannot both be set in one source")
-		}
-	}
-	out := make(map[string][]string, len(in))
-	for action, chords := range in {
-		if action == "ExpandTools" {
-			action = "Toolcalls"
-		}
-		out[action] = append([]string(nil), chords...)
-	}
-	return out, nil
-}
-
-// applyKeyOverridesToDeps normalizes aliases per client/CLI source, then parses,
-// validates, and applies the merged keymap overrides to deps.
+// applyKeyOverridesToDeps parses, validates, and applies the merged keymap
+// overrides to deps.
 //
 // TWO layers merge PER ACTION (a higher layer rebinds only the actions it
 // names), lowest to highest precedence:
@@ -358,14 +340,8 @@ func normalizeKeymapAliases(in map[string][]string) (map[string][]string, error)
 // The merged map then goes through keymap.Parse + keymap.Validate unchanged:
 // an invalid override still fails startup.
 func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
-	clientMap, err := normalizeKeymapAliases(splitKeymap(settings.Keymap))
-	if err != nil {
-		return fmt.Errorf("keymap: client settings: %w", err)
-	}
-	cliMap, err := normalizeKeymapAliases(keyOverridesFromConfig(cfg))
-	if err != nil {
-		return fmt.Errorf("keymap: CLI overrides: %w", err)
-	}
+	clientMap := splitKeymap(settings.Keymap)
+	cliMap := keyOverridesFromConfig(cfg)
 	merged := mergeKeymaps(clientMap, cliMap)
 	if cfg.debugKeymap {
 		fmt.Fprintf(os.Stderr, "mecatui keymap (client YAML): %v\n", clientMap)

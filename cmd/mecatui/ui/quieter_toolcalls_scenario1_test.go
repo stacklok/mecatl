@@ -74,10 +74,10 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	for _, want := range []struct {
 		call, line string
 	}{
-		{"read", "✓ Read · Read greeting.txt"},
-		{"failed", "✗ Read · Read missing.txt"},
-		{"edit", "✓ Edit · Edit x.go"},
-		{"write", "✓ Write · Write new.go"},
+		{"read", "✓ Read · greeting.txt"},
+		{"failed", "✗ Read · missing.txt"},
+		{"edit", "✓ Edit · x.go"},
+		{"write", "✓ Write · new.go"},
 	} {
 		id := toolBlockID(t, m.conv.scrollback, want.call)
 		rows := blockRows(frame, id)
@@ -111,7 +111,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 
 	mcpEntry := toolcallEntryByID(t, entries, "mcp", m.conv.scrollback)
 	mcpRows := blockRows(frame, uint64(mcpEntry.blockID))
-	if got, want := strings.TrimSpace(stripANSIstr(mcpRows[0])), "✓ GitHub · Issue write · mcp__github__issue_write issue-42"; got != want {
+	if got, want := strings.TrimSpace(stripANSIstr(mcpRows[0])), "✓ GitHub · Issue write · issue-42"; got != want {
 		t.Fatalf("MCP conversation line = %q, want %q", got, want)
 	}
 	m.phase = phaseIdle
@@ -136,12 +136,12 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	failedEntry := toolcallEntryByID(t, entries, "failed", m.conv.scrollback)
 	var failedRow string
 	for _, line := range strings.Split(listText, "\n") {
-		if strings.Contains(line, "Read missing.txt") {
+		if strings.Contains(line, "Read · missing.txt") {
 			failedRow = line
 			break
 		}
 	}
-	if !strings.Contains(failedRow, "✗ Read · Read missing.txt") || strings.Contains(failedRow, "failed") {
+	if !strings.Contains(failedRow, "✗ Read · missing.txt") || strings.Contains(failedRow, "failed") {
 		t.Fatalf("failed inspector list row must show only its status icon: %q", failedRow)
 	}
 	inspector.selected = failedEntry.index
@@ -160,7 +160,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m,
 		client.ToolCallMsg{ID: "read", Name: "Read", Args: `{}`}, client.ToolResultMsg{CallID: "read", Content: "read result"},
-		client.ToolCallMsg{ID: "grep", Name: "Grep", Args: `{"pattern":"needle"}`}, client.ToolResultMsg{CallID: "grep", Content: "grep result"},
+		client.ToolCallMsg{ID: "grep", Name: "Grep", Args: `{"pattern":"needle","path":"cmd/**/*.go"}`}, client.ToolResultMsg{CallID: "grep", Content: "grep result"},
 		client.ToolCallMsg{ID: "shell", Name: "Shell", Args: `{"command":"echo hi"}`}, client.ToolResultMsg{CallID: "shell", Content: "shell result"},
 		client.ToolCallMsg{ID: "edit", Name: "Edit", Args: `{"path":"x.go"}`}, client.ToolResultMsg{CallID: "edit", Content: "edit result"},
 		client.ToolCallMsg{ID: "write", Name: "Write", Args: `{"path":"x.go"}`}, client.ToolResultMsg{CallID: "write", Content: "write result"},
@@ -210,6 +210,9 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 	list, _ := toolcallsForTest(t, modal.(Model)).Render(160, 30)
 	listText := stripANSIstr(list)
 	for _, entry := range entries {
+		if entry.fullName == "Grep" && entry.intent != `"needle" in cmd/**/*.go` {
+			t.Fatalf("Grep intent lost pattern or search scope: %q", entry.intent)
+		}
 		glyph, _, _ := entry.state.status()
 		want := glyph + " " + entry.summary()
 		if !strings.Contains(listText, want) {

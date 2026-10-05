@@ -554,7 +554,7 @@ func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 		renderTickMsg{},
 	)
 	got := m.rend.renderConversation(&m.conv, m.expandConversation)
-	if !strings.Contains(stripANSIstr(got), "✓ Shell · Run go test ./...") {
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
 		t.Errorf("non-tail resolve through Update must render the settled summary (stale cached card?), got:\n%s", stripANSIstr(got))
 	}
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
@@ -686,7 +686,7 @@ func TestIncrementalJoinTailChangesMidScrollback(t *testing.T) {
 		t.Fatalf("post-non-tail-resolve incremental join diverged from fresh oracle (stale prefix served past the changed index?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "✓ Shell · Run go test ./...") {
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
 		t.Error("non-tail resolve must render the settled summary through the incremental path (stale prefix?)")
 	}
 }
@@ -956,7 +956,7 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 		t.Fatalf("path-switch served a STALE prefix: lines join diverged from fresh oracle after a string-path re-render of a non-tail block\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "✓ Shell · Run go test ./...") {
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
 		t.Error("the resolved summary must render through the line path after the path switch (stale prefix served?)")
 	}
 }
@@ -1003,7 +1003,7 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 		t.Fatalf("multi-block frame: incremental join diverged from fresh oracle (firstChanged took max not min?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "✓ Read · Read f.go") {
+	if !strings.Contains(stripANSIstr(got), "✓ Read · f.go") {
 		t.Error("the mid-block settled summary must render (firstChanged must be the MIN changed index)")
 	}
 }

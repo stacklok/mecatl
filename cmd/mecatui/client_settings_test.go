@@ -241,54 +241,42 @@ func TestSplitChordsByteCompatCommaFormat(t *testing.T) {
 func TestKeymapPrecedenceCLIBeatsClient(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	writeSettings(t, "mecatl", "keymap:\n  Effort: ctrl+f2\n")
-	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n  ExpandTools: ctrl+f4\n")
-	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5"}}
+	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n  Toolcalls: ctrl+f4\n")
+	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5", "Toolcalls": "ctrl+f6"}}
 	var deps ui.Deps
 	if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := map[string][]string{
 		"Agents":    {"ctrl+f5"},
-		"Toolcalls": {"ctrl+f4"},
+		"Toolcalls": {"ctrl+f6"},
 	}
 	if !reflect.DeepEqual(deps.KeyOverrides, want) {
 		t.Errorf("merged overrides = %v, want %v", deps.KeyOverrides, want)
 	}
 }
 
-func TestKeymapAliasesNormalizePerSource(t *testing.T) {
-	t.Run("client alias", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-		writeSettings(t, "mecatui", "keymap:\n  ExpandTools: ctrl+f4\n")
-		var deps ui.Deps
-		if err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps); err != nil {
-			t.Fatalf("apply: %v", err)
-		}
-		if got, want := deps.KeyOverrides, map[string][]string{"Toolcalls": {"ctrl+f4"}}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("overrides = %#v, want %#v", got, want)
-		}
-	})
-	t.Run("CLI alias overrides client canonical", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-		writeSettings(t, "mecatui", "keymap:\n  Toolcalls: ctrl+f4\n")
-		var deps ui.Deps
-		cfg := config{keymap: &cliconfig.KeyValueList{"ExpandTools": "ctrl+f5"}}
-		if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
-			t.Fatalf("apply: %v", err)
-		}
-		if got := deps.KeyOverrides["Toolcalls"]; !reflect.DeepEqual(got, []string{"ctrl+f5"}) {
-			t.Fatalf("Toolcalls = %v, want CLI alias override", got)
-		}
-	})
-	t.Run("both client names fail", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-		writeSettings(t, "mecatui", "keymap:\n  Toolcalls: ctrl+f4\n  ExpandTools: ctrl+f5\n")
-		var deps ui.Deps
-		err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps)
-		if err == nil || !strings.Contains(err.Error(), "keymap:") {
-			t.Fatalf("apply error = %v, want keymap prefix", err)
-		}
-	})
+func TestKeymapRejectsDeprecatedExpandTools(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings string
+		cfg      config
+	}{
+		{"client settings", "keymap:\n  ExpandTools: ctrl+f4\n", config{}},
+		{"CLI", "", config{keymap: &cliconfig.KeyValueList{"ExpandTools": "ctrl+f5"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			if tc.settings != "" {
+				writeSettings(t, "mecatui", tc.settings)
+			}
+			var deps ui.Deps
+			err := applyKeyOverridesToDeps(tc.cfg, mustReadClientSettings(t), &deps)
+			if err == nil || !strings.Contains(err.Error(), `unknown action "ExpandTools"`) {
+				t.Fatalf("apply error = %v, want deprecated alias rejection", err)
+			}
+		})
+	}
 }
 
 func TestCanonicalDebugPrintsKeymapDiagnostics(t *testing.T) {

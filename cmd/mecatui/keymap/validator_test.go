@@ -322,8 +322,9 @@ func TestExpandConversationGlobalValidation(t *testing.T) {
 	}
 }
 
-func TestParseRejectsUnnormalizedExpandTools(t *testing.T) {
-	if _, err := Parse(map[string][]string{"ExpandTools": {"ctrl+t"}}); err == nil {
-		t.Fatal("un-normalized legacy alias must be rejected")
+func TestParseRejectsDeprecatedExpandTools(t *testing.T) {
+	_, err := Parse(map[string][]string{"ExpandTools": {"ctrl+t"}})
+	if err == nil || !strings.Contains(err.Error(), `unknown action "ExpandTools"`) {
+		t.Fatalf("Parse deprecated alias error = %v, want unknown action", err)
 	}
 }

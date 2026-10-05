@@ -441,29 +441,19 @@ func (m Model) renderFooter() string {
 	}
 	left := m.footerActivity()
 
-	// The full decompressed chord list now lives in the "?" help overlay, so the
-	// footer leads with its two entry points and carries only the most useful prompt
-	// affordances plus quit. "/ commands" is ALWAYS shown: the TUI ships built-in
-	// client-side commands (/clear, /help, and the caps-gated /mcp,/agents), so "/"
-	// is a live entry point even when the server has slash-command expansion disabled.
-	// While a run streams the line is extended with the type-while-running affordance
-	// (enter steers when supported or queues a follow-up otherwise; ctrl+u clears the
-	// unsent draft; esc cancels the run without changing draft, queue, or steer state).
-	// Prompt selection affordances appear only while the prompt accepts input. Every
-	// chord is sourced from the LIVE keyMap markings (hk) so a rebinding propagates to
-	// the footer affordances (issue #457, the #455 liveness pattern extended to the
-	// footer).
+	// The full chord list lives in the help overlay. Keep the conversation's
+	// inspection shortcuts visible here and the live quit chord last.
+	// While work streams, enter queues/steers and esc cancels the run.
+	// "/ commands" remains available through built-in client commands even when
+	// server slash-command expansion is disabled.
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands"
 	if m.pasteGateOpen() {
-		help += " · " + hk.selectAll + " select all · " + hk.copySelection + " copy"
-		if m.phase != phaseRunning {
-			help += " · " + hk.clearPrompt + " clear"
-		}
+		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " session details"
 	}
 	help += " · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
-		help = hk.submit + " queue · " + hk.clearPrompt + " clear · " + hk.cancel + " cancel · " + help
+		help = hk.submit + " queue · " + hk.cancel + " cancel · " + help
 	}
 	if m.phase == phaseAwaitingApproval && approval.plan {
 		allow, always, deny := approvalMnemonic(hk.allow), approvalMnemonic(hk.allowAlways), approvalMnemonic(hk.deny)

@@ -166,13 +166,11 @@ Bindings resolve per action in this order, from lowest to highest precedence:
 1. `$XDG_CONFIG_HOME/mecatui/settings.yaml`.
 1. A `--keymap` override for the named action.
 
-The CLI override wins for its action. `ExpandTools` remains a deprecated alias for
-`Toolcalls`; a binding using that name opens the tool-calls inspector. Do not set
-both names in the same settings file or command invocation.
+The CLI override wins for its action.
 
 Restart `mecatui` after changing the settings file.
 
-Action names are exact. Global actions require a modified or special chord so
+Action names are exact, including `Toolcalls` and `ExpandConversation`. Global actions require a modified or special chord so
 normal typing remains available; approval and overlay actions can use bare
 letters. `mecatui` fails startup with a `keymap:` error for invalid names, empty
 chords, conflicts, a shared submit and newline key, or an unsafe approval

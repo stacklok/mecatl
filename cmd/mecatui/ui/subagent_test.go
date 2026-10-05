@@ -106,7 +106,7 @@ func TestSubagentResolved(t *testing.T) {
 		c.finishSubagentCard("p1", client.Usage{InputTokens: 1200, OutputTokens: 80}, 4, "end_turn", 2500)
 		c.resolveTool("p1", "found the bug in dispatch.go", false)
 	})
-	if got, want := out, " ✓ Subagent · Subagent investigate the loop"; got != want {
+	if got, want := out, " ✓ Subagent · investigate the loop"; got != want {
 		t.Errorf("settled subagent line = %q, want %q", got, want)
 	}
 }
@@ -120,7 +120,7 @@ func TestSubagentErrorResolves(t *testing.T) {
 		// caller-neutral: "Subagent: " + "failed without producing a summary").
 		c.resolveTool("p1", "Subagent: failed without producing a summary", true)
 	})
-	if got, want := out, " ✗ Subagent · Subagent investigate the loop"; got != want {
+	if got, want := out, " ✗ Subagent · investigate the loop"; got != want {
 		t.Errorf("failed subagent line = %q, want %q", got, want)
 	}
 }

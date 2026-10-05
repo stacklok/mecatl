@@ -13,9 +13,11 @@ Use the conversation view to follow the response, inspect tool calls, and steer
 the agent without waiting for the current run to finish. Assistant text streams
 as it arrives. A reasoning summary occupies one line by default. Tool calls
 appear as bordered cards while they run, then as icon-led, one-line summaries
-when they settle. Tool-only turns appear as consecutive calls without empty
-assistant entries between them. Edit and Write cards include their diff while
-they are active.
+when they settle, such as `✓ Read · cmd/main.go`. The tool name identifies the
+action; the text after the separator identifies its target. A scoped search
+shows its quoted pattern and path, such as `✓ Grep · "TODO" in cmd/**/*.go`.
+Tool-only turns appear as consecutive calls without empty assistant entries
+between them. Edit and Write cards include their diff while they are active.
 
 Press `ctrl+t` to open `/toolcalls` and inspect complete call details for the
 current session. You can use it during a run or when revisiting its transcript.

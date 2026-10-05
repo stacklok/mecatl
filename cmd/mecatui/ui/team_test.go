@@ -330,7 +330,7 @@ func TestTeamResolved(t *testing.T) {
 		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
 		c.resolveTool("t1", "team shipped the feature", false)
 	})
-	if got, want := out, " ✓ Team · Team ship the feature"; got != want {
+	if got, want := out, " ✓ Team · ship the feature"; got != want {
 		t.Errorf("settled team line = %q, want %q", got, want)
 	}
 }
@@ -342,7 +342,7 @@ func TestTeamErrorResolves(t *testing.T) {
 		c.finishTeamCard("t1", "", 1, "error", client.Usage{}, nil)
 		c.resolveTool("t1", "Team: the run failed", true)
 	})
-	if got, want := out, " ✗ Team · Team ship the feature"; got != want {
+	if got, want := out, " ✗ Team · ship the feature"; got != want {
 		t.Errorf("failed team line = %q, want %q", got, want)
 	}
 }

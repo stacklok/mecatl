@@ -387,9 +387,8 @@ func TestApprovalMnemonic(t *testing.T) {
 	}
 }
 
-// TestDefaultFooterHelp pins the default footer help affordances. The selection
-// shortcuts follow help and slash commands, then quit; live-key tests separately
-// prove these markings update when operators rebind them.
+// TestDefaultFooterHelp pins the conversation inspection shortcuts followed by quit.
+// The line uses live bindings, so remapped chords are checked separately.
 func TestDefaultFooterHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m,
@@ -398,9 +397,25 @@ func TestDefaultFooterHelp(t *testing.T) {
 	)
 	m.phase = phaseIdle
 	got := stripANSIstr(m.renderFooter())
-	if !strings.Contains(got, "? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+u clear · ctrl+c quit") {
+	if !strings.Contains(got, "? help · / commands · ctrl+t tool calls · f9 session details · ctrl+c quit") {
 		t.Errorf("default footer help line = %q", got)
 	}
+	for _, stale := range []string{"select all", " copy ·", " clear ·"} {
+		if strings.Contains(got, stale) {
+			t.Errorf("footer retains editor hint %q: %q", stale, got)
+		}
+	}
+	m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
+	got = stripANSIstr(m.renderFooter())
+	if !strings.Contains(got, "ctrl+f11 tool calls · ctrl+f34 session details · ctrl+f13 quit") {
+		t.Errorf("rebound footer help line = %q", got)
+	}
+	m.phase = phaseRunning
+	got = stripANSIstr(m.renderFooter())
+	if !strings.HasSuffix(got, "ctrl+f13 quit") || strings.Contains(got, " clear ·") {
+		t.Errorf("running footer must end with quit, without editor shortcuts: %q", got)
+	}
+	m.keys = defaultKeys()
 
 	m.phase = phaseAwaitingApproval
 	openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}

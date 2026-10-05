@@ -144,26 +144,29 @@ type toolcallDetailRow struct {
 }
 
 type toolcallPresentation struct {
-	intentAction string
 	intentKeys   []string
 	argumentKeys []string
+	stringIntent bool
+	quoteFirst   bool
+	intentJoin   string
 }
 
 const toolSourceArg = "source"
 
 var toolcallPresentations = map[string]toolcallPresentation{
-	"Read":             {intentAction: "Read", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "offset", "limit"}},
-	"ListDir":          {intentAction: "List", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "depth"}},
-	"Glob":             {intentAction: "Find", intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
-	"Grep":             {intentAction: "Search", intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
-	toolEditName:       {intentAction: "Edit", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "old_string", "new_string"}},
-	toolWriteName:      {intentAction: "Write", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "content"}},
-	"Copy":             {intentAction: "Copy", intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
-	"Move":             {intentAction: "Move", intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
-	"Remove":           {intentAction: "Remove", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg}},
-	"Shell":            {intentAction: "Run", intentKeys: []string{"command"}, argumentKeys: []string{"command"}},
-	"WebFetch":         {intentAction: "Fetch", intentKeys: []string{toolURLArg}, argumentKeys: []string{toolURLArg}},
-	"FetchMcpResource": {intentAction: "Fetch", intentKeys: []string{"uri"}, argumentKeys: []string{"uri"}},
+	"Read":             {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "offset", "limit"}},
+	"ListDir":          {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "depth"}},
+	"Glob":             {intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
+	"Grep":             {intentKeys: []string{"pattern", toolPathArg}, argumentKeys: []string{"pattern", toolPathArg}, stringIntent: true, quoteFirst: true, intentJoin: " in "},
+	toolEditName:       {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "old_string", "new_string"}},
+	toolWriteName:      {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "content"}},
+	"Copy":             {intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
+	"Move":             {intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
+	"Remove":           {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg}},
+	"Shell":            {intentKeys: []string{"command"}, argumentKeys: []string{"command"}},
+	"WebFetch":         {intentKeys: []string{toolURLArg}, argumentKeys: []string{toolURLArg}},
+	"FetchMcpResource": {intentKeys: []string{"uri"}, argumentKeys: []string{"uri"}},
+	"Skill":            {intentKeys: []string{"name"}, stringIntent: true},
 }
 
 func toolcallArgumentLines(name, arguments string) []string {
@@ -282,30 +285,37 @@ func argumentSummary(raw json.RawMessage) string {
 }
 
 func toolcallIntent(name string, fields map[string]json.RawMessage) string {
-	if name == "Skill" {
-		var skillName string
-		if json.Unmarshal(fields["name"], &skillName) == nil {
-			if display := terminaltext.SanitizeSingleLine(skillName); strings.TrimSpace(display) != "" {
-				return display
-			}
-		}
-	}
 	if presentation, ok := toolcallPresentations[name]; ok {
 		values := make([]string, 0, len(presentation.intentKeys))
 		for _, key := range presentation.intentKeys {
-			if value := argumentSummary(fields[key]); value != "" {
+			var value string
+			if presentation.stringIntent {
+				if json.Unmarshal(fields[key], &value) != nil {
+					continue
+				}
+			} else {
+				value = argumentSummary(fields[key])
+			}
+			if value = terminaltext.SanitizeSingleLine(value); strings.TrimSpace(value) != "" {
+				if presentation.quoteFirst && key == presentation.intentKeys[0] {
+					value = fmt.Sprintf("%q", value)
+				}
 				values = append(values, value)
 			}
 		}
-		if len(values) == 0 {
-			return presentation.intentAction
+		if len(values) > 0 {
+			separator := " → "
+			if presentation.intentJoin != "" {
+				separator = presentation.intentJoin
+			}
+			return strings.Join(values, separator)
 		}
-		return presentation.intentAction + " " + strings.Join(values, " → ")
+		return terminaltext.SanitizeSingleLine(name)
 	}
 	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task", "goal"} {
 		if raw, ok := fields[key]; ok {
 			if value := argumentSummary(raw); value != "" {
-				return terminaltext.SanitizeSingleLine(name) + " " + value
+				return terminaltext.SanitizeSingleLine(value)
 			}
 		}
 	}

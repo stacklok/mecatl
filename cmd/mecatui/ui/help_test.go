@@ -282,8 +282,8 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 	}
 	footer := stripANSIstr(m.renderFooter())
 	for _, marker := range []string{selectAll + " select all", copySelection + " copy"} {
-		if !strings.Contains(footer, marker) {
-			t.Errorf("footer missing overridden marker %q:\n%s", marker, footer)
+		if strings.Contains(footer, marker) {
+			t.Errorf("footer retained editor marker %q:\n%s", marker, footer)
 		}
 	}
 	for _, marker := range []string{"ctrl+g select all", "ctrl+y copy"} {
@@ -319,8 +319,8 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 	}
 }
 
-// TestSelectionShortcutsRenderDefaults proves the prompt-selection bindings are
-// visible on both persistent UI surfaces with their default chords.
+// TestSelectionShortcutsRenderDefaults proves the prompt-selection bindings
+// remain visible in help, while the footer prioritizes session inspection.
 func TestSelectionShortcutsRenderDefaults(t *testing.T) {
 	const (
 		selectAll     = "ctrl+g select all"
@@ -357,9 +357,14 @@ func TestSelectionShortcutsRenderDefaults(t *testing.T) {
 			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
 		)
 		got := stripANSIstr(m.renderFooter())
-		for _, want := range []string{selectAll, copySelection} {
+		for _, want := range []string{"ctrl+t tool calls", "f9 session details"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("footer should contain %q: %q", want, got)
+			}
+		}
+		for _, stale := range []string{selectAll, copySelection} {
+			if strings.Contains(got, stale) {
+				t.Errorf("footer should leave editor shortcut %q in help: %q", stale, got)
 			}
 		}
 	})

@@ -373,18 +373,18 @@ func TestMecatuiToolcallsInspector_Scenario4_CoreToolPresentation(t *testing.T) 
 	calls := []struct {
 		id, name, args, wantIntent string
 	}{
-		{"read", "Read", `{"path":"src/main.go","offset":12,"limit":20,"extra":"kept"}`, "Read src/main.go"},
-		{"list", "ListDir", `{"path":"src","depth":2}`, "List src"},
-		{"glob", "Glob", `{"pattern":"**/*.go","path":"cmd"}`, "Find **/*.go"},
-		{"grep", "Grep", `{"pattern":"TODO","path":"cmd"}`, "Search TODO"},
-		{"edit", "Edit", `{"path":"a.go","old_string":"old","new_string":"new","extra":true}`, "Edit a.go"},
-		{"write", "Write", `{"path":"a.go","content":"complete replacement"}`, "Write a.go"},
-		{"copy", "Copy", `{"source":"a.go","destination":"b.go"}`, "Copy a.go → b.go"},
-		{"move", "Move", `{"source":"a.go","destination":"b.go"}`, "Move a.go → b.go"},
-		{"remove", "Remove", `{"path":"old.go"}`, "Remove old.go"},
-		{"shell", "Shell", `{"command":"go test ./..."}`, "Run go test ./..."},
-		{"web", "WebFetch", `{"url":"https://example.invalid/docs"}`, "Fetch https://example.invalid/docs"},
-		{"resource", "FetchMcpResource", `{"uri":"mcp://docs/readme"}`, "Fetch mcp://docs/readme"},
+		{"read", "Read", `{"path":"src/main.go","offset":12,"limit":20,"extra":"kept"}`, "src/main.go"},
+		{"list", "ListDir", `{"path":"src","depth":2}`, "src"},
+		{"glob", "Glob", `{"pattern":"**/*.go","path":"cmd"}`, "**/*.go"},
+		{"grep", "Grep", `{"pattern":"TODO","path":"cmd"}`, "TODO"},
+		{"edit", "Edit", `{"path":"a.go","old_string":"old","new_string":"new","extra":true}`, "a.go"},
+		{"write", "Write", `{"path":"a.go","content":"complete replacement"}`, "a.go"},
+		{"copy", "Copy", `{"source":"a.go","destination":"b.go"}`, "a.go → b.go"},
+		{"move", "Move", `{"source":"a.go","destination":"b.go"}`, "a.go → b.go"},
+		{"remove", "Remove", `{"path":"old.go"}`, "old.go"},
+		{"shell", "Shell", `{"command":"go test ./..."}`, "go test ./..."},
+		{"web", "WebFetch", `{"url":"https://example.invalid/docs"}`, "https://example.invalid/docs"},
+		{"resource", "FetchMcpResource", `{"uri":"mcp://docs/readme"}`, "mcp://docs/readme"},
 	}
 	for _, call := range calls {
 		m.conv.addTool(call.id, call.name, call.args)
@@ -436,7 +436,7 @@ func TestMecatuiToolcallsInspector_Scenario4_GenericFallbackAndLifecycle(t *test
 	m.conv.addTool("array", "odd-array", `["not","an","object"]`)
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	for i, want := range []string{"future-tool useful target", "mcp__docs__lookup needle", "Subagent delegate this", "odd", "odd-array"} {
+	for i, want := range []string{"useful target", "needle", "delegate this", "odd", "odd-array"} {
 		if got := s.entries[i].intent; !strings.Contains(got, want) || strings.Contains(got, `{"`) || strings.Contains(got, "\x1b[") {
 			t.Fatalf("generic list %d = %q, want %q", i, got, want)
 		}
@@ -494,20 +494,20 @@ func TestMecatuiToolcallsInspector_Scenario4_NestedArgumentsAndEmptyKeys(t *test
 		{
 			name: "nested target intent", tool: "future-tool",
 			args:   `{"target":{"path":"one","revision":2},"other":[null,true,3.25],"empty":{},"items":[]}`,
-			intent: "future-tool 2 fields",
+			intent: "2 fields",
 			want:   []string{"Target:", "  Path: one", "  Revision: 2", "Other:", "  [0]: null", "  [1]: true", "  [2]: 3.25", "Empty: (empty object)", "Items: (empty array)"},
 		},
 		{
 			name: "array target and unicode key", tool: "mcp__lookup",
 			args:   `{"target":[{"étiquette":"safe"},null],"payload":{"notes":"\u001b[31m"}}`,
-			intent: "mcp__lookup 2 items",
+			intent: "2 items",
 			want:   []string{"Target:", "  [0]:", "    Étiquette: safe", "  [1]: null", "Payload:", "  Notes:"},
 			absent: []string{"\x1b[31m", `[{"étiquette"`},
 		},
 		{
 			name: "hostile controls and long nested values", tool: "Read",
 			args:   `{"path":"safe","extra":{"\u001b[31m":"\u001b]8;;evil\u0007"},"content":"` + strings.Repeat("large-value-", 30) + `"}`,
-			intent: "Read safe",
+			intent: "safe",
 			want:   []string{"Extra:", strings.Repeat("large-value-", 30)},
 			absent: []string{"\x1b[31m", "\x1b]8;;evil"},
 		},
@@ -549,7 +549,7 @@ func TestMecatuiToolcallsInspector_Scenario4_LargeListIntentDoesNotBuildDetail(t
 	m.conv.addTool("large", "Subagent", args)
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	if got := s.entries[0].intent; got != "Subagent delegate" || ansi.StringWidth(got) > 120 {
+	if got := s.entries[0].intent; got != "delegate" || ansi.StringWidth(got) > 120 {
 		t.Fatalf("large list intent = %q", got)
 	}
 	// Parsing the top-level object is required, but the list must not expand
