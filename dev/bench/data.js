@@ -268894,6 +268894,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791241981931,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b61a4a57ba6f4f43a0ae255aaad95583204d3b5f",
+          "message": "feat(mecatui): quiet settled tool calls and open inspector from shortcut (#2089)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T16:29:30-07:00",
+          "tree_id": "653d87c47d315a2e3f5767fbcbc9eac1342dfcb8",
+          "url": "https://github.com/stacklok/mecatl/commit/b61a4a57ba6f4f43a0ae255aaad95583204d3b5f"
+        },
+        "date": 1791243700149,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -390071,6 +390105,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791243697088,
+  "lastUpdate": 1791243700937,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
