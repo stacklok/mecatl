@@ -11,7 +11,13 @@
 **Plan PR:** [stacklok/mecatl#2118](https://github.com/stacklok/mecatl/pull/2118)
 **Approved baseline:** Absent until plan approval.
 
-A reasoning-capable model that supplies summarized thinking should make that summary available as display-only reasoning without conflating it with signed or encrypted replay state. Authenticated model listings that omit capability fields must not silently disable thinking; a supported Responses endpoint must be asked for summaries rather than relying on an upstream default. The owning living guide is [provider architecture](../architecture/providers.md); the public [model-selection guide](../../user-docs/features/choose-models.md) owns the operator-facing caveat that summaries depend on provider/model support and may not appear on every turn. Update those pages only with verified implemented behavior, in the implementation PR.
+This contract requires **three distinct Mecatl fixes**, each with its own scenario and acceptance proofs:
+
+1. **Anthropic discovery (Scenario 1):** preserve missing thinking-capability metadata as *unknown* rather than marking the model incapable; explicit unsupported metadata remains authoritative.
+2. **Anthropic fallback (Scenario 2):** select adaptive, summarized thinking for Claude 5 when live metadata is unknown, including supported bare and OpenRouter-namespaced IDs. Reuse or credit #2100's bare-ID prefix fix; that PR alone does not satisfy fix 1.
+3. **OpenAI Responses requests (Scenario 3):** send `reasoning.summary:"auto"` on every Responses route while keeping display summaries separate from encrypted replay; surface an incompatible endpoint's rejection without an automatic retry.
+
+All three are required for this plan to land. The owning living guide is [provider architecture](../architecture/providers.md); the public [model-selection guide](../../user-docs/features/choose-models.md) owns the operator-facing caveat that summaries depend on provider/model support and may not appear on every turn. Update those pages only with verified implemented behavior, in the implementation PR.
 
 Live evidence behind [#2084](https://github.com/stacklok/mecatl/issues/2084): an internal gateway lists Claude Opus 5.5 with `capabilities` absent; a direct Messages call succeeds with zero summary when thinking is omitted and returns a summary when adaptive + summarized is requested. Without a live descriptor, current Claude 5 prefix fallback returns HTTP 400. On the same gateway's Responses route, GPT-5-mini returned no summary with the current request and a summary with `reasoning.summary:"auto"`; OpenRouter Responses already returned one without an explicit ask. These probes validate specific endpoints and models, not universal model support.
 
