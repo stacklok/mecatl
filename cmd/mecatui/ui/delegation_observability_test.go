@@ -19,7 +19,7 @@ import (
 // TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool pins AC3.1: a
 // collapsed, RUNNING Subagent card extends its existing counts line with the
 // child's live current-tool name — `subagent · <tool> · ↑<in> ↓<out> · N tools ·
-// ctrl+t trace` — no heartbeat ticker (this is a render, never a ticking
+// f6 agents` — no heartbeat ticker (this is a render, never a ticking
 // animation). The tool name is the LATEST tool's name, not a stale one.
 func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *testing.T) {
 	r := newTestRenderer()
@@ -36,7 +36,7 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	if strings.Contains(out, "subagent · Grep ·") {
 		t.Errorf("collapsed card must track the LATEST tool, not an earlier one, got %q", out)
 	}
-	if !strings.Contains(out, "↑0 ↓0") || !strings.Contains(out, "2 tools") || !strings.Contains(out, "ctrl+t trace") {
+	if !strings.Contains(out, "↑0 ↓0") || !strings.Contains(out, "2 tools") || !strings.Contains(out, "f6 agents") {
 		t.Errorf("collapsed card must keep the token/tool counts and the trace affordance, got %q", out)
 	}
 	if strings.Contains(out, "Read…") {

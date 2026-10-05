@@ -329,7 +329,7 @@ func (r *renderer) subagentPresentationLiveLine(p subagentCardPresentation) stri
 	if p.current != "" {
 		current = terminaltext.Sanitize(p.current)
 	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace", current, renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.toolcalls)
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s agents", current, renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.agents)
 }
 
 func subagentPresentationResolvedLine(p subagentCardPresentation) string {
@@ -345,7 +345,7 @@ func (r *renderer) renderTeamPresentation(p teamCardPresentation, expand bool, b
 			return out.String()
 		}
 	} else {
-		out.WriteString(renderDelegationToolCardText(muted, r.teamPresentationHeader(p, expand), bodyWidth))
+		out.WriteString(renderDelegationToolCardText(muted, r.teamPresentationHeader(p), bodyWidth))
 	}
 	order := teamLaneOrder(p.lanes)
 	shown := order
@@ -378,12 +378,8 @@ func (r *renderer) renderTeamPresentation(p teamCardPresentation, expand bool, b
 	return out.String()
 }
 
-func (r *renderer) teamPresentationHeader(p teamCardPresentation, expand bool) string {
-	verb := r.marks.toolcalls + " trace"
-	if expand {
-		verb = r.marks.toolcalls + " collapse"
-	}
-	return "team · " + plural(len(p.lanes), "member") + " · " + verb
+func (r *renderer) teamPresentationHeader(p teamCardPresentation) string {
+	return "team · " + plural(len(p.lanes), "member") + " · " + r.marks.agents + " agents"
 }
 
 func teamPresentationResolvedLine(p teamCardPresentation) string {

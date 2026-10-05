@@ -90,7 +90,7 @@ func TestSummarizeArgsAffordanceOnHiddenValue(t *testing.T) {
 	plain := stripANSIstr(out)
 	rows := strings.Split(plain, "\n")
 	last := rows[len(rows)-1]
-	if !strings.Contains(last, "ctrl+t expand") {
+	if !strings.Contains(last, "ctrl+t inspect") {
 		t.Errorf("a collapsed long-string arg must advertise ctrl+t even with no key overflow, got footer %q\nfull:\n%s", last, plain)
 	}
 	// It is the per-value form (no key overflow), so it does NOT name a key count.
@@ -104,7 +104,7 @@ func TestSummarizeArgsAffordanceOnHiddenValue(t *testing.T) {
 		twelve[i] = i
 	}
 	out2, _ := r.summarizeArgs(mustJSON(t, map[string]any{"many": twelve}))
-	if !strings.Contains(stripANSIstr(out2), "ctrl+t expand") {
+	if !strings.Contains(stripANSIstr(out2), "ctrl+t inspect") {
 		t.Errorf("a collapsed array must advertise ctrl+t, got %q", stripANSIstr(out2))
 	}
 }
@@ -161,8 +161,8 @@ func TestSummarizeArgsBoundedRows(t *testing.T) {
 	if len(rows) != maxSummaryRows+1 {
 		t.Fatalf("expected %d capped rows + 1 roll-up, got %d:\n%s", maxSummaryRows, len(rows), plain)
 	}
-	if !strings.Contains(rows[len(rows)-1], "more key") || !strings.Contains(rows[len(rows)-1], "ctrl+t expand") {
-		t.Errorf("expected a '+K more keys · ctrl+t expand' roll-up, got %q", rows[len(rows)-1])
+	if !strings.Contains(rows[len(rows)-1], "more key") || !strings.Contains(rows[len(rows)-1], "ctrl+t inspect") {
+		t.Errorf("expected a '+K more keys · ctrl+t inspect' roll-up, got %q", rows[len(rows)-1])
 	}
 	// Deterministic order: priority keys first (owner before repo before title),
 	// each on its own row, ahead of any non-priority key.
@@ -205,7 +205,7 @@ func TestSummarizeArgsScalarInline(t *testing.T) {
 		t.Errorf("bool should be inline verbatim, got %q", plain)
 	}
 	// Nothing hidden → NO affordance/roll-up line.
-	if strings.Contains(plain, "ctrl+t expand") || strings.Contains(plain, "more key") {
+	if strings.Contains(plain, "ctrl+t inspect") || strings.Contains(plain, "more key") {
 		t.Errorf("an all-short-scalar card should show no affordance line, got %q", plain)
 	}
 }

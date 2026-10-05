@@ -930,10 +930,10 @@ func TestInlineTeamRollupAdvertisesOverlay(t *testing.T) {
 		t.Errorf("inline roll-up should advertise the f6 overlay, got %q", out)
 	}
 
-	// A small team (no roll-up) must NOT carry the hint — it has nothing to overflow.
 	small := teamCard(t, false, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
-	if strings.Contains(small, "f6") {
-		t.Errorf("a non-overflowing inline card should not advertise f6, got %q", small)
+	// The hint now points to Agents for detailed activity even for a small team.
+	if !strings.Contains(small, "f6 agents") {
+		t.Errorf("live team should advertise the Agents view, got %q", small)
 	}
 }
 

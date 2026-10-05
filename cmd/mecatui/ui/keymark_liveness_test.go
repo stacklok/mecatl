@@ -106,8 +106,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 		b := subagentCardPresentation{current: "Grep", toolCount: 2,
 			usage: client.Usage{InputTokens: 100, OutputTokens: 20}}
 		line := r.subagentPresentationLiveLine(b)
-		if !strings.Contains(line, wantExpand+" trace") {
-			t.Errorf("subagent live line should carry %q trace, got %q", wantExpand, line)
+		if !strings.Contains(line, wantAgents+" agents") {
+			t.Errorf("subagent live line should carry %q agents, got %q", wantAgents, line)
 		}
 		if strings.Contains(line, "ctrl+t") {
 			t.Errorf("subagent live line still shows the default ctrl+t: %q", line)
@@ -117,16 +117,12 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	t.Run("team header trace/collapse affordance", func(t *testing.T) {
 		r := remderRenderer()
 		b := teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
-		collapsed := r.teamPresentationHeader(b, false)
-		if !strings.Contains(collapsed, wantExpand+" trace") {
-			t.Errorf("collapsed team header should carry %q trace, got %q", wantExpand, collapsed)
+		header := r.teamPresentationHeader(b)
+		if !strings.Contains(header, wantAgents+" agents") {
+			t.Errorf("live team header should carry %q agents, got %q", wantAgents, header)
 		}
-		if strings.Contains(collapsed, "ctrl+t") {
-			t.Errorf("collapsed team header still shows the default ctrl+t: %q", collapsed)
-		}
-		expanded := r.teamPresentationHeader(b, true)
-		if !strings.Contains(expanded, wantExpand+" collapse") {
-			t.Errorf("expanded team header should carry %q collapse, got %q", wantExpand, expanded)
+		if strings.Contains(header, "ctrl+t") {
+			t.Errorf("live team header still shows the Toolcalls chord: %q", header)
 		}
 	})
 
@@ -153,8 +149,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	t.Run("collapse marker carries live expand chord", func(t *testing.T) {
 		r := remderRenderer()
 		got := r.collapseMarker(3)
-		if !strings.Contains(got, wantExpand+" expand") {
-			t.Errorf("collapseMarker should carry %q expand, got %q", wantExpand, got)
+		if !strings.Contains(got, wantExpand+" inspect") {
+			t.Errorf("collapseMarker should carry %q inspect, got %q", wantExpand, got)
 		}
 		if strings.Contains(got, "ctrl+t") {
 			t.Errorf("collapseMarker still shows the default ctrl+t: %q", got)
@@ -164,12 +160,12 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	t.Run("arg rollup marker carries live expand chord", func(t *testing.T) {
 		r := remderRenderer()
 		withCount := r.argRollupMarker(2)
-		if !strings.Contains(withCount, wantExpand+" expand") {
-			t.Errorf("argRollupMarker(2) should carry %q expand, got %q", wantExpand, withCount)
+		if !strings.Contains(withCount, wantExpand+" inspect") {
+			t.Errorf("argRollupMarker(2) should carry %q inspect, got %q", wantExpand, withCount)
 		}
 		zero := r.argRollupMarker(0)
-		if !strings.Contains(zero, wantExpand+" expand") {
-			t.Errorf("argRollupMarker(0) should carry %q expand, got %q", wantExpand, zero)
+		if !strings.Contains(zero, wantExpand+" inspect") {
+			t.Errorf("argRollupMarker(0) should carry %q inspect, got %q", wantExpand, zero)
 		}
 		if strings.Contains(zero, "ctrl+t") {
 			t.Errorf("argRollupMarker still shows the default ctrl+t: %q", zero)
@@ -188,8 +184,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 			t.Fatal("Write diff should render")
 		}
 		plain := stripANSIstr(out)
-		if !strings.Contains(plain, wantExpand+" expand") {
-			t.Errorf("collapsed diff should carry %q expand, got %q", wantExpand, plain)
+		if !strings.Contains(plain, wantExpand+" inspect") {
+			t.Errorf("collapsed diff should carry %q inspect, got %q", wantExpand, plain)
 		}
 		if strings.Contains(plain, "ctrl+t") {
 			t.Errorf("collapsed diff still shows the default ctrl+t: %q", plain)
@@ -421,30 +417,27 @@ func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 	// Reasoning header.
 	b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
 	if got := stripANSIstr(r.renderReasoningSnapshot(b, false)); !strings.Contains(got, "f9 expand") {
-		t.Errorf("default reasoning header should carry f9 expand, got %q", got)
+		t.Errorf("default reasoning header should carry f9 inspect, got %q", got)
 	}
 	if got := stripANSIstr(r.renderReasoningSnapshot(b, true)); !strings.Contains(got, "f9 collapse") {
 		t.Errorf("default reasoning header should carry f9 collapse, got %q", got)
 	}
 	// Subagent live line.
 	sb := subagentCardPresentation{current: "Grep", toolCount: 1}
-	if got := r.subagentPresentationLiveLine(sb); !strings.Contains(got, "ctrl+t trace") {
-		t.Errorf("default subagent live line should carry ctrl+t trace, got %q", got)
+	if got := r.subagentPresentationLiveLine(sb); !strings.Contains(got, "f6 agents") {
+		t.Errorf("default subagent live line should carry f6 agents, got %q", got)
 	}
 	// Team header.
 	tb := teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}}}
-	if got := r.teamPresentationHeader(tb, false); !strings.Contains(got, "ctrl+t trace") {
-		t.Errorf("default team header should carry ctrl+t trace, got %q", got)
-	}
-	if got := r.teamPresentationHeader(tb, true); !strings.Contains(got, "ctrl+t collapse") {
-		t.Errorf("default team header should carry ctrl+t collapse, got %q", got)
+	if got := r.teamPresentationHeader(tb); !strings.Contains(got, "f6 agents") {
+		t.Errorf("default team header should carry f6 agents, got %q", got)
 	}
 	// Collapse + arg rollup markers.
-	if got := r.collapseMarker(1); !strings.Contains(got, "ctrl+t expand") {
-		t.Errorf("default collapseMarker should carry ctrl+t expand, got %q", got)
+	if got := r.collapseMarker(1); !strings.Contains(got, "ctrl+t inspect") {
+		t.Errorf("default collapseMarker should carry ctrl+t inspect, got %q", got)
 	}
-	if got := r.argRollupMarker(0); !strings.Contains(got, "ctrl+t expand") {
-		t.Errorf("default argRollupMarker should carry ctrl+t expand, got %q", got)
+	if got := r.argRollupMarker(0); !strings.Contains(got, "ctrl+t inspect") {
+		t.Errorf("default argRollupMarker should carry ctrl+t inspect, got %q", got)
 	}
 	// Team roll-up advertises f6.
 	c := &conversation{}

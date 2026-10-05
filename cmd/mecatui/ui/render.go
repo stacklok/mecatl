@@ -28,7 +28,7 @@ import (
 const maxToolResultLines = 12
 
 // maxDiffLines caps how many lines of each diff side (Edit old/new, Write
-// content) show inline when collapsed; ctrl+t expands to the full diff.
+// content) show inline in a tool card. Approval details retain the full diff.
 const maxDiffLines = 12
 
 // toolCardMaxWidth caps a tool card's column width on a wide terminal: past this
@@ -37,14 +37,12 @@ const maxDiffLines = 12
 // r.width-2 inset wins (the card never exceeds the viewport).
 const toolCardMaxWidth = 100
 
-// Compact-card tuning (issue #24): a collapsed tool card summarizes its JSON
-// args (and large JSON results) into a few scannable key:value rows instead of
-// dumping the full pretty-printed JSON inline — so an MCP call with a huge body
-// argument no longer dominates the scrollback. ctrl+t still reveals the full
-// JSON (and, for MCP, the raw tool name).
+// Compact-card tuning (issue #24): a pending tool card summarizes its JSON
+// args (and large JSON results) into a few scannable key:value rows. The
+// complete received payload remains available in the Toolcalls inspector.
 const (
 	// maxSummaryRows caps how many key:value rows a collapsed arg/result summary
-	// shows; the rest roll up into a "+K more keys · ctrl+t expand" line.
+	// shows; the rest roll up into a "+K more keys · ctrl+t inspect" line.
 	maxSummaryRows = 8
 	// inlinePreviewLen is the rune budget below which a single-line string value is
 	// shown inline verbatim ("key: \"value\""); longer/multiline strings collapse
@@ -93,15 +91,10 @@ type renderer struct {
 	traceWidth int
 
 	// marks carries the LIVE chord markings derived from the model's keyMap at
-	// construction (keyMarkings). The inline-card affordances that reference
-	// rebindable actions — the Toolcalls chord ("ctrl+t" by default) in the
-	// reasoning/subagent/team headers and the collapse/rollup markers, and the
-	// Agents chord ("f6") in the team "+N more" roll-up — read them off
-	// here so an override propagates to those affordances (issue #457, the
-	// #455 liveness pattern extended to inline cards). Set once at construction
-	// from keyMarkings; a bare &renderer{th: th} (the width-0 team/fleet focus
-	// panes) is seeded with defaultHelpKeys() so its output stays
-	// byte-identical to the pre-#457 default.
+	// construction (keyMarkings). The Toolcalls chord in truncated tool-card
+	// footers and Agents chord in live delegation cards use these marks so
+	// overrides propagate to the displayed hints.
+	// A bare &renderer{th: th} is seeded with defaultHelpKeys().
 	marks helpKeys
 
 	// indent is the left margin (in cells) prepended to EVERY conversation block so the
@@ -1256,17 +1249,6 @@ func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason
 		decision.ConsecutiveMisses, decision.MissLimit, breaker)
 }
 
-// subagentLiveLine is the calm, monotonic collapsed status line: the child's live
-// current-tool name (when one has run — "…" while it is still working), the token
-// totals, a running tool count, and the expand-tools trace affordance. No elapsed clock
-// and no heartbeat ticker, so the line changes only when the tool actually changes
-// (ADR 0079 AC3.1). The tool name is sanitized (server-derived). The trace chord
-// reads the LIVE Toolcalls marking (r.marks.toolcalls) so an override propagates
-// (issue #457).
-
-// subagentResolvedLine is the muted one-line summary shown once the child run has
-// finished: duration, token totals, final tool count, and the stop reason.
-
 // chipSep is the two-space gap between adjacent child-tool chips in the expanded
 // trace row.
 const chipSep = "  "
@@ -1401,12 +1383,6 @@ func teamLaneOrder(lanes []teamLane) []int {
 //
 // All member-derived text (names, message lines, tool names, previews) is
 // terminal-sanitized before it reaches lipgloss.
-
-// teamHeader is the muted lead line summarising the team's shape: the member count
-// and the expand-tools affordance, whose verb tracks the toggle (trace when collapsed,
-// collapse when expanded). The round count is carried only on team.end, so it is
-// shown on the resolved line rather than fabricated live. The chord reads the LIVE
-// Toolcalls marking (r.marks.toolcalls) so an override propagates (issue #457).
 
 // teamNameWidth is the column width member BARE names are padded to on the
 // collapsed lane lines: the longest shown bare name, capped at maxTeamNameWidth,
@@ -1782,10 +1758,8 @@ func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultL
 }
 
 // renderChangedFiles renders the session's changed-files summary as a muted,
-// insertion-ordered list under a "✎ N files this session" header — the ctrl+t
-// expansion of the header indicator (sharing its "✎" pencil glyph). Returns ""
-// for an empty set. Paths are terminal-sanitized (they originate from
-// server-relayed tool args).
+// insertion-ordered list under a "✎ N files this session" header — revealed by
+// ExpandConversation. Returns "" for an empty set. Paths are terminal-sanitized.
 func (r *renderer) renderChangedFiles(paths []string) string {
 	if len(paths) == 0 {
 		return ""
@@ -1977,12 +1951,8 @@ func prettyJSON(raw string) string {
 // see the CWE-150 invariant in sanitize.go). Keys are styled "muted", values
 // "toolArgs".
 //
-// ctrl+t is never the only path to the data: the collapsed summary always sits
-// behind the full prettyJSON expansion, advertised by an argRollupMarker footer
-// (collapseMarker's shape) whenever ANYTHING was hidden — a key overflow
-// ("… +K more keys · ctrl+t expand") OR a per-value collapse with no overflow
-// ("… ctrl+t expand"). A card whose args are all short scalars hides nothing and
-// shows no footer.
+// The full arguments are in the Toolcalls inspector. A roll-up footer is
+// shown whenever a key or a value is omitted; short scalar args need no footer.
 func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 	raw := strings.TrimSpace(rawArgs)
 	if raw == "" {
@@ -2015,9 +1985,8 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 		b.WriteString(" ")
 		b.WriteString(valStyle.Render(text))
 	}
-	// Advertise ctrl+t whenever ANYTHING was hidden: a key overflow OR a per-value
-	// collapse (long string, big array/object). The marker mirrors collapseMarker's
-	// shape so adjacent collapsed cards/results read consistently.
+	// Link to Toolcalls whenever anything was hidden: a key overflow or a
+	// per-value collapse (long string, big array/object).
 	if extra := len(keys) - len(shown); extra > 0 {
 		b.WriteString("\n")
 		b.WriteString(muted.Render(r.argRollupMarker(extra)))
@@ -2028,22 +1997,17 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 	return b.String(), true
 }
 
-// argRollupMarker formats the collapsed-args affordance footer, matching
-// collapseMarker's "  … <…> · <expand> expand" shape (leading "…", indented) so an
-// arg roll-up and a line-capped result/diff don't show two different "there's
-// more" idioms. n>0 names the hidden-key count ("+K more keys"); n==0 (a pure
-// per-value collapse, no key overflow) shows just the expand hint. The chord
-// reads the LIVE Toolcalls marking (r.marks.toolcalls) so an override
-// propagates (issue #457).
+// argRollupMarker formats the collapsed-args footer. Full arguments are available
+// from the Toolcalls inspector; tool cards no longer expand in place.
 func (r *renderer) argRollupMarker(n int) string {
 	if n <= 0 {
-		return "  … " + r.marks.toolcalls + " expand"
+		return "  … " + r.marks.toolcalls + " inspect"
 	}
 	noun := "keys"
 	if n == 1 {
 		noun = "key"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.toolcalls + " expand"
+	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.toolcalls + " inspect"
 }
 
 // sortedArgKeys returns obj's keys in deterministic render order: the keys in
@@ -2361,20 +2325,15 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // result all return ok=false so renderTool falls through to the existing styled,
 // line-capped/full body path (Read and prose results unchanged).
 
-// collapseMarker formats the "+N more line(s) · <expand> expand" affordance shown
-// when a tool result or diff side is line-capped. The verb matches the footer
-// help line's collapsed-state hint ("<expand> expand") — the expand/collapse pair
-// is used consistently across help line, keybinding help, and this marker. The
-// chord reads the LIVE Toolcalls marking (r.marks.toolcalls) so an override
-// propagates (issue #457).
+// collapseMarker formats the line-cap footer for a tool card. Complete details
+// remain in the Toolcalls inspector; tool cards no longer expand in place.
 func (r *renderer) collapseMarker(n int) string {
 	return collapseMarkerMark(n, r.marks.toolcalls)
 }
 
-// truncateLinesTailMark is the free-function core of truncateLinesTail, taking the
-// expand chord explicitly so non-renderer callers (the MCP resource preview, which
-// has no *renderer) can thread the LIVE Toolcalls marking through (issue #457).
-func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) string {
+// truncateLinesTailMark is the free-function core of truncateLinesTail. An empty
+// inspection mark leaves a plain line-count marker for previews with no detail view.
+func truncateLinesTailMark(s string, maxLines int, tail, inspectMark string) string {
 	s = terminaltext.Sanitize(strings.TrimRight(s, "\n"))
 	if s == "" {
 		return ""
@@ -2386,19 +2345,22 @@ func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) stri
 	kept := lines[:maxLines]
 	marker := tail
 	if marker == "" {
-		marker = collapseMarkerMark(len(lines)-maxLines, expandMark)
+		marker = collapseMarkerMark(len(lines)-maxLines, inspectMark)
 	}
 	return strings.Join(kept, "\n") + "\n" + lipgloss.NewStyle().Render(marker)
 }
 
-// collapseMarkerMark is the free-function core of collapseMarker, taking the
-// expand chord explicitly (issue #457).
-func collapseMarkerMark(n int, expandMark string) string {
+// collapseMarkerMark formats a line-cap marker, optionally linking to inspection.
+func collapseMarkerMark(n int, inspectMark string) string {
 	noun := "lines"
 	if n == 1 {
 		noun = "line"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + expandMark + " expand"
+	marker := "  … +" + strconv.Itoa(n) + " more " + noun
+	if inspectMark != "" {
+		marker += " · " + inspectMark + " inspect"
+	}
+	return marker
 }
 
 // lineCount returns the number of text lines in s (0 for empty, otherwise one

@@ -107,12 +107,12 @@ func TestDiffSideCollapsesWhenNotExpanded(t *testing.T) {
 	if !ok {
 		t.Fatal("Write diff should render")
 	}
-	if !strings.Contains(stripANSIstr(collapsed), "ctrl+t expand") {
+	if !strings.Contains(stripANSIstr(collapsed), "ctrl+t inspect") {
 		t.Errorf("collapsed diff should show expand hint, got %q", stripANSIstr(collapsed))
 	}
 
 	expanded, _ := r.renderToolDiff("Write", args, true)
-	if strings.Contains(stripANSIstr(expanded), "ctrl+t expand") {
+	if strings.Contains(stripANSIstr(expanded), "ctrl+t inspect") {
 		t.Errorf("expanded diff should NOT show expand hint")
 	}
 	// Expanded has more lines than collapsed.

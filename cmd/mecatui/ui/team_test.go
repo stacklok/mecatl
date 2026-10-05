@@ -105,8 +105,8 @@ func TestTeamLiveCollapsed(t *testing.T) {
 	if !strings.Contains(out, "team ·") || !strings.Contains(out, "2 members") {
 		t.Errorf("live card should show a team header with the member count, got %q", out)
 	}
-	if !strings.Contains(out, "ctrl+t trace") {
-		t.Errorf("live card should advertise the ctrl+t trace, got %q", out)
+	if !strings.Contains(out, "f6 agents") {
+		t.Errorf("live card should advertise the f6 agents, got %q", out)
 	}
 	if !strings.Contains(out, "[lead]") {
 		t.Errorf("lead member should be tagged [lead], got %q", out)

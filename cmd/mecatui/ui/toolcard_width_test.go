@@ -77,7 +77,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			b := &toolCardPresentation{name: name, resolved: true, result: strings.Join(rows, "\n")}
 			collapsed := stripANSIstr(r.renderTool(b, false))
-			if !strings.Contains(collapsed, "+1 more line · ctrl+t expand") {
+			if !strings.Contains(collapsed, "+1 more line · ctrl+t inspect") {
 				t.Fatalf("collapsed %s result must reserve its shared row budget for source rows:\n%s", name, collapsed)
 			}
 			for i := range maxToolResultLines {
@@ -86,7 +86,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 				}
 			}
 			expanded := stripANSIstr(r.renderTool(b, true))
-			if strings.Contains(expanded, "ctrl+t expand") || !strings.Contains(expanded, "result-row-12") {
+			if strings.Contains(expanded, "ctrl+t inspect") || !strings.Contains(expanded, "result-row-12") {
 				t.Errorf("expanded %s result must retain complete source rows without a collapse marker:\n%s", name, expanded)
 			}
 		})
@@ -105,11 +105,11 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 		})
 		b := &toolCardPresentation{name: "WebFetch", resolved: true, result: result}
 		collapsed := stripANSIstr(r.renderTool(b, false))
-		if !strings.Contains(collapsed, "ctrl+t expand") || strings.Contains(collapsed, "omitted") {
+		if !strings.Contains(collapsed, "ctrl+t inspect") || strings.Contains(collapsed, "omitted") {
 			t.Errorf("collapsed JSON must budget summary rows and hide omitted source fields:\n%s", collapsed)
 		}
 		expanded := stripANSIstr(r.renderTool(b, true))
-		if strings.Contains(expanded, "ctrl+t expand") || !strings.Contains(expanded, "omitted") || !strings.Contains(expanded, "hidden") {
+		if strings.Contains(expanded, "ctrl+t inspect") || !strings.Contains(expanded, "omitted") || !strings.Contains(expanded, "hidden") {
 			t.Errorf("expanded JSON must retain complete source content:\n%s", expanded)
 		}
 	})
@@ -121,7 +121,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 		}
 		b := &toolCardPresentation{name: "WebFetch", resolved: true, result: "source\n\nparagraph", artifacts: blocks}
 		collapsed := stripANSIstr(r.renderTool(b, false))
-		if !strings.Contains(collapsed, "ctrl+t expand") || strings.Contains(collapsed, "artifact-12") {
+		if !strings.Contains(collapsed, "ctrl+t inspect") || strings.Contains(collapsed, "artifact-12") {
 			t.Errorf("collapsed artifact result must share the source row budget:\n%s", collapsed)
 		}
 		expanded := stripANSIstr(r.renderTool(b, true))
@@ -135,7 +135,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 				paragraphAt = i
 			}
 		}
-		if strings.Contains(expanded, "ctrl+t expand") || !strings.Contains(expanded, "artifact-12") || sourceAt < 0 || paragraphAt != sourceAt+2 || strings.TrimSpace(strings.Trim(expandedRows[sourceAt+1], "│")) != "" {
+		if strings.Contains(expanded, "ctrl+t inspect") || !strings.Contains(expanded, "artifact-12") || sourceAt < 0 || paragraphAt != sourceAt+2 || strings.TrimSpace(strings.Trim(expandedRows[sourceAt+1], "│")) != "" {
 			t.Errorf("expanded artifact result must retain all artifacts and intentional blank paragraph:\n%s", expanded)
 		}
 	})
@@ -197,7 +197,7 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 
 	out := r.renderTool(b, false)
 	plain := stripANSIstr(out)
-	if !strings.Contains(plain, "+29 more lines · ctrl+t expand") {
+	if !strings.Contains(plain, "+29 more lines · ctrl+t inspect") {
 		t.Fatalf("collapsed Shell card lost its expansion marker:\n%s", plain)
 	}
 	if got := strings.Count(plain, "-"); got != 220 {
@@ -274,7 +274,7 @@ func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 	}
 	collapsed := r.renderTool(b, false)
 	plain := stripANSIstr(collapsed)
-	marker := "+" + strconv.Itoa(expectedOverflow) + " more lines · ctrl+t expand"
+	marker := "+" + strconv.Itoa(expectedOverflow) + " more lines · ctrl+t inspect"
 	markerRow := -1
 	firstResultRow := -1
 	for i, line := range strings.Split(plain, "\n") {
@@ -331,7 +331,7 @@ func TestCollapsedShellResultSkipsIndentOnlyWrapRows(t *testing.T) {
 	}
 
 	collapsed := stripANSIstr(r.renderTool(b, false))
-	const marker = "+1 more line · ctrl+t expand"
+	const marker = "+1 more line · ctrl+t inspect"
 	firstResultRow, markerRow := -1, -1
 	rows := strings.Split(collapsed, "\n")
 	for i, line := range rows {
@@ -363,7 +363,7 @@ func TestCollapsedShellResultSkipsIndentOnlyWrapRows(t *testing.T) {
 	}
 
 	expanded := stripANSIstr(r.renderTool(b, true))
-	if strings.Contains(expanded, "ctrl+t expand") {
+	if strings.Contains(expanded, "ctrl+t inspect") {
 		t.Errorf("expanded result retained collapsed expansion affordance:\n%s", expanded)
 	}
 	for i := range resultLines {
@@ -433,7 +433,7 @@ func TestCollapsedLargeJSONResultCapsVisualRows(t *testing.T) {
 	}
 
 	expanded := stripANSIstr(r.renderTool(b, true))
-	if strings.Contains(expanded, "ctrl+t expand") {
+	if strings.Contains(expanded, "ctrl+t inspect") {
 		t.Errorf("expanded JSON result retained collapsed expansion affordance:\n%s", expanded)
 	}
 	if !strings.Contains(expanded, "unlisted") || !strings.Contains(expanded, "hidden") {
@@ -472,16 +472,16 @@ func TestCollapsedLargeJSONSummaryAdvertisesOmittedFields(t *testing.T) {
 	}
 
 	collapsed := stripANSIstr(r.renderTool(b, false))
-	const marker = "  … +1 more key · ctrl+t expand"
+	const marker = "  … +1 more key · ctrl+t inspect"
 	if !strings.Contains(collapsed, marker) {
 		t.Fatalf("collapsed JSON summary must advertise its omitted field:\n%s", collapsed)
 	}
-	if got := strings.Count(collapsed, "ctrl+t expand"); got != 1 {
+	if got := strings.Count(collapsed, "ctrl+t inspect"); got != 1 {
 		t.Errorf("collapsed JSON summary has %d expansion affordances, want 1:\n%s", got, collapsed)
 	}
 
 	expanded := stripANSIstr(r.renderTool(b, true))
-	if strings.Contains(expanded, "ctrl+t expand") {
+	if strings.Contains(expanded, "ctrl+t inspect") {
 		t.Errorf("expanded JSON result retained collapsed expansion affordance:\n%s", expanded)
 	}
 	if !strings.Contains(expanded, "omitted") {
@@ -502,19 +502,19 @@ func TestCollapsedArraySummaryAdvertisesExpansion(t *testing.T) {
 	b := &toolCardPresentation{name: "WebFetch", resolved: true, result: result}
 
 	collapsed := stripANSIstr(r.renderTool(b, false))
-	const marker = "  … ctrl+t expand"
+	const marker = "  … ctrl+t inspect"
 	if !strings.Contains(collapsed, marker) {
 		t.Fatalf("collapsed array summary must advertise expansion:\n%s", collapsed)
 	}
 	if strings.Contains(collapsed, "more key") || strings.Contains(collapsed, "entry-19") {
 		t.Errorf("collapsed array summary must not claim hidden fields or expose items:\n%s", collapsed)
 	}
-	if got := strings.Count(collapsed, "ctrl+t expand"); got != 1 {
+	if got := strings.Count(collapsed, "ctrl+t inspect"); got != 1 {
 		t.Errorf("collapsed array summary has %d expansion affordances, want 1:\n%s", got, collapsed)
 	}
 
 	expanded := stripANSIstr(r.renderTool(b, true))
-	if strings.Contains(expanded, "ctrl+t expand") {
+	if strings.Contains(expanded, "ctrl+t inspect") {
 		t.Errorf("expanded array result retained collapsed expansion affordance:\n%s", expanded)
 	}
 	for _, item := range []string{"entry-0", "entry-19"} {
@@ -550,7 +550,7 @@ func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 
 	collapsed := r.renderTool(b, false)
 	plain := stripANSIstr(collapsed)
-	const marker = "  … +3 more lines · ctrl+t expand"
+	const marker = "  … +3 more lines · ctrl+t inspect"
 	firstResultRow, markerRow := -1, -1
 	for i, line := range strings.Split(plain, "\n") {
 		if strings.Contains(line, "body-0") && firstResultRow < 0 {
@@ -566,7 +566,7 @@ func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 	if rows := markerRow - firstResultRow; rows != maxToolResultLines {
 		t.Errorf("collapsed result has %d visual rows before its affordance, want %d:\n%s", rows, maxToolResultLines, plain)
 	}
-	if got := strings.Count(plain, "ctrl+t expand"); got != 1 {
+	if got := strings.Count(plain, "ctrl+t inspect"); got != 1 {
 		t.Errorf("collapsed result has %d expansion affordances, want 1:\n%s", got, plain)
 	}
 	for i := range 10 {
@@ -586,7 +586,7 @@ func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 	}
 
 	expanded := stripANSIstr(r.renderTool(b, true))
-	if strings.Contains(expanded, "ctrl+t expand") {
+	if strings.Contains(expanded, "ctrl+t inspect") {
 		t.Errorf("expanded result retained collapsed expansion affordance:\n%s", expanded)
 	}
 	for i := range blocks[:len(blocks)-1] {

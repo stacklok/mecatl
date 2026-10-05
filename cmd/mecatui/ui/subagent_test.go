@@ -43,7 +43,7 @@ func addSubTool(c *conversation, parentCallID, toolName string, isError bool, to
 
 // TestSubagentLiveCollapsed asserts the default (collapsed, unresolved) card: the
 // goal title, a calm status line (LATEST child tool name + tokens + tool count)
-// with the ctrl+t trace affordance — and no heartbeat ticker (ADR 0079: the line
+// with the f6 agents affordance — and no heartbeat ticker (ADR 0079: the line
 // changes only when the tool actually changes).
 func TestSubagentLiveCollapsed(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
@@ -57,8 +57,8 @@ func TestSubagentLiveCollapsed(t *testing.T) {
 	if !strings.Contains(out, "subagent · Read ·") || !strings.Contains(out, "2 tools") {
 		t.Errorf("live card should show the latest tool name + counts, got %q", out)
 	}
-	if !strings.Contains(out, "ctrl+t trace") {
-		t.Errorf("live card should advertise the ctrl+t trace, got %q", out)
+	if !strings.Contains(out, "f6 agents") {
+		t.Errorf("live card should advertise the f6 agents, got %q", out)
 	}
 }
 
