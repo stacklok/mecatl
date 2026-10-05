@@ -10,7 +10,7 @@ func TestQuieterToolcallsResidualHintsRouteToTheirAvailableViews(t *testing.T) {
 	longResult := strings.Repeat("result\n", maxToolResultLines+1)
 
 	for name, got := range map[string]string{
-		"truncated result": r.resultBody(longResult, false),
+		"truncated result": r.renderTypedToolResult(longResult, false, nil, 0),
 		"truncated args": func() string {
 			out, ok := r.summarizeArgs(mustJSON(t, map[string]any{"body": longBody()}))
 			if !ok {
@@ -28,8 +28,8 @@ func TestQuieterToolcallsResidualHintsRouteToTheirAvailableViews(t *testing.T) {
 		}
 	}
 
-	subagent := stripANSIstr(r.renderSubagentPresentation(subagentCardPresentation{current: "Grep", toolCount: 1}, false, 0))
-	team := stripANSIstr(r.renderTeamPresentation(teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}}}, false, 0))
+	subagent := stripANSIstr(r.renderSubagentPresentation(subagentCardPresentation{current: "Grep", toolCount: 1}, 0))
+	team := stripANSIstr(r.renderTeamPresentation(teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}}}, 0))
 	for name, got := range map[string]string{"subagent": subagent, "team": team} {
 		if !strings.Contains(got, "f6 agents") {
 			t.Errorf("%s trace hint = %q, want Agents chord", name, got)

@@ -1483,12 +1483,6 @@ func teamStopReasonLabel(reason string) string {
 	}
 }
 
-// renderTraceAtWidth prepares styled trace rows against a tool card's body before
-// they join the card. It leaves the shared renderer untouched for other regions.
-func (r *renderer) renderTraceAtWidth(trace []teamTrace, bodyWidth int) string {
-	return (&renderer{th: r.th, traceWidth: bodyWidth}).renderTrace(trace)
-}
-
 // renderTrace renders a delegation lane's expanded trace — the SHARED format for
 // the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
 // lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
@@ -1687,25 +1681,23 @@ func subagentStopLabel(stop string) string {
 	}
 }
 
-// resultBody renders a tool result body with the legacy logical-line cap for
-// callers without card geometry.
-func (r *renderer) resultBody(body string, expand bool) string {
-	return r.resultBodyAtWidth(body, expand, 0)
-}
-
-// resultBodyAtWidth renders a tool result body: full when expanded; otherwise it
-// hard-wraps to the card body width before capping visible display rows. This keeps
-// the overflow count honest and prevents the final card wrap from growing the
-// collapsed body after its cap.
-func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) string {
-	body = normalizeToolCardTabs(terminaltext.Sanitize(strings.TrimRight(body, "\n")))
-	if expand || body == "" {
-		return body
+// humanizeDuration renders a millisecond wall-clock duration compactly: sub-second
+// as "Nms", under a minute as "N.Ns", else "Nm Ns". A non-positive duration (no
+// clock) renders as "0ms".
+func humanizeDuration(ms int64) string {
+	if ms <= 0 {
+		return "0ms"
 	}
-	if bodyWidth > 0 {
-		body = ansi.Hardwrap(body, bodyWidth, true)
+	if ms < 1000 {
+		return strconv.FormatInt(ms, 10) + "ms"
 	}
-	return truncateLinesTailMark(body, maxToolResultLines, "", r.marks.toolcalls)
+	secs := float64(ms) / 1000.0
+	if secs < 60 {
+		return trimDecimal(secs) + "s"
+	}
+	m := int64(secs) / 60
+	s := int64(secs) % 60
+	return strconv.FormatInt(m, 10) + "m " + strconv.FormatInt(s, 10) + "s"
 }
 
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {

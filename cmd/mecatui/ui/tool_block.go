@@ -53,7 +53,7 @@ func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 			return r.renderSettledToolLine(blockID, projection)
 		}
 		presentation := toolCardPresentationFromSnapshot(p)
-		prepared := r.prepareTypedToolCard(presentation, false, projection.state)
+		prepared := r.prepareTypedToolCard(presentation, projection.state)
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -87,7 +87,7 @@ func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProj
 	}
 }
 
-func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool, state toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareTypedToolCard(p toolCardPresentation, state toolcallProjectionState) preparedToolCard {
 	r.cardPrepares++
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
@@ -102,33 +102,26 @@ func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool, sta
 	}
 	headLabel = status + " · " + headLabel
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
-	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(p.name), bodyWidth)
-	}
 	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
-	if args := r.renderOrdinaryToolArgs(p.name, p.arguments, expand, bodyWidth); args != "" {
+	if args := r.renderOrdinaryToolArgs(p.name, p.arguments, bodyWidth); args != "" {
 		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
 	}
 	if p.resolved {
-		if result := r.renderTypedToolResult(p.result, p.isError, p.artifacts, expand, bodyWidth); result != "" {
+		if result := r.renderTypedToolResult(p.result, p.isError, p.artifacts, bodyWidth); result != "" {
 			sections = append(sections, preparedToolSection{Region: blocks.RegionResult, Text: result, Trailing: len(p.result) - len(strings.TrimRight(p.result, " "))})
 		}
 	}
 	return preparedToolCard{Prepared: blocks.PrepareStyledTool(blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections}), theme)}
 }
 
-func (r *renderer) renderTypedToolResult(body string, isError bool, artifacts []client.ContentBlock, expand bool, bodyWidth int) string {
-	lines, hiddenSummaryFields := r.renderTypedToolResultLines(body, isError, expand)
+func (r *renderer) renderTypedToolResult(body string, isError bool, artifacts []client.ContentBlock, bodyWidth int) string {
+	lines, hiddenSummaryFields := r.renderTypedToolResultLines(body, isError)
 	for _, artifact := range artifacts {
 		if line, ok := renderResultBlockLine(artifact); ok {
 			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
 		}
 	}
-	if expand {
-		lines = wrapResultDisplayLines(lines, bodyWidth)
-	} else {
-		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
-	}
+	lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
 	var out strings.Builder
 	for i, line := range lines {
 		if i > 0 {
@@ -139,8 +132,8 @@ func (r *renderer) renderTypedToolResult(body string, isError bool, artifacts []
 	return out.String()
 }
 
-func (*renderer) renderTypedToolResultLines(body string, isError, expand bool) ([]toolResultLine, int) {
-	if !expand && !isError {
+func (*renderer) renderTypedToolResultLines(body string, isError bool) ([]toolResultLine, int) {
+	if !isError {
 		if summary, hiddenFields, ok := summarizeResultDetail(body); ok {
 			return resultLines(summary, resultLineSummary), hiddenFields
 		}
@@ -156,16 +149,12 @@ func (*renderer) renderTypedToolResultLines(body string, isError, expand bool) (
 	return resultLines(body, style), 0
 }
 
-func (r *renderer) renderOrdinaryToolArgs(name, arguments string, expand bool, bodyWidth int) string {
+func (r *renderer) renderOrdinaryToolArgs(name, arguments string, bodyWidth int) string {
 	var args string
-	if diff, ok := r.renderToolDiffAtWidth(name, arguments, expand, bodyWidth); ok {
+	if diff, ok := r.renderToolDiffAtWidth(name, arguments, false, bodyWidth); ok {
 		return diff
 	}
-	if expand {
-		if jsonArgs := prettyJSON(arguments); jsonArgs != "" {
-			return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
-		}
-	} else if summary, ok := r.summarizeArgs(arguments); ok {
+	if summary, ok := r.summarizeArgs(arguments); ok {
 		args = summary
 	} else if jsonArgs := prettyJSON(arguments); jsonArgs != "" {
 		args = r.th.Style("toolArgs").Render(jsonArgs)
@@ -200,7 +189,7 @@ func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p
 			return r.renderSettledToolLine(blockID, projection)
 		}
 		r.cardPrepares++
-		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), false, projection.state).Prepared
+		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), projection.state).Prepared
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -219,7 +208,7 @@ func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 			return r.renderSettledToolLine(blockID, projection)
 		}
 		r.cardPrepares++
-		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), false, projection.state).Prepared
+		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), projection.state).Prepared
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -228,17 +217,17 @@ func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 	})
 }
 
-func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool, state toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareSubagentCard(p subagentCardPresentation, state toolcallProjectionState) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand, state)
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, bodyWidth), state)
 }
 
-func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool, state toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareTeamCard(p teamCardPresentation, state toolcallProjectionState) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand, state)
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, bodyWidth), state)
 }
 
-func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool, state toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, state toolcallProjectionState) preparedToolCard {
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
 	glyphText, status, style := state.status()
@@ -250,44 +239,19 @@ func (r *renderer) prepareDelegationCard(name string, resolved bool, result stri
 	}
 	headLabel = status + " · " + headLabel
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
-	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(name), bodyWidth)
-	}
 	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
 	if args != "" {
 		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
 	}
 	if resolved {
-		if rendered := r.renderDelegationResult(result, isError, artifacts, expand, bodyWidth); rendered != "" {
+		if rendered := r.renderTypedToolResult(result, isError, artifacts, bodyWidth); rendered != "" {
 			sections = append(sections, preparedToolSection{Region: blocks.RegionResult, Text: rendered, Trailing: len(result) - len(strings.TrimRight(result, " "))})
 		}
 	}
 	return preparedToolCard{Prepared: blocks.PrepareStyledTool(blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections}), r.blockTheme())}
 }
 
-func (r *renderer) renderDelegationResult(result string, isError bool, artifacts []client.ContentBlock, expand bool, bodyWidth int) string {
-	lines, hiddenSummaryFields := r.renderTypedToolResultLines(result, isError, expand)
-	for _, artifact := range artifacts {
-		if line, ok := renderResultBlockLine(artifact); ok {
-			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
-		}
-	}
-	if expand {
-		lines = wrapResultDisplayLines(lines, bodyWidth)
-	} else {
-		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
-	}
-	var out strings.Builder
-	for i, line := range lines {
-		if i > 0 {
-			out.WriteByte('\n')
-		}
-		out.WriteString(r.renderToolResultLine(line))
-	}
-	return out.String()
-}
-
-func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, expand bool, bodyWidth int) string {
+func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, bodyWidth int) string {
 	muted := r.th.Style("muted")
 	var out strings.Builder
 	if p.goal != "" {
@@ -295,29 +259,12 @@ func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, expand
 		out.WriteString("\n")
 	}
 	modelLabel := delegationModelLabel(p.routedCategory, p.routedModel, p.routingReason, p.model, p.routing)
-	if expand && p.routing != nil {
-		modelLabel = ""
-	}
 	if modelLabel != "" {
 		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
 		out.WriteString("\n")
 	}
-	if expand {
-		if detail := routingDecisionDetail(p.routing, p.model, p.routingReason); detail != "" {
-			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			out.WriteString("\n")
-		}
-	}
 	if p.done {
 		out.WriteString(renderDelegationToolCardText(muted, subagentPresentationResolvedLine(p), bodyWidth))
-		return strings.TrimRight(out.String(), "\n")
-	}
-	if expand {
-		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
-		if trace := r.renderTraceAtWidth(p.trace, bodyWidth); trace != "" {
-			out.WriteString("\n")
-			out.WriteString(trace)
-		}
 		return strings.TrimRight(out.String(), "\n")
 	}
 	out.WriteString(renderDelegationToolCardText(muted, r.subagentPresentationLiveLine(p), bodyWidth))
@@ -336,40 +283,23 @@ func subagentPresentationResolvedLine(p subagentCardPresentation) string {
 	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s", renderfmt.HumanizeDuration(p.durationMS), renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), subagentStopLabel(p.stop))
 }
 
-func (r *renderer) renderTeamPresentation(p teamCardPresentation, expand bool, bodyWidth int) string {
+func (r *renderer) renderTeamPresentation(p teamCardPresentation, bodyWidth int) string {
 	muted := r.th.Style("muted")
 	var out strings.Builder
 	if p.done {
-		out.WriteString(renderDelegationToolCardText(muted, teamPresentationResolvedLine(p), bodyWidth))
-		if !expand {
-			return out.String()
-		}
-	} else {
-		out.WriteString(renderDelegationToolCardText(muted, r.teamPresentationHeader(p), bodyWidth))
+		return renderDelegationToolCardText(muted, teamPresentationResolvedLine(p), bodyWidth)
 	}
+	out.WriteString(renderDelegationToolCardText(muted, r.teamPresentationHeader(p), bodyWidth))
 	order := teamLaneOrder(p.lanes)
 	shown := order
 	if len(shown) > maxTeamLanes {
 		shown = order[:maxTeamLanes]
 	}
 	nameW := teamNameWidth(p.lanes, shown)
-	for n, idx := range shown {
+	for _, idx := range shown {
 		lane := &p.lanes[idx]
-		if expand && n > 0 {
-			out.WriteString("\n")
-		}
 		out.WriteString("\n")
 		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(lane, nameW, p.done), bodyWidth))
-		if expand {
-			if detail := routingDecisionDetail(lane.routingDecision, lane.model, lane.routingReason); detail != "" {
-				out.WriteString("\n")
-				out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			}
-			if trace := r.renderTraceAtWidth(lane.trace, bodyWidth); trace != "" {
-				out.WriteString("\n")
-				out.WriteString(trace)
-			}
-		}
 	}
 	if extra := len(order) - len(shown); extra > 0 {
 		out.WriteString("\n")
