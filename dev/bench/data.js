@@ -268536,6 +268536,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791224985748,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a5c42b9ccc6e8691fffd9c112590089bdd49518d",
+          "message": "test: time rotation convergence and scripted journeys (#2120)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T16:01:21-07:00",
+          "tree_id": "1677227ae398f27a8782e55c83d891b277d0f92a",
+          "url": "https://github.com/stacklok/mecatl/commit/a5c42b9ccc6e8691fffd9c112590089bdd49518d"
+        },
+        "date": 1791241981931,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -389560,6 +389594,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791241979166,
+  "lastUpdate": 1791241983185,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
