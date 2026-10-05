@@ -235,15 +235,11 @@ type inputRenderKey struct {
 // exactly. The width-0 team/fleet focus renderers (bare &renderer{}) keep indent 0.
 const defaultBlockIndent = 1
 
-// assistantBodyHang is the extra left indent (cells) the assistant MESSAGE body hangs
-// under its "● mecatl" label, so the body text sits under "mecatl" rather than flush
-// under the "●" bullet — matching the user block, whose gold rail + PaddingLeft(1)
-// already lands its body under "you". It equals the label marker width
-// lipgloss.Width("● ") = 2. Applied ON TOP of the base block indent (renderBlock), to
-// the body ONLY (reasoning summary + markdown answer) — never the label, and never the
-// non-message blocks (tool cards / notices / turn-stats / errors). The assistant
-// markdown wrap budget subtracts it (see markdown) so a wrapped body line + base +
-// hang never exceeds r.width.
+// assistantBodyHang is the extra left indent (cells) for assistant text and
+// reasoning. In the F9 detail view it aligns the body under the "● mecatl"
+// label; in the normal view it keeps prose inset from tool lines. It equals the
+// label marker width lipgloss.Width("● ") = 2. Applied on top of the base block
+// indent; the markdown wrap budget subtracts it so wrapped text fits r.width.
 const assistantBodyHang = 2
 
 // newRenderer builds a renderer for a theme, seeded with the LIVE chord
@@ -687,6 +683,9 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 
 func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.AssistantCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		if strings.TrimSpace(p.Text) == "" && strings.TrimSpace(p.Reasoning) == "" {
+			return blockRenderOutput{}
+		}
 		out := r.renderAssistantSnapshotFresh(idx, p, expand)
 		out = r.indentLines(out)
 		return blockRenderOutput{
@@ -697,12 +696,20 @@ func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, 
 }
 
 func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantCardSnapshot, expand bool) string {
-	label := r.th.Style("assistantLabel").Render("● mecatl")
-	body := padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
-	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
-		body = padLines(reasoning, assistantBodyHang) + "\n" + body
+	var body string
+	if strings.TrimSpace(p.Text) != "" {
+		body = padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
 	}
-	return label + "\n\n" + body
+	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
+		if body != "" {
+			body = "\n" + body
+		}
+		body = padLines(reasoning, assistantBodyHang) + body
+	}
+	if !expand {
+		return body
+	}
+	return r.th.Style("assistantLabel").Render("● mecatl") + "\n\n" + body
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
@@ -770,14 +777,12 @@ const reasoningCaveat = "— summary of the model's reasoning; may not reflect i
 // reasoning. Collapsed (the default) it is a single dim header: while reasoning
 // is still streaming and no answer text has begun it reads "reasoning…" (a live
 // "the model is working" affordance); otherwise it is the static
-// "reasoning summary · N lines · ctrl+t expand". When the global details toggle
-// (expand) is on, a dim caveat plus the full summary text are shown with no line
-// cap (a long chain-of-thought no longer truncates once the user has explicitly
-// asked to see it — matching how resultBody handles tool results). Streamed
-// reasoning is never a trust anchor: hidden unless explicitly asked for, and
+// "reasoning summary · N lines · f9 expand". When the conversation detail toggle
+// is on, a dim caveat plus the full summary text are shown with no line cap.
+// Streamed reasoning is never a trust anchor: hidden unless explicitly asked for, and
 // clearly labelled as a lossy summary.
 func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, expand bool) string {
-	if p.Reasoning == "" {
+	if strings.TrimSpace(p.Reasoning) == "" {
 		return ""
 	}
 	style := r.th.Style("reasoning")

@@ -295,7 +295,7 @@ func TestTurnStatWraps(t *testing.T) {
 	r.setWidth(40)
 	long := strings.TrimSpace(strings.Repeat("turn 7 · 1234 in 5678 out · 12.3s elapsed · model gpt-4o · compacted once ", 3))
 	b := testSnapshot(0, scrollback.TurnStatCardSnapshot{Text: long})
-	out := r.renderSnapshot(0, b, false)
+	out := r.renderSnapshot(0, b, true)
 	lines := strings.Split(out, "\n")
 	if len(lines) <= 1 {
 		t.Fatalf("expected the long stat line to wrap, got %d lines", len(lines))

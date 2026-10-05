@@ -18,7 +18,7 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	const settled = 105
 	const anchorCall = 52
 	const anchorMarker = "ANCHOR052"
-	const selectedWord = "done"
+	const selectedWord = "✓"
 
 	m, _ := selModel(t)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -85,9 +85,11 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	}
 	m.vp.SetYOffset(line)
 	m.conversationView.mode = anchored
-	m = m.wordSelect(line, strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), selectedWord))
+	anchorLine := ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line])
+	wordOffset := strings.Index(anchorLine, selectedWord)
+	m = m.wordSelect(line, graphemeColForCellX(anchorLine, ansi.StringWidth(anchorLine[:wordOffset])))
 	if !m.sel.active || m.sel.snapshot != selectedWord {
-		t.Fatalf("precondition: selected settled text = %q (active=%t)", m.sel.snapshot, m.sel.active)
+		t.Fatalf("precondition: selected settled text = %q (active=%t line=%q)", m.sel.snapshot, m.sel.active, anchorLine)
 	}
 	anchorID := toolBlockID(t, m.conv.scrollback, fmt.Sprintf("settled-%03d", anchorCall))
 	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != anchorID {

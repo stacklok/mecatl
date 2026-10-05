@@ -305,8 +305,11 @@ func toolcallIntent(name string, fields map[string]json.RawMessage) string {
 }
 
 func (p toolcallProjection) summary() string {
-	_, status, _ := p.state.status()
-	summary := status + " · " + p.displayName
+	summary := p.displayName
+	if !p.settled() {
+		_, status, _ := p.state.status()
+		summary = status + " · " + summary
+	}
 	if p.intent != "" && p.intent != p.displayName {
 		summary += " · " + p.intent
 	}

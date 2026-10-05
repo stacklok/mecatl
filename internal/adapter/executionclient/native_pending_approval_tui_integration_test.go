@@ -467,6 +467,9 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			}
 			assertNoNativeActiveRun(t, dyn, ref.ID)
 
+			tm.Send(tea.KeyPressMsg{Code: tea.KeyF9})
+			tm.Send(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}) // approval details, not /toolcalls
+			tm.Send(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}) // back to the ask
 			tm.Send(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key)})
 			select {
 			case <-stats.ownerResolved:
@@ -557,9 +560,9 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if toolResults != 1 || continuationRequests.Load() != 1 || stats.ownerConverse.Load() != 0 || stats.ownerResolve.Load() != 1 || stats.foreignCalls.Load() != 3 {
 				t.Fatalf("unexpected work counts: tool-results=%d model=%d converse=%d resolve=%d foreign=%d", toolResults, continuationRequests.Load(), stats.ownerConverse.Load(), stats.ownerResolve.Load(), stats.foreignCalls.Load())
 			}
-			wantSummary := "✗ failed · Shell · Run printf bridge-command"
+			wantSummary := "✗ Shell · Run printf bridge-command"
 			if tc.wantRun {
-				wantSummary = "✓ done · Shell · Run printf bridge-command"
+				wantSummary = "✓ Shell · Run printf bridge-command"
 			}
 			if strings.Count(view, wantSummary) != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") || strings.Contains(view, "│ ✓ Shell") || strings.Contains(view, "│ ✗ Shell") {
 				t.Fatalf("terminal view lost draft, continuation, or one-line resolved tool summary:\n%s", view)

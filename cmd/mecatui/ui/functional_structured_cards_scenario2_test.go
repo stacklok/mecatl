@@ -36,7 +36,7 @@ func TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPre
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := stripANSIstr(r.renderSnapshot(i, testSnapshot(i, tc.payload), false))
+			out := stripANSIstr(r.renderSnapshot(i, testSnapshot(i, tc.payload), tc.name == "turn stat"))
 			for _, want := range tc.want {
 				if !strings.Contains(out, want) {
 					t.Errorf("render=%q want %q", out, want)

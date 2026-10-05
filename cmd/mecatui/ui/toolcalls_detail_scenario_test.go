@@ -218,11 +218,16 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 			s := toolcallsForTest(t, m)
 			selected := s.entries[s.selected].blockID
 
-			assertList := func(glyph, status, slot string) {
+			assertList := func(glyph, status, slot string, listShowsStatus bool) {
 				t.Helper()
 				body := m.View().Content
-				if plain := stripANSIstr(body); !strings.Contains(plain, glyph+" "+status) {
-					t.Fatalf("list lacks non-color status %q %q:\n%s", glyph, status, plain)
+				plain := stripANSIstr(body)
+				wantSummary := glyph + " Read"
+				if listShowsStatus {
+					wantSummary = glyph + " " + status + " · Read"
+				}
+				if !strings.Contains(plain, wantSummary) || (!listShowsStatus && strings.Contains(plain, status)) {
+					t.Fatalf("list status glyph=%q status=%q visible=%t:\n%s", glyph, status, listShowsStatus, plain)
 				}
 				if !strings.Contains(body, th.Style(slot).Render(glyph)) {
 					t.Fatalf("list glyph %q does not use %s: %q", glyph, slot, body)
@@ -256,17 +261,17 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 				return stripANSIstr(detail)
 			}
 
-			assertList("…", "running", "toolName")
+			assertList("…", "running", "toolName", true)
 			assertDetail("…", "running", "toolName")
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "provisional failure", Available: true, IsError: true})
-			assertList("…", "awaiting confirmation", "toolName")
+			assertList("…", "awaiting confirmation", "toolName", true)
 			if detail := assertDetail("…", "awaiting confirmation", "toolName"); !strings.Contains(detail, "provisional failure") {
 				t.Fatalf("provisional result missing from detail: %q", detail)
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "canonical success"})
-			assertList("✓", "done", "toolOk")
+			assertList("✓", "done", "toolOk", false)
 			if detail := assertDetail("✓", "done", "toolOk"); strings.Contains(detail, "provisional failure") || !strings.Contains(detail, "canonical success") {
 				t.Fatalf("canonical detail lifecycle state: %q", detail)
 			}

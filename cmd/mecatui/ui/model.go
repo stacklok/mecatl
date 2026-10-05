@@ -920,7 +920,7 @@ type Model struct {
 	contextUnknown   bool
 	contextEstimated bool
 
-	// expandConversation toggles reasoning, permanent error details and changed files.
+	// expandConversation reveals turn headings/stats, full reasoning, errors, and changed files.
 	expandConversation bool
 
 	// Changed-file membership and the synthetic appendix identity belong to conv.

@@ -3,6 +3,7 @@ package ui
 import (
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -56,6 +57,96 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	}
 	if frame.appendixID != c.testAppendixID() {
 		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.testAppendixID())
+	}
+}
+
+func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
+	c := &conversation{}
+	c.addTool("one", "Read", `{"path":"one.go"}`)
+	c.resolveTool("one", "first", false)
+	c.startAssistant() // turn finished with tool calls but no assistant prose
+	firstEmpty := uint64(c.testBlocks()[c.scrollback.Len()-1].ID)
+	c.startAssistant() // another visually empty turn must not add a speaker or spacing
+	c.appendAssistant("\n\t")
+	secondEmpty := uint64(c.testBlocks()[c.scrollback.Len()-1].ID)
+	c.addTool("two", "Read", `{"path":"two.go"}`)
+	c.resolveTool("two", "second", false)
+	c.startAssistant() // live empty assistant at the end
+	lastEmpty := uint64(c.testBlocks()[c.scrollback.Len()-1].ID)
+	if c.scrollback.Len() != 5 {
+		t.Fatal("empty turns must remain in logical scrollback")
+	}
+
+	r := newCacheRenderer()
+	for _, width := range []int{28, 100} {
+		r.setWidth(width)
+		frame := r.renderConversationFrame(&c.scrollback, false)
+		if got := strings.Count(stripANSIstr(strings.Join(frame.lines, "\n")), "● mecatl"); got != 0 {
+			t.Fatalf("width %d rendered %d empty assistant labels: %q", width, got, frame.lines)
+		}
+		first := toolBlockID(t, c.scrollback, "one")
+		second := toolBlockID(t, c.scrollback, "two")
+		assertLongRunGap(t, frame, first, second, 0)
+		if len(frame.lines) != len(frame.provenance) {
+			t.Fatalf("width %d frame/provenance mismatch", width)
+		}
+		for _, row := range frame.provenance {
+			if row.blockID == firstEmpty || row.blockID == secondEmpty || row.blockID == lastEmpty {
+				t.Fatalf("width %d empty assistant owns visible row: %+v", width, row)
+			}
+		}
+	}
+	// F9 must not resurrect whitespace-only messages as empty speaker turns.
+	expandedEmpty := r.renderConversationFrame(&c.scrollback, true)
+	if strings.Contains(stripANSIstr(strings.Join(expandedEmpty.lines, "\n")), "● mecatl") || expandedEmpty.hasRegion(secondEmpty, conversationRegionBody) {
+		t.Fatalf("whitespace-only assistant rendered in F9 detail: %q", expandedEmpty.lines)
+	}
+
+	// The same block becomes visible as soon as real content arrives, even if
+	// its empty predecessor and the compact tool run were cached already.
+	c.appendReasoning("a summary")
+	frame := r.renderConversationFrame(&c.scrollback, false)
+	plain := stripANSIstr(strings.Join(frame.lines, "\n"))
+	if got := strings.Count(plain, "● mecatl"); got != 0 {
+		t.Fatalf("collapsed reasoning-only turn rendered %d speaker labels", got)
+	}
+	if !strings.Contains(plain, "reasoning…") || !frame.hasRegion(lastEmpty, conversationRegionReasoning) {
+		t.Fatalf("reasoning-only turn lost its collapsed summary or provenance: %q", plain)
+	}
+	expandedFrame := r.renderConversationFrame(&c.scrollback, true)
+	if expanded := stripANSIstr(strings.Join(expandedFrame.lines, "\n")); !strings.Contains(expanded, "a summary") || !strings.Contains(expanded, "● mecatl") || !expandedFrame.hasRegion(lastEmpty, conversationRegionReasoning) {
+		t.Fatalf("reasoning-only turn lost its expanded detail or provenance: %q", expanded)
+	}
+	c.appendAssistant("an answer")
+	frame = r.renderConversationFrame(&c.scrollback, false)
+	if !strings.Contains(stripANSIstr(strings.Join(frame.lines, "\n")), "an answer") {
+		t.Fatal("assistant text did not replace the previously empty turn")
+	}
+	fresh := newCacheRenderer()
+	if got, want := strings.Join(frame.lines, "\n"), strings.Join(fresh.renderConversationFrame(&c.scrollback, false).lines, "\n"); got != want {
+		t.Fatalf("cached empty-to-visible transition diverged from fresh render\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestEmptyAssistantBecomesVisibleWithoutMovingReader(t *testing.T) {
+	m := scenario2Model(t, 80, 12, false, phaseIdle, nil)
+	for i := range 20 {
+		id := strconv.Itoa(i)
+		m.conv.addTool(id, "Read", `{"path":"file.go"}`)
+		m.conv.resolveTool(id, "result", false)
+	}
+	m.conv.startAssistant()
+	m.refreshView()
+	m.vp.SetYOffset(5)
+	m.conversationView.mode = anchored
+	before := m.conversationView.frame.provenance[m.vp.YOffset()].blockID
+	if before == 0 || m.vp.AtBottom() {
+		t.Fatal("precondition: reader must be anchored to visible tool text")
+	}
+	m.conv.appendAssistant("the final answer")
+	m.refreshView()
+	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != before || m.conversationView.mode != anchored {
+		t.Fatalf("empty-to-visible assistant displaced reader: block=%d want=%d mode=%v", got, before, m.conversationView.mode)
 	}
 }
 

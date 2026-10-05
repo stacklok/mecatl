@@ -29,11 +29,12 @@ func TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume(t *testing.T) {
 		}
 		text := strings.Join(rows, "\n")
 		plain := stripANSIstr(text)
-		if !strings.Contains(plain, glyph+" "+status+" · ") {
+		if settled {
+			if strings.Contains(plain, " "+status+" ·") || !strings.Contains(plain, glyph+" "+entry.summary()) {
+				t.Fatalf("%s: settled conversation line must retain glyph and intent without status word: %q", callID, plain)
+			}
+		} else if !strings.Contains(plain, glyph+" "+status+" · ") {
 			t.Fatalf("%s: conversation header differs from inspector status %q: %q", callID, status, rows)
-		}
-		if !strings.Contains(plain, glyph) || !strings.Contains(plain, status) {
-			t.Fatalf("%s: conversation status differs from inspector %q %q: %q", callID, glyph, status, plain)
 		}
 		list, _ := s.Render(160, 35)
 		if !strings.Contains(stripANSIstr(list), glyph+" "+entry.summary()) {

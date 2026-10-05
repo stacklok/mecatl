@@ -42,10 +42,10 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	for _, want := range []struct {
 		call, line string
 	}{
-		{"read", "✓ done · Read · Read greeting.txt"},
-		{"failed", "✗ failed · Read · Read missing.txt"},
-		{"edit", "✓ done · Edit · Edit x.go"},
-		{"write", "✓ done · Write · Write new.go"},
+		{"read", "✓ Read · Read greeting.txt"},
+		{"failed", "✗ Read · Read missing.txt"},
+		{"edit", "✓ Edit · Edit x.go"},
+		{"write", "✓ Write · Write new.go"},
 	} {
 		id := toolBlockID(t, m.conv.scrollback, want.call)
 		rows := blockRows(frame, id)
@@ -70,8 +70,8 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 		if !entry.settled() || len(rows) != 1 {
 			continue
 		}
-		glyph, status, _ := entry.state.status()
-		want := glyph + " " + status + " · " + entry.displayName + " · " + entry.intent
+		glyph, _, _ := entry.state.status()
+		want := glyph + " " + entry.summary()
 		if got := strings.TrimSpace(stripANSIstr(rows[0])); got != want {
 			t.Fatalf("conversation %q differs from inspector semantic projection %q", got, want)
 		}
@@ -79,7 +79,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 
 	mcpEntry := toolcallEntryByID(t, entries, "mcp", m.conv.scrollback)
 	mcpRows := blockRows(frame, uint64(mcpEntry.blockID))
-	if got, want := strings.TrimSpace(stripANSIstr(mcpRows[0])), "✓ done · GitHub · Issue write · mcp__github__issue_write issue-42"; got != want {
+	if got, want := strings.TrimSpace(stripANSIstr(mcpRows[0])), "✓ GitHub · Issue write · mcp__github__issue_write issue-42"; got != want {
 		t.Fatalf("MCP conversation line = %q, want %q", got, want)
 	}
 	m.phase = phaseIdle
@@ -90,14 +90,32 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	list, _ := inspector.Render(160, 30)
 	listText := stripANSIstr(list)
 	for _, entry := range entries {
-		_, status, _ := entry.state.status()
-		semantic := status + " · " + entry.displayName + " · " + entry.intent
+		semantic := entry.summary()
+		if strings.Contains(semantic, "done ·") || strings.Contains(semantic, "failed ·") {
+			t.Fatalf("settled inspector row still advertises redundant status: %q", semantic)
+		}
 		if !strings.Contains(listText, semantic) {
 			t.Fatalf("inspector list missing %q:\n%s", semantic, listText)
 		}
 		if rows := blockRows(frame, uint64(entry.blockID)); len(rows) != 1 || !strings.Contains(stripANSIstr(rows[0]), semantic) {
 			t.Fatalf("conversation line for %q = %q", semantic, rows)
 		}
+	}
+	failedEntry := toolcallEntryByID(t, entries, "failed", m.conv.scrollback)
+	var failedRow string
+	for _, line := range strings.Split(listText, "\n") {
+		if strings.Contains(line, "Read missing.txt") {
+			failedRow = line
+			break
+		}
+	}
+	if !strings.Contains(failedRow, "✗ Read · Read missing.txt") || strings.Contains(failedRow, "failed") {
+		t.Fatalf("failed inspector list row must show only its status icon: %q", failedRow)
+	}
+	inspector.selected = failedEntry.index
+	inspector.refreshDetail(&m.conv.scrollback)
+	if inspector.detailEntry == nil || !strings.Contains(strings.Join(toolcallDetailLines(*inspector.detailEntry), "\n"), "Identity · ✗ Read · failed") {
+		t.Fatalf("failed inspector detail lost its status word: %#v", inspector.detailEntry)
 	}
 	inspector.selected = mcpEntry.index
 	inspector.refreshDetail(&m.conv.scrollback)

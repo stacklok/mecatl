@@ -11,15 +11,19 @@ description:
 
 Use the conversation view to follow the response, inspect tool calls, and steer
 the agent without waiting for the current run to finish. Assistant text streams
-as it arrives. Tool calls appear as bordered cards while they run, then as
-one-line summaries when they settle. Edit and Write cards include their diff
-while they are active.
+as it arrives. A reasoning summary occupies one line by default. Tool calls
+appear as bordered cards while they run, then as icon-led, one-line summaries
+when they settle. Tool-only turns appear as consecutive calls without empty
+assistant entries between them. Edit and Write cards include their diff while
+they are active.
 
 Press `ctrl+t` to open `/toolcalls` and inspect complete call details for the
 current session. You can use it during a run or when revisiting its transcript.
-`f9` expands or collapses reasoning summaries, permanent non-tool error details,
-and the changed-files appendix. You can rebind both actions in the
-[Keybindings](./keybindings.md) settings. `f9` does not expand tool results.
+`f9` reveals speaker headings, per-turn token and timing summaries, full
+reasoning summaries, permanent non-tool error details, and the changed-files
+appendix. User prompts and assistant prose remain visible in the normal view.
+You can rebind both actions in the [Keybindings](./keybindings.md) settings.
+`f9` does not expand tool results.
 
 `ctrl+t` also reveals routine guardrail checks: completed, acceptable reviews
 that allowed the action or released its result. They are hidden by default;

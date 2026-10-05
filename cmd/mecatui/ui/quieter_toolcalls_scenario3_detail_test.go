@@ -42,9 +42,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConversationDetailToggle(t *testing.T
 					}
 					snapshots[s.ID] = m.rend.renderSnapshot(i, s, false)
 				case scrollback.AssistantCardSnapshot:
-					if s.Payload.(scrollback.AssistantCardSnapshot).Reasoning == "" {
-						snapshots[s.ID] = m.rend.renderSnapshot(i, s, false)
-					}
+					continue
 				}
 			}
 			for _, kind := range []scrollback.Kind{scrollback.KindAssistant, scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam, scrollback.KindError} {
@@ -119,6 +117,52 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConversationDetailToggle(t *testing.T
 			t.Fatal("approval modal did not retain ownership of f9")
 		}
 	})
+}
+
+func TestConversationDetailToggleShowsTurnChromeOnlyOnF9(t *testing.T) {
+	m := scenario2Model(t, 90, 24, false, phaseRunning, nil)
+	m.conv.addUser("Please check the files")
+	m = applyAll(m,
+		client.TurnStartMsg{Turn: 1},
+		client.ReasoningDeltaMsg{Turn: 1, Text: "why this tool is needed"},
+		client.AssistantDeltaMsg{Turn: 1, Text: "I will inspect them."},
+		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1200, OutputTokens: 100}, DurationMs: 4100},
+		client.ToolCallMsg{ID: "one", Name: "Read", Args: `{"path":"one.go"}`},
+		client.ToolResultMsg{CallID: "one", Content: "content"},
+		client.TurnStartMsg{Turn: 2}, // tool-only turn has no assistant prose
+		client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 1300, OutputTokens: 110}, DurationMs: 3100},
+		client.ToolCallMsg{ID: "two", Name: "Grep", Args: `{"pattern":"needle"}`},
+		client.ToolResultMsg{CallID: "two", Content: "found"},
+	)
+	m.conv.recordFileChange("appendix-only.go")
+	m.conv.addNotice("notice stays visible")
+	m.phase = phaseIdle
+	m.refreshView()
+	collapsed := detailText(m)
+	for _, want := range []string{"Please check the files", "I will inspect them.", "notice stays visible", "reasoning summary", "✓ Read", "✓ Grep"} {
+		if !strings.Contains(collapsed, want) {
+			t.Errorf("normal conversation lacks %q: %q", want, collapsed)
+		}
+	}
+	for _, hidden := range []string{"● mecatl", "↑1.2K ↓100", "↑1.3K ↓110", "4.1s", "3.1s", "why this tool is needed", "changed this session", "appendix-only.go"} {
+		if strings.Contains(collapsed, hidden) {
+			t.Errorf("normal conversation shows hidden detail %q: %q", hidden, collapsed)
+		}
+	}
+	m, _ = pressKey(m, f9)
+	expanded := detailText(m)
+	for _, want := range []string{"● mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "changed this session", "  appendix-only.go", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
+		if !strings.Contains(expanded, want) {
+			t.Errorf("F9 view lacks %q: %q", want, expanded)
+		}
+	}
+	if count := strings.Count(expanded, "● mecatl"); count != 1 {
+		t.Errorf("F9 resurrected empty assistant heading: count=%d", count)
+	}
+	m, _ = pressKey(m, f9)
+	if got := detailText(m); got != collapsed {
+		t.Errorf("F9 did not restore dense view\n got %q\nwant %q", got, collapsed)
+	}
 }
 
 func TestMecatuiQuieterToolCalls_Scenario4_ErrorDetailAccess(t *testing.T) {

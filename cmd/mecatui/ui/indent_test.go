@@ -182,7 +182,7 @@ func TestAssistantBodyHangsUnderLabel(t *testing.T) {
 	c := &conversation{}
 	c.addUser("user body text")
 	c.appendAssistant("assistant body text")
-	out := r.renderConversation(c, false)
+	out := r.renderConversation(c, true)
 
 	wantCol := r.indent + assistantBodyHang // base + marker width
 	asstCol := bodyTextColumn(t, out, "● mecatl", 'a')

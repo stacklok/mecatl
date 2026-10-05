@@ -393,7 +393,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	m.phase = phaseRunning
 
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100})
-	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(withDur, "↑1.2K ↓340 · 4.1s") {
 		t.Errorf("expected cost-first per-turn stat line with duration, got:\n%s", withDur)
 	}
@@ -404,7 +404,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	// A turn with substantial tokens but no duration (no clock) omits the elapsed
 	// segment but still renders (it is not trivial).
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 500, OutputTokens: 20}, DurationMs: 0})
-	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(noDur, "↑500 ↓20") {
 		t.Errorf("expected per-turn stat line, got:\n%s", noDur)
 	}
@@ -451,7 +451,7 @@ func TestTurnEndTrivialSuppressed(t *testing.T) {
 
 	// A turn over the duration threshold is NOT trivial even with tiny tokens.
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 10, OutputTokens: 0}, DurationMs: 1500})
-	view := stripANSIstr(m.rend.renderConversation(&m.conv, false))
+	view := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(view, "↑10 ↓0 · 1.5s") {
 		t.Errorf("a turn with a measurable duration should not be suppressed:\n%s", view)
 	}

@@ -44,9 +44,9 @@ func TestConcurrentDelegations_RenderTerminalGlyphBeforeSiblingFinishes(t *testi
 	for _, family := range families {
 		for _, failed := range []bool{false, true} {
 			name := family.name + "/success"
-			stop, before, after := "end_turn", "… awaiting result · "+family.tool, "✓ done · "+family.tool
+			stop, before, after := "end_turn", "… awaiting result · "+family.tool, "✓ "+family.tool
 			if failed {
-				name, stop, before, after = family.name+"/error", "error", "✗ failed · "+family.tool, "✗ failed · "+family.tool
+				name, stop, before, after = family.name+"/error", "error", "✗ "+family.tool, "✗ "+family.tool
 			}
 			t.Run(name, func(t *testing.T) {
 				m := newMCPModel(t, aztec(), nil)
@@ -94,19 +94,19 @@ func TestLateDelegationResultOwnsFinalOutcome(t *testing.T) {
 				client.ToolCallMsg{ID: "slow", Name: "Read", Args: `{}`},
 			)
 			m = tt.finish(m)
-			assertConcurrentCards(t, m, "✗ failed · "+tt.tool, "Read")
+			assertConcurrentCards(t, m, "✗ "+tt.tool, "Read")
 
 			m = applyAll(m, client.ToolResultMsg{CallID: "fast", Content: "usable result"})
-			assertConcurrentCards(t, m, "✓ done · "+tt.tool, "Read")
+			assertConcurrentCards(t, m, "✓ "+tt.tool, "Read")
 		})
 	}
 }
 
 func TestConcurrentTools_ResultSettlesOnlyMatchingCardAndKeepsSiblingActive(t *testing.T) {
 	for _, failed := range []bool{false, true} {
-		name, glyph := "success", "✓ done · Read"
+		name, glyph := "success", "✓ Read"
 		if failed {
-			name, glyph = "error", "✗ failed · Read"
+			name, glyph = "error", "✗ Read"
 		}
 		t.Run(name, func(t *testing.T) {
 			m := newMCPModel(t, aztec(), nil)

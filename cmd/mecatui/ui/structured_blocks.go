@@ -61,6 +61,11 @@ func (r *renderer) renderHiddenSnapshot(index int, s scrollback.BlockSnapshot, e
 }
 
 func (r *renderer) renderTurnStatSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.TurnStatCardSnapshot, expand bool) string {
+	if !expand {
+		return r.renderCachedSnapshot(index, uint64(s.ID), rendererRevision(s.Revision), false, func(uint64) blockRenderOutput {
+			return blockRenderOutput{}
+		})
+	}
 	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindTurnStat, expand, func() blocks.Prepared { return r.prepareTurnStatSnapshot(p) })
 }
 

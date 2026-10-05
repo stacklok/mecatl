@@ -35,7 +35,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_RebindAndLegacyAlias(t *testing.T) {
 	for _, row := range []struct{ action, chords string }{
 		{"open tool calls", "ctrl+f10/ctrl+f11"},
 		{"open full approval details", "ctrl+f10/ctrl+f11"},
-		{"expand conversation details", "ctrl+f12/ctrl+f13"},
+		{"expand turn details", "ctrl+f12/ctrl+f13"},
 	} {
 		found := false
 		for _, line := range strings.Split(help, "\n") {

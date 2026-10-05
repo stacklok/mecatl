@@ -157,7 +157,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy selected prompt or conversation text"},
 		{key: hk.scroll, action: "scroll the conversation; the header shows your position"},
-		{key: hk.expandConversationFull, action: "expand conversation details (reasoning, errors, and changed files)"},
+		{key: hk.expandConversationFull, action: "expand turn details (speaker, usage, reasoning, errors, changed files)"},
 		{key: hk.jump, action: "jump to top or bottom; " + hk.scrollBottom + " resumes automatic scrolling"},
 		{key: "wheel", action: "scroll with the mouse (alternate screen only)"},
 		{key: "drag", action: "select and copy conversation text; dragging past an edge scrolls"},
