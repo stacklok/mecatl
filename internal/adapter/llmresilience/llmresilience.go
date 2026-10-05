@@ -1228,37 +1228,8 @@ func wrapAttempt(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[
 		if result.cancel != nil {
 			defer result.cancel()
 		}
-		cleanupRemaining := func() {
-			if result.cancel != nil {
-				result.cancel()
-			}
-			if result.stop != nil {
-				result.stop()
-			}
-		}
-		if result.discardedUsage != (session.Usage{}) {
-			if !yield(port.Chunk{Kind: port.ChunkUsage, Usage: &result.discardedUsage}, nil) {
-				cleanupRemaining()
-				return
-			}
-		}
-		for _, buffered := range result.buffered {
-			if err := diagnostic.ctx.Err(); err != nil {
-				cleanupRemaining()
-				yield(port.Chunk{}, err)
-				return
-			}
-			if buffered.Kind == port.ChunkUsage {
-				continue // already included in the accounting prefix
-			}
-			if !yield(buffered, nil) {
-				cleanupRemaining()
-				return
-			}
-		}
-		if err := diagnostic.ctx.Err(); err != nil {
-			cleanupRemaining()
-			yield(port.Chunk{}, err)
+		cleanupRemaining := result.cleanupRemaining
+		if !flushBufferedAttempt(diagnostic.ctx, result, yield, cleanupRemaining) {
 			return
 		}
 		switch result.progress {
@@ -1309,6 +1280,46 @@ func wrapAttempt(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[
 			cleanupRemaining()
 		}
 	}
+}
+
+func (result *attemptResult) cleanupRemaining() {
+	if result.cancel != nil {
+		result.cancel()
+	}
+	if result.stop != nil {
+		result.stop()
+	}
+}
+
+// flushBufferedAttempt emits accounting before semantics and reports whether the
+// handoff completed without cancellation or a consumer stop.
+func flushBufferedAttempt(ctx context.Context, result *attemptResult, yield func(port.Chunk, error) bool, cleanupRemaining func()) bool {
+	if result.discardedUsage != (session.Usage{}) {
+		if !yield(port.Chunk{Kind: port.ChunkUsage, Usage: &result.discardedUsage}, nil) {
+			cleanupRemaining()
+			return false
+		}
+	}
+	for _, buffered := range result.buffered {
+		if err := ctx.Err(); err != nil {
+			cleanupRemaining()
+			yield(port.Chunk{}, err)
+			return false
+		}
+		if buffered.Kind == port.ChunkUsage {
+			continue // already included in the accounting prefix
+		}
+		if !yield(buffered, nil) {
+			cleanupRemaining()
+			return false
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		cleanupRemaining()
+		yield(port.Chunk{}, err)
+		return false
+	}
+	return true
 }
 
 // backoffDuration computes the full-jitter backoff for the given zero-based

@@ -361,11 +361,12 @@ func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttem
 				}
 				wantCalls := 2
 				wantDecision, wantSource := "terminal", "backoff"
-				if mode == "recovered" {
+				switch mode {
+				case "recovered":
 					wantDecision = "recovered"
-				} else if mode == "breaker only" {
+				case "breaker only":
 					wantCalls, wantSource = 0, "breaker"
-				} else if mode == "provider wait" {
+				case "provider wait":
 					wantCalls, wantSource = 1, "provider"
 					if argValue(records[0].args, "decision") != "wait" || argValue(records[0].args, "attempt") != 1 || argValue(records[0].args, "source") != "provider" {
 						t.Fatalf("provider wait log=%+v", records[0])
