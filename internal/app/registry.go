@@ -1128,8 +1128,9 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 	// normaliseAnthropicCacheTTL is called ONCE here (a build-time, not a
 	// per-remint, call site — mirrors the operatorDefaultEffortFor discipline
 	// above) so an unrecognised --anthropic-cache-ttl value WARNs at most once
-	// per process, never once per session/heal re-mint.
-	cacheTTL := normaliseAnthropicCacheTTL(cfg)
+	// per entry build, never once per session/heal re-mint. With no operator
+	// value, anthropicCacheTTLFor applies the shared built-in-provider default.
+	cacheTTL := anthropicCacheTTLFor(id, normaliseAnthropicCacheTTL(cfg), cfg)
 	// construct mints a resilience-wrapped anthropic adapter carrying the given
 	// reasoning-effort token (ADR 0055) and per-session capability intersection
 	// (T7), over the SAME max-tokens + thinking resolvers. It is the SINGLE

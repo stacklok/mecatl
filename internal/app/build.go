@@ -386,7 +386,10 @@ type Config struct {
 	// TTL field's default omits "ttl"; the StablePrefix breakpoint itself
 	// predates this feature). AnthropicCacheTTL (wired from
 	// --anthropic-cache-ttl) accepts "5m" or "1h"; any other value is
-	// normalised to "" (omit) with a WARN — see normaliseAnthropicCacheTTL.
+	// normalised to "" with a WARN — see normaliseAnthropicCacheTTL. "" selects
+	// the shared default (anthropicCacheTTLFor): "1h" on the built-in
+	// anthropic, openrouter-anthropic and toolhive-anthropic providers,
+	// omitted on custom anthropic-messages providers.
 	PromptCacheDisabled bool
 	AnthropicCacheTTL   string
 

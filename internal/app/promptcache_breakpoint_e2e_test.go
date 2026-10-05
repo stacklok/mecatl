@@ -200,9 +200,8 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 // justification.
 //
 // It drives the REAL anthropic adapter (providerConstructor nil) against an
-// Anthropic-Messages SSE handler, and asserts BOTH directions: the flag set
-// stamps "ttl":"1h" on every marker, and the flag UNSET emits no ttl key at all
-// rather than a hardcoded default.
+// Anthropic-Messages SSE handler: the flag set stamps its value on every
+// marker, and the flag UNSET stamps the shared built-in default of 1h.
 func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 	for _, tc := range []struct {
 		name, ttl string
@@ -210,7 +209,7 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 	}{
 		{"operator set 1h", "1h", "1h"},
 		{"operator set 5m", "5m", "5m"},
-		{"flag unset leaves the API default", "", ""},
+		{"flag unset defaults to 1h", "", "1h"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -285,6 +284,53 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 			if withTTL != markers {
 				t.Errorf("%d of %d cache_control markers carried ttl=%q; the TTL must be uniform across every marker.\nbody=%s",
 					withTTL, markers, tc.wantTTL, body)
+			}
+		})
+	}
+}
+
+// TestAnthropicCacheTTLDefaultsToOneHourOnBuiltinProviders drives the REAL
+// entry construction for each built-in Anthropic Messages provider against a
+// local server. All three must behave identically: with --anthropic-cache-ttl
+// unset every marker carries the 1-hour default, and
+// --anthropic-cache-ttl=5m restores the shorter TTL.
+func TestAnthropicCacheTTLDefaultsToOneHourOnBuiltinProviders(t *testing.T) {
+	type ttlCase struct{ name, id, flag, wantTTL string }
+	var cases []ttlCase
+	for _, id := range []string{providerAnthropic, providerOpenRouterAnthropic, providerToolhiveAnthropic} {
+		cases = append(cases,
+			ttlCase{id + "/flag unset defaults to 1h", id, "", "1h"},
+			ttlCase{id + "/flag 5m restores the shorter TTL", id, "5m", "5m"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var body string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				body = string(raw)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, toolhiveCompletedMessageSSE)
+			}))
+			defer srv.Close()
+
+			cfg := Config{LLMMaxAttempts: 1, AnthropicCacheTTL: tc.flag}
+			entry := newAnthropicEntryFor(cfg, tc.id, "test", srv.URL, newLiveMetaStore(), false)
+			if err := driveCacheRichStream(entry.provider); err != nil {
+				t.Fatalf("drive stream: %v", err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			markers := countCacheControlMarkers(t, body)
+			if markers < 3 {
+				t.Fatalf("%d cache_control marker(s), want >= 3.\nbody=%s", markers, body)
+			}
+			if got := countCacheControlTTL(t, body, tc.wantTTL); got != markers {
+				t.Errorf("%d of %d markers carried ttl=%q, want all.\nbody=%s", got, markers, tc.wantTTL, body)
 			}
 		})
 	}
