@@ -1386,7 +1386,9 @@ func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
 	}
 	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
 	var detailCmd tea.Cmd
-	if r != nil && msg.Guardrail.Disposition != "ask_action" && !routineGuardrail(msg.Guardrail) && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
+	// Benign reviews are retained (hidden by default), so they fetch live detail
+	// too; ExpandTools or hook_notices.show_benign reveals it with the summary.
+	if r != nil && msg.Guardrail.Disposition != "ask_action" && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
 		m.guardrailDetailRequest++
 		r.beginDetailRequest(m.guardrailDetailRequest)
 		r.show(&m.conv, guardrailPresentationText(r, m.deps.Debug))
@@ -2098,6 +2100,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 func (m Model) switchTheme(th theme.Theme) Model {
 	m.deps.Theme = th
 	m.rend = newRenderer(th, m.rend.marks)
+	m.rend.showBenignGuardrails = m.deps.showBenignGuardrails()
 	m.rend.setWidth(m.width)
 	m.sp.Style = th.Style("spinner")
 	m.refreshView()

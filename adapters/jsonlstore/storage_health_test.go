@@ -2,6 +2,11 @@ package jsonlstore
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -44,3 +49,58 @@ func TestSessionStorageContinuity_Scenario6_HealthIsBoundedAndHonest(t *testing.
 		t.Fatalf("health traversed authoritative snapshots: work=%v", work)
 	}
 }
+
+func TestMeasureStorageEntries_ConcurrentRemovalOnly(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := st.resolver.currentSnapshotPath("removed")
+	if err := os.WriteFile(path, []byte("snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(st.resolver.canonicalDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	var health port.SessionStorageHealth
+	if err := measureStorageEntries(&health, entries); err != nil {
+		t.Fatalf("file removed after enumeration: %v", err)
+	}
+	if health.FileCount != 0 || health.CurrentBytes != 0 || health.V2Count != 0 {
+		t.Fatalf("removed snapshot counted: %+v", health)
+	}
+
+	var snapshotEntry os.DirEntry
+	for _, entry := range entries {
+		if entry.Name() == filepath.Base(path) {
+			snapshotEntry = entry
+			break
+		}
+	}
+	if snapshotEntry == nil {
+		t.Fatal("snapshot missing from directory entries")
+	}
+	if err := measureStorageEntries(&health, []os.DirEntry{faultEntry{DirEntry: snapshotEntry, err: fmt.Errorf("concurrent removal: %w", fs.ErrNotExist)}}); err != nil {
+		t.Fatalf("wrapped removal: %v", err)
+	}
+	if health.FileCount != 0 {
+		t.Fatalf("removed file counted: %+v", health)
+	}
+	if err := measureStorageEntries(&health, []os.DirEntry{faultEntry{DirEntry: snapshotEntry, err: fs.ErrPermission}}); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("permission failure = %v, want error", err)
+	}
+	if health.FileCount != 0 {
+		t.Fatalf("failed stat counted: %+v", health)
+	}
+}
+
+type faultEntry struct {
+	os.DirEntry
+	err error
+}
+
+func (e faultEntry) Info() (os.FileInfo, error) { return nil, e.err }

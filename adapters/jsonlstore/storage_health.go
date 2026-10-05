@@ -2,7 +2,9 @@ package jsonlstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -77,31 +79,41 @@ func (st *Store) measureStorageFiles(health *port.SessionStorageHealth) error {
 		if err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if !isSessionStorageFile(name) {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			health.FileCount++
-			health.CurrentBytes += info.Size()
-			switch {
-			case strings.HasSuffix(name, sessionFileSuffix):
-				health.V1Count++
-			case strings.HasSuffix(name, currentSnapshotSuffix):
-				health.V2Count++
-			}
+		if err := measureStorageEntries(health, entries); err != nil {
+			return err
 		}
 	}
 	health.CurrentBytesAvailable = true
 	// Reclaimable bytes require a generation-bound maintenance plan. No such job
 	// is implemented yet, so availability remains false rather than fabricating 0.
+	return nil
+}
+
+func measureStorageEntries(health *port.SessionStorageHealth, entries []os.DirEntry) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !isSessionStorageFile(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		health.FileCount++
+		health.CurrentBytes += info.Size()
+		switch {
+		case strings.HasSuffix(name, sessionFileSuffix):
+			health.V1Count++
+		case strings.HasSuffix(name, currentSnapshotSuffix):
+			health.V2Count++
+		}
+	}
 	return nil
 }
 

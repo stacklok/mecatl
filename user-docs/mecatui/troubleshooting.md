@@ -199,10 +199,11 @@ keymap-resolution diagnostics at startup, compact guardrail success diagnostics,
 and debug-only local commands such as `/debug-ask`. These surfaces are off by
 default.
 
-Normal conversation output omits guardrail checks that completed successfully
-and allowed an action or released a result. Mecatui does not request explanations
-for those checks. `--debug` shows a compact success entry with the review's
-technical metadata. Stored-session transcripts use the same visibility rules.
+Normal conversation output hides guardrail checks that completed successfully
+and allowed an action or released a result. Press `ctrl+t` to reveal them, or
+[keep them visible](./customization.md#show-benign-guardrail-notices).
+`--debug` always shows them, with the review's technical metadata.
+Stored-session transcripts use the same visibility rules.
 
 Warnings, unresolved reviews, checker outages, and unknown states remain visible.
 A warning's explanation updates its existing entry when available; a review that

@@ -44,11 +44,20 @@ func (r *renderer) renderUserSnapshot(index int, s scrollback.BlockSnapshot, p s
 }
 
 func (r *renderer) renderNoticeSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.NoticeCardSnapshot, expand bool) string {
+	if p.BenignGuardrail && !expand && !r.showBenignGuardrails {
+		return r.renderHiddenSnapshot(index, s, expand)
+	}
 	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindNotice, expand, func() blocks.Prepared { return r.prepareNoticeSnapshot(p) })
 }
 
 func (r *renderer) renderHookSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.HookCardSnapshot, expand bool) string {
 	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindHook, expand, func() blocks.Prepared { return r.prepareHookSnapshot(p) })
+}
+
+func (r *renderer) renderHiddenSnapshot(index int, s scrollback.BlockSnapshot, expand bool) string {
+	return r.renderCachedSnapshot(index, uint64(s.ID), rendererRevision(s.Revision), expand, func(uint64) blockRenderOutput {
+		return blockRenderOutput{}
+	})
 }
 
 func (r *renderer) renderTurnStatSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.TurnStatCardSnapshot, expand bool) string {

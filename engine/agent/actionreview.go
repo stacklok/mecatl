@@ -712,14 +712,14 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 	}
 }
 
-func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
+func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment, resultEvent session.EventType) (session.ToolResult, bool, bool, bool) {
 	r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 	if assessment.action.close != nil {
 		defer assessment.action.close()
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.action.principalRevision) {
 		res := session.NewToolError(call.ID, "contextual guardrail review context changed during review; retry the action for a fresh assessment")
-		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	if assessment.grantHit {
@@ -761,13 +761,13 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 	}
 	if !e.deps.Interactive {
 		res := session.NewToolError(call.ID, reason)
-		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
-	return e.resolveActionAsk(ctx, r, sess, env, turnIdx, call, auth, assessment, reason)
+	return e.resolveActionAsk(ctx, r, sess, env, turnIdx, call, auth, assessment, reason, resultEvent)
 }
 
-func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment, reason string) (session.ToolResult, bool, bool, bool) {
+func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment, reason string, resultEvent session.EventType) (session.ToolResult, bool, bool, bool) {
 	ask := session.PendingAsk{
 		AskID: r.issueAskID(sess.ID, sess.Counters.ToolCalls, call.ID), Tool: call.Name, Args: call.Args,
 		Reason: reason, Call: call.ID, Origin: session.ApprovalOriginHookGuardrail,
@@ -783,13 +783,13 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 	}
 	if answer.verdict != session.VerdictAllowOnce && answer.verdict != session.VerdictAllowAlways {
 		res := session.NewToolError(call.ID, reason)
-		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
 		r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "denied"))
 		return res, false, false, false
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.action.principalRevision) {
 		res := session.NewToolError(call.ID, "contextual guardrail review context changed while approval was pending; retry the action for a fresh assessment")
-		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	allowed, cancelled, staleReason := e.reauthorizeAction(ctx, r, sess, env, turnIdx, call, auth)
@@ -801,7 +801,7 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 			staleReason = "contextual guardrail approval became stale before execution"
 		}
 		res := session.NewToolError(call.ID, staleReason)
-		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "approved"))
@@ -870,7 +870,7 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 		}
 		return session.ToolResult{}, nil, true, false
 	}
-	res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, call, auth, assessment)
+	res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, call, auth, assessment, session.EvToolResult)
 	if cancelled || !proceed {
 		return res, nil, cancelled, false
 	}
