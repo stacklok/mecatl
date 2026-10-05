@@ -294779,6 +294779,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791196574574,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f8b2d7f5843a2c3d04dbef3e4abf2b0b1611ffa5",
+          "message": "fix: align local file operands with built-in decoding (#2095)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T13:52:00+03:00",
+          "tree_id": "19b468297f1f5c674291f532eb1d5575c304a14e",
+          "url": "https://github.com/stacklok/mecatl/commit/f8b2d7f5843a2c3d04dbef3e4abf2b0b1611ffa5"
+        },
+        "date": 1791198238690,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -386017,6 +386056,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791198235610,
+  "lastUpdate": 1791198239824,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
