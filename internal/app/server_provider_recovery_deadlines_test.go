@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/provider/openai"
 )
 
@@ -152,7 +152,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				done := make(chan reviewOutcome, 1)
 				started := time.Now()
 				go func() {
-					out, err := reviewer.Review(ctx, req, nil)
+					out, _, err := reviewer.Review(ctx, req, nil)
 					done <- reviewOutcome{result: out, err: err}
 				}()
 				select {
