@@ -79,7 +79,7 @@ and test-owned `UserModelDir` even when user-model features are disabled.
 - Preserve default secret scrubbing. Explicit operator grants can reach built-in
   main runners and direct-write children, but not hardened children/internal
   Git; harness credentials remain protected. Never inspect or disclose credential
-  values. Scrubbing is not an OS sandbox. See [runner authority](docs/adr/0343-operator-configured-command-runners.md).
+  values. Scrubbing is not an OS sandbox.
 - Placement is server-owned: exact `EnvironmentRef{Kind, ID, Revision}`, fail-closed
   reattachment, no public paths or cwd-based inference. No-FS children remain
   file-less. Skills expose logical assets, not extra workspace/execution roots.
@@ -94,30 +94,3 @@ and test-owned `UserModelDir` even when user-model features are disabled.
 - A model-dependent affordance needs a model-visible instruction and a test
   proving it reaches the appropriate system-prompt layer through the real factory.
   Do not pin arbitrary documentation prose in tests.
-
-## Change routing
-
-Classify work with [the development process](docs/development-process.md).
-Routine/Cleanup proceed directly; Bounded/Architectural use the acceptance spine.
-Only a human authorizes a Spike or waives the spine. Plan-PR merge is approval;
-contract drift stops implementation until the directing human explicitly authorizes the
-identified amendments under the development process. The agent explains the recommended
-route and risks; the operator may override that recommendation. Cleanup does not
-authorize new design or unresolved data destruction, and Spike work does not ship as-is.
-
-| Change | Required follow-through |
-| --- | --- |
-| Engine exported API | Follow [compatibility](engine/COMPATIBILITY.md), run `task api:update`, include API snapshots and classified `engine/CHANGELOG.md` entry |
-| Protobuf/generated reference | Edit sources, never generated output by hand; run `task generate` |
-| Markdown | Follow [documentation change review](docs/development-process.md#documentation-change-review); run `task docs` before committing |
-| User-facing behavior | Use `user-docs` and `tech-writer` skills; update the owning page identified in `user-docs/_README.md` in the same PR and run `task site:build` |
-| Website infrastructure | Follow `website/AGENTS.md`; public content lives in `user-docs/` |
-| Studio | Follow [its boundary](docs/adr/0351-mecatl-studio-in-repo-web-ui.md); use the published SDK, not a local path; run `task studio:check` |
-| Resource outliving a call | Update [ADR 0027](docs/adr/0027-cloud-native.md) Lists 1/2 with owner, cleanup, and restart-state decision; these maintained inventories do not license rewriting frozen decisions |
-
-Keep this file a correction file, not a changelog. New root instructions must
-prevent a concrete, broadly applicable mistake that existing code/tests/docs do
-not already address adequately. Prefer a scoped rule for a narrow recurring
-failure. Mecatl eagerly loads rules: splitting prose into more rule files does
-not reduce prompt cost. Details belong in the existing owning documentation;
-[the reader map](docs/READING.md) routes to it.

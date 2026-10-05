@@ -24,7 +24,7 @@ against the main baseline but never publishes a new baseline from a PR.
 `task perf:scenarios` remains the separate whole-loop signal. In particular,
 `BenchmarkSingleSessionLong` preserves the approximately 500-turn single-session
 coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. See
-`docs/adr/0019-perf-tracking.md` for the performance-tracking decision.
+[performance regression tracking](../perf-tracking.md) for the performance-tracking decision.
 
 The `gh-pages` trend store keeps commit granularity without retaining duplicate
 sampling rows. The hard microbenchmark gate and its latest-main `bench.txt`
@@ -322,7 +322,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   error because EventLog errors can follow a durable write; retry would duplicate folded
   text. Memory remains bounded, one warning is emitted per recorder, and later boundary/result
   appends continue. A process crash or failed append can lose a chunk; the completed snapshot
-  remains authoritative. See [ADR 0243](../adr/0243-jsonl-durability.md). `jsonlstore` triples as
+  remains authoritative. See ADR 0243. `jsonlstore` triples as
   `SessionStore`+`ToolCallRecorder`+`EventLog` (a `.events.jsonl` sidecar);
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
@@ -359,7 +359,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   incarnation-bound, revalidated handles, while pruned snapshots remain content-free
   tombstones keyed separately from a later same-ID incarnation. Event-log
   retention and scan limits are reported rather than inferred. See
-  [ADR 0256](../adr/0256-session-debugger-evidence-and-reporting.md).
+  ADR 0256.
 
   > **Two `Load` implementations, one port.** mecatl's own adapters (memstore,
   > jsonlstore, the remote driver) implement `Load` by **snapshot-deserialize**

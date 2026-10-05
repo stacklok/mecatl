@@ -24,4 +24,4 @@ the engine module's `go.mod` stays free of the `go/tools` dependency
 (ADR 0036); only these text baselines ship inside the engine module.
 
 See [`../COMPATIBILITY.md`](../COMPATIBILITY.md) and
-[ADR 0037](../../docs/adr/0037-engine-stability-contract.md).
+ADR 0037.

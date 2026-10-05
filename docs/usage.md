@@ -4,7 +4,7 @@ The public [Mecatl documentation](../user-docs/intro.md) is the canonical
 source for user-facing guides and reference material. This file remains only so
 historical ADR links resolve.
 
-See [ADR 0321](./adr/0321-canonical-user-documentation-ownership.md) for the ownership decision.
+See ADR 0321 for the ownership decision.
 
 | Legacy topic | Canonical page |
 | --- | --- |

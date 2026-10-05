@@ -1,7 +1,7 @@
 # Scoped resource grants: a filesystem and tool substrate
 
 *Status: strawman / working draft. Speculative scoping, not a design record under
-[ADR 0002](adr/0002-documentation-lifecycle.md) (no frozen decision here). Same
+ADR 0002 (no frozen decision here). Same
 tier as [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md) and the
 [session-state/read-ledger boundary proposal](session-state-and-read-ledger.md).
 It picks up the shared-handle problem (§1) from the companion
@@ -475,7 +475,7 @@ that caches, and not proxy a slow remote API call per `stat`.
 ## The protocol
 
 gRPC-native, under the same conventions as the existing driver protocol
-([ADR 0005](adr/0005-driver-seams.md)): server-streamed chunked reads, capped
+(ADR 0005): server-streamed chunked reads, capped
 and paged list/glob/grep, `NOT_FOUND` mapped to sentinels, server-side caps,
 non-local cleartext refused. This supersedes ADR 0005's deliberately-parked
 `WorkspaceService` sketch, and its trigger condition ("a real consumer that
@@ -520,8 +520,8 @@ for this direction would supersede them by new ADR, never by quiet edits.
   a descent spec: mounts with postures (an `immutable-snapshot` of the parent
   tree is a read-only fork; an `exclusive-write` overlay is a mutating one),
   a merge strategy, and a lease. The existing forkers become backends. The
-  merge-back machinery ([ADR 0039](adr/0039-parallel-auto-merge.md),
-  [ADR 0077](adr/0077-direct-write-subagent.md)) is not redesigned here; how
+  merge-back machinery (ADR 0039,
+  ADR 0077) is not redesigned here; how
   merge strategies ride grants is an open question below.
 - **Per-session engines gain a per-call dimension.** Today a workspace is
   fixed per session (and per fork). Grants are per call. The composition
@@ -750,11 +750,11 @@ reversals. The spike is throwaway proof, not phase one.
 - [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md): the kit
   framing this substrate would slot into; the grant mechanism is exactly the
   kind of component the kit's reuse test is about.
-- [ADR 0005 — driver seams](adr/0005-driver-seams.md): the protocol
+- ADR 0005 — driver seams: the protocol
   conventions this inherits and the `WorkspaceService` sketch this supersedes.
-- [ADR 0027 — cloud-native arc](adr/0027-cloud-native.md) and
-  [ADR 0048 — mecak8s](adr/0048-mecak8s.md): the disposable-process
+- ADR 0027 — cloud-native arc and
+  ADR 0048 — mecak8s: the disposable-process
   properties this extends from session state to the tool data plane.
-- [ADR 0039](adr/0039-parallel-auto-merge.md) /
-  [ADR 0077](adr/0077-direct-write-subagent.md): the fork/merge decisions the
+- ADR 0039 /
+  ADR 0077: the fork/merge decisions the
   descent-spec question touches.

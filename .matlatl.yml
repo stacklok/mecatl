@@ -36,9 +36,9 @@ inboundThreshold: 1
 # ranked, and gated by `check` — but hides them from generated documentation
 # surfaces. It has zero effect on the check exit code or graph.json.
 #
-# Used here for Claude Code agent scaffolding: these files are dev tooling, not
-# product documentation, so they shouldn't appear in the navigation surface or
-# skew it — but we still want their links verified.
+# Used here for the skills under .claude/skills/: they are dev tooling, not
+# product documentation, so they stay off the navigation surface, but some link
+# into docs/ and those links must stay verified.
 emitExclude:
   # Skill definitions (SKILL.md + their references/). Note: SKILL.md files are
   # auto-detected reachability roots, so matlatl emits an informational config

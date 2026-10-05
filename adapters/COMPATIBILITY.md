@@ -4,7 +4,7 @@ This policy covers `github.com/stacklok/mecatl/adapters`. For construction,
 capability checks, read semantics, and resource ownership, use the
 [SessionStore and EventLog guide](../user-docs/building/extension-points/session-store.md).
 The [driver architecture](../docs/architecture/observability.md#remote-store--source-drivers-adaptersgrpcdriver)
-owns protocol integration details. [ADR 0372](../docs/adr/0372-public-persistence-adapters.md)
+owns protocol integration details. ADR 0372
 records the publication decision.
 
 ## Public Go API

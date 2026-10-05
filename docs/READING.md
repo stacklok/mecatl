@@ -44,8 +44,10 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 - [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — draft protocol proposal for remote agent capabilities over HTTP/JSON; not a shipped mecatl surface.
-- [Documentation change review](development-process.md#documentation-change-review) — choose one owner, verify current behavior, and prune obsolete material.
-- [ADR index](adr/README.md) — the frozen *why* archive; reach for it on demand to understand a decision's rationale.
+- [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
+- [User-docs authoring contract](../user-docs/_README.md) and [style guide](../user-docs/_STYLE.md) — where public documentation lives and how it is written.
+- Design notes: [design principles](design/principles.md) and [contextual guardrails capacity](design/contextual-guardrails-capacity.md).
+- Legacy redirect stubs that point into `user-docs/`: [usage index](usage.md), [configuration](usage/configuration.md), [gRPC API](usage/grpc-api.md), [HTTP/SSE API](usage/http-sse-api.md), [mecak8s](usage/mecak8s.md), [model routing](usage/model-routing.md), [skills, soul, and user model](usage/skills-soul-usermodel.md).
 
 ---
 

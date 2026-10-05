@@ -146,7 +146,7 @@ expire when the server restarts. Mecatl stores the exact placement privately and
 reattaches it before each run. See
 [Execution environments](/features/execution-environments.md) for the shared
 placement and reattachment model. For the underlying design, see
-[ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
+[ADR 0291](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers
 
@@ -278,7 +278,7 @@ then bounds gaps between chunks without limiting an active turn.
 |`--default-provider`|`""`|Deployment-wide default provider (`openai`, `openrouter`, `anthropic`, `opencode`); validated fail-fast|
 |`--default-model`|`""`|Deployment-wide default model id for the default provider; validated fail-fast|
 |`--subagent-model`|`""`|Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own|
-|`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)|
+|`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0100-provider-prompt-caching.md)|
 |`--anthropic-cache-ttl`|`""` (`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`, API default `5m` elsewhere)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
 |`--mock`|`false`|Offline canned provider with one text turn; smoke tests only|
 |`--mock-script`|`""`|Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns|

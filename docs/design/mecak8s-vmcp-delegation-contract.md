@@ -318,4 +318,4 @@ curl config files throughout, never in process argv or shell history.
 ## See also
 
 - [The fixture this was qualified against](../../deploy/mecak8s-vmcp/README.md)
-- [Design docs index](README.md)
+- Design docs index

@@ -159,7 +159,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **`tool.WorkspaceNamespace`** — an additive POSIX-like namespace-operation extension (`ReadDir`/`Remove`/`Rename`/`CopyFile`) implemented by workspaces that support listing and mutating path names beyond content replacement (memfs, osfs, redisstore, remoteenv; ACP implements it with `Remove`/`Rename` returning `tool.ErrFileOperationUnsupported`). Adds `tool.ErrDirectoryNotEmpty` and `tool.ErrFileOperationUnsupported` sentinels. `Workspace` itself is unchanged; a consumer type-asserts for the new capability. Added (minor).
 
-- **`port.AppendHTTPErrorDisplay`** ([ADR 0309](../docs/adr/0299-safe-http-rejection-display-evidence.md)) — a stdlib-only helper for independently versioned provider modules to append only a validated HTTP(S) request target and bounded opaque correlation ID to a structured HTTP rejection. Added (minor).
+- **`port.AppendHTTPErrorDisplay`** (ADR 0309) — a stdlib-only helper for independently versioned provider modules to append only a validated HTTP(S) request target and bounded opaque correlation ID to a structured HTTP rejection. Added (minor).
 - **Versioned bounded reflection evidence materialization (ADR 0300)** — adds the storage-neutral `learning.MaterializeEvidence` protocol, immutable aggregate manifests, distinct selected-local and durable source coordinates, and closed no-work outcomes. Added (minor).
 
 - **Exact durable-lineage edge selection** — adds optional `RecordID` and `RecordIncarnation` fields to `port.SessionLineageQuery`. Stores return at most the selected direct-edge record without exposing or enumerating sibling records, allowing callers to prove each ancestry hop against both the child's self record and its parent's direct-edge partition. Added (minor).
@@ -175,7 +175,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Unified environment and placement identity** — adds `Revision` and `Valid` to `session.EnvironmentRef`, makes that exact `{Kind, ID, Revision}` value the runtime and durable placement identity, and removes the short-lived duplicate `session.PlacementRef`/`PlacementKind` types. Engine-created Subagent, Parallel, and Team child sessions now persist the identity carried by their `tool.Environment`; `port.ScheduleSpec` and `port.SessionDiscoveryMeta` replace workspace paths with the exact private environment identity, with schedules also retaining their trusted placement scope. Changed (breaking, pre-v1 minor).
 
-- **`agent.Run.RetractPermissionAsk`** ([ADR 0294](../docs/adr/0294-session-correlation-and-affinity.md)) — lets a lease-owning host atomically withdraw one still-pending local permission ask without resolving it, emitting the matching retraction before cancellation while leaving an already-durable awaiting snapshot untouched for successor handoff. Added (minor).
+- **`agent.Run.RetractPermissionAsk`** (ADR 0294) — lets a lease-owning host atomically withdraw one still-pending local permission ask without resolving it, emitting the matching retraction before cancellation while leaving an already-durable awaiting snapshot untouched for successor handoff. Added (minor).
 - **Title metadata revisions** — adds `Session.TitleRevision` and
   `TitlePayload.Revision`: a durable, title-specific monotonic revision that
   advances only for effective title metadata mutations. Added (minor).
@@ -191,9 +191,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Terminal external-authorization resolution value** — `session.AuthorizationResolution` and `session.NewAuthorizationResolution` make pending and unknown statuses unrepresentable at the continuation boundary while preserving `AuthorizationStatus` as the complete event-lifecycle vocabulary. Added (minor).
 
-- **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).
+- **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** (ADR 0281) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).
 
-- **`tool.CommandEnvironmentOverlay`, `tool.CommandEnvironmentRunner`, and `tool.CommandEnvironmentStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — an optional, per-invocation command-environment overlay for host-owned runtime values such as managed temporary storage. The optional capability preserves the existing bound-runner API and namespace affinity: callers that require an overlay must decline honestly when a runner does not implement it, never interpolate environment values into shell text or fall back to an unoverlayed call. Added (minor).
+- **`tool.CommandEnvironmentOverlay`, `tool.CommandEnvironmentRunner`, and `tool.CommandEnvironmentStreamer`** (ADR 0281) — an optional, per-invocation command-environment overlay for host-owned runtime values such as managed temporary storage. The optional capability preserves the existing bound-runner API and namespace affinity: callers that require an overlay must decline honestly when a runner does not implement it, never interpolate environment values into shell text or fall back to an unoverlayed call. Added (minor).
 
 - **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
   durable title-generation lifecycle/source/attempt records, canonical title-model
@@ -272,7 +272,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   applies only within one run/dispatch; shared adapter state reached by concurrent
   runs still requires its own synchronization. Added (minor).
 
-- **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, [ADR 0250](../docs/adr/0250-durable-cursors-and-watch.md)) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
+- **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, ADR 0250) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
 
   It exists because the two read paths the engine shipped cannot express replay-then-follow as one operation. `port.EventLog.Read` is a complete, ordered, durable replay with no position and no follow — it reads the whole log and stops — so catching up and then watching means reading everything and THEN subscribing, and any event appended between those two steps is silently lost. `CursorEventLog.ReadAfter` closes that window: `ReadOptions.Follow` keeps the iterator open at the tail, and `LogRecord.Live` reports the replay/live boundary a follower needs in order to tell a caller it is caught up.
 
@@ -320,15 +320,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   without widening the minimal `SessionStore` or loading transcript content.
   Added (minor).
 
-- **`agent.Run.RunID()`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — reports the run's host-minted identity, or `""` when none was supplied.
+- **`agent.Run.RunID()`** (issue #821, ADR 0249) — reports the run's host-minted identity, or `""` when none was supplied.
 
   It exists so a caller holding a `*Run` can ASK which run it holds instead of inferring it from the session aggregate, and that distinction is load-bearing for stale-control refusal: a control addressed at a specific run must be compared against the run it would ACTUALLY affect, and the aggregate names the session's CURRENT run — which, after a terminal race, is precisely the run the caller did NOT mean.
 
-- **Durable run identity: `session.Event.RunID`, `session.Session.BeginRun`/`RunID`, `agent.RunRequest.RunID`, `sessnap.Snapshot.RunID`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — a run now carries an opaque, host-minted identity that survives restart.
+- **Durable run identity: `session.Event.RunID`, `session.Session.BeginRun`/`RunID`, `agent.RunRequest.RunID`, `sessnap.Snapshot.RunID`** (issue #821, ADR 0249) — a run now carries an opaque, host-minted identity that survives restart.
 
   `agent.RunRequest.RunID` is how a host supplies it. The loop stamps every event it emits with that value at `Run.emit`/`emitOrAbort`, beside the existing `Seq` stamp — so `session.Event.RunID` is populated on every path an event can leave a run by, with no relay, transport, or persistence site able to omit it. `Seq` is monotonic WITHIN a run and restarts each run, so it cannot distinguish two runs of one session; `RunID` is what makes an event attributable to a specific run.
 
-  When `RunRequest.AskIDDiscriminator` is empty, `RunID` also SUPPLIES the ask discriminator. That is the arrangement [ADR 0044](../docs/adr/0044-host-supplied-askid-discriminator.md) described in terms of a run id that did not then exist ("a durable host passes its own RunID"): a durable host now sets ONE field and gets both a stamped identity and cross-process-reconstructable askIDs. `AskIDDiscriminator` is retained and still wins when set explicitly, so the derivation is a default, not a constraint.
+  When `RunRequest.AskIDDiscriminator` is empty, `RunID` also SUPPLIES the ask discriminator. That is the arrangement ADR 0044 described in terms of a run id that did not then exist ("a durable host passes its own RunID"): a durable host now sets ONE field and gets both a stamped identity and cross-process-reconstructable askIDs. `AskIDDiscriminator` is retained and still wins when set explicitly, so the derivation is a default, not a constraint.
 
   `Session.BeginRun`/`RunID` store the value on the aggregate and `sessnap.Snapshot.RunID` persists it (`omitempty`, additive, no format-tag bump — the `Profile`/`ProviderID` precedent). That is what makes an awaiting-approval resume continue THE SAME run across a process restart: `Engine.ResumeApproval` reads the id back off the session rather than minting a new one. The fallback is confined to that seam — a prompt entry never reads it off the session, because a reused session still carries the id of the run that just ended.
 
@@ -336,9 +336,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
   All four additions are **Added = minor**. `Event` and `RunRequest` gain a field, which breaks external UNKEYED struct literals — but both are already routinely constructed keyed, and `Event` is a wide event-payload struct nobody builds positionally.
 
-- **`tool.ReadLedger`, `tool.ErrLedgerUnavailable`** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md)) — the storage-independent, context-aware read-before-write evidence capability selected independently of file content and carried by `tool.Environment`. `RecordRead(ctx, key, version) error` and `RecordedVersion(ctx, key) (version, ok, err)` distinguish a valid recorded token, ordinary absence, and an unavailable/corrupt lookup (`err != nil`). `engine/adapter/memledger` is the in-memory reference implementation; `engine/adapter/ledgerconformance` is the shared behavioral suite every implementation runs. Both additions are **Added = minor**.
+- **`tool.ReadLedger`, `tool.ErrLedgerUnavailable`** (ADR 0298) — the storage-independent, context-aware read-before-write evidence capability selected independently of file content and carried by `tool.Environment`. `RecordRead(ctx, key, version) error` and `RecordedVersion(ctx, key) (version, ok, err)` distinguish a valid recorded token, ordinary absence, and an unavailable/corrupt lookup (`err != nil`). `engine/adapter/memledger` is the in-memory reference implementation; `engine/adapter/ledgerconformance` is the shared behavioral suite every implementation runs. Both additions are **Added = minor**.
 
-- **`tool.EncodeFileVersion`, `tool.DecodeFileVersion`, `tool.ErrInvalidFileVersion`** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md), repair-wave task 05) — a narrow persistence/transport codec for opaque `FileVersion` values. It round-trips valid empty and non-empty tokens byte-exactly while rejecting the invalid zero value. **Added = minor**.
+- **`tool.EncodeFileVersion`, `tool.DecodeFileVersion`, `tool.ErrInvalidFileVersion`** (ADR 0298, repair-wave task 05) — a narrow persistence/transport codec for opaque `FileVersion` values. It round-trips valid empty and non-empty tokens byte-exactly while rejecting the invalid zero value. **Added = minor**.
 
 - **`agent.WithSubagentReadLedgerFactory`, `agent.WithTeamReadLedgerFactory`, `agent.WithTeamToolReadLedgerFactory`** (repair-wave task 05) — inject factories that mint a fresh ledger for every child environment without importing a concrete adapter into `engine/agent`. **Added = minor**.
 
@@ -446,11 +446,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   the internal run baseline now provides that allowance without a reset. Removed is
   breaking (pre-v1 minor) per COMPATIBILITY.md.
 
-- **`learning.AttemptRepository.DiscoverWork`, `learning.AttemptWork{List,Page,Cursor}`, and `learning.MaxAttemptWorkBatch`** ([ADR 0259](../docs/adr/0259-cloud-native-learning.md)) — adds bounded, cursor-paged, storage-neutral discovery of queued attempts and running attempts with expired claims across opaque owner partitions. The cursor is only a disposable scan position and grants no workflow authority. This makes the repository, including a remote driver, the sole worker authority for work admitted after startup and claim-expiry reassignment. Extending the interface is Changed/breaking (pre-v1 a minor bump).
+- **`learning.AttemptRepository.DiscoverWork`, `learning.AttemptWork{List,Page,Cursor}`, and `learning.MaxAttemptWorkBatch`** (ADR 0259) — adds bounded, cursor-paged, storage-neutral discovery of queued attempts and running attempts with expired claims across opaque owner partitions. The cursor is only a disposable scan position and grants no workflow authority. This makes the repository, including a remote driver, the sole worker authority for work admitted after startup and claim-expiry reassignment. Extending the interface is Changed/breaking (pre-v1 a minor bump).
 
-- **`tool.Workspace` loses `RecordRead`/`RecordedVersion`; `tool.Environment` gains a mandatory `ReadLedger()`; `tool.NewEnvironment`/`MustEnvironment` take a new required `ledger ReadLedger` parameter** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md), repair-wave task 05) — completes the read-ledger/content-backend separation the prior entry started: `Workspace` is now a pure content/search/versioned-mutation seam with no read-evidence capability of its own, and the read ledger is instead an independently-selected, mandatory second capability carried on `Environment` alongside `Workspace`. `NewEnvironment(ref, ws, ledger, runner)` / `MustEnvironment(ref, ws, ledger, runner)` replace the three-argument forms (`ledger` inserted before `runner`); a nil `ledger` is rejected with the new `ErrEnvironmentNoReadLedger`, mirroring the existing nil-`Workspace` rejection. The built-in Read/Edit/Write tools now record/consult evidence via `env.ReadLedger()` (keyed with the existing I/O-free `tool.LedgerKey(ws.Root(), path)`), not through the Workspace. Changed/breaking (pre-v1 a minor bump). Every in-tree `Workspace` implementation (osfs, memfs, nofs, the ACP fs-delegation workspace, remoteenv) drops its ledger methods; every `Environment` construction site now supplies an explicit ledger (a fresh `memledger.New()` for a session's default environment; a forked/direct-write child environment gets its OWN fresh ledger over the SAME content backend it was handed, never the parent's).
+- **`tool.Workspace` loses `RecordRead`/`RecordedVersion`; `tool.Environment` gains a mandatory `ReadLedger()`; `tool.NewEnvironment`/`MustEnvironment` take a new required `ledger ReadLedger` parameter** (ADR 0298, repair-wave task 05) — completes the read-ledger/content-backend separation the prior entry started: `Workspace` is now a pure content/search/versioned-mutation seam with no read-evidence capability of its own, and the read ledger is instead an independently-selected, mandatory second capability carried on `Environment` alongside `Workspace`. `NewEnvironment(ref, ws, ledger, runner)` / `MustEnvironment(ref, ws, ledger, runner)` replace the three-argument forms (`ledger` inserted before `runner`); a nil `ledger` is rejected with the new `ErrEnvironmentNoReadLedger`, mirroring the existing nil-`Workspace` rejection. The built-in Read/Edit/Write tools now record/consult evidence via `env.ReadLedger()` (keyed with the existing I/O-free `tool.LedgerKey(ws.Root(), path)`), not through the Workspace. Changed/breaking (pre-v1 a minor bump). Every in-tree `Workspace` implementation (osfs, memfs, nofs, the ACP fs-delegation workspace, remoteenv) drops its ledger methods; every `Environment` construction site now supplies an explicit ledger (a fresh `memledger.New()` for a session's default environment; a forked/direct-write child environment gets its OWN fresh ledger over the SAME content backend it was handed, never the parent's).
 
-- **`FileVersion.Token`** ([ADR 0298](../docs/adr/0298-persistent-read-before-write-ledgers.md), repair-wave task 05) — removed because it exposed an interpretation API for an opaque token. Persistence callers migrate to the added `tool.EncodeFileVersion`/`DecodeFileVersion` codec above. Changed/breaking (pre-v1 a minor bump).
+- **`FileVersion.Token`** (ADR 0298, repair-wave task 05) — removed because it exposed an interpretation API for an opaque token. Persistence callers migrate to the added `tool.EncodeFileVersion`/`DecodeFileVersion` codec above. Changed/breaking (pre-v1 a minor bump).
 
 - **Child workspace-view options** (repair-wave task 05) — `agent.WithSharedChildWorkspace`, `agent.WithTeamSharedBaseWorkspace`, and `agent.WithTeamToolSharedBaseWorkspace` now accept `func(tool.Workspace) tool.Workspace` rather than a root-to-Workspace factory. Base-sharing/direct-write children therefore retain the exact parent content backend through a potentially stricter authority view instead of reconstructing storage from `Workspace.Root()`; composition uses that view to preserve child path-escape containment while the independent read-ledger factory supplies fresh evidence. Changed/breaking (pre-v1 a minor bump).
 
@@ -472,18 +472,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   arguments, or credentials. Adding a field breaks external unkeyed `Event` struct
   literals. Changed/breaking (pre-v1 a minor bump).
 
-- **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
+- **`agent.Run.EnqueueSteer`** (issue #861, ADR 0251) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
 
-- **`session.SteerPayload.Parts`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — adds the committed media parts to the steer echo. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+- **`session.SteerPayload.Parts`** (issue #861, ADR 0251) — adds the committed media parts to the steer echo. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
 - **`agent.Run.EnqueueSteerWithMessageID`**
-  ([ADR 0232](../docs/adr/0232-steer-while-running.md)) adds an enqueue entry
+  (ADR 0232) adds an enqueue entry
   point that stores the client-minted correlation id atomically with the pending
   steer bundle. `EnqueueSteer` remains the id-less compatibility entry point.
   Added (minor).
 
 - **`session.SteerPayload.MessageID`**
-  ([ADR 0232](../docs/adr/0232-steer-while-running.md)) carries the latest
+  (ADR 0232) carries the latest
   contributing steer id as the committed bundle's positional watermark. Adding
   a field to an exported struct breaks external unkeyed literals, so this is
   Changed/breaking (pre-v1 a minor bump).
@@ -500,7 +500,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   for dedicated debug sessions. Adding a field to an exported struct breaks
   external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
-- **`agent.AgentMeta.WritableAuthorityCeiling`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — adds the exported mode-specific managed-authority ceiling used when a fresh named specialist runs with direct write. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+- **`agent.AgentMeta.WritableAuthorityCeiling`** (issue #517, ADR 0242) — adds the exported mode-specific managed-authority ceiling used when a fresh named specialist runs with direct write. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
 - **`agent.SteerOutcome` enum: superseded/slot_full dropped, appended added**
   (issue #512, the landed steer-while-running contract). The round-2/task-13
@@ -543,7 +543,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   change, no Go API change.
 
 - **Agent untrusted-content fencing APIs** (issue #380,
-  [ADR 0241](../docs/adr/0241-governance-fence-ownership.md)) — removed
+  ADR 0241) — removed
   `agent.UntrustedFence`, `agent.WriteUntrustedBlock`, `agent.FenceUntrusted`, and
   `agent.NeutraliseFraming` as part of their clean relocation to governance. This
   is a breaking API change (pre-v1 a minor bump); callers must use the governance
@@ -571,10 +571,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `session.NewDebug`, creating a separate empty-workspace session bound to one
   target session without copying target conversation state. Added (minor).
 
-- **`agent.WithAgentWritableModelEngineFactory`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — a `SubagentOption` factory that rebuilds an unpinned named `mode:"read-write"` specialist on the semantic router's selected model while preserving its specialist scope, direct-write environment, same-provider boundary, and per-definition limits. A declined target falls back to the ordinary writable specialist. Added (minor).
+- **`agent.WithAgentWritableModelEngineFactory`** (issue #517, ADR 0242) — a `SubagentOption` factory that rebuilds an unpinned named `mode:"read-write"` specialist on the semantic router's selected model while preserving its specialist scope, direct-write environment, same-provider boundary, and per-definition limits. A declined target falls back to the ordinary writable specialist. Added (minor).
 
 - **Canonical governance untrusted-content fencing** (issue #380,
-  [ADR 0241](../docs/adr/0241-governance-fence-ownership.md)) —
+  ADR 0241) —
   `governance.UntrustedFence`, `governance.WriteUntrustedBlock`,
   `governance.FenceUntrusted`, `governance.NeutraliseFraming`, and
   `governance.NeutraliseDelegationResult` are the five canonical public APIs for
@@ -621,7 +621,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   so the request edge re-states the rule instead of hand-rolling it; a nil
   principal is not well framed.
 
-- **`agent.WithTeamOwner`** (issue #368, [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) —
+- **`agent.WithTeamOwner`** (issue #368, ADR 0212) —
   a `SupervisorOption` attributing the members of a DIRECTLY server-created team
   to the verified caller that created it. It is ignored for a team created from
   a parent run, where `caps.owner` carries the authoritative inheritance — the
@@ -633,13 +633,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   nil`. The option supplies the OWNER ONLY and must not become a general caps
   channel; the zero-caps posture is otherwise preserved.
 
-- **Atomic session first publication** (issue #368, [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) —
+- **Atomic session first publication** (issue #368, ADR 0212) —
   `port.SessionCreator` is an optional backend capability for atomic create-once
   publication without widening `SessionStore`; collisions wrap
   `port.ErrSessionAlreadyExists` and leave the existing session family unchanged.
   Added (minor).
 
-- **Engine-child lifecycle exclusion** ([ADR 0027](../docs/adr/0027-cloud-native.md)) —
+- **Engine-child lifecycle exclusion** (ADR 0027) —
   `port.SessionLiveness`, `agent.Deps.SessionLiveness`, and
   `agent.WithMemberLiveness` let a host protect engine-owned Subagent, Parallel,
   and Team session lifecycles (including direct `RunTeam` supervisors) from destructive
@@ -648,18 +648,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   distributed exclusion until teardown. Added (minor); the final `Register` contract
   change is classified below.
 
-- **Context-bound session-migration ownership** ([ADR 0230](../docs/adr/0230-redis-migration-atomic-ownership-and-coverage.md)) —
+- **Context-bound session-migration ownership** (ADR 0230) —
   `port.SessionMigrationStore.AcquireSessionMigrationJob` binds the exact
   ownership-checking acquisition to a context required by mutations and durable
   checkpoints. Redis renews and atomically fences that acquisition; jsonlstore
   binds its stable flock through the same coherent port contract. Added (minor).
-- **Resumable session-storage migration** (issue #589, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Resumable session-storage migration** (issue #589, ADR 0226) —
   `port.SessionMigrationStore` and its plan/family/job value objects define an
   optional server-side v1-to-v2 physical-maintenance capability with durable bounded
   progress, sanitized item errors, and a stable job-scoped cross-process exclusion
   around each mutating load-to-checkpoint sequence, without widening `SessionStore`.
   Added (minor).
-- **Retention byte estimates and atomic cleanup** (issue #590, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Retention byte estimates and atomic cleanup** (issue #590, ADR 0226) —
   `port.SessionDiscoveryMeta.EstimatedBytes` lets indexed adapters project a
   content-free deletion estimate to the shared cleanup planner. The optional
   `port.ConditionalPrunableStore` and `SessionDiscoveryMetaEqual` keep durable
@@ -668,18 +668,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   The reference `memstore.WithDeleteFailure` option scripts deterministic offline
   maintenance failures for conformance tests. Added (minor).
 
-- **Bounded session-storage health** (issue #592, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Bounded session-storage health** (issue #592, ADR 0226) —
   `port.SessionStorageHealth`, `SessionStorageHealthProvider`, and explicit
   availability fields let optional backends expose content-free indexed aggregate
   status without widening `SessionStore` or fabricating zero values. Added (minor).
-- **Legacy-session adoption audit labels** (issue #593, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Legacy-session adoption audit labels** (issue #593, ADR 0226) —
   optional `session.Session.Adoption` metadata persists the source relationship and
   caller/source/request-bound retry proof on explicitly adopted main sessions.
   Existing sessions leave the pointer nil. `session.AdoptionMetadata` and its
   nil-preserving `Clone` method are Added (minor); replacing the two inline Session
   fields with the pointer is classified Changed below.
 
-- **Generation-bound session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Generation-bound session metadata continuation** (issue #587, ADR 0226) —
   `port.ErrSessionMetadataCursorRestart` makes stale/filter-mismatched continuation
   explicit, and `PaginateSessionMetadataBound(rows, request, generation string)`
   gives scan-based adapters the same generation and ownership-scope contract as
@@ -690,7 +690,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   memstore, the one adapter that used this helper (the row copy/sort itself stays O(rows) per call either way, so this is not an asymptotic change).
   Added (minor).
 
-- **Shared session-metadata ordering and owner-scope hashing** ([ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Shared session-metadata ordering and owner-scope hashing** (ADR 0226) —
   `port.CompareSessionMetadataOrder` is the one comparator for the pagination
   ordering (`ModifiedAt` DESC, `ID` ASC) that `port`, jsonlstore, and redisstore
   already had to agree on independently; `session.PrincipalScopeHash` is the raw
@@ -709,14 +709,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Authority evaluator port (ADR 0234)** — `governance.CapabilitySet` provides pure monotone narrowing and delegation-hop consumption, while `port.AuthorityEvaluator` carries a provider-neutral authority request and decision contract. `port.AuthorityResource` provides a normalized, workspace-bound local target derived at the execution boundary without forwarding raw arguments. The noop and local set-check reference adapters are available for explicit composition choices. New identifiers are Added (minor).
 
-- **Validated automatic learned-skill activation ([ADR 0224](../docs/adr/0224-validated-automatic-skill-activation.md))** —
+- **Validated automatic learned-skill activation (ADR 0224)** —
   `learning.SkillActivationPolicy` adds the closed validated/evaluated assurance vocabulary and
   `learning.ValidatedSkillActivator` adds an optional atomic repository capability for
   evidence-backed accepted/exact ABSTAIN versions, and `learning.EvaluationError` is the durable,
   non-activatable evaluator-infrastructure marker. New identifiers are Added (minor); the standard
   app's Auto default changes independently while the engine pipeline zero remains evaluated.
 
-- **Configurable learning-trigger policy ([ADR 0114](../docs/adr/0114-configurable-learning-trigger-policy.md))** —
+- **Configurable learning-trigger policy (ADR 0114)** —
   `learning` adds strict sensitivity, scoped signal detection, closed admission
   request/decision/class/reason contracts, pure threshold/always/never policies,
   host-requested provenance, message spans, content-free activity metrics, and
@@ -731,7 +731,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   The new optional interface is Added (minor).
 
 - **Session discovery taxonomy, title provenance, and bounded metadata paging** (issues #471 and #557,
-  [ADR 0217](../docs/adr/0217-session-discovery-continuation.md)) —
+  ADR 0217) —
   `session.SessionKind` / `session.SessionRelationship` define the validated
   main, scheduled, Subagent, Parallel-branch, team-member, and legacy-unknown
   vocabulary. `session.TitleProvenance` records legacy/unknown, first-prompt, or
@@ -745,7 +745,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `port.WithSessionID` and `port.SessionIDFromContext` carry the exact active
   session identity through the existing provider call context without widening
   `LLMRequest`. New exported functions: Added (a minor bump).
-- **Evaluated, versioned agent-owned skills (issue #510, [ADR 0110](../docs/adr/0110-evaluated-agent-owned-skills.md))** — `learning` adds the concrete body-only skill lifecycle, bounded provenance/evaluation/receipt values, owner/partition-aware `SkillRepository` CAS seam (including explicit reject), `SkillDraftInput`, `SkillValidator`, `SkillEvaluator`, and the optional bounded `SkillReceiptRepository` pagination seam with opaque stale-cursor errors. `memskill`, `skillconformance`, and `skillvalidation` provide reference proofs and logical admission checks; `skillmaterialize` provides recoverable proposal-to-draft linkage; `skilllifecycle.Pipeline` applies off/review/auto policy synchronously and its optional `Quarantiner` fail-closes a committed publication error; and `skillfs.AtomicCatalog` publishes immutable live generations without changing the existing snapshot source contracts. Proposal records can explicitly link a deferred procedure to a draft without a memory receipt. New identifiers are Added (minor); existing struct/interface changes are classified below.
+- **Evaluated, versioned agent-owned skills (issue #510, ADR 0110)** — `learning` adds the concrete body-only skill lifecycle, bounded provenance/evaluation/receipt values, owner/partition-aware `SkillRepository` CAS seam (including explicit reject), `SkillDraftInput`, `SkillValidator`, `SkillEvaluator`, and the optional bounded `SkillReceiptRepository` pagination seam with opaque stale-cursor errors. `memskill`, `skillconformance`, and `skillvalidation` provide reference proofs and logical admission checks; `skillmaterialize` provides recoverable proposal-to-draft linkage; `skilllifecycle.Pipeline` applies off/review/auto policy synchronously and its optional `Quarantiner` fail-closes a committed publication error; and `skillfs.AtomicCatalog` publishes immutable live generations without changing the existing snapshot source contracts. Proposal records can explicitly link a deferred procedure to a draft without a memory receipt. New identifiers are Added (minor); existing struct/interface changes are classified below.
 
 - **Verified evidence previews (issue #509)** — `learning.EvidencePreview` exposes the
   bounded canonical projection of a digest-verified message or event while omitting
@@ -753,7 +753,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   content. Added (minor).
 
 - **Durable staged learning proposals and atomic memory convergence (issue #509,
-  [ADR 0109](../docs/adr/0109-staged-learning-proposals.md))** — `engine/learning`
+  ADR 0109)** — `engine/learning`
   adds bounded proposal lifecycle values and the narrow `ProposalRepository` CAS
   seam. `engine/adapter/memproposal` plus shared conformance provide the reference
   store, and `engine/adapter/memorypromotion` provides conservative fact policy,
@@ -763,7 +763,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   struct additions are classified Changed below.
 
 - **Evidence-grounded reflection core (issue #509,
-  [ADR 0109](../docs/adr/0109-staged-learning-proposals.md))** — `engine/learning`
+  ADR 0109)** — `engine/learning`
   adds closed candidate/outcome/signal values, bounded input/outcome validation,
   content-addressed canonical message/event evidence projections, structural signal
   detection, and the storage-neutral `Reflector` seam. `engine/agent` adds
@@ -790,7 +790,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   (minor); additions to existing public structs are classified Changed below.
 
 - **Optional completed-trajectory learning seam** (issue #507,
-  [ADR 0106](../docs/adr/0106-optional-learning-seam.md)) — the new importable
+  ADR 0106) — the new importable
   `engine/learning` package provides the strict `Mode` vocabulary (`off`, `review`,
   `auto`; zero is `off`), an owned `Trajectory` snapshot, and synchronous `Observer`.
   `agent.Deps` gains additive `LearningMode` and `LearningObserver` fields, and
@@ -799,7 +799,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   legacy ID-based `Review` path retains the SessionStore-backed constructor. All are
   new exported identifiers/fields and therefore Added (minor).
 - **Steer-while-running: in-flight operator steer injection** (issue #512,
-  [ADR 0232](../docs/adr/0232-steer-while-running.md)) — a `Run`-scoped,
+  ADR 0232) — a `Run`-scoped,
   single-slot, append-default mutex inbox that the agent loop drains at the
   Step 2a turn boundary (the same provider-legal seam
   `injectBackgroundNotice`/`drainPendingDelivery` use) and records as an
@@ -875,21 +875,21 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   bump).
 
 - **`session.PrincipalFromClaims` and `session.GrantTypeFromClaims`**
-  ([ADR 0206](../docs/adr/0206-oidc-authn-module.md)) — stdlib-only projection
+  (ADR 0206) — stdlib-only projection
   helpers for embedders that verify credentials outside the engine. Projection
   requires non-empty string `iss` and `sub`, preserves strings byte-exactly,
   never fabricates anonymous identity or derives the `system` grant, and keeps
   JWT/OIDC dependencies out of the engine. New exported functions: Added (a
   minor bump).
 - **`session.(*Principal).SameIdentity`** (issue #368,
-  [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) — compares the
+  ADR 0212) — compares the
   immutable `(Issuer, Subject)` owner identity without treating presentation or
   grant metadata as authority. Ownership enforcement uses this single
   projection for callers, resource owners, and explicitly classified system
   actors. A new exported method: Added (a minor bump).
 
 - **Caller-identity labels on the session aggregate** (issue #367,
-  [ADR 0204](../docs/adr/0204-caller-identity-threading.md)) — the joint
+  ADR 0204) — the joint
   field-prep addition for the caller-identity track (`Owner`) and Track C
   (`Authority`), landed together so the generated-surface regeneration is paid
   once:
@@ -927,7 +927,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   silently becoming an aliasing bug. A new exported method: Added (a minor bump).
 
 - **`port.SessionMeta.Owner`** (issue #367,
-  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 4) — the
+  ADR 0204 decision 4) — the
   session owner on the cheap picker projection, so a `MetaLister` listing (which
   skips `Load` entirely) renders the owner column IDENTICALLY to the
   `Load`-per-row fallback instead of leaving it empty on the fast path. Nil for
@@ -935,7 +935,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   unowned, never as somebody else. A new struct field: Added (a minor bump).
 
 - **`session.Event.Actor`** (issue #367,
-  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 5) — the
+  ADR 0204 decision 5) — the
   verified caller a durable-log event is attributed to, so an event read in
   isolation names its actor. It is LOG-ONLY and DERIVE-AT-APPEND: every emit
   site — the agent loop included — leaves it nil (the loop is storage- and
@@ -949,7 +949,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   minor bump).
 
 - **`port.ScheduleSpec.Owner`** (issue #367,
-  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 6) — the
+  ADR 0204 decision 6) — the
   verified caller a schedule is attributed to, captured ONCE at create time and
   never derived at fire time (retention sweeps the origin session while the
   schedule lives on, so a fire-time lookup would read a session that no longer
@@ -960,7 +960,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Added (a minor bump).
 
 - **`session.WithPrincipal` / `session.PrincipalFromContext`** (issue #367,
-  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 2) — the
+  ADR 0204 decision 2) — the
   context seam the verified caller rides on. No port interface gains a principal
   parameter; the principal travels in the `context.Context` under an unexported
   empty-struct key. Absent identity reads back as a nil `*Principal`, never a
@@ -1479,19 +1479,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
-- **`port.SessionLiveness.Register` lifecycle acquisition** ([ADR 0027](../docs/adr/0027-cloud-native.md)) —
+- **`port.SessionLiveness.Register` lifecycle acquisition** (ADR 0027) —
   `Register` now accepts the lifecycle context and cancellation function and returns
   an error, allowing a host to acquire distributed exclusion before a child becomes
   runnable and cancel it on renewal loss. This breaks external implementations and
   is classified Changed for a pre-v1 minor bump.
 
-- **Session migration job exclusion** (issue #589, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Session migration job exclusion** (issue #589, ADR 0226) —
   `port.SessionMigrationStore` adds `LockSessionMigrationJob`, requiring optional
   migration adapters to hold stable cross-process job exclusion around every mutating
   load-to-checkpoint sequence. The interface addition is breaking for external
   implementations and is classified Changed for a pre-v1 minor bump.
 
-- **Session discovery byte estimate** (issue #590, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Session discovery byte estimate** (issue #590, ADR 0226) —
   `port.SessionDiscoveryMeta` adds `EstimatedBytes`. Keyed literals remain source
   compatible; external unkeyed literals are breaking, so this is Changed for a
   pre-v1 minor bump.
@@ -1502,7 +1502,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   layout while preserving the same persisted labels. The field replacement is
   breaking for external literals and classified Changed for a pre-v1 minor bump.
 
-- **Opaque session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+- **Opaque session metadata continuation** (issue #587, ADR 0226) —
   `port.SessionMetadataCursor` retains neutral ordering, generation, and ownership-scope
   bindings while replacing the storage-specific numeric position with an opaque
   pager-owned `Continuation`. Jsonlstore privately encodes and validates its direct
@@ -1537,13 +1537,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   This changes the existing exported type and `RestoreLabels` argument, so it is
   breaking under the compatibility contract.
 
-- **Learning trajectory current-run metadata ([ADR 0114](../docs/adr/0114-configurable-learning-trigger-policy.md))** —
+- **Learning trajectory current-run metadata (ADR 0114)** —
   `learning.Trajectory` adds `Kind`, `Counters`, and `Current`. The fields are
   additive for keyed literals but breaking for external unkeyed literals; classified
   Changed for a pre-v1 minor bump.
 
 - **Session taxonomy and title-provenance fields on existing structs** (issues #471 and #557,
-  [ADR 0217](../docs/adr/0217-session-discovery-continuation.md)) —
+  ADR 0217) —
   `session.Session.Kind`, `session.Session.Relationship`, and
   `session.Session.TitleProvenance` and `port.SessionDiscoveryMeta.TitleProvenance` are
   additive for keyed literals but breaking for external unkeyed literals. The required
@@ -1618,7 +1618,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   under the pre-v1 policy it ships in a minor bump. See ADR 0208.
 
 - **Schedule-origin binding is now run-context attribution**
-  ([ADR 0209](../docs/adr/0209-schedule-origin-run-context.md)) — removed the
+  (ADR 0209) — removed the
   exported `agent.OriginBinder` interface, `agent.Deps.OriginBinder` field,
   `agent.SessionOriginScheduleManager` (its constructor and all ten methods), and
   the `BindSessionOrigin` method that type carried. `Engine.Run` stamps the
@@ -2114,7 +2114,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   falling back to `Content`. Typed content rides `EvToolResult.ToolResult`, so
   `engine/adapter/eventsource` (`Fold`) reconstructs it from the durable log with
   no relay sidecar. Classified Added per COMPATIBILITY.md (a new struct field is a
-  minor bump). (#223, [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
+  minor bump). (#223, ADR 0078)
 
 - **`session.Content` block-kind generalization** — the existing `Content` gains a
   `BlockKind` discriminator plus block variants (`BlockText`/`BlockImage`/
@@ -2124,7 +2124,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   A legacy media part (`BlockKind == ""`, the user-message media shape) is distinct
   from a tool-result block. Classified Added per COMPATIBILITY.md (additive fields
   + consts + constructors). (#223,
-  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
+  ADR 0078)
 
 - **`port.RouteToolResultParts`** — a pure composition-driven projection that
   returns the capability-gated subset of a recorded `session.ToolResult.Parts`
@@ -2142,7 +2142,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   projection that drops every block) returns nil so the caller degrades to the
   recorded model-facing `Content` string. Classified Added per COMPATIBILITY.md
   (a new exported function is a minor bump). (#223,
-  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
+  ADR 0078)
 
 - **`FetchMcpResource` tool** (registered in `internal/adapter/tools`, NOT an
   `engine/` exported API — recorded here for completeness) — the model-facing
@@ -2154,7 +2154,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `toolkit.MaxOutputBytes`; binary content is summarized. The model sees the
   `resource_link` REFERENCE, never auto-fetched raw bytes. No `engine/` exported
   surface change. (#223,
-  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
+  ADR 0078)
 
 - **Wire: `ContentBlock` proto message + `ToolResult.blocks`/`structured_content`
   fields.** The gRPC `ToolResult` proto mirrors the additive domain `Parts` field
@@ -2163,7 +2163,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Additive — legacy clients/sessions round-trip with empty `blocks`. (This is a
   `contracts/gen` wire change, not an `engine/` exported-API change; recorded
   here as the wire half of #223.) (#223,
-  [ADR 0078](../docs/adr/0078-mcp-typed-tool-results.md))
+  ADR 0078)
 
 - **`session.ValidateResolvedIP`** — a new exported func
   (`func ValidateResolvedIP(ip net.IP) error`) re-exporting the dial-layer SSRF
@@ -2233,7 +2233,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   All three are classified Added per COMPATIBILITY.md (a new struct field is a
   minor bump; a new optional interface is a minor bump). The engine stays generic —
   the new surfaces carry NO guardrail vocabulary. See
-  [ADR 0062](../docs/adr/0062-guardrails-approve-once.md). (guardrail-approve-once)
+  ADR 0062. (guardrail-approve-once)
 
 ## [0.2.0] - 2026-06-25
 
@@ -2247,7 +2247,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   composition). It is round-tripped by the `sessnap` snapshot and the
   `eventsource` fold so a restarted process re-mints the same-effort per-session
   engine. Classified Added per COMPATIBILITY.md (a new exported struct field).
-  See [ADR 0055](../docs/adr/0055-reasoning-effort.md). (reasoning-effort)
+  See ADR 0055. (reasoning-effort)
 
 - **`session.HookAdvisory`.** A new `HookDecision` value (`"advisory"`) for an
   `EvHook` carrying an advisory guardrail finding — client-visible (rendered as
@@ -2451,12 +2451,12 @@ surface.
 
 - The engine became its own Go module, `github.com/stacklok/mecatl/engine`,
   importable independently of the host repo (monorepo via `go.work`). (#113,
-  [ADR 0036](../docs/adr/0036-engine-module.md))
+  ADR 0036)
 - A public API stability contract for the seven core packages: this CHANGELOG,
   [COMPATIBILITY.md](./COMPATIBILITY.md), the committed text snapshots under
   [`engine/api/`](./api/), and the `api-compat` freshness gate that fails CI on
   an unflagged change to the exported surface. (#114,
-  [ADR 0037](../docs/adr/0037-engine-stability-contract.md))
+  ADR 0037)
 - `engine/adapter/eventsource` reference fold (event-sourced `SessionStore.Load`
   rehydration): `Fold` reconstructs a `*session.Session` from a `port.EventLog`
   stream plus out-of-band creation metadata (`SessionMeta`), for hosts whose system
@@ -2464,7 +2464,7 @@ surface.
   guarded-surface change) and ships with the documented reconstruction contract in
   [COMPATIBILITY.md](./COMPATIBILITY.md) (the only residual limitation is the
   provider-private `Reasoning`/`ProviderPhase`/`ItemID` replay fields). (#115,
-  [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md))
+  ADR 0038)
 - `session`: `EvUserPrompt` event (+ `UserPromptPayload` + `Event.UserPrompt`). The
   durable event log now records the user-role messages the loop adds — the genuine
   client prompt and the harness-authored synthetic continuations (nudges/notices) —
@@ -2472,7 +2472,7 @@ surface.
   show what the user asked" gap, ADR 0027 row 11). It is LOG-ONLY: the relay appends
   it and skips it on the live client wire (the EvApproval/EvCompactionArchive
   precedent; wire `type` string passthrough, no proto enum). (#115,
-  [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md))
+  ADR 0038)
 
 ### Hygiene
 

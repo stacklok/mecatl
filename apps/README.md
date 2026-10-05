@@ -23,8 +23,8 @@ one self-contained pnpm workspace (pnpm 12.4.2, Node 24, see `package.json`):
 | `contracts/` (`@mecatl-studio/contracts`) | Zod schemas, the generated `openapi.json`, and the generated Hey API / TanStack Query client. Generated files are committed and drift-gated.                        |
 
 The design and its rationale are in
-[ADR 0351](../docs/adr/0351-mecatl-studio-in-repo-web-ui.md); the acceptance contract is
-[docs/acceptance/studio-bootstrap.md](../docs/acceptance/studio-bootstrap.md); the
+ADR 0351; the acceptance contract is
+docs/acceptance/studio-bootstrap.md; the
 architecture guide has a [Mecatl Studio](../docs/architecture.md#mecatl-studio) section.
 Two rules from the ADR shape everything here:
 

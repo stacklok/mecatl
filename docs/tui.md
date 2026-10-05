@@ -12,7 +12,7 @@ answers the user's task, but add them only when they help someone discover a
 non-obvious action, avoid a consequential mistake, or recover from a problem.
 Don't copy every overlay action or implementation detail into public docs. Keep
 feature-specific behavior in its owning code and tests; keep decision rationale
-in ADRs. Follow the [documentation change review](development-process.md#documentation-change-review)
+in ADRs. Follow the documentation change review
 when deciding whether either page needs an update.
 
 ## Client boundary

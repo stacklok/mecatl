@@ -141,7 +141,7 @@ without enforcement, owner comparisons are omitted. `delegation` projects typed 
 pruned children remain visible only as content-free tombstones, including across same-ID
 recreation, and retained child
 transcripts are read through revalidated scope handles. This keeps unrelated session IDs
-unprobeable and makes retention gaps explicit ([ADR 0258](../adr/0258-cryptographic-session-incarnations.md)).
+unprobeable and makes retention gaps explicit (ADR 0258).
 
 **Background Shell jobs ride the same registry as a NON-delegation family**
 (`docs/adr/0201-background-bash.md`). A `background: true` call on the `Shell`

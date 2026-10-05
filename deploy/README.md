@@ -109,7 +109,7 @@ authenticates callers, and neither substitutes for the other. Edge mode leaves a
 backend whose caller bearer tokens cross the pod network in cleartext — restricting
 reachability to the gateway or mesh is the control that matters, and the chart ships no
 NetworkPolicy to do it. The full operator contract, and what the chart deliberately does
-not create, is [ADR 0278](../docs/adr/0278-mecak8s-edge-terminated-tls.md).
+not create, is ADR 0278.
 
 The `oidc.*` values turn on **caller identity and
 ownership isolation** for the mecak8s agent: a real IdP authenticates each

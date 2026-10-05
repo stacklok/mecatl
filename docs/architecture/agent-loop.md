@@ -81,7 +81,7 @@ The loop terminates the session in exactly one of `Complete`/`Stop`/`Cancel`/
 `Fail` and emits exactly one terminal `result` event carrying cumulative usage.
 The `result` payload includes typed retry disposition and stream-progress facts.
 A `permanent` disposition identifies a provider rejection for which replaying the
-same request cannot help ([ADR 0239](../adr/0239-semantic-stream-retry.md)). A
+same request cannot help (ADR 0239). A
 session recovered after such a failure emits a one-time `recover_notice` advisory
 before the first turn.
 
@@ -206,7 +206,7 @@ arguments or credentials. Composition chooses one evaluator at startup:
 
 A Cedar policy cannot grant a capability absent from the carried set. An
 unavailable evaluator is a distinct fail-closed execution error, not an implicit
-switch to `noop`. See [ADR 0234](../adr/0234-authority-evaluator-port.md) for
+switch to `noop`. See ADR 0234 for
 the decision; operator configuration is documented in the public permissions
 guide.
 
@@ -270,9 +270,9 @@ keyed by session id so the verdict reaches the right run
 ## Plan-approval gate
 
 Plan mode (`session.ModePlan`) gains a structured approval gate
-([ADR 0069](../adr/0069-plan-approval-gate.md)) that reuses the permission-ask
+(ADR 0069) that reuses the permission-ask
 machinery above. The shape is the same as the guardrail approve-once
-([ADR 0062](../adr/0062-guardrails-approve-once.md)): a tool call refined into an
+(ADR 0062): a tool call refined into an
 askable ask, a serialized provenance marker, and a verdict tail.
 
 - **The PresentPlan signalling tool** (`engine/agent/presentplan.go`
@@ -337,7 +337,7 @@ askable ask, a serialized provenance marker, and a verdict tail.
 ## Steer-while-running
 
 A **steer** is an operator-supplied message injected into an *in-flight* run
-(issue #512, [ADR 0232](../adr/0232-steer-while-running.md)): it takes effect at
+(issue #512, ADR 0232): it takes effect at
 a turn boundary after the current streamed response and its tool batch settle —
 never mid-stream, never aborting an in-flight model call — and enters through
 gRPC `Converse` controls or unary HTTP controls. The pieces:
@@ -364,7 +364,7 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   `RecordUserPromptWithParts` (plus the log-only `EvUserPrompt`), persisted, then
   echoed to the client as `EvSteer` carrying the committed text and media parts —
   the engine is the sole authority on what landed. This multimodal extension is
-  specified by [ADR 0251](../adr/0251-multimodal-steer.md).
+  specified by ADR 0251.
 - **Capability gate.** `ServerCapabilities.steer` says the multimodal inbox is
   enabled. Mecatui uses native steer when it is true and otherwise retains all
   mid-run text and media in its local merge queue; this supports runtime feature
@@ -422,7 +422,7 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   drain, enqueue, and projection ordering.
 - **Fidelity.** The inbox is in-memory and best-effort: a pending (un-drained)
   steer is lost with its run on a crash — reset-by-design, inventoried in
-  [ADR 0027](../adr/0027-cloud-native.md) (List 1 / List 2). Only a steer that
+  ADR 0027 (List 1 / List 2). Only a steer that
   reached a boundary and was recorded survives, as ordinary conversation
   history.
 
@@ -430,7 +430,7 @@ Awaiting-ask runs hold the steer parked: the loop is suspended in
 `PauseForApproval`, and the resumed run's first Step 2a drains it (the steer is
 purely additive — the ask still requires an explicit verdict). Steer-to-child
 (subagent / team / parallel) and ACP steer are deferred (ADR 0232). HTTP steer
-is specified by [ADR 0252](../adr/0252-http-steer-endpoint.md).
+is specified by ADR 0252.
 
 ## Follow-on reading
 

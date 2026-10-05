@@ -138,7 +138,7 @@ the values file if you need a fixed name.
 |Session ownership|Kubernetes Leases|
 |Filesystem|No filesystem access|
 |Network binds|Pod network on `0.0.0.0`|
-|Metrics and OpenTelemetry|Opt-in|
+|[Metrics and OpenTelemetry](../what-you-get/observability.md)|Opt-in|
 
 Project-provided instructions, skills, agents, and read-only child Shell access
 still require explicit project trust. `mecak8s` does not include ACP, local
@@ -1279,7 +1279,7 @@ the operator's log.
 
 Client-certificate (mTLS) authentication is **not supported**: the shared
 `toolhive-core/redisconn` connection layer cannot express it
-([ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-secure-external-redis.md)),
+([ADR 0233](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0233-secure-external-redis.md)),
 and it is tracked upstream at
 [toolhive-core#240](https://github.com/stacklok/toolhive-core/issues/240).
 

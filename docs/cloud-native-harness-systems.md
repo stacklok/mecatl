@@ -2,7 +2,7 @@
 
 *Status: speculative scoping only. Nothing in this doc is a committed direction, a
 design decision, or implemented. It exists to name questions worth exploring later,
-not to answer them. Not a design record under [ADR 0002](adr/0002-documentation-lifecycle.md)
+not to answer them. Not a design record under ADR 0002
 (no frozen decision to supersede) — closer in kind to
 [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md)'s strawman status,
 one level more speculative still.*
@@ -12,7 +12,7 @@ one level more speculative still.*
 Two things this doc could have covered are deliberately left out because real work
 already resolved them:
 
-- **Session / event state.** [ADR 0027 — Cloud-native arc](adr/0027-cloud-native.md)
+- **Session / event state.** ADR 0027 — Cloud-native arc
   (Accepted, Phases 0–5 shipped) closes the session/event-state gaps: a durable
   event log (`port.EventLog`), non-destructive compaction, verdict replay, mid-turn
   awaiting-approval evict/rehydrate, and cross-process single-writer leasing
@@ -20,7 +20,7 @@ already resolved them:
 - **Resource-lifetime management.** ADR 0027 also directly answers "does
   resource-lifetime management earn a seam yet?" (not yet; a trip-wire condition is
   recorded for when to revisit) — so it isn't repeated here as an open question.
-- **A concrete demonstration.** [ADR 0048 — mecak8s](adr/0048-mecak8s.md) (shipped
+- **A concrete demonstration.** ADR 0048 — mecak8s (shipped
   MVP) is the k8s-native proof of these properties: a storage-free agent binary, a
   Redis-backed `port.SessionStore`/`port.EventLog`/`port.PrunableStore` adapter, and
   a kind-based e2e proof of multi-replica disposability.
@@ -41,7 +41,7 @@ assumption breaks: the filesystem, the forker, and the runner all need to resolv
 the *same bytes* without transiting them through the harness process.
 
 This is confirmed still unresolved: the driver protocol
-([ADR 0005 — driver seams](adr/0005-driver-seams.md)) shipped a gRPC driver for
+(ADR 0005 — driver seams) shipped a gRPC driver for
 every other stateful port (sessions, memory, skills, soul, agent defs, commands),
 and deliberately left the workspace/FS driver as a **proto sketch only**
 (`WorkspaceService` in `docs/adr/0005-driver-seams.md`) — because it breaks the
@@ -137,7 +137,7 @@ forks), proving the interface is genuinely swappable. Merge-back is **not**
 hardwired to discard across the board any more: a diff-apply `tool.EnvironmentMerger`
 (`internal/adapter/forker.Merger`, wrapped in a process-wide `SerializingMerger`)
 promotes a preserved fork's changes into the parent, default-on when wired
-([ADR 0039](adr/0039-parallel-auto-merge.md)) — but it is scoped narrowly, to
+(ADR 0039) — but it is scoped narrowly, to
 Parallel's single-branch fast path (`join=first`/`join=judge`, exactly one
 branch), and it only ever does one strategy: apply the fork's `git diff HEAD` and
 fail loud on conflict (no force, no three-way merge). Every other fork path still
@@ -145,8 +145,8 @@ discards: Team members and multi-branch Parallel fan-out stay read-only-by-desig
 specifically to dodge the merge-conflict problem, and the writable Subagent
 (`mode:"read-write"`) deliberately bypasses forking altogether — it edits the
 parent tree directly during the run, no fork and no merge involved
-([ADR 0077](adr/0077-direct-write-subagent.md), which superseded an earlier
-fork-and-merge design for it in [ADR 0040](adr/0040-writable-subagent-and-serialized-merge.md)).
+(ADR 0077, which superseded an earlier
+fork-and-merge design for it in ADR 0040).
 
 - **A menu of sharing policies**, chosen per child, is the richer model: (a) a
   descoped read-only view of a subtree (bind-mount / 9P-attach style, no merge
@@ -263,7 +263,7 @@ diagnostics, MCP federation, and the clock are each already a clean, narrow
 interface met by an adapter only in composition. Distributing any of them is "wrap
 it in an RPC client/server," proven out by the driver-seams arc doing exactly that
 for sessions, memory, and the skill/soul/agent/command sources
-([ADR 0005](adr/0005-driver-seams.md)). None of them need scoping work; nothing to
+(ADR 0005). None of them need scoping work; nothing to
 track here.
 
 ## Where this leaves it
@@ -272,7 +272,7 @@ In priority order, if any of this is picked up:
 
 1. **The shared-handle problem (§1)** is the architectural crux — it gates the
    filesystem, the forker, and the command runner all at once, and the workspace/FS
-   driver sketch in [ADR 0005](adr/0005-driver-seams.md) is the natural place to
+   driver sketch in ADR 0005 is the natural place to
    spike it.
 2. **The two domain-logic touch points (§4)** are small, concrete, and don't
    require the shared-handle problem to be solved first — either could be picked up
@@ -286,10 +286,10 @@ In priority order, if any of this is picked up:
 
 - [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md) — the kit
   definition this doc's open threads eventually feed, if pursued.
-- [`docs/adr/0027-cloud-native.md`](adr/0027-cloud-native.md) — the shipped arc that
+- `docs/adr/0027-cloud-native.md` — the shipped arc that
   resolved the session/event-state questions this doc doesn't cover; also where
   "does resource-lifetime management earn a seam" was directly answered.
-- [`docs/adr/0048-mecak8s.md`](adr/0048-mecak8s.md) — the concrete k8s-native
+- `docs/adr/0048-mecak8s.md` — the concrete k8s-native
   demonstration of the properties this whole line of thinking is in service of.
-- [`docs/adr/0005-driver-seams.md`](adr/0005-driver-seams.md) — the driver protocol
+- `docs/adr/0005-driver-seams.md` — the driver protocol
   arc; its still-sketch-only `WorkspaceService` is where §1's spike would land.

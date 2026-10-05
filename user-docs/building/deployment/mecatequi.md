@@ -267,7 +267,7 @@ There is no login or refresh flow. See
 
 `mecatequi` can push metrics and traces to an OTLP collector and flush them
 before exit. Telemetry is off when both endpoint flags are empty. See
-[ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)
+[ADR 0098](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0098-headless-telemetry.md)
 and [Key flags](#key-flags).
 
 |Flag|Default|Notes|

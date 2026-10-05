@@ -131,8 +131,8 @@ the reviewed session, including a worker session, and merged during the dispatch
 ordered drain. The main-session path-escape pre-check returns its usage with the
 permission decision; the Engine records each evaluation while the owning run remains
 active. Results completed after session ownership is lost are dropped rather than
-replayed or persisted through a stale owner. See [ADR 0363](../adr/0363-contextual-investigative-guardrails.md)
-and [ADR 0371](../adr/0371-contextual-guardrail-usage-accounting.md).
+replayed or persisted through a stale owner. See ADR 0363
+and ADR 0371.
 
 ## Prerequisites
 

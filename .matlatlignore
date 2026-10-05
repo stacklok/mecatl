@@ -37,8 +37,7 @@ e2e/fixtures/
 # only LOOKS like a markdown link, and the files are navigationally isolated — so
 # leaving them in the corpus only adds a spurious broken-link + orphan that block
 # `check --strict`. The operator-facing prose lives in
-# user-docs/building/deployment/mecatequi.md; the design rationale stays in
-# docs/adr/0028-mecatequi.md.
+# user-docs/building/deployment/mecatequi.md.
 .github/mecatequi/
 
 # GitHub issue and pull-request templates are rendered by GitHub rather than read
@@ -59,12 +58,3 @@ website/CLAUDE.md
 # Exclude both the committed reports and their ignored comparison copies.
 sdk/typescript/etc/*.api.md
 sdk/typescript/.api-extractor-temp/
-
-# docs/superpowers/{plans,specs}/ are the SDD (spec-driven-development) workflow's
-# committed historical record of a feature's implementation plan and design spec —
-# a point-in-time process artifact analogous to review-*.md/handoff-*.md above, not
-# navigational product documentation. They are intentionally standalone (no inbound
-# or outbound doc links); the decisions they record land in a proper docs/adr/ entry
-# instead, which DOES stay in the corpus. Left in, each new plan/spec adds a fresh
-# orphan/unreachable pair that blocks `check --strict`.
-docs/superpowers/

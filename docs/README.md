@@ -21,8 +21,8 @@ not restate it.
 - [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, and operator/library routes).
 - [`architecture.md`](architecture.md) — the living architecture reference.
 - [Public documentation](../user-docs/intro.md) — canonical user-facing guidance and reference.
-- [`adr/README.md`](adr/README.md) — the frozen ADR index (the *why* archive).
-- [ADR 0215](adr/0215-openai-subscription-manual-token.md) — the landed,
+- `adr/README.md` — the frozen ADR index (the *why* archive).
+- ADR 0215 — the landed,
   experimental `openai-codex` capability and its private-backend boundary.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent
   protocol for remote access to files, folders, and callable actions over

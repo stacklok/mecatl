@@ -87,7 +87,7 @@ backend identity ref (`env.Ref()`). File-system tools obtain the Workspace and l
 the Shell tool obtains the runner and surfaces `ErrNoShell` when it is nil.
 `Workspace` scopes all paths to one root, rejects escapes, exposes the read/search
 surface, and carries the versioned content-mutation protocol from
-[ADR 0208](../adr/0208-execution-environment.md). It exposes no ledger operation.
+ADR 0208. It exposes no ledger operation.
 `ReadVersion` returns content plus an opaque `FileVersion`; the narrow persistence
 codec rejects an invalid zero version while preserving valid empty opaque tokens.
 Agent-facing Read records the exact version in `env.ReadLedger()` under the I/O-free
@@ -106,7 +106,7 @@ child-authority Workspace view; storage is never reconstructed from `Root()`. Re
 durable ledger as one validated hash per session, borrowing the Store lifecycle; both
 canonical session-deletion scripts remove it atomically with the other sidecars, and
 `DeleteReadLedger` remains an idempotent ledger-only reset. It is not wired as the
-production default. See [ADR 0298](../adr/0298-persistent-read-before-write-ledgers.md).
+production default. See ADR 0298.
 Restarting the process loses in-memory overrides; a restarted session
 re-derives its Environment through the same rehydration path (no-fs profile,
 ACP adapter reconnect). As of ADR 0214, `EnvironmentRef` is a DURABLE snapshot
@@ -140,19 +140,19 @@ deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
 `CommandRunner` (output-capped, context-bounded, process-group-killed on
 cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
 shell-less deployment simply omits Shell, and an OS sandbox would wrap this seam.
-[ADR 0211](../adr/0211-execution-environment-runtime-seam.md) implements the
+ADR 0211 implements the
 runtime seam: a coding agent runs in an execution environment (`tool.Environment`)
 whose `Workspace`, separately selected `ReadLedger`, and bound `CommandRunner` address one namespace and evidence scope. The
 `tool.Environment` carries identity (`session.EnvironmentRef`) plus those three
 capabilities; the forker/merger are `tool.EnvironmentForker`/
 `tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
 governance remains outside. `EnvironmentRef` is an in-process identity in phase 2
-— snapshot persistence and remote transport are deferred to phase 3. [ADR 0214](../adr/0214-environment-persistence.md)
+— snapshot persistence and remote transport are deferred to phase 3. ADR 0214
 implements the phase-3 persistence/reattachment half: `EnvironmentRef` is a durable
 snapshot field, and `server.Config.EnvironmentResolver` reattaches a live
 `Environment` for a non-in-tree Kind (the `internal/adapter/remoteenv` reference
 fake proves the contract). The
-version-aware file-mutation foundation is [ADR 0208](../adr/0208-execution-environment.md).
+version-aware file-mutation foundation is ADR 0208.
 
 The production microVM adapter places execution in one repository-scoped VM generation
 per authenticated local operator and canonical Git common directory. Sessions and isolated
@@ -208,7 +208,7 @@ same spawn/wait tail as `Run`; a runner without it declines background calls
 honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail
 ring (`engine/agent/tailbuffer.go`), so `ShellStatus` shows the RECENT output a
 head-capped capture would have lost. See
-[ADR 0201](../adr/0201-background-bash.md) and
+ADR 0201 and
 [subagents & teams](subagents-and-teams.md) for the registry family mechanics.
 
 ## Prerequisites

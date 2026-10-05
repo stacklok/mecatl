@@ -2,7 +2,7 @@
 
 Date: 2026-09-15
 
-This report supports AC6.5 of the [contextual guardrails acceptance plan](../acceptance/contextual-guardrails.md). It records implementation calibration, not a public configuration contract or a checker-model efficacy claim. All workloads were synthetic and offline; no production content, provider route, model call, token price, or invented dollar estimate was used.
+This report supports AC6.5 of the contextual guardrails acceptance plan (see [hooks and guardrails](../architecture/hooks-and-guardrails.md)). It records implementation calibration, not a public configuration contract or a checker-model efficacy claim. All workloads were synthetic and offline; no production content, provider route, model call, token price, or invented dollar estimate was used.
 
 ## Selected finite capacities
 

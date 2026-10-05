@@ -72,7 +72,7 @@ tasks:
       # mecatequi: the single-shot, headless CI/batch runner (one prompt -> diff +
       # summary JSON + optional durable event log -> exit code).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatequi ./cmd/mecatequi
-      # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
+      # mecak8s: the storage-free, k8s-native agent binary (a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
       # Optional native Kubernetes execution provider and its fixed workload helper.
@@ -85,13 +85,13 @@ tasks:
       - cd internal/adaptersupport && go build ./...
       - cd contracts/gen/go/mecatl/driver && go build ./...
       - cd adapters && go build ./...
-      # authn/oidc is the opt-in caller-identity adapter module (ADR 0206),
+      # authn/oidc is the opt-in caller-identity adapter module,
       # separate from both the dependency-free engine and provider modules.
       - cd authn/oidc && go build ./...
-      # environment/microvm is the opt-in local microVM runtime module (ADR 0367).
+      # environment/microvm is the opt-in local microVM runtime module.
       # It remains isolated from the root and engine dependency graphs.
       - cd environment/microvm && go build ./...
-      # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each its
+      # provider/ holds the opt-in LLM-provider Go submodules, each its
       # own module under the workspace. Building them here keeps the importable
       # adapters compiling alongside the binaries.
       - cd provider/ssefilter && go build ./...
@@ -115,7 +115,7 @@ tasks:
     desc: |
       The api-compat gate — fail if the engine module's public API surface (the
       seven core packages) drifts from the committed engine/api/*.txt snapshots.
-      See engine/COMPATIBILITY.md + ADR 0037. (Also runs under `task test` via ./...)
+      See engine/COMPATIBILITY.md. (Also runs under `task test` via ./...)
     cmds:
       - go test ./internal/apicheck
 
@@ -189,7 +189,7 @@ tasks:
       - ko resolve -f deploy/
 
   ko:build:k8s:
-    desc: Build the mecak8s image locally with ko (ADR 0048; no push; tagged under ko.local)
+    desc: Build the mecak8s image locally with ko (no push; tagged under ko.local)
     env:
       KO_DOCKER_REPO: ko.local
       VERSION: "{{.BUILD_ID}}"
@@ -197,7 +197,7 @@ tasks:
       - ko build --local --bare ./cmd/mecak8s
 
   ko:publish:k8s:
-    desc: Build and push the mecak8s image with ko (ADR 0048; honours KO_DOCKER_REPO)
+    desc: Build and push the mecak8s image with ko (honours KO_DOCKER_REPO)
     env:
       VERSION: "{{.BUILD_ID}}"
     cmds:
@@ -631,7 +631,7 @@ tasks:
 
   e2e:k8s:
     desc: |
-      Run the kind-based k8s e2e suite (e2e/k8s/, build tag kind_e2e, ADR 0048).
+      Run the kind-based k8s e2e suite (e2e/k8s/, build tag kind_e2e).
       Spins a real kind cluster with a Redis StatefulSet + two storage-free
       mecak8s agent replicas and asserts lease exclusion, graceful failover,
       session persistence, and OIDC caller identity against an in-cluster Dex.
@@ -760,7 +760,7 @@ tasks:
       Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
       every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
       rendered manifests (default + oidc.enabled=true), and assert the
-      caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
+      caller-identity boundaries. Needs helm + kubeconform; needs NO
       cluster, so it runs in CI and on a laptop.
     vars:
       PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
@@ -988,7 +988,7 @@ tasks:
       - cd environment/microvm && go test -race -coverprofile=../../coverage/environment-microvm.out -covermode=atomic ./...
       - go tool cover -func=coverage/environment-microvm.out
       - go tool cover -html=coverage/environment-microvm.out -o coverage/environment-microvm.html
-      # provider/ submodules (ADR 0093) — sibling profiles per module.
+      # provider/ submodules — sibling profiles per module.
       - cd provider/ssefilter && go test -race -coverprofile=../../coverage/provider-ssefilter.out -covermode=atomic ./...
       - cd provider/anthropic && go test -race -coverprofile=../../coverage/provider-anthropic.out -covermode=atomic ./...
       - cd provider/openai && go test -race -coverprofile=../../coverage/provider-openai.out -covermode=atomic ./...
@@ -1021,7 +1021,7 @@ tasks:
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd integration/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      # provider/ submodules (ADR 0093) — each its own module; sharing the ROOT
+      # provider/ submodules — each its own module; sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
@@ -1058,7 +1058,7 @@ tasks:
       # Opt-in OIDC and microVM modules: independently scan their sensitive closures.
       - cmd: set -o pipefail; cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
       - cmd: set -o pipefail; cd environment/microvm && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
-      # provider/ submodules (ADR 0093) — each its own module; scan against its
+      # provider/ submodules — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
       - cmd: set -o pipefail; cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
       - cmd: set -o pipefail; cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0

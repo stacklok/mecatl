@@ -23,7 +23,7 @@ new path. Operators can select `temporary_storage.mode: system` to
 restore inherited/configured system temporary storage; this disables managed
 allocation and reaping and leaves existing managed data for explicit inspection or
 removal. Managed mode is available on Linux and macOS; other platforms must use
-`system` mode. See [ADR 0281](../adr/0281-managed-temporary-command-leases.md).
+`system` mode. See ADR 0281.
 
 **Portable memory contract.** `tool.MemoryStore` is one mandatory lifecycle/CAS
 contract: create-only or exact-version Remember, Inspect, Recall, List, exact-version
@@ -49,17 +49,17 @@ is not replayed and the model receives a normalized unavailable result that
 states its outcome is unknown. A structured JSON-RPC 400/404 or HTTP
 429/502/503/504 is likewise a one-call failure: the live session is retained
 and the operation is never replayed automatically. See
-[ADR 0056](../adr/0056-mcp-client-reconnect.md),
-[ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md), and
-[ADR 0309](../adr/0309-mcp-ambiguous-closed-idle-post.md). The client also holds the
+ADR 0056,
+ADR 0223, and
+ADR 0309. The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
 `notifications/{tools,prompts,resources}/list_changed` enter the same serialized,
 bounded reconciler as explicit refresh and ToolHive-only jittered polling. The
 reconciler retains source last-known-good state, builds complete immutable
 candidates, and atomically publishes one runtime revision. Root operations pin
 that revision; displaced runtimes close after their pins drain. See
-[ADR 0057](../adr/0057-mcp-server-notifications.md) and
-[ADR 0355](../adr/0355-mcp-source-reconciliation.md).
+ADR 0057 and
+ADR 0355.
 
 Automatic reconciliation changes current availability but never widens durable
 session authority. `Service.RefreshMcpSources` owner-checks an eligible idle or
@@ -78,7 +78,7 @@ closed if the current direct tool set differs at all on restart. Every selected 
 including an outbound read and a tool marked read-only, requires a fresh interactive approval;
 deny remains absolute, headless denies, and approval is never learned. This is the hardened
 GitHub-like draft-then-publish boundary in
-[ADR 0257](../adr/0257-session-debugger-hardening.md), not a general MCP permission
+ADR 0257, not a general MCP permission
 exception.
 
 The adapter optionally owns an authorization-code `OAuthController` when an embedding
@@ -120,10 +120,10 @@ OAuth remains unavailable to per-session/inline/discovered MCP, and DCR remains
 unsupported. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
 cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
 Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
-headers retain their existing origin-scoped behavior. See [ADR 0219](../adr/0219-mcp-oauth-sdk-profile.md)
-for the constrained dependency profile, [ADR 0220](../adr/0220-mcp-oauth-controller.md)
-for controller ownership, [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md) for the
-opt-in host runtime, and [ADR 0113](../adr/0113-operator-mcp-auth-profiles.md) for profile
+headers retain their existing origin-scoped behavior. See ADR 0219
+for the constrained dependency profile, ADR 0220
+for controller ownership, ADR 0112 for the
+opt-in host runtime, and ADR 0113 for profile
 and command wiring.
 
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
@@ -251,8 +251,8 @@ public surface, governed by [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILI
 and the `api-compat` gate (`internal/apicheck`); the `engine/adapter/*` reference
 adapters (`mockllm`, `memfs`, `nofs`, `memstore`, …) ship for offline tests and
 sane defaults and carry **no** stability promise. See
-[ADR 0036](../adr/0036-engine-module.md) (the module carve) and
-[ADR 0037](../adr/0037-engine-stability-contract.md) (the contract).
+ADR 0036 (the module carve) and
+ADR 0037 (the contract).
 
 ### Seam summary
 
