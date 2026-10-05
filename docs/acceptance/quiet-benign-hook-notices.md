@@ -4,7 +4,7 @@
 **Work classification:** Bounded — changes only mecatui's presentation of existing structured contextual-guardrail events and adds client-local display configuration; server authority, engine outcomes, public APIs, wire contracts, and persistence remain unchanged.
 **Decision record:** None — ADR 0363 already owns contextual guardrail review semantics; this plan applies a bounded client rendering policy to its existing machine assessment, inspection, and disposition fields.
 **Phase:** contextual guardrail TUI presentation
-**Status:** in-progress, 2026-09-25. Amended after contextual guardrails landed on `origin/main`, under the directing human's explicit authorization recorded below.
+**Status:** landed in this implementation candidate; authoritative on merge. Amended after contextual guardrails landed on `origin/main` and again after #2002, under the directing human's explicit authorizations recorded below.
 **Delivery:** Split contract with a direct-human waiver of the merged Plan / Interface PR checkpoint for this named work; implementation remains stacked on the planning commit.
 **Expected tasks:** deferred to orchestration
 **Plan PR:** absent under the named process waiver
@@ -19,6 +19,7 @@ Mecatui uses the contextual guardrail event's existing machine fields to disting
 - [x] Explicit reveal — Decision: the existing rebindable `ExpandTools` action (`ctrl+t` by default) temporarily reveals retained benign notices, and client setting `hook_notices.show_benign: true` makes them visible by default.
 - [x] Configuration ownership — Decision: visibility is local mecatui presentation configuration with no server, project, or new CLI surface.
 - [x] Contract amendment — Decision: after contextual guardrails landed, remove the obsolete exported-engine/protobuf proposal and use the already-shipped structured guardrail metadata instead.
+- [x] Reconcile with #2002 — Decision: the directing human instructed “bring them back under the original plan”. #2002 dropped routine reviews unless `--debug`; this plan restores retain-and-hide on #2002's per-review notice model. Each review keeps one notice with its live detail folded in; benign reviews also fetch that detail; `--debug` keeps benign notices visible; a routine final outcome never replaces a resolved approval receipt; a mismatched detail identity fails visible while a detail RPC error on a benign review stays hidden.
 
 ## Interface contract
 
@@ -28,7 +29,7 @@ Mecatui uses the contextual guardrail event's existing machine fields to disting
 - **CLI / config:** Add optional strict client YAML `hook_notices.show_benign` in `$XDG_CONFIG_HOME/mecatui/settings.yaml`, default `false`. `true` keeps benign hook and detail notices visible while conversation details are collapsed. The existing rebindable `ExpandTools` action reveals retained benign notices while expanded. No CLI flag, server setting, or project-tier setting.
 - **Events / persistence:** No event or persistence change. Mecatui derives benign presentation only when the review ID is non-empty, the job is `action` or `inbound`, `inspection=complete`, `assessment=acceptable`, and disposition is `execute` or `release_result`. Durable guardrail hook events remain captured for live and replay rendering. Live-only detail RPC responses remain conversation blocks for the requesting active session but are not made durable by this work.
 - **Security / authority:** Presentation never changes inspection, holding, release, execution, approval, diagnostics, or permission authority. Missing identity/job metadata and every unknown, unresolved, prohibited, operational-failure, advisory, ask, withhold, deny, and warning disposition fail visible. Live details are accepted only for the requesting session and exact review ID; stale-session responses are discarded, mismatched identities fail visible, and approval details remain on their matching approval surface. Classification uses structured fields only, never checker-authored prose.
-- **Compatibility / migration:** Existing servers already provide the structured fields. Older clients remain noisy but lose no data. New clients hide only the exact known-benign combination and display older, absent, or unknown metadata. No persisted-data migration.
+- **Compatibility / migration:** Existing servers already provide the structured fields. Older clients either remain noisy or, after #2002, omit routine reviews; neither loses server data. New clients hide only the exact known-benign combination and display older, absent, or unknown metadata. No persisted-data migration.
 
 ## In scope — 3 scenarios, in implementation order
 
