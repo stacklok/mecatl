@@ -11,12 +11,15 @@ description:
 
 Use the conversation view to follow the response, inspect tool calls, and steer
 the agent without waiting for the current run to finish. Assistant text streams
-as it arrives. Tool calls appear as compact cards; Edit and Write cards include
-their diff.
+as it arrives. Tool calls appear as bordered cards while they run, then as
+one-line summaries when they settle. Edit and Write cards include their diff
+while they are active.
 
-Use `/toolcalls` to inspect calls in the current session, even during a run or
-when revisiting its transcript. `ctrl+t` expands tool details across the
-conversation; `/toolcalls` focuses on one call at a time.
+Press `ctrl+t` to open `/toolcalls` and inspect complete call details for the
+current session. You can use it during a run or when revisiting its transcript.
+`f9` expands or collapses reasoning summaries, permanent non-tool error details,
+and the changed-files appendix. You can rebind both actions in the
+[Keybindings](./keybindings.md) settings. `f9` does not expand tool results.
 
 `ctrl+t` also reveals routine guardrail checks: completed, acceptable reviews
 that allowed the action or released its result. They are hidden by default;
@@ -104,8 +107,9 @@ is pending, the command reports that fact and makes no changes.
 
 When a tool needs permission, a modal shows what it wants to do. Read the
 request, then allow it once, allow the exact action for this session when
-offered, or deny it. Long arguments can be scrolled. For requests other than
-plan approval, `ctrl+t` opens a full-screen detail view. Mouse buttons activate
+offered, or deny it. Long arguments can be scrolled. The active `Toolcalls`
+binding, `ctrl+t` by default, opens the request's details while the permission
+modal owns the keyboard, so it does not open `/toolcalls`. Mouse buttons activate
 the same choices as their displayed keys.
 
 ## Get editor notifications
@@ -194,8 +198,9 @@ for it to settle, then retry `/clear`.
 
 Use `?` on an empty prompt for the live help overlay. The everyday defaults are
 `enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
-to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
-not support steering, `enter` queues a follow-up while a run is active. See
+to inspect tool calls, `f9` to expand conversation details, `pgup`/`pgdn` to
+scroll, and `/` to open commands. If the server does not support steering,
+`enter` queues a follow-up while a run is active. See
 [Keybindings](./keybindings.md) for approval controls, remapping, and the
 complete reference.
 
