@@ -140,13 +140,17 @@ func (c nativeBridgePendingClient) WatchPendingApprovalRun(ctx context.Context, 
 // goroutine, so barriers do not depend on the terminal renderer's flush timer.
 type nativeBridgeModel struct {
 	ui.Model
-	ready, terminal chan string
-	lastView        *atomic.Value
+	ready, terminal, keyViews chan string
+	lastView                  *atomic.Value
 }
 
 func (m *nativeBridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.Model.Update(msg)
 	m.Model = next.(ui.Model)
+	if key, ok := msg.(tea.KeyPressMsg); ok && m.keyViews != nil &&
+		(key.Code == tea.KeyF9 || key.Code == 't' && key.Mod == tea.ModCtrl) {
+		m.keyViews <- ansi.Strip(m.Model.View().Content)
+	}
 	return m, cmd
 }
 
@@ -438,9 +442,9 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				Theme: theme.New("aztec", theme.AztecPalette()), Ctx: ctx, Workspace: workspace,
 				InitialPrompt: "draft only", NoAltScreen: true, NoBanner: true,
 			})
-			ready, terminal := make(chan string, 1), make(chan string, 1)
+			ready, terminal, keyViews := make(chan string, 1), make(chan string, 1), make(chan string, 3)
 			lastView := &atomic.Value{}
-			tm := teatest.NewTestModel(t, &nativeBridgeModel{Model: model, ready: ready, terminal: terminal, lastView: lastView}, teatest.WithInitialTermSize(100, 40))
+			tm := teatest.NewTestModel(t, &nativeBridgeModel{Model: model, ready: ready, terminal: terminal, keyViews: keyViews, lastView: lastView}, teatest.WithInitialTermSize(100, 40))
 			defer func() {
 				cancel()
 				if err := tm.Quit(); err != nil {
@@ -448,11 +452,13 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				}
 				tm.WaitFinished(t, teatest.WithFinalTimeout(5*time.Second))
 			}()
+			var approvalView string
 			select {
 			case view := <-ready:
 				if !strings.Contains(view, "Shell") || !strings.Contains(view, "draft only") {
 					t.Fatalf("approval view lost original call or draft:\n%s", view)
 				}
+				approvalView = view
 			case <-ctx.Done():
 				t.Fatalf("TUI did not display approval: %v", ctx.Err())
 			}
@@ -467,9 +473,31 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			}
 			assertNoNativeActiveRun(t, dyn, ref.ID)
 
-			tm.Send(tea.KeyPressMsg{Code: tea.KeyF9})
-			tm.Send(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}) // approval details, not /toolcalls
-			tm.Send(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}) // back to the ask
+			for _, keyCheck := range []struct {
+				key  tea.KeyPressMsg
+				view string
+			}{
+				{tea.KeyPressMsg{Code: tea.KeyF9}, "approval"},
+				{tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, "details"},
+				{tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}, "approval"},
+			} {
+				tm.Send(keyCheck.key)
+				select {
+				case view := <-keyViews:
+					if keyCheck.view == "details" {
+						if !strings.Contains(view, "Ask args: Shell") || strings.Contains(view, "Tool calls\n") {
+							t.Fatalf("approval details key opened wrong view:\n%s", view)
+						}
+					} else if view != approvalView {
+						t.Fatalf("%v changed approval view or hidden conversation:\n%s", keyCheck.key, view)
+					}
+				case <-ctx.Done():
+					t.Fatalf("approval key view did not update: %v", ctx.Err())
+				}
+				if stats.ownerResolve.Load() != 0 || continuationRequests.Load() != 0 {
+					t.Fatal("detail key resolved approval or restarted work")
+				}
+			}
 			tm.Send(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key)})
 			select {
 			case <-stats.ownerResolved:
@@ -564,7 +592,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if tc.wantRun {
 				wantSummary = "✓ Shell · Run printf bridge-command"
 			}
-			if strings.Count(view, wantSummary) != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") || strings.Contains(view, "│ ✓ Shell") || strings.Contains(view, "│ ✗ Shell") {
+			if strings.Count(view, wantSummary) != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "● mecatl") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") || strings.Contains(view, "│ ✓ Shell") || strings.Contains(view, "│ ✗ Shell") {
 				t.Fatalf("terminal view lost draft, continuation, or one-line resolved tool summary:\n%s", view)
 			}
 			executor.mu.Lock()
