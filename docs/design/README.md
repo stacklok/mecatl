@@ -9,6 +9,8 @@ This folder no longer holds the per-feature design records — those are now num
 - [surface-migration-plan.md](./surface-migration-plan.md) — the issue #555 surface
   interface (one modal, dynamic Open, surfaceDeps); `/soul` is the first migrator.
 - [contextual-guardrails-capacity.md](./contextual-guardrails-capacity.md) — the point-in-time offline private-capacity evidence for ADR 0350.
+- [mcp-broker-service.md](./mcp-broker-service.md) — draft design: moving the MCP broker
+  out of mecak8s agent pods into a separate `mecabroker` service.
 - this file — the **documentation & citation conventions** the `docs/lint` gate enforces.
 
 One source of truth per fact: current behavior in the owning

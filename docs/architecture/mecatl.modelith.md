@@ -22,6 +22,27 @@ A reusable definition of a specialist agent — its role prompt, tool grants, mo
 - **agentdef-origin-is-tier-not-location** — An `AgentDef`'s origin is a trust tier (managed, project, user), never a filesystem location.
 
 
+### `BrokerSession`
+
+Proposed in the MCP broker service design; not yet implemented. The broker-owned state through which one `Session` uses OAuth-protected upstream tools: its catalog, bundle authorizations, workspace enrollment, provider credentials, and replay state. The `Session` stores only an opaque reference issued by the broker, which replaces today's process-local broker-incarnation binding.
+
+**Relationships**
+
+- `Session` — 1:1 — referenced — serves — The `Session` snapshot holds the opaque reference; the broker owns the state. Deleting the `Session` deletes its `BrokerSession`, but the `BrokerSession` can also expire on its own while the `Session` remains.
+
+- `MCPServer` — n:n — referenced — holds provider credentials for
+
+**Invariants**
+
+- **broker-session-reference-exact** — A `BrokerSession` reference is opaque to the harness and names exactly one `BrokerSession` lifetime. Reopening or cleaning up with an old reference never creates, adopts, or deletes a later `BrokerSession` for the same `Session` ID.
+
+- **broker-session-not-inherited** — A fork or clear of a `Session` gets a fresh `BrokerSession`; it never inherits the source's reference or provider credentials.
+
+- **broker-session-restore-no-replay** — Restoring access to a `BrokerSession` after a broker restart never re-executes a `ToolCall` that may already have been dispatched; that `ToolCall` gets an error `ToolResult` recording an unknown outcome.
+
+- **broker-session-idle-expiry** — A `BrokerSession` expires after 48 hours without authorized use, and its provider credentials are reclaimed with it. Expiry leaves the `Session` intact and never extends a provider grant.
+
+
 ### `CommandRunner`
 
 The optional command-execution port bound into an `Environment`. It runs commands in a namespace selected by the host. Programs access files through a filesystem they understand, such as a shared directory or mount; they do not call the Workspace interface. The environment binding supplies that connection. Binding a working directory does not by itself sandbox a command's filesystem access.
@@ -526,6 +547,7 @@ A logical file namespace exposed through a backend-independent port. File `Tools
 ```mermaid
 erDiagram
     AgentDef {}
+    BrokerSession {}
     CommandRunner {}
     Conversation {}
     Environment {}
@@ -559,6 +581,8 @@ erDiagram
     ToolResult {}
     Turn {}
     Workspace {}
+    BrokerSession ||--|| Session : "serves"
+    BrokerSession }o--o{ MCPServer : "holds provider credentials for"
     Conversation ||--o{ Message : "orders"
     Environment }o--|| Workspace : "provides file access through"
     Environment ||--|| ReadLedger : "carries read evidence in"
@@ -1068,6 +1092,25 @@ erDiagram
 - **mcp-streaming-http-only** — An `MCPServer` connects only over streaming-HTTP transport; it is never spawned as a local stdio process.
 
 - **mcp-tools-namespaced** — An `MCPServer`'s `Tools` are registered into the catalog under a server-namespaced name.
+
+### A broker restart between calls restores access without a second login
+
+**Actors:** Principal
+
+**Steps**
+
+1. A `Session` holds a `BrokerSession` reference and a completed workspace enrollment.
+2. The broker restarts while the `Principal` reads an answer.
+3. The next `ToolCall` reopens the exact `BrokerSession` by its saved reference and runs without a browser login.
+4. A `ToolCall` that was in flight during the restart receives an error `ToolResult` and is not dispatched again.
+
+**Invariants touched**
+
+- **broker-session-reference-exact** — A `BrokerSession` reference is opaque to the harness and names exactly one `BrokerSession` lifetime. Reopening or cleaning up with an old reference never creates, adopts, or deletes a later `BrokerSession` for the same `Session` ID.
+
+- **broker-session-restore-no-replay** — Restoring access to a `BrokerSession` after a broker restart never re-executes a `ToolCall` that may already have been dispatched; that `ToolCall` gets an error `ToolResult` recording an unknown outcome.
+
+- **toolcall-exactly-one-result** — A `ToolCall` produces exactly one `ToolResult`.
 
 ### A hook blocks a tool use
 
