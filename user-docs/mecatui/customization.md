@@ -47,8 +47,7 @@ hook_notices:
   show_benign: true
 ```
 
-This client-owned setting applies to embedded and remote sessions. Project and
-server settings do not control it.
+This changes display only; guardrail checks still run.
 
 ## Customize the status line
 

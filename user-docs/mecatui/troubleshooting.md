@@ -200,7 +200,8 @@ and debug-only local commands such as `/debug-ask`. These surfaces are off by
 default.
 
 Normal conversation output hides guardrail checks that completed successfully
-and allowed an action or released a result. Press `ctrl+t` to reveal them, or
+and allowed an action or released a result. Press `f9` (or your configured
+`ExpandConversation` binding) to reveal them, or
 [keep them visible](./customization.md#show-benign-guardrail-notices).
 `--debug` always shows them, with the review's technical metadata.
 Stored-session transcripts use the same visibility rules.

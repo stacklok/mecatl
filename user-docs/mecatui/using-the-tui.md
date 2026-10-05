@@ -9,32 +9,20 @@ description:
 
 # Work in the TUI
 
-Use the conversation view to follow the response, inspect tool calls, and steer
-the agent without waiting for the current run to finish. Assistant text streams
-as it arrives. A reasoning summary occupies one line by default. Tool calls
-appear as bordered cards while they run, then as icon-led, one-line summaries
-when they settle, such as `✓ Read · cmd/main.go`. The tool name identifies the
-action; the text after the separator identifies its target. A scoped search
-shows its quoted pattern and path, such as `✓ Grep · "TODO" in cmd/**/*.go`.
-Tool-only turns appear as consecutive calls without empty assistant entries
-between them. Edit and Write cards include their diff while they are active.
+During a run, you can inspect tool calls with `ctrl+t` in `/toolcalls`. The
+inspector also works when revisiting a session transcript. Running Edit and
+Write cards show their diffs inline; settled calls keep their full arguments and
+results in the inspector.
 
-Press `ctrl+t` to open `/toolcalls` and inspect complete call details for the
-current session. You can use it during a run or when revisiting its transcript.
-Skill calls show the selected skill's name in both the conversation and inspector
-list. `f9` reveals speaker headings, per-turn token and timing summaries, full
-reasoning summaries, permanent non-tool error details, and the changed-files
-appendix. User prompts and assistant prose remain visible in the normal view.
-You can rebind both actions in the [Keybindings](./keybindings.md) settings.
-`f9` does not expand tool results.
+Press `f9` to reveal conversation details, including reasoning summaries,
+per-turn usage, permanent error details, and changed files. Tool results stay in
+`/toolcalls`. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
 
-`f9` also reveals retained routine guardrail checks: completed, acceptable
-reviews that allowed the action or released its result. They are hidden by
-default; guardrail findings, outages, unresolved reviews, and approval-related
-outcomes remain visible. Press `f9` again to hide routine checks. To keep them
-visible, configure
+`f9` also temporarily reveals retained benign guardrail notices in live and
+replayed conversations. These are completed, acceptable checks that allowed an
+action or released a result; findings, failures, unresolved reviews, and
+approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
-`ctrl+t` opens `/toolcalls`; it does not toggle guardrail notices.
 
 ## Attach a local file
 
@@ -113,12 +101,10 @@ is pending, the command reports that fact and makes no changes.
 
 ## Review approvals
 
-When a tool needs permission, a modal shows what it wants to do. Read the
-request, then allow it once, allow the exact action for this session when
-offered, or deny it. Long arguments can be scrolled. The active `Toolcalls`
-binding, `ctrl+t` by default, opens the request's details while the permission
-modal owns the keyboard, so it does not open `/toolcalls`. Mouse buttons activate
-the same choices as their displayed keys.
+During a permission request, the active `Toolcalls` binding (`ctrl+t` by
+default) opens that request's details instead of `/toolcalls`. See
+[Approve or deny a request](./keybindings.md#approve-or-deny-a-request) for
+approval keys and the scope of "allow always".
 
 ## Get editor notifications
 
@@ -201,16 +187,6 @@ for the available modes and their behavior.
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait
 for it to settle, then retry `/clear`.
-
-## A short key reference
-
-Use `?` on an empty prompt for the live help overlay. The everyday defaults are
-`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
-to inspect tool calls, `f9` to expand conversation details, `pgup`/`pgdn` to
-scroll, and `/` to open commands. If the server does not support steering,
-`enter` queues a follow-up while a run is active. See
-[Keybindings](./keybindings.md) for approval controls, remapping, and the
-complete reference.
 
 ## Next steps
 
