@@ -265314,6 +265314,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791194611216,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e8b43d61d70fbba5bc8552214397e4d6e5a9fe75",
+          "message": "chore(deps): update docker images (#2068)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-05T12:08:53+02:00",
+          "tree_id": "b55b930f6c795c2ba6d094ee5ea52e529cb0478e",
+          "url": "https://github.com/stacklok/mecatl/commit/e8b43d61d70fbba5bc8552214397e4d6e5a9fe75"
+        },
+        "date": 1791195630504,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -384961,6 +384995,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791195627157,
+  "lastUpdate": 1791195631509,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
