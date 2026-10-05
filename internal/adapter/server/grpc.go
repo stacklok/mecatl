@@ -1895,6 +1895,19 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 			}
 		}
 	}
+	// select picks uniformly among ready cases, so a control failure already
+	// reported when the continuation closed could lose to that close and the RPC
+	// would end OK. Such a failure wins. A frame not yet received is not awaited:
+	// the client may keep its send side open until the server ends the RPC.
+	if controlDone != nil && sendErr == nil {
+		select {
+		case err := <-controlDone:
+			if err != nil && !errors.Is(err, io.EOF) {
+				sendErr = err
+			}
+		default:
+		}
+	}
 	return sendErr
 }
 

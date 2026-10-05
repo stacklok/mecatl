@@ -43,6 +43,7 @@ type recheckAuthorizationStream struct {
 	staleThenApprove bool
 	pendingAsk       *mecatlv1.PermissionAsk
 	afterInitial     func()
+	requestsDrained  chan struct{}
 	sendErr          error
 	failAt           int
 	sendCalls        int
@@ -60,6 +61,10 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 		if s.afterInitial != nil {
 			s.afterInitial()
 			s.afterInitial = nil
+		}
+		if len(s.requests) == 0 && s.requestsDrained != nil {
+			close(s.requestsDrained)
+			s.requestsDrained = nil
 		}
 		return req, nil
 	}
@@ -592,7 +597,12 @@ func TestMCPAuthorizationGRPCRejectsRepeatedInitialControl(t *testing.T) {
 	start := func() *mecatlv1.RecheckMcpAuthorizationRequest {
 		return &mecatlv1.RecheckMcpAuthorizationRequest{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}
 	}
-	stream := &recheckAuthorizationStream{ctx: t.Context(), requests: []*mecatlv1.RecheckMcpAuthorizationRequest{start(), start()}}
+	// The protocol violation is received while the continuation is still live:
+	// hold the resumed call until the repeated frame has been delivered, so the
+	// test pins "received control error beats a later terminal", not scheduling.
+	drained := make(chan struct{})
+	f.attach.tool.hold = func(context.Context) { <-drained }
+	stream := &recheckAuthorizationStream{ctx: t.Context(), requestsDrained: drained, requests: []*mecatlv1.RecheckMcpAuthorizationRequest{start(), start()}}
 	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("repeated initial control code = %v, want InvalidArgument", status.Code(err))
 	}
