@@ -266746,6 +266746,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791202412477,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b1280662b1add8b4f5bd0844198849ef12442e4",
+          "message": "feat(app): default Anthropic prompt-cache TTL to 1h (#2102)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T15:53:52+03:00",
+          "tree_id": "ebaeac41cd4364919ad0c3ff395cd99f990de76a",
+          "url": "https://github.com/stacklok/mecatl/commit/6b1280662b1add8b4f5bd0844198849ef12442e4"
+        },
+        "date": 1791205568515,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -387005,6 +387039,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791205565687,
+  "lastUpdate": 1791205569237,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
