@@ -293985,6 +293985,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791194615665,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e8b43d61d70fbba5bc8552214397e4d6e5a9fe75",
+          "message": "chore(deps): update docker images (#2068)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-05T12:08:53+02:00",
+          "tree_id": "b55b930f6c795c2ba6d094ee5ea52e529cb0478e",
+          "url": "https://github.com/stacklok/mecatl/commit/e8b43d61d70fbba5bc8552214397e4d6e5a9fe75"
+        },
+        "date": 1791195634609,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3323.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -384995,6 +385034,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791195631509,
+  "lastUpdate": 1791195635688,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
