@@ -78,6 +78,11 @@ The [current inspector inventory](../../cmd/mecatui/ui/toolcalls.go) uses scroll
 2. The implementation candidate passes `task lint`, `task test:race`, `task docs`, `task site:build`, `task ac-trace-strict`, and the offline demo's tool/permission/result flow.
 3. `/panel-review` reports no ship blockers; the implementation PR references the approved plan baseline and only a human merges it.
 
+## Implementation guidance (non-binding)
+
+- Consider a small client-local internal package for **domain-specific tool presentation** if it simplifies at least two real consumers—for example, Edit request rows shared by the active card and `/toolcalls`, or semantic delegation trace rows shared by F6 and the inspector. The existing [`cmd/mecatui/internal/renderfmt`](../../cmd/mecatui/internal/renderfmt/renderfmt.go) is one candidate; a UI-internal package or package-private helpers may fit better depending on dependencies. Choose the boundary during implementation rather than requiring a package extraction in this contract.
+- Share interpretation of received facts, not styled ANSI strings, viewport geometry, selection, or a cached replacement for the canonical payload. Keep approval's sanitized verbatim raw arguments accessible; do not build a generic renderer framework for unrelated tools or change the distinct full-call versus bounded-child-preview data contracts.
+
 ## Deferred decisions and known risks
 
 - Bounded trace slots have no child-call IDs; duplicate-looking events and evictions require conservative selection fallback, not correlation by tool name. A result can replace the stored call-argument preview, so the UI cannot recover both from one trace entry.
