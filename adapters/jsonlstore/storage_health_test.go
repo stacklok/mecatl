@@ -3,6 +3,7 @@ package jsonlstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -82,6 +83,12 @@ func TestMeasureStorageEntries_ConcurrentRemovalOnly(t *testing.T) {
 	}
 	if snapshotEntry == nil {
 		t.Fatal("snapshot missing from directory entries")
+	}
+	if err := measureStorageEntries(&health, []os.DirEntry{faultEntry{DirEntry: snapshotEntry, err: fmt.Errorf("concurrent removal: %w", fs.ErrNotExist)}}); err != nil {
+		t.Fatalf("wrapped removal: %v", err)
+	}
+	if health.FileCount != 0 {
+		t.Fatalf("removed file counted: %+v", health)
 	}
 	if err := measureStorageEntries(&health, []os.DirEntry{faultEntry{DirEntry: snapshotEntry, err: fs.ErrPermission}}); !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("permission failure = %v, want error", err)

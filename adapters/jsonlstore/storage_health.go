@@ -2,7 +2,9 @@ package jsonlstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -98,7 +100,7 @@ func measureStorageEntries(health *port.SessionStorageHealth, entries []os.DirEn
 		}
 		info, err := entry.Info()
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return err

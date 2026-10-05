@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -470,7 +471,7 @@ func scanCurrentSnapshotEntries(ctx context.Context, root *os.Root, entries []fs
 		}
 		info, err := entry.Info()
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return fmt.Errorf("jsonlstore: inspect current snapshot %q: %w", entry.Name(), err)

@@ -3,6 +3,7 @@ package jsonlstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -72,6 +73,9 @@ func TestScanCurrentSnapshotEntries_ConcurrentRemovalOnly(t *testing.T) {
 				t.Fatalf("removed snapshot included: %+v", rows)
 			}
 		})
+	}
+	if err := scanCurrentSnapshotEntries(ctx, root, []fs.DirEntry{faultEntry{DirEntry: snapshot, err: fmt.Errorf("concurrent removal: %w", fs.ErrNotExist)}}, make(map[session.SessionID]snapshotFile)); err != nil {
+		t.Fatalf("wrapped removal: %v", err)
 	}
 	if err := scanCurrentSnapshotEntries(ctx, root, []fs.DirEntry{faultEntry{DirEntry: snapshot, err: fs.ErrPermission}}, make(map[session.SessionID]snapshotFile)); !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("permission failure = %v, want error", err)
