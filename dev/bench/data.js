@@ -264956,6 +264956,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791187620099,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c51713188e0a7bd4db2bbf77dd471386d730c36",
+          "message": "fix(mecatui): persist trusted server CA certificates (#1233)\n\nPersist target-specific gRPC server CA references separately from OIDC issuer trust. Restore saved trust on later connects while preserving explicit CA precedence and restricting credential-independent lookups to the actual dial target.\n\nAdd offline TLS RPC regressions for saved credentials, explicit authentication modes, and wrong or missing trust roots.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T12:50:57+03:00",
+          "tree_id": "15c1f5a9372f3675e3497decfcee984adde716fd",
+          "url": "https://github.com/stacklok/mecatl/commit/4c51713188e0a7bd4db2bbf77dd471386d730c36"
+        },
+        "date": 1791194611216,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -384450,6 +384484,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791194608181,
+  "lastUpdate": 1791194612439,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
