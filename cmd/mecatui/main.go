@@ -428,6 +428,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.MCPAuthorization = cl
 	deps.WorkspaceEnrollment = cl
 	deps.OpenURL = openBrowserURL
+	applyClientPresentationSettings(settings, &deps)
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
@@ -464,6 +465,10 @@ func runWithOptions(argv []string, options runOptions) error {
 		return restartFromConnectIntent(argv, intent, restartTransport{Target: target, TLSCAFile: cfg.tlsCA})
 	}
 	return runErr
+}
+
+func applyClientPresentationSettings(settings clientSettings, deps *ui.Deps) {
+	deps.ShowBenignHookNotices = settings.HookNotices.ShowBenign
 }
 
 func applyDebugConfig(cfg config, deps *ui.Deps) {

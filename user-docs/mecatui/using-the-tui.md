@@ -18,6 +18,13 @@ Use `/toolcalls` to inspect calls in the current session, even during a run or
 when revisiting its transcript. `ctrl+t` expands tool details across the
 conversation; `/toolcalls` focuses on one call at a time.
 
+`ctrl+t` also reveals routine guardrail checks: completed, acceptable reviews
+that allowed the action or released its result. They are hidden by default;
+guardrail findings, outages, unresolved reviews, and approval-related outcomes
+remain visible. Press `ctrl+t` again to hide them. To keep routine checks
+visible, configure
+[`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
+
 ## Attach a local file
 
 Type `@` to complete and attach a file. Ordinary `@path` and `@./path` completion

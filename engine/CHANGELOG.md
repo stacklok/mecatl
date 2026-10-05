@@ -344,6 +344,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Fixed
 
+- **Built-in file operand decoding (issue #2094)** — `tool.LocalFileOperands`
+  now matches built-in JSON decoding for case variants, duplicate keys, and
+  null values. Operand decoding errors yield no paths; Copy/Move require both
+  operands. Shell script recognition and custom/MCP non-inference are unchanged.
+  Fixed (patch); no exported signatures changed.
+
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed

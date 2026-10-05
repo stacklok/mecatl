@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -42,6 +45,45 @@ func TestReviewTargetUsesOnlyKnownLocalFileSemantics(t *testing.T) {
 		if target.Kind != "workspace" || len(paths) == 0 {
 			t.Fatalf("%s target=%+v paths=%v", name, target, paths)
 		}
+	}
+}
+
+func TestReviewTargetMatchesBuiltinReadWithConflictingPathVariants(t *testing.T) {
+	ctx := context.Background()
+	workspace := memfs.NewWorkspace("/review")
+	for path, marker := range map[string]string{
+		"website/a.ts":  "WEBSITE_MARKER",
+		"services/a.ts": "SERVICES_MARKER",
+	} {
+		if err := workspace.Write(ctx, path, []byte(marker)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	call := session.NewToolCall("c", "Read", json.RawMessage(`{"path":"website/a.ts","Path":"services/a.ts"}`))
+	target, paths := reviewTarget(call)
+	if target.Display != "services/a.ts" || len(paths) != 1 || paths[0] != "services/a.ts" {
+		t.Fatalf("review target=%+v paths=%v", target, paths)
+	}
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review"}, workspace, memledger.New(), nil)
+	result, err := (fstools.ReadTool{}).Execute(ctx, call, env)
+	if err != nil || result.IsError || !strings.Contains(result.Content, "SERVICES_MARKER") || strings.Contains(result.Content, "WEBSITE_MARKER") {
+		t.Fatalf("Read result=%+v err=%v", result, err)
+	}
+	deps, complete := snapshotActionDependencies(ctx, workspace, paths)
+	if !complete || len(deps) != 1 || deps[0].path != "services/a.ts" || !deps[0].exists || !revalidateActionDependencies(ctx, workspace, deps) {
+		t.Fatalf("dependencies=%+v complete=%v", deps, complete)
+	}
+	if err := workspace.Write(ctx, "website/a.ts", []byte("website changed")); err != nil {
+		t.Fatal(err)
+	}
+	if !revalidateActionDependencies(ctx, workspace, deps) {
+		t.Fatal("unselected website invalidated service dependency")
+	}
+	if err := workspace.Write(ctx, "services/a.ts", []byte("service changed")); err != nil {
+		t.Fatal(err)
+	}
+	if revalidateActionDependencies(ctx, workspace, deps) {
+		t.Fatal("changed service retained stale dependency approval")
 	}
 }
 

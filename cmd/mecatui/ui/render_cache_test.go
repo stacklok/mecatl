@@ -246,6 +246,9 @@ var oracleSteps = []struct {
 		c.scrollback.Notices().RemoveNotice(c.guardrailReview("oracle-review").blockID)
 	}},
 	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Shell", "blocked") }},
+	{"addBenignGuardrailHook", func(c *conversation) {
+		c.addGuardrailHook(guardrailTestHook("oracle-benign", "complete", "acceptable", "execute"), false)
+	}},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},
 	{"addRecoverNotice", func(c *conversation) { c.addRecoverNotice("permanent failure recovered; start a new session") }},
