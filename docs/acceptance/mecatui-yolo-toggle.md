@@ -8,7 +8,7 @@
 **Delivery:** Split. The change adds a user-facing command with a security-relevant confirmation and refusal surface, so the interface deserves review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#2057](https://github.com/stacklok/mecatl/issues/2057).
-**Plan PR:** <added when opened>
+**Plan PR:** [stacklok/mecatl#2112](https://github.com/stacklok/mecatl/pull/2112)
 **Approved baseline:** <merged plan commit; absent until approved>
 
 In the default (embedded) mecatui, typing `/yolo` switches the embedded server to posture `yolo`
