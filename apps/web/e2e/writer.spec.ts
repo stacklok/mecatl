@@ -76,8 +76,12 @@ test("Writer stays author-owned through observation, discussion, and undo", asyn
     brief: "Audience: maintainers; focus on assumptions",
   });
   await expect(page.getByText("What evidence supports this assumption?")).toBeVisible();
+  await expect(page.getByText("Checked", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Revision \d/)).toHaveCount(0);
+  await expect(page.getByText("Open", { exact: true })).toBeVisible();
   await expect(editor).toHaveText("First draft");
   await page.getByRole("button", { name: "Open thread" }).click();
+  await expect(page.getByRole("heading", { name: "Observation discussion" })).toBeVisible();
   // CodeMirror groups nearby author edits into one undo event.
   await page.waitForTimeout(600);
   await editor.fill("Second draft");
@@ -129,6 +133,26 @@ test("Writer feedback controls fit without clipping at desktop and mobile widths
   offlineBff.json("POST", "/api/v1/writer/observe", { status: "silent" });
 
   await page.goto("/workspace/writer");
+  const saveStatus = page
+    .getByRole("status")
+    .filter({ hasText: "Clear · not saved in this browser" });
+  const privacy = page.locator("details").filter({
+    has: page.getByText("Storage and privacy", { exact: true }),
+  });
+  const privacySummary = privacy.getByText("Storage and privacy", { exact: true });
+  const privacyPolicy = privacy.getByText("Browser storage is not a backup or cross-device sync.", {
+    exact: false,
+  });
+  await expect(saveStatus).toBeVisible();
+  await expect(privacy).not.toHaveAttribute("open", "");
+  await expect(privacyPolicy).not.toBeVisible();
+  await privacySummary.focus();
+  await page.keyboard.press("Enter");
+  await expect(privacyPolicy).toBeVisible();
+  await privacySummary.click();
+  await expect(privacyPolicy).not.toBeVisible();
+  await privacySummary.click();
+  await expect(privacyPolicy).toBeVisible();
   const sidebar = page.getByRole("complementary", { name: "Writer observations" });
   const title = sidebar.getByRole("heading", { name: "Observations" });
   const automaticFeedback = sidebar.getByRole("switch", { name: "Automatic feedback" });
@@ -197,10 +221,10 @@ test("Reveal passage scrolls to the first of reversed quotes only on author requ
   await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(before);
 });
 
-test("Writer shows native line numbers for Markdown lines through editing and undo", async ({
+test("Writer keeps the native gutter aligned with a bounded document through editing, undo, and scrolling", async ({
   offlineBff,
   page,
-}) => {
+}, testInfo) => {
   offlineBff.json("GET", "/api/v1/auth/session", {
     account: "offline-writer",
     mode: "oidc",
@@ -213,8 +237,11 @@ test("Writer shows native line numbers for Markdown lines through editing and un
   offlineBff.json("GET", "/api/v1/sessions", { complete: true, items: [] });
   offlineBff.json("POST", "/api/v1/writer/observe", { status: "silent" });
 
+  if (testInfo.project.name === "chromium-desktop")
+    await page.setViewportSize({ width: 1720, height: 900 });
   await page.goto("/workspace/writer");
   const editor = page.getByRole("textbox", { name: "Writer document" });
+  const scroller = page.locator(".cm-scroller");
   const lineNumbers = page.locator(".cm-lineNumbers .cm-gutterElement:visible");
   const draftLines = [
     `A Markdown line that is deliberately long enough to wrap in the Writer surface. ${"More text ".repeat(20)}`,
@@ -225,6 +252,18 @@ test("Writer shows native line numbers for Markdown lines through editing and un
   await editor.fill(draft);
   await expect(editor.locator(".cm-line")).toHaveText(draftLines);
   await expect(lineNumbers).toHaveText(["1", "2", "3"]);
+  const [firstGutterBox, firstLineBox] = await Promise.all([
+    lineNumbers.first().boundingBox(),
+    editor.locator(".cm-line").first().boundingBox(),
+  ]);
+  if (!firstGutterBox || !firstLineBox)
+    throw new Error("Writer gutter or document line is missing");
+  expect(firstGutterBox.x).toBeLessThan(firstLineBox.x);
+  expect(firstLineBox.x - (firstGutterBox.x + firstGutterBox.width)).toBeLessThan(64);
+  expect(Math.abs(firstGutterBox.y - firstLineBox.y)).toBeLessThan(2);
+  await expect
+    .poll(() => scroller.evaluate((node) => node.scrollWidth <= node.clientWidth))
+    .toBe(true);
 
   // Let CodeMirror close the initial input history event before adding a line.
   await page.waitForTimeout(600);
@@ -235,6 +274,21 @@ test("Writer shows native line numbers for Markdown lines through editing and un
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(editor.locator(".cm-line")).toHaveText(draftLines);
   await expect(lineNumbers).toHaveText(["1", "2", "3"]);
+
+  const longDraft = Array.from({ length: 120 }, (_, index) => `Line ${index + 1}`).join("\n");
+  await editor.fill(longDraft);
+  await scroller.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  await expect(lineNumbers.last()).toHaveText("120");
+  await expect(editor.locator(".cm-line").last()).toHaveText("Line 120");
+  const [lastGutterBox, lastLineBox] = await Promise.all([
+    lineNumbers.last().boundingBox(),
+    editor.locator(".cm-line").last().boundingBox(),
+  ]);
+  if (!lastGutterBox || !lastLineBox) throw new Error("Writer long-document layout is missing");
+  expect(Math.abs(lastGutterBox.y - lastLineBox.y)).toBeLessThan(2);
 });
 
 test("Writer draws one empty-editor caret on the placeholder line in light and dark themes", async ({

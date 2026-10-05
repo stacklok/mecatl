@@ -254,16 +254,24 @@ function WriterEditor({ available }: { available: boolean }) {
               backgroundColor: "var(--background)",
               color: "var(--foreground)",
             },
-            ".cm-scroller": { overflow: "auto", fontFamily: "inherit", lineHeight: "1.8" },
+            ".cm-scroller": {
+              overflow: "auto",
+              fontFamily: "inherit",
+              lineHeight: "1.8",
+              justifyContent: "center",
+            },
             ".cm-gutters": {
-              backgroundColor: "var(--muted)",
+              backgroundColor: "transparent",
               color: "var(--muted-foreground)",
               border: "none",
             },
             ".cm-content": {
+              boxSizing: "border-box",
+              flex: "0 1 75ch",
+              width: "75ch",
+              minWidth: "0",
               padding: "2rem 1.5rem",
-              maxWidth: "75ch",
-              margin: "0 auto",
+              margin: "0",
               minHeight: "100%",
               caretColor: "var(--primary)",
             },
@@ -352,7 +360,12 @@ function WriterEditor({ available }: { available: boolean }) {
     return (
       <article className="mb-3 rounded-lg border bg-background p-3 text-sm" key={item.id}>
         <p className="mb-2 text-xs text-muted-foreground">
-          Revision {item.revision} · {item.status}
+          {item.status === "not-relevant"
+            ? "Not relevant"
+            : item.status === "addressed"
+              ? "Addressed"
+              : "Open"}
+          {item.revision !== core.document.revision && " · earlier draft"}
         </p>
         <p className="whitespace-pre-wrap break-words">{item.text}</p>
         {(item.quotes?.length || item.quote) && (
@@ -422,9 +435,6 @@ function WriterEditor({ available }: { available: boolean }) {
       <section aria-label="Document" className="flex min-h-0 min-w-0 flex-1 flex-col bg-muted/20">
         <div className="flex flex-nowrap items-center gap-3 overflow-x-auto border-b px-5 py-3 text-sm">
           <h1 className="mr-auto font-semibold">Writer</h1>
-          <span className="text-muted-foreground">
-            Revision {core.document.revision} · {active.length} unresolved
-          </span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild disabled={modelDisabled}>
               <button
@@ -555,8 +565,8 @@ function WriterEditor({ available }: { available: boolean }) {
           className="m-3 min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-background shadow-sm"
           ref={host}
         />
-        <div className="border-t px-5 py-2 text-xs text-muted-foreground">
-          <span role="status">{saveState}</span>{" "}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t px-5 py-2 text-xs text-muted-foreground">
+          <span role="status">{saveState}</span>
           {!enabled.current &&
             recovery?.available &&
             !saveState.startsWith("Saving unavailable") && (
@@ -594,19 +604,14 @@ function WriterEditor({ available }: { available: boolean }) {
               Forget local draft
             </Button>
           )}
-          <details className="lg:hidden">
+          <details>
             <summary>Storage and privacy</summary>
-            <p>
+            <p className="mt-1 max-w-prose">
               Browser storage is not a backup or cross-device sync. Existing Studio account cleanup
               removes saved data on sign-out or account change. Analysis sends this document and
               recent context to the configured provider. Download .md works independently.
             </p>
           </details>
-          <p className="hidden lg:block">
-            Browser storage is not a backup or cross-device sync. Existing Studio account cleanup
-            removes saved data on sign-out or account change. Analysis sends this document and
-            recent context to the configured provider. Download .md works independently.
-          </p>
         </div>
       </section>
       <aside
@@ -682,7 +687,7 @@ function WriterEditor({ available }: { available: boolean }) {
           </Button>
           <section aria-label="Discussion" className="border-t pt-4">
             <h3 className="mb-2 text-sm font-semibold">
-              {selected ? `Discussion · revision ${selected.revision}` : "General discussion"}
+              {selected ? "Observation discussion" : "General discussion"}
             </h3>
             {selected && (
               <>

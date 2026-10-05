@@ -83,11 +83,13 @@ export class WriterCore {
     if (!this.available)
       return "Writer is unavailable. Requests are suspended; your draft remains in this tab.";
     if (this.busy === "discuss") return "Discussing…";
-    if (this.busy === "observe") return `Analyzing revision ${this.checkingRevision}…`;
+    if (this.busy === "observe") return "Analyzing…";
     if (this.paused)
       return this.checkedBriefGeneration !== this.briefGeneration
         ? "Automatic checks paused · brief not checked"
-        : "Automatic checks paused";
+        : this.lastChecked && this.document.content !== this.checkpoint.content
+          ? "Automatic checks paused · earlier draft checked"
+          : "Automatic checks paused";
     if (this.error) return "Analysis needs manual retry";
     if (
       this.checkedBriefGeneration !== this.briefGeneration &&
@@ -103,10 +105,11 @@ export class WriterCore {
     if (this.document.content && !this.automaticEligible && !this.lastChecked)
       return "Draft restored · read this now or keep writing";
     return this.lastChecked
-      ? `Last checked revision ${this.lastChecked.revision}${this.lastChecked.silent ? " · no observation" : ""}`
+      ? this.document.content === this.checkpoint.content
+        ? `Checked${this.lastChecked.silent ? " · no new observations" : ""}`
+        : "Earlier draft checked · keep writing or read this now"
       : "Start writing to receive occasional observations";
   }
-  private checkingRevision?: number;
   private selectionGeneration = 0;
   busy: "observe" | "discuss" | undefined;
   error = "";
@@ -275,7 +278,6 @@ export class WriterCore {
     const controller = new AbortController();
     this.controller = controller;
     this.busy = "observe";
-    this.checkingRevision = context.document.revision;
     this.error = "";
     this.notify();
     const task = (async () => {

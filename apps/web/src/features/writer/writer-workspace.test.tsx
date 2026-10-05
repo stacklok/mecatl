@@ -488,7 +488,7 @@ it("keeps Ask Writer available while an automatic observation is running", async
   );
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Draft during analysis" } }));
-  await screen.findByText(/Analyzing revision/, {}, { timeout: 3500 });
+  await screen.findByText("Analyzing…", {}, { timeout: 3500 });
   expect(screen.getByRole("textbox", { name: "Message Mecatl" })).not.toHaveProperty(
     "disabled",
     true,

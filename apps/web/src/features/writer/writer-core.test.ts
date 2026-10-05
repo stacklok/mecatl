@@ -175,6 +175,16 @@ describe("WriterCore", () => {
     expect(observe).toHaveBeenCalledTimes(3);
   });
 
+  it("describes freshness without exposing internal revisions", async () => {
+    core.edit("A meaningful draft for analysis.");
+    expect(core.status).toBe("Waiting for a pause in typing");
+    await tick(1500);
+    expect(core.status).toBe("Checked · no new observations");
+    core.edit("A newer draft for analysis.");
+    core.setPaused(true);
+    expect(core.status).toBe("Automatic checks paused · earlier draft checked");
+  });
+
   it("applies an author brief only to future checks; old-brief in-flight results cannot become current", async () => {
     const held = deferred<Awaited<ReturnType<WriterTransport["observe"]>>>();
     observe.mockImplementationOnce(() => held.promise);
