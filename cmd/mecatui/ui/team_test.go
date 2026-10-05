@@ -383,9 +383,7 @@ func TestTeamMessageCoalesces(t *testing.T) {
 	}
 }
 
-// TestTeamResolved asserts the resolved card: a muted stat line with the round
-// count, summed team usage, and the human stop label, plus the Team tool's joined
-// summary rendered via the normal result body path.
+// TestTeamResolved asserts a settled Team card is projected as one shared semantic line.
 func TestTeamResolved(t *testing.T) {
 	out := teamCard(t, false, func(c *conversation) {
 		c.startTeamCard("t1", "", roster())
@@ -393,36 +391,20 @@ func TestTeamResolved(t *testing.T) {
 		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
 		c.resolveTool("t1", "team shipped the feature", false)
 	})
-	if !strings.Contains(out, "4 rounds") {
-		t.Errorf("resolved card should show the round count, got %q", out)
-	}
-	if !strings.Contains(out, "stop:done") {
-		t.Errorf("resolved card should map end_turn → stop:done, got %q", out)
-	}
-	if !strings.Contains(out, "↑5.2K") {
-		t.Errorf("resolved card should show summed team usage, got %q", out)
-	}
-	if !strings.Contains(out, "team shipped the feature") {
-		t.Errorf("resolved card should render the joined summary via the result body, got %q", out)
+	if got, want := out, " ✓ done · Team · Team ship the feature"; got != want {
+		t.Errorf("settled team line = %q, want %q", got, want)
 	}
 }
 
-// TestTeamErrorResolves asserts a Team tool error resolves the card with a "✗"
-// glyph and stop:error, with the error text in the result slot.
+// TestTeamErrorResolves asserts a settled Team error has the shared failed line.
 func TestTeamErrorResolves(t *testing.T) {
 	out := teamCard(t, false, func(c *conversation) {
 		c.startTeamCard("t1", "", roster())
 		c.finishTeamCard("t1", "", 1, "error", client.Usage{}, nil)
 		c.resolveTool("t1", "Team: the run failed", true)
 	})
-	if !strings.Contains(out, "✗") {
-		t.Errorf("errored card should carry the error glyph, got %q", out)
-	}
-	if !strings.Contains(out, "stop:error") {
-		t.Errorf("errored card should show stop:error, got %q", out)
-	}
-	if !strings.Contains(out, "the run failed") {
-		t.Errorf("errored card should render the error text, got %q", out)
+	if got, want := out, " ✗ failed · Team · Team ship the feature"; got != want {
+		t.Errorf("failed team line = %q, want %q", got, want)
 	}
 }
 

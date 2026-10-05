@@ -283,18 +283,34 @@ func argumentSummary(raw json.RawMessage) string {
 
 func toolcallIntent(name string, fields map[string]json.RawMessage) string {
 	if presentation, ok := toolcallPresentations[name]; ok {
-		values := make([]string, len(presentation.intentKeys))
-		for i, key := range presentation.intentKeys {
-			values[i] = argumentSummary(fields[key])
+		values := make([]string, 0, len(presentation.intentKeys))
+		for _, key := range presentation.intentKeys {
+			if value := argumentSummary(fields[key]); value != "" {
+				values = append(values, value)
+			}
+		}
+		if len(values) == 0 {
+			return presentation.intentAction
 		}
 		return presentation.intentAction + " " + strings.Join(values, " → ")
 	}
-	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task"} {
+	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task", "goal"} {
 		if raw, ok := fields[key]; ok {
-			return terminaltext.SanitizeSingleLine(name) + " " + argumentSummary(raw)
+			if value := argumentSummary(raw); value != "" {
+				return terminaltext.SanitizeSingleLine(name) + " " + value
+			}
 		}
 	}
 	return terminaltext.SanitizeSingleLine(name)
+}
+
+func (p toolcallProjection) summary() string {
+	_, status, _ := p.state.status()
+	summary := status + " · " + p.displayName
+	if p.intent != "" && p.intent != p.displayName {
+		summary += " · " + p.intent
+	}
+	return summary
 }
 
 func argumentValue(raw json.RawMessage) string {
@@ -459,9 +475,8 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	items := make([]bounded.ListItem, len(s.entries))
 	for i, entry := range s.entries {
-		glyph, status, _ := entry.state.status()
-		text := status + " · " + entry.displayName + " · " + entry.intent
-		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: ansi.Truncate(text, 120, "…"), StatusCells: [2]string{glyph}}
+		glyph, _, _ := entry.state.status()
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: ansi.Truncate(entry.summary(), 120, "…"), StatusCells: [2]string{glyph}}
 	}
 	s.list.SetGeometry(width, bodyHeight, 2, bounded.Clip)
 	s.list.SetItems(items)

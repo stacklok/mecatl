@@ -69,8 +69,8 @@ func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 }
 
 func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProjection) blockRenderOutput {
-	glyph, status, style := projection.state.status()
-	line := r.th.Style(style).Render(glyph) + " " + status + " · " + projection.displayName + " · " + projection.intent
+	glyph, _, style := projection.state.status()
+	line := r.th.Style(style).Render(glyph) + " " + projection.summary()
 	indent := 0
 	width := r.width
 	if r.width > r.indent {
@@ -203,6 +203,11 @@ func (p preparedToolCard) render() string {
 // presentation value. Cache storage and frame provenance remain renderer-owned.
 func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		if metadata, ok := scrollback.ToolCallMetadataOf(s); ok {
+			if projection := projectToolCall(metadata); projection.settled() {
+				return r.renderSettledToolLine(blockID, projection)
+			}
+		}
 		r.cardPrepares++
 		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), expand).Prepared
 		out := prepared.Text()
@@ -217,6 +222,11 @@ func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p
 // presentation value. The Agents overlay continues to use its existing ui.block path.
 func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.TeamCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		if metadata, ok := scrollback.ToolCallMetadataOf(s); ok {
+			if projection := projectToolCall(metadata); projection.settled() {
+				return r.renderSettledToolLine(blockID, projection)
+			}
+		}
 		r.cardPrepares++
 		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), expand).Prepared
 		out := prepared.Text()

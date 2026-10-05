@@ -154,9 +154,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 	}
 }
 
-// TestSubagentResolved asserts the resolved card: a single muted stat line with
-// duration, token totals, final tool count, and the human stop label — no
-// "0 writes", and the child's summary renders via the normal result body path.
+// TestSubagentResolved asserts a settled card is projected as one shared semantic line.
 func TestSubagentResolved(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
 		c.startSubagentCard("p1", "investigate the loop", "", "", "", "")
@@ -164,25 +162,12 @@ func TestSubagentResolved(t *testing.T) {
 		c.finishSubagentCard("p1", client.Usage{InputTokens: 1200, OutputTokens: 80}, 4, "end_turn", 2500)
 		c.resolveTool("p1", "found the bug in dispatch.go", false)
 	})
-	if !strings.Contains(out, "stop:done") {
-		t.Errorf("resolved card should map end_turn → stop:done, got %q", out)
-	}
-	if !strings.Contains(out, "4 tools") {
-		t.Errorf("resolved card should show the final tool count, got %q", out)
-	}
-	if !strings.Contains(out, "2.5s") {
-		t.Errorf("resolved card should show a human duration, got %q", out)
-	}
-	if strings.Contains(out, "0 writes") {
-		t.Errorf("resolved card must not show a writes count, got %q", out)
-	}
-	if !strings.Contains(out, "found the bug in dispatch.go") {
-		t.Errorf("resolved card should render the child summary via the result body, got %q", out)
+	if got, want := out, " ✓ done · Subagent · Subagent investigate the loop"; got != want {
+		t.Errorf("settled subagent line = %q, want %q", got, want)
 	}
 }
 
-// TestSubagentErrorResolves asserts a child error resolves the Subagent card with a
-// "✗" glyph, stop:error, and the error text in the result slot.
+// TestSubagentErrorResolves asserts a settled failure has the shared failed line.
 func TestSubagentErrorResolves(t *testing.T) {
 	out := subagentCard(t, false, func(c *conversation) {
 		c.startSubagentCard("p1", "investigate the loop", "", "", "", "")
@@ -191,14 +176,8 @@ func TestSubagentErrorResolves(t *testing.T) {
 		// caller-neutral: "Subagent: " + "failed without producing a summary").
 		c.resolveTool("p1", "Subagent: failed without producing a summary", true)
 	})
-	if !strings.Contains(out, "✗") {
-		t.Errorf("errored card should carry the error glyph, got %q", out)
-	}
-	if !strings.Contains(out, "stop:error") {
-		t.Errorf("errored card should show stop:error, got %q", out)
-	}
-	if !strings.Contains(out, "failed without producing a summary") {
-		t.Errorf("errored card should render the error text, got %q", out)
+	if got, want := out, " ✗ failed · Subagent · Subagent investigate the loop"; got != want {
+		t.Errorf("failed subagent line = %q, want %q", got, want)
 	}
 }
 

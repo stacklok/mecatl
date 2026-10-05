@@ -62,7 +62,7 @@ func TestToolcallPresentationUnknownFallback(t *testing.T) {
 	if got, want := strings.Join(toolcallArgumentLines("McpCustom", arguments), "\n"), "A: first\nPath: target\nZ: last"; got != want {
 		t.Fatalf("unknown detail arguments = %q, want %q", got, want)
 	}
-	if got, want := toolcallIntentFor("Copy", `{}`), "Copy  → "; got != want {
+	if got, want := toolcallIntentFor("Copy", `{}`), "Copy"; got != want {
 		t.Fatalf("known missing fields intent = %q, want %q", got, want)
 	}
 	if got := toolcallArgumentLines("Copy", `{}`); len(got) != 0 {
