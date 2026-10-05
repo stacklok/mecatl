@@ -202,12 +202,13 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 		t.Fatalf("generate synthetic rotation material: %v: %s", err, out)
 	}
 	logQualificationStage(t, &stageStarted, "initial_provision", "invalid_and_recovery")
+	stepStarted := time.Now()
 	t.Cleanup(func() {
 		cleanupStarted := time.Now()
 		t.Log("stage=rotation_cleanup starting")
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		restoreFixtureSecurity(t, cleanupCtx, kubeconfig, rotationDir)
+		restoreFixtureSecurity(t, cleanupCtx, kubeconfig, rotationDir, "rotation_cleanup")
 		t.Logf("stage=rotation_cleanup elapsed=%s", time.Since(cleanupStarted).Round(time.Millisecond))
 	})
 
@@ -215,12 +216,16 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	// both replicas. The old snapshot cannot continue authorizing RPCs while the
 	// mounted candidate disagrees with the durable authority ledger.
 	applySecurityCandidate(t, ctx, kubeconfig, filepath.Join(state, "pki"), filepath.Join(rotationDir, "invalid-same-generation.json"), "initial")
-	waitProviderReadyReplicas(t, ctx, kubeconfig, 0)
+	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "apply_invalid")
+	waitProviderReadyReplicas(t, ctx, kubeconfig, 0, "invalid_and_recovery")
+	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "wait_unready")
 	if _, err := oldClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
 		t.Fatal("same-generation changed policy continued authorizing an existing gRPC connection")
 	}
 	applySecurityCandidate(t, ctx, kubeconfig, filepath.Join(state, "pki"), filepath.Join(state, "pki", "manifest.json"), "initial")
-	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "deny_and_apply_recovery")
+	waitProviderReadyReplicas(t, ctx, kubeconfig, 2, "invalid_and_recovery")
+	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "wait_ready")
 	recovered, err := oldClient.RenewRun(ctx, executionenv.RunClaimRequest{Environment: oldRun.Environment, Owner: owner, BindingID: binding, RunID: oldRun.RunID, ClaimID: oldRun.ClaimID, Epoch: oldRun.Epoch, GrantGeneration: oldRun.GrantGeneration, OperationID: "renew-rotation-recovered-grant", TTL: time.Minute})
 	if isRemoteCode(err, executionenv.CodeConflict) {
 		recovered, err = oldClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-recovered-grant", OperationID: "acquire-rotation-recovered-grant", TTL: time.Minute})
@@ -233,14 +238,19 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if err := oldClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: recovered.Environment, Owner: owner, BindingID: binding, RunID: recovered.RunID, ClaimID: recovered.ClaimID, Epoch: recovered.Epoch, GrantGeneration: recovered.GrantGeneration, OperationID: "rotation-release-recovered"}); err != nil {
 		t.Fatalf("release recovery-phase claim: code=%s", remoteErrorCode(err))
 	}
+	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "recovery_rpc")
 	logQualificationStage(t, &stageStarted, "invalid_and_recovery", "bridge_authority")
+	stepStarted = time.Now()
 
 	// Generation 2 bridges client trust before changing the server certificate.
 	// The old connection remains usable, while a new-CA client can establish its
 	// own connection and receives grants from k2.
 	applySecurityCandidate(t, ctx, kubeconfig, rotationDir, filepath.Join(rotationDir, "bridge.json"), "bridge")
+	logQualificationStep(t, &stepStarted, "bridge_authority", "apply_bridge")
 	waitSecurityGeneration(ctx, t, kubeconfig, 2)
-	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+	logQualificationStep(t, &stepStarted, "bridge_authority", "wait_ledger")
+	waitProviderReadyReplicas(t, ctx, kubeconfig, 2, "bridge_authority")
+	logQualificationStep(t, &stepStarted, "bridge_authority", "wait_ready")
 	newTLS, err := executionclient.LoadTLSConfig(executionclient.TLSFiles{CA: filepath.Join(rotationDir, "client-roots.pem"), Cert: filepath.Join(rotationDir, "mecak8s-new.crt"), Key: filepath.Join(rotationDir, "mecak8s-new.key")})
 	if err != nil {
 		t.Fatal(err)
@@ -264,14 +274,19 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: renewed.Environment, Owner: owner, BindingID: binding, RunID: renewed.RunID, ClaimID: renewed.ClaimID, Epoch: renewed.Epoch, GrantGeneration: renewed.GrantGeneration, OperationID: "rotation-release-k2-bridge"}); err != nil {
 		t.Fatalf("release bridge-phase claim: code=%s", remoteErrorCode(err))
 	}
+	logQualificationStep(t, &stepStarted, "bridge_authority", "rpc_proof")
 	logQualificationStage(t, &stageStarted, "bridge_authority", "final_authority")
+	stepStarted = time.Now()
 
 	// Generation 3 switches server TLS, removes the old client CA, and revokes
 	// k1. Authorization is checked on every RPC, so the established old-client
 	// HTTP/2 connection is denied rather than passing until reconnect.
 	applySecurityCandidate(t, ctx, kubeconfig, rotationDir, filepath.Join(rotationDir, "final.json"), "final")
+	logQualificationStep(t, &stepStarted, "final_authority", "apply_final")
 	waitSecurityGeneration(ctx, t, kubeconfig, 3)
-	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+	logQualificationStep(t, &stepStarted, "final_authority", "wait_ledger")
+	waitProviderReadyReplicas(t, ctx, kubeconfig, 2, "final_authority")
+	logQualificationStep(t, &stepStarted, "final_authority", "wait_ready")
 	finalAttached := waitReady(t, ctx, newClient, owner, binding, attached.Environment)
 	finalRequest := executionenv.RunClaimRequest{Environment: finalAttached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-final-grant", OperationID: "rotation-acquire-final", TTL: time.Minute}
 	finalClaim, err := acquireCurrentAuthorityRun(ctx, finalRequest, newClient.AcquireRun, 500*time.Millisecond)
@@ -300,6 +315,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: finalClaim.Environment, Owner: owner, BindingID: binding, RunID: finalClaim.RunID, ClaimID: finalClaim.ClaimID, Epoch: finalClaim.Epoch, GrantGeneration: finalClaim.GrantGeneration, OperationID: "rotation-release-final"}); err != nil {
 		t.Fatal(err)
 	}
+	logQualificationStep(t, &stepStarted, "final_authority", "rpc_proof")
 	logQualificationStage(t, &stageStarted, "final_authority", "provider_restart")
 	generation, err := newClient.RevokeEnvironment(ctx, attached.Environment, owner, newAttached.GrantGeneration, "rotation-revoke-replay")
 	if err != nil {
@@ -342,7 +358,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	logQualificationStage(t, &stageStarted, "provider_restart", "fixture_restore")
 	// Restore fixture client compatibility through a higher generation; this is
 	// another forward rotation, never a high-water-mark rollback.
-	restoreFixtureSecurity(t, ctx, kubeconfig, rotationDir)
+	restoreFixtureSecurity(t, ctx, kubeconfig, rotationDir, "fixture_restore")
 	logQualificationStage(t, &stageStarted, "fixture_restore", "scoped_administrator")
 	qualifyDistinctAdministrator(t, ctx, state, kubeconfig, "rotated")
 	logQualificationStage(t, &stageStarted, "scoped_administrator", "cleanup")
@@ -594,11 +610,15 @@ func applySecurityCandidate(t *testing.T, ctx context.Context, kubeconfig, mater
 	applyKubectlInput(t, ctx, kubeconfig, config)
 }
 
-func restoreFixtureSecurity(t *testing.T, ctx context.Context, kubeconfig, rotationDir string) {
+func restoreFixtureSecurity(t *testing.T, ctx context.Context, kubeconfig, rotationDir, stage string) {
 	t.Helper()
+	stepStarted := time.Now()
 	applySecurityCandidate(t, ctx, kubeconfig, rotationDir, filepath.Join(rotationDir, "restore-fixture-clients.json"), "restore")
+	logQualificationStep(t, &stepStarted, stage, "apply_restore")
 	waitSecurityGeneration(ctx, t, kubeconfig, 4)
-	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+	logQualificationStep(t, &stepStarted, stage, "wait_ledger")
+	waitProviderReadyReplicas(t, ctx, kubeconfig, 2, stage)
+	logQualificationStep(t, &stepStarted, stage, "wait_ready")
 
 	pki := filepath.Join(os.Getenv("MECATL_EXECUTION_QUAL_STATE"), "pki")
 	roots, err := os.ReadFile(filepath.Join(rotationDir, "client-roots.pem"))
@@ -611,8 +631,10 @@ func restoreFixtureSecurity(t *testing.T, ctx context.Context, kubeconfig, rotat
 	clientSecret := runKubectl(t, ctx, kubeconfig, "create", "secret", "generic", "execution-client-tls", "-n", namespace,
 		"--from-file=ca.crt="+filepath.Join(rotationDir, "client-roots.pem"), "--from-file=tls.crt="+filepath.Join(pki, "mecak8s.crt"), "--from-file=tls.key="+filepath.Join(pki, "mecak8s.key"), "--dry-run=client", "-o", "yaml")
 	applyKubectlInput(t, ctx, kubeconfig, clientSecret)
+	logQualificationStep(t, &stepStarted, stage, "apply_client_trust")
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	logQualificationStep(t, &stepStarted, stage, "agent_rollout")
 }
 
 func applyKubectlInput(t *testing.T, ctx context.Context, kubeconfig string, input []byte) {
@@ -649,9 +671,11 @@ func waitSecurityGeneration(ctx context.Context, t *testing.T, kubeconfig string
 	}
 }
 
-func waitProviderReadyReplicas(t *testing.T, ctx context.Context, kubeconfig string, want int) {
+func waitProviderReadyReplicas(t *testing.T, ctx context.Context, kubeconfig string, want int, stage ...string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Minute)
+	started := time.Now()
+	lastReady := -1
+	deadline := started.Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		var pods corev1.PodList
 		raw := runKubectl(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/name=mecatl-execution", "-o", "json")
@@ -663,6 +687,10 @@ func waitProviderReadyReplicas(t *testing.T, ctx context.Context, kubeconfig str
 						ready++
 					}
 				}
+			}
+			if len(stage) > 0 && ready != lastReady {
+				t.Logf("stage=%s step=provider_ready_progress ready=%d want=%d elapsed=%s", stage[0], ready, want, time.Since(started).Round(time.Millisecond))
+				lastReady = ready
 			}
 			if ready == want {
 				return
@@ -1349,8 +1377,12 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 	agent := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
 	defer agent.stop()
 
+	stepStarted := time.Now()
 	source := createSession(t, ctx, agent.addr, alice)
-	assertMockJourney(t, prompt(t, ctx, agent.addr, source, alice, "run the scripted remote qualification"))
+	logQualificationStep(t, &stepStarted, "scripted_source", "create_session")
+	body := prompt(t, ctx, agent.addr, source, alice, "run the scripted remote qualification")
+	logQualificationStep(t, &stepStarted, "scripted_source", "prompt_stream")
+	assertMockJourney(t, body)
 	logQualificationStage(t, &stageStarted, "scripted_source", "source_ready")
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
 	allocation := executionenv.EnsureEnvironmentResponse{Environment: environmentForBinding(t, ctx, kubeconfig, source)}
