@@ -4,6 +4,7 @@
 - Date: 2026-09-15; draft amended 2026-09-25
 - Scope: independently deployed execution environment provider service; mecak8s is an optional client; controller/executor, logical environment, PVC, Pod, authorization, fencing, shared HarnessContext consumption, and kind qualification boundaries
 - Supersedes: none
+- Superseded by: [ADR 0373](0373-kubernetes-session-vm-isolation.md) (partially: the §6 last-reference retention of a running executor)
 
 ## Context
 
