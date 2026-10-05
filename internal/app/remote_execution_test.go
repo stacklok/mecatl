@@ -137,7 +137,7 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 					session.NewToolCall("allowed", "Shell", json.RawMessage(`{"command":"echo allowed"}`)),
 					session.NewToolCall("project-ask", "Shell", json.RawMessage(`{"command":"echo project-ask"}`)),
 				), mockllm.TextTurn("done"))
-			cfg := Config{MockProvider: llm, Workspace: project, Posture: PostureAuto, PermissionsConventional: true, NoSoul: true, RemoteExecution: true, PlacementScope: "remote", PlacementProvider: remoteFactoryPlacement{env: env}}
+			cfg := Config{MockProvider: llm, Workspace: project, Posture: PostureAuto, GuardrailsDisabled: true, PermissionsConventional: true, NoSoul: true, RemoteExecution: true, PlacementScope: "remote", PlacementProvider: remoteFactoryPlacement{env: env}}
 			if source == "explicit" {
 				cfg.PermissionConfigs = []string{operatorPath}
 			}
@@ -258,7 +258,7 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 	if err := os.WriteFile(filepath.Join(commandDir, "project-only.md"), []byte("LOCAL_COMMAND_MARKER_DO_NOT_LOAD"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	built, err := buildIsolated(t, context.Background(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Workspace: localProject, TrustProject: true, AllowAllTools: true, EnableCommands: true, SkillsConventional: true, NoSoul: true, SchedulerEnabled: false})
+	built, err := buildIsolated(t, context.Background(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Workspace: localProject, TrustProject: true, AllowAllTools: true, GuardrailsDisabled: true, EnableCommands: true, SkillsConventional: true, NoSoul: true, SchedulerEnabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}

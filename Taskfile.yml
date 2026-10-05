@@ -806,7 +806,7 @@ tasks:
           set -eu -o pipefail
           missing=""
           rendered=$(helm template production deploy/helm/mecak8s --set '{{.SAFE_SET}}')
-          for arg in --grpc-addr --http-addr --redis-url --session-lease-k8s-namespace --headless --posture --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do
+          for arg in --grpc-addr --http-addr --redis-url --session-lease-k8s-namespace --headless --permission-mode --guardrails --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do
             echo "$rendered" | grep -q -- "$arg" || missing="$missing $arg"
           done
           if [ -n "$missing" ]; then
