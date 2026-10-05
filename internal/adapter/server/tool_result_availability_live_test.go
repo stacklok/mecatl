@@ -20,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -34,6 +35,23 @@ func (s *availabilityPartsTool) Execute(_ context.Context, in session.ToolCall, 
 		session.NewStructuredContentBlock(`{"ok":true}`),
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{1, 2, 3}},
 	}), nil
+}
+
+type blockedReadPreparationPolicy struct {
+	port.PermissionPolicy
+	entered  chan struct{}
+	observed chan struct{}
+	release  chan struct{}
+}
+
+func (p *blockedReadPreparationPolicy) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
+	close(p.entered)
+	select {
+	case <-ctx.Done():
+		close(p.observed)
+	case <-p.release:
+	}
+	return p.PermissionPolicy.Evaluate(ctx, id, mode, call, ws)
 }
 
 // TestADR_0370_Scenario3_LiveOnlyProjection pins the live/durable split at
@@ -329,12 +347,18 @@ func TestADR_0370_Scenario3_LiveOnlyProjection(t *testing.T) {
 			}
 		})
 	}
-	for _, transport := range []string{"grpc-disconnect", "http-disconnect"} {
+	for _, transport := range []string{"grpc-disconnect", "http-disconnect", "grpc-preparation-disconnect", "http-preparation-disconnect"} {
 		t.Run(transport, func(t *testing.T) {
 			log := memstore.NewEventLog()
 			gate := make(chan struct{})
+			policy := port.PermissionPolicy(permpolicy.NewPolicy(allowRules(), nil))
+			var blocked *blockedReadPreparationPolicy
+			if strings.Contains(transport, "preparation") {
+				blocked = &blockedReadPreparationPolicy{PermissionPolicy: policy, entered: make(chan struct{}), observed: make(chan struct{}), release: make(chan struct{})}
+				policy = blocked
+			}
 			llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "Read", `{}`)), mockllm.TextTurn("done"))
-			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: catalogWith(&gateTool{name: "Read", release: gate}), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model"})
+			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: catalogWith(&gateTool{name: "Read", release: gate}), Policy: policy, Model: "test-model"})
 			svc, err := newPlacementTestService(server.Config{Engine: engine, Store: memstore.New(), EventLog: log, DefaultCapabilities: llm.Capabilities()})
 			if err != nil {
 				t.Fatal(err)
@@ -347,7 +371,7 @@ func TestADR_0370_Scenario3_LiveOnlyProjection(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			switch transport {
-			case "grpc-disconnect":
+			case "grpc-disconnect", "grpc-preparation-disconnect":
 				client, cleanup := dialGRPC(t, svc)
 				defer cleanup()
 				stream, err := client.Converse(ctx)
@@ -366,7 +390,7 @@ func TestADR_0370_Scenario3_LiveOnlyProjection(t *testing.T) {
 						break
 					}
 				}
-			case "http-disconnect":
+			case "http-disconnect", "http-preparation-disconnect":
 				httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
 				defer httpServer.Close()
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpServer.URL+"/v1/sessions/"+string(sess.ID)+"/prompt", strings.NewReader(`{"text":"go"}`))
@@ -401,7 +425,23 @@ func TestADR_0370_Scenario3_LiveOnlyProjection(t *testing.T) {
 				}
 				defer resp.Body.Close()
 			}
+			if blocked != nil {
+				select {
+				case <-blocked.entered:
+				case <-time.After(5 * time.Second):
+					close(blocked.release)
+					t.Fatal("read preparation did not reach permission evaluation")
+				}
+			}
 			cancel()
+			if blocked != nil {
+				select {
+				case <-blocked.observed:
+				case <-time.After(5 * time.Second):
+					close(blocked.release)
+					t.Fatal("disconnect did not cancel read preparation")
+				}
+			}
 			close(gate)
 			deadline := time.NewTimer(5 * time.Second)
 			defer deadline.Stop()
