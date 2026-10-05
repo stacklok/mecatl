@@ -267820,6 +267820,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791210411753,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5755fc6065581e92ba1083e6d4d7cc2112019253",
+          "message": "Fix retention scan and pre-execution cancellation races (#2108)\n\nFix retention scan races and preserve ordered read-batch results during pre-execution cancellation. Keep guarded availability delivery and deterministic regression coverage.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T17:58:01+03:00",
+          "tree_id": "e729b1d4b7452a66245935da5a9d7b771364c68a",
+          "url": "https://github.com/stacklok/mecatl/commit/5755fc6065581e92ba1083e6d4d7cc2112019253"
+        },
+        "date": 1791213019584,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -388538,6 +388572,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791213015660,
+  "lastUpdate": 1791213020601,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
