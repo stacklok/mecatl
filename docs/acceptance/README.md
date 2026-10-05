@@ -128,6 +128,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Visible reasoning summaries across provider protocols](visible-reasoning-summaries.md) — proposed Bounded contract for incomplete Anthropic capabilities, Claude 5 adaptive fallback, and unconditional requested Responses summaries. Status: proposed; awaiting Plan / Interface review.
+
 - [Mecatui exit handoff](mecatui-exit-handoff.md) - an exact embedded-session resume command, qualified latest alternative, and authoritative session summary after clean exit, while preserving the machine-readable ID record. Status: landed in this implementation candidate; authoritative on merge.
 
 - [Tool-result availability](tool-result-availability.md) - adds one live-only, call-ID-correlated availability projection for every effective tool result so concurrent cards expose the batch's long pole while canonical results retain ordered history. Status: proposed.
