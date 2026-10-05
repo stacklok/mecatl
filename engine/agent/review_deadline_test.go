@@ -10,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -104,10 +105,10 @@ func TestPreparationTerminalContextErrorIsNotDowngraded(t *testing.T) {
 
 type cancelledReviewChecker struct{ terminalFailureReviewer }
 
-func (r *cancelledReviewChecker) Review(ctx context.Context, _ ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *cancelledReviewChecker) Review(ctx context.Context, _ ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.reviews++
 	<-ctx.Done()
-	return ToolReviewResult{Assessment: ReviewUnresolved}, ctx.Err()
+	return ToolReviewResult{Assessment: ReviewUnresolved}, session.AuxiliaryUsage{}, ctx.Err()
 }
 
 func TestResolveInboundCancellationOnlyWithholdsReviewedResults(t *testing.T) {
@@ -122,8 +123,8 @@ func TestResolveInboundCancellationOnlyWithholdsReviewedResults(t *testing.T) {
 			name = "reviewed"
 		}
 		t.Run(name, func(t *testing.T) {
-			// Neither early return may publish review events or asks; no Run is supplied.
-			got, cancelled := engine.resolveInbound(ctx, nil, nil, memEnv("/ws"), 0, call, original, inboundAssessment{applies: applies})
+			// Neither early return may publish review events or asks.
+			got, cancelled, _ := engine.resolveInbound(ctx, &Run{diag: port.NopDiagnostics{}}, nil, memEnv("/ws"), 0, call, original, inboundAssessment{applies: applies})
 			want := original
 			if applies {
 				want = session.NewToolError(call.ID, withheldResultText+": review was cancelled")

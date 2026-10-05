@@ -192,9 +192,10 @@ func TestEvidenceAuthorizationPrecedesBackendMetadata(t *testing.T) {
 
 type countingRangeEvidenceWorkspace struct {
 	tool.Workspace
-	reads      int
-	delays     []time.Duration
-	beforeRead func(context.Context, int) error
+	reads                 int
+	delays                []time.Duration
+	beforeRead            func(context.Context, int) error
+	completeAfterDeadline bool
 }
 
 func (w *countingRangeEvidenceWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
@@ -210,6 +211,9 @@ func (w *countingRangeEvidenceWorkspace) ReadVersionRangeBounded(ctx context.Con
 		if err := w.beforeRead(ctx, w.reads); err != nil {
 			return nil, tool.FileVersion{}, 0, err
 		}
+	}
+	if w.completeAfterDeadline && ctx.Err() != nil {
+		ctx = context.WithoutCancel(ctx)
 	}
 	return w.Workspace.(tool.BoundedWorkspaceRangeReader).ReadVersionRangeBounded(ctx, path, offset, maxBytes, totalLimit)
 }

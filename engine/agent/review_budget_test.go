@@ -26,12 +26,12 @@ type lateAcceptReviewer struct {
 	enforce   bool
 }
 
-func (r *lateAcceptReviewer) Review(ctx context.Context, _ ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *lateAcceptReviewer) Review(ctx context.Context, _ ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.calls++
 	deadline, _ := ctx.Deadline()
 	r.remaining = time.Until(deadline)
 	<-time.After(r.delay)
-	return ToolReviewResult{Assessment: ReviewAcceptable}, r.err
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, r.err
 }
 
 type slowGrantReviewer struct{ siblingBudgetReviewer }

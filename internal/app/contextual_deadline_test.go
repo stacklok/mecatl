@@ -37,7 +37,7 @@ func TestReviewEvidenceBindingExpiresAtInheritedDeadline(t *testing.T) {
 }
 
 func TestContextualEvidencePreparationAndCheckerShareBudget(t *testing.T) {
-	for _, mode := range []string{"retries", "preparation_timeout", "evidence_read_timeout", "stale_evidence"} {
+	for _, mode := range []string{"retries", "preparation_timeout", "evidence_read_timeout", "stale_evidence", "terminal_after_deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				files := memfs.NewWorkspace("/review")
@@ -57,6 +57,19 @@ func TestContextualEvidencePreparationAndCheckerShareBudget(t *testing.T) {
 						return nil
 					}
 				}
+				deadlineObserved := false
+				if mode == "terminal_after_deadline" {
+					ws.delays[2] = 0
+					ws.completeAfterDeadline = true
+					ws.beforeRead = func(ctx context.Context, read int) error {
+						if read == 3 {
+							<-ctx.Done()
+							deadlineObserved = errors.Is(ctx.Err(), context.DeadlineExceeded)
+							return files.Write(context.Background(), "review-script.sh", []byte("changed after inventory"))
+						}
+						return nil
+					}
+				}
 				evidenceProvider := &evidenceBuildProvider{call: 1} // start at its contextual evidence-read turn
 				retryProvider := &invalidThenBlockingReviewProvider{firstDelay: 15 * time.Second}
 				var provider port.LLMProvider = evidenceProvider
@@ -65,7 +78,7 @@ func TestContextualEvidencePreparationAndCheckerShareBudget(t *testing.T) {
 				}
 				pc := promptConfig(Config{Model: "review-model"}, "")
 				pc.Role = contextualReviewerSystemPrompt
-				deps := childEngineDepsForProvider(Config{UseMock: true}, "guardrail-reviewer", provider, "review-model", func() int { return 128000 }, tool.NewCatalog(), pc, nil)
+				deps := childEngineDepsForProvider(Config{UseMock: true}, "guardrail-reviewer", provider, session.ProviderModelID{ProviderID: "mock", ModelID: "review-model"}, func() int { return 128000 }, tool.NewCatalog(), pc, nil)
 				deps.MaxNoProgressNudges = -1
 				rules, ok := compileGuardrailRules(Config{}, []modelhook.RuleSpec{{Match: "Write", Phases: []string{"pre"}, Mode: "block"}})
 				if !ok {
@@ -81,13 +94,15 @@ func TestContextualEvidencePreparationAndCheckerShareBudget(t *testing.T) {
 				env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review", Revision: "r1"}, ws, reviewerReadLedger{}, nil)
 				sess := session.New("real-evidence-budget", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
 				wantCode, wantDisposition := agent.ReviewFailureTimeout, "pass_advisory"
-				if mode == "stale_evidence" {
+				if mode == "stale_evidence" || mode == "terminal_after_deadline" {
 					wantCode, wantDisposition = agent.ReviewFailureEvidenceFailure, "deny"
 				}
 				found, denied := false, false
+				findings := 0
 				for ev := range engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "write"}).Events() {
 					if ev.Hook != nil && ev.Hook.Guardrail != nil {
 						found = true
+						findings++
 						if ev.Hook.Guardrail.ReasonCode != string(wantCode) || ev.Hook.Guardrail.Disposition != wantDisposition {
 							t.Errorf("review=%+v", ev.Hook.Guardrail)
 						}
@@ -97,8 +112,11 @@ func TestContextualEvidencePreparationAndCheckerShareBudget(t *testing.T) {
 					}
 				}
 				seen, inspection, _, code := health.snapshot()
-				if !found || !seen || inspection != "operational_failure" || code != wantCode || denied != (mode == "stale_evidence") {
+				if !found || !seen || inspection != "operational_failure" || code != wantCode || denied != (mode == "stale_evidence" || mode == "terminal_after_deadline") {
 					t.Fatalf("found=%t health=%t %s %s denied=%t", found, seen, inspection, code, denied)
+				}
+				if mode == "terminal_after_deadline" && (!deadlineObserved || findings != 1 || evidenceProvider.call != 2) {
+					t.Fatalf("deadline observed=%t findings=%d provider turns=%d; terminal failure must not retry", deadlineObserved, findings, evidenceProvider.call)
 				}
 				switch mode {
 				case "retries":
@@ -127,7 +145,7 @@ func TestEngineReviewBudgetAndCallerCancellationHaveDistinctRouteHealth(t *testi
 					provider := &blockingReviewProvider{}
 					pc := promptConfig(Config{Model: "review-model"}, "")
 					pc.Role = contextualReviewerSystemPrompt
-					deps := childEngineDepsForProvider(Config{UseMock: true}, "guardrail-reviewer", provider, "review-model", func() int { return 128000 }, tool.NewCatalog(), pc, nil)
+					deps := childEngineDepsForProvider(Config{UseMock: true}, "guardrail-reviewer", provider, session.ProviderModelID{ProviderID: "mock", ModelID: "review-model"}, func() int { return 128000 }, tool.NewCatalog(), pc, nil)
 					base := newContextualToolReviewer(agent.NewEngine(deps), "mock", "review-model")
 					health := &guardrailRouteHealth{}
 					health.record(agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil)
@@ -202,7 +220,7 @@ func TestContextualReviewerDoesNotEnterProviderWithExpiredParent(t *testing.T) {
 				want = context.DeadlineExceeded
 			}
 			cancel()
-			result, err := reviewer.Review(ctx, reviewRequestWithoutEvidence(), nil)
+			result, _, err := reviewer.Review(ctx, reviewRequestWithoutEvidence(), nil)
 			if result.Assessment != agent.ReviewUnresolved || !errors.Is(err, want) || reviewFailureCodeForTest(err) != "" || provider.Calls() != 0 {
 				t.Fatalf("result=%+v error=%v calls=%d", result, err, provider.Calls())
 			}

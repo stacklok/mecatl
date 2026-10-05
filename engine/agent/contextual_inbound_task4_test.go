@@ -109,7 +109,7 @@ func TestInboundReleaseWaitOutlivesReviewBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if ev.ToolResult != nil && ev.ToolResult.Content == "held" {
+			if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.Content == "held" {
 				released++
 			}
 		}

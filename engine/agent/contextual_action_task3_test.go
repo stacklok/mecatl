@@ -9,6 +9,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -155,6 +157,7 @@ func TestActionApprovalWaitOutlivesReviewBudgetAndArmsGrant(t *testing.T) {
 		}}
 		executions := 0
 		cat := tool.NewCatalog()
+		cat.MustRegister(&fakeTool{name: "Read", readOnly: true})
 		cat.MustRegister(&fakeTool{name: "Write", exec: func(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			if deadline, _ := ctx.Deadline(); ctx.Err() != nil || deadline != parentDeadline {
 				t.Errorf("execution context err=%v deadline=%v, want live parent %v", ctx.Err(), deadline, parentDeadline)
@@ -164,7 +167,19 @@ func TestActionApprovalWaitOutlivesReviewBudgetAndArmsGrant(t *testing.T) {
 		}})
 		args := []byte(`{"path":"new.txt","content":"x"}`)
 		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("first", "Write", args)), mockllm.ToolCallTurn(session.NewToolCall("second", "Write", args)), mockllm.TextTurn("done")), Catalog: cat, Policy: &noLearnPolicy{}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer, Interactive: true})
-		env := agent.MemEnv("/ws")
+		base := memfs.NewWorkspace("/ws")
+		if err := base.Write(parent, "new.txt", []byte("original")); err != nil {
+			t.Fatal(err)
+		}
+		workspace := &countingBoundedWorkspace{Workspace: base}
+		workspace.beforeRead = func(ctx context.Context, read int) {
+			if read == 2 || read == 3 { // post-approval revalidation and grant binding
+				if deadline, _ := ctx.Deadline(); ctx.Err() != nil || deadline != parentDeadline {
+					t.Errorf("post-approval dependency read context err=%v deadline=%v, want live parent %v", ctx.Err(), deadline, parentDeadline)
+				}
+			}
+		}
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, workspace, memledger.New(), nil)
 		run := engine.Run(parent, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "write it"})
 		asks := 0
 		for ev := range run.Events() {
@@ -176,8 +191,51 @@ func TestActionApprovalWaitOutlivesReviewBudgetAndArmsGrant(t *testing.T) {
 				}
 			}
 		}
-		if asks != 1 || reviewer.reviews != 1 || executions != 2 || prepares != 3 || !reviewer.AllowsGrant("Write:"+string(args)+":"+env.Ref().Revision) {
-			t.Fatalf("asks=%d reviews=%d executions=%d prepares=%d grants=%v", asks, reviewer.reviews, executions, prepares, reviewer.armed)
+		if asks != 1 || reviewer.reviews != 1 || executions != 2 || prepares != 3 || workspace.bounded < 4 || !reviewer.AllowsGrant("Write:"+string(args)+":"+env.Ref().Revision) {
+			t.Fatalf("asks=%d reviews=%d executions=%d prepares=%d dependency reads=%d grants=%v", asks, reviewer.reviews, executions, prepares, workspace.bounded, reviewer.armed)
+		}
+	})
+}
+
+func TestActionApprovalWaitRevalidatesStaleDependency(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		base := memfs.NewWorkspace("/ws")
+		if err := base.Write(ctx, "new.txt", []byte("original")); err != nil {
+			t.Fatal(err)
+		}
+		workspace := &countingBoundedWorkspace{Workspace: base}
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, workspace, memledger.New(), nil)
+		reviewer := &scenario1GrantReviewer{}
+		executions := 0
+		cat := tool.NewCatalog()
+		cat.MustRegister(&fakeTool{name: "Read", readOnly: true})
+		cat.MustRegister(&fakeTool{name: "Write", exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			executions++
+			return session.NewToolResult(call.ID, "ok"), nil
+		}})
+		call := session.NewToolCall("first", "Write", []byte(`{"path":"new.txt","content":"x"}`))
+		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: cat, Policy: &noLearnPolicy{}, ToolReviewer: reviewer, ReviewEvidencePreparer: noExternalEvidencePreparer{}, Interactive: true})
+		run := engine.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "write it"})
+		asks, stale := 0, false
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asks++
+				<-time.After(91 * time.Second)
+				if err := base.Write(ctx, "new.txt", []byte("changed while waiting")); err != nil {
+					t.Fatal(err)
+				}
+				if err := run.Approve(ev.Ask.AskID, session.VerdictAllowAlways); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if ev.ToolResult != nil && ev.ToolResult.IsError && ev.ToolResult.Content == "contextual guardrail approval became stale before execution" {
+				stale = true
+			}
+		}
+		if asks != 1 || !stale || executions != 0 || reviewer.reviews != 1 || workspace.bounded < 2 || reviewer.AllowsGrant("Write:"+string(call.Args)+":"+env.Ref().Revision) {
+			t.Fatalf("asks=%d stale=%t executions=%d reviews=%d dependency reads=%d", asks, stale, executions, reviewer.reviews, workspace.bounded)
 		}
 	})
 }

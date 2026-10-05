@@ -275,7 +275,7 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 		return result, false, true
 	}
 	if ctx.Err() != nil {
-		return session.NewToolError(call.ID, withheldResultText+": review was cancelled"), true
+		return session.NewToolError(call.ID, withheldResultText+": review was cancelled"), true, false
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.principalRevision) {
 		e.emitInboundReview(r, turnIdx, call, assessment, "withhold_result")
