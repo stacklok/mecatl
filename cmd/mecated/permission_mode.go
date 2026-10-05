@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// permissionModeHelp is the --permission-mode usage line (ADR 0365). It names
+// permissionModeHelp is the --permission-mode usage line (ADR 0375). It names
 // both halves a token sets and their lifetimes, and lists every valid token from
 // the composition table so help and parsing cannot drift.
 var permissionModeHelp = "permission mode, one of: " + strings.Join(app.PermissionModeNames(), ", ") +
@@ -47,12 +47,12 @@ func warnDeprecatedPermissionFlags(diag port.Diagnostics, cfg config) {
 	}
 	if cfg.postureFlagSet {
 		diag.Log(context.Background(), port.LevelWarn,
-			"--posture is DEPRECATED; use --permission-mode instead (ADR 0365)",
+			"--posture is DEPRECATED; use --permission-mode instead (ADR 0375)",
 			"posture", cfg.posture, "replacement", "--permission-mode "+postureReplacementToken(cfg.posture))
 	}
 	if cfg.yoloFlagSet {
 		diag.Log(context.Background(), port.LevelWarn,
-			"--yolo is DEPRECATED; use --permission-mode yolo instead (ADR 0365)",
+			"--yolo is DEPRECATED; use --permission-mode yolo instead (ADR 0375)",
 			"replacement", "--permission-mode yolo")
 	}
 }

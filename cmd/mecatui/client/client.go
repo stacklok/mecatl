@@ -721,7 +721,7 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 
 // RequestModeFromString maps the mode a client REQUESTS for a new session. It is
 // ModeFromString except that an empty mode means "no preference" and goes out
-// UNSPECIFIED, so the server applies its own configured default mode (ADR 0365)
+// UNSPECIFIED, so the server applies its own configured default mode (ADR 0375)
 // instead of receiving an explicit DEFAULT.
 func RequestModeFromString(s string) mecatlv1.PermissionMode {
 	if s == "" {
