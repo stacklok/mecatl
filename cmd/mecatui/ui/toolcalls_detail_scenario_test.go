@@ -260,8 +260,8 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 			assertDetail("…", "running", "toolName")
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "provisional failure", Available: true, IsError: true})
-			assertList("✗", "failed", "toolErr")
-			if detail := assertDetail("✗", "failed", "toolErr"); !strings.Contains(detail, "provisional failure") {
+			assertList("…", "awaiting confirmation", "toolName")
+			if detail := assertDetail("…", "awaiting confirmation", "toolName"); !strings.Contains(detail, "provisional failure") {
 				t.Fatalf("provisional result missing from detail: %q", detail)
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -285,7 +285,7 @@ func TestMecatuiToolcallsInspector_Scenario2_LiveResultAndStatus(t *testing.T) {
 	}
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "temporary output", Available: true, IsError: true})
 	provisional := inspectorDetail(t, s, 70, 12)
-	if !strings.Contains(provisional, "temporary output") || !strings.Contains(provisional, "failed") {
+	if !strings.Contains(provisional, "temporary output") || !strings.Contains(provisional, "awaiting confirmation") {
 		t.Fatalf("provisional detail: %q", provisional)
 	}
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "canonical output"})

@@ -2624,7 +2624,7 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 	if !ok {
 		return false
 	}
-	if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].blockID == detail.blockID {
+	if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].toolcallProjection.blockID == detail.blockID {
 		s.refreshDetail(&m.conv.scrollback)
 	}
 	return true

@@ -33,19 +33,20 @@ func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
 }
 
 type toolcallEntry struct {
-	blockID  scrollback.BlockID
-	revision uint64
-	index    int
-	name     string
-	intent   string
-	resolved bool
-	failed   bool
+	toolcallProjection
+	index            int
+	blockID          scrollback.BlockID
+	revision         uint64
+	name, intent     string
+	resolved, failed bool
 }
 
 type toolcallDetail struct {
 	callID, name, intent string
 	result               scrollback.ToolResult
-	resolved, failed     bool
+	state                toolcallProjectionState
+	stateSet             bool
+	resolved, failed     bool // retained for direct detail-row fixtures
 	resultReceived       bool
 }
 
@@ -93,14 +94,14 @@ func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		return nil, true, false
 	}
 	for i, entry := range s.entries {
-		if entry.blockID == blockID {
+		if entry.toolcallProjection.blockID == blockID {
 			s.selected = i
 			if s.list != nil {
 				s.list.SetCursor(i)
 				s.listFollow = i == len(s.entries)-1
 			}
 			s.detail = true
-			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
+			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].toolcallProjection.blockID}
 			s.window = new(bounded.Viewport)
 			s.width = 0
 			s.anchor = 0
@@ -148,15 +149,8 @@ type toolcallDetailRow struct {
 	statusStyle             string
 }
 
-func toolcallStatus(resolved, failed bool) (glyph, text, style string) {
-	switch {
-	case failed:
-		return "✗", statusFailed, "toolErr"
-	case resolved:
-		return "✓", statusDone, "toolOk"
-	default:
-		return "…", "running", "toolName"
-	}
+func toolcallStatus(state toolcallProjectionState) (glyph, text, style string) {
+	return (toolcallProjection{state: state}).status()
 }
 
 type toolcallPresentation struct {
@@ -354,7 +348,7 @@ func (m Model) toolcallEntries() []toolcallEntry { return m.toolcallEntriesSince
 func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 	cached := make(map[scrollback.BlockID]toolcallEntry, len(previous))
 	for _, entry := range previous {
-		cached[entry.blockID] = entry
+		cached[entry.toolcallProjection.blockID] = entry
 	}
 	entries := make([]toolcallEntry, 0)
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
@@ -362,16 +356,15 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 		if !ok {
 			continue
 		}
-		intent := cached[metadata.ID].intent
-		if old, ok := cached[metadata.ID]; !ok || old.revision != metadata.Revision {
-			intent = ansi.Truncate(terminaltext.SanitizeSingleLine(toolcallIntentFor(metadata.Name, metadata.Arguments)), 120, "…")
+		projection := cached[metadata.ID].toolcallProjection
+		if old, ok := cached[metadata.ID]; !ok || old.toolcallProjection.revision != metadata.Revision {
+			projection = projectToolCall(metadata)
 		}
 		entries = append(entries, toolcallEntry{
-			blockID: metadata.ID, revision: metadata.Revision, index: i,
-			name:     ansi.Truncate(terminaltext.SanitizeSingleLine(metadata.Name), 120, "…"),
-			intent:   intent,
-			resolved: metadata.Resolved,
-			failed:   metadata.Failed || subagentStopErrored(metadata.Stop),
+			toolcallProjection: projection, index: i,
+			blockID: projection.blockID, revision: projection.revision,
+			name: projection.fullName, intent: projection.intent,
+			resolved: metadata.Resolved, failed: metadata.Failed || subagentStopErrored(metadata.Stop),
 		})
 	}
 	return entries
@@ -386,7 +379,7 @@ func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 	var selected scrollback.BlockID
 	following := !s.detail && (opening || (s.listFollow && len(s.entries) > 0 && s.selected == len(s.entries)-1))
 	if !following && s.selected >= 0 && s.selected < len(s.entries) {
-		selected = s.entries[s.selected].blockID
+		selected = s.entries[s.selected].toolcallProjection.blockID
 	}
 	s.entries = entries
 	if len(entries) == 0 {
@@ -398,7 +391,7 @@ func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 		return
 	}
 	for i := range entries {
-		if entries[i].blockID == selected {
+		if entries[i].toolcallProjection.blockID == selected {
 			s.selected = i
 			return
 		}
@@ -418,7 +411,7 @@ func (m *Model) syncToolcalls() {
 func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
 	entry := s.entries[s.selected]
 	snapshot := c.SnapshotAt(entry.index)
-	if snapshot.ID != entry.blockID {
+	if snapshot.ID != entry.toolcallProjection.blockID {
 		s.detailEntry = nil
 		return
 	}
@@ -433,8 +426,8 @@ func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
 	case scrollback.TeamCardSnapshot:
 		call, result, received = card.Call, card.Result, card.Resolved
 	}
-	s.detailEntry = &toolcallDetail{callID: call.ID, name: call.Name, intent: call.Arguments, result: result,
-		resolved: entry.resolved, failed: entry.failed, resultReceived: received}
+	s.detailEntry = &toolcallDetail{callID: call.ID, name: entry.fullName, intent: call.Arguments, result: result,
+		state: entry.state, stateSet: true, resultReceived: received}
 }
 
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
@@ -481,8 +474,9 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	items := make([]bounded.ListItem, len(s.entries))
 	for i, entry := range s.entries {
-		glyph, status, _ := toolcallStatus(entry.resolved, entry.failed)
-		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent, StatusCells: [2]string{glyph}}
+		glyph, status, _ := toolcallStatus(entry.state)
+		text := status + " · " + entry.displayName + " · " + entry.intent
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.toolcallProjection.blockID), Text: ansi.Truncate(text, 120, "…"), StatusCells: [2]string{glyph}}
 	}
 	s.list.SetGeometry(width, bodyHeight, 2, bounded.Clip)
 	s.list.SetItems(items)
@@ -511,7 +505,7 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		presentation := presentListRow(row, s.deps.theme.Style("toolName"), s.deps.theme.Style("toolArgs"))
 		statusStyle := s.deps.theme.Style("toolName")
 		if row.ItemIndex >= 0 && row.ItemIndex < len(s.entries) {
-			_, _, slot := toolcallStatus(s.entries[row.ItemIndex].resolved, s.entries[row.ItemIndex].failed)
+			_, _, slot := toolcallStatus(s.entries[row.ItemIndex].state)
 			statusStyle = s.deps.theme.Style(slot)
 		}
 		y := len(body)
@@ -523,7 +517,7 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		x1 := min(max(0, width), lipgloss.Width(body[y]))
 		if x1 > 0 {
 			regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
-			s.hitItems[id] = s.entries[row.ItemIndex].blockID
+			s.hitItems[id] = s.entries[row.ItemIndex].toolcallProjection.blockID
 		}
 	}
 	if view.Below > 0 {
@@ -668,7 +662,15 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 }
 
 func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
-	glyph, status, style := toolcallStatus(entry.resolved, entry.failed)
+	state := entry.state
+	if !entry.stateSet {
+		if entry.failed {
+			state = toolcallFailed
+		} else if entry.resolved {
+			state = toolcallDone
+		}
+	}
+	glyph, status, style := toolcallStatus(state)
 
 	lines := []toolcallDetailRow{
 		{text: "Identity · " + glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
@@ -682,7 +684,7 @@ func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 
 	result := entry.result
 	lines = append(lines, toolcallDetailRow{})
-	if entry.failed {
+	if state == toolcallFailed {
 		lines = append(lines, toolcallDetailRow{text: "Error:", kind: toolcallError})
 	} else {
 		lines = append(lines, toolcallDetailRow{text: "Result:", kind: toolcallHeading})
@@ -787,7 +789,7 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	case bubbleskey.Matches(msg, s.deps.keys.Choose):
 		if !s.detail {
 			s.detail = true
-			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
+			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].toolcallProjection.blockID}
 			s.window = new(bounded.Viewport)
 			s.width = 0
 			s.anchor = 0
