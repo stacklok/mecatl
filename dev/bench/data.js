@@ -265672,6 +265672,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791195630504,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41898282+github-actions[bot]@users.noreply.github.com",
+            "name": "github-actions[bot]",
+            "username": "github-actions[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "42ef8b6f1c5c9051eed7d2500cc4243374e24c3a",
+          "message": "chore(catalog): refresh models.dev curated subset (#2093)\n\nCo-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-05T12:25:21+02:00",
+          "tree_id": "fd7f2a317be1d30b202668548d533face3455236",
+          "url": "https://github.com/stacklok/mecatl/commit/42ef8b6f1c5c9051eed7d2500cc4243374e24c3a"
+        },
+        "date": 1791196571160,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -385472,6 +385506,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791196568303,
+  "lastUpdate": 1791196571667,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
