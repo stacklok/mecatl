@@ -181,6 +181,8 @@ func assertProductionExecutorPod(t *testing.T, ctx context.Context, kubeconfig, 
 func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
+	stageStarted := time.Now()
+	t.Log("stage=initial_provision starting")
 	oldClient, forward := productionClient(t, ctx, state, kubeconfig)
 	owner, binding, attached := createProductionEnvironment(t, ctx, oldClient, "rotation")
 	oldClaim, err := oldClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-old-grant", OperationID: "acquire-rotation-old-grant", TTL: time.Minute})
@@ -199,10 +201,14 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if out, err := generator.CombinedOutput(); err != nil {
 		t.Fatalf("generate synthetic rotation material: %v: %s", err, out)
 	}
+	logQualificationStage(t, &stageStarted, "initial_provision", "invalid_and_recovery")
 	t.Cleanup(func() {
+		cleanupStarted := time.Now()
+		t.Log("stage=rotation_cleanup starting")
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
 		restoreFixtureSecurity(t, cleanupCtx, kubeconfig, rotationDir)
+		t.Logf("stage=rotation_cleanup elapsed=%s", time.Since(cleanupStarted).Round(time.Millisecond))
 	})
 
 	// A changed policy at the already-authoritative generation is rejected by
@@ -227,6 +233,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if err := oldClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: recovered.Environment, Owner: owner, BindingID: binding, RunID: recovered.RunID, ClaimID: recovered.ClaimID, Epoch: recovered.Epoch, GrantGeneration: recovered.GrantGeneration, OperationID: "rotation-release-recovered"}); err != nil {
 		t.Fatalf("release recovery-phase claim: code=%s", remoteErrorCode(err))
 	}
+	logQualificationStage(t, &stageStarted, "invalid_and_recovery", "bridge_authority")
 
 	// Generation 2 bridges client trust before changing the server certificate.
 	// The old connection remains usable, while a new-CA client can establish its
@@ -257,6 +264,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: renewed.Environment, Owner: owner, BindingID: binding, RunID: renewed.RunID, ClaimID: renewed.ClaimID, Epoch: renewed.Epoch, GrantGeneration: renewed.GrantGeneration, OperationID: "rotation-release-k2-bridge"}); err != nil {
 		t.Fatalf("release bridge-phase claim: code=%s", remoteErrorCode(err))
 	}
+	logQualificationStage(t, &stageStarted, "bridge_authority", "final_authority")
 
 	// Generation 3 switches server TLS, removes the old client CA, and revokes
 	// k1. Authorization is checked on every RPC, so the established old-client
@@ -292,6 +300,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: finalClaim.Environment, Owner: owner, BindingID: binding, RunID: finalClaim.RunID, ClaimID: finalClaim.ClaimID, Epoch: finalClaim.Epoch, GrantGeneration: finalClaim.GrantGeneration, OperationID: "rotation-release-final"}); err != nil {
 		t.Fatal(err)
 	}
+	logQualificationStage(t, &stageStarted, "final_authority", "provider_restart")
 	generation, err := newClient.RevokeEnvironment(ctx, attached.Environment, owner, newAttached.GrantGeneration, "rotation-revoke-replay")
 	if err != nil {
 		t.Fatal(err)
@@ -330,10 +339,13 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 		t.Fatalf("revoked claim generation rejection: code=%s, want conflict", remoteErrorCode(err))
 	}
 	waitFileContent(t, ctx, postRestartClient, currentRun, "rotation-sentinel.txt", "old-authority\n", "post-restart revocation positive control after probe")
+	logQualificationStage(t, &stageStarted, "provider_restart", "fixture_restore")
 	// Restore fixture client compatibility through a higher generation; this is
 	// another forward rotation, never a high-water-mark rollback.
 	restoreFixtureSecurity(t, ctx, kubeconfig, rotationDir)
+	logQualificationStage(t, &stageStarted, "fixture_restore", "scoped_administrator")
 	qualifyDistinctAdministrator(t, ctx, state, kubeconfig, "rotated")
+	logQualificationStage(t, &stageStarted, "scoped_administrator", "cleanup")
 }
 
 func acquireCurrentAuthorityRun(ctx context.Context, req executionenv.RunClaimRequest, acquire func(context.Context, executionenv.RunClaimRequest) (executionenv.RunClaim, error), retryDelay time.Duration) (executionenv.RunClaim, error) {
@@ -1326,6 +1338,8 @@ func runKindExecutionProductionCompatiblePrototypeMigration(t *testing.T) {
 func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
+	stageStarted := time.Now()
+	t.Log("stage=scripted_source starting")
 	provider, _ := productionClient(t, ctx, state, kubeconfig)
 
 	tokenForward := portForward(t, ctx, kubeconfig, "service/oidc-issuer", 8443)
@@ -1337,10 +1351,12 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 
 	source := createSession(t, ctx, agent.addr, alice)
 	assertMockJourney(t, prompt(t, ctx, agent.addr, source, alice, "run the scripted remote qualification"))
+	logQualificationStage(t, &stageStarted, "scripted_source", "source_ready")
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
 	allocation := executionenv.EnsureEnvironmentResponse{Environment: environmentForBinding(t, ctx, kubeconfig, source)}
 	attached := waitReady(t, ctx, provider, owner, source, allocation.Environment)
 	before := readExecutionStatus(t, ctx, kubeconfig, allocation.Environment.ID)
+	logQualificationStage(t, &stageStarted, "source_ready", "publish_successors")
 
 	forkID := successorSession(t, ctx, agent.addr, source, alice, "fork")
 	clearID := successorSession(t, ctx, agent.addr, source, alice, "clear")
@@ -1354,6 +1370,7 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 		t.Fatal("successor publication lost its source environment")
 	}
 	waitReferenceSet(t, ctx, kubeconfig, allocation.Environment.ID, source, forkID, clearID)
+	logQualificationStage(t, &stageStarted, "publish_successors", "run_exclusion")
 	after := readExecutionStatus(t, ctx, kubeconfig, allocation.Environment.ID)
 	if after.PVCUID != before.PVCUID || after.PodUID != before.PodUID || after.Epoch != before.Epoch {
 		t.Fatal("Clear/Fork changed the exact remote execution identity")
@@ -1377,6 +1394,7 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 	clearAttached := waitReady(t, ctx, provider, owner, clearID, allocation.Environment)
 	_, release := acquireRun(t, ctx, provider, owner, clearID, clearAttached, "clear-after-release")
 	release()
+	logQualificationStage(t, &stageStarted, "run_exclusion", "delete_references")
 
 	for _, id := range []string{forkID, clearID, source} {
 		status, body := request(t, ctx, http.MethodPost, "http://"+agent.addr+"/v1/sessions/"+id+"/delete", alice, nil)
@@ -1389,6 +1407,7 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 	if final.PVCUID != before.PVCUID || resourceCount(t, ctx, kubeconfig, "pvc -l execution.mecatl.dev/environment="+allocation.Environment.ID) != 1 {
 		t.Fatal("session deletion removed or replaced the retained workspace")
 	}
+	logQualificationStage(t, &stageStarted, "delete_references", "complete")
 }
 
 func environmentForBinding(t *testing.T, ctx context.Context, kubeconfig, binding string) executionenv.EnvironmentRef {

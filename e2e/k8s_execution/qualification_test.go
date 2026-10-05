@@ -38,9 +38,12 @@ func TestKindExecutionQualification(t *testing.T) {
 	pki := filepath.Join(state, "pki")
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
+	stageStarted := time.Now()
+	t.Log("stage=mock_rollout starting")
 	applyMockScript(t, ctx, kubeconfig, "mock-script.json")
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	logQualificationStage(t, &stageStarted, "mock_rollout", "direct_environment")
 
 	baseline := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev")
 	providerForward := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
@@ -93,6 +96,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	if got := resourceCount(t, ctx, kubeconfig, "pvc -l execution.mecatl.dev/environment="+first.Environment.ID); got != 1 {
 		t.Fatalf("workspace PVCs = %d, want 1", got)
 	}
+	logQualificationStage(t, &stageStarted, "direct_environment", "authorization_preflight")
 
 	intruderTLS := loadTLS(t, pki, "intruder", "mecatl-execution.execution-qualification.svc.cluster.local")
 	intruder, err := executionclient.New(providerForward.addr, intruderTLS)
@@ -148,12 +152,14 @@ func TestKindExecutionQualification(t *testing.T) {
 	if afterNoFS := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); afterNoFS != beforeNoFS {
 		t.Fatalf("no-fs session allocated execution resources: before=%d after=%d", beforeNoFS, afterNoFS)
 	}
+	logQualificationStage(t, &stageStarted, "authorization_preflight", "scripted_prompt")
 	sessionID := createSession(t, ctx, agentForward.addr, alice)
 	body := prompt(t, ctx, agentForward.addr, sessionID, alice, "run the scripted remote qualification")
 	if err := os.WriteFile(filepath.Join(state, "mock-journey.sse"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	assertMockJourney(t, body)
+	logQualificationStage(t, &stageStarted, "scripted_prompt", "independent_verification")
 	lookup := environmentForBinding(t, ctx, kubeconfig, sessionID)
 	attached := waitReady(t, ctx, providerClient, owner, sessionID, lookup)
 	rc, releaseVerification := acquireRun(t, ctx, providerClient, owner, sessionID, attached, fmt.Sprintf("independent-verify-%d", time.Now().UnixNano()))
@@ -171,6 +177,7 @@ func TestKindExecutionQualification(t *testing.T) {
 		t.Fatalf("different OIDC owner read status = %d, want 404", status)
 	}
 	agentForward.stop()
+	logQualificationStage(t, &stageStarted, "independent_verification", "provider_restart")
 
 	applyReattachScript(t, ctx, kubeconfig, state)
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
@@ -186,8 +193,10 @@ func TestKindExecutionQualification(t *testing.T) {
 	if refreshed := waitReady(t, ctx, providerClient, owner, sessionID, lookup); refreshed.Environment != lookup {
 		t.Fatal("provider did not reattach the exact environment after restart")
 	}
+	logQualificationStage(t, &stageStarted, "provider_restart", "agent_restart")
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	logQualificationStage(t, &stageStarted, "agent_restart", "reattach_prompt")
 	agentForward = portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
 	defer agentForward.stop()
 	body = promptEventually(t, ctx, agentForward.addr, sessionID, alice, "verify exact reattachment after both deployments restarted")
@@ -202,6 +211,13 @@ func TestKindExecutionQualification(t *testing.T) {
 	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != baseline+2 {
 		t.Fatalf("post-restart environments = %d, want baseline + direct + session (%d)", got, baseline+2)
 	}
+	logQualificationStage(t, &stageStarted, "reattach_prompt", "complete")
+}
+
+func logQualificationStage(t *testing.T, started *time.Time, completed, next string) {
+	t.Helper()
+	t.Logf("stage=%s elapsed=%s next=%s", completed, time.Since(*started).Round(time.Millisecond), next)
+	*started = time.Now()
 }
 
 func assertMockJourney(t *testing.T, body []byte) {

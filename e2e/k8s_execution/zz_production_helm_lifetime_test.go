@@ -33,6 +33,8 @@ import (
 func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
+	stageStarted := time.Now()
+	t.Log("stage=provision_and_probe starting")
 	requireOwnedHelmFixture(t, state, kubeconfig)
 	client, _ := productionClient(t, ctx, state, kubeconfig)
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "helm-lifetime")
@@ -60,6 +62,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		t.Fatal("commit lifetime capacity:", remoteErrorCode(err))
 	}
 	waitReady(t, ctx, client, owner, quotaBinding, quota.Environment)
+	logQualificationStage(t, &stageStarted, "provision_and_probe", "prepare_upgrade_fixture")
 
 	before := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 	envUID := kubeValue(t, ctx, kubeconfig, "get", "executionenvironment", attached.Environment.ID, "-n", namespace, "-o", "jsonpath={.metadata.uid}")
@@ -121,12 +124,15 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		return err
 	}
 	t.Cleanup(func() {
+		cleanupStarted := time.Now()
+		t.Log("stage=helm_cleanup starting")
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 7*time.Minute)
 		defer cleanupCancel()
 		requireOwnedHelmFixture(t, state, kubeconfig)
 		if err := restore(cleanupCtx); err != nil {
 			t.Error("restore owned release/current authority failed:", err)
 		}
+		t.Logf("stage=helm_cleanup elapsed=%s", time.Since(cleanupStarted).Round(time.Millisecond))
 	})
 	capacityBefore := lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-profile-allocations")
 	authorityBefore := lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-security-authority")
@@ -140,6 +146,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	liveLedgers := map[string]corev1.ConfigMap{capacityBefore.Name: capacityBefore, authorityBefore.Name: authorityBefore, current.Name: current}
 	liveLedgers["mecatl-execution-profiles"] = lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-profiles")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+	logQualificationStage(t, &stageStarted, "prepare_upgrade_fixture", "live_upgrade_rejection")
 	if _, err := helmLifetime(ctx, kubeconfig, "upgrade", "mecatl-execution", chart, "-f", valuesPath, "--wait", "--timeout=4m"); !errors.Is(err, errLifetimeNotQuiesced) {
 		t.Fatal("live same-release upgrade did not reject provider writers with the quiescence error")
 	}
@@ -147,6 +154,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if status := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID); status != before || envUID != kubeValue(t, ctx, kubeconfig, "get", "executionenvironment", attached.Environment.ID, "-n", namespace, "-o", "jsonpath={.metadata.uid}") || before.PodUID != kubeValue(t, ctx, kubeconfig, "get", "pod", pod, "-n", namespace, "-o", "jsonpath={.metadata.uid}") || before.PVCUID != kubeValue(t, ctx, kubeconfig, "get", "pvc", "-n", namespace, "-l", "execution.mecatl.dev/environment="+attached.Environment.ID, "-o", "jsonpath={.items[*].metadata.uid}") {
 		t.Fatal("rejected live upgrade changed runtime identity or status")
 	}
+	logQualificationStage(t, &stageStarted, "live_upgrade_rejection", "compatible_upgrade")
 	// Quiesce all writers before lookup snapshots are rendered into the upgrade.
 	if err := restore(ctx); err != nil {
 		t.Fatal("compatible Helm upgrade failed:", err)
@@ -170,6 +178,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if len(policies) < 2 {
 		t.Fatal("workload policies missing before uninstall")
 	}
+	logQualificationStage(t, &stageStarted, "compatible_upgrade", "uninstall_and_retained_workload")
 	if _, err := helmLifetime(ctx, kubeconfig, "uninstall", "mecatl-execution", "--wait", "--timeout=2m"); err != nil {
 		t.Fatal("uninstall owned release failed:", err)
 	}
@@ -189,6 +198,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if string(data) != "retained-helm-data\n" {
 		t.Fatal("retained workspace data changed during provider absence")
 	}
+	logQualificationStage(t, &stageStarted, "uninstall_and_retained_workload", "negative_adoption")
 	// An incompatible profile is refused before a new release can mutate anything.
 	if _, err := helmLifetime(ctx, kubeconfig, "install", "mecatl-execution", chart, "-f", valuesPath, "--set", "profiles.go.maxEnvironments=30", "--dry-run=server"); err == nil {
 		t.Fatal("incompatible reinstall was accepted")
@@ -204,6 +214,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		}
 	}
 	assertLifetimeRetained(ctx, t, kubeconfig, ledgers, policies)
+	logQualificationStage(t, &stageStarted, "negative_adoption", "reinstall_and_reattach")
 	if _, err := helmLifetime(ctx, kubeconfig, "install", "mecatl-execution", chart, "-f", valuesPath, "--wait", "--timeout=4m"); err != nil {
 		t.Fatal("same-identity Helm reinstall/adoption failed:", err)
 	}
@@ -224,6 +235,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if _, err := reattachedClient.Ensure(ctx, quotaBinding+"-excess", "quota-cas", owner, "ensure-"+quotaBinding+"-excess"); !isRemoteCode(err, executionenv.CodeResourceExhausted) {
 		t.Fatal("retained capacity did not reject excess allocation:", remoteErrorCode(err))
 	}
+	logQualificationStage(t, &stageStarted, "reinstall_and_reattach", "stale_authority_restore")
 
 	// The old manifest still has valid key material, windows, and clients. Only
 	// its generation is older. An existing connection must fail after reload.
@@ -246,6 +258,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
 	restoredClient, _ := productionClient(t, ctx, state, kubeconfig)
 	waitReady(t, ctx, restoredClient, owner, binding, attached.Environment)
+	logQualificationStage(t, &stageStarted, "stale_authority_restore", "cleanup")
 	// Retain the test's data by default, as the chart does; no forced cleanup or
 	// finalizer removal. The explicit test-cluster owner controls final disposal.
 }
