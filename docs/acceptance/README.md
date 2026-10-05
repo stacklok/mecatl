@@ -205,6 +205,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Managed temporary command leases](managed-temporary-command-leases.md) — private,
   attributable Linux and macOS command/job temporary storage with a permission-visible
   system escape and deterministic crash-residue reaping. Status: landed.
+- [Multi-session mecatui window](tui-multi-session.md) — several sessions in one mecatui window switched with ←, new sessions in server-created worktrees, and stop-and-delete with optional worktree removal. Status: proposed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
 - [Authoritative mecatui session reload](mecatui-authoritative-session-reload.md) - reconcile server-derived session facts from an authorized snapshot after reconnect or adoption while preserving client view state. Status: proposed.
 - [MCP source reconciliation](mcp-source-reconciliation.md) — bounded ToolHive polling, MCP notifications, and manual refresh publish immutable direct MCP runtimes while preserving exact-name authority; explicit owner refresh unions additions. Status: landed in the stacked implementation candidate; authoritative only after human merge.
