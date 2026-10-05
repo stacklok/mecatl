@@ -110,7 +110,9 @@ current tab remains editable.
 The draft stays in this tab until you choose **Save locally (opt in)**. With
 browser storage and Web Locks available under a verified signed-in Studio
 account, Writer then saves your draft, applied brief, threads, and decisions
-together. Check **Saved in this browser** before leaving. **Saving…** and
+together. Recovery is unavailable when browser login is disabled or this tab's
+account no longer matches browser storage, including pending account cleanup.
+Use **Download .md** in those cases. Check **Saved in this browser** before leaving. **Saving…** and
 **Save failed** do not indicate a recoverable copy; if storage is blocked, full,
 invalid, or changed in another tab, download the draft before leaving. A
 recovered draft opens only for the same account on the same browser origin;
@@ -118,7 +120,8 @@ recovery itself does not check the draft until your next edit or **Read this now
 Studio's existing account cleanup clears it on sign-out or account change.
 **Forget local draft** asks for confirmation, removes the saved copy, and stops
 future saves without clearing the current tab. It refuses to delete a copy changed
-by another tab. **Download .md** is independent of recovery. Browser-local storage
+by another tab. Invalid saved data stays untouched until you confirm **Forget local draft**;
+new edits do not overwrite it. **Download .md** is independent of recovery. Browser-local storage
 is not a backup or cross-device sync; route departure loses anything not saved or
 downloaded.
 

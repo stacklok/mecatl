@@ -29,6 +29,134 @@ afterEach(() => {
 });
 
 describe("WriterCore", () => {
+  it.each(["pause", "dispose"] as const)("suppresses late observation after %s", async (action) => {
+    const held = deferred<Awaited<ReturnType<WriterTransport["observe"]>>>();
+    const changed = vi.fn();
+    core.dispose();
+    core = new WriterCore({ observe, discuss }, changed);
+    observe.mockReturnValueOnce(held.promise);
+    core.edit("A meaningful draft for analysis.");
+    await tick(1500);
+    if (action === "pause") core.setPaused(true);
+    else core.dispose();
+    const calls = changed.mock.calls.length;
+    expect(observe.mock.calls[0]?.[1].aborted).toBe(true);
+    held.resolve({ status: "observe", text: "Must not appear" });
+    await tick(60_000);
+    expect(core.observations).toEqual([]);
+    expect(core.checkpoint).toEqual({ revision: 0, content: "" });
+    expect(core.lastChecked).toBeUndefined();
+    expect(observe).toHaveBeenCalledOnce();
+    if (action === "dispose") expect(changed).toHaveBeenCalledTimes(calls);
+  });
+
+  it.each(["cancellation", "reply"] as const)(
+    "rejects a thread switch during %s, including switch-away-and-back",
+    async (phase) => {
+      core.restore({
+        document: { revision: 1, content: "Draft" },
+        brief: "",
+        generalDiscussion: [],
+        observations: [
+          { id: "thread", revision: 1, text: "Why?", status: "open", timestamp: 1, discussion: [] },
+        ],
+      });
+      core.select("thread");
+      const observation = deferred<Awaited<ReturnType<WriterTransport["observe"]>>>();
+      const reply = deferred<Awaited<ReturnType<WriterTransport["discuss"]>>>();
+      observe.mockReturnValueOnce(observation.promise);
+      discuss.mockReturnValueOnce(reply.promise);
+      const reading = phase === "cancellation" ? core.readNow() : Promise.resolve();
+      const pending = core.discuss("Thread question");
+      if (phase === "cancellation") expect(discuss).not.toHaveBeenCalled();
+      else expect(discuss).toHaveBeenCalledOnce();
+      core.select(undefined);
+      core.select("thread");
+      observation.resolve({ status: "observe", text: "Canceled analysis" });
+      reply.resolve({ text: "Late reply" });
+      await reading;
+      expect(await pending).toBe(false);
+      expect(core.discussion).toEqual([]);
+      expect(core.generalDiscussion).toEqual([]);
+      expect(discuss).toHaveBeenCalledTimes(phase === "cancellation" ? 0 : 1);
+    },
+  );
+
+  it("keeps an in-flight observation on its original revision and schedules the latest edit", async () => {
+    const held = deferred<Awaited<ReturnType<WriterTransport["observe"]>>>();
+    observe.mockReturnValueOnce(held.promise);
+    core.edit("First draft under analysis.");
+    await tick(1500);
+    core.edit("Latest draft with different evidence.");
+    held.resolve({ status: "observe", text: "Original revision question?" });
+    await tick(0);
+    expect(core.observations[0]?.revision).toBe(1);
+    expect(core.checkpoint).toEqual({ revision: 1, content: "First draft under analysis." });
+    expect(core.document.revision).toBe(2);
+    await tick(30_000);
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe.mock.lastCall?.[0].document).toEqual(core.document);
+    expect(observe.mock.lastCall?.[0].checkpoint?.revision).toBe(1);
+  });
+
+  it("sends the selected model in both request types and removes it for deployment default", async () => {
+    core.edit("Draft");
+    const model = { id: "model", providerId: "provider" };
+    core.setModel(model);
+    await core.readNow();
+    await core.discuss("Why?");
+    expect(observe.mock.lastCall?.[0].model).toEqual(model);
+    expect(discuss.mock.lastCall?.[0].model).toEqual(model);
+    core.setModel();
+    await core.readNow();
+    await core.discuss("Why again?");
+    expect(observe.mock.lastCall?.[0]).not.toHaveProperty("model");
+    expect(discuss.mock.lastCall?.[0]).not.toHaveProperty("model");
+  });
+
+  it("sends at most twelve discussion entries while retaining the full local thread", async () => {
+    core.setPaused(true);
+    core.edit("Draft");
+    for (let index = 0; index < 8; index++)
+      expect(await core.discuss(`Question ${index}`)).toBe(true);
+    expect(discuss.mock.lastCall?.[0].discussion).toHaveLength(12);
+    expect(discuss.mock.lastCall?.[0].discussion[0]?.text).toBe("Question 1");
+    expect(core.discussion).toHaveLength(16);
+    expect(core.discussion[0]?.text).toBe("Question 0");
+    await core.readNow();
+    expect(observe.mock.lastCall?.[0].discussion).toEqual(core.discussion.slice(-12));
+    expect(core.snapshot().generalDiscussion).toHaveLength(16);
+  });
+
+  it("never sends an over-100k document via automatic, explicit, retry, or discussion requests", async () => {
+    core.edit("x".repeat(100_001));
+    await tick(100_000);
+    await core.readNow();
+    await core.retry();
+    expect(await core.discuss("Why?")).toBe(false);
+    expect(observe).not.toHaveBeenCalled();
+    expect(discuss).not.toHaveBeenCalled();
+    core.edit("x".repeat(100_000));
+    await core.readNow();
+    expect(await core.discuss("Why?")).toBe(true);
+    expect(observe).toHaveBeenCalledOnce();
+    expect(discuss).toHaveBeenCalledOnce();
+  });
+
+  it("requires explicit discussion retry while On request and retains only successful messages", async () => {
+    core.setPaused(true);
+    core.edit("Draft");
+    discuss.mockRejectedValueOnce(new Error("transient"));
+    expect(await core.discuss("Retry this question")).toBe(false);
+    await tick(100_000);
+    expect(discuss).toHaveBeenCalledOnce();
+    expect(observe).not.toHaveBeenCalled();
+    expect(core.discussion).toEqual([]);
+    expect(await core.discuss("Retry this question")).toBe(true);
+    expect(core.discussion).toHaveLength(2);
+    expect(core.error).toBe("");
+    expect(core.paused).toBe(true);
+  });
   it("uses a quiet interval even after silence, defers trivial edits, and checks during continuous typing", async () => {
     core.edit("A first meaningful draft ends here.");
     await tick(1500);

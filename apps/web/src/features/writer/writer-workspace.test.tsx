@@ -6,23 +6,30 @@ import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { client } from "@mecatl-studio/contracts/client";
-import { getRuntimeOptions, getRuntimeSettingsOptions } from "@mecatl-studio/contracts/query";
+import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
+import {
+  getAuthSessionOptions,
+  getPublicStatusOptions,
+  getRuntimeOptions,
+  getRuntimeSettingsOptions,
+} from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { clearUserScopedStorage, reconcileAccount } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
+import { AuthGate } from "../auth/auth-gate";
+import type { WriterSnapshot, WriterTransport } from "./writer-core";
+import { WriterRecovery } from "./writer-recovery";
 import { formatMarkdown, WriterWorkspace } from "./writer-workspace";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+const queries: QueryClient[] = [];
 const requests: Array<{
   path: string;
-  body: {
-    document: { content: string; revision: number };
-    message?: string;
-    model?: { id: string; providerId: string };
-  };
+  body: Parameters<WriterTransport["observe"]>[0] & { message?: string };
 }> = [];
 let answer:
   | { status: "observe"; text: string; quote?: string; quotes?: string[] }
@@ -40,6 +47,12 @@ const fetchBff = async (request: Request) => {
     if (runtimeFailure) return Response.json({ error: "unavailable" }, { status: 503 });
     return Response.json({ experimentalWriter: true });
   }
+  if (path === "/api/v1/settings/runtime") {
+    return Response.json({
+      modelsSupported: true,
+      models: [{ id: "one", providerId: "provider", displayName: "One", image: false }],
+    });
+  }
   const body = await request.clone().json();
   requests.push({ path, body });
   if (path === "/api/v1/writer/observe") return Response.json(answer);
@@ -50,33 +63,58 @@ const fetchBff = async (request: Request) => {
   throw new Error(`Unexpected ${path}`);
 };
 
-function mount(enabled?: boolean, strict = false) {
+function mount(
+  enabled?: boolean,
+  strict = false,
+  auth?: { account?: string; showWriter?: boolean },
+) {
   setRequestRecoveryState({ identityEpoch: 0, phase: "ready", workspaceMounted: true });
   vi.stubGlobal("fetch", fetchBff);
   client.setConfig({ baseUrl: "http://studio.test" });
   const query = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
+  queries.push(query);
   query.setQueryData<unknown>(getRuntimeOptions().queryKey, { experimentalWriter: enabled });
   query.setQueryData<unknown>(getRuntimeSettingsOptions().queryKey, {
     modelsSupported: true,
     models: [{ id: "one", providerId: "provider", displayName: "One", image: false }],
   });
-  const component = (
+  if (auth) {
+    query.setQueryData<GetAuthSessionResponse>(
+      getAuthSessionOptions().queryKey,
+      auth.account
+        ? { mode: "oidc", status: "authenticated", account: auth.account }
+        : { mode: "none", status: "disabled" },
+    );
+    query.setQueryData(getPublicStatusOptions().queryKey, {
+      connection: "reachable",
+      signInRequired: false,
+    });
+  }
+  const component = (showWriter: boolean) => (
     <QueryClientProvider client={query}>
-      <WriterWorkspace />
+      {auth ? (
+        <AuthGate>{showWriter ? <WriterWorkspace /> : <span>Verified workspace</span>}</AuthGate>
+      ) : (
+        <WriterWorkspace />
+      )}
     </QueryClientProvider>
   );
-  const mounted = render(strict ? <StrictMode>{component}</StrictMode> : component);
-  return { ...mounted, query };
+  const initial = component(auth?.showWriter !== false);
+  const mounted = render(strict ? <StrictMode>{initial}</StrictMode> : initial);
+  return { ...mounted, query, showWriter: () => mounted.rerender(component(true)) };
 }
 afterEach(() => {
   cleanup();
+  for (const query of queries.splice(0)) query.clear();
   runtimeFailure = false;
   discussionFailure = false;
   runtimeRequests = 0;
   requests.length = 0;
-  window.localStorage.clear();
+  vi.restoreAllMocks();
+  clearUserScopedStorage();
+  Reflect.deleteProperty(navigator, "locks");
   answer = { status: "observe", text: "What evidence supports this assumption?" };
   vi.unstubAllGlobals();
 });
@@ -445,34 +483,322 @@ it("keeps Ask Writer available while an automatic observation is running", async
   await waitFor(() => expect(requests.some(({ path }) => path.endsWith("/discuss"))).toBe(true));
 });
 
+function installLocks(gate: Promise<void> = Promise.resolve()) {
+  let chain = gate;
+  const locks = {
+    request: vi.fn((_key: string, _options: unknown, callback: () => boolean) => {
+      const result = chain.then(callback);
+      chain = result.then(
+        () => {},
+        () => {},
+      );
+      return result;
+    }),
+  } as unknown as LockManager;
+  Object.defineProperty(navigator, "locks", { configurable: true, value: locks });
+  return locks;
+}
+
+function writerView() {
+  const view = EditorView.findFromDOM(
+    screen.getByRole("textbox", { name: "Writer document" }) as HTMLElement,
+  );
+  if (!view) throw new Error("CodeMirror did not mount");
+  return view;
+}
+
 it("keeps a local draft only after opt-in, restores it, and forgets only on confirmation", async () => {
-  window.localStorage.setItem("studio.account", "alice");
-  const lock = {
-    request: async (_key: string, _options: unknown, callback: () => boolean) => callback(),
-  };
-  Object.defineProperty(navigator, "locks", { configurable: true, value: lock });
-  const first = mount(true);
+  installLocks();
+  const first = mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
   const editor = screen.getByRole("textbox", { name: "Writer document" });
   const view = EditorView.findFromDOM(editor as HTMLElement);
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Saved draft" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Quiet · on request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
+    target: { value: "Restored audience" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
+  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("What evidence supports this assumption?");
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Message Mecatl" }),
+    "General saved question",
+  );
+  await userEvent.keyboard("{Enter}");
+  await screen.findByText("Keep the author's own wording.");
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Message Mecatl" }),
+    "Thread saved question",
+  );
+  await userEvent.keyboard("{Enter}");
+  await screen.findByText("Keep the author's own wording.");
+  fireEvent.change(screen.getByRole("textbox", { name: /Author decision/ }), {
+    target: { value: "Confirmed author intent" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
   expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
   await screen.findByText("Saved in this browser");
   expect(window.localStorage.getItem("studio.writer.recovery")).toContain("Saved draft");
   first.unmount();
-  mount(true);
+  first.query.clear();
+  mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
   expect(screen.getByRole("textbox", { name: "Writer document" }).textContent).toBe("Saved draft");
+  expect(screen.getByText("General saved question")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  expect(screen.getByText("Thread saved question")).toBeTruthy();
+  expect((screen.getByRole("textbox", { name: /Author decision/ }) as HTMLInputElement).value).toBe(
+    "Confirmed author intent",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await waitFor(() =>
+    expect(requests.filter(({ path }) => path.endsWith("/observe"))).toHaveLength(2),
+  );
+  expect(requests.at(-1)?.body).toMatchObject({
+    document: { revision: 1, content: "Saved draft" },
+    brief: "Restored audience",
+    observations: [{ selected: true, decision: "Confirmed author intent" }],
+    decisions: [
+      { text: "What evidence supports this assumption?", decision: "Confirmed author intent" },
+    ],
+    discussion: [
+      { role: "user", text: "Thread saved question" },
+      { role: "assistant", text: "Keep the author's own wording." },
+    ],
+  });
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Message Mecatl" }),
+    "Continue restored thread",
+  );
+  await userEvent.keyboard("{Enter}");
+  await screen.findByText("Continue restored thread");
+  expect(requests.at(-1)?.body).toMatchObject({
+    brief: "Restored audience",
+    decisions: [{ decision: "Confirmed author intent" }],
+    discussion: [{ text: "Thread saved question" }, { role: "assistant" }],
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Ask Writer · general/ }));
+  expect(screen.getByText("General saved question")).toBeTruthy();
   const confirm = vi.fn().mockReturnValue(false);
-  window.confirm = confirm;
+  vi.stubGlobal("confirm", confirm);
   fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
   expect(window.localStorage.getItem("studio.writer.recovery")).not.toBeNull();
   confirm.mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
   await screen.findByText("Clear · not saved in this browser");
   expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
-  Reflect.deleteProperty(window, "confirm");
-  Reflect.deleteProperty(navigator, "locks");
+});
+
+it("cannot restore, overwrite, or forget a peer's draft mounted before the account event arrives", async () => {
+  installLocks();
+  const tab = mount(true, false, { account: "alice", showWriter: false });
+  await screen.findByText("Verified workspace");
+  expect(window.localStorage.getItem("studio.account")).toBe("alice");
+  const snapshot: WriterSnapshot = {
+    document: { revision: 1, content: "Bob private draft" },
+    brief: "Bob private brief",
+    observations: [],
+    generalDiscussion: [],
+  };
+  const raw = JSON.stringify({
+    version: 1,
+    account: "bob",
+    generation: crypto.randomUUID(),
+    snapshot,
+  });
+  window.localStorage.setItem("studio.account", "bob");
+  window.localStorage.setItem("studio.writer.recovery", raw);
+  tab.showWriter();
+  expect(writerView().state.doc.toString()).toBe("");
+  expect(screen.getByText("Saving unavailable · download your draft")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Save locally (opt in)" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Forget local draft" })).toBeNull();
+  act(() => writerView().dispatch({ changes: { from: 0, insert: "Alice live draft" } }));
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(raw);
+  expect(document.body.textContent).not.toContain("Bob private");
+  tab.query.clear();
+});
+
+it("does not enable persistent recovery in auth-disabled mode from an ambient account marker", async () => {
+  installLocks();
+  window.localStorage.setItem("studio.account", "unverified");
+  mount(true, false, {});
+  await screen.findByRole("textbox", { name: "Writer document" });
+  expect(screen.getByText("Saving unavailable · download your draft")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Save locally (opt in)" })).toBeNull();
+});
+
+it("retains a live draft and reports an actual quota failure instead of Saved", async () => {
+  installLocks();
+  const store = window.localStorage;
+  vi.stubGlobal("localStorage", {
+    getItem: store.getItem.bind(store),
+    removeItem: store.removeItem.bind(store),
+    key: store.key.bind(store),
+    get length() {
+      return store.length;
+    },
+    setItem(key: string, value: string) {
+      if (key === "studio.writer.recovery") throw new DOMException("quota", "QuotaExceededError");
+      store.setItem(key, value);
+    },
+  });
+  mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  const view = writerView();
+  act(() => view.dispatch({ changes: { from: 0, insert: "Live quota draft" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+  await screen.findByText(/Save failed · download/);
+  expect(view.state.doc.toString()).toBe("Live quota draft");
+  expect(screen.queryByText("Saved in this browser")).toBeNull();
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+});
+
+it("keeps corrupt restore bytes untouched and preserves subsequent live edits until confirmed forget", async () => {
+  installLocks();
+  reconcileAccount("alice");
+  const raw = JSON.stringify({
+    version: 1,
+    account: "alice",
+    snapshot: { document: { content: "recoverable text" } },
+  });
+  window.localStorage.setItem("studio.writer.recovery", raw);
+  mount(true, false, { account: "alice" });
+  await screen.findByText(/saved data is invalid; draft not restored/);
+  const view = writerView();
+  expect(view.state.doc.toString()).toBe("");
+  act(() => view.dispatch({ changes: { from: 0, insert: "Live draft survives" } }));
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(raw);
+  expect(screen.queryByText("Saved in this browser")).toBeNull();
+  const confirm = vi.fn().mockReturnValue(false);
+  vi.stubGlobal("confirm", confirm);
+  fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(raw);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
+  await screen.findByText("Clear · not saved in this browser");
+  expect(view.state.doc.toString()).toBe("Live draft survives");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+});
+
+it("rejects a stale mounted save after a peer save without losing the live draft", async () => {
+  const locks = installLocks();
+  reconcileAccount("alice");
+  const peer = new WriterRecovery(window.localStorage, locks);
+  const snapshot: WriterSnapshot = {
+    document: { revision: 1, content: "Saved original" },
+    brief: "",
+    observations: [],
+    generalDiscussion: [],
+  };
+  expect(await peer.save(snapshot)).toBe(true);
+  mount(true, false, { account: "alice" });
+  await screen.findByText("Saved in this browser");
+  expect(await peer.save({ ...snapshot, brief: "Peer latest" })).toBe(true);
+  const raw = window.localStorage.getItem("studio.writer.recovery");
+  act(() => writerView().dispatch({ changes: { from: 0, insert: "Live edit: " } }));
+  await screen.findByText(/Save failed · download/);
+  expect(writerView().state.doc.toString()).toBe("Live edit: Saved original");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(raw);
+});
+
+it("finishes a pending save then confirmed forget without resurrecting queued edits", async () => {
+  let release!: () => void;
+  installLocks(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  const view = writerView();
+  act(() => view.dispatch({ changes: { from: 0, insert: "Pending save" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+  await screen.findByText("Saving…");
+  act(() =>
+    view.dispatch({ changes: { from: view.state.doc.length, insert: " plus queued edit" } }),
+  );
+  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  fireEvent.click(screen.getByRole("button", { name: "Forget local draft" }));
+  await act(async () => {
+    release();
+  });
+  await screen.findByText("Clear · not saved in this browser");
+  act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: " after forget" } }));
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+  expect(view.state.doc.toString()).toBe("Pending save plus queued edit after forget");
+});
+
+it.each(["switch", "logout"] as const)(
+  "cleans Writer recovery through AuthGate on %s",
+  async (kind) => {
+    installLocks();
+    const tab = mount(true, false, { account: "alice" });
+    await screen.findByRole("textbox", { name: "Writer document" });
+    act(() => writerView().dispatch({ changes: { from: 0, insert: "Alice saved draft" } }));
+    fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+    await screen.findByText("Saved in this browser");
+    if (kind === "switch") {
+      const session: GetAuthSessionResponse = {
+        mode: "oidc",
+        status: "authenticated",
+        account: "bob",
+      };
+      act(() => {
+        tab.query.setQueryData(getAuthSessionOptions().queryKey, session);
+      });
+      await waitFor(() => expect(window.localStorage.getItem("studio.account")).toBe("bob"));
+    } else {
+      window.localStorage.removeItem("studio.account");
+      // Hold the refetch so the signed-out state remains observable.
+      vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+      act(() =>
+        window.dispatchEvent(
+          new StorageEvent("storage", { key: "studio.account", newValue: null }),
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.queryByRole("textbox", { name: "Writer document" })).toBeNull(),
+      );
+    }
+    expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+    expect(document.body.textContent).not.toContain("Alice saved draft");
+    if (kind === "switch") {
+      await screen.findByRole("textbox", { name: "Writer document" });
+      expect(writerView().state.doc.toString()).toBe("");
+    }
+    tab.query.clear();
+  },
+);
+
+it("does not highlight or scroll an ambiguous duplicate quote in the mounted editor", async () => {
+  answer = { status: "observe", text: "Which cost?", quote: "Costs" };
+  mount(true);
+  const view = writerView();
+  act(() =>
+    view.dispatch({
+      changes: { from: 0, insert: "Costs first. Costs again." },
+      selection: { anchor: 3 },
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("Which cost?");
+  const scroll = vi.spyOn(EditorView, "scrollIntoView");
+  fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
+  expect(screen.getByText(/passage is missing or ambiguous/)).toBeTruthy();
+  expect(view.dom.querySelectorAll(".cm-writer-passage")).toHaveLength(0);
+  expect(scroll).not.toHaveBeenCalled();
+  expect(view.state.selection.main.anchor).toBe(3);
+  // Positive control: the same observation can reveal once the quote is unique.
+  act(() => view.dispatch({ changes: { from: 13, to: 18, insert: "Price" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
+  expect(scroll).toHaveBeenCalledOnce();
+  expect(view.dom.querySelector(".cm-writer-passage")?.textContent).toBe("Costs");
 });
 
 it("keeps silent analysis invisible", async () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { accountStorageKey } from "../../lib/account-storage";
+import { verifiedPersistentAccount } from "../../lib/account-storage";
 import type { WriterSnapshot } from "./writer-core";
 
 const key = "studio.writer.recovery";
@@ -83,6 +83,28 @@ function validSnapshot(snapshot: unknown): snapshot is WriterSnapshot {
   );
 }
 
+function parseSaved(raw: string, account: string): { saved?: Saved; forgettable: boolean } {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed && "account" in parsed && parsed.account !== account)
+      return { forgettable: false };
+    const item = parsed as Partial<Saved> | null;
+    if (
+      raw.length <= 1_000_000 &&
+      hasOnlyKeys(item, ["version", "account", "generation", "snapshot"]) &&
+      item?.version === 1 &&
+      item.account === account &&
+      typeof item.generation === "string" &&
+      /^[0-9a-f-]{36}$/.test(item.generation) &&
+      validSnapshot(item.snapshot)
+    )
+      return { saved: item as Saved, forgettable: true };
+  } catch {
+    // Malformed bytes may only be removed by explicit, byte-exact forget.
+  }
+  return { forgettable: true };
+}
+
 export class WriterRecovery {
   private account?: string;
   private generation?: string;
@@ -91,63 +113,30 @@ export class WriterRecovery {
     private store: Pick<Storage, "getItem" | "setItem" | "removeItem">,
     private locks: Pick<LockManager, "request"> | undefined,
   ) {
-    try {
-      const account = store.getItem(accountStorageKey);
-      if (account && /^[A-Za-z0-9_-]+$/.test(account)) this.account = account;
-    } catch {
-      /* storage may be unavailable */
-    }
+    this.account = verifiedPersistentAccount(store);
   }
 
   get available() {
-    return !!this.account && !!this.locks;
+    return !!this.account && !!this.locks && verifiedPersistentAccount(this.store) === this.account;
   }
   get storageKey() {
     return key;
   }
 
   read(): RecoveryRead {
-    if (!this.available) return { kind: "unavailable" };
+    if (!this.account || !this.available) return { kind: "unavailable" };
     let raw: string | null;
     try {
-      if (this.store.getItem(accountStorageKey) !== this.account) return { kind: "unavailable" };
       raw = this.store.getItem(key);
     } catch {
       return { kind: "unavailable" };
     }
     if (raw === null) return { kind: "empty" };
-    this.corruptRaw = raw;
-    try {
-      const saved: unknown = JSON.parse(raw);
-      if (
-        typeof saved === "object" &&
-        saved &&
-        "account" in saved &&
-        saved.account !== this.account
-      )
-        this.corruptRaw = undefined;
-      if (raw.length > 1_000_000) return { kind: "corrupt" };
-      if (
-        typeof saved !== "object" ||
-        !saved ||
-        !hasOnlyKeys(saved, ["version", "account", "generation", "snapshot"])
-      )
-        return { kind: "corrupt" };
-      const item = saved as Partial<Saved>;
-      if (
-        item.version !== 1 ||
-        item.account !== this.account ||
-        typeof item.generation !== "string" ||
-        !/^[0-9a-f-]{36}$/.test(item.generation) ||
-        !validSnapshot(item.snapshot)
-      )
-        return { kind: "corrupt" };
-      this.generation = item.generation;
-      this.corruptRaw = undefined;
-      return { kind: "saved", saved: item as Saved };
-    } catch {
-      return { kind: "corrupt" };
-    }
+    const { saved, forgettable } = parseSaved(raw, this.account);
+    this.corruptRaw = !saved && forgettable ? raw : undefined;
+    if (!saved) return { kind: "corrupt" };
+    this.generation = saved.generation;
+    return { kind: "saved", saved };
   }
 
   async save(snapshot: WriterSnapshot): Promise<boolean> {
@@ -155,12 +144,11 @@ export class WriterRecovery {
     const expected = this.generation;
     try {
       return await this.locks.request(key, { mode: "exclusive" }, () => {
-        if (this.store.getItem(accountStorageKey) !== this.account) return false;
+        if (!this.account || !this.available) return false;
         const raw = this.store.getItem(key);
         if (raw !== null) {
-          const parsed: unknown = JSON.parse(raw);
-          if (typeof parsed !== "object" || !parsed || (parsed as Saved).generation !== expected)
-            return false;
+          const { saved } = parseSaved(raw, this.account);
+          if (!expected || !saved || saved.generation !== expected) return false;
         } else if (expected) return false;
         const generation = crypto.randomUUID();
         const value = JSON.stringify({ version: 1, account: this.account, generation, snapshot });
@@ -180,7 +168,7 @@ export class WriterRecovery {
     if (!this.account || !this.locks) return false;
     try {
       return await this.locks.request(key, { mode: "exclusive" }, () => {
-        if (this.store.getItem(accountStorageKey) !== this.account) return false;
+        if (!this.account || !this.available) return false;
         const raw = this.store.getItem(key);
         if (raw === null) {
           this.generation = undefined;
@@ -188,15 +176,8 @@ export class WriterRecovery {
         }
         if (this.corruptRaw !== undefined && raw !== this.corruptRaw) return false;
         if (raw !== this.corruptRaw) {
-          const parsed: unknown = JSON.parse(raw);
-          if (
-            typeof parsed !== "object" ||
-            !parsed ||
-            !this.generation ||
-            (parsed as Saved).generation !== this.generation ||
-            (parsed as Saved).account !== this.account
-          )
-            return false;
+          const { saved } = parseSaved(raw, this.account);
+          if (!this.generation || !saved || saved.generation !== this.generation) return false;
         }
         this.store.removeItem(key);
         if (this.store.getItem(key) !== null) return false;
