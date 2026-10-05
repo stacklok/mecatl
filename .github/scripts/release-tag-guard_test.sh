@@ -3,9 +3,13 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 script="$script_dir/release-tag-guard.sh"
-work=${TEST_TMPDIR:-.scratch}/release-tag-guard-$$
-mkdir -p "$work"
-work=$(CDPATH= cd -- "$work" && pwd -P)
+if [ -n "${TEST_TMPDIR:-}" ]; then
+  mkdir -p "$TEST_TMPDIR"
+  work=$(mktemp -d "$TEST_TMPDIR/release-tag-guard.XXXXXX")
+else
+  work=$(mktemp -d)
+fi
+trap 'rm -rf -- "$work"' EXIT
 
 repo="$work/repo"
 mkdir "$repo"

@@ -2,11 +2,8 @@
 set -euo pipefail
 
 checker=$(cd "$(dirname "$0")" && pwd)/check-acceptance-plan.sh
-root=.scratch/check-acceptance-plan-fixtures-$$
-if [[ -e "$root" ]]; then
-  printf 'fixture path already exists: %s\n' "$root" >&2
-  exit 1
-fi
+root=$(mktemp -d)
+trap 'rm -rf -- "$root"' EXIT
 mkdir -p "$root/acceptance" "$root/adr"
 cat >"$root/adr/9999-fixture-architectural-decision.md" <<'ADR'
 # ADR 9999 — fixture architectural decision
@@ -184,4 +181,4 @@ for plan in "${adopted_plans[@]}"; do
   bash "$checker" "$plan" >/dev/null
 done
 
-printf 'check-acceptance-plan fixtures: passed (%s)\n' "$root"
+printf 'check-acceptance-plan fixtures: passed\n'
