@@ -127,17 +127,6 @@ OpenRouter. The current OpenAI Chat Completions route uses no cache dialect.
 |`--no-prompt-cache`|`false`|Disable provider caching.|
 |`--anthropic-cache-ttl`|`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`; API default (`5m`) elsewhere|Set Anthropic cache breakpoints to `5m` or `1h`.|
 
-Mecatl defaults to the longest cache lifetime each provider accepts. On
-Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway's Anthropic
-route that is `1h`. A 1-hour cache write bills at twice the base input price,
-against 1.25 times for `5m`. Set `--anthropic-cache-ttl=5m` when requests in a
-session arrive within a few minutes of each other, so the cheaper write is
-enough. The default applies to these three providers alike, including when you
-override their base URL. Custom `anthropic-messages` providers keep the API
-default unless you set the flag. OpenAI Responses already requests the 24-hour
-retention on models that accept it. GPT-5.6 and later accept only the 30-minute TTL, which is
-already their default.
-
 Use `mecatl_tokens_total` and `mecatl_cache_hit_ratio` to confirm cache use.
 
 ### Failure diagnostics
