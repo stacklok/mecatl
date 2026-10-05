@@ -4,7 +4,7 @@
 **Work classification:** Bounded — extends the existing in-process provider-resilience policy and host composition without changing an engine, wire, persistence, authority, or deployment boundary.
 **Decision record:** None — the directing human chose server/runtime ownership and explicitly requested no ADR; this plan records bounded operating policy rather than a new durable architecture boundary.
 **Phase:** live-run provider recovery
-**Status:** in-progress — implementation against the human-approved amendment of 2026-10-05, merged in [Plan / Interface PR #1912](https://github.com/stacklok/mecatl/pull/1912) at `39dcc11ac97569e0889a7da2416400e48bea9df6`; CI validation, final review, and human implementation merge remain pending.
+**Status:** landed in this implementation candidate; authoritative only on human merge. Implements the human-approved amendment of 2026-10-05, merged in [Plan / Interface PR #1912](https://github.com/stacklok/mecatl/pull/1912) at `39dcc11ac97569e0889a7da2416400e48bea9df6`. Focused local proofs, independent review, and CI validate the implementation; full validation runs in CI under the directing operator's verification decision.
 **Delivery:** Split, with an explicit human-authorized stacked implementation before plan merge. Plan / Interface PR #1912 is merged; the separate Implementation PR #1920 requires human merge.
 **Expected tasks:** deferred to orchestration
 **Source baseline:** `20f1220e90c124a355ff103c63defdf279e68279`
