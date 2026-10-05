@@ -4,7 +4,7 @@
 **Work classification:** Bounded — a client-local presentation and keybinding change needs an observable UI contract but does not change server authority, persistence, or module boundaries.
 **Decision record:** None — the existing typed scrollback, inspector, and keymap establish the necessary boundaries; this plan chooses how their current presentation is used, not a durable system architecture.
 **Phase:** issue #1361, second slice: quiet settled calls and direct inspection
-**Status:** proposed, 2026-10-04. Based on hands-on review after the landed `/toolcalls` inspector and the operator's 2026-10-04 decision to use `f9` for both reasoning and permanent-error detail.
+**Status:** approved, 2026-10-04 (Plan / Interface PR #2081). Based on hands-on review after the landed `/toolcalls` inspector and the operator's 2026-10-04 decision to use `f9` for both reasoning and permanent-error detail.
 **Delivery:** Split. Replacing the global detail gesture and changing conversation density deserve behavioral/interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1361](https://github.com/stacklok/mecatl/issues/1361).
