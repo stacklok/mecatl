@@ -430,7 +430,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "Maximum cumulative input and output tokens per team run. Zero is unlimited")
 
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "Disable provider-side prompt caching")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic prompt-cache TTL: 5m or 1h. Empty uses the API default; other values are ignored")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic prompt-cache TTL: 5m or 1h. Empty uses 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway, the API default elsewhere; other values are ignored")
 
 	// Headless: DEFAULT true (mecak8s is a headless daemon — no human approver).
 	fs.BoolVar(&cfg.headless, "headless", true, "Run without an interactive permission approver. Child permission requests are denied unless --subagent-ask-reviewer handles them")

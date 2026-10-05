@@ -125,7 +125,7 @@ OpenRouter. The current OpenAI Chat Completions route uses no cache dialect.
 |Flag|Default|Purpose|
 |-|-|-|
 |`--no-prompt-cache`|`false`|Disable provider caching.|
-|`--anthropic-cache-ttl`|Provider default, usually `5m`|Set Anthropic cache breakpoints to `5m` or `1h`.|
+|`--anthropic-cache-ttl`|`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`; API default (`5m`) elsewhere|Set Anthropic cache breakpoints to `5m` or `1h`.|
 
 Use `mecatl_tokens_total` and `mecatl_cache_hit_ratio` to confirm cache use.
 

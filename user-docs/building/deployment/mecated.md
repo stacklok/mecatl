@@ -279,7 +279,7 @@ then bounds gaps between chunks without limiting an active turn.
 |`--default-model`|`""`|Deployment-wide default model id for the default provider; validated fail-fast|
 |`--subagent-model`|`""`|Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own|
 |`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)|
-|`--anthropic-cache-ttl`|`""` (API default, `5m`)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
+|`--anthropic-cache-ttl`|`""` (`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`, API default `5m` elsewhere)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
 |`--mock`|`false`|Offline canned provider with one text turn; smoke tests only|
 |`--mock-script`|`""`|Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns|
 

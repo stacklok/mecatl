@@ -1746,7 +1746,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "maximum cumulative input and output tokens across a team run; checked between rounds. A per-call team limit can only lower it. Default 0 allows unlimited tokens.")
 
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching. Caching is enabled by default.")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic ephemeral prompt-cache TTL: \"5m\" or \"1h\". Default empty uses the API default of 5m. Other values are ignored with a warning.")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic ephemeral prompt-cache TTL: \"5m\" or \"1h\". Default empty uses 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway, and the API default of 5m elsewhere; set 5m for cheaper cache writes. Other values are ignored with a warning.")
 
 	fs.StringVar(&cfg.metricsAddr, "metrics-addr", defaultMetricsAddr, "Prometheus /metrics listen address (empty disables the metrics endpoint)")
 

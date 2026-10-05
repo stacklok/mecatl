@@ -37,6 +37,8 @@ type inboundAssessment struct {
 	usage             session.AuxiliaryUsage
 	source            ReviewEvidenceSource
 	close             func()
+	cancel            context.CancelFunc
+	ctx               context.Context
 	err               error
 	applies           bool
 	enforce           bool
@@ -53,7 +55,7 @@ func reviewPolicy(reviewer ToolReviewer, toolName string, job ReviewJob, operati
 	return job == ReviewJobAction, true
 }
 
-func (e *Engine) prepareInboundAssessment(r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, result session.ToolResult) inboundAssessment {
+func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, result session.ToolResult) inboundAssessment {
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 		return inboundAssessment{}
 	}
@@ -62,6 +64,8 @@ func (e *Engine) prepareInboundAssessment(r *Run, sess *session.Session, env too
 	if !applies {
 		return assessment
 	}
+	reviewCtx, cancel := context.WithTimeoutCause(ctx, reviewAssessmentTimeout, reviewFailure(ReviewFailureTimeout))
+	assessment.ctx, assessment.cancel = reviewCtx, cancel
 	e.establishReviewPrincipal(r)
 	principal, principalComplete, principalRevision := r.reviewRoot.principalSnapshotWithRevision()
 	assessment.principalRevision = principalRevision
@@ -81,15 +85,32 @@ func (e *Engine) prepareInboundAssessment(r *Run, sess *session.Session, env too
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxEvidenceHandles: defaultReviewEvidenceHandles, MaxEvidenceBytes: defaultReviewEvidenceBytes, MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	prepared, prepareErr := e.prepareReviewEvidence(r.ctx, r, sess, env, assessment.request, &result)
+	var prepared PreparedReviewEvidence
+	var prepareErr error
+	if reviewCtx.Err() == nil {
+		prepared, prepareErr = e.prepareReviewEvidence(reviewCtx, r, sess, env, assessment.request, &result)
+	} else {
+		prepareErr = reviewFailure(ReviewFailureTimeout)
+	}
+	if prepareErr == nil && reviewCtx.Err() != nil {
+		prepareErr = reviewFailure(ReviewFailureTimeout)
+	}
 	assessment.request.Evidence, assessment.request.EvidenceComplete = prepared.Evidence, prepared.Complete
 	assessment.source, assessment.close, assessment.err = prepared.Source, prepared.Close, prepareErr
 	return assessment
 }
 
-func assessInbound(ctx context.Context, r *Run, assessment *inboundAssessment) {
+func assessInbound(parent context.Context, r *Run, assessment *inboundAssessment) {
 	if assessment == nil || !assessment.applies {
 		return
+	}
+	defer assessment.cancel()
+	if parent.Err() != nil {
+		return
+	}
+	ctx := assessment.ctx
+	if assessment.err == nil && ctx.Err() != nil {
+		assessment.err = reviewFailure(ReviewFailureTimeout)
 	}
 	if assessment.err != nil {
 		assessment.result.Assessment = ReviewUnresolved
@@ -102,6 +123,14 @@ func assessInbound(ctx context.Context, r *Run, assessment *inboundAssessment) {
 		return
 	}
 	assessment.result, assessment.usage, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.request, assessment.source)
+	if parent.Err() != nil {
+		return
+	}
+	var terminal GuardrailReviewTerminalFailure
+	if ctx.Err() != nil && (assessment.err == nil || !errors.As(assessment.err, &terminal) || !terminal.GuardrailReviewTerminalFailure()) {
+		assessment.result = ToolReviewResult{Assessment: ReviewUnresolved}
+		assessment.err = reviewFailure(ReviewFailureTimeout)
+	}
 	if assessment.err == nil && !validReviewAssessment(assessment.result.Assessment) {
 		assessment.result.Assessment = ReviewUnresolved
 		assessment.err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -244,6 +273,9 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 	}
 	if !assessment.applies {
 		return result, false, true
+	}
+	if ctx.Err() != nil {
+		return session.NewToolError(call.ID, withheldResultText+": review was cancelled"), true, false
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.principalRevision) {
 		e.emitInboundReview(r, turnIdx, call, assessment, "withhold_result")

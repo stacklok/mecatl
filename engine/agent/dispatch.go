@@ -223,8 +223,11 @@ type readBatchPending struct {
 
 func closeActionAssessments(prepared []readBatchPending) {
 	for i := range prepared {
-		if prepared[i].assessment != nil && prepared[i].assessment.action.close != nil {
-			prepared[i].assessment.action.close()
+		if prepared[i].assessment != nil {
+			prepared[i].assessment.cancel()
+			if prepared[i].assessment.action.close != nil {
+				prepared[i].assessment.action.close()
+			}
 		}
 	}
 }
@@ -240,20 +243,17 @@ func (r *Run) recordCompletedActionUsage(ctx context.Context, sess *session.Sess
 	}
 }
 
-func closePreparedOnCancel(prepared *[]readBatchPending, cancelled *bool) {
-	if *cancelled {
-		closeActionAssessments(*prepared)
-	}
-}
-
 func closeInboundAssessment(assessment inboundAssessment) {
+	if assessment.cancel != nil {
+		assessment.cancel()
+	}
 	if assessment.close != nil {
 		assessment.close()
 	}
 }
 
+//nolint:gocyclo // Keep serial authorization and approval waits before review budgets, with shared cancellation cleanup.
 func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, out map[session.ToolCallID]session.ToolResult, opened *int) (prepared []readBatchPending, cancelled bool) {
-	defer closePreparedOnCancel(&prepared, &cancelled)
 	for _, c := range batch {
 		c := c
 		e.openCard(r, turnIdx, c)
@@ -312,16 +312,9 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 			e.publishToolResult(r, session.Event{Type: session.EvToolResultAvailable, Turn: turnIdx, ToolResult: ptr(res)})
 			continue
 		}
-		p := readBatchPending{call: pre.effective, t: actualTool, auth: auth}
-		if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
-			if applies, _ := reviewPolicy(r.reviewRoot.reviewer, pre.effective.Name, ReviewJobAction, false); applies {
-				assessment := e.prepareActionAssessment(ctx, r, sess, env, pre.effective)
-				p.assessment = &assessment
-			}
-		}
-		prepared = append(prepared, p)
+		prepared = append(prepared, readBatchPending{call: pre.effective, t: actualTool, auth: auth})
 	}
-	return prepared, false
+	return prepared, ctx.Err() != nil
 }
 
 // runReadBatch runs a batch of read-only tool calls concurrently. Permission and
@@ -364,19 +357,26 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	}
 	defer closeActionAssessments(prepared)
 
-	// Only the independent reviewer invocation fans out. All permission, trusted
-	// mutation, immutable request preparation, grant lookup, and tool classification
-	// work above remains dispatcher-serial.
+	// Human permission and pre-hook waits are complete. Prepare each sibling
+	// serially, launching its private checker before preparing the next.
 	var reviewWG sync.WaitGroup
 	for i := range prepared {
-		if prepared[i].assessment == nil {
+		if ctx.Err() != nil {
+			break
+		}
+		p := &prepared[i]
+		if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 			continue
 		}
-		reviewWG.Add(1)
-		go func(p *readBatchPending) {
-			defer reviewWG.Done()
-			assessAction(ctx, r, p.assessment)
-		}(&prepared[i])
+		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, p.call.Name, ReviewJobAction, false); applies {
+			assessment := e.prepareActionAssessment(ctx, r, sess, env, p.call)
+			p.assessment = &assessment
+			reviewWG.Add(1)
+			go func(a *actionReviewAssessment) {
+				defer reviewWG.Done()
+				assessAction(ctx, r, a)
+			}(p.assessment)
+		}
 	}
 	reviewWG.Wait()
 	if ctx.Err() != nil {
@@ -391,6 +391,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 		p := &prepared[i]
 		if p.assessment != nil {
 			res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, p.call, &p.auth, *p.assessment, session.EvToolResultAvailable)
+			p.assessment.action.close = nil
 			p.assessment.usageConsumed = true
 			if cancelled {
 				r.recordCompletedActionUsage(ctx, sess, prepared[i+1:])
@@ -1321,6 +1322,9 @@ func (e *Engine) authorizeDecision(ctx context.Context, r *Run, sess *session.Se
 		auth.permissionReviewRevision = revision
 		return governance.PermissionDecision{Effect: governance.Allow}, false
 	}
+	if ctx.Err() != nil {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: "cancelled"}, true
+	}
 
 	verdictResult, ok, paused := e.surfaceAsk(ctx, r, sess, turnIdx, ask)
 	if !paused {
@@ -1711,7 +1715,7 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	res = session.RepairToolResult(res)
 	var assessment inboundAssessment
 	if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
-		assessment = e.prepareInboundAssessment(r, sess, env, c, res)
+		assessment = e.prepareInboundAssessment(ctx, r, sess, env, c, res)
 		assessInbound(ctx, r, &assessment)
 	}
 	return executionRecord{

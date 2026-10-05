@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -30,6 +31,7 @@ type evidenceBuildProvider struct {
 	reviewID    string
 	prompt      string
 	sawContents bool
+	remaining   []time.Duration
 }
 
 var (
@@ -41,9 +43,12 @@ func (*evidenceBuildProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func (p *evidenceBuildProvider) Stream(_ context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+func (p *evidenceBuildProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if deadline, ok := ctx.Deadline(); ok {
+		p.remaining = append(p.remaining, time.Until(deadline))
+	}
 	var chunks []port.Chunk
 	switch p.call {
 	case 0:
@@ -187,11 +192,29 @@ func TestEvidenceAuthorizationPrecedesBackendMetadata(t *testing.T) {
 
 type countingRangeEvidenceWorkspace struct {
 	tool.Workspace
-	reads int
+	reads                 int
+	delays                []time.Duration
+	beforeRead            func(context.Context, int) error
+	completeAfterDeadline bool
 }
 
 func (w *countingRangeEvidenceWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
 	w.reads++
+	if w.reads <= len(w.delays) && w.delays[w.reads-1] > 0 {
+		select {
+		case <-time.After(w.delays[w.reads-1]):
+		case <-ctx.Done():
+			return nil, tool.FileVersion{}, 0, ctx.Err()
+		}
+	}
+	if w.beforeRead != nil {
+		if err := w.beforeRead(ctx, w.reads); err != nil {
+			return nil, tool.FileVersion{}, 0, err
+		}
+	}
+	if w.completeAfterDeadline && ctx.Err() != nil {
+		ctx = context.WithoutCancel(ctx)
+	}
 	return w.Workspace.(tool.BoundedWorkspaceRangeReader).ReadVersionRangeBounded(ctx, path, offset, maxBytes, totalLimit)
 }
 

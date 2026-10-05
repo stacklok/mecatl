@@ -453,6 +453,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Mecatl Studio workspace shell](studio-workspace-shell.md) — responsive workspace navigation and search interaction, accessible error routes, installable assets, and honest loaded-shell offline status. Status: proposed.
 - [Mecatl Studio appearance foundation](studio-appearance-foundation.md) — semantic light/dark tokens and Default, Aztec, Mono, and Solar choices in Appearance; same-origin fonts and pre-paint state; accessible shared controls for the 500px pivot. Status: landed (candidate, pending stacked PR merges).
 - [Session-scoped agent identity](session-scoped-agent-identity.md) — a `CreateSessionRequest.agent_definition_name` binding whose root engine is built exclusively from a named AgentDef's own tools/provider/model/limits/mode/hooks/memory, with ordinary main-session guardrails and ask-flow, a strictly non-widenable tool ceiling (closing grant channels — `Config.RootAuthority`, `Config.MCPBroker`, `GrantToolAuthority`, and `CompleteWorkspaceEnrollment` — ADR 0353's own text didn't name), and fail-closed behavior across every engine-rebuild path. Status: proposed.
+- [Unified permission mode](unified-permission-mode.md) — one named `--permission-mode` vocabulary over the posture and session-mode mechanisms that already exist, with boot refusals when an allow-all token has no guardrails checker or a headless root names project trust it cannot be granted, plus an adjudicating default for headless subagent asks. Status: proposed.
 
 ## See also
 

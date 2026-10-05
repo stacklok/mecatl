@@ -444,7 +444,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens; 0 uses the detected or configured value")
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider prompt caching")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h; other values are ignored with a warning")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h (default: 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway); other values are ignored with a warning")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "enable project instructions, persona, skills, commands, and allow rules; use only with projects you trust")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
 		"use yolo posture: allow tools by default and disable delegated-agent command-injection safeguards; explicit deny and ask rules still apply")
