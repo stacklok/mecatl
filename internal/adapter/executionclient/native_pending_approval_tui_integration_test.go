@@ -505,6 +505,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			var (
 				observedKinds []mecatuiclient.PendingApprovalEventKind
 				observedNil   bool
+				toolResult    mecatuiclient.ToolResultMsg
 				toolResults   int
 			)
 			for {
@@ -518,6 +519,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 					if result.CallID != "native-shell" || result.IsError == tc.wantRun {
 						t.Fatal("resumed tool result identity/outcome mismatch")
 					}
+					toolResult = result
 					toolResults++
 				}
 				if event.Kind == mecatuiclient.PendingApprovalEventTerminal {
@@ -555,18 +557,22 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if toolResults != 1 || continuationRequests.Load() != 1 || stats.ownerConverse.Load() != 0 || stats.ownerResolve.Load() != 1 || stats.foreignCalls.Load() != 3 {
 				t.Fatalf("unexpected work counts: tool-results=%d model=%d converse=%d resolve=%d foreign=%d", toolResults, continuationRequests.Load(), stats.ownerConverse.Load(), stats.ownerResolve.Load(), stats.foreignCalls.Load())
 			}
-			if strings.Count(view, `command: "printf bridge-command"`) != 1 || strings.Count(view, "│ ✓ Shell")+strings.Count(view, "│ ✗ Shell") != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") {
-				t.Fatalf("terminal view lost draft, continuation, or single resolved tool card:\n%s", view)
+			wantSummary := "✗ failed · Shell · Run printf bridge-command"
+			if tc.wantRun {
+				wantSummary = "✓ done · Shell · Run printf bridge-command"
+			}
+			if strings.Count(view, wantSummary) != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") || strings.Contains(view, "│ ✓ Shell") || strings.Contains(view, "│ ✗ Shell") {
+				t.Fatalf("terminal view lost draft, continuation, or one-line resolved tool summary:\n%s", view)
 			}
 			executor.mu.Lock()
 			operations := append([]executionenv.Operation(nil), executor.operations...)
 			executor.mu.Unlock()
 			if tc.wantRun {
-				if len(operations) != 1 || operations[0] != executionenv.OpCommandStart || !strings.Contains(view, "out�") || !strings.Contains(view, "[exit code: 0]") {
-					t.Fatalf("allow result projection: operations=%v\n%s", operations, view)
+				if len(operations) != 1 || operations[0] != executionenv.OpCommandStart || !strings.Contains(toolResult.Content, "out�") || !strings.Contains(toolResult.Content, "[exit code: 0]") || strings.Contains(view, "out�") || strings.Contains(view, "[exit code: 0]") {
+					t.Fatalf("allow result/summary projection: operations=%v result=%q\n%s", operations, toolResult.Content, view)
 				}
-			} else if len(operations) != 0 || !strings.Contains(view, "denied") {
-				t.Fatalf("deny executed original command or lost refusal: operations=%v\n%s", operations, view)
+			} else if len(operations) != 0 || !strings.Contains(toolResult.Content, "denied") {
+				t.Fatalf("deny executed original command or lost refusal: operations=%v result=%q\n%s", operations, toolResult.Content, view)
 			}
 		})
 	}
