@@ -297558,6 +297558,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791224990427,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a5c42b9ccc6e8691fffd9c112590089bdd49518d",
+          "message": "test: time rotation convergence and scripted journeys (#2120)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T16:01:21-07:00",
+          "tree_id": "1677227ae398f27a8782e55c83d891b277d0f92a",
+          "url": "https://github.com/stacklok/mecatl/commit/a5c42b9ccc6e8691fffd9c112590089bdd49518d"
+        },
+        "date": 1791241986028,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3281,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 71,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -389594,6 +389633,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791241983185,
+  "lastUpdate": 1791241986778,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
