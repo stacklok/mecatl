@@ -264240,6 +264240,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791169430618,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3222c2fb808d4140d19b2979a73dd2a6b2cc4398",
+          "message": "test: show execution qualification phase and spec timing (#2086)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T20:13:53-07:00",
+          "tree_id": "32fe3461544add66e2d0ae236187f358440e4615",
+          "url": "https://github.com/stacklok/mecatl/commit/3222c2fb808d4140d19b2979a73dd2a6b2cc4398"
+        },
+        "date": 1791170727709,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -383428,6 +383462,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791170724867,
+  "lastUpdate": 1791170729075,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
