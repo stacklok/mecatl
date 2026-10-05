@@ -1157,6 +1157,23 @@ func shutdownProductMetrics(pm cliconfig.ProductMetricsHandles) {
 	_ = pm.Shutdown(shutdownCtx)
 }
 
+// normalizedLookupTarget adds gRPC's default HTTPS port to bare host and IPv6
+// targets before FindTarget, without allowing resource aliases to select another
+// target's saved trust.
+func normalizedLookupTarget(target string) string {
+	if !strings.ContainsAny(target, ":/?#@") {
+		return net.JoinHostPort(target, "443")
+	}
+	if strings.HasPrefix(target, "[") && strings.HasSuffix(target, "]") {
+		host := target[1 : len(target)-1]
+		ip, _, _ := strings.Cut(host, "%")
+		if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+			return net.JoinHostPort(host, "443")
+		}
+	}
+	return target
+}
+
 // resolveRemoteTransport dials only the configured remote target. It never starts
 // an embedded server or reports embedded startup progress.
 func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (target string, dial client.DialConfig, cleanup func(), err error) {
@@ -1164,20 +1181,7 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 	if cfg.authToken != "" || cfg.anonymous {
 		registry, regErr := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
 		if regErr == nil {
-			lookupTarget := cfg.connectAddress
-			if !strings.ContainsAny(lookupTarget, ":/?#@") {
-				// gRPC defaults a bare hostname to HTTPS's port. Normalize only
-				// that spelling before FindTarget so resource aliases never select
-				// another target's saved trust.
-				lookupTarget = net.JoinHostPort(lookupTarget, "443")
-			} else if strings.HasPrefix(lookupTarget, "[") && strings.HasSuffix(lookupTarget, "]") {
-				host := lookupTarget[1 : len(lookupTarget)-1]
-				ip, _, _ := strings.Cut(host, "%")
-				if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
-					lookupTarget = net.JoinHostPort(host, "443")
-				}
-			}
-			if conn, findErr := registry.FindTarget(lookupTarget); findErr == nil {
+			if conn, findErr := registry.FindTarget(normalizedLookupTarget(cfg.connectAddress)); findErr == nil {
 				// Explicit bearer and anonymous connects may reuse only the
 				// target's saved server trust. Their transport policy remains
 				// entirely caller-controlled; the managed-OIDC guarantee above
