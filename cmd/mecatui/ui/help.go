@@ -148,7 +148,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		helpRow{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
 		helpRow{key: "/connect", action: "sign in or connect to a remote server"},
 		helpRow{key: hk.modeSwitch, action: "change permission mode (unavailable while filling an MCP prompt)"},
-		helpRow{key: hk.toolcalls, action: "show or hide tool details"},
+		helpRow{key: hk.toolcalls, action: "open tool calls"},
 	)
 	writeHelpRows(&b, th, inspectRows)
 
@@ -561,6 +561,6 @@ func zeroStateRows(hk helpKeys) []helpRow {
 		{key: hk.help, action: "keys & features"},
 		{key: "/", action: "slash commands"},
 		{key: hk.agents, action: "agents (when running)"},
-		{key: hk.toolcalls, action: "details"},
+		{key: hk.toolcalls, action: "tool calls"},
 	}
 }

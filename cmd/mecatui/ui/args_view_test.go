@@ -78,8 +78,8 @@ func TestCtrlTOpensArgsViewForShellAsk(t *testing.T) {
 	}
 }
 
-// TestCtrlTPlanAskUnchanged is the regression guard: a plan ask's ctrl+t keeps
-// toggling expandTools and never opens the args view.
+// TestCtrlTPlanAskUnchanged is the regression guard: a plan ask's ctrl+t is
+// consumed by approval without opening a detail view or changing global state.
 func TestCtrlTPlanAskUnchanged(t *testing.T) {
 	m := planAskModel(t, true)
 	before := m.expandTools
@@ -87,8 +87,11 @@ func TestCtrlTPlanAskUnchanged(t *testing.T) {
 	if approvalSurfaceOf(t, m).argsViewOpen {
 		t.Error("ctrl+t on a plan ask must NOT open the args view")
 	}
-	if m.expandTools == before {
-		t.Error("ctrl+t on a plan ask must keep toggling expandTools")
+	if _, ok := m.modal.(*toolcallsState); ok {
+		t.Error("ctrl+t on a plan ask must NOT open the tool-call inspector")
+	}
+	if m.expandTools != before {
+		t.Error("ctrl+t on a plan ask must be a consumed no-op")
 	}
 }
 

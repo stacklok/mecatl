@@ -72,7 +72,6 @@ type approvalSurface struct {
 	sessionID    string
 	modelID      string
 	debugSession bool
-	expandTools  bool
 
 	// hits is the current render frame's verdict hit map.
 	hits map[HitID]client.Verdict
@@ -114,12 +113,11 @@ func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) 
 
 func (s *approvalSurface) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if key.Matches(msg, s.deps.keys.Toolcalls) {
-		if s.approvalExpandToggle() {
-			s.intent = nil
+		if isPlanAsk(s.ask.Tool) {
 			return nil, true, false
 		}
-		s.expandTools = !s.expandTools
-		s.intent = setToolcallsIntent{expand: s.expandTools}
+		s.approvalExpandToggle()
+		s.intent = nil
 		return nil, true, false
 	}
 	cmd, intent := s.onApprovalKey(msg)
@@ -240,10 +238,6 @@ type approvalRetractedIntent struct {
 }
 
 func (approvalRetractedIntent) isSurfaceIntent() {}
-
-type setToolcallsIntent struct{ expand bool }
-
-func (setToolcallsIntent) isSurfaceIntent() {}
 
 func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 	intent := s.intent
@@ -1021,7 +1015,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	if ask.offerAlways {
 		actionRows++
 	}
-	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… ctrl+t details"))
+	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… "+s.deps.marks.toolcalls+" details"))
 	b.Reset()
 	b.WriteString(preActions)
 

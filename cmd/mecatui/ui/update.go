@@ -2300,8 +2300,8 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// ctrl+t is a global render toggle (full vs capped tool output); it works in
-	// any phase and never feeds the textarea.
+	// Toolcalls opens the current session's inspector while idle or running. In
+	// other phases it is consumed without forwarding to the textarea.
 	if key.Matches(msg, m.keys.Toolcalls) {
 		return m.onToolcallsKey()
 	}
@@ -2409,17 +2409,10 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	return m, true
 }
 
-// onToolcallsKey is the ctrl+t handler, extracted from onKey so onKey stays
-// under the cyclomatic cap. ctrl+t is a global render toggle (full vs capped
-// tool output); inside the permission modal it ROUTES by ask type (issue #488):
-// a non-diff, non-plan ask opens/closes the full-screen ask-args view INSTEAD
-// of toggling expandTools; a plan ask or an Edit/Write (diff-capable) ask keeps
-// the in-modal expand behavior byte-for-byte. Approval emits a semantic toggle
-// intent for the latter; Model owns the global expandTools effect.
+// onToolcallsKey opens the current session's inspector while the conversation owns
+// the keyboard. Other phases consume the binding without forwarding it to the prompt.
 func (m Model) onToolcallsKey() (tea.Model, tea.Cmd) {
-	m.expandTools = !m.expandTools
-	m.refreshView()
-	return m, nil
+	return m.runToolcalls()
 }
 
 // dispatchPhaseKey is the per-phase key router, extracted from onKey so onKey

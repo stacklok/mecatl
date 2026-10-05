@@ -140,16 +140,14 @@ func TestEffectiveModelSetterUpdatesApprovalIdentityOnly(t *testing.T) {
 	}
 }
 
-func TestApprovalExpandOpensDetailsWithoutChangingExpandState(t *testing.T) {
+func TestApprovalExpandOpensDetailsWithoutChangingModelExpandState(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "diff", Tool: "Edit", Args: `{"path":"a","old_string":"a","new_string":"b"}`, offerAlways: true})
-	s := approvalSurfaceOf(t, m)
-	s.expandTools = true
 	m.expandTools = false
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 
-	if !s.expandTools || m.expandTools {
-		t.Fatalf("expand values = surface:%v model:%v, want true:false", s.expandTools, m.expandTools)
+	if m.expandTools {
+		t.Fatal("approval details must not change the model's global expand state")
 	}
 	if !approvalSurfaceOf(t, m).argsViewOpen {
 		t.Fatal("ctrl+t must open the bounded approval-details view")

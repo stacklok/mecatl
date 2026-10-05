@@ -57,7 +57,7 @@
               ┃    ?                     keys & features                            ┃
               ┃    /                     slash commands                             ┃
               ┃    f6                    agents (when running)                      ┃
-              ┃    ctrl+t                details                                    ┃
+              ┃    ctrl+t                tool calls                                 ┃
               ┃                                                                     ┃
               ┃    Cross-session memory is on — I'll remember context across runs.  ┃
               ┃                                                                     ┃

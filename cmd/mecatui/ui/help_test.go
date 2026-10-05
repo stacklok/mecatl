@@ -421,7 +421,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Agents", match: "inspect agents", want: "ctrl+f9", absent: "f6", occurs: 1},
 		{name: "Effort", match: "choose reasoning effort", want: "ctrl+f5", absent: "f7", occurs: 1},
 		{name: "ModeSwitch", match: "change permission mode", want: "ctrl+f10", absent: "shift+tab", occurs: 1},
-		{name: "Toolcalls", match: "show or hide tool details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
+		{name: "Toolcalls", match: "open tool calls", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
 		{name: "Help", match: "open this help; the shortcut", want: "ctrl+f12 or /help", absent: "? or /help", occurs: 1},
 		{name: "Quit", match: "the first clears the prompt", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},
 		{name: "Scroll", match: "scroll the conversation", want: "ctrl+f14/ctrl+f15", absent: "pgup", occurs: 1},

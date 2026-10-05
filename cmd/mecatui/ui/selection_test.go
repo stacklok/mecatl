@@ -1209,12 +1209,13 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 		t.Fatalf("selection snapshot %q should cover the marker", m.sel.snapshot)
 	}
 
-	// Toggle ctrl+t → the tool body expands, shifting the marker DOWN, so line index
+	// Expand the retained render state directly: it shifts the marker DOWN, so
 	// markerLine now holds a tool-body line instead of the marker.
-	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	m.expandTools = true
+	m.refreshView()
 	afterIdx := lineIndexContaining(m.vp.GetContent(), marker)
 	if afterIdx == markerLine {
-		t.Fatalf("test setup did not shift the layout (marker stayed at line %d); ctrl+t must change the tool body height", markerLine)
+		t.Fatalf("test setup did not shift the layout (marker stayed at line %d); expanded tools must change the tool body height", markerLine)
 	}
 	if m.sel.active {
 		t.Errorf("selection should be CLEARED after a reflow changed the selected text (marker %d → %d)", markerLine, afterIdx)

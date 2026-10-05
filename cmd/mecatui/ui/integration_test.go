@@ -238,19 +238,21 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	}
 }
 
-// TestToolcallsToggle asserts ctrl+t flips the global expand flag.
-func TestToolcallsToggle(t *testing.T) {
+// TestToolcallsShortcutOpensInspector asserts ctrl+t opens the current-session
+// inspector without changing the legacy expansion state.
+func TestToolcallsShortcutOpensInspector(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.phase = phaseIdle
 	if m.expandTools {
 		t.Fatal("expandTools should start false")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if !m.expandTools {
-		t.Error("ctrl+t should set expandTools true")
+	if m.expandTools || toolcallsForTest(t, m) == nil {
+		t.Error("ctrl+t should open the inspector without changing expandTools")
 	}
 	// The footer is now the minimal "? help · … · ctrl+c quit" line; the full
-	// chord list (including "ctrl+t … details") moved into the "?" help overlay.
+	// chord list moved into the "?" help overlay.
 	footer := stripANSIstr(m.renderFooter())
 	if !strings.Contains(footer, "? help") || !strings.Contains(footer, "ctrl+c quit") {
 		t.Errorf("footer should carry the minimal help line:\n%s", footer)
@@ -258,16 +260,12 @@ func TestToolcallsToggle(t *testing.T) {
 	if strings.Contains(footer, "ctrl+t details") {
 		t.Errorf("footer should no longer carry the full chord list:\n%s", footer)
 	}
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.expandTools {
-		t.Error("ctrl+t should toggle expandTools back to false")
-	}
 }
 
 // TestReasoningBlockCollapsedThenExpanded asserts a reasoning delta renders as a
 // dim, collapsed one-line "reasoning summary" header by default (the full text
-// hidden), and that ctrl+t expands it to show the streamed reasoning text under
-// a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
+// hidden), and that the retained expansion state shows the streamed reasoning text
+// under a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
 // assistant answer of the same turn.
 func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
@@ -296,8 +294,10 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 		t.Errorf("reasoning (%d) should render above the answer (%d):\n%s", ri, ai, collapsed)
 	}
 
-	// Expanded (ctrl+t): the caveat + the full reasoning text become visible.
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	// The legacy expansion state continues to render expanded reasoning until T05
+	// retires it; Toolcalls no longer changes it.
+	m.expandTools = true
+	// Expanded: the caveat + the full reasoning text become visible.
 	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
 	if !strings.Contains(expanded, "may not reflect its actual process") {
 		t.Errorf("expanded reasoning should carry the lossy-summary caveat:\n%s", expanded)
