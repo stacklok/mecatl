@@ -291206,6 +291206,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791153012062,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d7541d6c0d39017ea560c85ee8f2be1c89b684fb",
+          "message": "fix: return and fence auxiliary usage results (#1904)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T16:49:33-07:00",
+          "tree_id": "208c4d4d76d598768172c5b3cae4f3a960e4be7e",
+          "url": "https://github.com/stacklok/mecatl/commit/d7541d6c0d39017ea560c85ee8f2be1c89b684fb"
+        },
+        "date": 1791158496843,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3282,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 70.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1156,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -381418,6 +381457,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791158494250,
+  "lastUpdate": 1791158497797,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
