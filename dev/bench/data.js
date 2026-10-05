@@ -295176,6 +295176,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791198238690,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b9cd7a40c8a5a8555355af0eb0328f25dc7326d1",
+          "message": "[Implementation] Quiet benign guardrail notices (#1958)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T15:01:31+03:00",
+          "tree_id": "9be0cc4afe14f1fe19e722836f3f1b977088d49a",
+          "url": "https://github.com/stacklok/mecatl/commit/b9cd7a40c8a5a8555355af0eb0328f25dc7326d1"
+        },
+        "date": 1791202416508,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3295,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 82.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -386528,6 +386567,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791202413699,
+  "lastUpdate": 1791202417290,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
