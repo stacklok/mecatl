@@ -251,6 +251,7 @@ func validateToolcallsApprovalKeys(res Resolved) error {
 		{"Tab", "tab"},
 		{"Left", "left"},
 		{"Right", "right"},
+		{"Down", "down"},
 	} {
 		if err := rejectPairOverlap(toolcalls, []string{key.chord}, actionToolcalls, key.action); err != nil {
 			return err

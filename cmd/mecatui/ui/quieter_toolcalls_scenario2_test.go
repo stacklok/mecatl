@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 var (
@@ -105,6 +107,10 @@ func TestMecatuiQuieterToolCalls_Scenario2_InspectorShortcutAndFocus(t *testing.
 				// submit the hidden draft or mutate transcript/tool state, and handled
 				// keys emit no command that could carry approval/control traffic.
 				beforeBlocks, beforeEntries := m.conv.scrollback.Len(), len(toolcallsForTest(t, m).entries)
+				beforeCalls := make([]scrollback.BlockSnapshot, beforeBlocks)
+				for i := range beforeCalls {
+					beforeCalls[i] = m.conv.scrollback.SnapshotAt(i)
+				}
 				beforePhase, beforeDraft := m.phase, m.prompt.Value()
 				compactBefore := toolcallsForTest(t, m).compact
 				for _, key := range []tea.KeyPressMsg{{Code: 'x'}, {Code: tea.KeyEnter}} {
@@ -129,6 +135,11 @@ func TestMecatuiQuieterToolCalls_Scenario2_InspectorShortcutAndFocus(t *testing.
 						}
 					}
 					m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+				}
+				for i, before := range beforeCalls {
+					if after := m.conv.scrollback.SnapshotAt(i); !reflect.DeepEqual(after, before) {
+						t.Fatalf("inspector keys mutated existing conversation block %d", i)
+					}
 				}
 
 				// A call and its result arrive through Update while the inspector is open.

@@ -265,6 +265,7 @@ func TestToolcallsValidationRejectsApprovalDetailAndNavigationCollisions(t *test
 		{"tab", map[string][]string{"Toolcalls": {"tab"}}, "Tab"},
 		{"left", map[string][]string{"Toolcalls": {"left"}}, "Left"},
 		{"right", map[string][]string{"Toolcalls": {"right"}}, "Right"},
+		{"down", map[string][]string{"Toolcalls": {"down"}}, "Down"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := Parse(tc.in)
