@@ -2,7 +2,10 @@
 
 *Living explanation, not a new decision or acceptance plan. Implementation claims
 refer to the pins below, not to an integrated release. Existing ADRs and plans
-remain authoritative; source inspection is not deployment qualification.*
+remain authoritative; source inspection is not deployment qualification. This page
+describes the identity and external-broker foundation we intend to build. Mandates
+are a possible follow-on capability, not a prerequisite or a selected wire profile;
+new protocol decisions still require an ADR and acceptance proof.*
 
 ## The user journey
 
@@ -25,165 +28,257 @@ Two kinds of independence matter:
   solely on the harness's assertion that it authenticated that user. A separate
   signer or a broker-audience claim does not by itself establish this property.
 
-The integration branch supplies broker-side named-agent/exact-call enforcement.
-It still trusts an allowlisted harness for user-authentication and agent-selection
-facts, and its admission records are process-local. Independent user provenance and
-broker-owned durable activity evidence remain gaps.
+For example, Alice asks `code-reviewer` to read PR 42. Mecatl identifies the acting
+agent; the broker checks its signed credential and decides whether to allow that
+specific read. Permission to read PR 42 must not authorize merging PR 43. The broker
+must check the requested action and target, not just accept the agent's name.
+
+Trusting Mecatl to identify its own agents is intentional. Whether the broker should
+also trust Mecatl's report that Alice authorized the action is a separate, unresolved
+question. [Task mandates](#possible-follow-on-task-mandates) could add a way to
+express delegated permission on top of this foundation; they would not by themselves
+prove that Alice approved it.
+The intended audit history must survive a broker restart; a permission record held
+only in memory is not enough. The
+[implementation evidence](#implementation-evidence-separate-branches-not-one-product)
+section below distinguishes the existing prototypes from these design goals.
+
+### Agreed agent-attribution trust boundary
+
+**Mecatl says which agent is calling; the broker decides what that agent may do.**
+We trust Mecatl to identify its own agents. The broker checks their credentials and
+applies its own policy rather than accepting Mecatl's permission decision.
+
+For example:
+
+1. Mecatl starts `code-reviewer` and determines which tools it may use.
+2. The issuer signs a credential identifying that agent and its allowed tools,
+   using information supplied by Mecatl. The issuer limits which identities and
+   tools Mecatl may request.
+3. When the agent calls `read_pr`, Mecatl attaches its credential. The broker
+   verifies it and checks whether its own policy permits reading the requested PR.
+
+The signature proves who issued the credential and that its contents have not
+changed. It does **not** prove which agent inside Mecatl actually made the call.
+Authenticating the Mecatl process does not let the issuer or broker observe its
+internal agents. If Mecatl is compromised, it could attach `deployer`'s credential
+to a call made by `code-reviewer`, within the credentials it can obtain or use.
+Keeping the signing key outside Mecatl limits token forgery, but does not prevent
+that substitution. Separate instance IDs or keys held by the same compromised
+process do not prevent it either.
+
+Preventing that substitution is a longer-term goal, not a promise of this design.
+It would require stronger isolation—for example, an agent running in a separate
+worker whose identity and exclusive control of its key can be independently
+verified. To leave room for that, we keep the agent definition, running instance,
+party vouching for it, and credential holder distinct. A different SPIFFE name
+alone does not provide isolation.
+
+**Identifying the agent is separate from proving the user's permission.** Trusting
+Mecatl to identify `code-reviewer` does not settle whether the broker should also
+trust its claim that Alice approved the action. The broker must check whose
+authority the call uses and whether that user's permission covers this agent and
+operation. What evidence it accepts for those checks remains a separate decision.
 
 ## What each identity means
 
-| Value | Question it answers; boundary |
-|---|---|
-| Owner | Who controls the durable session or schedule? An owner label is not fresh authentication. |
-| Subject | Whose user authority does the external call spend? |
-| Logical agent / actor | Which configured definition performs the operation? |
-| Instance | Which runtime occurrence? Accountability metadata, not a separately keyed v1 principal. |
-| Workload presenter | Which admitted workload presents the request? Not the user or logical agent. |
-| Holder | Which process/key can exercise a sender-bound credential, when used? |
-| Effective authority | Which capabilities survive parent, definition and current policy ceilings? |
-| Environment | Which exact namespace/revision supplies execution? Placement is not consent. |
-| Target | Which server-resolved integration, operation, resource and credential selection? |
-| Correlation | Which records join? A correlation value never grants authority. |
+Alice opens a Mecatl session and asks `code-reviewer` to read PR 42 from
+`acme/payments`. The request runs through a Mecatl worker and an external broker.
+The identities describe the user, the agent and the worker carrying its request.
+This is the intended broker flow. The existing architecture has caller ownership
+checks and a separate acting-as-user exchange gate; that gate is not yet wired into
+production external calls. The terms below build on the
+[domain model](architecture/domain-model.md), not a second set of core entities.
+
+### The user
+
+**User:** Alice is the authenticated caller, represented by `session.Principal`.
+Her identity is the pair `(Issuer, Subject)`, not her display name. Mecatl records
+that principal as the session owner at creation; children and forks inherit it.
+With ownership enforcement enabled, another caller cannot take over her session.
+In the proposed broker flow, the broker also checks the required user-authorization
+evidence and matches it to that owner. Session ownership alone does not authorize
+external operations, and Bob's evidence cannot substitute for Alice's.
+
+These are two checks about the same user, not a design requiring separate people
+as owner and subject. Protocol sections use *subject* for the identity a particular
+token describes; that may be the user or the logical agent, depending on the token.
+
+### The agent and the process carrying its request
+
+- **Logical agent / actor:** the resolved `code-reviewer` definition (`AgentDef`),
+  which supplies the role, tools and model for a specialist. It is not Alice and
+  not the Mecatl worker process. The logical-agent credential identifies that
+  definition; it does not replace the session's user owner.
+- **Instance:** a particular execution of that definition—for example, a Subagent
+  with its own child `Session`. Two reviews can use the same definition but have
+  different child sessions. Optional instance metadata distinguishes occurrences;
+  it does not give each one an isolated key or introduce a new aggregate alongside
+  `Session`.
+- **Workload presenter:** the Mecatl worker that sends the request to the broker.
+  Authenticating that worker identifies the calling software, not Alice or the
+  particular agent inside it.
+
+### The operation and its context
+
+These are not additional identities:
+
+- **Effective authority:** the tools this agent may actually use after applying
+  parent, agent-definition and current policy restrictions. If its parent cannot
+  write, selecting a definition that includes write tools must not restore them.
+- **Environment:** the execution namespace supplied by `tool.Environment`: a
+  workspace and an optional bound command runner, identified durably by an exact
+  `EnvironmentRef{Kind, ID, Revision}`. For example, Alice's session reattaches to
+  its recorded environment, not whatever workspace is now the deployment default.
+  That placement is not permission to act on her GitHub account.
+
+Sender binding is planned as [workload-level DPoP](#add-dpop-atop-logical-agent-identity)
+after logical-agent identity. It protects against stolen-token replay, not
+misattribution between agents inside a compromised harness.
 
 ### What the internal SPIFFE identity proves
 
-The v1 subject is definition-scoped:
+The logical-agent credential separates **stable identity** from **the tools
+allowed for a particular execution**.
+
+- Editing `code-reviewer`'s prompt or tool configuration does not change its identity;
+  renaming it or changing its source tier does. Identity follows the definition's
+  source tier and exact name, not its contents or revision.
+- Two executions can share that identity but receive credentials with different
+  tool lists. The broker checks the credential presented for the call; it must
+  never combine permissions from other credentials with the same identity.
+
+The tool list is only one authority limit. It does not encode filesystem access,
+direct-write permission or the full delegation history.
+
+#### How the name and signature work
+
+For a project-defined `code-reviewer`, the token's subject (`sub`) would look like
+this (`<digest>` stands for the full computed digest, not literal text in the name):
 
 ```text
-spiffe://<trust-domain>/mecatl/agent-definition/v1/<tier>/<slug>--<digest>
+spiffe://agents.example.com/mecatl/agent-definition/v1/project/code-reviewer--<digest>
 ```
 
-The digest binds tier and exact name, **not definition contents or revision**.
-Renaming changes the principal; editing its contents does not. Schedule revision
-pinning therefore needs separate verified evidence. Runtime measurement is not an
-agreed v1 prerequisite, and a goroutine is not a separately protected principal.
+- **Trust domain:** `agents.example.com` is the configured identity namespace. It
+  is not the address of the agent or broker.
+- **Tier:** `project` means the definition came from the project. Other categories
+  are `user`, `managed`, `driver` and `system`. These distinguish sources, not
+  privilege levels: a user-defined `code-reviewer` and a project-defined
+  `code-reviewer` are different identities.
+- **Slug:** `code-reviewer` is the readable part. It is not sufficient to identify
+  the agent: names such as `code reviewer` and `code-reviewer` can produce the same
+  slug.
+- **Digest:** a deterministic hash of the tier and exact name distinguishes those
+  cases. Those two names receive different digests, as does the same name in a
+  different tier. Changing only the prompt or tools leaves the digest unchanged;
+  it is not a hash of the definition's contents.
 
-The credential projects exact tool names through `CapabilitySet.Contains`. It is
-not a complete resource/argument, filesystem, direct-write, delegation-history,
-user-consent or holder-binding credential. Never union authority merely because
-two tokens share a subject; instance/`jti` values alone do not prevent replay.
+The broker service initially contains both credential issuance and invocation
+enforcement. Its issuance component holds the private signing key and signs only
+permitted agent identities and tool lists, not arbitrary claims. Its invocation
+component checks presented credentials using public verification keys and decides
+whether to allow each call. Key rotation and cache expiry limit how long old keys
+remain trusted.
 
-The identity substrate uses Secret-backed ES256 issuance, public bundles and bounded
-rotation verification on an agent-free host. It neither requires SPIRE nor exposes
-arbitrary signing. KMS/HSM is later hardening; software keys do not protect against
-issuer-host, node, cluster-admin or Secret-store compromise.
+These are separate responsibilities within one deployment, not separate services
+or an internal security boundary. The signing key stays outside the agent-executing
+harness. The components may be deployed separately later, but that would require
+its own authentication and key-distribution design. The credentials use SPIFFE
+names and JWT-SVIDs; running SPIRE is not required.
 
-Sources: pinned identity ADRs for [issuer custody][issuer-adr] and
-[logical-agent projection][agent-adr].
+The issuer and its key storage remain trusted infrastructure: separating them from
+agents does not protect against compromise of that infrastructure. The signing
+algorithm and storage backend belong in the implementation specification.
 
 #### Internal SPIFFE identity: issuer and verifier trust
 
-These are **three deployment profiles, not mandatory stages**. Each diagram has
-one harness. Model code is not a participant in credential issuance.
+These are **four deployment profiles, not mandatory stages**. In every profile, the harness (`mecak8s`) is a client of one logical broker deployment; the model does not participate in authentication or credential issuance.
 
-**A — SA only:** implemented in the broker squash at `53eab6b7`, without logical-agent
-SPIFFE identity. The broker authenticates a workload, not the agent definition in it.
+**A — workload-only Kubernetes ServiceAccount authentication:** the harness runs as a Kubernetes **ServiceAccount (SA)**. Kubernetes projects that workload a short-lived bearer token with the broker as its audience. Over a trusted TLS connection, the broker validates the configured Kubernetes issuer, token audience and SA subject allowlist before accepting the request. The broker holds the provider credentials and invokes ToolHive itself.
+
+This workload-only profile will be delivered as the first implementation of the broker.
+
+For example, calls from `code-reviewer` and `deployer` inside the same harness present the same ServiceAccount identity. The broker can restrict which harness may connect, but this token alone cannot support different policies for those two agents. Profile B adds the missing logical-agent evidence.
 
 ```mermaid
 flowchart LR
-    K["Kubernetes SA issuer"] -->|Projected workload token| H["mecak8s trusted client"]
-    H -->|Bearer over TLS| B["Broker verifies workload and allowlist"]
-    B --> T["Broker-owned ToolHive invocation"]
+    K["Kubernetes"] -->|SA token| H["Harness (mecak8s)"]
+    H -->|TLS + bearer| B["Combined broker"]
+    B -->|Broker-held credentials| T["ToolHive"]
 ```
 
-**B — SA-authenticated independent Mecatl issuer:** wired at `db5bcd884`, but the
-sequence below is the **intended successful path, not a qualified SA deployment**.
-Ordinary SA claims are classified as `user`, while issuance requires
-`client_credentials`. The custom verification bundle also lacks standard
-`use: jwt-svid` key metadata and uses custom sequence/refresh field names. These
-[known blockers](#known-identity-profile-defects) remain unfixed.
+**B — SA-authenticated logical-agent credential:** this adds a harness-attested, short-lived logical-agent credential to profile A. The broker remains one combined deployment containing the agent identity issuer and MCP authorization and execution components. The broker first authenticates the harness's SA identity, then checks which agent identities and tools that harness is allowed to request. It signs only a credential within those limits.
 
-There is one broker deployment containing issuance and invocation components.
-Its three checks are configuration decisions, not three services or SPIFFE domains:
+This profile is substantially implemented on the identity-integration branch, but still needs deployment qualification.
 
-| Check | Who checks it? | Concrete question |
-|---|---|---|
-| Authenticate the workload | Broker | “Was this token issued by the configured Kubernetes issuer for this broker, and is it valid?” |
-| Authorize issuance | Broker issuer | “Is this workload allowlisted to request `deployment-specialist` with this tool set?” |
-| Verify the issued credential | Trusted harness client, then broker invocation component | “Was this SVID signed by our configured Mecatl issuer, for the expected audience, and is it still valid?” |
-
-The first uses **Kubernetes workload identity**. The third uses the **internal
-Mecatl SPIFFE identity**. The second is the operator's policy connecting the two:
-knowing a workload's identity does not let it request any logical-agent identity.
+The broker returns the signed agent credential to the harness. Before using it, the harness checks the signature against the broker's configured public signing keys and verifies its expiry, audience, agent identity and tool list against the request. When the harness presents it with an operation, the broker checks both the workload token and agent credential again, enforces the exact-call admission and applies its policy before using provider credentials. These checks belong to one broker deployment, not separate services or trust domains.
 
 ```mermaid
 sequenceDiagram
-    participant K as Kubernetes SA issuer
-    participant H as mecak8s trusted client
-    box Combined broker deployment
-        participant I as Identity issuer
-        participant R as MCP admission and execution
+    participant K as Kubernetes
+    participant H as Harness (mecak8s)
+    box Combined broker
+        participant I as Agent identity issuer
+        participant R as MCP authorization and execution
     end
 
-    K->>H: Projected workload token (audience = broker)
-    Note over H,R: HTTPS issuance and TLS-protected gRPC<br/>Client verifies broker TLS server identity
-    H->>I: Workload token + definition, narrowed tools, user facts, exact call
-    Note over I: 1. Verify workload token
-    Note over I: 2. Check workload allowlist, definition and capability ceiling<br/>Known SA classification defect blocks ordinary SA tokens at this gate
-    Note over I: Sign JWT-SVID with private Mecatl issuer key<br/>Record process-local exact-call admission before returning token
-    I-->>H: Short-lived logical-agent JWT-SVID
-    Note over H: 3. Verify SVID using configured public bundle,<br/>trust domain, audience and execution facts
-    H->>R: Workload token + JWT-SVID + exact invocation
-    Note over R: Verify workload token and SVID again<br/>Consume exact-call admission and evaluate Cedar
-    alt All checks permit
+    K->>H: Projected SA token (broker audience)
+    H->>I: SA token + agent, tools, user facts and exact call
+    I->>I: Authenticate workload and check permitted agent and tools
+    Note over I: Sign credential and record single-use admission for this call
+    I-->>H: Logical-agent credential
+    H->>H: Check broker signature, expiry, audience, agent and tools
+    H->>R: SA token + credential + actual call
+    R->>R: Verify identities, match and consume admission, and apply call policy
+    alt Permitted
         R->>R: Invoke through ToolHive with broker-held credentials
-        R-->>H: Operation result
-    else Any check denies
-        R-->>H: Denial - no backend operation
+        R-->>H: Result
+    else Denied
+        R-->>H: No backend operation
     end
 ```
 
-Operator configuration is **not another network hop** in this sequence. It supplies
-the broker's Kubernetes issuer/audience/allowed subjects, the issuer's permitted
-agent definitions and capability ceilings, and each verifier's Mecatl issuer trust.
-The harness obtains public verification keys from its configured HTTPS bundle
-endpoint using configured CA/server-name trust; the SVID cannot choose that endpoint.
-The broker uses its configured issuer/verifier. Private signing keys remain inside
-the broker boundary; sharing public keys grants verification, not signing authority.
+Operator configuration tells the broker which Kubernetes issuer, audience and ServiceAccounts to accept, and which agent identities and tools each harness may request. It also supplies the public signing keys trusted by the harness and broker. Verification-key endpoints, CA trust and server names are configured by the operator, never selected by a token. Public keys allow verification, not signing; private signing keys stay inside the broker.
 
-The broker still trusts this admitted harness to report user-authentication and
-resolved-definition facts. The SVID proves what the constrained issuer accepted,
-not independently measured agent code or independently authenticated human identity.
-A valid SVID also does not bypass exact-call admission or Cedar. No SPIRE deployment,
-federation or future user-token exchange is implied.
-Sources: [integration issuer ingress][ingress], [admission verifier][admission] and
-[integration ADR][integration-adr].
+The broker signs the credential based on information supplied by the harness.
+The signature does not independently prove that Alice approved the action or that a particular agent's code is running. The broker must still check whether each requested operation is allowed.
 
-**C — external SPIRE workload authentication:** proposed, not wired in this pin.
-It replaces B's requester authentication, not the independent Mecatl signing keys.
-JWT-SVID verification or X.509-SVID/mTLS must authenticate the workload on both
-issuance and invocation; the protocol choice and rotation wiring remain open.
+These credentials currently work as bearer tokens: possession is enough to present them, though the broker's other checks still apply. The planned [DPoP work](#add-dpop-atop-logical-agent-identity) will require proof of a worker-held key when presenting the broker-facing access token.
+
+**C — B with SPIRE JWT-SVID authentication:** the first SPIRE integration replaces B's Kubernetes SA token with a platform JWT-SVID for the broker's audience. The harness obtains it through the SPIFFE Workload API and presents it on both issuance and invocation requests. The broker checks its signature, audience, expiry and allowed workload SPIFFE ID. Agent credential issuance and operation checks remain as in B; SPIRE does not replace the broker's signing keys or create federation.
 
 ```mermaid
 flowchart LR
-    S["Platform SPIRE"] -->|Attests workload and issues workload SVID| H["mecak8s trusted client"]
-    subgraph B["Combined Mecatl broker"]
-        I["Verify platform SVID and issuance envelope"]
-        K["Independent Mecatl signing key"]
-        R["Verify platform and logical identities plus exact call and Cedar"]
+    S["Platform SPIRE"] -->|Platform JWT-SVID| H["Harness (mecak8s)"]
+    subgraph B["Combined broker"]
+        I["Agent identity issuer"]
+        R["MCP authorization and execution"]
     end
-    H -->|Platform identity and bounded agent request| I
-    K -->|Sign logical-agent credential| I
-    I -->|Mecatl logical-agent credential| H
-    H -->|Platform authentication plus logical credential and call| R
+    H -->|TLS + platform JWT-SVID + agent request| I
+    I -->|Broker-issued agent credential| H
+    H -->|TLS + platform JWT-SVID + credential + call| R
 ```
 
-Platform SVID verification requires explicitly trusted platform keys and permitted
-workload IDs. The Mecatl credential is verified against separately configured Mecatl
-keys. This is **authenticated workload → authorized issuance**, not an automatic
-parent-domain signing chain or federation. Neither profile independently proves
-harness-asserted human identity.
+C is planned, not yet wired. It retains B's bearer-token request pattern while adding SPIRE-managed identity. Credential renewal and platform trust-bundle refresh need explicit handling, separate from the broker's logical-agent verification keys. A stolen platform JWT-SVID remains replayable until expiry; DPoP on a subsequently issued access token does not remove that bootstrap risk.
 
-#### Known identity-profile defects
+**D — B with SPIRE X.509-SVID mutual TLS:** an optional follow-on to C replaces bearer workload authentication with proof of a workload private key during the TLS handshake. The harness obtains its certificate and key through the Workload API. The broker verifies the certificate against trusted platform keys and permits only configured workload SPIFFE IDs. Agent credential issuance and exact-call policy remain as in B and C.
 
-At `db5bcd884`, the SA blocker is the mismatch between
-[`GrantTypeFromClaims`](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/engine/session/principal.go)
-and [`IssueAttested`](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/internal/identityissuer/host.go).
-The separate [bundle-format gap](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/internal/identityissuer/bundle.go)
-prevents claiming standard SPIFFE bundle interoperability merely because the local
-issuer and verifier agree. These are source-review findings, not fixes or live
-reproductions. Profile A does not require this logical-agent issuer; profile C
-requires new workload-authentication support as well as qualified issuer compatibility.
+```mermaid
+flowchart LR
+    S["Platform SPIRE"] -->|X.509-SVID and key via Workload API| H["Harness (mecak8s)"]
+    subgraph B["Combined broker"]
+        I["Agent identity issuer"]
+        R["MCP authorization and execution"]
+    end
+    H -->|Workload mTLS + agent request| I
+    I -->|Broker-issued agent credential| H
+    H -->|Workload mTLS + agent credential + call| R
+```
+
+Both broker endpoints must verify the harness's mTLS identity. A TLS-terminating ingress needs an explicitly trusted identity-propagation design; an ordinary forwarded header is not proof. Certificate rotation, trust-bundle refresh and connection renewal must be designed together. The operator selects the accepted method; failed mTLS must not silently fall back to bearer authentication.
+
+D authenticates the harness, not its internal agents, and does not automatically bind an OAuth access token to the certificate. The selected DPoP task remains a separate token-protection mechanism. Neither C nor D independently verifies user consent or isolates agents sharing the harness.
 
 ## Implementation evidence: separate branches, not one product
 
@@ -194,7 +289,7 @@ older review-remediation branch; the integration has not absorbed that squash.
 | Source and pin | What it supplies | What it does not establish |
 |---|---|---|
 | `origin/main` — `a711451616edf84f50e793c9bcbfb697ef400347` | Caller/owner checks, carried authority, exact placement, dispatch/event logging and configured in-process MCP broker paths | Completed external user/agent admission or exhaustive evidence of shell side effects |
-| `handover/agent-mcp-authority-restart` — `ed319f45cd972de3cb95031b39e57b8eec425789` | Issuer substrate (I1), logical-agent projection (I2), adapter-neutral acting-as-user contract (I3-C) | Production ToolHive exchange or provider credential lookup |
+| `handover/agent-mcp-authority-restart` — `ed319f45cd972de3cb95031b39e57b8eec425789` | Issuer signing and verification, logical-agent credentials, adapter-neutral acting-as-user exchange contract | Production ToolHive exchange or provider credential lookup |
 | `acc/singleton-mcp-broker-review-remediation-squash` — `53eab6b753869b33c317da49a67295575807ac61` | TLS/workload-OIDC remote broker, callback lifecycle, process-local Execute receipts, configured encrypted custody recovery | Logical-agent admission, fresh user proof, HA or durable operation outcomes |
 | `acc/singleton-identity-mcp-integration` — `db5bcd8845f87f05fa0c0efecb2092fd6c5e497c` | Constrained issuer, live exact-call Cedar admission and ToolHive fixture tests | Independently verified human evidence, scheduled grants or durable broker audit completion |
 | `workload-identity` — `b6dc951c091197bcb4c3ec444a80308d43dc9e5a` | Historical broker-owned SPIFFE custody/proxy experiment | Selected production transport or an integration dependency |
@@ -204,6 +299,19 @@ comparisons diverge at `038b5739`; neither squash nor integration contains the o
 The integration adapts the issuer slice but has no `internal/actingaccess`; its
 broker-local admission is not simply the donor's exchange contract wired to ToolHive.
 Individual branch tests do not prove that their combination works.
+
+### Known identity-profile defects
+
+The inspected integration classifies ordinary Kubernetes SA tokens as user grants,
+but its issuance gate requires a client-credentials grant. That mismatch blocks the
+ordinary-SA flow shown above. At `db5bcd884`, it lies between
+[`GrantTypeFromClaims`](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/engine/session/principal.go)
+and [`IssueAttested`](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/internal/identityissuer/host.go).
+The separate [bundle-format gap](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/internal/identityissuer/bundle.go)
+prevents claiming standard SPIFFE bundle interoperability merely because the local
+issuer and verifier agree. These are source-review findings, not fixes or live
+reproductions. Profile A does not require this logical-agent issuer; profile C
+requires new workload-authentication support as well as qualified issuer compatibility.
 
 ### Baseline and broker protections worth preserving
 
@@ -402,7 +510,11 @@ and [OAuth flow](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0ef
   Return sanitized results, not tokens or reusable signed requests. This does not
   relocate every harness credential, including LLM-provider credentials.
 - The operation API resolves registered targets server-side, not arbitrary model-chosen
-  URLs, headers, issuers, audiences, scopes or credential selectors.
+  URLs, headers, issuers, audiences, scopes or credential selectors. For example,
+  reading PR 42 must resolve through the registered integration and pass checks for
+  the requested operation, resource and required tools. Credential lookup is a
+  separate broker responsibility, not part of the existing exchange gate's target
+  checks.
 - Execution isolation must prevent alternate credential/network bypasses. A local
   workspace or scrubbed environment is not OS confinement; a microVM alone does not
   make a claimed identity trustworthy. Shell logs are not exhaustive effect records.
@@ -447,10 +559,70 @@ reconciliation; arbitrary effects cannot generally be guaranteed exactly once.
 
 The intended broker-owned ledger records identity provenance, exact operation,
 policy decision, dispatch and observed completion/unknown outcome, without secrets.
-Safe correlation joins it to the harness log but grants no authority. Durable audit
-retention can precede replication. Replicated continuity additionally needs durable
+Its records should link to the corresponding harness session, run and tool call;
+knowing those identifiers grants no authority. The cross-system linking contract
+still needs design: existing harness IDs alone are not assumed sufficient, and this
+page introduces no new correlation identifier. Durable audit retention can precede
+replication. Replicated continuity additionally needs durable
 callback claims, refresh/disconnect fences, routing generations and operation state;
 adding Redis or replicas alone does not deliver those semantics.
+
+## Possible follow-on: task mandates
+
+The logical-agent identity and external-broker design above is the foundation we
+intend to build, not merely a survey of prototypes. A mandate could be built on top
+of it to express authority delegated for a particular task. We do not yet have a
+selected task-mandate model. Internal capability ceilings, logical-agent credentials
+and broker-local operation policies are useful building blocks, not that model.
+Mandates are not a prerequisite for completing the foundation.
+
+The responsibilities would remain separate:
+
+| Piece | What it establishes |
+|---|---|
+| Logical-agent credential | Which agent is acting and which tool ceiling the trusted attester asserts. |
+| Possible task mandate | What this actor has been authorized to do, on which resources and under which conditions, for this delegation. |
+| External broker | Whether the actual operation satisfies all required evidence and the broker's own current policy before credential selection and dispatch. |
+
+For example, the foundation lets the broker identify `code-reviewer` and enforce
+its own policy on a request to read PR 42. A future mandate could additionally
+restrict this particular delegation to reviewing PR 42, even if the broker's
+standing policy permits that agent to review other PRs. Identity supplies the actor
+to bind the grant to; the broker supplies an enforcement point outside the harness.
+Neither decides who may grant that permission or proves Alice's consent.
+
+This makes mandates worth exploring when we need task-specific delegated authority
+rather than only standing policy for a named agent. The foundation should keep
+identity distinct from authorization and leave room for additional verified grant
+evidence at broker admission. That does not require adding a speculative token
+field or mandate interface now, nor does it weaken the existing acting-as-user,
+registered-target, tool-ceiling or exact-call checks.
+
+One candidate is a signed token carrying Cedar policy in RAR-shaped
+`authorization_details`. In that candidate, the policy itself travels with the
+trusted runtime's request; it is not merely operation data evaluated against
+broker-local policies. The broker would verify the grant and its actor binding,
+evaluate the carried policy against the actual operation, and independently require
+its own policy to permit the call. Neither policy could expand the other. The
+credential would stay outside model-visible content. This is an option to assess,
+not a selected representation or a change to the logical-agent credential profile.
+
+Before selecting a mandate design, we would need to decide:
+
+- Who can issue a grant, what authorization or consent supports issuance, and how
+  it binds to the verified user, actor and presenter.
+- Which operations and resources it can express, and how the broker maps an actual
+  registered call to those meanings. Cedar would also need an agreed schema and
+  trusted entity/context inputs.
+- Whether a grant covers a task or one operation, and separately whether it is
+  reusable. A narrow policy does not itself make a grant single-use; a reusable
+  task grant would still require every invocation to pass the broker's checks.
+- How expiry, revocation and delegation narrowing work, including how issuance
+  prevents a grant from exceeding the authority available to its issuer.
+
+These questions belong to a follow-on design. They should not hold up useful
+logical-agent attribution and broker enforcement, and choosing a mandate format
+would not itself close the existing consent or durable-audit gaps.
 
 ## Comparison with current WIMSE work
 
@@ -468,28 +640,92 @@ The [former S2S draft][wimse-s2s] was replaced by workload-credentials, WPT,
 HTTP-signature and mutual-TLS drafts. Cross-references can lag that split.
 Architecture §§3.4.4–3.4.5 support context provenance, inspectable traces, secret
 exclusion and tamper-evident storage—not a Mecatl audit schema or provider-effect
-proof. Adopting sender-constrained credentials is a separate threat-model decision;
-it would not remove trust in harness-supplied user facts. WIMSE does not prescribe
+proof. The planned workload-level DPoP task addresses stolen-access-token replay;
+it does not remove trust in harness-supplied user facts. WIMSE does not prescribe
 Cedar, SPIRE, measured logical-agent code, replicas or exactly-once execution here.
 
-## Proof gaps and next decisions
+## Next steps
 
-These are inputs to acceptance plans, not a parallel shipped-status ledger:
+This is the single work list for the design, not a shipped-status ledger. Complete
+the identity and broker foundation first; DPoP is the selected security follow-on.
+Mandates and the other extensions remain separate design work, not prerequisites.
 
-1. **User provenance:** decide which facts the harness may attest and which the broker
-   independently verifies; prove rejection of substituted, stale or mismatched evidence.
-2. **Composed agent policy:** reconcile the integration and broker squash, then qualify
-   allow/deny, target/argument substitution and narrowed child authority through real
-   deployment wiring. Coverage is registered protected MCP, not all agent actions.
-3. **Independent evidence:** prove broker identity/decision/dispatch/outcome records
-   remain inspectable without the harness log; preserve unknown outcomes across restart.
-4. **Custody and protocol qualification:** prove key/credential isolation and no alternate
-   bypass; select the ToolHive release/exchange capabilities and direct-client/proxy
-   topology. Decide any further structured resource constraints explicitly.
-5. **Separate extensions:** scheduled consent/revocation (#373) and replicated callback/
-   operation continuity require their own contracts. Neither is silently a prerequisite
-   for a useful singleton live checkpoint. Issuer enablement work is tracked by #478;
-   issue numbers are planning references, not runtime evidence.
+### Complete the identity and broker foundation
+
+1. **User provenance:** decide which user/consent facts the harness may attest and
+   which the broker independently verifies. Prove rejection of substituted, stale
+   or mismatched evidence. Independent attribution of individual goroutines is not
+   required for this step.
+2. **Logical-agent identity and broker integration:** reconcile the identity
+   integration and broker squash, resolve the documented credential-profile defects,
+   and qualify allow/deny, target/argument substitution and narrowed child authority
+   through real deployment wiring. Coverage is registered protected MCP, not all
+   agent actions. Issuer enablement is tracked by #478.
+3. **Broker-owned evidence:** make identity, decision, dispatch and outcome records
+   inspectable without the harness log. Define how they link to the harness's
+   session, run and tool call, and preserve unknown outcomes across restart.
+4. **Custody and protocol qualification:** prove the intended key/credential
+   isolation and absence of alternate bypasses. Select the ToolHive release/exchange
+   capabilities and direct-client/proxy topology. Decide any further structured
+   resource constraints explicitly.
+
+### Add DPoP atop logical-agent identity
+
+5. **Workload-level sender binding — selected:** implement DPoP for the worker's
+   broker-facing OAuth credential, retaining the separate logical-agent assertion
+   and exact-call checks. Define issuance, key custody and rotation/restart behavior,
+   nonce handling and replay-state ownership. Prove rejection of missing, wrong-key,
+   stale and replayed proofs, with no bearer fallback. The initial claim is protection
+   against stolen-access-token replay, not compromised-harness or per-agent isolation.
+
+   [DPoP](https://www.rfc-editor.org/rfc/rfc9449.html) can use one key per worker;
+   subagents need not be separate workloads. The broker must also verify the
+   logical-agent assertion's association with the authenticated presenter. DPoP
+   covers HTTP method and URI, not MCP arguments or the request body, and does not
+   change the logical-agent JWT-SVID profile.
+
+   Keep keys, tokens and proofs out of model-visible tools, results, logs and
+   environment variables; expose no general-purpose signing tool. A process-lifetime
+   key is a minimal custody option, with fresh token issuance after restart and no
+   cached-token reuse under a different key. Custody and lifecycle still need an
+   implementation plan.
+
+   Environment scrubbing is not isolation: a shell with access to the worker's
+   memory, files or signer can defeat this protection. A keystore or HSM may prevent
+   key extraction, but an authorized compromised client can still request signatures.
+   Protecting against hostile tools requires an enforced boundary around the broker
+   client; a sidecar with an accessible signing socket is insufficient. That is the
+   separate runtime-isolation work below, not a DPoP guarantee.
+
+   A projected bearer used to bootstrap issuance remains a risk: stealing it may
+   let an attacker obtain a new token bound to their own key.
+
+### Evaluate separate extensions
+
+6. **Task mandates — exploratory:** assess task-specific grants on top of the
+   foundation. Token-carried Cedar is a candidate, not a selected profile. Decide
+   issuance and consent, operation/resource semantics, scope and reuse, expiry,
+   revocation and delegation narrowing before implementation. See
+   [the mandate discussion](#possible-follow-on-task-mandates).
+7. **Stronger runtime isolation — deferred:** if hostile tool code must be unable
+   to exercise the worker's key, design an enforced boundary between tool execution
+   and the protected broker client. Independently proving which agent made a call
+   is a further requirement; neither DPoP nor a separate signing process alone
+   provides it.
+8. **Scheduled consent and revocation — separate contract:** define permission to
+   act unattended (#373); restoring a schedule's owner is not sufficient.
+9. **Replicated continuity — separate contract:** define durable callback claims,
+   refresh/disconnect fences, routing generations and operation state. Replication
+   is not a prerequisite for a useful singleton checkpoint.
+
+10. **SPIRE integration — JWT-SVID first, optional mTLS later:** implement profile C
+    using platform JWT-SVID authentication, then offer profile D using X.509-SVID
+    mutual TLS. Both feed the same authenticated-harness checks; define workload
+    allowlists, trust-bundle refresh and credential renewal. D additionally requires
+    a deliberate TLS-termination and connection-lifecycle design, without silent
+    fallback to bearer authentication.
+
+Issue numbers are planning references, not runtime evidence.
 
 For shipped behavior, use [architecture.md](architecture.md); for design alternatives,
 [agent-identity-model.md](agent-identity-model.md) and
