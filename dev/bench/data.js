@@ -266030,6 +266030,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791196571160,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f8b2d7f5843a2c3d04dbef3e4abf2b0b1611ffa5",
+          "message": "fix: align local file operands with built-in decoding (#2095)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T13:52:00+03:00",
+          "tree_id": "19b468297f1f5c674291f532eb1d5575c304a14e",
+          "url": "https://github.com/stacklok/mecatl/commit/f8b2d7f5843a2c3d04dbef3e4abf2b0b1611ffa5"
+        },
+        "date": 1791198234511,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -385983,6 +386017,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791198231274,
+  "lastUpdate": 1791198235610,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
