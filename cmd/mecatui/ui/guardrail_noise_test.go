@@ -65,6 +65,8 @@ func guardrailReplies(cmd tea.Cmd) []client.GuardrailReviewDetailMsg {
 	return nil
 }
 
+// Routine reviews are retained but hidden while details are collapsed; debug
+// mode keeps them visible with checker metadata.
 func TestGuardrailRoutineReviewsQuiet(t *testing.T) {
 	for _, debug := range []bool{false, true} {
 		r := &guardrailDetailRecorder{}
@@ -79,19 +81,20 @@ func TestGuardrailRoutineReviewsQuiet(t *testing.T) {
 			updateGuardrail(&m, msg)
 			replay.applyReplayEvent(msg)
 		}
-		want := 0
-		if debug {
-			want = 3
-		}
-		if m.conv.scrollback.Len() != want || replay.transcript.scrollback.Len() != want || r.calls != 0 {
+		if m.conv.scrollback.Len() != 3 || replay.transcript.scrollback.Len() != 3 || r.calls != 3 {
 			t.Fatalf("debug=%v: live=%d replay=%d requests=%d", debug, m.conv.scrollback.Len(), replay.transcript.scrollback.Len(), r.calls)
 		}
-		for i := range want {
-			live := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.NoticeCardSnapshot).Text
-			stored := replay.transcript.scrollback.SnapshotAt(i).Payload.(scrollback.NoticeCardSnapshot).Text
-			if live != stored || !strings.Contains(live, "check passed") || !strings.Contains(live, "checker provider/model") {
-				t.Fatalf("debug diagnostic: live=%q replay=%q", live, stored)
+		for i := range 3 {
+			live := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.NoticeCardSnapshot)
+			stored := replay.transcript.scrollback.SnapshotAt(i).Payload.(scrollback.NoticeCardSnapshot)
+			if live.Text != stored.Text || !live.BenignGuardrail || !stored.BenignGuardrail || !strings.Contains(live.Text, "check passed") ||
+				debug != strings.Contains(live.Text, "checker provider/model") {
+				t.Fatalf("debug=%v diagnostic: live=%+v replay=%+v", debug, live, stored)
 			}
+		}
+		frame := stripANSIstr(strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, false), "\n"))
+		if debug != strings.Contains(frame, "check passed") {
+			t.Fatalf("debug=%v collapsed visibility: %q", debug, frame)
 		}
 	}
 }

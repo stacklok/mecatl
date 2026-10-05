@@ -7,6 +7,7 @@ import (
 	"iter"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -253,15 +254,17 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
-		partial := session.Usage{InputTokens: 8, OutputTokens: 2}
-		reflector, _ := agent.NewEvidenceReflector(waitProvider{usage: &partial}, session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, agent.ReflectionLimits{Timeout: time.Millisecond})
-		_, usage, err := reflector.Reflect(context.Background(), input)
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("error = %v", err)
-		}
-		if got := usage.Buckets[session.UsageKindReflection].Models["test/m"]; got != partial {
-			t.Fatalf("partial usage on timeout = %#v, want %#v", got, partial)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			partial := session.Usage{InputTokens: 8, OutputTokens: 2}
+			reflector, _ := agent.NewEvidenceReflector(waitProvider{usage: &partial}, session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, agent.ReflectionLimits{Timeout: time.Millisecond})
+			_, usage, err := reflector.Reflect(context.Background(), input)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("error = %v", err)
+			}
+			if got := usage.Buckets[session.UsageKindReflection].Models["test/m"]; got != partial {
+				t.Fatalf("partial usage on timeout = %#v, want %#v", got, partial)
+			}
+		})
 	})
 	for _, limits := range []agent.ReflectionLimits{{InputBytes: -1}, {Timeout: -1}, {Candidates: learning.MaxCandidates + 1}} {
 		if _, err := agent.NewEvidenceReflector(mockllm.New(), session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, limits); !errors.Is(err, agent.ErrReflectionLimits) {
