@@ -1496,37 +1496,12 @@ jobs:
             provider/openaichat/go.sum
             Taskfile.yml
 
-      # ac-trace resolves TypeScript proof titles through the SDK compiler, so run
-      # it here alongside the existing always-on documentation gate. This avoids a
-      # separate runner while still covering docs-only acceptance-plan changes.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11.25.0
-          run_install: false
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24.x'
-          # ac-trace installs the SDK and Studio dependency closures with pnpm.
-          cache: pnpm
-          cache-dependency-path: |
-            sdk/typescript/pnpm-lock.yaml
-            apps/pnpm-lock.yaml
-
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-
-      - name: Acceptance-proof traceability gate
-        run: task ac-trace-strict
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: '1.72.0'
           github_token: ${{ github.token }}
-
-      # Documentation-only changes still run the repository's Go-backed structural
-      # checks (ADR numbering/shape, citations, lifecycle, and reading-map checks).
-      - name: go test ./docs/lint
-        run: go test ./docs/lint
 
       # This command validates the executable systemd, launchd, and retention
       # examples in the session-storage operations guide under user-docs/.

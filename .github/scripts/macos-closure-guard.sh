@@ -32,7 +32,6 @@ terminal_dirs=(
   perf
   e2e
   deploy
-  docs/lint
 )
 
 # Package roots the three macOS jobs BUILD or TEST (see ci.yml: smoke-darwin-arm64,

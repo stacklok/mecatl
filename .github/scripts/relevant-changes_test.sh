@@ -48,7 +48,7 @@ run "go: other command binaries run (in the Linux closure)" go true cmd/mecademo
 run "go: examples run (in the Linux closure)" go true examples/first-agent/main.go
 run "go: perf harness runs (in the Linux closure)" go true perf/scenarios/loop_bench_test.go
 run "go: e2e + deploy run (in the Linux closure)" go true e2e/k8s/suite_test.go deploy/helm/mecak8s/values_test.go
-run "go: docs-lint tool runs (Go code under docs/)" go true docs/lint/citations.go
+run "go: Go code under docs/ runs" go true docs/tool/main.go
 run "go: docs non-Markdown assets run" go true docs/architecture/mecatl.modelith.yaml
 run "go: Taskfile + workflow run (self-validation)" go true Taskfile.yml .github/workflows/ci.yml
 run "go: mixed docs + Go runs" go true user-docs/intro.md internal/adapter/osfs/osfs.go

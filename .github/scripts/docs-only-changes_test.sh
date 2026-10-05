@@ -41,7 +41,7 @@ run "empty NUL record fails closed" false ''
 # Any source/build/configuration path makes the whole change full validation.
 run "mixed documentation and Go fails closed" false user-docs/intro.md engine/agent/loop.go
 run "workflow and configuration paths fail closed" false user-docs/intro.md .github/workflows/ci.yml Taskfile.yml .matlatl.yml website/package-lock.json
-run "docs implementation files fail closed" false docs/lint/citations.go docs/architecture/mecatl.modelith.yaml
+run "docs implementation files fail closed" false docs/tool/main.go docs/architecture/mecatl.modelith.yaml
 run "unknown paths fail closed" false user-docs/intro.md notes.txt AGENTS.md CLAUDE.md
 
 # CI disables rename detection before piping paths here, so both sides of a

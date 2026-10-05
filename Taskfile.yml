@@ -1202,10 +1202,8 @@ tasks:
         silent: true
 
   docs:check:
-    desc: Gate acceptance-plan checker fixtures, Go-backed document structure, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+    desc: Gate executable operations examples and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
-      - bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh
-      - go test ./docs/lint
       - go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs$'
       - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.11 check . --strict
 
@@ -1226,39 +1224,6 @@ tasks:
       - task: docs:grpc-ref
       - task: sdk:docs
       - task: docs:check
-
-  ac-trace:
-    desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
-    # sdk:install is a REAL dependency, not a convenience: .actrace.yml resolves
-    # titled TypeScript proofs through the `vitest:` and `playwright:` resolvers,
-    # which parse the TypeScript AST using the compiler from
-    # sdk/typescript/node_modules. Without it every titled proof is rejected
-    # ("TypeScript is unavailable"), which is merely noisy here but FATAL under
-    # --strict once its plan lands. The install task is fingerprinted on
-    # package.json + pnpm-lock.yaml, so this is a no-op on an already-installed
-    # tree. studio:install is the SAME kind of dependency for the Studio plans:
-    # a `vitest:` proof under apps/ is parsed with the compiler hoisted to
-    # apps/node_modules (typescript is a devDependency of the apps/ root), so
-    # without it every apps/ proof is rejected the same way.
-    deps: [sdk:install, studio:install]
-    cmds:
-      # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL
-      # module, and a tool directive would force EVERY build of the root module
-      # (incl. CI without internal-org access) to resolve it. go run keeps it out
-      # of the module graph. (A private-module fetch needs GOPRIVATE set.)
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4
-
-  ac-trace-strict:
-    desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
-    deps: [sdk:install, studio:install]
-    cmds:
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --strict
-
-  ac-trace-matrix:
-    desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
-    deps: [sdk:install, studio:install]
-    cmds:
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --matrix
 
   ci:
     desc: Full local CI gate (tidy, fmt, lint, race test, build)

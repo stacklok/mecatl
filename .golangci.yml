@@ -853,16 +853,16 @@ linters:
     # mecatui→file). The patterns are precise: slog.New*/Handler/HandlerOptions/Level/
     # DiscardHandler (slogdiag's legitimate internals) and the *slog.Logger type (the
     # perf surface) do NOT match, so only the banned call shapes trip. See
-    # docs/adr/0020-diagnostics.md and CLAUDE.md ("global slog is banned in engine/ and internal/").
+    # CLAUDE.md ("global slog is banned in engine/ and internal/").
     forbidigo:
       analyze-types: true
       forbid:
         - pattern: 'slog\.Default\b'
-          msg: 'global slog is banned in engine/ and internal/: route diagnostics through the injected port.Diagnostics seam (slogdiag adapter); the cmd/ main owns the sink. See docs/adr/0020-diagnostics.md.'
+          msg: 'global slog is banned in engine/ and internal/: route diagnostics through the injected port.Diagnostics seam (slogdiag adapter); the cmd/ main owns the sink.'
         - pattern: 'slog\.SetDefault\b'
-          msg: 'global slog is banned in engine/ and internal/: only cmd/ mains may install a slog default (the third-party-slog bridge). Everything else must take a port.Diagnostics. See docs/adr/0020-diagnostics.md.'
+          msg: 'global slog is banned in engine/ and internal/: only cmd/ mains may install a slog default (the third-party-slog bridge). Everything else must take a port.Diagnostics.'
         - pattern: 'slog\.(Info|Warn|Debug|Error)(Context)?\b'
-          msg: 'package-level slog.* is banned in engine/ and internal/: log through the injected port.Diagnostics seam, not the global logger. See docs/adr/0020-diagnostics.md.'
+          msg: 'package-level slog.* is banned in engine/ and internal/: log through the injected port.Diagnostics seam, not the global logger.'
     goconst:
       ignore-tests: true
       min-occurrences: 5

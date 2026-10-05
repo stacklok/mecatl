@@ -47,7 +47,7 @@ irrelevant() {
   case "$1" in
     README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|apps/*)
       return 0 ;;
-    cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|examples/*|perf/*|e2e/*|deploy/*|docs/lint/*)
+    cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|examples/*|perf/*|e2e/*|deploy/*)
       return 0 ;;
   esac
 
