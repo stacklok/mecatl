@@ -579,6 +579,15 @@ session as authoritative.
 - Provider/model selection flags configure an embedded or server deployment;
   they do not override a remote server reached with `connect`.
 
+## Next steps
+
+- [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
+- [Start and resume sessions](./start-and-resume-sessions.md) for session
+  creation and continuation.
+- [Context windows](./context-windows.md) for context limits and fallback.
+- [Capability and deployment matrix](./capability-matrix.md) for deployment
+  availability.
+
 ## Troubleshooting
 
 ### A provider error ended a model step
@@ -594,23 +603,18 @@ calls, including the initial request. Extra provider calls can be billed even
 when Mecatl discards their precommit output. These limits apply separately to
 each model step, so they are not a task-wide spending ceiling. Engine token
 budgets are checked at turn boundaries, not between wrapper calls within one
-step.
+step. Prompt-cache retention can end while a model step is recovering; a later
+attempt can incur cache-write charges or full input charges. A matching prompt
+does not guarantee a cache hit: reuse also depends on the provider's model and
+routing, and cache lifetimes vary. A longer cache lifetime may carry a higher
+write price. Check the current [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+guides for retention and billing details before choosing a cache setting.
 
 For an embedded terminal session, set `--llm-recovery-budget` and
 `--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
 server owns these values. Daemon, Kubernetes, and CI configuration is described
 in [LLM resilience](/building/deployment/mecated.md#llm-resilience).
-
-## Next steps
-
-- [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
-- [Start and resume sessions](./start-and-resume-sessions.md) for session
-  creation and continuation.
-- [Context windows](./context-windows.md) for context limits and fallback.
-- [Capability and deployment matrix](./capability-matrix.md) for deployment
-  availability.
-
-## Troubleshooting
 
 ### A provider request failed
 

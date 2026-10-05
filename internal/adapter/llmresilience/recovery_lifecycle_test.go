@@ -348,8 +348,31 @@ func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttem
 						t.Fatal("new serialized reason")
 					}
 				}
-				if mode == "provider wait" && len(records) != 2 {
-					t.Fatalf("want one wait and terminal, got %v", records)
+				wantLogs := 1
+				if mode == "provider wait" {
+					wantLogs = 2
+				}
+				if len(records) != wantLogs {
+					t.Fatalf("recovery records=%v, want %d", records, wantLogs)
+				}
+				wantCalls := 2
+				wantDecision, wantSource := "terminal", "backoff"
+				if mode == "recovered" {
+					wantDecision = "recovered"
+				} else if mode == "breaker only" {
+					wantCalls, wantSource = 0, "breaker"
+				} else if mode == "provider wait" {
+					wantCalls, wantSource = 1, "provider"
+					if argValue(records[0].args, "decision") != "wait" || argValue(records[0].args, "attempt") != 1 || argValue(records[0].args, "source") != "provider" {
+						t.Fatalf("provider wait log=%+v", records[0])
+					}
+					if duration, ok := argValue(records[0].args, "wait").(time.Duration); !ok || duration < time.Minute {
+						t.Fatalf("provider wait duration=%v", argValue(records[0].args, "wait"))
+					}
+				}
+				last := records[len(records)-1]
+				if argValue(last.args, "decision") != wantDecision || argValue(last.args, "attempt") != wantCalls || argValue(last.args, "source") != wantSource {
+					t.Fatalf("terminal/recovered log=%+v, want %s/%d/%s", last, wantDecision, wantCalls, wantSource)
 				}
 			})
 		})

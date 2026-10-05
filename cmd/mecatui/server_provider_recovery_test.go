@@ -6,6 +6,17 @@ import (
 )
 
 func TestServerProviderRecovery_Scenario5_FourHostConfigParity(t *testing.T) {
+	defaultInvocation := resolveInvocation([]string{"mecatui"})
+	if defaultInvocation.err != nil {
+		t.Fatal(defaultInvocation.err)
+	}
+	defaults, err := parseRunConfig(defaultInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := embeddedConfig(defaults, nil); got.LLMRecoveryBudget != 30*time.Minute || got.LLMMaxAttempts != 60 {
+		t.Fatalf("default recovery policy = %v/%d", got.LLMRecoveryBudget, got.LLMMaxAttempts)
+	}
 	res := resolveInvocation([]string{"mecatui", "--llm-recovery-budget=2m", "--llm-max-attempts=7"})
 	if res.err != nil {
 		t.Fatal(res.err)

@@ -6,6 +6,13 @@ import (
 )
 
 func TestServerProviderRecovery_Scenario5_FourHostConfigParity(t *testing.T) {
+	defaults, err := parseFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := appConfig(defaults, nil, observability{}); got.LLMRecoveryBudget != 30*time.Minute || got.LLMMaxAttempts != 60 {
+		t.Fatalf("default recovery policy = %v/%d", got.LLMRecoveryBudget, got.LLMMaxAttempts)
+	}
 	cfg, err := parseFlags([]string{"--llm-recovery-budget=2m", "--llm-max-attempts=7"})
 	if err != nil {
 		t.Fatal(err)

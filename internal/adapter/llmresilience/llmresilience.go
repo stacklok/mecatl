@@ -323,7 +323,6 @@ const (
 	replayUnknown              replaySuppressedReason = "unknown"
 	replayClassifierVeto       replaySuppressedReason = "classifier_veto"
 	replayProviderInternalVeto replaySuppressedReason = "provider_internal_veto"
-	replayBreakerOpen          replaySuppressedReason = "breaker_open"
 )
 
 type attemptDiagnostic struct {
@@ -424,8 +423,6 @@ func (p *resilientProvider) logAttemptDecision(
 			message = "llm stream failed with a non-retryable provider error; ending turn"
 		case replayProviderInternalVeto:
 			message = "llm provider recovery retry budget exhausted; ending turn"
-		case replayBreakerOpen:
-			message = "llm stream rejected by the open circuit breaker; ending turn"
 		default:
 			message = "llm stream failed without a safe retry; ending turn"
 		}

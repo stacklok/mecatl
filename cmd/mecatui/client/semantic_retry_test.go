@@ -50,33 +50,6 @@ func TestResultTypedDispositionPrecedenceAndPresence(t *testing.T) {
 	}
 }
 
-func TestFailedStepRetryEligibleRequiresTypedRetryablePrecommit(t *testing.T) {
-	eligible := ResultMsg{
-		Stop: "error", RetryDispositionPresent: true, RetryDisposition: RetryDispositionRetryable,
-		StreamProgressPresent: true, StreamProgress: StreamProgressPrecommit,
-	}
-	if !eligible.FailedStepRetryEligible() {
-		t.Fatal("typed retryable precommit error must be failed-step retry eligible")
-	}
-
-	tests := map[string]ResultMsg{
-		"non-error stop":      func() ResultMsg { r := eligible; r.Stop = "cancelled"; return r }(),
-		"disposition absent":  func() ResultMsg { r := eligible; r.RetryDispositionPresent = false; return r }(),
-		"unknown disposition": func() ResultMsg { r := eligible; r.RetryDisposition = RetryDispositionUnknown; return r }(),
-		"permanent":           func() ResultMsg { r := eligible; r.RetryDisposition = RetryDispositionPermanent; return r }(),
-		"progress absent":     func() ResultMsg { r := eligible; r.StreamProgressPresent = false; return r }(),
-		"visible":             func() ResultMsg { r := eligible; r.StreamProgress = StreamProgressVisible; return r }(),
-		"complete":            func() ResultMsg { r := eligible; r.StreamProgress = StreamProgressComplete; return r }(),
-	}
-	for name, result := range tests {
-		t.Run(name, func(t *testing.T) {
-			if result.FailedStepRetryEligible() {
-				t.Fatalf("%+v must not be failed-step retry eligible", result)
-			}
-		})
-	}
-}
-
 func TestModelRetryEventMapping(t *testing.T) {
 	msg := EventToMsg(&mecatlv1.Event{Type: "model.retry", Text: "superseded", ModelRetry: &mecatlv1.ModelRetry{
 		RetryDisposition: mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE,

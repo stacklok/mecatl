@@ -172,7 +172,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly_Compos
 				if terminal.Stop != session.StopEndTurn || terminal.Text != "recovered without projection" {
 					t.Fatalf("successful terminal=%+v", terminal)
 				}
-			} else if terminal.Stop != session.StopError || !strings.Contains(terminal.Error, "unavailable") {
+			} else if terminal.Stop != session.StopError || !strings.Contains(terminal.Error, "503 Service Unavailable") {
 				t.Fatalf("exhausted terminal did not retain safe cause: %+v", terminal)
 			}
 			built.Close()

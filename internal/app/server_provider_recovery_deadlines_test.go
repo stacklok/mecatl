@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/provider/openai"
 )
@@ -109,7 +112,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				if shorter {
-					ctx, cancel = context.WithTimeout(t.Context(), 900*time.Millisecond)
+					ctx, cancel = context.WithTimeout(t.Context(), 300*time.Millisecond)
 					defer cancel()
 				}
 				var calls atomic.Int32
@@ -126,6 +129,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				}))
 				defer func() { cancel(); srv.Close() }()
 				cfg := recoveryAppConfig(t, srv.URL)
+				cfg.LLMBreakerCooldown = 10 * time.Millisecond
 				cfg.GuardrailsModel = cfg.Model
 				cfg.GuardrailsOnCheckerDown = policy
 				cfg.GuardrailsRules = []GuardrailRule{{Match: "Write", Phases: []string{"pre"}, Mode: "block"}}
@@ -140,6 +144,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				})}
 				entry := newOpenAICompatEntry(cfg, providerOpenAI, "test", srv.URL+"/v1", openai.WithHTTPClient(client))
 				reviewer := buildGuardrailsActionReviewer(cfg, regForTest(entry.provider, providerOpenAI, cfg.Model), entry.provider, providerOpenAI, nil)
+				reviewer.(*guardrailActionReviewer).base.(*contextualToolReviewer).deadline = 600 * time.Millisecond
 				req := reviewRequestWithoutEvidence()
 				req.Job = agent.ReviewJobAction
 				req.Event = governance.HookEvent{Phase: governance.PhasePreToolUse, SessionID: "session-1", CallID: "write-1", Tool: "Write", Input: []byte(`{"path":"x","content":"x"}`)}
@@ -162,8 +167,8 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 						if !deadline.Equal(want) {
 							t.Errorf("caller deadline=%v want %v", deadline, want)
 						}
-					} else if delta := deadline.Sub(started); delta < reviewTotalDeadline-time.Second || delta > reviewTotalDeadline+time.Second {
-						t.Errorf("auxiliary deadline=%v want %s", delta, reviewTotalDeadline)
+					} else if delta := deadline.Sub(started); delta < 500*time.Millisecond || delta > 650*time.Millisecond {
+						t.Errorf("auxiliary deadline=%v want injected 600ms", delta)
 					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("guardrail did not call provider")
@@ -171,13 +176,10 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				guard, stopGuard := context.WithTimeout(t.Context(), 3*time.Second)
 				defer stopGuard()
 				awaitRecovery(guard, t, probe, "guardrail half-open recovery probe")
-				if !shorter {
-					cancel()
-				} // Verify the reviewer's bound without waiting for it to expire.
 				select {
 				case out := <-done:
-					if out.err == nil || out.result.Assessment != agent.ReviewUnresolved {
-						t.Fatalf("guardrail cancellation result=%+v err=%v", out.result, out.err)
+					if out.err == nil || out.result.Assessment != agent.ReviewUnresolved || reviewFailureCodeForTest(out.err) != agent.ReviewFailureTimeout {
+						t.Fatalf("guardrail deadline result=%+v err=%v", out.result, out.err)
 					}
 					applies, enforce := reviewer.(agent.ReviewPolicyProvider).GuardrailReviewPolicy("Write", agent.ReviewJobAction, true)
 					if !applies || enforce != (policy == "fail") {
@@ -193,6 +195,56 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				}
 			})
 		}
+	}
+}
+
+func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *testing.T) {
+	for _, policy := range []string{"warn", "fail"} {
+		t.Run(policy, func(t *testing.T) {
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				if requests.Add(1) == 1 {
+					writeRecoveryFailure(w)
+					return
+				}
+				<-r.Context().Done()
+			}))
+			defer srv.Close()
+			cfg := recoveryAppConfig(t, srv.URL)
+			cfg.GuardrailsModel = cfg.Model
+			cfg.GuardrailsOnCheckerDown = policy
+			cfg.GuardrailsRules = []GuardrailRule{{Match: "Grep", Phases: []string{"pre"}, Mode: "block"}}
+			cfg.LLMBreakerCooldown = 10 * time.Millisecond
+			entry := newOpenAICompatEntry(cfg, providerOpenAI, "test", srv.URL+"/v1")
+			reviewer := buildGuardrailsActionReviewer(cfg, regForTest(entry.provider, providerOpenAI, cfg.Model), entry.provider, providerOpenAI, nil)
+			reviewer.(*guardrailActionReviewer).base.(*contextualToolReviewer).deadline = 250 * time.Millisecond
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(stubTool{name: "Grep"})
+			deps := agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("checked", "Grep", []byte(`{}`))), mockllm.TextTurn("done")),
+				Catalog: catalog, Model: "parent-model",
+				Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil),
+			}
+			attachGuardrailReviewer(&deps, reviewer, nil)
+			sess := session.New("deadline-dispatch", session.ModeDefault,
+				session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+				session.Limits{}, time.Unix(1, 0))
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			seen := false
+			for ev := range agent.NewEngine(deps).Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"}).Events() {
+				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "checked" {
+					seen = true
+					if ev.ToolResult.IsError != (policy == "fail") {
+						t.Fatalf("checker-down policy %s dispatched result=%+v", policy, ev.ToolResult)
+					}
+				}
+			}
+			if !seen || requests.Load() != 2 {
+				t.Fatalf("checker-down policy %s result=%v requests=%d", policy, seen, requests.Load())
+			}
+		})
 	}
 }
 

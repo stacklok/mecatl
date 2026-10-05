@@ -153,6 +153,13 @@ func TestServerProviderRecovery_Scenario2_RetryAfterParsingAndSecrecy(t *testing
 	}
 }
 
+func TestRecoveryZeroAppConfigRemainsInert(t *testing.T) {
+	cfg := providerResilienceConfig(Config{}, providerOpenAI)
+	if cfg.RecoveryBudget != 0 || cfg.MaxAttempts != 0 {
+		t.Fatalf("zero-valued app config changed recovery policy: %+v", cfg)
+	}
+}
+
 // Each constructor and remint uses outer attempts, while standalone adapters
 // retain SDK retries and Responses can still perform its bounded semantic repair.
 func TestServerProviderRecovery_Scenario2_OuterAttemptsAndProviderRepairAccounting(t *testing.T) {
@@ -202,6 +209,56 @@ func TestServerProviderRecovery_Scenario2_OuterAttemptsAndProviderRepairAccounti
 	}
 	t.Run("standalone_defaults", testRecoveryStandaloneDefaults)
 	t.Run("semantic_repair", testRecoverySemanticRepair)
+}
+
+func TestRecoveryBudgetAcrossConstructorsAndRemints(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func(Config, string) providerEntry
+	}{
+		{"responses", func(cfg Config, url string) providerEntry {
+			return newOpenAICompatEntry(cfg, providerOpenAI, "test", url+"/v1")
+		}},
+		{"chat", func(cfg Config, url string) providerEntry {
+			return newOpenCodeEntry(cfg, providerOpenCode, "test", url+"/v1")
+		}},
+		{"anthropic", func(cfg Config, url string) providerEntry {
+			return newAnthropicEntryFor(cfg, providerAnthropic, "test", url, newLiveMetaStore(), false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, remint := range []bool{false, true} {
+				name := "default"
+				if remint {
+					name = "remint"
+				}
+				t.Run(name, func(t *testing.T) {
+					var hits atomic.Int32
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						if hits.Add(1) == 1 {
+							w.Header().Set("Retry-After", "1")
+						}
+						w.WriteHeader(http.StatusServiceUnavailable)
+						_, _ = io.WriteString(w, `{"error":{"code":"server_error","message":"unavailable"}}`)
+					}))
+					defer srv.Close()
+					entry := tc.make(isolateConfig(t, Config{LLMMaxAttempts: 2, LLMRecoveryBudget: 2 * time.Second}), srv.URL)
+					llm := entry.provider
+					if remint {
+						llm = entry.remint("high", llm.Capabilities())
+					}
+					start := time.Now()
+					if err := providerStreamError(t, llm); err == nil {
+						t.Fatal("expected terminal provider failure")
+					}
+					if got := hits.Load(); got != 2 || time.Since(start) < 900*time.Millisecond {
+						t.Fatalf("calls=%d elapsed=%s: recovery budget or Retry-After lost", got, time.Since(start))
+					}
+				})
+			}
+		})
+	}
 }
 
 func testRecoveryStandaloneDefaults(t *testing.T) {

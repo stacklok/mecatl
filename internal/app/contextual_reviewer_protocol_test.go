@@ -74,13 +74,19 @@ func completeEvidenceBinding(req agent.ToolReviewRequest) reviewEvidenceBinding 
 
 type blockingReviewProvider struct{ calls int }
 
-type invalidThenBlockingReviewProvider struct{ calls int }
+type invalidThenBlockingReviewProvider struct {
+	calls     int
+	deadlines []time.Time
+}
 
 func (*invalidThenBlockingReviewProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 func (p *invalidThenBlockingReviewProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	p.calls++
+	if deadline, ok := ctx.Deadline(); ok {
+		p.deadlines = append(p.deadlines, deadline)
+	}
 	if p.calls == 1 {
 		return func(yield func(port.Chunk, error) bool) {
 			if !yield(port.Chunk{Kind: port.ChunkText, Text: `{"assessment":"unknown","concerns":[],"evidence":[],"missing_evidence":[]}`}, nil) {
@@ -247,7 +253,7 @@ func TestADR_0363_ContextualGuardrails_Scenario2_TotalBudget(t *testing.T) {
 	started := time.Now()
 	reviewerWithDeadline := &contextualToolReviewer{engine: agent.NewEngine(deps), checkerProviderID: "mock", checkerModelID: "review-model", deadline: 20 * time.Millisecond, diagnostics: port.NopDiagnostics{}}
 	result, _, err = reviewerWithDeadline.Review(context.Background(), reviewRequestWithoutEvidence(), nil)
-	if err == nil || result.Assessment != agent.ReviewUnresolved || sharedDeadlineProvider.calls != 2 || time.Since(started) > time.Second || reviewFailureCodeForTest(err) != agent.ReviewFailureTimeout {
+	if err == nil || result.Assessment != agent.ReviewUnresolved || sharedDeadlineProvider.calls != 2 || len(sharedDeadlineProvider.deadlines) != 2 || !sharedDeadlineProvider.deadlines[0].Equal(sharedDeadlineProvider.deadlines[1]) || time.Since(started) > time.Second || reviewFailureCodeForTest(err) != agent.ReviewFailureTimeout {
 		t.Fatalf("shared deadline result=%+v err=%v calls=%d elapsed=%s", result, err, sharedDeadlineProvider.calls, time.Since(started))
 	}
 

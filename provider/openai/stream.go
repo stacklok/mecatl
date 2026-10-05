@@ -353,9 +353,6 @@ func (e *responseStreamError) ProviderErrorCorrelationKind() string {
 	return e.metadata.correlationKind
 }
 func (e *responseStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
-func (e *responseStreamError) RetryNotBefore() (time.Time, bool) {
-	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
-}
 
 // httpMetadataError keeps the SDK error unwrap-visible while exposing a safe
 // display projection plus typed metadata for diagnostics.
