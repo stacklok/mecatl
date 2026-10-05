@@ -96,3 +96,33 @@ func TestBufferedZeroUsageCancellationIsNotSuccess(t *testing.T) {
 		t.Fatalf("zero-usage cancel chunks=%+v err=%v breaker open=%v", got, err, provider.breaker.open)
 	}
 }
+
+func TestBufferedDoneCancellationDoesNotCloseBreaker(t *testing.T) {
+	inner := &fakeProvider{steps: []step{{chunks: []port.Chunk{{Kind: port.ChunkDone, Stop: session.StopEndTurn}}}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider := Wrap(inner, Config{MaxAttempts: 1, BreakerThreshold: 1}).(*resilientProvider)
+	provider.breaker.open = true // half-open probe must not close on cancellation
+	seq, err := provider.Stream(ctx, port.LLMRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []port.Chunk
+	var streamErr error
+	seq(func(chunk port.Chunk, err error) bool {
+		if err != nil {
+			streamErr = err
+			return false
+		}
+		got = append(got, chunk)
+		if chunk.Kind == port.ChunkDone {
+			cancel()
+		}
+		return true
+	})
+	if len(got) != 1 || got[0].Kind != port.ChunkDone || !errors.Is(ctx.Err(), context.Canceled) ||
+		!errors.Is(streamErr, context.Canceled) || !provider.breaker.open {
+		t.Fatalf("buffered done cancellation chunks=%+v ctx=%v err=%v breaker open=%v", got, ctx.Err(), streamErr, provider.breaker.open)
+	}
+}

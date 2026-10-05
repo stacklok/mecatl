@@ -2828,8 +2828,6 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 			if chunk.ToolCall != nil {
 				calls = append(calls, *chunk.ToolCall)
 			}
-		case port.ChunkUsage:
-			// Folded before the cancellation and error checks above.
 		case port.ChunkProviderRoute:
 			// The downstream provider slug that routed this turn (issue #480).
 			// Relayed verbatim onto a client-visible event; never stored on the
