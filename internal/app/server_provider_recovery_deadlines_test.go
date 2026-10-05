@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,7 +179,14 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				awaitRecovery(guard, t, probe, "guardrail half-open recovery probe")
 				select {
 				case out := <-done:
-					if out.err == nil || out.result.Assessment != agent.ReviewUnresolved || reviewFailureCodeForTest(out.err) != agent.ReviewFailureTimeout {
+					wantCode := agent.ReviewFailureTimeout
+					if shorter {
+						wantCode = ""
+						if !errors.Is(out.err, context.DeadlineExceeded) {
+							t.Fatalf("caller deadline error=%v", out.err)
+						}
+					}
+					if out.err == nil || out.result.Assessment != agent.ReviewUnresolved || reviewFailureCodeForTest(out.err) != wantCode {
 						t.Fatalf("guardrail deadline result=%+v err=%v", out.result, out.err)
 					}
 					applies, enforce := reviewer.(agent.ReviewPolicyProvider).GuardrailReviewPolicy("Write", agent.ReviewJobAction, true)

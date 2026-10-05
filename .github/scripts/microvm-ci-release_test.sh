@@ -248,15 +248,16 @@ require '[ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-relea
 
 # Build the Brood Box digest helper from its own module, as the release job does.
 require 'go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache" "linux/$goarch"' "$repo_root/environment/microvm/e2e/prepare.sh"
-mkdir -p "$repo_root/.scratch/microvm-oci-digest-test"
+test_tmp=$(mktemp -d)
+trap 'rm -rf -- "$test_tmp"' EXIT
+mkdir -p "$test_tmp/oci-digest"
 CGO_ENABLED=0 GOWORK=off go -C "$repo_root/environment/microvm" build -trimpath -buildvcs=false -ldflags='-buildid=' \
-  -o "$repo_root/.scratch/microvm-oci-digest-test/digest" ./cmd/mecatl-oci-tree-digest
+  -o "$test_tmp/oci-digest/digest" ./cmd/mecatl-oci-tree-digest
 
 # Functional host-stamp/entrypoint contract: both real binaries consume the same
 # defaults through their package-specific version symbol. Mecated exercises its offline
 # administration entrypoint; mecatui proves the stamp reaches embedded app composition.
-host_scratch="$repo_root/.scratch/microvm-host-entrypoint-test"
-rm -rf "$host_scratch"
+host_scratch="$test_tmp/host-entrypoint"
 mkdir -p "$host_scratch/home" "$host_scratch/config" "$host_scratch/data" "$host_scratch/state" "$host_scratch/runtime"
 host_version=v0.0.0-host-contract
 host_platform=linux-amd64
@@ -301,8 +302,7 @@ go test -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
 expected_status=$(printf '{"backend":"microvm-local","configured":false,"running":false,"state":"unconfigured","error":"","remediation":"Not configured; run '\''mecated microvm doctor'\'' to check host readiness.","socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
 test "$(cat "$host_scratch/mecated.json")" = "$expected_status"
 
-scratch="$repo_root/.scratch/microvm-release-test"
-rm -rf "$scratch"
+scratch="$test_tmp/release"
 mkdir -p "$scratch/fixture/runtime" "$scratch/fixture/firmware" "$scratch/fixture/execution-image/usr/local/bin" "$scratch/fixture/execution-image/bin" "$scratch/one" "$scratch/two"
 printf 'microvmd-fixture\n' >"$scratch/fixture/mecatl-microvmd"
 printf 'guest-agent-fixture\n' >"$scratch/fixture/mecatl-guest-agent"
@@ -778,5 +778,3 @@ for kind in mecated mecatui; do
     exit 1
   fi
 done
-
-rm -rf "$scratch"

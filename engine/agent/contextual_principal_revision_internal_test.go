@@ -86,7 +86,7 @@ func (cancelBatchPolicy) Evaluate(_ context.Context, _ session.SessionID, _ sess
 }
 func (cancelBatchPolicy) Learn(session.SessionID, session.ToolCall) {}
 
-func TestReadBatchCancellationRetainsPreparedEvidenceAndCanonicalOrder(t *testing.T) {
+func TestReadBatchCancellationBeforeApprovalSkipsEvidenceAndPreservesCanonicalOrder(t *testing.T) {
 	closed := 0
 	var executions atomic.Int64
 	catalog := tool.NewCatalog()
@@ -114,7 +114,7 @@ func TestReadBatchCancellationRetainsPreparedEvidenceAndCanonicalOrder(t *testin
 			canonical = append(canonical, ev.ToolResult.CallID)
 		}
 	}
-	if executions.Load() != 0 || closed != 1 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, []session.ToolCallID{"prepared", "denied", "ask"}) {
+	if executions.Load() != 0 || closed != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, []session.ToolCallID{"prepared", "denied", "ask"}) {
 		t.Fatalf("executions=%d closed=%d state=%s canonical=%v", executions.Load(), closed, sess.State, canonical)
 	}
 	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {

@@ -168,9 +168,9 @@ and any OpenAI-compatible endpoint you configure yourself.
 
 Select Anthropic models under `openrouter-anthropic` when you want more than
 the floor. That endpoint speaks the Anthropic Messages protocol, which carries
-four cache breakpoints instead of one and lets you set a cache lifetime with
-`--anthropic-cache-ttl` (`5m` or `1h`). The Responses protocol expresses
-neither.
+four cache breakpoints instead of one and a cache lifetime, which defaults to
+`1h` and can be set with `--anthropic-cache-ttl` (`5m` or `1h`). The Responses
+protocol expresses neither.
 
 This matters for cost. Anthropic caches a prompt only when the caller asks, and
 cache reads bill at a tenth of uncached input, so a long session on an unasked

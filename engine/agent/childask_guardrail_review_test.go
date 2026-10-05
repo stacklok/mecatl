@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -78,6 +79,55 @@ func (r *permissionReviewer) jobs() []agent.ReviewJob {
 		jobs[i] = r.requests[i].Job
 	}
 	return jobs
+}
+
+func TestPermissionReviewTimeoutPreservesAsk(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		bash := &fakeShell{}
+		policy := &permissionReviewPolicy{provenance: governance.AskProvenanceBuiltinSubstitutionFloor}
+		reviewer := &permissionReviewer{waitForCtx: true, assessment: agent.ReviewAcceptable}
+		child := agent.NewEngine(agent.Deps{LLM: mockllm.New(substitutionAskTurns(1)...), Catalog: catalogWith(t, bash), Policy: policy, ToolReviewer: reviewer, Role: "subagent"})
+		run := child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect"})
+		var asked, timedOut bool
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asked = true
+				if err := run.Approve(ev.Ask.AskID, session.VerdictDeny); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.Guardrail.ReasonCode == string(agent.ReviewFailureTimeout) {
+				timedOut = true
+			}
+		}
+		if !asked || !timedOut || len(bash.ran()) != 0 || reviewer.count() != 1 || policy.learns != 0 {
+			t.Fatalf("asked=%t timedOut=%t executions=%d reviews=%d learns=%d", asked, timedOut, len(bash.ran()), reviewer.count(), policy.learns)
+		}
+	})
+}
+
+func TestPermissionReviewCallerCancellationDoesNotSurfaceFallbackAsk(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		bash := &fakeShell{}
+		policy := &permissionReviewPolicy{provenance: governance.AskProvenanceBuiltinSubstitutionFloor}
+		reviewer := &permissionReviewer{waitForCtx: true, entered: make(chan struct{}, 1)}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		child := agent.NewEngine(agent.Deps{LLM: mockllm.New(substitutionAskTurns(1)...), Catalog: catalogWith(t, bash), Policy: policy, ToolReviewer: reviewer, Role: "subagent"})
+		run := child.Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect"})
+		go func() {
+			<-reviewer.entered
+			cancel()
+		}()
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk || (ev.Hook != nil && ev.Hook.Guardrail != nil) {
+				t.Errorf("cancelled review surfaced ask or finding: %+v", ev)
+			}
+		}
+		if len(bash.ran()) != 0 || reviewer.count() != 1 {
+			t.Fatalf("executions=%d reviews=%d", len(bash.ran()), reviewer.count())
+		}
+	})
 }
 
 func TestBuiltinFloorPermissionReviewRunsOnChildLoopAndAllowsOnce(t *testing.T) {

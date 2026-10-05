@@ -75,8 +75,10 @@ func completeEvidenceBinding(req agent.ToolReviewRequest) reviewEvidenceBinding 
 type blockingReviewProvider struct{ calls int }
 
 type invalidThenBlockingReviewProvider struct {
-	calls     int
-	deadlines []time.Time
+	calls      int
+	firstDelay time.Duration
+	remaining  []time.Duration
+	deadlines  []time.Time
 }
 
 func (*invalidThenBlockingReviewProvider) Capabilities() port.ProviderCapabilities {
@@ -84,10 +86,13 @@ func (*invalidThenBlockingReviewProvider) Capabilities() port.ProviderCapabiliti
 }
 func (p *invalidThenBlockingReviewProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	p.calls++
-	if deadline, ok := ctx.Deadline(); ok {
-		p.deadlines = append(p.deadlines, deadline)
-	}
+	deadline, _ := ctx.Deadline()
+	p.remaining = append(p.remaining, time.Until(deadline))
+	p.deadlines = append(p.deadlines, deadline)
 	if p.calls == 1 {
+		if p.firstDelay > 0 {
+			<-time.After(p.firstDelay)
+		}
 		return func(yield func(port.Chunk, error) bool) {
 			if !yield(port.Chunk{Kind: port.ChunkText, Text: `{"assessment":"unknown","concerns":[],"evidence":[],"missing_evidence":[]}`}, nil) {
 				return

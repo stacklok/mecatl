@@ -11,8 +11,11 @@ subsystem documentation, not a full-repository reading pass.
 - Delegate with known paths and context. Omit `max_run_tokens`, `max_turns`,
   `max_tool_calls`, and `timeout_ms` unless the user/task requests a bound.
   Omit `authority` unless deliberately reducing it for a documented reason.
-- Keep scratch files and smoke tests under ignored `.scratch/`, not `/tmp` or
-  `mktemp`; orchestration state belongs in `.scratch/orchestrate/<slug>/`.
+- Keep retained work notes and smoke-test artifacts under ignored `.scratch/`;
+  orchestration state belongs in `.scratch/orchestrate/<slug>/`. Use `t.TempDir()`
+  for disposable Go test files and `$TMPDIR` for Shell test files, not
+  repo scratch or hard-coded `/tmp`: the managed Shell lease is reclaimed even
+  if the test process is killed before its cleanup runs.
 - Shell is POSIX `/bin/sh`. For `gh`, put multiline Markdown in a scratch file
   and use `--body-file`. Avoid Bash-only syntax, `eval`, and command substitution
   to construct Markdown.

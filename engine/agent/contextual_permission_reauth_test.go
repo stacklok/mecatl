@@ -92,11 +92,15 @@ func TestContextualActionApprovalReauthorizesDependencyReadsBeforeBackendAccess(
 
 type countingBoundedWorkspace struct {
 	tool.Workspace
-	bounded int
+	bounded    int
+	beforeRead func(context.Context, int)
 }
 
 func (w *countingBoundedWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
 	w.bounded++
+	if w.beforeRead != nil {
+		w.beforeRead(ctx, w.bounded)
+	}
 	return w.Workspace.(tool.BoundedWorkspaceReader).ReadVersionBounded(ctx, path, maxBytes)
 }
 

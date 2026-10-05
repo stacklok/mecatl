@@ -263,6 +263,12 @@ func (r *guardrailActionReviewer) Review(ctx context.Context, req agent.ToolRevi
 		req.PrincipalFacts = append(req.PrincipalFacts, agent.ReviewPrincipalFact{Kind: "operator_task_risk_policy", Ref: "operator-policy", Statement: prompt})
 	}
 	result, usage, err := r.base.Review(ctx, req, source)
+	if ctx.Err() != nil && reviewContextError(ctx) == ctx.Err() {
+		if err == nil {
+			return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, usage, ctx.Err()
+		}
+		return result, usage, err
+	}
 	r.health.record(result, err)
 	return result, usage, err
 }

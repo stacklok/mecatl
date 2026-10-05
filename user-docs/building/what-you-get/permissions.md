@@ -391,7 +391,12 @@ available as review data.
 
 The contextual reviewer returns **acceptable**, **prohibited**, or **unresolved**.
 Inspection health is separate: an operational checker failure is an outage, not proof
-that content is unsafe. Each rule has one of two modes:
+that content is unsafe. Each review has up to 90 seconds for evidence authorization,
+dependency snapshots, evidence preparation, and checker attempts combined. The
+limit uses cooperative context cancellation; a reviewer or I/O operation that ignores
+cancellation can return later, but a late acceptable result does not approve an action
+or release a held result. Human approval waits and subsequent tool execution are
+outside the review limit. Each rule has one of two modes:
 
 - **`block`** enforces. Before execution, an action finding can stop or ask. After
   execution, a result finding is held privately before it reaches history, events,
