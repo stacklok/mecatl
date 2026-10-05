@@ -23,8 +23,11 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	m, _ := selModel(t)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.conv.addUser("long run request")
+	userID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
 	m.conv.appendAssistant("starting the long run")
+	assistantID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
 	m = applyAll(m, client.CompactionMsg{Text: "readable long-run notice"})
+	noticeID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
 	for i := 0; i < settled; i++ {
 		id := fmt.Sprintf("settled-%03d", i)
 		path := fmt.Sprintf("settled-%03d.txt", i)
@@ -40,17 +43,25 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	}
 	m.conv.addTool("live", "Read", `{"path":"live-call-with-a-readable-target.txt"}`)
 	m.conv.appendAssistant("ordinary assistant block after the run")
+	endingAssistantID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
 	m.phase = phaseIdle
 	m.refreshView()
 
 	for _, width := range []int{28, 100} {
 		m.rend.setWidth(width)
 		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		firstID := toolBlockID(t, m.conv.scrollback, "settled-000")
+		assertLongRunGap(t, frame, userID, assistantID, 1)
+		assertLongRunGap(t, frame, assistantID, noticeID, 1)
+		assertLongRunGap(t, frame, noticeID, firstID, 1)
 		for i := 0; i < settled; i++ {
 			id := toolBlockID(t, m.conv.scrollback, fmt.Sprintf("settled-%03d", i))
 			rows := blockRows(frame, id)
 			if len(rows) != 1 || strings.ContainsAny(rows[0], "╭╮╰╯┌┐└┘─│") {
 				t.Fatalf("width %d settled call %d = %q, want one borderless line", width, i, rows)
+			}
+			if i > 0 {
+				assertLongRunGap(t, frame, toolBlockID(t, m.conv.scrollback, fmt.Sprintf("settled-%03d", i-1)), id, 0)
 			}
 		}
 		liveRows := blockRows(frame, toolBlockID(t, m.conv.scrollback, "live"))
@@ -84,6 +95,10 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 		t.Fatal("settle live call")
 	}
 	m.refreshView()
+	for _, width := range []int{28, 100} {
+		m.rend.setWidth(width)
+		assertLongRunGap(t, m.rend.renderConversationFrame(&m.conv.scrollback, false), toolBlockID(t, m.conv.scrollback, "live"), endingAssistantID, 1)
+	}
 	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != anchorID {
 		t.Fatalf("settling a later card moved semantic anchor to block %d, want %d", got, anchorID)
 	}
@@ -106,5 +121,26 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	m.refreshView()
 	if m.conversationView.mode != followTail || !m.vp.AtBottom() || !strings.Contains(ansi.Strip(m.vp.GetContent()), "restored auto-follow") {
 		t.Fatalf("restored auto-follow: mode=%v bottom=%t content=%q", m.conversationView.mode, m.vp.AtBottom(), ansi.Strip(m.vp.GetContent()))
+	}
+}
+
+func assertLongRunGap(t *testing.T, frame renderedFrame, before, after uint64, want int) {
+	t.Helper()
+	last, first := -1, -1
+	for i, row := range frame.provenance {
+		if row.blockID == before {
+			last = i
+		}
+		if row.blockID == after && first < 0 {
+			first = i
+		}
+	}
+	if last < 0 || first < 0 || first-last-1 != want {
+		t.Fatalf("block %d → %d gap = %d rows, want %d (positions %d → %d)", before, after, first-last-1, want, last, first)
+	}
+	for i := last + 1; i < first; i++ {
+		if frame.lines[i] != "" || !frame.provenance[i].separator {
+			t.Fatalf("block %d → %d gap row %d = %q, want derived blank separator", before, after, i, frame.lines[i])
+		}
 	}
 }

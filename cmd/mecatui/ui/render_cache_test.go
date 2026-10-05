@@ -46,11 +46,19 @@ func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	for i := range kinds {
 		kinds[i] = c.scrollback.MetadataAt(i).Kind
 	}
+	var previousText string
 	for i := range snapshots {
 		if i > 0 {
-			b.WriteString(blockSepAfter(kinds, i-1))
+			if kinds[i] == scrollback.KindAssistant &&
+				(kinds[i-1] == scrollback.KindTool || kinds[i-1] == scrollback.KindSubagent || kinds[i-1] == scrollback.KindTeam) &&
+				!strings.Contains(previousText, "\n") {
+				b.WriteString(interBlockSepCompact)
+			} else {
+				b.WriteString(blockSepAfter(kinds, i-1))
+			}
 		}
-		b.WriteString(r.renderSnapshot(i, snapshots[i], expand))
+		previousText = r.renderSnapshot(i, snapshots[i], expand)
+		b.WriteString(previousText)
 		b.WriteByte('\n')
 	}
 	return b.String()

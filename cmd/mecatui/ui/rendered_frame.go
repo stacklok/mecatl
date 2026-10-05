@@ -210,7 +210,7 @@ func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, i
 		}
 	}
 	if previous >= 0 {
-		for n := 0; n < blockBlankLinesBetween(passes[previous].kind, pass.kind); n++ {
+		for n := 0; n < blockBlankLinesAfterPasses(passes, previous, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
@@ -219,6 +219,16 @@ func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, i
 		frame.lines = append(frame.lines, line)
 		frame.provenance = append(frame.provenance, pass.rows[row])
 	}
+}
+
+func blockBlankLinesAfterPasses(passes []renderPass, previous, current int) int {
+	if passes[current].kind == scrollback.KindAssistant && len(passes[previous].rows) == 1 {
+		switch passes[previous].kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+			return interBlockBlankLinesCompact
+		}
+	}
+	return blockBlankLinesBetween(passes[previous].kind, passes[current].kind)
 }
 
 func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {

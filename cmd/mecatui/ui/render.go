@@ -715,14 +715,15 @@ func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bo
 // (appendSegmentLines) MUST mirror this exactly (the matching blank-"" count before each
 // block i>0) or the cache-equivalence oracle (render_cache_test.go) trips.
 //
-// blockSepAfter / blockBlankLinesAfter encode per-transition spacing rules; both
-// paths (string and lines) must use them so the cache-equivalence oracle holds.
+// The production frame path uses blockBlankLinesAfterPasses; the string-path
+// oracle mirrors it, including the settled-tool → assistant exception below.
 //
 // Spacing policy (compact throughout):
-//   - blockTool → any                : 0 blank lines — tool boxes cluster tight
-//   - blockAssistant → blockTurnStat : 0 blank lines — empty turns need no gap before stats
-//   - blockTurnStat → any            : 1 blank line  — compact stat annotation
-//   - everything else                : 1 blank line  — user↔assistant, assistant→tool, etc.
+//   - settled tool → assistant         : 1 blank line  — separate prose from the call run
+//   - other tool → any                 : 0 blank lines — tool boxes cluster tight
+//   - blockAssistant → blockTurnStat   : 0 blank lines — empty turns need no gap before stats
+//   - blockTurnStat → any              : 1 blank line  — compact stat annotation
+//   - everything else                  : 1 blank line  — user↔assistant, assistant→tool, etc.
 const (
 	interBlockSepCompact        = "\n"
 	interBlockBlankLinesCompact = 1 // == strings.Count(trailing-"\n" + interBlockSepCompact, "\n") - 1
