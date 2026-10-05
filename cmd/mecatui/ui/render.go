@@ -115,6 +115,10 @@ type renderer struct {
 	// bare renderer (team/fleet focus panes) leaves it 0.
 	indent int
 
+	// showBenignGuardrails keeps exact known-benign guardrail summaries and live
+	// details visible while conversation details are collapsed.
+	showBenignGuardrails bool
+
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
@@ -729,18 +733,23 @@ const (
 	interBlockBlankLinesNone = 0 // == strings.Count(trailing-"\n" + interBlockSepNone, "\n") - 1
 )
 
+func blockBlankLinesBetween(previous, current scrollback.Kind) int {
+	switch previous {
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+		return interBlockBlankLinesNone
+	case scrollback.KindAssistant:
+		if current == scrollback.KindTurnStat {
+			return interBlockBlankLinesNone
+		}
+	}
+	return interBlockBlankLinesCompact
+}
+
 // blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
 // before block i+1).
 func blockSepAfter(kinds []scrollback.Kind, i int) string {
-	switch kinds[i] {
-	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+	if blockBlankLinesBetween(kinds[i], kinds[i+1]) == 0 {
 		return interBlockSepNone
-	case scrollback.KindTurnStat:
-		return interBlockSepCompact
-	case scrollback.KindAssistant:
-		if i+1 < len(kinds) && kinds[i+1] == scrollback.KindTurnStat {
-			return interBlockSepNone
-		}
 	}
 	return interBlockSepCompact
 }
@@ -748,17 +757,7 @@ func blockSepAfter(kinds []scrollback.Kind, i int) string {
 // blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
 // number of blank "" lines to insert before block i (i.e. after block i-1).
 func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
-	switch kinds[i-1] {
-	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
-		return interBlockBlankLinesNone
-	case scrollback.KindTurnStat:
-		return interBlockBlankLinesCompact
-	case scrollback.KindAssistant:
-		if i < len(kinds) && kinds[i] == scrollback.KindTurnStat {
-			return interBlockBlankLinesNone
-		}
-	}
-	return interBlockBlankLinesCompact
+	return blockBlankLinesBetween(kinds[i-1], kinds[i])
 }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED

@@ -1,10 +1,13 @@
 package scrollback
 
 // NoticeCardSnapshot is the detached payload for a notice; Recover marks a
-// notice emitted while recovering a session.
+// notice emitted while recovering a session. BenignGuardrail marks a retained
+// known-benign guardrail review that presentation may hide while details are
+// collapsed.
 type NoticeCardSnapshot struct {
-	Text    string
-	Recover bool
+	Text            string
+	Recover         bool
+	BenignGuardrail bool
 }
 
 // Kind returns KindNotice.
@@ -66,6 +69,27 @@ func (p PlainCards) UpdateNotice(id BlockID, text string) bool {
 		return false
 	}
 	notice.Text = text
+	return p.conversation.replace(i, notice)
+}
+
+// AddGuardrailNotice appends a guardrail review notice with its client-only
+// benign presentation classification.
+func (p PlainCards) AddGuardrailNotice(text string, benign bool) BlockID {
+	return p.conversation.append(NoticeCardSnapshot{Text: text, BenignGuardrail: benign})
+}
+
+// UpdateGuardrailNotice replaces a guardrail review notice's text and benign
+// classification without changing its identity or position.
+func (p PlainCards) UpdateGuardrailNotice(id BlockID, text string, benign bool) bool {
+	i := p.conversation.index(id)
+	if i < 0 {
+		return false
+	}
+	notice, ok := p.conversation.cards[i].payload.(NoticeCardSnapshot)
+	if !ok {
+		return false
+	}
+	notice.Text, notice.BenignGuardrail = text, benign
 	return p.conversation.replace(i, notice)
 }
 

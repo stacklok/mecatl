@@ -137,6 +137,9 @@ type Deps struct {
 	MCP        client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
 	Cmds       client.Commander       // slash-command discovery for the input palette; nil disables it
 	Guardrails client.GuardrailClient // contextual coverage and live-only review detail; nil disables /guardrails
+	// ShowBenignHookNotices keeps exact known-benign contextual guardrail review
+	// notices, including their live detail, visible while details are collapsed.
+	ShowBenignHookNotices bool
 	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
@@ -1073,6 +1076,8 @@ func New(deps Deps) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(th.Style("spinner")))
 
 	vp := viewport.New()
+	rend := newRenderer(th, hk)
+	rend.showBenignGuardrails = deps.showBenignGuardrails()
 	// In-app text-selection highlight is rendered by the APP (styleSelection splices
 	// the "selection" theme style into the content lines inside refreshView), NOT the
 	// viewport's native SetHighlights/HighlightStyle. The native highlighter mis-placed
@@ -1087,7 +1092,7 @@ func New(deps Deps) Model {
 	m := Model{
 		deps:             deps,
 		keys:             keys,
-		rend:             newRenderer(th, hk),
+		rend:             rend,
 		hits:             &hitRegions{},
 		metrics:          &renderedSurfaceMetrics{},
 		phase:            phaseConnecting,

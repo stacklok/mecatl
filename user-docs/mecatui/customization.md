@@ -29,6 +29,26 @@ retention, and learning. The client rejects server-only flags in this mode.
 - [Themes](./themes.md) explains built-in themes, custom palette locations, and
   selection.
 
+### Show benign guardrail notices
+
+`mecatui` retains contextual guardrail summaries and live review details. It
+hides a completed, acceptable `execute` or `release_result` review while
+conversation details are collapsed. Findings, outages, unresolved reviews,
+approval requests, withheld results, denied actions, warnings, and unknown
+outcomes remain visible.
+
+Press your configured `ExpandTools` keybinding (`ctrl+t` by default) to show
+retained benign notices temporarily. To keep them visible while details are
+collapsed, add this setting to `$XDG_CONFIG_HOME/mecatui/settings.yaml`:
+
+```yaml
+hook_notices:
+  show_benign: true
+```
+
+This client-owned setting applies to embedded and remote sessions. Project and
+server settings do not control it.
+
 ## Customize the status line
 
 `$XDG_CONFIG_HOME/mecatui/settings.yaml` may customize the local header and

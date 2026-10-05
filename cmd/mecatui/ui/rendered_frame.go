@@ -198,33 +198,27 @@ func (r *renderer) rebuildFramePrefix(passes []renderPass, prefixN int) ([]strin
 }
 
 func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, index int) {
-	if index > 0 {
-		for n := 0; n < blockBlankLinesAfterPasses(passes, index); n++ {
+	pass := passes[index]
+	if pass.text == "" {
+		return
+	}
+	previous := -1
+	for i := index - 1; i >= 0; i-- {
+		if passes[i].text != "" {
+			previous = i
+			break
+		}
+	}
+	if previous >= 0 {
+		for n := 0; n < blockBlankLinesBetween(passes[previous].kind, pass.kind); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
 	}
-	pass := passes[index]
 	for row, line := range strings.Split(pass.text, "\n") {
 		frame.lines = append(frame.lines, line)
 		frame.provenance = append(frame.provenance, pass.rows[row])
 	}
-}
-
-func blockBlankLinesAfterPasses(passes []renderPass, i int) int {
-	previous := passes[i-1].kind
-	current := passes[i].kind
-	switch previous {
-	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
-		return interBlockBlankLinesNone
-	case scrollback.KindTurnStat:
-		return interBlockBlankLinesCompact
-	case scrollback.KindAssistant:
-		if current == scrollback.KindTurnStat {
-			return interBlockBlankLinesNone
-		}
-	}
-	return interBlockBlankLinesCompact
 }
 
 func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {

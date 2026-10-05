@@ -31,25 +31,35 @@ type guardrailDetailState struct {
 	requestID   uint64
 	detail      client.GuardrailReviewDetail
 	unavailable bool
+	// mismatched marks a response for the requested review that names another
+	// review; it fails visible without displaying the mismatched text.
+	mismatched bool
 }
 
 func (d *guardrailDetailState) applyDetail(msg client.GuardrailReviewDetailMsg, sessionID, reviewID string) bool {
-	if msg.SessionID != sessionID || msg.ReviewID != reviewID || d.requestID == 0 || d.requestID != msg.RequestID ||
-		(msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID) {
+	if msg.SessionID != sessionID || msg.ReviewID != reviewID || d.requestID == 0 || d.requestID != msg.RequestID {
 		return false
 	}
 	d.requestID = 0
-	d.unavailable = msg.Err != nil
-	if msg.Err == nil {
+	d.mismatched = msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID
+	d.unavailable = msg.Err != nil || d.mismatched
+	if !d.unavailable {
 		d.detail = msg.Detail
 	}
 	return true
 }
 
+// showBenignGuardrails reports whether known-benign review notices render while
+// details are collapsed: by client setting, or always in debug mode.
+func (d Deps) showBenignGuardrails() bool { return d.ShowBenignHookNotices || d.Debug }
+
+// routineGuardrail reports the exact known-benign review combination. Missing
+// identity or job metadata and every other combination fail visible.
 func routineGuardrail(review *client.GuardrailReview) bool {
-	return review.Inspection == "complete" && review.Assessment == "acceptable" &&
-		(review.Disposition == "execute" || review.Disposition == "release_result") &&
-		(review.Job == "action" || review.Job == "inbound")
+	return review != nil && review.ReviewID != "" &&
+		(review.Job == "action" || review.Job == "inbound") &&
+		review.Inspection == "complete" && review.Assessment == "acceptable" &&
+		(review.Disposition == "execute" || review.Disposition == "release_result")
 }
 
 func (c *conversation) guardrailReview(id string) *guardrailPresentation {
@@ -65,11 +75,14 @@ func (c *conversation) guardrailReview(id string) *guardrailPresentation {
 	return c.guardrailReviews[id]
 }
 
+// show retains every review notice; a known-benign review is classified so the
+// renderer hides it unless details are expanded or benign notices are shown.
 func (r *guardrailPresentation) show(c *conversation, text string) {
+	benign := routineGuardrail(r.hook.Guardrail) && !r.mismatched
 	if r.blockID == 0 {
-		r.blockID = c.scrollback.Notices().AddNotice(text)
+		r.blockID = c.scrollback.Notices().AddGuardrailNotice(text, benign)
 	} else {
-		c.scrollback.Notices().UpdateNotice(r.blockID, text)
+		c.scrollback.Notices().UpdateGuardrailNotice(r.blockID, text, benign)
 	}
 }
 
@@ -98,6 +111,7 @@ func (r *guardrailPresentation) beginDetailRequest(requestID uint64) {
 	r.requestID = requestID
 	r.needsFinalDetail = false
 	r.unavailable = false
+	r.mismatched = false
 }
 
 // Live and replay share the visibility policy. A live approval takes ownership
@@ -107,13 +121,11 @@ func (c *conversation) addGuardrailHook(msg client.HookMsg, debug bool) *guardra
 		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
 		return nil
 	}
-	if !debug && routineGuardrail(msg.Guardrail) {
-		return nil
-	}
 	r := c.guardrailReview(msg.Guardrail.ReviewID)
-	// A replayed pending-action hook must not undo an answer. Final outcomes,
-	// including checker outages after releasing a result, still update the card.
-	if r.approvalResolved && msg.Guardrail.Disposition == "ask_action" {
+	// A replayed pending-action hook must not undo an answer, and a routine final
+	// outcome must not replace or hide the visible approval receipt. Other final
+	// outcomes, including checker outages after releasing a result, still update it.
+	if r.approvalResolved && (msg.Guardrail.Disposition == "ask_action" || routineGuardrail(msg.Guardrail)) {
 		return nil
 	}
 	r.hook = msg
@@ -133,7 +145,9 @@ func guardrailPresentationText(r *guardrailPresentation, debug bool) string {
 
 func guardrailDetailText(r *guardrailPresentation, debug bool) string {
 	text := ""
-	if r.unavailable {
+	if r.mismatched {
+		text += " Detailed explanation unavailable: response identity mismatch."
+	} else if r.unavailable {
 		text += " Detailed explanation unavailable or expired."
 	} else if r.detail.Concern != "" {
 		text += " " + terminaltext.Sanitize(r.detail.Concern)
