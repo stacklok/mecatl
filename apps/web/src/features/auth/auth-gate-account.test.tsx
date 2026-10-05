@@ -149,6 +149,18 @@ async function mountStaleAliceTab() {
   window.localStorage.setItem("studio.account", "bob");
   window.localStorage.setItem("studio.chat.folders", folder("Bob"));
   window.localStorage.setItem("studio.chat.queue.same", queue("Bob"));
+  const writerRecovery = JSON.stringify({
+    version: 1,
+    account: "bob",
+    generation: "12345678-1234-1234-1234-123456789abc",
+    snapshot: {
+      document: { revision: 1, content: "Bob's Writer draft" },
+      brief: "Bob's writing brief",
+      observations: [],
+      generalDiscussion: [],
+    },
+  });
+  window.localStorage.setItem("studio.writer.recovery", writerRecovery);
   await act(async () =>
     window.dispatchEvent(
       new StorageEvent("storage", {
@@ -167,6 +179,8 @@ async function mountStaleAliceTab() {
   expect(window.localStorage.getItem("studio.account")).toBe("bob");
   expect(window.localStorage.getItem("studio.chat.folders")).toBe(folder("Bob"));
   expect(window.localStorage.getItem("studio.chat.queue.same")).toBe(queue("Bob"));
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(writerRecovery);
+  expect(readUserScopedItem("studio.writer.recovery")).toBeNull();
   expect(readUserScopedItem("studio.chat.folders")).toBeNull();
   expect(listUserScopedKeys("studio.chat.queue.")).toEqual([]);
   expect(window.localStorage.getItem("mecatl-studio-theme")).toBe("dark");
@@ -177,11 +191,11 @@ async function mountStaleAliceTab() {
           .pathname === "/api/v1/auth/session",
     ),
   ).toBe(true);
-  return { client, resolveAuth };
+  return { client, resolveAuth, writerRecovery };
 }
 
 it("preserves Bob's marked shared data through Alice's storage event and Bob's auth refetch", async () => {
-  const { client, resolveAuth } = await mountStaleAliceTab();
+  const { client, resolveAuth, writerRecovery } = await mountStaleAliceTab();
   resolveAuth(Response.json(authenticated("bob")));
   await waitFor(() =>
     expect(crossTabData()).toMatchObject({ folders: ["Bob folder"], queuedPrompts: ["Bob queue"] }),
@@ -191,6 +205,7 @@ it("preserves Bob's marked shared data through Alice's storage event and Bob's a
   expect(window.localStorage.getItem("studio.account")).toBe("bob");
   expect(window.localStorage.getItem("studio.chat.folders")).toContain("Bob folder");
   expect(window.localStorage.getItem("studio.chat.queue.same")).toContain("Bob queue");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(writerRecovery);
   client.clear();
 });
 
@@ -199,7 +214,7 @@ it.each([
   ["failed check", new Response("unavailable", { status: 503 })],
   ["stale Alice account", Response.json(authenticated("alice"))],
 ])("keeps Bob's shared data quarantined after a %s auth refetch", async (_case, response) => {
-  const { client, resolveAuth } = await mountStaleAliceTab();
+  const { client, resolveAuth, writerRecovery } = await mountStaleAliceTab();
   resolveAuth(response);
   await waitFor(() =>
     expect(client.getQueryState(getAuthSessionOptions().queryKey)?.fetchStatus).toBe("idle"),
@@ -209,6 +224,7 @@ it.each([
   expect(window.localStorage.getItem("studio.account")).toBe("bob");
   expect(window.localStorage.getItem("studio.chat.folders")).toContain("Bob folder");
   expect(window.localStorage.getItem("studio.chat.queue.same")).toContain("Bob queue");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBe(writerRecovery);
   client.clear();
 });
 
