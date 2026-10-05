@@ -292794,6 +292794,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791169434264,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3222c2fb808d4140d19b2979a73dd2a6b2cc4398",
+          "message": "test: show execution qualification phase and spec timing (#2086)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T20:13:53-07:00",
+          "tree_id": "32fe3461544add66e2d0ae236187f358440e4615",
+          "url": "https://github.com/stacklok/mecatl/commit/3222c2fb808d4140d19b2979a73dd2a6b2cc4398"
+        },
+        "date": 1791170731973,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3308,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 99,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -383462,6 +383501,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791170729075,
+  "lastUpdate": 1791170733393,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
