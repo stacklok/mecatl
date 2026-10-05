@@ -643,7 +643,7 @@ func TestTranscriptReflowsOnWidthOnlyResize(t *testing.T) {
 		client.ToolCallMsg{ID: "bash-1", Name: "Shell", Args: mustJSON(t, map[string]string{"command": command})},
 		client.ToolResultMsg{CallID: "bash-1", Content: "docs and site passed\n M cmd/mecatui/ui/update.go"},
 	)
-	if m.sel.active || m.expandTools {
+	if m.sel.active || m.expandConversation {
 		t.Fatal("precondition: normal transcript must use SetContentLines")
 	}
 	bodyHeight := m.vp.Height()

@@ -639,14 +639,19 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 			revision: rendererRevision(meta.Revision),
 			kind:     meta.Kind,
 		}
-		key := blockRenderKey{revision: pass.revision, context: r.renderContext(expand)}
+		effectiveExpand := expand
+		switch meta.Kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+			effectiveExpand = false
+		}
+		key := blockRenderKey{revision: pass.revision, context: r.renderContext(effectiveExpand)}
 		if entry, ok := r.blocks.renderedBlock(i, key); ok {
 			pass.text, pass.rows = entry.out, entry.rows
 			passes[i] = pass
 			continue
 		}
 		r.snapshotLoads++
-		pass.text = r.renderSnapshot(i, c.SnapshotAt(i), expand)
+		pass.text = r.renderSnapshot(i, c.SnapshotAt(i), effectiveExpand)
 		entry, _ := r.blocks.renderedBlock(i, key)
 		pass.rows = entry.rows
 		passes[i] = pass
@@ -667,7 +672,7 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 	case scrollback.AssistantCardSnapshot:
 		return r.renderAssistantSnapshot(idx, s, p, expand)
 	case scrollback.ToolCardSnapshot:
-		return r.renderToolSnapshot(idx, s, p, expand)
+		return r.renderToolSnapshot(idx, s, p)
 	case scrollback.NoticeCardSnapshot:
 		return r.renderNoticeSnapshot(idx, s, p, expand)
 	case scrollback.TurnStatCardSnapshot:
@@ -679,9 +684,9 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 	case scrollback.DeliveryCardSnapshot:
 		return r.renderDeliverySnapshot(idx, s, p, expand)
 	case scrollback.SubagentCardSnapshot:
-		return r.renderSubagentSnapshot(idx, s, p, expand)
+		return r.renderSubagentSnapshot(idx, s, p)
 	case scrollback.TeamCardSnapshot:
-		return r.renderTeamSnapshot(idx, s, p, expand)
+		return r.renderTeamSnapshot(idx, s, p)
 	default:
 		return ""
 	}
@@ -784,10 +789,10 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 	style := r.th.Style("reasoning")
 	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
-	expandMark := r.marks.toolcalls
+	expandMark := r.marks.expandConversation
 	if !expand {
 		if p.ReasoningStreaming {
-			return style.Render("reasoning…")
+			return style.Render("reasoning… · " + expandMark + " expand")
 		}
 		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
 	}

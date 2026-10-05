@@ -144,7 +144,7 @@ func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolSnapshotAdapterPreser
 					legacy := newTestRenderer()
 					legacy.setWidth(width)
 					metadata, _ := scrollback.ToolCallMetadataOf(snapshot)
-					want := legacy.prepareTypedToolCard(toolCardPresentationFromSnapshot(payload), expand, projectToolCall(metadata).state).render()
+					want := legacy.prepareTypedToolCard(toolCardPresentationFromSnapshot(payload), false, projectToolCall(metadata).state).render()
 					if legacy.width > legacy.indent {
 						want = legacy.indentLines(want)
 					}
@@ -294,10 +294,10 @@ func TestMecatuiTypedScrollbackModel_Scenario3_DelegationSnapshotPresentationPar
 			switch payload := snapshot.Payload.(type) {
 			case scrollback.SubagentCardSnapshot:
 				presentation := subagentCardPresentationFromSnapshot(payload)
-				prepare = func(r *renderer) string { return r.prepareSubagentCard(presentation, expand, state).render() }
+				prepare = func(r *renderer) string { return r.prepareSubagentCard(presentation, false, state).render() }
 			case scrollback.TeamCardSnapshot:
 				presentation := teamCardPresentationFromSnapshot(payload)
-				prepare = func(r *renderer) string { return r.prepareTeamCard(presentation, expand, state).render() }
+				prepare = func(r *renderer) string { return r.prepareTeamCard(presentation, false, state).render() }
 			default:
 				continue
 			}

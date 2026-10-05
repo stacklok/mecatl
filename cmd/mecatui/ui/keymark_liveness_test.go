@@ -20,42 +20,43 @@ import (
 // approvalMnemonic paths render them legibly.
 func overrideAll() map[string][]string {
 	return map[string][]string{
-		"Submit":           {"ctrl+f1"},
-		"Newline":          {"ctrl+f2"},
-		"Paste":            {"ctrl+f3"},
-		"SelectAll":        {"ctrl+f31"},
-		"CopySelection":    {"ctrl+f32"},
-		"Cancel":           {"ctrl+f4"},
-		"ClearPrompt":      {"ctrl+f33"},
-		"Effort":           {"ctrl+f5"},
-		"MCPPanel":         {"ctrl+f6"},
-		"Resources":        {"ctrl+f7"},
-		"Prompts":          {"ctrl+f8"},
-		"Agents":           {"ctrl+f9"},
-		"ModeSwitch":       {"ctrl+f10"},
-		"Toolcalls":        {"ctrl+f11"},
-		"Help":             {"ctrl+f12"},
-		"Quit":             {"ctrl+f13"},
-		"ScrollU":          {"ctrl+f14"},
-		"ScrollD":          {"ctrl+f15"},
-		"Close":            {"ctrl+f16"},
-		"Allow":            {"y"},
-		"AllowAlways":      {"q"},
-		"Deny":             {"n"},
-		"Choose":           {"ctrl+f17"},
-		"NextTab":          {"ctrl+f18"},
-		"JumpTop":          {"ctrl+f19"},
-		"JumpEnd":          {"ctrl+f20"},
-		"CancelChild":      {"ctrl+f21"},
-		"Tasks":            {"ctrl+f22"},
-		"Findings":         {"ctrl+f23"},
-		"Refresh":          {"ctrl+f24"},
-		"SetGlobalDefault": {"ctrl+f25"},
-		"Up":               {"ctrl+f26"},
-		"Down":             {"ctrl+f27"},
-		"ScrollTop":        {"ctrl+f28"},
-		"ScrollBottom":     {"ctrl+f29"},
-		"EditBack":         {"ctrl+f30"},
+		"Submit":             {"ctrl+f1"},
+		"Newline":            {"ctrl+f2"},
+		"Paste":              {"ctrl+f3"},
+		"SelectAll":          {"ctrl+f31"},
+		"CopySelection":      {"ctrl+f32"},
+		"Cancel":             {"ctrl+f4"},
+		"ClearPrompt":        {"ctrl+f33"},
+		"Effort":             {"ctrl+f5"},
+		"MCPPanel":           {"ctrl+f6"},
+		"Resources":          {"ctrl+f7"},
+		"Prompts":            {"ctrl+f8"},
+		"Agents":             {"ctrl+f9"},
+		"ModeSwitch":         {"ctrl+f10"},
+		"ExpandConversation": {"ctrl+f34"},
+		"Toolcalls":          {"ctrl+f11"},
+		"Help":               {"ctrl+f12"},
+		"Quit":               {"ctrl+f13"},
+		"ScrollU":            {"ctrl+f14"},
+		"ScrollD":            {"ctrl+f15"},
+		"Close":              {"ctrl+f16"},
+		"Allow":              {"y"},
+		"AllowAlways":        {"q"},
+		"Deny":               {"n"},
+		"Choose":             {"ctrl+f17"},
+		"NextTab":            {"ctrl+f18"},
+		"JumpTop":            {"ctrl+f19"},
+		"JumpEnd":            {"ctrl+f20"},
+		"CancelChild":        {"ctrl+f21"},
+		"Tasks":              {"ctrl+f22"},
+		"Findings":           {"ctrl+f23"},
+		"Refresh":            {"ctrl+f24"},
+		"SetGlobalDefault":   {"ctrl+f25"},
+		"Up":                 {"ctrl+f26"},
+		"Down":               {"ctrl+f27"},
+		"ScrollTop":          {"ctrl+f28"},
+		"ScrollBottom":       {"ctrl+f29"},
+		"EditBack":           {"ctrl+f30"},
 	}
 }
 
@@ -77,6 +78,7 @@ func remderRenderer() *renderer {
 // the same renderer path the model uses (remderRenderer) so the seam is real.
 func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	const (
+		wantDetail = "ctrl+f34" // overridden ExpandConversation
 		wantExpand = "ctrl+f11" // overridden Toolcalls
 		wantAgents = "ctrl+f9"  // overridden Agents
 	)
@@ -84,15 +86,15 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 		r := remderRenderer()
 		b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
 		collapsed := stripANSIstr(r.renderReasoningSnapshot(b, false))
-		if !strings.Contains(collapsed, wantExpand+" expand") {
-			t.Errorf("collapsed reasoning header should carry %q, got %q", wantExpand+" expand", collapsed)
+		if !strings.Contains(collapsed, wantDetail+" expand") {
+			t.Errorf("collapsed reasoning header should carry %q, got %q", wantDetail+" expand", collapsed)
 		}
 		if strings.Contains(collapsed, "ctrl+t") {
 			t.Errorf("collapsed reasoning header still shows the default ctrl+t: %q", collapsed)
 		}
 		expanded := stripANSIstr(r.renderReasoningSnapshot(b, true))
-		if !strings.Contains(expanded, wantExpand+" collapse") {
-			t.Errorf("expanded reasoning header should carry %q, got %q", wantExpand+" collapse", expanded)
+		if !strings.Contains(expanded, wantDetail+" collapse") {
+			t.Errorf("expanded reasoning header should carry %q, got %q", wantDetail+" collapse", expanded)
 		}
 		if strings.Contains(expanded, "ctrl+t") {
 			t.Errorf("expanded reasoning header still shows the default ctrl+t: %q", expanded)
@@ -413,18 +415,16 @@ func TestDefaultFooterHelp(t *testing.T) {
 }
 
 // TestDefaultInlineCardsBytesUnchanged is the byte-identical guard for the default
-// keymap on the inline-card affordances: with NO overrides the reasoning header,
-// subagent live line, team header, roll-up, and collapse/arg-rollup markers must
-// render EXACTLY the historical "ctrl+t" / "f6" literals.
+// Reasoning follows ExpandConversation (f9); tool-card helpers retain ctrl+t hints.
 func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 	r := newTestRenderer()
 	// Reasoning header.
 	b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
-	if got := stripANSIstr(r.renderReasoningSnapshot(b, false)); !strings.Contains(got, "ctrl+t expand") {
-		t.Errorf("default reasoning header should carry ctrl+t expand, got %q", got)
+	if got := stripANSIstr(r.renderReasoningSnapshot(b, false)); !strings.Contains(got, "f9 expand") {
+		t.Errorf("default reasoning header should carry f9 expand, got %q", got)
 	}
-	if got := stripANSIstr(r.renderReasoningSnapshot(b, true)); !strings.Contains(got, "ctrl+t collapse") {
-		t.Errorf("default reasoning header should carry ctrl+t collapse, got %q", got)
+	if got := stripANSIstr(r.renderReasoningSnapshot(b, true)); !strings.Contains(got, "f9 collapse") {
+		t.Errorf("default reasoning header should carry f9 collapse, got %q", got)
 	}
 	// Subagent live line.
 	sb := subagentCardPresentation{current: "Grep", toolCount: 1}

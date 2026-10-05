@@ -229,7 +229,7 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	m = applyAll(m,
 		client.ToolCallMsg{ID: "e1", Name: "Edit", Args: `{"path":"x.go","old_string":"foo","new_string":"bar"}`},
 	)
-	view := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	view := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(view, "- foo") || !strings.Contains(view, "+ bar") {
 		t.Errorf("expected diff lines in conversation, got:\n%s", view)
 	}
@@ -244,12 +244,12 @@ func TestToolcallsShortcutOpensInspector(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.phase = phaseIdle
-	if m.expandTools {
-		t.Fatal("expandTools should start false")
+	if m.expandConversation {
+		t.Fatal("expandConversation should start false")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.expandTools || toolcallsForTest(t, m) == nil {
-		t.Error("ctrl+t should open the inspector without changing expandTools")
+	if m.expandConversation || toolcallsForTest(t, m) == nil {
+		t.Error("ctrl+t should open the inspector without changing expandConversation")
 	}
 	// The footer is now the minimal "? help · … · ctrl+c quit" line; the full
 	// chord list moved into the "?" help overlay.
@@ -278,8 +278,8 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	)
 
 	// Collapsed (default): the "reasoning summary" header is shown, body hidden.
-	collapsed := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
-	if !strings.Contains(collapsed, "reasoning summary · 2 lines · ctrl+t expand") {
+	collapsed := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	if !strings.Contains(collapsed, "reasoning summary · 2 lines · f9 expand") {
 		t.Errorf("expected collapsed reasoning-summary header, got:\n%s", collapsed)
 	}
 	if strings.Contains(collapsed, "inspect the file") {
@@ -294,11 +294,10 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 		t.Errorf("reasoning (%d) should render above the answer (%d):\n%s", ri, ai, collapsed)
 	}
 
-	// The legacy expansion state continues to render expanded reasoning until T05
-	// retires it; Toolcalls no longer changes it.
-	m.expandTools = true
+	// f9 expands reasoning; Toolcalls never changes this state.
+	m, _ = pressKey(m, f9)
 	// Expanded: the caveat + the full reasoning text become visible.
-	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(expanded, "may not reflect its actual process") {
 		t.Errorf("expanded reasoning should carry the lossy-summary caveat:\n%s", expanded)
 	}
@@ -344,7 +343,7 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 	if got := strings.Count(view, "reasoning summary"); got != 1 {
 		t.Errorf("want exactly one reasoning region, got %d:\n%s", got, view)
 	}
-	if !strings.Contains(view, "reasoning summary · 2 lines · ctrl+t expand") {
+	if !strings.Contains(view, "reasoning summary · 2 lines · f9 expand") {
 		t.Errorf("merged reasoning should report 2 lines:\n%s", view)
 	}
 	// Reasoning above both answer fragments.
@@ -370,8 +369,8 @@ func TestReasoningLiveAffordance(t *testing.T) {
 	if !strings.Contains(live, "reasoning…") {
 		t.Errorf("streaming reasoning (no answer yet) should show the live affordance:\n%s", live)
 	}
-	if strings.Contains(live, "ctrl+t expand") {
-		t.Errorf("live reasoning should not yet show the static expand hint:\n%s", live)
+	if !strings.Contains(live, "reasoning… · f9 expand") {
+		t.Errorf("live reasoning must advertise its detail toggle:\n%s", live)
 	}
 
 	// Answer text begins → flips to the static, expandable header.
@@ -380,7 +379,7 @@ func TestReasoningLiveAffordance(t *testing.T) {
 	if strings.Contains(settled, "reasoning…") {
 		t.Errorf("reasoning should stop showing the live affordance once answer begins:\n%s", settled)
 	}
-	if !strings.Contains(settled, "reasoning summary · 1 line · ctrl+t expand") {
+	if !strings.Contains(settled, "reasoning summary · 1 line · f9 expand") {
 		t.Errorf("settled reasoning should show the static header:\n%s", settled)
 	}
 }
@@ -394,7 +393,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	m.phase = phaseRunning
 
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100})
-	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(withDur, "↑1.2K ↓340 · 4.1s") {
 		t.Errorf("expected cost-first per-turn stat line with duration, got:\n%s", withDur)
 	}
@@ -405,7 +404,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	// A turn with substantial tokens but no duration (no clock) omits the elapsed
 	// segment but still renders (it is not trivial).
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 500, OutputTokens: 20}, DurationMs: 0})
-	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(noDur, "↑500 ↓20") {
 		t.Errorf("expected per-turn stat line, got:\n%s", noDur)
 	}

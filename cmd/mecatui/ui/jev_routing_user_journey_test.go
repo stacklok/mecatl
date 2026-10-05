@@ -82,7 +82,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 		t.Errorf("compact card replaced the actual model or retained a mutable decision pointer:\n%s", compact)
 	}
 
-	expanded := stripANSIstr(r.renderSnapshot(0, subBlock, true))
+	expanded := stripANSIstr(r.indentLines(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(subBlock.Payload.(scrollback.SubagentCardSnapshot)), true, toolcallAwaitingResult).Text()))
 	assertRoutingDetail(t, "expanded completed Subagent card", expanded)
 	if got := strings.Count(expanded, "candidate: medium"); got != 1 {
 		t.Errorf("expanded fallback duplicated compact candidate cue %d times:\n%s", got, expanded)
@@ -91,7 +91,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	if !ok {
 		t.Fatal("accepted Subagent card was not created")
 	}
-	acceptedExpanded := stripANSIstr(r.renderSnapshot(0, acceptedBlock, true))
+	acceptedExpanded := stripANSIstr(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(acceptedBlock.Payload.(scrollback.SubagentCardSnapshot)), true, toolcallAwaitingResult).Text())
 	assertAcceptedRoutingDetail(t, "expanded accepted Subagent card", acceptedExpanded)
 	teamBlock, ok := m.conv.scrollback.SnapshotForCall("team-call")
 	if !ok {
@@ -99,7 +99,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	}
 	teamPayload := teamBlock.Payload.(scrollback.TeamCardSnapshot)
 	teamPresentation := teamCardPresentationFromSnapshot(teamPayload)
-	completedTeamExpanded := stripANSIstr(r.renderSnapshot(0, teamBlock, true))
+	completedTeamExpanded := stripANSIstr(r.prepareTeamCard(teamCardPresentationFromSnapshot(teamPayload), true, toolcallAwaitingResult).Text())
 	assertRoutingDetail(t, "expanded completed Team card", completedTeamExpanded)
 	for _, tc := range []struct {
 		name, want string
@@ -207,7 +207,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 			}
 			cardRenderer := newTestRenderer()
 			cardRenderer.width = width
-			completedTeam := stripANSIstr(cardRenderer.renderSnapshot(0, teamBlock, true))
+			completedTeam := stripANSIstr(cardRenderer.prepareTeamCard(teamCardPresentationFromSnapshot(teamPayload), true, toolcallAwaitingResult).Text())
 			if strings.TrimSpace(completedTeam) == "" || !strings.Contains(completedTeam, "backend: jev") {
 				t.Errorf("completed Team expanded routing detail disappeared at width %d:\n%s", width, completedTeam)
 			}

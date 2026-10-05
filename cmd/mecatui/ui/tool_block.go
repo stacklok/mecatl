@@ -45,15 +45,15 @@ func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPre
 // frame provenance renderer-owned. A settled call collapses to the same semantic
 // one-line projection the /toolcalls inspector lists; complete arguments and
 // results remain in the inspector.
-func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot, expand bool) string {
-	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), false, func(blockID uint64) blockRenderOutput {
 		metadata, _ := scrollback.ToolCallMetadataOf(s)
 		projection := projectToolCall(metadata)
 		if projection.settled() {
 			return r.renderSettledToolLine(blockID, projection)
 		}
 		presentation := toolCardPresentationFromSnapshot(p)
-		prepared := r.prepareTypedToolCard(presentation, expand, projection.state)
+		prepared := r.prepareTypedToolCard(presentation, false, projection.state)
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -192,15 +192,15 @@ func (p preparedToolCard) render() string {
 
 // renderSubagentSnapshot adapts only the sealed Subagent payload to its renderer
 // presentation value. Cache storage and frame provenance remain renderer-owned.
-func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot, expand bool) string {
-	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), false, func(blockID uint64) blockRenderOutput {
 		metadata, _ := scrollback.ToolCallMetadataOf(s)
 		projection := projectToolCall(metadata)
 		if projection.settled() {
 			return r.renderSettledToolLine(blockID, projection)
 		}
 		r.cardPrepares++
-		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), expand, projection.state).Prepared
+		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), false, projection.state).Prepared
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -211,15 +211,15 @@ func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p
 
 // renderTeamSnapshot adapts only the sealed Team payload to its renderer
 // presentation value. The Agents overlay continues to use its existing ui.block path.
-func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.TeamCardSnapshot, expand bool) string {
-	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.TeamCardSnapshot) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), false, func(blockID uint64) blockRenderOutput {
 		metadata, _ := scrollback.ToolCallMetadataOf(s)
 		projection := projectToolCall(metadata)
 		if projection.settled() {
 			return r.renderSettledToolLine(blockID, projection)
 		}
 		r.cardPrepares++
-		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), expand, projection.state).Prepared
+		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), false, projection.state).Prepared
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)

@@ -188,18 +188,18 @@ func TestMecatuiQuieterToolCalls_Scenario2_ContextualShortcutAndOverrides(t *tes
 			m := tc.build(t)
 			askID := approvalSurfaceOf(t, m).ask.AskID
 			m.prompt.Rewrite("draft")
-			beforeExpand := m.expandTools
+			beforeExpand := m.expandConversation
 
 			// ExpandConversation is inert while approval owns the keyboard.
 			m, _ = pressKey(m, f9)
-			if s := assertApprovalPending(t, m, askID, "draft"); s.argsViewOpen || m.expandTools != beforeExpand {
+			if s := assertApprovalPending(t, m, askID, "draft"); s.argsViewOpen || m.expandConversation != beforeExpand {
 				t.Fatal("ExpandConversation changed approval state")
 			}
 
 			m, _ = pressKey(m, ctrlT)
 			s := assertApprovalPending(t, m, askID, "draft")
-			if s.argsViewOpen != tc.detail || m.expandTools != beforeExpand {
-				t.Fatalf("Toolcalls detail open=%v expand=%v, want open=%v expand=%v", s.argsViewOpen, m.expandTools, tc.detail, beforeExpand)
+			if s.argsViewOpen != tc.detail || m.expandConversation != beforeExpand {
+				t.Fatalf("Toolcalls detail open=%v expand=%v, want open=%v expand=%v", s.argsViewOpen, m.expandConversation, tc.detail, beforeExpand)
 			}
 			if tc.detail {
 				if view := stripANSIstr(m.View().Content); !strings.Contains(view, tc.title) {

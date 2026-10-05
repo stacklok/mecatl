@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // subagentCard builds a Subagent tool block, applies the given subagent.* projection
@@ -24,7 +25,10 @@ func subagentCard(t *testing.T, expand bool, build func(c *conversation)) string
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"investigate the loop"}`)
 	build(c)
-	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], expand))
+	if expand {
+		return stripANSIstr(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(c.testBlocks()[0].Payload.(scrollback.SubagentCardSnapshot)), true, toolcallPending).Text())
+	}
+	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 }
 
 // addSubTool routes a bare (kind-less) subagent.tool event into the card — the
@@ -137,7 +141,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		addSubTool(c, "p1", "Read", false, i+1)
 	}
-	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
+	out := stripANSIstr(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(c.testBlocks()[0].Payload.(scrollback.SubagentCardSnapshot)), true, toolcallPending).Text())
 	// The chip region must occupy more than one visual line (it wrapped).
 	if strings.Count(out, "✓") != 6 {
 		t.Fatalf("want all 6 chips present, got %q", out)

@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool pins AC3.1: a
@@ -52,10 +53,8 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	}
 }
 
-// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews pins AC3.2:
-// ctrl+t on a Subagent card shows bounded args/result previews per child tool call
-// (Team chip format: `✓ Grep — pattern: foo`) plus capped child message lines, and
-// the TUI applies its secondary caps on top of the engine's clamp.
+// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews checks
+// the retained detail preparer; conversation cards no longer expose this mode.
 func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *testing.T) {
 	r := newTestRenderer()
 	c := &conversation{}
@@ -73,7 +72,7 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
 		InnerKind: "message.delta", Text: "looking into the loop", ToolCount: 1,
 	})
-	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
+	out := stripANSIstr(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(c.testBlocks()[0].Payload.(scrollback.SubagentCardSnapshot)), true, toolcallPending).Text())
 
 	if !strings.Contains(out, "✓ Grep") {
 		t.Errorf("expanded card should show the Team-format tool chip, got %q", out)
@@ -95,7 +94,7 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
 		InnerKind: "tool.call", ToolName: "Read", Detail: longDetail, ToolCount: 2,
 	})
-	out = stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
+	out = stripANSIstr(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(c.testBlocks()[0].Payload.(scrollback.SubagentCardSnapshot)), true, toolcallPending).Text())
 	if strings.Contains(out, strings.Repeat("x", maxTraceDetailLen+40)) {
 		t.Errorf("expanded card must bound the detail preview to maxTraceDetailLen, got %q", out)
 	}
@@ -159,7 +158,7 @@ func TestDelegationObservability_Scenario3_HonestyNoteIsBoundedPreviews(t *testi
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"investigate"}`)
 	applySubagentTo(c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "p1", ChildID: "c1", Goal: "investigate"})
-	card := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
+	card := stripANSIstr(r.prepareSubagentCard(subagentCardPresentationFromSnapshot(c.testBlocks()[0].Payload.(scrollback.SubagentCardSnapshot)), true, toolcallPending).Text())
 	if !strings.Contains(card, "bounded previews") {
 		t.Errorf("expanded Subagent card should carry the bounded-previews note, got %q", card)
 	}

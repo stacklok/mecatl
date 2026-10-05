@@ -2306,6 +2306,10 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.onToolcallsKey()
 	}
 
+	if mm, handled := m.onConversationDetailKey(msg); handled {
+		return mm, nil
+	}
+
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
 	// text → inserted). It is handled here — before the phase switch — for the two
 	// input-accepting phases (idle + running, both keep the textarea focused for
@@ -2324,6 +2328,17 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.dispatchPhaseKey(msg)
+}
+
+func (m Model) onConversationDetailKey(msg tea.KeyPressMsg) (Model, bool) {
+	if !key.Matches(msg, m.keys.ExpandConversation) {
+		return m, false
+	}
+	if m.phase == phaseIdle || m.phase == phaseRunning || m.phase == phaseReplay {
+		m.expandConversation = !m.expandConversation
+		m.refreshView()
+	}
+	return m, true
 }
 
 func (m Model) onGlobalLifecycleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
@@ -4825,9 +4840,9 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // conversationContent produces the complete current projection, including the expanded
 // changed-files appendix which is outside the conversation renderer's block rows.
 func (m *Model) conversationContent() string {
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	content := strings.Join(frame.lines, "\n")
-	if m.expandTools {
+	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
 			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
 				content += "\n" + list
@@ -4856,9 +4871,9 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
-	// changed-files footer is not in play (it renders only under the global expand
+	// changed-files footer is not in play (it renders only under the conversation detail
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
 	// slice — reusing the cached prefix of settled blocks and only building the
 	// changed suffix. This skips the O(scrollback) Builder copy + strings.Split that
@@ -4866,12 +4881,12 @@ func (m *Model) refreshView() {
 	// re-renders every token, so the whole-join memo never helps streaming). The
 	// selection and footer paths both post-process the JOINED STRING, so they fall
 	// back to the byte-identical string path below.
-	if !m.sel.active && !m.expandTools {
+	if !m.sel.active && !m.expandConversation {
 		m.conversationView.replace(&m.vp, frame)
 		return
 	}
 	content := strings.Join(frame.lines, "\n")
-	if m.expandTools {
+	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
 			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
 				content += "\n" + list

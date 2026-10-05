@@ -103,9 +103,10 @@ func TestMecatuiFunctionalConversationCards_Scenario3_AnchorsAndSelectionSurvive
 		t.Fatal("logical reading anchor did not survive card reflow")
 	}
 
+	// A conversation detail toggle leaves the tool argument row and its selection intact.
 	collapsed := r.renderConversationFrame(&c.scrollback, false)
-	if _, _, ok := resolveSelectionPoint(collapsed, point); ok {
-		t.Fatal("selection survived after collapse hid its prepared argument row")
+	if _, _, ok := resolveSelectionPoint(collapsed, point); !ok {
+		t.Fatal("selection lost after conversation detail toggle changed no tool rows")
 	}
 
 }

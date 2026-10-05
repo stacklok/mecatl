@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // roster is a small two-member roster (a lead + a read-only scout) reused across
@@ -31,7 +32,10 @@ func teamCard(t *testing.T, expand bool, build func(c *conversation)) string {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{"goal":"ship the feature"}`)
 	build(c)
-	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], expand))
+	if expand {
+		return stripANSIstr(r.prepareTeamCard(teamCardPresentationFromSnapshot(c.testBlocks()[0].Payload.(scrollback.TeamCardSnapshot)), true, toolcallPending).Text())
+	}
+	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 }
 
 // member builds a TeamMember msg for the canonical team t1.

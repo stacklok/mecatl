@@ -7,7 +7,7 @@ import (
 
 func (r *renderer) plainBlockLayout(expand bool) blocks.PlainLayout {
 	return blocks.SnapshotPlainLayout(blocks.PlainLayoutInput{
-		Width: r.contentWidth(), Expanded: expand, ExpandMark: r.marks.toolcalls,
+		Width: r.contentWidth(), Expanded: expand, ExpandMark: r.marks.expandConversation,
 	})
 }
 

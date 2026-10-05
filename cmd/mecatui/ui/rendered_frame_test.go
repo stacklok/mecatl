@@ -185,10 +185,10 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 	assertFrame("tool mutation", 2)
 	r.setWidth(48)
 	assertFrame("resize", 3)
-	// render at the changed expand axis directly so it covers the block-cache key.
+	// Conversation detail does not invalidate the tool card cache key.
 	frame := r.renderConversationFrame(&c.scrollback, true)
-	if r.toolCardPrepares != 4 {
-		t.Fatalf("expand change: prepareToolCard calls = %d, want 4", r.toolCardPrepares)
+	if r.toolCardPrepares != 3 {
+		t.Fatalf("detail change: prepareToolCard calls = %d, want 3", r.toolCardPrepares)
 	}
 	fresh := newCacheRenderer()
 	fresh.setWidth(r.width)

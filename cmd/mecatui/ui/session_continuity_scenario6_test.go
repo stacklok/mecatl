@@ -130,7 +130,7 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 	}
 	fresh := newRenderer(m.deps.Theme, m.rend.marks)
 	fresh.setWidth(m.rend.width)
-	wantFrame := fresh.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	wantFrame := fresh.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	if !reflect.DeepEqual(m.conversationView.frame.provenance, wantFrame.provenance) {
 		t.Fatal("replacement retained stale frame provenance")
 	}
