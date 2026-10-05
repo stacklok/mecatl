@@ -386,9 +386,8 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 			}
 		}
 		if terr != nil {
-			// A terminal failure event (response.failed / error / incomplete)
-			// carries the provider's real message; surface it as the stream's
-			// error so the loop reports the reason rather than a bare stop.
+			// Terminal failure events retain private classification inputs but
+			// expose only a closed display category to the loop.
 			return emitted, false, terr
 		}
 	}

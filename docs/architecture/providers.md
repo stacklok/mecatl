@@ -72,11 +72,17 @@ directly from recorded fixtures by `decodeSSE` in tests):
   reasoning items, flushed here because only now is the full ordered list known),
   then `ChunkUsage` and `ChunkDone(end_turn)` (cached tokens map into
   `Usage.CacheReadTokens`)
-- `response.incomplete` → `ChunkUsage` then `ChunkDone(error)`
-- `response.failed` / `error` → a non-nil stream **error** carrying the
-  provider's in-band message verbatim; HTTP API rejections instead render only
-  their structured `code` (or `type`) and message as `code: message`, never the
-  SDK's raw response body, request URL, or correlation ID.
+- `response.incomplete` → `ChunkUsage` then a non-nil error with a closed
+  incomplete-response reason.
+- `response.failed` / `error` → a non-nil stream **error** with a closed,
+  harness-authored display category. HTTP rejections and transport failures use
+  the same closed-display policy across Responses, Chat Completions, and
+  Anthropic. Raw messages, codes, and types remain private classification inputs
+  or programmatic metadata; SDK and transport causes remain unwrap-visible.
+  HTTP displays may include a standard status label, a sanitized request target,
+  and a validated request ID. Host composition restores bounded Codex manual-token
+  remediation only from the local policy's concrete `StatusError`, never arbitrary
+  upstream or transport error text.
 
 **Cancellation**: `Stream` (`openai.go`) selects on `ctx.Done()` each iteration
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported

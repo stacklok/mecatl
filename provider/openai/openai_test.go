@@ -520,8 +520,7 @@ func TestPhaseDroppedOnTextlessAssistantTurn(t *testing.T) {
 	}
 }
 
-// TestTranslateErrorEvent verifies a top-level "error" stream event surfaces a
-// non-nil error carrying the provider's code, message, and offending param,
+// TestTranslateErrorEvent verifies a top-level error surfaces a safe category
 // rather than a bare StopError chunk that drops the reason.
 func TestTranslateErrorEvent(t *testing.T) {
 	chunks, err := decodeFixtureErr(t, "error_event.sse")
@@ -531,10 +530,8 @@ func TestTranslateErrorEvent(t *testing.T) {
 	if len(chunks) != 0 {
 		t.Errorf("expected no chunks before the error, got %+v", chunks)
 	}
-	for _, want := range []string{"rate_limit_exceeded", "Rate limit reached for requests", "model"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err.Error(), want)
-		}
+	if got, want := err.Error(), "provider request failed (429 Too Many Requests)"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
@@ -548,10 +545,8 @@ func TestTranslateResponseFailed(t *testing.T) {
 	if len(chunks) != 0 {
 		t.Errorf("expected no chunks before the error, got %+v", chunks)
 	}
-	for _, want := range []string{"server_error", "The model produced an internal error"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err.Error(), want)
-		}
+	if got, want := err.Error(), "provider request failed (503 Service Unavailable)"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
@@ -609,18 +604,18 @@ func TestTopLevelErrorDoesNotUseResponseIDFromUnknownEvent(t *testing.T) {
 	}
 }
 
-func TestStructuredHTTPErrorTextFallback(t *testing.T) {
+func TestProviderErrorTextCategories(t *testing.T) {
 	for _, tc := range []struct {
-		name, code, kind, message, want string
+		status        int
+		message, want string
 	}{
-		{"type fallback", "", "invalid_request_error", "invalid input", "invalid_request_error: invalid input"},
-		{"no envelope", "", "", "", "provider request failed"},
+		{400, "Bearer synthetic-canary", "provider request failed (400 Bad Request)"},
+		{0, "Bearer synthetic-canary", "provider request failed"},
+		{503, "context length exceeded: Bearer synthetic-canary", "provider request failed: context window exceeded"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := structuredHTTPErrorText(tc.code, tc.kind, tc.message); got != tc.want {
-				t.Errorf("structuredHTTPErrorText() = %q, want %q", got, tc.want)
-			}
-		})
+		if got := providerErrorText(tc.status, tc.message); got != tc.want {
+			t.Errorf("providerErrorText() = %q, want %q", got, tc.want)
+		}
 	}
 }
 
@@ -634,7 +629,7 @@ func TestInvalidEncryptedContentFallbackUsesUnwrapDiagnostic(t *testing.T) {
 
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
-	if got, want := err.Error(), "provider request failed (target: "+srv.URL+"/v1/responses)"; got != want {
+	if got, want := err.Error(), "provider request failed (400 Bad Request) (target: "+srv.URL+"/v1/responses)"; got != want {
 		t.Fatalf("safe display error = %q, want %q", got, want)
 	}
 	if !isInvalidEncryptedContent(err) {
@@ -661,7 +656,7 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error %T does not preserve the SDK error", err)
 	}
-	if got, want := err.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/responses; request ID: req_409)"; got != want {
+	if got, want := err.Error(), "provider request failed (400 Bad Request) (target: "+srv.URL+"/v1/responses; request ID: req_409)"; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 	if strings.Contains(err.Error(), "must-not-leak") {
@@ -693,7 +688,7 @@ func TestHTTPErrorDisplayOmitsInvalidRequestID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected SDK HTTP error")
 	}
-	if got, want := err.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/responses)"; got != want {
+	if got, want := err.Error(), "provider request failed (400 Bad Request) (target: "+srv.URL+"/v1/responses)"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
@@ -748,15 +743,8 @@ func TestResponseFailedRateLimitIsRetryable(t *testing.T) {
 	if got := sc.StatusCode(); got != 429 {
 		t.Errorf("StatusCode() = %d, want 429 (rate_limit_exceeded must map to HTTP 429)", got)
 	}
-	// The human-readable message must still contain the provider code and message.
-	for _, want := range []string{"rate_limit_exceeded", "Too Many Requests"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q (human-readable message must be unchanged)", err.Error(), want)
-		}
-	}
-	// Prefix must also be preserved.
-	if !strings.HasPrefix(err.Error(), "response failed: ") {
-		t.Errorf("error %q does not start with %q", err.Error(), "response failed: ")
+	if got, want := err.Error(), "provider request failed (429 Too Many Requests)"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
@@ -825,38 +813,29 @@ func TestErrorEventRateLimitIsRetryable(t *testing.T) {
 	if got := sc.StatusCode(); got != 429 {
 		t.Errorf("StatusCode() = %d, want 429 for rate_limit_exceeded error event", got)
 	}
-	// Human-readable message is unchanged.
-	for _, want := range []string{"rate_limit_exceeded", "Rate limit reached for requests"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err.Error(), want)
-		}
+	if got, want := err.Error(), "provider request failed (429 Too Many Requests)"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
-// TestResponseStreamErrorMessageUnchanged pins the invariant that switching from
-// fmt.Errorf to *responseStreamError does NOT change the human-readable Error()
-// string for either the response.failed path or the top-level error path.
-func TestResponseStreamErrorMessageUnchanged(t *testing.T) {
+// Both event forms expose a safe category, not the raw provider message.
+func TestResponseStreamErrorSafeCategories(t *testing.T) {
 	t.Run("response.failed server_error message", func(t *testing.T) {
-		// The existing TestTranslateResponseFailed fixture uses server_error; the
-		// message must still equal what fmt.Errorf("response failed: %s", ...) produced.
 		_, err := decodeFixtureErr(t, "response_failed.sse")
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		want := "response failed: server_error: The model produced an internal error"
+		want := "provider request failed (503 Service Unavailable)"
 		if err.Error() != want {
 			t.Errorf("Error() = %q, want %q", err.Error(), want)
 		}
 	})
 	t.Run("error event rate_limit_exceeded message", func(t *testing.T) {
-		// The existing TestTranslateErrorEvent fixture: message must equal what
-		// fmt.Errorf("stream error: %s", streamErrorString(...)) produced.
 		_, err := decodeFixtureErr(t, "error_event.sse")
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		want := "stream error: rate_limit_exceeded: Rate limit reached for requests (param: model)"
+		want := "provider request failed (429 Too Many Requests)"
 		if err.Error() != want {
 			t.Errorf("Error() = %q, want %q", err.Error(), want)
 		}
@@ -867,7 +846,7 @@ func TestResponseStreamErrorMessageUnchanged(t *testing.T) {
 // event whose `server_error` code is reused for a context-window-overflow
 // rejection (OpenRouter / OpenAI Responses) is demoted to status 0 — permanent,
 // non-retryable, breaker-neutral — despite the otherwise-retryable code. The
-// human-readable message is preserved verbatim.
+// display retains the context-overflow category without the raw message.
 func TestResponseFailedContextOverflowNotRetryable(t *testing.T) {
 	event := responses.ResponseStreamEventUnion{
 		Type: "response.failed",
@@ -891,14 +870,8 @@ func TestResponseFailedContextOverflowNotRetryable(t *testing.T) {
 	if got := sc.StatusCode(); got != 0 {
 		t.Errorf("StatusCode() = %d, want 0 (context overflow is non-retryable despite server_error code)", got)
 	}
-	msg := err.Error()
-	if !strings.HasPrefix(msg, "response failed: ") {
-		t.Errorf("error %q does not start with 'response failed: '", msg)
-	}
-	for _, want := range []string{"server_error", "context window"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error %q does not contain %q", msg, want)
-		}
+	if got, want := err.Error(), "provider request failed: context window exceeded"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
@@ -923,8 +896,8 @@ func TestErrorEventContextOverflowNotRetryable(t *testing.T) {
 	if got := sc.StatusCode(); got != 0 {
 		t.Errorf("StatusCode() = %d, want 0 (context overflow is non-retryable despite server_error code)", got)
 	}
-	if !strings.HasPrefix(err.Error(), "stream error:") {
-		t.Errorf("error %q does not start with 'stream error:'", err.Error())
+	if got, want := err.Error(), "provider request failed: context window exceeded"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
@@ -1057,7 +1030,7 @@ func TestTranslateIncompleteUnknownReason(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error from response.incomplete (unknown reason), got nil")
 	}
-	if got, want := err.Error(), "response incomplete: some_future_reason"; got != want {
+	if got, want := err.Error(), "response incomplete: unknown reason"; got != want {
 		t.Errorf("unknown-reason message = %q, want %q", got, want)
 	}
 }
@@ -1853,12 +1826,10 @@ func TestResponseStreamErrorRetryDisposition(t *testing.T) {
 	}
 }
 
-// TestResponseStreamErrorErrorMessageUnchanged pins the invariant that adding
-// RetryDisposition does not change the Error() string.
-func TestResponseStreamErrorErrorMessageUnchanged(t *testing.T) {
+func TestResponseStreamErrorSafeCategory(t *testing.T) {
 	e := &responseStreamError{msg: "response failed: rate_limit_exceeded: Too Many Requests", status: 429}
-	if got := e.Error(); got != "response failed: rate_limit_exceeded: Too Many Requests" {
-		t.Errorf("Error() = %q, want unchanged message", got)
+	if got := e.Error(); got != "provider request failed (429 Too Many Requests)" {
+		t.Errorf("Error() = %q, want safe rate-limit category", got)
 	}
 }
 

@@ -392,12 +392,10 @@ func TestOpenAIChatStreamErrorRetryDisposition(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatStreamErrorErrorMessageUnchanged pins the invariant that wrapping
-// does not change the Error() string.
-func TestOpenAIChatStreamErrorErrorMessageUnchanged(t *testing.T) {
+func TestOpenAIChatStreamErrorSafeCategory(t *testing.T) {
 	e := &openaichatStreamError{msg: "request failed: 429 too many requests", status: 429}
-	if got := e.Error(); got != "request failed: 429 too many requests" {
-		t.Errorf("Error() = %q, want unchanged message", got)
+	if got := e.Error(); got != "provider request failed (429 Too Many Requests)" {
+		t.Errorf("Error() = %q, want safe rate-limit category", got)
 	}
 }
 

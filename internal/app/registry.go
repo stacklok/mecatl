@@ -1008,6 +1008,9 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		opts = append(opts, extra...)
 		opts = append(opts, openai.WithMaxRetries(0))
 		var llm port.LLMProvider = openai.New(opts...)
+		if id == providerOpenAICodex {
+			llm = codexRemediationProvider{LLMProvider: llm}
+		}
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
 			RecoveryBudget:    cfg.LLMRecoveryBudget,
