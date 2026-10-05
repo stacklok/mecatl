@@ -291603,6 +291603,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791158496843,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "157fe84aa17942d3e67c98c0d7f7d7070bee7b01",
+          "message": "Implement canonical mecatui status surfaces (#2075)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T17:16:59-07:00",
+          "tree_id": "355c001a91fc16a9b9dbbb3a023217b523a74f31",
+          "url": "https://github.com/stacklok/mecatl/commit/157fe84aa17942d3e67c98c0d7f7d7070bee7b01"
+        },
+        "date": 1791160167219,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -381929,6 +381968,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791160164275,
+  "lastUpdate": 1791160168344,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
