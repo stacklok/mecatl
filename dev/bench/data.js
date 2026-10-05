@@ -267462,6 +267462,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791208980309,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e9d7525373314f73e7dcd2565764e74e8be2eb4",
+          "message": "test: keep disposable fixtures out of repository scratch (#2087)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T07:15:03-07:00",
+          "tree_id": "149b6a0f364b947cebb5fdd1514b137276514d82",
+          "url": "https://github.com/stacklok/mecatl/commit/4e9d7525373314f73e7dcd2565764e74e8be2eb4"
+        },
+        "date": 1791210411753,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -388027,6 +388061,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791210408299,
+  "lastUpdate": 1791210413157,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
