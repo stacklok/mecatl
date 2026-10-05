@@ -16,6 +16,8 @@ type Resolved struct {
 	ByAction map[string][]string
 }
 
+const actionToolcalls = "Toolcalls"
+
 // validActions is the public action name contract (keyMap struct field names as strings).
 var validActions = map[string]struct{}{
 	"Submit":             {},
@@ -50,7 +52,7 @@ var validActions = map[string]struct{}{
 	"JumpTop":            {},
 	"JumpEnd":            {},
 	"Agents":             {},
-	"Toolcalls":          {},
+	actionToolcalls:      {},
 	"ExpandConversation": {},
 	"NextTab":            {},
 	"CancelChild":        {},
@@ -67,7 +69,7 @@ var (
 		"Suspend": {},
 		"ScrollU": {}, "ScrollD": {}, "ScrollTop": {}, "ScrollBottom": {},
 		"ModeSwitch": {}, "MCPPanel": {}, "Resources": {}, "Prompts": {},
-		"Agents": {}, "Toolcalls": {}, "ExpandConversation": {}, "Help": {}, "Effort": {},
+		"Agents": {}, actionToolcalls: {}, "ExpandConversation": {}, "Help": {}, "Effort": {},
 	}
 	overlayInternal = map[string]struct{}{
 		"Up": {}, "Down": {}, "Choose": {}, "Close": {}, "Refresh": {}, "Tasks": {}, "Findings": {},
@@ -79,14 +81,14 @@ var (
 // ExpandTools input alias renamed to Toolcalls. A source cannot name both.
 func NormalizeAliases(in map[string][]string) (map[string][]string, error) {
 	if _, hasAlias := in["ExpandTools"]; hasAlias {
-		if _, hasCanonical := in["Toolcalls"]; hasCanonical {
-			return nil, fmt.Errorf("ExpandTools and Toolcalls cannot both be set in one source")
+		if _, hasCanonical := in[actionToolcalls]; hasCanonical {
+			return nil, fmt.Errorf("ExpandTools and %s cannot both be set in one source", actionToolcalls)
 		}
 	}
 	out := make(map[string][]string, len(in))
 	for action, chords := range in {
 		if action == "ExpandTools" {
-			action = "Toolcalls"
+			action = actionToolcalls
 		}
 		out[action] = append([]string(nil), chords...)
 	}
@@ -147,35 +149,8 @@ func Validate(res Resolved) error {
 	if err := validateToolcallsVerdicts(res); err != nil {
 		return err
 	}
-	// The two conversation actions must not shadow existing default global keys
-	// even when only one side of the collision is explicitly overridden.
-	defaults := map[string][]string{
-		"Submit": {"enter"}, "Newline": {"shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"},
-		"Cancel": {"esc"}, "ClearPrompt": {"ctrl+u"}, "EditBack": {"up"},
-		"Paste": {"ctrl+v"}, "SelectAll": {"ctrl+g"}, "CopySelection": {"ctrl+y"},
-		"Quit": {"ctrl+c"}, "QuitD": {"ctrl+d"}, "Suspend": {"ctrl+z"},
-		"ScrollU": {"pgup"}, "ScrollD": {"pgdown"}, "ScrollTop": {"home"}, "ScrollBottom": {"end"},
-		"ModeSwitch": {"shift+tab"}, "MCPPanel": {"ctrl+o"}, "Resources": {"ctrl+r"},
-		"Prompts": {"f8"}, "Agents": {"f6"}, "Effort": {"f7"},
-		"Toolcalls": {"ctrl+t"}, "ExpandConversation": {"f9"}, "Help": {"?"},
-	}
-	for _, action := range []string{"Toolcalls", "ExpandConversation"} {
-		chords := res.ByAction[action]
-		if len(chords) == 0 {
-			chords = defaults[action]
-		}
-		for other, fallback := range defaults {
-			if other == action {
-				continue
-			}
-			effective := res.ByAction[other]
-			if len(effective) == 0 {
-				effective = fallback
-			}
-			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
-				return err
-			}
-		}
+	if err := validateConversationDefaultGlobalCollisions(res); err != nil {
+		return err
 	}
 	// 3b) RawArgs and Refresh share default chord r in disjoint surfaces; an
 	// explicit rebind of either must keep them disjoint. With both at their
@@ -229,8 +204,40 @@ func Validate(res Resolved) error {
 	return rejectPairOverlap(res.ByAction["Quit"], res.ByAction["QuitD"], "Quit", "QuitD")
 }
 
+func validateConversationDefaultGlobalCollisions(res Resolved) error {
+	defaults := map[string][]string{
+		"Submit": {"enter"}, "Newline": {"shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"},
+		"Cancel": {"esc"}, "ClearPrompt": {"ctrl+u"}, "EditBack": {"up"},
+		"Paste": {"ctrl+v"}, "SelectAll": {"ctrl+g"}, "CopySelection": {"ctrl+y"},
+		"Quit": {"ctrl+c"}, "QuitD": {"ctrl+d"}, "Suspend": {"ctrl+z"},
+		"ScrollU": {"pgup"}, "ScrollD": {"pgdown"}, "ScrollTop": {"home"}, "ScrollBottom": {"end"},
+		"ModeSwitch": {"shift+tab"}, "MCPPanel": {"ctrl+o"}, "Resources": {"ctrl+r"},
+		"Prompts": {"f8"}, "Agents": {"f6"}, "Effort": {"f7"},
+		actionToolcalls: {"ctrl+t"}, "ExpandConversation": {"f9"}, "Help": {"?"},
+	}
+	for _, action := range []string{actionToolcalls, "ExpandConversation"} {
+		chords := res.ByAction[action]
+		if len(chords) == 0 {
+			chords = defaults[action]
+		}
+		for other, fallback := range defaults {
+			if other == action {
+				continue
+			}
+			effective := res.ByAction[other]
+			if len(effective) == 0 {
+				effective = fallback
+			}
+			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func validateToolcallsVerdicts(res Resolved) error {
-	toolcalls := res.ByAction["Toolcalls"]
+	toolcalls := res.ByAction[actionToolcalls]
 	if len(toolcalls) == 0 {
 		toolcalls = []string{"ctrl+t"}
 	}
@@ -243,7 +250,7 @@ func validateToolcallsVerdicts(res Resolved) error {
 		if len(chords) == 0 {
 			chords = defaults
 		}
-		if err := rejectPairOverlap(toolcalls, chords, "Toolcalls", verdict); err != nil {
+		if err := rejectPairOverlap(toolcalls, chords, actionToolcalls, verdict); err != nil {
 			return err
 		}
 	}

@@ -269,6 +269,26 @@ func TestToolcallsValidation(t *testing.T) {
 	}
 }
 
+func TestValidateConversationActionsAgainstDefaultGlobals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   map[string][]string
+	}{
+		{"toolcalls overlaps default agents", map[string][]string{"Toolcalls": {"f6"}}},
+		{"expand conversation overlaps default toolcalls", map[string][]string{"ExpandConversation": {"ctrl+t"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(res); err == nil {
+				t.Fatal("validate must reject a conversation action that shadows a default global chord")
+			}
+		})
+	}
+}
+
 func TestExpandConversationGlobalValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
