@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1163,7 +1164,20 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 	if cfg.authToken != "" || cfg.anonymous {
 		registry, regErr := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
 		if regErr == nil {
-			if conn, findErr := registry.Find(cfg.connectAddress); findErr == nil {
+			lookupTarget := cfg.connectAddress
+			if !strings.ContainsAny(lookupTarget, ":/?#@") {
+				// gRPC defaults a bare hostname to HTTPS's port. Normalize only
+				// that spelling before FindTarget so resource aliases never select
+				// another target's saved trust.
+				lookupTarget = net.JoinHostPort(lookupTarget, "443")
+			} else if strings.HasPrefix(lookupTarget, "[") && strings.HasSuffix(lookupTarget, "]") {
+				host := lookupTarget[1 : len(lookupTarget)-1]
+				ip, _, _ := strings.Cut(host, "%")
+				if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+					lookupTarget = net.JoinHostPort(host, "443")
+				}
+			}
+			if conn, findErr := registry.FindTarget(lookupTarget); findErr == nil {
 				// Explicit bearer and anonymous connects may reuse only the
 				// target's saved server trust. Their transport policy remains
 				// entirely caller-controlled; the managed-OIDC guarantee above

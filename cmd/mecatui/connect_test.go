@@ -2,7 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,9 +22,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/adrg/xdg"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/zalando/go-keyring"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -585,6 +594,227 @@ func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T)
 			defer cleanup()
 			if err != nil || target != id.Target || dial.Server != id.Target || dial.UseTLS != tc.useTLS || dial.Insecure != tc.wantInsecure || dial.RemotePlaintextAllowed != tc.wantPlaintext || dial.TLSCAFile != tc.want || (dial.TokenSource != nil) != tc.wantTokenSource || dial.AuthToken != tc.authToken || dial.ExplicitAnonymous != tc.anonymous {
 				t.Fatalf("target=%q dial=%#v err=%v, want saved verified transport with CA %q", target, dial, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExplicitConnectReusesSavedServerCAOnlyForSameDialTarget(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	registry, err := clientauth.OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := clientauth.Identity{
+		Target: "MiXeD.Example:0443", Issuer: "https://issuer.example", ClientID: "client", Audience: "audience",
+		RedirectURI: "http://127.0.0.1:18473/oauth/callback", Scopes: []string{"openid"},
+	}
+	const savedCA = "/saved-server-ca.pem"
+	if _, err := registry.Upsert(clientauth.Connection{
+		Identity: id, ResourceURL: "https://resource.example", ServerCAFile: savedCA,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, address, explicitCA, wantCA string
+		authToken                         string
+		anonymous                         bool
+	}{
+		{name: "bearer canonical target", address: "MIXED.EXAMPLE:00443", authToken: "token", wantCA: savedCA},
+		{name: "anonymous bare target defaults to HTTPS port", address: "mixed.example", anonymous: true, wantCA: savedCA},
+		{name: "bearer explicit CA wins", address: "mixed.example:443", authToken: "token", explicitCA: "/explicit-server-ca.pem", wantCA: "/explicit-server-ca.pem"},
+		{name: "anonymous resource alias does not retarget trust", address: "https://resource.example", anonymous: true},
+		{name: "bearer resource hostname alias does not retarget trust", address: "resource.example", authToken: "token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, dial, cleanup, err := resolveTransport(t.Context(), config{
+				transportMode: modeConnect, connectAddress: tc.address, useTLS: true, tlsCA: tc.explicitCA,
+				authToken: tc.authToken, anonymous: tc.anonymous,
+			})
+			defer cleanup()
+			if err != nil || target != tc.address || dial.Server != tc.address || dial.TLSCAFile != tc.wantCA || dial.AuthToken != tc.authToken || dial.ExplicitAnonymous != tc.anonymous || dial.TokenSource != nil {
+				t.Fatalf("target=%q dial=%#v err=%v, want direct explicit dial with CA %q", target, dial, err, tc.wantCA)
+			}
+		})
+	}
+
+	ipv6ID := id
+	ipv6ID.Target = "[::1]:443"
+	if _, err := registry.Upsert(clientauth.Connection{Identity: ipv6ID, ResourceURL: "https://ipv6-resource.example", ServerCAFile: savedCA}); err != nil {
+		t.Fatal(err)
+	}
+	ipv6ZoneID := ipv6ID
+	ipv6ZoneID.Target = "[fe80::1%en0]:443"
+	if _, err := registry.Upsert(clientauth.Connection{Identity: ipv6ZoneID, ResourceURL: "https://ipv6-zone-resource.example", ServerCAFile: savedCA}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, address string
+		authToken     string
+		anonymous     bool
+	}{
+		{name: "bearer bracketed IPv6 defaults to HTTPS port", address: "[::1]", authToken: "token"},
+		{name: "anonymous expanded IPv6 canonical target", address: "[0:0:0:0:0:0:0:1]:00443", anonymous: true},
+		{name: "bearer bracketed IPv6 zone defaults to HTTPS port", address: "[fe80::1%EN0]", authToken: "token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, dial, cleanup, err := resolveTransport(t.Context(), config{
+				transportMode: modeConnect, connectAddress: tc.address, useTLS: true,
+				authToken: tc.authToken, anonymous: tc.anonymous,
+			})
+			defer cleanup()
+			if err != nil || target != tc.address || dial.Server != tc.address || dial.TLSCAFile != savedCA || dial.AuthToken != tc.authToken || dial.ExplicitAnonymous != tc.anonymous || dial.TokenSource != nil {
+				t.Fatalf("target=%q dial=%#v err=%v, want direct explicit IPv6 dial with saved CA %q", target, dial, err, savedCA)
+			}
+		})
+	}
+}
+
+func TestConnectUsesSavedServerCAForLazyTLSRPC(t *testing.T) {
+	t.Setenv("MECATL_AUTH_TOKEN", "")
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	issuer := newOIDCTestIssuer(t, "saved-server-ca", nil)
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	issuerCA := filepath.Join(root, "issuer-ca.pem")
+	issuer.writeCA(t, issuerCA)
+
+	caPublic, caPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTemplate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "server-root"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPublic, caPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafPublic, leafPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "mecated"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, leafPublic, caPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKeyDER, err := x509.MarshalPKCS8PrivateKey(leafPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverCert, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: leafKeyDER}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverCA := filepath.Join(root, "server-ca.pem")
+	if err := os.WriteFile(serverCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wrongCA := issuerCA // The issuer and gRPC server deliberately have distinct roots.
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{serverCert}, MinVersion: tls.VersionTLS12})))
+	mecatlv1.RegisterHarnessServiceServer(grpcServer, anonymousConnectServer{})
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+
+	address := listener.Addr().String()
+	id := clientauth.Identity{Target: address, Issuer: issuer.Server.URL, ClientID: "client", Audience: "audience", RedirectURI: "http://127.0.0.1:18473/oauth/callback", Scopes: []string{"openid"}}
+	if _, err := clientauth.ResolveCredentialStore(t.Context(), root, clientauth.CredentialStoreFile); err != nil {
+		t.Fatal(err)
+	}
+	store, err := clientauth.OpenCredentialStore(t.Context(), root, clientauth.CredentialBackendFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := clientauth.NewCredentials(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": issuer.Server.URL, "sub": "fixture-user", "aud": "audience",
+		"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Add(-time.Minute).Unix(),
+	})
+	token.Header["kid"] = "saved-server-ca"
+	accessToken, err := token.SignedString(issuer.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Save(t.Context(), id, clientauth.Token{AccessToken: accessToken, TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).Format(time.RFC3339)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, savedCA   string
+		args            []string
+		managed, wantOK bool
+	}{
+		{name: "managed saved CA without TLS flag", savedCA: serverCA, managed: true, wantOK: true},
+		{name: "managed explicit CA overrides wrong saved CA", savedCA: wrongCA, args: []string{"--tls-ca", serverCA}, managed: true, wantOK: true},
+		{name: "managed wrong explicit CA overrides correct saved CA", savedCA: serverCA, args: []string{"--tls-ca", wrongCA}, managed: true},
+		{name: "managed missing saved CA is rejected", managed: true},
+		{name: "managed wrong saved CA is rejected", savedCA: wrongCA, managed: true},
+		{name: "anonymous saved CA", savedCA: serverCA, args: []string{"--anonymous", "--tls"}, wantOK: true},
+		{name: "bearer saved CA", savedCA: serverCA, args: []string{"--auth-token", "token", "--tls"}, wantOK: true},
+		{name: "wrong explicit CA overrides correct saved CA", savedCA: serverCA, args: []string{"--anonymous", "--tls", "--tls-ca", wrongCA}},
+		{name: "missing saved CA is rejected", args: []string{"--anonymous", "--tls"}},
+		{name: "wrong saved CA is rejected", savedCA: wrongCA, args: []string{"--anonymous", "--tls"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			registry, err := clientauth.OpenRegistry(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Upsert(clientauth.Connection{Identity: id, IssuerCAFile: issuerCA, ServerCAFile: tc.savedCA}); err != nil {
+				t.Fatal(err)
+			}
+			invocation := resolveInvocation(append([]string{"mecatui", "connect", address}, tc.args...))
+			if invocation.err != nil {
+				t.Fatal(invocation.err)
+			}
+			cfg, err := parseRunConfig(invocation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, dial, cleanup, err := resolveTransport(t.Context(), cfg)
+			defer cleanup()
+			if err != nil || !dial.UseTLS || (dial.TokenSource != nil) != tc.managed {
+				t.Fatalf("resolve dial=%#v err=%v, want parsed TLS dial managed=%v", dial, err, tc.managed)
+			}
+			cl, err := client.Dial(dial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cl.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			got, _, _, callErr := cl.CreateSession(ctx, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+			if tc.wantOK {
+				if callErr != nil || got != "anonymous-local" {
+					t.Fatalf("lazy TLS CreateSession = %q, %v", got, callErr)
+				}
+				return
+			}
+			if callErr == nil || !strings.Contains(callErr.Error(), "x509: certificate signed by unknown authority") {
+				t.Fatalf("CreateSession = %v, want unknown-authority certificate failure", callErr)
 			}
 		})
 	}
