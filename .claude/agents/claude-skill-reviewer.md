@@ -1,43 +1,10 @@
 ---
 name: claude-skill-reviewer
 description: >-
-  Reviews Claude Code / Agent Skills definitions — SKILL.md files and their
-  bundled scripts/, references/, assets/ directories — against the official
-  Agent Skills specification (agentskills.io), Claude Code's skills documentation
-  at code.claude.com/docs/en/skills, and Anthropic's published guidance ("skill-
-  write", "Equipping agents for the real world with Agent Skills"). Catches:
-  bad description (the primary trigger mechanism), trigger keywords trapped in
-  the body, SKILL.md over 500 lines without progressive disclosure, custom
-  directories outside scripts/references/assets, hardcoded credentials, invented
-  frontmatter keys, deeply nested references, overlapping skill descriptions,
-  over-explained instructions, missing error handling, missing degrees-of-
-  freedom calibration, name/folder mismatch, and the Claude Code skill
-  extensions (disable-model-invocation, run-in-subagent context). Read-only.
-
-  Examples:
-
-  <example>
-  Context: User just authored a skill.
-  user: "Wrote a new skill for our API conventions, can you review it?"
-  assistant: "Let me use the claude-skill-reviewer agent — skill discovery runs entirely off the description field, and a few minutes of review there is high-leverage."
-  </example>
-
-  <example>
-  Context: User reports a skill that isn't activating.
-  user: "Claude never picks up my pdf-extract skill."
-  assistant: "Almost always a description problem. I'll use the claude-skill-reviewer agent to diagnose."
-  </example>
-
-  <example>
-  Context: User wants an audit of an inherited skill library.
-  user: "We took over a project with 20 skills, half feel stale. Can you audit them?"
-  assistant: "I'll use the claude-skill-reviewer agent to scan them against the spec and current best practices."
-  </example>
-
-  NOT for: writing skills from scratch (use the skill-write skill itself, or
-  ask the user to invoke /write-a-skill), reviewing sub-agent definitions (use
-  claude-agent-reviewer), reviewing CLAUDE.md (use claude-md skill), MCP server
-  authoring review (use mcp-server-authoring skill).
+  Reviews Claude Code / Agent Skills definitions (SKILL.md plus scripts/,
+  references/, assets/) against the Agent Skills spec: description triggers,
+  progressive disclosure, size, and structure. Use after writing or changing a
+  skill. Read-only. Not for sub-agents (use claude-agent-reviewer).
 tools: [Read, Glob, Grep, WebFetch, Bash]
 color: orange
 memory: project
