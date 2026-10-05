@@ -18,6 +18,79 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 )
 
+type firstTimeoutReviewPreparer struct {
+	reviewer *guardrailActionReviewer
+}
+
+func (p firstTimeoutReviewPreparer) PrepareReviewEvidence(ctx context.Context, req agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+	if req.Request.EffectiveCall.ID == "first" {
+		<-ctx.Done()
+		return agent.PreparedReviewEvidence{}, ctx.Err()
+	}
+	return p.reviewer.PrepareReviewEvidence(ctx, req)
+}
+
+type healthOrderReadTool struct {
+	stubTool
+	executed chan session.ToolCallID
+}
+
+func (t healthOrderReadTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	t.executed <- call.ID
+	return t.stubTool.Execute(ctx, call, env)
+}
+
+func TestReadBatchPreparationFailureDoesNotOverwriteLaterRouteHealth(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		base, provider := reviewerForTurns(t, mockllm.ToolCallTurn(session.NewToolCall("submit", submitReviewAssessmentToolName, []byte(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))))
+		rules, ok := compileGuardrailRules(Config{}, []modelhook.RuleSpec{{Match: "Inspect", Phases: []string{"pre"}, Mode: "block"}})
+		if !ok {
+			t.Fatal("rules")
+		}
+		health := &guardrailRouteHealth{}
+		reviewer := &guardrailActionReviewer{base: base, rules: rules, health: health, failClosed: true}
+		catalog := tool.NewCatalog()
+		executed := make(chan session.ToolCallID, 2)
+		catalog.MustRegister(healthOrderReadTool{stubTool: stubTool{name: "Inspect"}, executed: executed})
+		calls := []session.ToolCall{session.NewToolCall("first", "Inspect", []byte(`{}`)), session.NewToolCall("second", "Inspect", []byte(`{}`))}
+		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil), ToolReviewer: reviewer, ReviewEvidencePreparer: firstTimeoutReviewPreparer{reviewer: reviewer}})
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "health-order", Revision: "r1"}, memfs.NewWorkspace("/ws"), reviewerReadLedger{}, nil)
+		sess := session.New("health-order", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
+		timeouts, denied, succeeded := 0, 0, 0
+		for ev := range engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "inspect"}).Events() {
+			if ev.Type == session.EvPermissionAsk {
+				t.Error("unexpected approval ask")
+			}
+			if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.Guardrail.ReasonCode == string(agent.ReviewFailureTimeout) {
+				timeouts++
+				if ev.Hook.CallID != "first" || ev.Hook.Guardrail.Disposition != "deny" {
+					t.Errorf("timeout enforcement=%+v", ev.Hook)
+				}
+			}
+			if ev.Type == session.EvToolResult && ev.ToolResult != nil {
+				if ev.ToolResult.CallID == "first" && ev.ToolResult.IsError {
+					denied++
+				}
+				if ev.ToolResult.CallID == "second" && !ev.ToolResult.IsError {
+					succeeded++
+				}
+			}
+		}
+		if timeouts != 1 || denied != 1 || succeeded != 1 || provider.Calls() != 1 {
+			t.Fatalf("timeouts=%d denied=%d succeeded=%d provider calls=%d", timeouts, denied, succeeded, provider.Calls())
+		}
+		if len(executed) != 1 {
+			t.Fatalf("executed %d calls, want only second sibling", len(executed))
+		}
+		if got := <-executed; got != "second" {
+			t.Fatalf("executed %s, want second sibling", got)
+		}
+		if seen, inspection, assessment, code := health.snapshot(); !seen || inspection != "complete" || assessment != "acceptable" || code != "" {
+			t.Fatalf("latest route health=%t %s %s %s; want second sibling's healthy assessment", seen, inspection, assessment, code)
+		}
+	})
+}
+
 func TestReviewEvidenceBindingExpiresAtInheritedDeadline(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review", Revision: "r1"}
 	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/review"), reviewerReadLedger{}, nil)

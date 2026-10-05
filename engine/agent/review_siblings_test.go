@@ -77,6 +77,101 @@ func TestCancelledReadBatchClosesUnassessedSibling(t *testing.T) {
 	}
 }
 
+type cancellingSiblingPreparer struct {
+	entered <-chan struct{}
+	cancel  context.CancelFunc
+	closed  atomic.Int32
+}
+
+func (p *cancellingSiblingPreparer) PrepareReviewEvidence(ctx context.Context, req ReviewEvidencePreparation) (PreparedReviewEvidence, error) {
+	if req.Request.EffectiveCall.ID == "second" {
+		<-p.entered
+		p.cancel()
+		return PreparedReviewEvidence{}, ctx.Err()
+	}
+	return PreparedReviewEvidence{Complete: true, Close: func() { p.closed.Add(1) }}, nil
+}
+
+type cancellationCleanupReviewer struct {
+	terminalFailureReviewer
+	entered chan struct{}
+	cleanup chan struct{}
+	release <-chan struct{}
+}
+
+func (r *cancellationCleanupReviewer) Review(ctx context.Context, _ ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
+	r.reviews++
+	close(r.entered)
+	<-ctx.Done()
+	close(r.cleanup)
+	<-r.release
+	return ToolReviewResult{Assessment: ReviewUnresolved}, testGuardrailUsage(7), ctx.Err()
+}
+
+func TestCancelledReadBatchJoinsActiveCheckerBeforeClosingSource(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		release := make(chan struct{})
+		defer close(release)
+		reviewer := &cancellationCleanupReviewer{terminalFailureReviewer: terminalFailureReviewer{job: ReviewJobAction}, entered: make(chan struct{}), cleanup: make(chan struct{}), release: release}
+		preparer := &cancellingSiblingPreparer{entered: reviewer.entered, cancel: cancel}
+		var executions atomic.Int32
+		catalog := tool.NewCatalog()
+		catalog.MustRegister(budgetReadTool{executions: &executions})
+		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{}`))}
+		details := &rootContractSink{}
+		engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...)), Catalog: catalog, Policy: terminalFailurePolicy{job: ReviewJobAction}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer, ReviewDetails: details, Interactive: true})
+		env := memEnv("/ws")
+		sess := session.New("cancel-active-sibling", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
+		run := engine.Run(ctx, sess, env, RunRequest{Text: "read"})
+		done := make(chan struct{})
+		var events []session.Event
+		go func() {
+			defer close(done)
+			for ev := range run.Events() {
+				events = append(events, ev)
+			}
+		}()
+		synctest.Wait()
+		select {
+		case <-reviewer.cleanup:
+		default:
+			t.Fatal("first checker did not enter cancellation cleanup")
+		}
+		select {
+		case <-done:
+			t.Error("run finished before active checker cleanup was released")
+		default:
+		}
+		if got := preparer.closed.Load(); got != 0 {
+			t.Errorf("source closed %d times while checker was active", got)
+		}
+		release <- struct{}{}
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("run did not finish after checker cleanup")
+		}
+		stopped := false
+		for _, ev := range events {
+			if ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+				stopped = true
+			}
+			if ev.Type == session.EvPermissionAsk || (ev.Hook != nil && ev.Hook.Guardrail != nil) {
+				t.Errorf("cancelled review published %+v", ev)
+			}
+		}
+		if !stopped || preparer.closed.Load() != 1 || reviewer.reviews != 1 || executions.Load() != 0 || reviewer.recorded != nil || details.got.ReviewID != "" {
+			t.Fatalf("stopped=%t closed=%d reviews=%d executions=%d failure=%v detail=%+v", stopped, preparer.closed.Load(), reviewer.reviews, executions.Load(), reviewer.recorded, details.got)
+		}
+		if got := sess.UsageFor(session.UsageKindGuardrail); got.InputTokens != 7 {
+			t.Fatalf("cancelled checker usage=%+v, want 7 input tokens exactly once", got)
+		}
+	})
+}
+
 type siblingAskGate struct {
 	hook  bool
 	asked bool

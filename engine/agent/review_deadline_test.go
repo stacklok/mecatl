@@ -79,6 +79,81 @@ func TestReviewPreparationTimeoutHonorsEnforcement(t *testing.T) {
 	}
 }
 
+type deadlineGrantReviewer struct {
+	terminalFailureReviewer
+	digestDelay time.Duration
+	lookupDelay time.Duration
+	records     int
+}
+
+func (r *deadlineGrantReviewer) GrantDigest(ToolReviewRequest) (string, bool) {
+	time.Sleep(r.digestDelay)
+	return "grant", true
+}
+func (r *deadlineGrantReviewer) AllowsGrant(string) bool {
+	time.Sleep(r.lookupDelay)
+	return true
+}
+func (*deadlineGrantReviewer) ArmGrant(string, string) {}
+func (r *deadlineGrantReviewer) RecordGuardrailReviewFailure(result ToolReviewResult, err error) {
+	r.records++
+	r.terminalFailureReviewer.RecordGuardrailReviewFailure(result, err)
+}
+
+func TestActionPreparationFailureRecordedBeforeAssessment(t *testing.T) {
+	for _, stage := range []string{"preparation", "late_preparation", "grant_digest", "grant_lookup", "before_checker", "parent_cancelled"} {
+		t.Run(stage, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				reviewer := &deadlineGrantReviewer{terminalFailureReviewer: terminalFailureReviewer{job: ReviewJobAction}}
+				preparer := &deadlineEvidencePreparer{}
+				switch stage {
+				case "preparation", "late_preparation", "parent_cancelled":
+					preparer.delay = 91 * time.Second
+					preparer.ignoreContext = stage == "late_preparation"
+				case "grant_digest":
+					reviewer.digestDelay = 91 * time.Second
+				case "grant_lookup":
+					reviewer.lookupDelay = 91 * time.Second
+				}
+				if stage == "parent_cancelled" {
+					timer := time.AfterFunc(time.Second, cancel)
+					defer timer.Stop()
+				}
+				r := &Run{reviewRoot: newReviewRoot(reviewer, preparer, nil)}
+				env := memEnv("/ws")
+				sess := session.New("prep-health", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
+				assessment := NewEngine(Deps{}).prepareActionAssessment(ctx, r, sess, env, session.NewToolCall("call", "Act", []byte(`{}`)))
+				defer assessment.cancel()
+				wantRecords := 1
+				if stage == "before_checker" || stage == "parent_cancelled" {
+					wantRecords = 0
+				}
+				if reviewer.records != wantRecords {
+					t.Errorf("preparation recorded %d failures, want %d before checker starts", reviewer.records, wantRecords)
+				}
+				if stage == "before_checker" {
+					if !assessment.grantHit {
+						t.Fatal("expected grant before deadline")
+					}
+					time.Sleep(91 * time.Second)
+				}
+				assessAction(ctx, r, &assessment)
+				if stage != "parent_cancelled" {
+					wantRecords = 1
+					if reviewFailureCode(assessment.err) != ReviewFailureTimeout || assessment.result.Assessment != ReviewUnresolved || assessment.grantHit {
+						t.Errorf("expired assessment=%+v", assessment)
+					}
+				}
+				if reviewer.records != wantRecords || reviewer.reviews != 0 {
+					t.Fatalf("records=%d want %d; checker calls=%d", reviewer.records, wantRecords, reviewer.reviews)
+				}
+			})
+		})
+	}
+}
+
 type terminalContextEvidenceError struct{ error }
 
 func (e terminalContextEvidenceError) Unwrap() error                      { return e.error }

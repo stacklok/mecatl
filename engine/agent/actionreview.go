@@ -673,6 +673,10 @@ func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *sess
 		assessment.action.prepareErr = reviewFailure(ReviewFailureTimeout)
 		assessment.grantHit = false
 	}
+	// Record before preparing later siblings, not during ordered resolution.
+	if assessment.action.prepareErr != nil && ctx.Err() == nil {
+		recordReviewFailure(r.reviewRoot.reviewer, ToolReviewResult{Assessment: ReviewUnresolved}, assessment.action.prepareErr)
+	}
 	return assessment
 }
 
@@ -760,6 +764,9 @@ func assessAction(parent context.Context, r *Run, assessment *actionReviewAssess
 	if assessment.action.prepareErr == nil && ctx.Err() != nil {
 		assessment.action.prepareErr = reviewFailure(ReviewFailureTimeout)
 		assessment.grantHit = false
+		if parent.Err() == nil {
+			recordReviewFailure(r.reviewRoot.reviewer, ToolReviewResult{Assessment: ReviewUnresolved}, assessment.action.prepareErr)
+		}
 	}
 	if assessment.action.prepareErr != nil {
 		assessment.result.Assessment = ReviewUnresolved
@@ -792,9 +799,6 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 	}
 	if ctx.Err() != nil {
 		return session.ToolResult{}, true, false, false
-	}
-	if assessment.action.prepareErr != nil {
-		recordReviewFailure(r.reviewRoot.reviewer, assessment.result, assessment.err)
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.action.principalRevision) {
 		res := session.NewToolError(call.ID, "contextual guardrail review context changed during review; retry the action for a fresh assessment")

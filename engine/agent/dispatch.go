@@ -243,12 +243,6 @@ func (r *Run) recordCompletedActionUsage(ctx context.Context, sess *session.Sess
 	}
 }
 
-func closePreparedOnCancel(prepared *[]readBatchPending, cancelled *bool) {
-	if *cancelled {
-		closeActionAssessments(*prepared)
-	}
-}
-
 func closeInboundAssessment(assessment inboundAssessment) {
 	if assessment.cancel != nil {
 		assessment.cancel()
@@ -260,7 +254,6 @@ func closeInboundAssessment(assessment inboundAssessment) {
 
 //nolint:gocyclo // Keep serial authorization and approval waits before review budgets, with shared cancellation cleanup.
 func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, out map[session.ToolCallID]session.ToolResult) (prepared []readBatchPending, cancelled bool) {
-	defer closePreparedOnCancel(&prepared, &cancelled)
 	for _, c := range batch {
 		c := c
 		e.openCard(r, turnIdx, c)
