@@ -9,7 +9,13 @@ sidebar_position: 5
 
 Pass narrow responder functions to a run when application code can decide
 permission or plan-approval asks. The raw ask remains in the event stream so a
-UI or audit consumer can still observe it.
+UI or audit log can still observe it.
+
+## Prerequisites
+
+[Connect your application](connect.md), then choose which decisions it is
+authorized to make. Keep the client open while responders or continuation flows
+are active. The examples use `client` and, after creation, `session` and `run`.
 
 ## Resolve ordinary permission asks
 
@@ -63,7 +69,7 @@ activity before retrying.
 
 Create a session-bound authorization handle from the handoff returned by
 `Run.outcome()`. The handle stores correlation only and performs no request or
-state check during construction:
+state check during construction.
 
 Use this workflow only for `authorization.required` handoffs from session-scoped
 ToolHive broker tools. It does not configure direct or global MCP profiles or
@@ -107,7 +113,7 @@ const result = await flow.result();
 requests its iterator. Request headers, callbacks, signals, and deadlines apply
 only to that flow, and the SDK adds exact session affinity.
 
-The result discriminant defines the next application action:
+Use the result's `outcome` field to choose the next action:
 
 |`outcome`|Meaning|
 |-|-|
@@ -197,12 +203,12 @@ start the proceed run after plan approval. The SDK requires the server's
 combined with `onPlanApproval` or set to `true` on `session.retry()`.
 
 After showing a `PresentPlan` `permission.ask`, submit the operator's verdict
-through `session.controls(run.id).resolvePlanAsk(askId, verdict)`. The verdict is
-`approve`, `accept_edits`, or `iterate`. The control acknowledges the exact run
-and ask; it does not confirm that execution started. Follow `session.activity()`
-until a new run ID appears or a `plan.continuation_failed` event identifies the
-approved plan run and ask. A disconnected activity stream can leave the outcome
-uncertain until activity is reconciled.
+through `session.controls(run.id).resolvePlanAsk(askId, verdict)`. The verdict
+is `approve`, `accept_edits`, or `iterate`. The control acknowledges the exact
+run and ask; it does not confirm that execution started. Follow
+`session.activity()` until a new run ID appears or a `plan.continuation_failed`
+event identifies the approved plan run and ask. A disconnected activity stream
+can leave the outcome uncertain until activity is reconciled.
 
 For a restored pending plan ask, use its durable run and ask IDs with the same
 exact control. The server owns that continuation even if the original run did

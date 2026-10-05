@@ -1,7 +1,8 @@
 ---
 sidebar_position: 30
 title: Cloud-native k8s with mecak8s
-description: Deploy a shared-team Mecatl service with Redis and Kubernetes Leases.
+description:
+  Deploy a shared-team Mecatl service with Redis and Kubernetes Leases.
 ---
 
 # Cloud-native k8s with mecak8s
@@ -31,10 +32,8 @@ sessions from Redis. The pod is disposable; the session is not.
 ## Try mecak8s locally
 
 The repository includes a disposable local Kind environment with Redis and two
-`mecak8s` replicas. Follow
-[Try Mecatl on Kubernetes](/operating/kubernetes.md) to create
-the cluster and connect with `mecatui`.
-
+`mecak8s` replicas. Follow [Try Mecatl on Kubernetes](/operating/kubernetes.md)
+to create the cluster and connect with `mecatui`.
 
 ## Before you deploy
 
@@ -179,8 +178,7 @@ Use an API-key provider instead of mounting a local Codex OAuth credential.
 
 <span id="choose-filesystem-access"></span>
 <span id="mounted-workspace-shared-filesystem-root"></span>
-<span id="redis-virtual-workspace"></span>
-<span id="state-topology"></span>
+<span id="redis-virtual-workspace"></span> <span id="state-topology"></span>
 <span id="secure-redis-credentials-and-tls"></span>
 
 [Configure durable state and filesystem access](/operating/mecak8s/state-and-execution.md).
@@ -197,8 +195,7 @@ Use an API-key provider instead of mounting a local Codex OAuth credential.
 
 <span id="inspect-the-event-log"></span>
 <span id="size-durable-event-followers"></span>
-<span id="configure-logging"></span>
-<span id="readiness-and-health"></span>
+<span id="configure-logging"></span> <span id="readiness-and-health"></span>
 
 [Inspect events, logs, and readiness](/operating/mecak8s/observe-and-troubleshoot.md).
 
@@ -206,22 +203,18 @@ Use an API-key provider instead of mounting a local Codex OAuth credential.
 <span id="use-workload-identity-for-an-llm-gateway"></span>
 <span id="session-affinity-is-an-infrastructure-contract"></span>
 <span id="mount-trusted-skills-agents-and-rules"></span>
-<span id="the-helm-charts-topology"></span>
-<span id="graceful-shutdown"></span>
-<span id="verify-session-failover"></span>
-<span id="scaling"></span>
+<span id="the-helm-charts-topology"></span> <span id="graceful-shutdown"></span>
+<span id="verify-session-failover"></span> <span id="scaling"></span>
 
 [Scale, recover, and upgrade the deployment](/operating/mecak8s/scale-recover-and-upgrade.md).
 
-<span id="connect-global-mcp-servers"></span>
-<span id="server-tls"></span>
+<span id="connect-global-mcp-servers"></span> <span id="server-tls"></span>
 <span id="rotate-server-tls-certificates"></span>
 <span id="configure-caller-identity"></span>
 <span id="check-existing-data-first"></span>
 <span id="before-admitting-callers-inventory-ownerless-records"></span>
 <span id="validator-and-bounded-signing-key-cache"></span>
-<span id="enable-oidc"></span>
-<span id="advertise-login-metadata"></span>
+<span id="enable-oidc"></span> <span id="advertise-login-metadata"></span>
 <span id="troubleshooting-start-here"></span>
 <span id="security-boundaries"></span>
 
@@ -239,8 +232,9 @@ Use an API-key provider instead of mounting a local Codex OAuth credential.
 - [Configure state and execution](/operating/mecak8s/state-and-execution.md).
 - [Secure client access](/operating/mecak8s/identity-and-client-access.md).
 - [Observe and troubleshoot](/operating/mecak8s/observe-and-troubleshoot.md).
-- [Scale, recover, and upgrade](/operating/mecak8s/scale-recover-and-upgrade.md).
 
 ## Related information
+
+- [Scale, recover, and upgrade](/operating/mecak8s/scale-recover-and-upgrade.md).
 
 - [Server CLI reference](/reference/server-cli.md).

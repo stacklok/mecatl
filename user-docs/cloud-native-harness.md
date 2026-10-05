@@ -8,8 +8,8 @@ description:
 
 # What is a cloud-native harness?
 
-A **cloud-native harness** is an agent runtime designed as a distributed
-application, not a desktop tool copied into a VM.
+A **cloud-native harness** is an agent runtime whose clients, execution
+environments, and durable state can be managed as separate application services.
 
 A desktop harness commonly ties the client, agent loop, filesystem, tools,
 credentials, and conversation state to one long-lived machine. Putting that
@@ -20,13 +20,15 @@ clients, execution environments, model providers, tools, and durable state sit
 outside it behind explicit boundaries. The same loop can run locally, as a
 service, or on Kubernetes without being replaced.
 
-| Harness | What changes when it moves to a server? |
-|---|---|
-| Desktop | Client, loop, workspace, and local state usually remain coupled to one machine. |
-| Containerized desktop | The coupled runtime moves into a container; replacing it still requires handling its workspace and state. |
-| Cloud-native | Clients, loop, execution, and durable state have separate owners, so workers can be replaced while services retain state. |
+|Harness|What changes when it moves to a server?|
+|-|-|
+|Desktop|Client, loop, workspace, and local state usually remain coupled to one machine.|
+|Containerized desktop|The coupled runtime moves into a container; replacing it still requires handling its workspace and state.|
+|Cloud-native|Clients, loop, execution, and durable state have separate owners, so workers can be replaced while services retain state.|
 
-## Explode the harness into its parts
+<span id="explode-the-harness-into-its-parts" />
+
+## Separate the harness into services
 
 A cloud-native harness separates the parts that a desktop harness often keeps
 inside one process:
@@ -66,10 +68,9 @@ recovery, and single-writer model.
 
 ### Build a governed tool ecosystem
 
-A cloud-native harness does not need an unrestricted remote desktop to be
-useful. Mecatl can expose purpose-built tools, MCP services, skills, and
-application integrations through an explicit catalog with permission, audit, and
-execution-environment boundaries.
+Mecatl exposes purpose-built tools, MCP services, skills, and application
+integrations through an explicit catalog. Permissions, audit records, and
+execution-environment boundaries govern access to each tool.
 
 Shell remains an available, governed capability when it is needed. The direction
 is to make it less necessary by expanding purpose-built, permissioned tools and
@@ -97,19 +98,18 @@ while `mecatui` and Studio act as clients connected to the same runtime.
 
 You can build another client on top of Mecatl using the
 [gRPC or HTTP/SSE APIs](/building/grpc-http.md) or the
-[TypeScript SDK](/building/typescript-sdk/first-run.md). An existing
-harness would need a dedicated integration to hand its agent loop over to
-Mecatl.
+[TypeScript SDK](/building/typescript-sdk/first-run.md). An existing harness
+would need a dedicated integration to hand its agent loop over to Mecatl.
 
 ## Where this is going
 
 Mecatl is early, and the cloud-native harness is a direction as well as a
 current architecture. We are working toward:
 
-- **More clients.** Mecatl already supports the TUI, Studio, gRPC, HTTP/SSE, and the
-  TypeScript SDK. Future directions include desktop and mobile clients, along with new
-  interaction models such as Slack and collaborative documents, all over the
-  same client/server core. See the
+- **More clients.** Mecatl already supports the TUI, Studio, gRPC, HTTP/SSE, and
+  the TypeScript SDK. Future directions include desktop and mobile clients,
+  along with new interaction models such as Slack and collaborative documents,
+  all over the same client/server core. See the
   [TypeScript SDK](https://github.com/stacklok/mecatl/tree/main/sdk/typescript)
   and
   [gRPC and HTTP/SSE contracts](https://github.com/stacklok/mecatl/tree/main/contracts/proto).
@@ -138,5 +138,5 @@ operator and capability guides describe what Mecatl supports today.
 - [See a session survive its pod](/operating/kubernetes.md#replace-the-sessions-pod).
 - [Deploy `mecak8s`](/operating/mecak8s.md) on Kubernetes.
 - [Understand session continuity](/features/sessions/session-continuity.md).
-- [Explore extension points](/building/go/extension-points/index.md) for your own
-  integrations.
+- [Explore extension points](/building/go/extension-points/index.md) for your
+  own integrations.

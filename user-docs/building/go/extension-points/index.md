@@ -43,10 +43,10 @@ loop.
 |`Clock`|Provide wall-clock time|
 |`SessionLease`|Coordinate single-writer ownership across processes|
 
-Filesystem and execution interfaces live in `engine/tool`, where tools consume
-them directly:
+Filesystem and execution types live in `engine/tool`, where tools use them
+directly:
 
-|Interface|Responsibility|
+|Type|Responsibility|
 |-|-|
 |`tool.FileSystem`|Underlying filesystem operations|
 |`tool.Workspace`|Version-aware reads and conditional writes|
@@ -122,8 +122,9 @@ The package defines interfaces for learned-skill validation, content-addressed
 versions, evaluation, review, and activation. Reference adapters provide
 in-memory storage and validation. Your embedding application owns proposal
 persistence, review authorization, scheduling, and transport. Use the
-[learning API](https://pkg.go.dev/github.com/stacklok/mecatl/engine/learning) for
-symbols and the [evidence contract](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
+[learning API](https://pkg.go.dev/github.com/stacklok/mecatl/engine/learning)
+for symbols and the
+[evidence contract](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
 for selection and output validation.
 
 ## Next steps
@@ -131,5 +132,8 @@ for selection and output validation.
 - [Implement an LLM provider](llm-provider.md).
 - [Implement session storage](session-store.md).
 - [Implement a permission policy](permission-policy.md).
-- [Implement a session lease](session-lease.md).
-- [Supply project rules](project-rules.md).
+
+## Related information
+
+- [Session leases](session-lease.md) coordinate concurrent writers.
+- [Project rules](project-rules.md) supply project and user guidance.

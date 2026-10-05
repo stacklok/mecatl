@@ -4,16 +4,12 @@
 and `linux` archives for `amd64` and `arm64`. Each release also includes
 checksums, Cosign signature bundles, SBOMs, and build provenance.
 
-```sh
-tar -xzf mecatl_<VERSION>_darwin_arm64.tar.gz
-./mecatui --version
-./mecated --version
-```
+Download the archive for your OS and architecture, together with its checksum,
+signature bundle, and provenance. The example below uses macOS on Apple Silicon;
+replace the filename for another platform. `<VERSION>` is the release number
+used in the asset filename.
 
-Each archive contains `mecatui` and `mecated` at its root, plus the license and
-README.
-
-Verify the checksum, signature, and provenance:
+Verify the checksum, signature, and provenance before extracting the archive:
 
 ```sh
 shasum -a 256 -c checksums.txt --ignore-missing
@@ -29,6 +25,15 @@ gh attestation verify mecatl_<VERSION>_darwin_arm64.tar.gz --repo stacklok/mecat
 
 The Cosign command verifies that a GitHub Actions workflow in the
 `stacklok/mecatl` repository signed the archive.
+
+Each archive contains `mecatui` and `mecated` at its root, plus the license and
+README. Extract the verified archive, then check the binaries:
+
+```sh
+tar -xzf mecatl_<VERSION>_darwin_arm64.tar.gz
+./mecatui --version
+./mecated --version
+```
 
 ## Build from source
 

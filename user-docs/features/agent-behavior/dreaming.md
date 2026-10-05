@@ -38,11 +38,11 @@ mecated serve \
   --user-model-dir "$HOME/.local/state/mecatl/usermodel"
 ```
 
-Automatic application is narrow. The local file-backed store may only tombstone
-a source when its active value and description are byte-identical to the
-displayed survivor, and it must compare the expected versions atomically. The
-survivor is never rewritten. Synthesized replacements are not applied by this
-unattended path.
+Automatic consolidation removes exact duplicates only. The local file-backed
+store tombstones a source when its active value and description are
+byte-identical to the survivor and an atomic version check confirms both entries
+are unchanged. It preserves the survivor. Synthesized replacements require
+manual review.
 
 These intervals do not change `learning.mode`. A project setting of
 `learning.mode: off` cannot suppress an explicit operator consolidation
@@ -83,13 +83,12 @@ is unavailable when:
 - no planner is configured;
 - the selected store lacks reviewed atomic consolidation.
 
-Remote memory drivers provide the mandatory lifecycle/CAS contract but do not add
-the separately required reviewed atomic consolidation. The target store must remain
-the same supported store through planning and
-application. Version checks turn concurrent edits into conflicts rather than
-silently overwriting newer facts. Storage-wide maintenance also requires the
-normal management authorization and a working cross-process lease where the
-backend is shareable.
+Remote memory drivers provide the mandatory lifecycle/CAS contract but do not
+add the separately required reviewed atomic consolidation. Planning and
+application must use the same supported store. Version checks turn concurrent
+edits into conflicts rather than silently overwriting newer facts. Storage-wide
+maintenance also requires the normal management authorization and a working
+cross-process lease where the backend is shareable.
 
 The model never receives raw secrets, tool arguments, or hidden control data as
 part of the review. Manual review does not expose provider and model identity or

@@ -2,8 +2,8 @@
 sidebar_position: 150
 title: Mecatl Studio web UI
 description:
-  Run the early-access Studio browser UI against a Mecatl deployment with the
-  signed container image, OIDC browser login, and the local Compose setup.
+  Deploy the early-access Studio browser client for your Mecatl service.
+  Configure the signed image and OIDC browser login.
 ---
 
 # Mecatl Studio web UI
@@ -34,9 +34,6 @@ Every release includes a multi-architecture image for `linux/amd64` and
 ```text
 ghcr.io/stacklok/mecatl/studio:<VERSION>
 ```
-
-Pin an exact release version: `latest` moves with every release, and an
-early-access release can change the interface without warning.
 
 The image is signed with keyless Cosign, carries an SPDX SBOM attestation, and
 has SLSA build provenance. Verify the signature and the provenance before you
@@ -69,17 +66,17 @@ connected deployment does not enable:
 
 - **Chats**: sessions with streamed runs, image attachments, permission
   approvals, steering, and model and reasoning-effort selection.
-- **Scheduled**: [scheduled tasks](/features/sessions/scheduled-tasks.md) with a cron
-  builder and fire history, when the deployment enables scheduling.
+- **Scheduled**: [scheduled tasks](/features/sessions/scheduled-tasks.md) with a
+  cron builder and fire history, when the deployment enables scheduling.
 - **Skills**: configured and learned skills, learning proposals, and session
   reflection, when the deployment enables them.
 - **Settings**: personal browser preferences and memory decisions alongside
   read-only facts about the connected deployment, its providers, and its models.
 
 A global search palette and a keyboard-shortcuts reference page complete the
-set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts**
-from **Settings > About**. The page lists the current browser bindings and
-features enabled by the connected deployment.
+set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts** from
+**Settings > About**. The page lists the current browser bindings and features
+enabled by the connected deployment.
 
 ### Browse and review skills
 
@@ -110,11 +107,9 @@ Studio explains settings ownership in the settings pages: personal choices stay
 in the browser, while deployment-managed provider, model, posture, and storage
 facts are read-only. Appearance controls explain theme and palette choices.
 Delegated-activity panels explain their observed history and incomplete replay.
-Users can open **Keyboard shortcuts** from **Settings > About** for bindings and
-available features.
-
 **About** identifies the Studio image, installed SDK, and connected daemon
-builds. Ask users for **Copy support summary** when diagnosing a deployment issue.
+builds. Ask users for **Copy support summary** when diagnosing a deployment
+issue.
 
 ## Install Studio in your browser
 
@@ -140,11 +135,11 @@ candidate leaves the message in the composer.
 
 Starter prompts fill the composer for you to review. A link with `?prompt=` also
 fills it without starting a run. If the link includes `send=1`, Studio shows the
-prompt, target chat, model, and permission mode before you select **Send prompt**
-or **Edit prompt**. For a new chat, it also shows tool access. Opening or
-reloading the link never sends it automatically. If you need to sign in first,
-keep the original tab open. Its prompt stays there while the popup or new tab
-completes sign-in.
+prompt, target chat, model, and permission mode before you select **Send
+prompt** or **Edit prompt**. For a new chat, it also shows tool access. Opening
+or reloading the link never sends it automatically. If you need to sign in
+first, keep the original tab open. Its prompt stays there while the popup or new
+tab completes sign-in.
 
 If the selected model supports images, use **Attach images** to add up to 16
 images to one message. Each image can be at most 10 MiB, with a combined limit
@@ -207,12 +202,12 @@ approval button selects that decision without sending your draft. The
 ### Review external authorization
 
 If a tool needs external authorization, select **Review authorization** in the
-chat. Select **Open authorization** to complete the external step in a
-new tab, then return to Studio and select **Recheck**. The panel shows the
-observed status. **Cancel authorization** ends the pending handoff. Opening the
-external page alone does not grant access, and closing the review panel leaves
-the handoff pending. Open the page from the Studio panel. The Studio
-authorization link rejects address-bar navigation and links from other sites.
+chat. Select **Open authorization** to complete the external step in a new tab,
+then return to Studio and select **Recheck**. The panel shows the observed
+status. **Cancel authorization** ends the pending handoff. Opening the external
+page alone does not grant access, and closing the review panel leaves the
+handoff pending. Open the page from the Studio panel. The Studio authorization
+link rejects address-bar navigation and links from other sites.
 
 If Studio cannot confirm a **Recheck** or **Cancel authorization** result, the
 panel disables both actions. Select **Refresh activity** to check for a later
@@ -234,8 +229,8 @@ refreshes its state and briefly reports only what it can verify, such as a run
 still working or the chat waiting for approval. Reloading the page does not
 create a return notice.
 
-When a [scheduled task](/features/sessions/scheduled-tasks.md) delivers a start or
-completion note to this chat, the transcript shows the recorded note with its
+When a [scheduled task](/features/sessions/scheduled-tasks.md) delivers a start
+or completion note to this chat, the transcript shows the recorded note with its
 schedule and fire attribution. The note body appears as plain text. A task's
 fire history alone does not add a note to the chat. An open, visible chat checks
 saved history while idle, so a short delivery's reply and turns added from
@@ -268,8 +263,8 @@ In production Studio runs behind your ingress and connects to a `mecak8s`
 deployment that publishes an OIDC profile (see
 [Cloud-native k8s with mecak8s](./mecak8s.md)). Users sign in through the
 deployment's identity provider with Authorization Code and PKCE; Studio keeps
-the session in encrypted, HttpOnly cookies and forwards the user's token on every
-request.
+the session in encrypted, HttpOnly cookies and forwards the user's token on
+every request.
 
 Set these variables on the Studio container:
 
@@ -293,8 +288,8 @@ only when that identifier is not the gRPC address in `MECATL_BASE_URL`. The
 local Compose file sets it because `mecated` serves gRPC and HTTP on separate
 ports.
 
-Studio answers only requests whose `Host` is the host of `STUDIO_PUBLIC_URL`,
-so the ingress in front of it must pass the original `Host` header through.
+Studio answers only requests whose `Host` is the host of `STUDIO_PUBLIC_URL`, so
+the ingress in front of it must pass the original `Host` header through.
 
 Studio listens on port `3100` on every interface inside the image, answers
 `GET /api/health` on any host name as soon as it starts, and runs as non-root
@@ -338,10 +333,10 @@ place while it checks again.
 
 ### Static token or no authentication
 
-Studio can also run as a single service identity by setting
-`MECATL_AUTH_TOKEN` together with `MECATL_BASE_URL`, or against a deployment
-that publishes no OIDC profile. In both cases every browser that reaches Studio
-acts as one principal, so the image refuses to start unless you also set
+Studio can also run as a single service identity by setting `MECATL_AUTH_TOKEN`
+together with `MECATL_BASE_URL`, or against a deployment that publishes no OIDC
+profile. In both cases every browser that reaches Studio acts as one principal,
+so the image refuses to start unless you also set
 `STUDIO_ALLOW_UNAUTHENTICATED=1`. Use this only behind your own access control.
 
 ## Configuration reference
@@ -373,8 +368,8 @@ covers the spawn and mock runtime modes and the `task studio:*` commands.
   connects to.
 - [Configure a deployment](./settings.md) to enable the capabilities Studio
   shows.
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) to understand
-  the approvals Studio surfaces in a chat.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  to understand the approvals Studio surfaces in a chat.
 
 ## Troubleshooting
 
@@ -392,8 +387,9 @@ choose **Reload Studio**. Check the Studio URL if the page remains missing.
 
 Studio could not fetch the deployment's protected-resource document. Check that
 `MECATL_BASE_URL` (or `MECATL_RESOURCE_URL`) points at the HTTPS address that
-serves `/.well-known/oauth-protected-resource`. A deployment without OIDC answers
-`404` there, which Studio treats as "no browser login" instead of an error.
+serves `/.well-known/oauth-protected-resource`. A deployment without OIDC
+answers `404` there, which Studio treats as "no browser login" instead of an
+error.
 
 </details>
 
@@ -426,7 +422,7 @@ origin. Without `STUDIO_PUBLIC_URL`, Studio answers only on `localhost`,
 
 Studio sets `Secure` cookies when `STUDIO_PUBLIC_URL` is `https://`. Confirm
 users open exactly that origin, that the identity provider redirects to
-`STUDIO_PUBLIC_URL/api/v1/auth/callback`, and that every replica shares the
-same `STUDIO_SESSION_SECRET`.
+`STUDIO_PUBLIC_URL/api/v1/auth/callback`, and that every replica shares the same
+`STUDIO_SESSION_SECRET`.
 
 </details>

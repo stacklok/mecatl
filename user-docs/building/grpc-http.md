@@ -16,7 +16,7 @@ exact fields, routes, and response codes.
 |-|-|
 |Generated, typed clients|JSON over ordinary HTTP|
 |A bidirectional `Converse` stream|Browsers and clients without gRPC support|
-|In-flight steering controls|A request that returns an SSE event stream|
+|Run controls on the same stream|A request that returns an SSE event stream|
 |A protobuf contract|An HTTP route and JSON schema contract|
 
 Both transports support server-side sessions, live run events, permission
@@ -35,9 +35,9 @@ Authenticated clients can inspect the deployment before creating a session:
 
 ### Use the TypeScript SDK
 
-`@stacklok-oss/mecatl-sdk` provides ergonomic clients for both transports.
-Node.js and Bun applications can connect through gRPC. Browser applications use
-HTTP and SSE through a same-origin backend-for-frontend.
+`@stacklok-oss/mecatl-sdk` provides typed clients for both transports. Node.js
+and Bun applications can connect through gRPC. Browser applications use HTTP and
+SSE through a same-origin backend-for-frontend.
 
 Start with the
 [TypeScript SDK quickstart](/building/typescript-sdk/first-run.md), then
@@ -57,17 +57,16 @@ For exact methods and types, see the
 
 ## The common lifecycle
 
-1. Create a session with a workspace and any provider, model, or permission
-   selection.
-2. Start a prompt and process events until the server returns a terminal result.
-3. For a failed result marked `retryable` and `precommit`, make one bounded
-   prompt-free retry. Send `RetryStart` as the first gRPC `Converse` frame, or
-   call `POST /v1/sessions/{id}/retry` with no body. Treat missing or unknown
-   retry metadata as non-retryable.
-4. If the run asks for permission, resolve the ask and continue the same
-   session.
-5. Read the final result. If the configured store supports durable sessions, you
-   can later resume the session or replay its events.
+1. Create a session using the deployment's default placement or the
+   no-filesystem profile, with any provider, model, or permission selection.
+2. Start a prompt and process the live events. Resolve permission asks while the
+   run is waiting so it can continue.
+3. Read the terminal result. For a failed result marked `retryable` and
+   `precommit`, make one bounded prompt-free retry. Send `RetryStart` as the
+   first gRPC `Converse` frame, or call `POST /v1/sessions/{id}/retry` with no
+   body. Treat missing or unknown retry metadata as non-retryable.
+4. If the configured store supports durable sessions, you can later resume the
+   session or replay its events.
 
 See [Session continuity](/features/sessions/session-continuity.md) for durable
 storage, event logs, recovery, and retention behavior.
@@ -93,9 +92,9 @@ import mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 ```
 
 For RPC-by-RPC behavior, request fields, response semantics, and stream control
-frames, see the [gRPC API reference](/reference/grpc-api.md).
-For generated service signatures, streaming directions, message fields, and
-enum values, see the [gRPC schema reference](/reference/grpc-schema.md).
+frames, see the [gRPC API reference](/reference/grpc-api.md). For generated
+service signatures, streaming directions, message fields, and enum values, see
+the [gRPC schema reference](/reference/grpc-schema.md).
 
 One `Converse` stream drives one run. Start it with exactly one `Prompt` or
 `RetryStart`, then send only control frames while the run remains live. The
@@ -114,10 +113,16 @@ For the route inventory, request/response schemas, event behavior,
 authentication, and `curl` examples, see the
 [HTTP/SSE API reference](/reference/http-sse-api.md).
 
-### Steering requires gRPC
+<span id="steering-requires-grpc" />
 
-gRPC can send an in-flight steering instruction, or cancel one, through the live
-`Converse` stream. HTTP/SSE has no client-to-server mid-run steering channel.
+### Send steering controls
+
+gRPC sends steering instructions and retractions through the live `Converse`
+stream. HTTP clients use separate unary `steer` and `cancel-steer` requests
+while consuming SSE events. Check the runtime `steer` capability and the
+`http_steer` compatibility feature before offering HTTP steering. See
+[Steer a running session](/reference/http-sse-api.md#steer-a-running-session)
+for strict run IDs and terminal-race behavior.
 
 ## Connect securely
 
@@ -127,9 +132,16 @@ configuration before clients connect. See
 TLS/mTLS, OIDC caller identity, rate limits, and health endpoints.
 
 Browser clients also require an allowed origin. See
-[Browsers and CORS](/operating/mecated/secure-and-expose.md#browsers-and-cors). In production, put
-a same-origin backend-for-frontend in front of `mecated` so browser JavaScript
-does not receive the server bearer token.
+[Browsers and CORS](/operating/mecated/secure-and-expose.md#browsers-and-cors).
+In production, put a same-origin backend-for-frontend in front of `mecated` so
+browser JavaScript does not receive the server bearer token.
+
+## Own a private daemon
+
+For a client-owned process, [host a private daemon](local-daemon.md) with a
+private socket, readiness file, and parent-liveness channel. TypeScript
+applications can use [SDK spawn](typescript-sdk/local-daemon.md) to manage that
+lifecycle.
 
 ## Next steps
 
@@ -139,10 +151,3 @@ does not receive the server bearer token.
   TypeScript SDK.
 - [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
   through either transport.
-
-## Own a private daemon
-
-For a client-owned process, [host a private daemon](local-daemon.md) with a
-private socket, readiness file, and parent-liveness channel. TypeScript
-applications can use [SDK spawn](typescript-sdk/local-daemon.md) to manage that
-lifecycle.

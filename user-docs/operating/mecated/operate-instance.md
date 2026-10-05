@@ -6,7 +6,9 @@ sidebar_position: 3
 
 # Operate a mecated instance
 
-Maintain the running instance, its session ownership, and its shutdown behavior.
+Use this guide after [starting mecated](/operating/mecated.md) and choosing
+[providers and storage](configure-providers-and-storage.md). Keep the service
+account, settings paths, and storage backend consistent across restarts.
 
 ## Daemon config file (`daemon.yaml`)
 
@@ -39,9 +41,9 @@ Three lease backends are available:
 
 |Backend|Flag|When to use|
 |-|-|-|
-|flock (single-host)|`--session-lease-dir <dir>`|Multiple `mecated` processes on one machine. flock auto-releases on crash|
-|k8s Lease|`--session-lease-k8s-namespace <ns>`|Multi-replica in Kubernetes; uses `coordination.k8s.io` Leases|
-|gRPC driver|`--session-lease-url <host:port>`|Custom or managed lease backend via the driver protocol|
+|flock (single-host)|`--session-lease-dir <DIRECTORY>`|Multiple `mecated` processes on one machine. flock auto-releases on crash|
+|k8s Lease|`--session-lease-k8s-namespace <NAMESPACE>`|Multi-replica in Kubernetes; uses `coordination.k8s.io` Leases|
+|gRPC driver|`--session-lease-url <HOST>:<PORT>`|Custom or managed lease backend via the driver protocol|
 
 The ServiceAccount for the k8s backend needs `get,create,update,delete` on
 `leases.coordination.k8s.io` in the configured namespace. It does not need
@@ -57,8 +59,9 @@ Without one, use session affinity; destructive maintenance fails closed.
 
 :::
 
-The lease TTL defaults to 30 seconds. After a crash, another replica can claim
-the session when that TTL expires.
+Timed lease backends use a 30-second default TTL. After a crash, another replica
+can claim the session when the lease expires; local flock releases when the
+process exits.
 
 ## Operator subcommands
 
@@ -101,11 +104,21 @@ same path. See [Host a local daemon](/building/local-daemon.md).
 
 ## Monitor the instance
 
-The loopback admin listener exposes `/metrics`, `/debug/pprof`, `/debug/vars`, and `/debug/flightrecorder`. Keep it on loopback: diagnostics can contain prompts, file paths, and goroutine stacks. Configure collectors using [observability](/operating/observability.md). Look up scheduler and LLM timeout tuning in the [server CLI reference](/reference/server-cli.md).
+The loopback admin listener exposes `/metrics`, `/debug/pprof`, `/debug/vars`,
+and `/debug/flightrecorder`. Keep it on loopback: diagnostics can contain
+prompts, file paths, and goroutine stacks. Configure collectors using
+[observability](/operating/observability.md). Look up scheduler and LLM timeout
+tuning in the [server CLI reference](/reference/server-cli.md).
 
 ## Connect tools and trusted instructions
 
-Configure streaming-HTTP MCP connections through [MCP client configuration](/features/security-and-execution/mcp-client.md). Authorize global OAuth profiles before serving with `mecated mcp login SERVER [--no-browser]`; the daemon restores and refreshes credentials without opening a browser. Use [skills and project instructions](/features/agent-behavior/skills-commands-and-soul.md) for trusted instruction sources.
+Configure streaming-HTTP MCP connections through
+[MCP client configuration](/features/security-and-execution/mcp-client.md).
+Authorize global OAuth profiles before serving with
+`mecated mcp login SERVER [--no-browser]`; the daemon restores and refreshes
+credentials without opening a browser. Use
+[skills and project instructions](/features/agent-behavior/skills-commands-and-soul.md)
+for trusted instruction sources.
 
 ## Offline mock providers (no credentials)
 
@@ -130,7 +143,6 @@ binding a listener when the script is invalid.
   ]
 }
 ```
-
 
 ## Next steps
 

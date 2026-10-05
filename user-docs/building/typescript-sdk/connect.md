@@ -13,6 +13,12 @@ owns only the client connection. Node.js, Bun, and Deno connect to the gRPC
 listener. Browser applications use the HTTP and SSE API and connect through a
 same-origin backend-for-frontend (BFF).
 
+## Prerequisites
+
+Install `@stacklok-oss/mecatl-sdk` in your application. Ask the operator for the
+listener URL, authentication method, and any private CA certificate. Keep the
+daemon running while your application uses the connection.
+
 ## Connect from Node.js or Bun
 
 Import `connect()` from the Node.js and Bun entry point, then pass the gRPC
@@ -105,8 +111,8 @@ Keep privileged daemon credentials out of browser JavaScript. The SDK supplies
 the browser-facing HTTP and SSE client; it does not include a BFF server.
 
 For local browser development, an operator can configure the daemon's exact CORS
-origins. See [Drive Mecatl through gRPC or HTTP](/building/grpc-http.md) for
-listener and transport configuration.
+origins. See [Connect with gRPC or HTTP](/building/grpc-http.md) for listener
+and transport configuration.
 
 ## Read timestamps and durations over HTTP
 
@@ -155,6 +161,6 @@ The status vocabulary is `connecting`, `online`, `reconnecting`, `offline`,
 
 ## Related information
 
-- [Drive Mecatl through gRPC or HTTP](/building/grpc-http.md)
+- [Connect with gRPC or HTTP](/building/grpc-http.md)
 - [HTTP and SSE API reference](/reference/http-sse-api.md)
 - [gRPC API reference](/reference/grpc-api.md)

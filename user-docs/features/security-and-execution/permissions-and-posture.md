@@ -205,9 +205,10 @@ missing capability. The explicit `noop` evaluator is intended for local or demo
 deployments. A bound session without its configured evaluator fails closed.
 
 Cedar requires verified owner identity. Its operator-owned policy is loaded once
-at startup; an absent, unreadable, or invalid policy prevents startup. Permission
-policy and authority are independent checks: approving a tool call cannot restore
-a capability excluded from the child's set or denied by Cedar. See
+at startup; an absent, unreadable, or invalid policy prevents startup.
+Permission policy and authority are independent checks: approving a tool call
+cannot restore a capability excluded from the child's set or denied by Cedar.
+See
 [Configure a Cedar authority policy](/operating/mecated/secure-and-expose.md#configure-a-cedar-authority-policy)
 for the daemon setup and a workspace-boundary example.
 
@@ -243,22 +244,23 @@ checker model to enable them:
 mecated serve --guardrails-model gpt-5.6-luna
 ```
 
-The checker reviews exact effective actions before execution and already-produced
-results before delivery. A configured checker with no custom rule list uses the
-expanded default enforcing set for Shell, local mutation/read/search, web, MCP,
-and delegation tools; the same applicable rules bind workers. Operators can
-configure advisory behavior instead. Guardrails remain active in headless
-deployments and are not a replacement for permission rules.
+The checker reviews exact effective actions before execution and
+already-produced results before delivery. A configured checker with no custom
+rule list uses the expanded default enforcing set for Shell, local
+mutation/read/search, web, MCP, and delegation tools; the same applicable rules
+bind workers. Operators can configure advisory behavior instead. Guardrails
+remain active in headless deployments and are not a replacement for permission
+rules.
 
-Mecatui's `/guardrails` command shows the active checker and session-specific
-coverage. `/posture` reports permission posture and checker state separately, including
-off/setup guidance, advisory or enforcing when on, and unknown when an older or
-unavailable server cannot establish status. When a review needs your decision,
-the approval prompt shows its explanation. Action reviews offer **Run once** or
-**Cancel**, plus **Don't ask again** when the server can bind approval to that
-exact action in this session. Result reviews offer **Release once** or **Cancel**;
-release delivers the same held result without rerunning side effects. For
-conversation visibility and success diagnostics, see
+`mecatui`'s `/guardrails` command shows the active checker and session-specific
+coverage. `/posture` reports permission posture and checker state separately,
+including off/setup guidance, advisory or enforcing when on, and unknown when an
+older or unavailable server cannot establish status. When a review needs your
+decision, the approval prompt shows its explanation. Action reviews offer **Run
+once** or **Cancel**, plus **Don't ask again** when the server can bind approval
+to that exact action in this session. Result reviews offer **Release once** or
+**Cancel**; release delivers the same held result without rerunning side
+effects. For conversation visibility and success diagnostics, see
 [client debug surfaces](/mecatui/troubleshooting.md#enable-client-debug-surfaces).
 
 |Mode|Behavior|
@@ -267,22 +269,22 @@ conversation visibility and success diagnostics, see
 |`advisory`|Reports a finding without changing the tool call or result.|
 
 The default rules cover Shell, local mutation and read tools, web, MCP, and
-delegation tools. A confidently read-only Shell command skips action review,
-but its result remains covered. An explicit rules list replaces the default
-set. Exact tool-name matches take precedence over prefix matches and the `*`
+delegation tools. A confidently read-only Shell command skips action review, but
+its result remains covered. An explicit rules list replaces the default set.
+Exact tool-name matches take precedence over prefix matches and the `*`
 wildcard.
 
 A result review runs after the tool, so it cannot undo the operation. An
 enforcing result review holds the result before the client, model, or session
-history receives it. Releasing it delivers the same result without rerunning
-the tool or its side effects.
+history receives it. Releasing it delivers the same result without rerunning the
+tool or its side effects.
 
-Each review has up to 90 seconds for evidence authorization, dependency snapshots,
-evidence preparation, and checker attempts combined. This limit uses cooperative
-context cancellation. A reviewer or I/O operation that ignores cancellation can
-return later, but a late acceptable result cannot approve an action or release a
-held result. Human approval waits and subsequent tool execution are outside the
-review limit.
+Each review has up to 90 seconds for evidence authorization, dependency
+snapshots, evidence preparation, and checker attempts combined. This limit uses
+cooperative context cancellation. A reviewer or I/O operation that ignores
+cancellation can return later, but a late acceptable result cannot approve an
+action or release a held result. Human approval waits and subsequent tool
+execution are outside the review limit.
 
 Guardrail configuration is operator-tier only. A project repository cannot
 weaken or disable the operator's checker. Checker outage is fail-closed by
@@ -309,8 +311,8 @@ replacement actions are not supported.
 
 ## Next steps
 
-- [PermissionPolicy](/building/go/extension-points/permission-policy.md) to replace
-  the supplied permission policy in an embedding.
+- [PermissionPolicy](/building/go/extension-points/permission-policy.md) to
+  replace the supplied permission policy in an embedding.
 - [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md)
   for project-ingestion behavior.
 - [Execution environments](/features/security-and-execution/execution-environments.md)

@@ -2,33 +2,40 @@
 slug: /building/embed-engine
 sidebar_position: 4
 title: Embed the engine directly
-description: Supply lifecycle, persistence, and adapters for an in-process Go agent.
+description:
+  Supply lifecycle, persistence, and adapters for an in-process Go agent.
 ---
 
 # Embed the engine directly
 
 Embed Mecatl when the agent loop should run inside your Go service. Build on
 [the first-agent tutorial](first-agent.md), then replace its reference adapters
-with the model provider, tools, and durable storage your application needs.
-The [object model](engine-and-session.md) explains the lifetimes of the objects
-used below.
+with the model provider, tools, and durable storage your application needs. The
+[object model](engine-and-session.md) explains the lifetimes of the objects used
+below.
+
+## Prerequisites
+
+Complete [Build your first agent](first-agent.md) and identify your model
+provider, required tools, and persistence backend. The examples below are
+integration fragments to adapt at your application's composition root.
 
 ## Assemble your dependencies
 
-Install the engine and the provider module your service uses:
+Install the engine:
 
 ```sh
 go get github.com/stacklok/mecatl/engine@latest
 ```
 
-Pin compatible engine and provider versions in your application's `go.mod`.
-Provider modules are opt-in dependencies; the engine itself imports no provider
-SDKs. Use [API stability](api-stability.md) and the provider release notes when
-upgrading.
+Add the provider module your service uses, then pin compatible engine and
+provider versions in your application's `go.mod`. Provider modules are opt-in
+dependencies; the engine itself imports no provider SDKs. Use
+[API stability](api-stability.md) and the provider release notes when upgrading.
 
-Construct `agent.Deps` at your application's composition root. Register only
-the tools required by the task and choose an explicit permission policy.
-The tutorial's `mockllm`, `memfs`, and `memstore` adapters are useful for offline
+Construct `agent.Deps` at your application's composition root. Register only the
+tools required by the task and choose an explicit permission policy. The
+tutorial's `mockllm`, `memfs`, and `memstore` adapters are useful for offline
 tests; production adapters implement the same
 [extension interfaces](extension-points/index.md).
 
@@ -39,9 +46,9 @@ Forward permission asks to an authenticated approval client or supply a policy
 that resolves unattended work. `Run.Approve` handles ordinary tool permission
 asks; plan and guardrail approvals have dedicated resolution contracts.
 
-On shutdown, cancel active runs and continue draining their event streams.
-Wait for run completion before closing storage or other adapters used by the
-loop. A closed stream can indicate external authorization parking, so inspect
+On shutdown, cancel active runs and continue draining their event streams. Wait
+for run completion before closing storage or other adapters used by the loop. A
+closed stream can indicate external authorization parking, so inspect
 `Run.Outcome()` and persisted session state before reporting a terminal result.
 Your application owns live event delivery and reconnect behavior.
 
@@ -81,7 +88,7 @@ The following fields are the main integration points in `agent.Deps`:
 
 Optional fields with non-trivial defaults:
 
-|Field|Default behaviour|
+|Field|Default behavior|
 |-|-|
 |`Compactor`|`HeuristicCompactor`, which trims the conversation at the context-window threshold.|
 |`TokenCounter`|`HeuristicTokenCounter`, a character-based estimate.|
@@ -106,37 +113,46 @@ team.
 
 An embedding can use the `learning` package to materialize bounded evidence and
 stage reflection proposals. Your host owns persistence, review authorization,
-scheduling, and transport. See [reflection integration](extension-points/index.md#reflection-integration)
-for the interfaces and evidence contract.
+scheduling, and transport. See
+[reflection integration](extension-points/index.md#reflection-integration) for
+the interfaces and evidence contract.
 
-## What you do not get
+<span id="what-you-do-not-get" />
 
-An embedding application is responsible for the capabilities outside the
-engine:
+## Supply the host services
 
-|Capability|Status|
-|-|-|
-|HTTP / gRPC server|Not included. Wire your own transport and relay events.|
-|Authentication|Not included. Add authentication in your application.|
-|TLS|Not included.|
-|Prometheus metrics|Not included. Wire `port.ToolCallRecorder` and `port.Diagnostics` to your own observability stack.|
-|Kubernetes manifests|Not included.|
-|CLI flags|Not included. Set the corresponding `Deps` fields in code.|
-|Provider adapters|Import `github.com/stacklok/mecatl/provider/openai`, `provider/openaichat`, or `provider/anthropic` as separate modules. Each adds only its provider SDK and the engine.|
-|Session store backends (JSONL, Redis)|Not included in the engine module. `memstore` is. Import `github.com/stacklok/mecatl/adapters/jsonlstore` or `github.com/stacklok/mecatl/adapters/redisstore` from the separate published adapters module; see [supplied storage backends](extension-points/session-store.md#use-a-supplied-backend).|
+Your application owns transport, authentication, TLS, deployment manifests, and
+configuration. Set engine configuration through `agent.Deps`; relay live events
+through your own HTTP or gRPC transport. Connect `port.ToolCallRecorder` and
+`port.Diagnostics` to your observability system.
+
+Import provider adapters as separate modules:
+`github.com/stacklok/mecatl/provider/openai`,
+`github.com/stacklok/mecatl/provider/openaichat`, or
+`github.com/stacklok/mecatl/provider/anthropic`. Each adds its provider SDK and
+the engine.
+
+For JSONL or Redis storage, import
+`github.com/stacklok/mecatl/adapters/jsonlstore` or
+`github.com/stacklok/mecatl/adapters/redisstore` from the published adapters
+module. Only the in-memory `memstore` adapter is included in the engine module.
+See
+[supplied storage backends](extension-points/session-store.md#use-a-supplied-backend).
 
 If you need several of these capabilities, use `mecated`, which assembles them
-for you. See
-[Run mecated standalone](/operating/mecated.md).
+for you. See [Run mecated standalone](/operating/mecated.md).
 
 ## Next steps
 
-- [Implement extension points](extension-points/index.md) for your application's adapters.
+- [Implement extension points](extension-points/index.md) for your application's
+  adapters.
 - [Review API stability](api-stability.md) before upgrading the engine.
-- [Operate a prebuilt server](/operating/index.md) if you want supplied authentication,
-  transports, and deployment integration.
+- [Operate a prebuilt server](/operating/index.md) if you want supplied
+  authentication, transports, and deployment integration.
 
-## Related topics
+<span id="related-topics" />
+
+## Related information
 
 <span id="contextual-guardrail-extension-contracts" />
 

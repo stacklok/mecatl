@@ -131,22 +131,25 @@ for filesystem and no-filesystem placement.
 
 ### Execution placement providers
 
-`microvm-local` is a trusted deployment default selected through the strict operator-tier
-`execution.default_placement` setting (or a higher-precedence explicit mecated serve flag).
-Bare mecatui consumes that setting for its embedded server; mecatui connect remains remote-only.
-Ordinary session creation then uses that default;
-clients cannot submit a placement alias, workspace path, or exact environment ref. Public
-session data contains bounded `PlacementMetadata` only. `profile: "no-fs"` remains the one
-client-selected attenuation. The daemon owns image, resource, egress, lifecycle, and
-attestation policy, and unavailable placement fails without host fallback.
+Set the operator-tier `execution.default_placement` to `microvm-local` to run
+filesystem and Shell tools in a local VM. An explicit `mecated serve` flag takes
+precedence for that invocation. `mecatui` uses this setting for its embedded
+server; `mecatui connect` uses the remote server's placement.
 
-Guest IPv4 is permissive by default, with external IPv6 unrouted. The operator can tighten
-it with `execution.microvm.guest_egress.mode: deny-all`, or `allowlist` plus
-`allow: [HOST:PORT/tcp|udp]`. Explicit mecated serve flags override settings for one run.
-HTTP/gRPC requests and project config cannot
-select or weaken placement or egress policy.
+The server applies the configured placement to ordinary session creation.
+Clients receive bounded `PlacementMetadata` and can select `profile: "no-fs"` to
+remove filesystem access, but cannot submit a placement alias, workspace path,
+or exact environment reference. The daemon controls images, resources, egress,
+lifecycle, and attestation. If placement is unavailable, session creation fails
+without falling back to the host.
 
----
+Guest IPv4 access is permissive by default; external IPv6 is unrouted. Operators
+can restrict IPv4 with `execution.microvm.guest_egress.mode: deny-all`, or use
+`allowlist` with `allow: [HOST:PORT/tcp|udp]`. Explicit `mecated serve` flags
+override settings for one invocation. HTTP/gRPC clients and project settings
+cannot weaken this policy. See
+[Local microVM environments](/operating/microvm-environments.md) for setup and
+artifact requirements.
 
 ## Optional tool groups
 
@@ -158,8 +161,6 @@ See [Memory and user model](/features/agent-behavior/memory.md) for memory
 lifecycle operations and
 [Subagents, teams, and parallel work](/features/agent-behavior/subagents-and-teams.md)
 for delegation behavior.
-
----
 
 ## The tool catalog model
 
@@ -179,12 +180,10 @@ The `Skill` tool loads instruction bundles on demand. See
 [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)
 for discovery, activation, and slash-command behavior.
 
----
-
 ## Next steps
 
 - [MCP client](/features/security-and-execution/mcp-client.md) to connect
   external MCP servers. Their catalog names use the `mcp__<server>__<tool>`
   format.
-- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md) to
-  add custom tools, configure skills, and control what the model can see.
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md)
+  to add custom tools, configure skills, and control what the model can see.

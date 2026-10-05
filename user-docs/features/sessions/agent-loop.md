@@ -60,8 +60,6 @@ sequenceDiagram
   E-->>C: result
 ```
 
----
-
 ## Turn structure
 
 Each turn follows this sequence:
@@ -108,9 +106,9 @@ When one turn requests multiple tools:
 
 A canonical result confirms an identical available result without changing the
 card. If cancellation changes a previously available result to a synthetic
-error, the canonical result replaces the card's displayed payload. A client
-that misses the transient availability event, including after reconnect, uses
-its canonical result to settle the same call.
+error, the canonical result replaces the card's displayed payload. A client that
+misses the transient availability event, including after reconnect, uses its
+canonical result to settle the same call.
 
 The dispatcher enforces these rules; clients do not need to coordinate calls.
 
@@ -144,8 +142,6 @@ separate run-token budget can end the session between turns.
 order, compaction strategies, thresholds, token-budget behavior, and `mecatui`
 context meter.
 
----
-
 ## Cancellation and terminal states
 
 Every run ends in exactly one of three terminal states:
@@ -173,5 +169,5 @@ and crash recovery.
   for how the permission rule engine and model-based guardrails work.
 - [Hook system](/features/security-and-execution/hooks.md) for lifecycle hooks
   that fire before and after tool calls, prompts, and sessions.
-- [Extension points](/building/go/extension-points/index.md) to replace providers,
-  stores, policies, and other capabilities.
+- [Extension points](/building/go/extension-points/index.md) to replace
+  providers, stores, policies, and other capabilities.

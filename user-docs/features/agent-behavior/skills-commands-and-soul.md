@@ -10,9 +10,8 @@ description:
 
 Choose the type of reusable guidance that fits your goal:
 
-- **Skills** are progressive-disclosure instruction bundles. Their metadata is
-  always available, while the full `SKILL.md` body is loaded only when
-  activated.
+- **Skills** bundle reusable instructions. The model sees their metadata and
+  loads the full `SKILL.md` body when it activates a skill.
 - **Slash commands** are templates that expand a prompt before the run. They can
   be file-backed, skill-backed, or supplied by a remote content source.
 - **Soul** is a user-scoped, read-only persona fragment that describes the

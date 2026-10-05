@@ -9,7 +9,7 @@ description:
 
 # Work in the TUI
 
-During a run, you can inspect tool calls with `ctrl+t` in `/toolcalls`. The
+Press `ctrl+t` to open `/toolcalls` and inspect calls during a run. The
 inspector also works when revisiting a session transcript. Running Edit and
 Write cards show their diffs inline; settled calls keep their full arguments and
 results in the inspector. When `mecatui` receives a result before its final update,
@@ -27,32 +27,33 @@ approvals remain visible. To keep benign notices visible, configure
 
 ## Attach a local file
 
-Type `@` to complete and attach a file. Ordinary `@path` and `@./path` completion
-search the client workspace, preserving a leading `./` on insertion. One or more
-leading `../` components search the corresponding parent of that workspace and remain
-in the inserted path, so they may select files outside the workspace. A token starting
-with literal `~/` instead searches the home directory of the **mecatui client process**,
-retains `~/` when inserted, supports leading `./` and `../` components after `~/`, and
-also works when the client workspace is empty. With no client workspace, non-home
-completion has no implicit process-cwd fallback. Completion lists files only, prunes
-hidden files and directories, and is bounded; use `↑`/`↓` then `tab` or `enter` to
-select a result. While file completion is visible, `enter` completes the selected
-path and `esc` dismisses the list before their ordinary idle or running action.
+Type `@` to find a file on the machine running `mecatui`. Use `↑` or `↓` to
+select a result, then `tab` or `enter` to insert its path. While completion is
+open, `enter` selects a path and `esc` dismisses the list.
 
-On send, mecatui reads a mentioned regular file and uploads its bytes into the
-conversation: text files are inlined and supported media becomes an attachment. The
-source path is not a server workspace path and is never mounted, materialized, or made
-readable/editable through server tools. Therefore in a remote, containerized, or no-FS
-session, `~` still means the machine running mecatui, not the server/container.
-Traversal outside the client workspace still uploads content only and grants no
-execution-environment filesystem access. Treat this as sharing local content and avoid
-attaching sensitive home-directory files.
+|Mention prefix|Search location|
+|-|-|
+|`@path` or `@./path`|The client workspace.|
+|`@../path`|A parent of the client workspace; repeated `../` components reach higher parents.|
+|`@~/path`|The client process's home directory, including when no client workspace is configured.|
 
-Only literal leading `~/` has this home-expansion meaning. `~user` receives no
-home expansion, but can still attach as an ordinary workspace-relative mention when
-such a file exists. Quoted paths and embedded tildes remain ordinary prose; a path
-containing whitespace cannot be one mention token. If mecatui cannot determine its
-home directory, `@~/…` also remains prose.
+Completion preserves the prefix, lists files only, excludes hidden files and
+directories, and limits the number of results. Without a client workspace,
+non-home completion has no current-directory fallback. After `~/`, leading `./`
+and `../` components are also supported.
+
+When you send the prompt, `mecatui` reads mentioned regular files and uploads
+their content. Text is inlined; supported media becomes an attachment. The file
+stays on the client machine. Its path does not become a server workspace path,
+and uploading it grants no filesystem or command access. This also applies to
+remote, containerized, and no-filesystem sessions. Check what you are sharing,
+especially when selecting home-directory files.
+
+Only a literal leading `~/` expands to the client home directory. `~user` is an
+ordinary workspace-relative path when that file exists. Quoted paths, embedded
+tildes, and paths containing whitespace remain prose rather than a single
+mention. If the client cannot determine its home directory, `@~/…` also remains
+prose.
 
 ## Keep working while a run is active
 
@@ -63,8 +64,8 @@ supported staged media stay attached, including media-only input. Multiple
 queued lines become one prompt.
 
 Bare TUI commands stay in the client. For example, `/help` opens local help.
-While a run is active and the prompt is available, `/clear` replaces the session.
-Unknown slash commands, workspace commands, and built-in commands with
+While a run is active and the prompt is available, `/clear` replaces the
+session. Unknown slash commands, workspace commands, and built-in commands with
 arguments go to the model.
 
 To revise queued input, empty the prompt and press `↑`. This restores the
@@ -77,17 +78,16 @@ paused queue, it clears the queue and preserves the draft.
 
 ## Add files and images
 
-Type `@` to find a file in the workspace, then select it with `enter` or `tab`.
-`mecatui` inserts text files into the prompt and attaches supported image or
-audio files as media. The selected model must support the media type; otherwise,
-the client keeps the draft and reports the unsupported attachment.
+File mentions can attach supported image or audio files as media. The selected
+model must support the media type; otherwise, the client keeps the draft and
+reports the unsupported attachment.
 
 Press `ctrl+v` to paste an image from the clipboard. If the clipboard does not
 contain an image, `ctrl+v` pastes its text. Large text pastes appear as compact
 placeholders in the editor and expand when you send the prompt.
 
-See [Multimodal input](/features/sessions/multimodal-input.md) for model capability and
-validation behavior.
+See [Multimodal input](/features/sessions/multimodal-input.md) for model
+capability and validation behavior.
 
 ## When a model stream fails
 
@@ -157,8 +157,8 @@ commands supported by the connected server.
 |Review learning and maintain memory|`/learning`, `/reflections`, `/reflect`, and `/dream`|[Use learning and memory commands](./commands-and-memory.md)|
 
 The palette also includes workspace-defined slash commands. See
-[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for how the
-server discovers and expands them.
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)
+for how the server discovers and expands them.
 
 ## Monitor delegated work
 
@@ -193,44 +193,48 @@ for it to settle, then retry `/clear`.
 ## A short key reference
 
 Use `?` on an empty prompt for the live help overlay. The everyday defaults are
-`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
-to open `/toolcalls`, `f9` to reveal conversation details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
-not support steering, `enter` queues a follow-up while a run is active. See
-[Keybindings](./keybindings.md) for approval controls, remapping, and the
-complete reference.
+`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline,
+`ctrl+t` to inspect tool calls, `f9` to reveal conversation details,
+`pgup`/`pgdn` to scroll, and `/` to open commands.
+If the server does not support steering, `enter` queues a follow-up while a run
+is active. See [Keybindings](./keybindings.md) for approval controls, remapping,
+and the complete reference.
 
 ## Inspect the broker catalogue
 
-On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
-broker catalogue: enrollment state, connector names, catalogue state, and tool
-counts. Opening and refresh read only that local state; they do not probe an
-upstream, refresh credentials, or enroll connectors. When the owner-authorized
-session is stably idle and the enrollment controller is wired, `/mcp` (or Ctrl+O)
-offers `c connect tools` after a fresh session, completed turns, a prior
-connection, a failed/terminal attempt, or a broker-process restart. A persisted
-name or inventory row never proves live connectivity: after restart the panel
-truthfully reports broker state unavailable and protected tools remain
-unavailable until the owner explicitly refreshes this same session.
-Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
-second refresh are blocked until the existing operation settles. The existing
-browser flow continues without a reopen-browser action. A running or awaiting
-session does not offer refresh. Setup is destructive and bundle-wide: starting
-it withdraws broker tools, and cancellation or failure leaves them unavailable.
-Use `/mcp-refresh` for this broker flow. `/tools-connect` remains a deprecated
-broker-only alias, and `/tools-cancel` cancels pending setup.
+On a broker-only `mecak8s` connection, `/mcp` shows the current session's
+enrollment state, connector names, catalogue state, and tool counts. The panel
+requires a verified authenticated caller who owns the session. Opening it or
+refreshing its display reads local state; it does not probe upstream services,
+refresh credentials, or enroll connectors.
 
-ToolHive remains the sole custodian of upstream OAuth presentation, callback
-state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only
-its opaque enrollment control. The operator configures broker availability; see [MCP network access and credentials](/operating/mecak8s/identity-and-client-access.md#maintain-mcp-network-access-and-credentials).
-The panel still requires the existing authenticated verified principal and a
-matching owned session; broker-only and direct-MCP compositions remain
-mutually exclusive, so broker-only sessions do not offer direct resources,
-prompts, or groups.
+When the session is idle and the operator has enabled enrollment, `/mcp` (or
+`ctrl+o`) offers **Connect tools**. Use it for a new session or to reconnect
+after completed turns, a previous connection, a failed attempt, or a broker
+restart. After a restart, saved connector names do not prove connectivity: the
+panel reports broker state unavailable and protected tools remain unavailable
+until you explicitly refresh that session.
 
-The panel is not an upstream health check. It requires the authenticated owner
-of the session. Broker-only sessions do not expose direct MCP resources,
-prompts, or groups.
+### Reconnect tools
 
+Run `/mcp-refresh` to start broker setup. Reconnection withdraws the existing
+broker tools for the whole bundle. Cancellation or failure leaves them
+unavailable. Setup shows **Setup in progress** and **Cancel setup**; prompts and
+a second refresh are blocked until it settles. A running session or one awaiting
+approval cannot refresh. The browser authorization flow continues without a
+reopen-browser action.
+
+`/tools-connect` is a deprecated broker-only alias for `/mcp-refresh`.
+`/tools-cancel` cancels pending setup.
+
+ToolHive owns upstream OAuth authorization, callback state, credentials, token
+refresh, and grant reuse. Mecatl handles enrollment through opaque references.
+The operator configures
+[MCP network access and credentials](/operating/mecak8s/identity-and-client-access.md#maintain-mcp-network-access-and-credentials).
+
+Broker-only and direct-MCP configurations are mutually exclusive. Broker-only
+sessions do not expose direct MCP resources, prompts, or groups. The catalogue
+is an inventory, not an upstream health check.
 
 ## Next steps
 

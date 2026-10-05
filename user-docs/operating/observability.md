@@ -7,8 +7,10 @@ description:
 
 # Collect metrics, traces, and diagnostics
 
-Mecatl exposes metrics, traces, structured logs, and tool audit records. Its
-model-provider wrapper also handles transient failures and stalled streams.
+Collect metrics and traces from the server process, and retain diagnostics and
+audit records according to your deployment's data policy. Keep diagnostic
+listeners private because they can expose prompts, file paths, and runtime
+state.
 
 |Channel|Purpose|
 |-|-|
@@ -17,7 +19,8 @@ model-provider wrapper also handles transient failures and stalled streams.
 |Structured diagnostics|Report lifecycle and degraded-mode conditions.|
 |Tool audit records|Record each tool call and its timing.|
 
-Embedders choose and inject the sinks. The engine does not use a global logger.
+Embedded applications supply their own telemetry sinks; see the
+[Go extension points](/building/go/extension-points/index.md).
 
 ## Prometheus metrics
 
@@ -25,6 +28,18 @@ In `mecated`, the admin listener serves `/metrics` at `127.0.0.1:9090` by
 default. The endpoint is unauthenticated, so keep it on a loopback address.
 `mecak8s` disables it by default. Embedders must provide their own recorder and
 exporter.
+
+For a local `mecated` instance, check the endpoint before configuring your
+Prometheus collector:
+
+```sh
+curl --fail http://127.0.0.1:9090/metrics
+```
+
+For Kubernetes, explicitly enable a loopback metrics listener with
+`--metrics-addr=127.0.0.1:9090` through `extraArgs`, then use an
+operator-controlled local collector or port forward. The listener rejects
+non-loopback addresses.
 
 Run metrics use a bounded `role` label: `main`, `subagent`, `member`,
 `parallel`, `usermodel`, or `child`. Session IDs and model names do not appear
@@ -68,7 +83,15 @@ links. Mecatl refuses this option when the admin listener is not loopback.
 ## OpenTelemetry traces
 
 Set `--otlp-endpoint` to enable run, turn, and tool spans. An empty endpoint
-disables tracing without affecting Prometheus metrics.
+disables tracing without affecting Prometheus metrics. For example, send traces
+to a local development collector over gRPC:
+
+```sh
+mecated serve --otlp-endpoint 127.0.0.1:4317 --otlp-insecure
+```
+
+Use a TLS-enabled collector for production. Run a prompt through the server,
+then confirm that run, turn, and tool spans reach your collector.
 
 |Flag|Default|Purpose|
 |-|-|-|
@@ -86,8 +109,10 @@ context or use its cancellation state to drop events.
 ## Model-call resilience
 
 For retries, circuit breakers, stream timeouts, caching, and bounded network
-inspection, see [Observability and resilience](/features/runtime/observability-and-resilience.md).
-Configure their deployment controls through the [server CLI reference](/reference/server-cli.md).
+inspection, see
+[Observability and resilience](/features/runtime/observability-and-resilience.md).
+Configure their deployment controls through the
+[server CLI reference](/reference/server-cli.md).
 
 ## Structured diagnostics
 
@@ -118,8 +143,8 @@ entry. It can be absent on cache hits.
 `port.ToolCallRecorder` receives one record per tool execution, including queue
 and execution time. With `--store-dir`, `jsonlstore` writes `.tools.jsonl`
 sidecars and feeds the tool count and duration metrics. See the
-[session store extension point](/building/go/extension-points/session-store.md) for
-record ownership and naming.
+[session store extension point](/building/go/extension-points/session-store.md)
+for record ownership and naming.
 
 ## Anonymous product metrics
 
@@ -139,7 +164,9 @@ reporting with one of the controls in the capability guide.
 - [Session store extension point](/building/go/extension-points/session-store.md)
   to provide custom persistence and audit recording.
 
-## Related topics
+<span id="related-topics"></span>
+
+## Related information
 
 <span id="retry-and-circuit-breaker" />
 <span id="timeouts" />

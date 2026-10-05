@@ -16,7 +16,7 @@ credentials.
 
 You need:
 
-- macOS or Linux with [Homebrew](https://brew.sh/); and
+- macOS or Linux with [Homebrew](https://brew.sh/).
 - Node.js 22 or later.
 
 ## Install `mecated`

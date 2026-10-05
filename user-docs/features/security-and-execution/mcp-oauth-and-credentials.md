@@ -106,8 +106,8 @@ mecated mcp list
 mecated mcp list --file /etc/mecatl/settings.yaml
 ```
 
-Each row identifies the configured source and a non-presenting credential
-status. Changes apply to newly started daemons.
+Each row identifies the configured source and credential status without
+revealing credentials. Changes apply to newly started daemons.
 
 Remove a profile from the default settings file with:
 
@@ -265,46 +265,16 @@ The flags do not revoke an upstream registration. Complete public-client refresh
 remains deferred to
 [issue #1355](https://github.com/stacklok/mecatl/issues/1355).
 
-#### Manual local-mecatui qualification
+<span id="manual-local-mecatui-qualification" />
 
-Run this live procedure only with explicit authorization and an isolated
-owner-only config and credential root. Do not paste command output into an issue
-or PR.
+#### Verify DCR login and reuse
 
-1. Configure the DCR profile above and export its 32-byte padded-base64
-   credential key.
-2. Run `mecated mcp login connector`; record whether explicit consent appeared,
-   but never record the URL, code, state, registration response, client ID, or
-   token.
-3. Start local `mecatui` with the same settings and key. Invoke only one
-   harmless discovered read-only tool and record its name and safe success
-   category.
-4. Restart `mecatui` before access-token expiry and invoke the same tool without
-   another login.
-5. After expiry, reconnect and confirm login-required, no refresh request, and
-   no browser launch.
-6. Run `mecated mcp login connector` explicitly, confirm registration reuse,
-   restart `mecatui`, and invoke the same harmless tool once more.
+After login, restart the local server and invoke a harmless read-only tool from
+that profile. Restart once more before token expiry to confirm the saved grant
+is reused. After expiry, run `mecated mcp login SERVER` explicitly and restart;
+startup never launches a browser or refreshes a direct DCR grant.
 
-Record only:
-
-```text
-canonical_resource: <origin/path, no query>
-issuer_origin: <origin only>
-explicit_consent: true|false
-harmless_tool_name: <name only>
-initial_result: success|failure:<safe-category>
-restart_reuse_before_expiry: true|false
-expiry_result: login-required|failure:<safe-category>
-refresh_attempted: false
-browser_launched_on_startup_or_expiry: false
-explicit_relogin_reused_registration: true|false
-relogin_result: success|failure:<safe-category>
-```
-
-Exclude OAuth and registration secrets, authorization URLs, callback values, raw
-provider errors, headers, credential-store contents, and screenshots containing
-any of them.
+#### Recover a changed or damaged registration
 
 If a valid ready DCR profile's intentional registration binding changes, for
 example its issuer, principal, scopes, or resource, run
@@ -384,7 +354,7 @@ For a flag-configured server, set `MCP_<NAME>_TOKEN`, where `<NAME>` is the
 uppercased server name. This is useful when the server does not need OAuth:
 
 ```sh
-export MCP_GITHUB_TOKEN='value-from-your-secret-manager'
+export MCP_GITHUB_TOKEN='<MCP_GITHUB_TOKEN>'
 mecated serve --mcp-server github=https://mcp.example.com/github
 ```
 
@@ -392,8 +362,8 @@ The token is read at startup, sent as an Authorization bearer header, and never
 logged. Token-bearing URLs must use HTTPS, except for loopback HTTP endpoints.
 Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique.
 
-The repeatable `--mcp-server-insecure-http <NAME>` flag permits a named server to
-send its token over off-host HTTP. Use this only when network controls and
+The repeatable `--mcp-server-insecure-http <NAME>` flag permits a named server
+to send its token over off-host HTTP. Use this only when network controls and
 short-lived tokens make cleartext transport acceptable.
 
 ## Runtime behavior and limitations
@@ -424,9 +394,11 @@ short-lived tokens make cleartext transport acceptable.
   any supplied issuer must still match.
 - A connection drop can trigger one bounded reconnect and retry. A
   server-declared tool failure is not replayed automatically because the call
-  may have mutated remote state. The startup tool catalog is retained across
-  reconnects; changed remote tool lists take effect after the next Mecatl
-  process start.
+  may have mutated remote state. Reconnect keeps the operation's pinned runtime
+  revision. Source reconciliation publishes changed tool lists for later
+  operations; existing sessions need an explicit refresh to grant newly added
+  tool names. See
+  [Refresh MCP tools for a session](./mcp-client.md#refresh-mcp-tools-for-a-session).
 - Treat the local credential store and configuration backups as sensitive. Keep
   roots owner-only and use your deployment's secret manager for rotation.
 

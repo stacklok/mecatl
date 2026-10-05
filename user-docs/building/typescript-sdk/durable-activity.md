@@ -14,6 +14,12 @@ views expose a serializable cursor for application-owned checkpoint storage.
 Watching and controlling are independent. A stored session ID and run ID are
 enough to create controls without opening a durable view.
 
+## Prerequisites
+
+Connect to a deployment with durable session and event storage, and retain the
+session ID your application is authorized to read. For reconnects, store the
+cursor alongside any run ID you need to control.
+
 ## Follow a session timeline
 
 Load the session, restore its previous cursor when present, and open the

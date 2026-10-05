@@ -49,9 +49,8 @@ For local versus remote connection ownership, see
 
 To continue a session through an API:
 
-1. creates a session and receives an opaque `session_id`;
-2. retains that ID; and
-3. sends prompts to that session until it is closed or no longer usable.
+1. Create a session and retain the returned opaque `session_id`.
+2. Send prompts using that ID until the session is closed or no longer usable.
 
 The session keeps its server-side workspace and configuration between prompts.
 Treat the ID as opaque.

@@ -37,10 +37,10 @@ replicas from firing the same slot. A leader lease limits polling to one
 replica, while the atomic claim remains the duplicate-execution safeguard.
 
 A crash after a claim can skip that slot. Recurring schedules continue at the
-next slot. By default a one-shot schedule can be lost. Opt-in retry can repeat the work,
-so tasks using it must tolerate duplicate effects; use an external job system
-when you need stronger delivery guarantees. Each successful claim creates a
-fresh session whose record preserves the conversation, tool calls, usage,
+next slot. By default a one-shot schedule can be lost. Opt-in retry can repeat
+the work, so tasks using it must tolerate duplicate effects; use an external job
+system when you need stronger delivery guarantees. Each successful claim creates
+a fresh session whose record preserves the conversation, tool calls, usage,
 terminal state, and fire result.
 
 Embeddings can provide `port.ScheduleStore`. Implementations must make claims
@@ -57,32 +57,20 @@ It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
 or `Shell` must explicitly set `mutating: true`; this is not an implicit
 allow-all mode.
 
-Placement is resolved once when the schedule is created and every fire exactly reattaches
-that durable placement. An in-chat schedule borrows its originating session's worktree;
-an independent schedule owns a separately provisioned placement when the deployment provider
-supports that lifecycle (including `microvm-local`). Updates cannot change either relationship.
-Deleting a borrowed schedule leaves its origin untouched. Deleting an independently placed
-schedule first persists an atomic, restart-safe deletion marker; claimed/running fires must settle
-before that transition, and inspect/list report deletion pending until conditional completion succeeds.
-Before the first claim, deletion cleans the owned placement while preserving dirty state. The first
-atomic claim hands placement lifetime to the fire-session lineage; after it, deleting the schedule
-removes only its record and retains the clean or dirty worktree for historical and resumable fire
-sessions. Deletion never destroys a shared repository VM, rootfs, or sibling worktree. Legacy records
-with ambiguous ownership keep the prior direct-delete behavior and are never guessed to be owned.
-
-Example REST workflow:
+For an independently created schedule, the server selects placement from its
+configured default. The create request has no workspace field. Use the HTTP
+listener for this REST workflow:
 
 ```sh
-curl -X POST http://localhost:8080/v1/schedules \
+curl -X POST http://127.0.0.1:8081/v1/schedules \
   -H 'content-type: application/json' \
   -d '{"name":"nightly-report",
        "prompt":"summarize commits from today",
-       "workspace":"/repo",
        "mode":"PERMISSION_MODE_PLAN",
        "trigger":{"cron":"0 9 * * *"}}'
 
-curl -X POST http://localhost:8080/v1/schedules/nightly-report/fire
-curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire-id>
+curl -X POST http://127.0.0.1:8081/v1/schedules/nightly-report/fire
+curl http://127.0.0.1:8081/v1/schedules/nightly-report/fires/<FIRE_ID>
 ```
 
 The REST routes are under `/v1/schedules`; the gRPC service is
@@ -93,6 +81,27 @@ for exact request and response fields.
 
 The `mecatui` overlay is available when the connected server advertises a
 reachable schedule store.
+
+## Placement and deletion
+
+Mecatl resolves placement when it creates the schedule. Every fire reattaches
+that exact durable placement. An in-chat schedule borrows its originating
+session's worktree; an independent schedule owns a separately provisioned
+placement when the deployment provider supports that lifecycle (including
+`microvm-local`). Updates cannot change either relationship.
+
+Deleting a borrowed schedule leaves its origin untouched. Deleting an
+independently placed schedule first persists an atomic, restart-safe deletion
+marker; claimed/running fires must settle before that transition, and
+inspect/list report deletion pending until conditional completion succeeds.
+
+Before the first claim, deletion cleans the owned placement while preserving
+dirty state. The first atomic claim hands placement lifetime to the fire-session
+lineage; after it, deleting the schedule removes only its record and retains the
+clean or dirty worktree for historical and resumable fire sessions. Deletion
+never destroys a shared repository VM, rootfs, or sibling worktree. Legacy
+records with ambiguous ownership keep the prior direct-delete behavior and are
+never guessed to be owned.
 
 ## Automatic firing
 
@@ -134,35 +143,39 @@ the schedule forever. Manual firing also rejects an overlapping active fire.
 
 ### One-shot retry
 
-`one_shot_retry` is off by default. Enable it for a one-shot task that can safely
-run more than once: the scheduler can re-arm a fire lost in a crash or ending in
-an error. `one_shot_max_retries` defaults to three when retry is enabled and no
-budget is supplied. The durable retry counter limits re-arming across restarts.
-Recurring schedules reject this setting and use their misfire policy instead.
+`one_shot_retry` is off by default. Enable it for a one-shot task that can
+safely run more than once: the scheduler can re-arm a fire lost in a crash or
+ending in an error. `one_shot_max_retries` defaults to three when retry is
+enabled and no budget is supplied. The durable retry counter limits re-arming
+across restarts. Recurring schedules reject this setting and use their misfire
+policy instead.
 
-A re-armed one-shot starts with fresh context, even when carried context is enabled.
-Retry is at least once within its configured budget, not an exactly-once guarantee.
+A re-armed one-shot starts with fresh context, even when carried context is
+enabled. Retry is at least once within its configured budget, not an
+exactly-once guarantee.
 
 ### Carried context
 
 `carry_context` is off by default. When enabled, Mecatl loads the prior fire's
 conversation and includes it as fenced untrusted data in the new prompt. It is
-background information, not replayed conversation or fresh authority. If the prior
-session cannot be loaded, the fire continues with fresh context and a diagnostic.
-Persist durable task state in memory or files when later runs must reload it.
+background information, not replayed conversation or fresh authority. If the
+prior session cannot be loaded, the fire continues with fresh context and a
+diagnostic. Persist durable task state in memory or files when later runs must
+reload it.
 
 ### Deadlines and orphaned fires
 
-The supplied deployment uses a 30-minute fire deadline unless the schedule supplies
-its own nonzero `fire_timeout`. A deadline ends the run in a recoverable timeout
-state. Inspect the fire before deciding whether to continue it manually.
+The supplied deployment uses a 30-minute fire deadline unless the schedule
+supplies its own nonzero `fire_timeout`. A deadline ends the run in a
+recoverable timeout state. Inspect the fire before deciding whether to continue
+it manually.
 
-The scheduler reconciles its latest orphaned in-flight fire after a crash. A claim
-lost before session creation becomes an error fire record; a fire lost during its
-run becomes an error record with a cancelled, recoverable session. Failed
-reconciliation is retried on later ticks. This cleanup records what happened; it
-is separate from opt-in one-shot retry. Older orphaned fire sessions beyond the
-latest schedule state are not covered by this sweep.
+The scheduler reconciles its latest orphaned in-flight fire after a crash. A
+claim lost before session creation becomes an error fire record; a fire lost
+during its run becomes an error record with a cancelled, recoverable session.
+Failed reconciliation is retried on later ticks. This cleanup records what
+happened; it is separate from opt-in one-shot retry. Older orphaned fire
+sessions beyond the latest schedule state are not covered by this sweep.
 
 ### Delivery to the originating conversation
 
@@ -173,10 +186,9 @@ origin waiting for approval drains them when its approval pause resumes. An idle
 or terminal origin can start a delivery turn. Delivery failure does not fail the
 recorded fire: its result remains available for inspection.
 
-Notes treat scheduled output as untrusted data and preserve
-the origin's permission policy. Missing, unauthorized, or short-lived child
-origins fall back to inspecting the fire record. There is no external webhook
-callback guarantee.
+Notes treat scheduled output as untrusted data and preserve the origin's
+permission policy. Missing, unauthorized, or short-lived child origins fall back
+to inspecting the fire record. There is no external webhook callback guarantee.
 
 ## Limitations
 

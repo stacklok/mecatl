@@ -14,11 +14,11 @@ other operator settings.
 
 Mecatl separates shared agent policy, credentials, daemon topology, command-line
 overrides, and terminal UI preferences. Keep each setting in its own
-configuration plane.
+configuration file or deployment input.
 
 ## Configuration at a glance
 
-|Plane|Practical location or input|Owner|What it configures|
+|Configuration|Practical location or input|Owner|What it configures|
 |-|-|-|-|
 |Operator settings|`$XDG_CONFIG_HOME/mecatl/settings.yaml` (usually `~/.config/mecatl/settings.yaml`)|Server operator|Providers and models, permissions, posture, MCP profiles, and other shared agent policy.|
 |Provider credentials|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`), or `--api-key-file`|Server operator|Provider API keys and the experimental Codex credential snapshot.|
@@ -71,24 +71,24 @@ limits. Supply the daemon API bearer through `--auth-token` or
 
 ## Select harness context sources
 
-Use `harness_context` in operator settings to choose instruction, command,
-rule, skill, and agent-definition sources independently of execution placement.
-For example, this policy keeps the configured local sources but disables agent
+Use `harness_context` in operator settings to choose instruction, command, rule,
+skill, and agent-definition sources independently of execution placement. For
+example, this policy keeps the configured local sources but disables agent
 definitions:
 
 ```yaml
 harness_context:
   enabled_sources: [local]
   kinds:
-    instructions: {sources: [local], mode: combine}
-    commands: {sources: [local], mode: combine}
-    rules: {sources: [local], mode: combine}
-    skills: {sources: [local], mode: combine}
-    agent_defs: {sources: [], mode: combine}
+    instructions: { sources: [local], mode: combine }
+    commands: { sources: [local], mode: combine }
+    rules: { sources: [local], mode: combine }
+    skills: { sources: [local], mode: combine }
+    agent_defs: { sources: [], mode: combine }
 ```
 
-Include all five kind mappings and set each `mode` to `combine` or `replace`.
-An empty `sources` list disables that kind. Sources appear in highest-precedence
+Include all five kind mappings and set each `mode` to `combine` or `replace`. An
+empty `sources` list disables that kind. Sources appear in highest-precedence
 order. `combine` concatenates instructions and combines named entries, keeping
 the first entry for each name. `replace` selects the complete contribution of
 the first nonempty source after exclusions.
@@ -118,20 +118,19 @@ without falling back to execution files.
 
 A project `harness_context` block is ignored in full with a warning that omits
 its values, even in a trusted project. Source selection cannot grant tool
-permissions or bypass project trust. A selected source that requires execution files fails for a no-filesystem
-session; there is no silent fallback. Use an independent registered source for
-that profile, or disable the execution-file source in operator policy. A
-no-filesystem session can still use separately configured file-backed or
-service-backed logical sources; reading those sources does not authorize
-execution-file edits.
+permissions or bypass project trust. A selected source that requires execution
+files fails for a no-filesystem session; there is no silent fallback. Use an
+independent registered source for that profile, or disable the execution-file
+source in operator policy. A no-filesystem session can still use separately
+configured file-backed or service-backed logical sources; reading those sources
+does not authorize execution-file edits.
 
 Restart the process after changing source policy. Existing sessions and
 schedules use the current policy and current source authorization when they
-rebind. Commands remain live between calls; instructions refresh per run;
-rules, skills, and agent definitions keep their source-binding snapshots.
-With no `harness_context` block, existing source settings and precedence apply,
-bound to the configured startup source rather than each session's execution
-placement.
+rebind. Commands remain live between calls; instructions refresh per run; rules,
+skills, and agent definitions keep their source-binding snapshots. With no
+`harness_context` block, existing source settings and precedence apply, bound to
+the configured startup source rather than each session's execution placement.
 
 See the [configuration reference](/reference/configuration.md#harness_context)
 for the strict schema. Named `overrides` replace only their listed candidates
@@ -178,10 +177,12 @@ complete schema.
 
 ## Configure provider credentials
 
-Model provider setup is covered in [Choose models and providers](/features/sessions/choose-models.md).
-For a service, keep credential custody with its operator: supply credentials to
-the process or an operator-owned credential file, and restrict file access to
-the service account. [Configure providers and storage](/operating/mecated/configure-providers-and-storage.md)
+Model provider setup is covered in
+[Choose models and providers](/features/sessions/choose-models.md). For a
+service, keep credential custody with its operator: supply credentials to the
+process or an operator-owned credential file, and restrict file access to the
+service account.
+[Configure providers and storage](/operating/mecated/configure-providers-and-storage.md)
 explains daemon-specific paths, precedence, and reload behavior. Kubernetes and
 CI deployments own their Secret and workflow-secret handling in their guides.
 
@@ -197,23 +198,22 @@ configure the remote server.
 
 The terminal client reads `$XDG_CONFIG_HOME/mecatui/settings.yaml` in both
 modes. These UI settings do not alter server behavior. For keymaps, the client
-file has the lowest priority and `mecatui --keymap` has the highest priority. See
-[Keybindings](/mecatui/keybindings.md),
+file has the lowest priority and `mecatui --keymap` has the highest priority.
+See [Keybindings](/mecatui/keybindings.md),
 [Customize mecatui](/mecatui/customization.md), and
 [Connect to a server](/mecatui/remote-servers.md) for client and transport
 details.
 
 ## Next steps
 
-- [Choose models and providers](/features/sessions/choose-models.md) covers
-  provider, model, and endpoint selection.
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
-  covers permission files, project trust, guardrails, and automation posture.
-- [MCP client](/features/security-and-execution/mcp-client.md) covers
-  streaming-HTTP MCP servers and their authentication profiles.
-- [Connect to a server](/mecatui/remote-servers.md) covers remote transport,
-  TLS, and client authentication.
-- [Keybindings](/mecatui/keybindings.md) covers the client-owned keymap schema
-  and overrides.
-- [Configuration reference](/reference/configuration.md) lists every
-  `settings.yaml` key, type, default, and allowed tier.
+- [Choose models and providers](/features/sessions/choose-models.md).
+- [Configure permissions and posture](/features/security-and-execution/permissions-and-posture.md).
+- [Configure MCP connections](/features/security-and-execution/mcp-client.md).
+
+## Related information
+
+- [Configuration reference](/reference/configuration.md) lists every settings
+  key, type, default, and allowed tier.
+- [Connect to a server](/mecatui/remote-servers.md) covers client transport and
+  authentication.
+- [Keybindings](/mecatui/keybindings.md) covers client-owned overrides.
