@@ -3,9 +3,12 @@
 # Build context is sdk/typescript: build the in-tree SDK before installing the
 # bot's file:../.. dependency. Only production artifacts reach the runtime.
 #
-# Chainguard's free Node images expose moving latest tags, so both stages are
-# pinned by multi-architecture digest, matching the convention in .ko.yaml.
-FROM cgr.dev/chainguard/node@sha256:dcb7cf99cf3eaf95bad12812e4233a2b534e464a277611287c3392d2171d662c AS builder
+# Chainguard's free Node images expose moving latest tags. Renovate's native
+# Dockerfile manager uses these tags to refresh each multi-architecture digest;
+# the digest still pins the build. Keep latest-dev for the builder and latest for
+# the runtime so updates cannot silently swap the development/runtime variants.
+# https://docs.renovatebot.com/docker/#digest-updating
+FROM cgr.dev/chainguard/node:latest-dev@sha256:dcb7cf99cf3eaf95bad12812e4233a2b534e464a277611287c3392d2171d662c AS builder
 
 WORKDIR /home/node/src
 COPY --chown=65532:65532 . .
@@ -20,7 +23,7 @@ FROM builder AS production-dependencies
 RUN cd examples/slack-bot && corepack pnpm@11.25.0 prune --prod
 RUN corepack pnpm@11.25.0 prune --prod
 
-FROM cgr.dev/chainguard/node@sha256:753a66014b1310b8f93c76d4cac41d039958b9a86dd44a245289d6cb85455582
+FROM cgr.dev/chainguard/node:latest@sha256:753a66014b1310b8f93c76d4cac41d039958b9a86dd44a245289d6cb85455582
 
 # The current runtime image includes BusyBox. Remove its single executable (all
 # applet links, including /bin/sh, then become inert) before dropping privileges.
