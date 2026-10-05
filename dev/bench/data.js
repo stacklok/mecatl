@@ -293191,6 +293191,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791170731973,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "473c05074cba0607c9d05f9f0c6e8bfdc5f05783",
+          "message": "fix(slack-bot): harden release image (#1182)\n\nBuild the Slack bot release image with digest-pinned Chainguard builder and runtime stages, production-only artifacts, and non-root shellless execution.\n\nExercise the compiled image against an offline mecated instance and enable grouped Renovate updates for its separate builder and runtime channels.\n\nFixes #1085\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T10:55:25+03:00",
+          "tree_id": "8579dd36f97be47656585ba5abfc36e4b502c28b",
+          "url": "https://github.com/stacklok/mecatl/commit/473c05074cba0607c9d05f9f0c6e8bfdc5f05783"
+        },
+        "date": 1791187624180,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3302,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 91.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -383973,6 +384012,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791187621103,
+  "lastUpdate": 1791187625445,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
