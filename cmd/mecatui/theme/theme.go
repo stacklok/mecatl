@@ -278,6 +278,11 @@ func (t *Theme) compile() {
 			BorderTop(true).
 			BorderForeground(col(p.Border)),
 
+		// Activity line above the input box: muted, same inset as the footer.
+		"activity": lipgloss.NewStyle().
+			Foreground(col(p.TextMuted)).
+			Padding(0, 1),
+
 		// Conversation viewport surface.
 		"viewport": lipgloss.NewStyle().
 			Foreground(col(p.Text)),

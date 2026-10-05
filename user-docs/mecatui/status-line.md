@@ -17,11 +17,11 @@ sessions cannot change it.
 
 With no `status_customization:` entry, `mecatui` uses its shipped responsive
 templates. The header includes the active session title at every width and the
-remote target in its full variant. Keyboard help, the header
-posture/scroll/changed-file indicators, and the footer activity lane remain part
-of the client interface; customization cannot remove them. In a debug session,
-the header also keeps a `⚠ DEBUG target` cue ahead of generated content and a
-privacy disclosure below it, even if a custom header is empty.
+remote target in its full variant. Keyboard help and the header
+posture/scroll/changed-file indicators remain part of the client interface;
+customization cannot remove them. In a debug session, the header also keeps a
+`⚠ DEBUG target` cue ahead of generated content and a privacy disclosure below
+it, even if a custom header is empty.
 
 ## Choose a source
 
@@ -144,7 +144,7 @@ refreshes it.
 |`Workspace.Name`|string|Provider-supplied workspace display metadata. It is not a directory basename or a usable path.|
 |`Workspace.Path`|string|Exact local root returned by the privileged local-context RPC. It is available to templates through their escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions.|
 |`Terminal.Rows`, `Terminal.Cols`|integers|Measured terminal dimensions.|
-|`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns remaining after the client reserves mandatory header and footer lanes.|
+|`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns available to each surface. The header value excludes the mandatory header indicators; the footer value is the full footer row less its padding.|
 |`MainAgent.State`|string|`connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`.|
 |`MainAgent.Activity`|string|Bounded display activity label.|
 |`MainAgent.Approval`|string|`none` or `awaiting`.|
@@ -170,8 +170,8 @@ command that supplies both surfaces:
 <status><header><accent>mecatui</accent><text> · GPT-5</text></header><footer><text>ctx 42%</text></footer></status>
 ```
 
-Each surface contains its styled text and link nodes directly. Headers are
-left-aligned by the renderer; footers are right-aligned. Text may be wrapped in
+Each surface contains its styled text and link nodes directly. The renderer
+left-aligns both headers and footers. Text may be wrapped in
 these semantic tokens:
 
 `text`, `muted`, `primary`, `secondary`, `accent`, `success`, `warning`,

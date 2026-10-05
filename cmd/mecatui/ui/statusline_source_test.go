@@ -10,7 +10,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
@@ -213,8 +212,8 @@ func TestStatusCustomization_Scenario2_ReservedLanesAndResponsiveSelection(t *te
 	if input.Terminal.HeaderAvailCols != geometry.headerAvailable || input.Terminal.FooterAvailCols != geometry.footerAvailable {
 		t.Fatalf("reserved-lane widths = %#v, want %#v", input.Terminal, geometry)
 	}
-	if want := m.widthOr() - 2 - lipgloss.Width(m.footerActivity()) - footerGapPad; input.Terminal.FooterAvailCols != want {
-		t.Fatalf("footer available columns = %d, want %d after footer padding and activity reservation", input.Terminal.FooterAvailCols, want)
+	if want := m.widthOr() - m.deps.Theme.Style("footer").GetHorizontalFrameSize(); input.Terminal.FooterAvailCols != want {
+		t.Fatalf("footer available columns = %d, want %d after footer padding only (activity renders above the input)", input.Terminal.FooterAvailCols, want)
 	}
 
 	updated, _ = m.Update(client.ToolCallMsg{Name: "Read"})

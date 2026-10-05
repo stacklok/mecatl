@@ -6,8 +6,7 @@
   ┃                                                                                              ┃
   ┃  agents · 20 members                                                                         ┃
   ┃                                                                                              ┃
-  ┃    · +6 rows above                                                                           ┃
-  ┃      ↑0 ↓0                                                                                   ┃
+  ┃    · +7 rows above                                                                           ┃
   ┃    ◆ · member-g                                                                              ┃
   ┃      working… · worker                                                                       ┃
   ┃      ↑0 ↓0                                                                                   ┃
@@ -21,10 +20,11 @@
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                       ⟳ team- · 20/20 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ⟳ team- · 20/20 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

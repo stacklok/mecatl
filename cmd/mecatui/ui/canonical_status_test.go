@@ -65,7 +65,7 @@ func TestCanonicalStatus_Scenario1_EmptySourceDoesNotFallBack(t *testing.T) {
 		if strings.Contains(header, "session") || strings.Contains(header, "canonical-model") || strings.Contains(header, "oversize") || strings.Contains(header, "·") || strings.Contains(footer, "ctx") || strings.Contains(footer, "oversize") {
 			t.Fatalf("source fallback: %q / %q", header, footer)
 		}
-		if !strings.Contains(header, "auto") || !strings.Contains(footer, "ready") || !strings.Contains(footer, "help") {
+		if !strings.Contains(header, "auto") || !strings.Contains(stripANSIstr(m.renderActivity()), "ready") || !strings.Contains(footer, "help") {
 			t.Fatalf("lost mandatory chrome: %q / %q", header, footer)
 		}
 	}
@@ -84,7 +84,7 @@ func TestCanonicalStatus_Scenario1_NoSourceMinimalIdentity(t *testing.T) {
 		} else if !strings.Contains(header, "session "+handle) {
 			t.Fatalf("known identity: %q", header)
 		}
-		if strings.Contains(header, "canonical-model") || strings.Contains(header, "[31m") || strings.Contains(footer, "ctx") || strings.Contains(footer, "↑") || !strings.Contains(header, "auto") || !strings.Contains(footer, "ready") || !strings.Contains(footer, "help") {
+		if strings.Contains(header, "canonical-model") || strings.Contains(header, "[31m") || strings.Contains(footer, "ctx") || strings.Contains(footer, "↑") || !strings.Contains(header, "auto") || !strings.Contains(stripANSIstr(m.renderActivity()), "ready") || !strings.Contains(footer, "help") {
 			t.Fatalf("unsafe/legacy identity or lost chrome: %q / %q", header, footer)
 		}
 	}

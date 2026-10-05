@@ -51,8 +51,8 @@ func resumeApprovalAskIDs(send *fakeSender) []string {
 }
 
 // TestAskEnqueuedWhileModalOpen: a second PermissionAskMsg while a modal is open
-// ENQUEUES behind the visible head (never clobbers it), and both the footer and
-// the modal title advertise the queue with a "(1 of 2)" badge.
+// ENQUEUES behind the visible head (never clobbers it), and both the activity line
+// and the modal title advertise the queue with a "(1 of 2)" badge.
 func TestAskEnqueuedWhileModalOpen(t *testing.T) {
 	m, _ := queuedAskModel(t)
 	if approvalSurfaceOf(t, m).ask.AskID != askA {
@@ -64,8 +64,11 @@ func TestAskEnqueuedWhileModalOpen(t *testing.T) {
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("phase = %v, want phaseAwaitingApproval", m.phase)
 	}
-	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
-		t.Errorf("footer must carry the queue badge, got %q", footer)
+	if activity := stripANSIstr(m.renderActivity()); !strings.Contains(activity, "(1 of 2)") {
+		t.Errorf("activity line must carry the queue badge, got %q", activity)
+	}
+	if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "(1 of 2)") {
+		t.Errorf("the queue badge must not be duplicated in the footer, got %q", footer)
 	}
 	modal := stripANSIstr(approvalSurfaceOf(t, m).renderPermissionModal(100, 24))
 	if !strings.Contains(modal, "Permission required (1 of 2)") {
@@ -77,7 +80,7 @@ func TestAskEnqueuedWhileModalOpen(t *testing.T) {
 // queued successor sends the approval for the ANSWERED ask, pops the successor
 // into the modal, STAYS awaitingApproval, and does NOT re-arm the spinner (the
 // spinner is still off-screen under the successor modal — keep in sync with
-// TestSpinnerVisibleMatchesFooterRender).
+// TestSpinnerVisibleMatchesActivityRender).
 func TestResolveAskAdvancesQueueNoSpinnerRearm(t *testing.T) {
 	m, send := queuedAskModel(t)
 	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
@@ -122,8 +125,8 @@ func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	if approvalSurfaceOf(t, m).ask.AskID != askB {
 		t.Fatalf("FIFO violated: head = %q, want %q (B before C)", approvalSurfaceOf(t, m).ask.AskID, askB)
 	}
-	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
-		t.Errorf("with one ask still queued the footer badge must read (1 of 2), got %q", footer)
+	if activity := stripANSIstr(m.renderActivity()); !strings.Contains(activity, "(1 of 2)") {
+		t.Errorf("with one ask still queued the activity badge must read (1 of 2), got %q", activity)
 	}
 
 	// Answer B: C heads, queue now EMPTY → no badge anywhere (never "(1 of 1)").
@@ -134,8 +137,8 @@ func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	if approvalSurfaceOf(t, m).ask.AskID != askC || len(approvalSurfaceOf(t, m).queue) != 0 {
 		t.Fatalf("want C visible with an empty queue, got head %q queue %+v", approvalSurfaceOf(t, m).ask.AskID, approvalSurfaceOf(t, m).queue)
 	}
-	if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "(1 of") {
-		t.Errorf("the badge must vanish at queue-empty, footer = %q", footer)
+	if activity := stripANSIstr(m.renderActivity()); strings.Contains(activity, "(1 of") {
+		t.Errorf("the badge must vanish at queue-empty, activity = %q", activity)
 	}
 	modal := stripANSIstr(approvalSurfaceOf(t, m).renderPermissionModal(100, 24))
 	if strings.Contains(modal, "(1 of") {
@@ -290,8 +293,8 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 			if m.phase != phaseAwaitingApproval || approvalSurfaceOf(t, m).ask.AskID != askB {
 				t.Fatalf("a fresh ask after run end must open the modal (not be swallowed by a stale answered-set), got phase=%v ask=%+v", m.phase, approvalSurfaceOf(t, m).ask)
 			}
-			if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "(1 of") {
-				t.Errorf("a fresh single ask must carry no phantom queue badge, footer = %q", footer)
+			if activity := stripANSIstr(m.renderActivity()); strings.Contains(activity, "(1 of") {
+				t.Errorf("a fresh single ask must carry no phantom queue badge, activity = %q", activity)
 			}
 		})
 	}
@@ -319,8 +322,8 @@ func TestResetSessionDropsAskQueue(t *testing.T) {
 func TestAskQueueBadgeWithLongArgsHeadAsk(t *testing.T) {
 	m, _ := queuedAskModel(t) // A (Shell) visible, B (Write) queued
 	approvalSurfaceOf(t, m).ask.Args = longShellArgs
-	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
-		t.Errorf("footer must carry the queue badge, got %q", footer)
+	if activity := stripANSIstr(m.renderActivity()); !strings.Contains(activity, "(1 of 2)") {
+		t.Errorf("activity line must carry the queue badge, got %q", activity)
 	}
 	modal := stripANSIstr(m.renderBody())
 	if !strings.Contains(modal, "Permission required (1 of 2)") {

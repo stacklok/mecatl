@@ -4,6 +4,7 @@
 ┃                                                                                                  ┃
 ┃  Agent definitions                                                                               ┃
 ┃                                                                                                  ┃
+┃  agent-10                                                                                        ┃
 ┃  agent-11                                                                                        ┃
 ┃  agent-12                                                                                        ┃
 ┃  agent-13                                                                                        ┃
@@ -13,18 +14,17 @@
 ┃  agent-17                                                                                        ┃
 ┃  agent-18                                                                                        ┃
 ┃  agent-19                                                                                        ┃
-┃  agent-20                                                                                        ┃
-┃  agent-21                                                                                        ┃
-┃  lines 12–22 of 30                                                                               ┃
+┃  lines 11–20 of 30                                                                               ┃
 ┃                                                                                                  ┃
 ┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close                     ┃
 ┃                                                                                                  ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

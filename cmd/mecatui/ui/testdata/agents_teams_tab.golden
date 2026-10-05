@@ -14,17 +14,17 @@
   ┃      ↑1.2K ↓80                                                                               ┃
   ┃    ◆ ✎ builder                                                                               ┃
   ┃      Edit… · implementer                                                                     ┃
-  ┃      ↑3.4K ↓220                                                                              ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected      ⛭ subagents 1◐ 0✓  ⟳ team- · 4/4 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ⛭ subagents 1◐ 0✓  ⟳ team- · 4/4 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit
