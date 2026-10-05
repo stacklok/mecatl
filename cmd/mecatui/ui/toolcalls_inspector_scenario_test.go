@@ -46,7 +46,7 @@ func TestMecatuiToolcallsInspector_Scenario1_ResumeProjection(t *testing.T) {
 	m.relayout()
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	if len(s.entries) != 1 || s.entries[0].name != "Read" {
+	if len(s.entries) != 1 || s.entries[0].fullName != "Read" {
 		t.Fatalf("resumed inventory: %#v", s.entries)
 	}
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -80,8 +80,8 @@ func TestMecatuiToolcallsInspector_Scenario1_TopLevelDelegationsOnly(t *testing.
 		t.Fatalf("top-level entries = %#v; want four parents and no nested child tools", s.entries)
 	}
 	for i, name := range []string{"Read", "Subagent", "Team", "Grep"} {
-		if s.entries[i].name != name {
-			t.Fatalf("entry %d name = %q, want %q", i, s.entries[i].name, name)
+		if s.entries[i].fullName != name {
+			t.Fatalf("entry %d name = %q, want %q", i, s.entries[i].fullName, name)
 		}
 	}
 	if !m.conv.scrollback.Tools().Resolve("sub", scrollback.ToolResult{Body: "child complete"}) ||
@@ -89,7 +89,7 @@ func TestMecatuiToolcallsInspector_Scenario1_TopLevelDelegationsOnly(t *testing.
 		t.Fatal("could not resolve specialized parent calls")
 	}
 	m.syncToolcalls()
-	if !s.entries[1].resolved || s.entries[1].failed || !s.entries[2].resolved || !s.entries[2].failed {
+	if s.entries[1].state != toolcallDone || s.entries[2].state != toolcallFailed {
 		t.Fatalf("delegation parent result state did not update in place: %#v", s.entries)
 	}
 }
@@ -178,7 +178,7 @@ func TestMecatuiToolcallsInspector_Scenario1_StableLiveSelection(t *testing.T) {
 	}
 	m.conv.resolveTool("call-0", "done", false)
 	m.syncToolcalls()
-	if got, want := s.selected, 0; got != want || !s.entries[0].resolved {
+	if got, want := s.selected, 0; got != want || s.entries[0].state != toolcallDone {
 		t.Fatalf("result changed selected row or did not update it: selected=%d entry=%#v", got, s.entries[0])
 	}
 	s.selected = len(s.entries) - 1
@@ -314,7 +314,7 @@ func TestMecatuiToolcallsInspector_Scenario3_SessionReplacementClosesInspector(t
 	m.conv.addTool("reused", "Write", `{"path":"successor"}`)
 	m = openToolcallsForTest(t, m)
 	fresh := toolcallsForTest(t, m)
-	if len(fresh.entries) != 1 || fresh.entries[0].name != "Write" || fresh.detail || fresh == s {
+	if len(fresh.entries) != 1 || fresh.entries[0].fullName != "Write" || fresh.detail || fresh == s {
 		t.Fatalf("reused call ID retained prior session state: %#v", fresh)
 	}
 }
@@ -357,7 +357,7 @@ func TestMecatuiToolcallsInspector_Scenario3_LoadedSessionReplacement(t *testing
 	m = updated.(Model)
 	m = openToolcallsForTest(t, m)
 	fresh := toolcallsForTest(t, m)
-	if fresh == s || len(fresh.entries) != 1 || fresh.entries[0].name != "Write" {
+	if fresh == s || len(fresh.entries) != 1 || fresh.entries[0].fullName != "Write" {
 		t.Fatalf("target inventory leaked source: %#v", fresh.entries)
 	}
 	fresh.Render(80, 12)
@@ -615,7 +615,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 		}
 		previous = pos
 	}
-	okResult := toolcallDetailLines(toolcallDetail{name: "Shell", resolved: true, resultReceived: true, result: scrollback.ToolResult{Body: "     1\tnot a Read row"}})
+	okResult := toolcallDetailLines(toolcallDetail{name: "Shell", state: toolcallDone, resultReceived: true, result: scrollback.ToolResult{Body: "     1\tnot a Read row"}})
 	if got := strings.Join(okResult, "\n"); !strings.Contains(got, "Result:\n     1\tnot a Read row") || strings.Contains(got, "Error:") {
 		t.Errorf("successful non-Read result changed: %q", got)
 	}

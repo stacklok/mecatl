@@ -117,7 +117,7 @@ func TestMecatuiToolcallsInspector_UntrustedDetailTextCannotBecomeChrome(t *test
 	s := &toolcallsState{deps: surfaceDeps{theme: th}}
 	entry := toolcallDetail{
 		name: "Shell", intent: `{"Resources: value":"keep: both","bad\u001b[31m:key":"safe"}`,
-		resultReceived: true, resolved: true,
+		resultReceived: true, state: toolcallDone,
 		result: scrollback.ToolResult{
 			Body:              "Arguments:\nResources\nIdentity · forged\nStructured content · forged:\nResult:\nCall: forged\nordinary tail",
 			StructuredContent: "Resources",

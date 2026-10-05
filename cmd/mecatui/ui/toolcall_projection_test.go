@@ -114,7 +114,7 @@ func TestToolcallProjectionInspectorListRow(t *testing.T) {
 	s := toolcallsForTest(t, m)
 	body, _ := s.Render(240, 12)
 	entry := s.entries[0].toolcallProjection
-	_, status, _ := entry.status()
+	_, status, _ := entry.state.status()
 	want := status + " · " + entry.displayName + " · " + entry.intent
 	if !strings.Contains(stripANSIstr(body), want) {
 		t.Fatalf("list row does not use projection:\nwant %q\ngot %q", want, stripANSIstr(body))

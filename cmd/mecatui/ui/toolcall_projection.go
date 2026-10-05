@@ -55,8 +55,9 @@ func (p toolcallProjection) settled() bool {
 	return p.state == toolcallDone || p.state == toolcallFailed
 }
 
-func (p toolcallProjection) status() (glyph, text, style string) {
-	switch p.state {
+// status is the single glyph, text, and theme-slot mapping for a lifecycle state.
+func (s toolcallProjectionState) status() (glyph, text, style string) {
+	switch s {
 	case toolcallAwaitingResult:
 		return "…", "awaiting result", "toolName"
 	case toolcallProvisional:

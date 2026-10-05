@@ -92,9 +92,7 @@ type ToolCallMetadata struct {
 	// without implying a canonical result.
 	ResultReceived, Provisional, Terminal bool
 	ResultError, LifecycleFailed          bool
-	// Resolved and Failed retain the former compact compatibility projection.
-	Resolved, Failed bool
-	Stop             string
+	Stop                                  string
 }
 
 // ToolCallMetadataAt returns the compact top-level tool projection at index i
@@ -129,8 +127,7 @@ func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
 	return ToolCallMetadata{
 		ID: card.id, Revision: card.revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
 		ResultReceived: resultReceived, Provisional: provisional, Terminal: terminal,
-		ResultError: resultError, LifecycleFailed: lifecycleFailed,
-		Resolved: resultReceived || terminal, Failed: resultError || lifecycleFailed, Stop: stop,
+		ResultError: resultError, LifecycleFailed: lifecycleFailed, Stop: stop,
 	}, true
 }
 

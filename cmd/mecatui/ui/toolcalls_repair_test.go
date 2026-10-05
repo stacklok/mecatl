@@ -61,7 +61,7 @@ func TestMecatuiToolcallsInspector_Scenario4_ListIntentRefreshesWithCardRevision
 	initialRevision := s.entries[0].revision
 	m.conv.resolveTool("write", "first result", false)
 	m.syncToolcalls()
-	if got := s.entries[0]; got.revision != initialRevision+1 || got.intent != "Write first" || !got.resolved {
+	if got := s.entries[0]; got.revision != initialRevision+1 || got.intent != "Write first" || got.state != toolcallDone {
 		t.Fatalf("result lifecycle entry = %+v", got)
 	}
 	runtime.GC()
@@ -88,7 +88,7 @@ func TestMecatuiToolcallsInspector_Scenario4_ListIntentRefreshesWithCardRevision
 	reconciledRevision := s.entries[1].revision
 	m.conv.resolveTool("pending", "done", false)
 	m.syncToolcalls()
-	if got := s.entries[1]; got.revision != reconciledRevision+1 || got.intent != "Write after" || !got.resolved {
+	if got := s.entries[1]; got.revision != reconciledRevision+1 || got.intent != "Write after" || got.state != toolcallDone {
 		t.Fatalf("result lifecycle changed reconciled entry: %+v", got)
 	}
 }
