@@ -292000,6 +292000,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791160167219,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8154675fbeb3d385f2a4651fda83a24a2547f5fb",
+          "message": "mecatui: aligned, humanized exit summary with aux usage (#2083)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T19:25:50-07:00",
+          "tree_id": "24655e071f43e15b9809eb0ac49c7c90ef6ab916",
+          "url": "https://github.com/stacklok/mecatl/commit/8154675fbeb3d385f2a4651fda83a24a2547f5fb"
+        },
+        "date": 1791167844779,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3282.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 70.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -382440,6 +382479,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791167842058,
+  "lastUpdate": 1791167845715,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
