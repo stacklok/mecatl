@@ -49,7 +49,8 @@ helm_kube() { printf '%s\n' "$@" > "$MARKER"; }
 }
 
 func TestProductionThenLiveImageAlias(t *testing.T) {
-	production := scriptRange(t, "run.sh", "for item in", "printf 'provider=%s")
+	// The alias fixture exercises the load loop without the runner's timing helper.
+	production := "image_step_done() { :; }\n" + scriptRange(t, "run.sh", "load_index=0\nfor item in", "printf 'provider=%s")
 	live := scriptRange(t, "live.sh", ". \"$root/deploy/mecatl-execution-kind/images.sh\"", "\nprovider_tag=$(build_ko")
 	helper, err := os.ReadFile("images.sh")
 	if err != nil {
