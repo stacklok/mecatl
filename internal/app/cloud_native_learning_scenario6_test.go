@@ -226,7 +226,7 @@ func TestCloudNativeLearning_Scenario6_NoPrematureGlobalBoundClaim(t *testing.T)
 
 	unwired := capture(t, nil)
 	if !strings.Contains(unwired.StablePrefix, learningAutomaticProcessLocalPostureNote) {
-		t.Fatalf("unwired StablePrefix = %q, want ADR-0114 process-local limitation", unwired.StablePrefix)
+		t.Fatalf("unwired StablePrefix = %q, want process-local limitation", unwired.StablePrefix)
 	}
 	if strings.Contains(unwired.StablePrefix, learningAutomaticGlobalPostureNote) {
 		t.Fatalf("unwired StablePrefix claims global automatic bounds: %q", unwired.StablePrefix)
@@ -238,6 +238,6 @@ func TestCloudNativeLearning_Scenario6_NoPrematureGlobalBoundClaim(t *testing.T)
 		t.Fatalf("durable-ledger StablePrefix = %q, want global automatic bounds", durable.StablePrefix)
 	}
 	if strings.Contains(durable.StablePrefix, learningAutomaticProcessLocalPostureNote) {
-		t.Fatalf("durable-ledger StablePrefix retains ADR-0114 process-local limitation: %q", durable.StablePrefix)
+		t.Fatalf("durable-ledger StablePrefix retains process-local limitation: %q", durable.StablePrefix)
 	}
 }

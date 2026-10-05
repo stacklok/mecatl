@@ -83,7 +83,7 @@
 #   # TaskWindow selects the last K explicitly authenticated root prompts (default 1,
 #   # clamped 1..3).
 #   taskWindow: 1
-#   # Escape is the ADR-0080 escape knob: when true AND a checker model is configured, an
+#   # Escape is the guardrail escape knob: when true AND a checker model is configured, an
 #   # out-of-root FS escape at posture auto routes through the guardrail checker (an
 #   # unsafe verdict denies; a checker error fails closed to the write-escape Ask).
 #   # Default false = the un-routed posture table.
@@ -103,12 +103,11 @@
 # posture: trusted
 
 #| === reasoning-effort === (tier: operator)
-#| OPERATOR-TIER reasoning-effort scalar (ADR 0055): "" / "auto" (unset — the provider
-#| default) / "low" / "medium" / "high" / "xhigh" / "max". OpenAI clamps xhigh/max down
-#| to high; Anthropic maps all five. A per-session CreateSession.reasoning_effort
-#| out-ranks this default. A project-tier reasoning-effort: is IGNORED with a WARN (a
-#| project cannot raise the model's reasoning spend). Empty = keep the CLI/default
-#| (provider default).
+#| OPERATOR-TIER reasoning-effort scalar: "" / "auto" (unset — the provider default) /
+#| "low" / "medium" / "high" / "xhigh" / "max". OpenAI clamps xhigh/max down to high;
+#| Anthropic maps all five. A per-session CreateSession.reasoning_effort out-ranks this
+#| default. A project-tier reasoning-effort: is IGNORED with a WARN (a project cannot
+#| raise the model's reasoning spend). Empty = keep the CLI/default (provider default).
 # reasoning-effort: high
 
 #| === plan-mode-auto-approve === (tier: operator)
@@ -412,10 +411,10 @@
 # steer: false
 
 #| === models === (tier: operator + project)
-#| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the
-#| semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all
-#| fields are honoured; a project tier honours slots/aliases/default within the operator
-#| allowlist on a trusted workspace (router/allowlist are operator-only).
+#| Per-slot/alias/default model config + the operator allowlist cap and the semantic
+#| Subagent model-router taxonomy. At the operator tier all fields are honoured; a
+#| project tier honours slots/aliases/default within the operator allowlist on a trusted
+#| workspace (router/allowlist are operator-only).
 # models:
 #   # Slots binds a slot name to a model selector. Call slots include "compaction",
 #   # "ask-reviewer", and "guardrail"; tier slots include "cheap", "fast", and
@@ -428,8 +427,8 @@
 #   # --model-alias map, CLI winning per key).
 #   aliases: {}
 #   # Default is the session-default model selector (alias or concrete id). It is the
-#   # project-overridable session default (ADR 0030 Phase 4) — within the operator
-#   # allowlist; the operator's own Default is uncapped. Empty = absent.
+#   # project-overridable session default — within the operator allowlist; the
+#   # operator's own Default is uncapped. Empty = absent.
 #   default: sonnet
 #   # Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
 #   # concrete id): the settings.yaml twin of the --subagent-model flag (issue #288). It
@@ -454,25 +453,24 @@
 #   # Empty = absent (the ladder's preferred default wins). The name pair (default =
 #   # model, default_provider = provider) mirrors the wire grammar exactly.
 #   default_provider: ""
-#   # Allowlist is the OPERATOR-TIER, non-wideable cap (ADR 0030 Phase 4): the set of
-#   # model selectors (alias names and/or concrete ids) a PROJECT-tier models: block may
-#   # bind to. An empty/absent allowlist means project models stay WARN-ignored (the
-#   # opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
-#   # honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored with
-#   # a WARN (a project cannot widen its own cap).
+#   # Allowlist is the OPERATOR-TIER, non-wideable cap: the set of model selectors (alias
+#   # names and/or concrete ids) a PROJECT-tier models: block may bind to. An empty/absent
+#   # allowlist means project models stay WARN-ignored (the opt-in: no cap ⇒ no project
+#   # override, byte-identical to pre-Phase-4). It is honoured ONLY from the operator
+#   # tiers; a project-tier allowlist: key is ignored with a WARN (a project cannot widen
+#   # its own cap).
 #   allowlist: []
-#   # Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031, Phase
-#   # 5; enable model superseded by ADR 0042): a classifier slot, the routing categories,
-#   # the default category, and the YAML kill-switch. It is operator-tier ONLY — a
-#   # project-tier router: sub-block is STRIPPED with a WARN (the taxonomy is an
-#   # autonomous-spend/capability decision the operator owns, like the allowlist).
-#   # nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent). Per ADR
-#   # 0042 the TAXONOMY is the enable: a non-empty router: with categories turns the
-#   # router ON unless `disabled: true` (or the CLI kill-switch) forces it off — the
-#   # guardrails-parity enable model, replacing 0031's flag-to-enable.
-#   # ENABLE: A non-empty `categories` list ENABLES the router (taxonomy-presence enable,
-#   # ADR 0042 — NOT a CLI enable-flag); `disabled: true` (or
-#   # --subagent-model-router=false) is the kill-switch. Operator-tier only.
+#   # Router is the OPERATOR-TIER semantic Subagent model-router taxonomy: a classifier
+#   # slot, the routing categories, the default category, and the YAML kill-switch. It is
+#   # operator-tier ONLY — a project-tier router: sub-block is STRIPPED with a WARN (the
+#   # taxonomy is an autonomous-spend/capability decision the operator owns, like the
+#   # allowlist). nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent).
+#   # The TAXONOMY is the enable: a non-empty router: with categories turns the router ON
+#   # unless `disabled: true` (or the CLI kill-switch) forces it off — the
+#   # guardrails-parity enable model, not a flag-to-enable.
+#   # ENABLE: A non-empty `categories` list ENABLES the router (taxonomy-presence enable
+#   # — NOT a CLI enable-flag); `disabled: true` (or --subagent-model-router=false) is
+#   # the kill-switch. Operator-tier only.
 #   router:
 #     # Backend selects llm or jev. Empty input defaults to llm.
 #     backend: jev
@@ -507,11 +505,11 @@
 #     # DefaultCategory is the category the classifier is told to choose when none clearly
 #     # fits (advisory to the classifier; the real safety net is the fail-soft inherit).
 #     default-category: ""
-#     # Disabled is the YAML-level kill switch (ADR 0042, mirroring
-#     # GuardrailsSection.Disabled): per ADR 0042 a non-empty taxonomy ENABLES the router,
-#     # so `disabled: true` is the "taxonomy defined but temporarily off" override. The
-#     # CLI kill-switch --subagent-model-router=false also sets it (the two OR together).
-#     # Default false ⇒ the router is enabled whenever categories are present.
+#     # Disabled is the YAML-level kill switch (mirroring GuardrailsSection.Disabled): a
+#     # non-empty taxonomy ENABLES the router, so `disabled: true` is the "taxonomy
+#     # defined but temporarily off" override. The CLI kill-switch
+#     # --subagent-model-router=false also sets it (the two OR together). Default false
+#     # ⇒ the router is enabled whenever categories are present.
 #     disabled: false
 #   # ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID →
 #   # total context token override map. It is intentionally not a selector map: aliases

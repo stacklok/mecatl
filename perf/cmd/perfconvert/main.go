@@ -2,7 +2,7 @@
 // KPIs (the []kpi.ScenarioResult that `task perf:scenarios` writes to
 // $MECATL_PERF_JSON) into the THREE github-action-benchmark custom-format files
 // the perf workflow feeds to the trend dashboard + alert gate. See
-// docs/adr/0019-perf-tracking.md (Phase 3) and .github/workflows/perf.yml.
+// docs/perf-tracking.md (Phase 3) and .github/workflows/perf.yml.
 //
 // THREE suites (a "customSmallerIsBetter" gate, a "customBiggerIsBetter" gate, and
 // a "customSmallerIsBetter" ADVISORY suite):
@@ -61,7 +61,7 @@ type benchPoint struct {
 // The by-design-0 scenarios (compaction_cycle exercises compact-and-replace, not
 // prefix caching; the tui_* render benches carry no model tokens at all) MUST NOT
 // emit a cache-hit point — their honest 0 is not a regression. See
-// docs/adr/0019-perf-tracking.md ("The non-obvious KPI: prompt-cache-hit-rate" and
+// docs/perf-tracking.md ("The non-obvious KPI: prompt-cache-hit-rate" and
 // the JSON-KPI-shape whitelist note).
 var cacheHitWhitelist = map[string]bool{
 	"single_session_long": true,

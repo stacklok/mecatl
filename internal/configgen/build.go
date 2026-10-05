@@ -417,7 +417,7 @@ func reasoningEffortSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "reasoning-effort",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER reasoning-effort scalar (ADR 0055): \"\" / \"auto\" (unset — " +
+		Doc: "OPERATOR-TIER reasoning-effort scalar: \"\" / \"auto\" (unset — " +
 			"the provider default) / \"low\" / \"medium\" / \"high\" / \"xhigh\" / \"max\". " +
 			"OpenAI clamps xhigh/max down to high; Anthropic maps all five. A per-session " +
 			"CreateSession.reasoning_effort out-ranks this default. A project-tier " +
@@ -488,7 +488,7 @@ func modelsSubtree(docs Docs) *Subtree {
 			f.ExampleValue = "coder"
 		case "router":
 			f.EnableNote = "A non-empty `categories` list ENABLES the router (taxonomy-presence " +
-				"enable, ADR 0042 — NOT a CLI enable-flag); `disabled: true` (or " +
+				"enable — NOT a CLI enable-flag); `disabled: true` (or " +
 				"--subagent-model-router=false) is the kill-switch. Operator-tier only."
 			rf := fieldsOf("RouterSection", permconfig.RouterSection{}, docs)
 			for _, nf := range rf {
@@ -533,8 +533,8 @@ func modelsSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "models",
 		Tier: TierProject,
-		Doc: "Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and " +
-			"the semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all " +
+		Doc: "Per-slot/alias/default model config + the operator allowlist cap and " +
+			"the semantic Subagent model-router taxonomy. At the operator tier all " +
 			"fields are honoured; a project tier honours slots/aliases/default within the operator " +
 			"allowlist on a trusted workspace (router/allowlist are operator-only).",
 		CommentedOut: true,

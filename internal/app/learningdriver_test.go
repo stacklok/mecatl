@@ -34,8 +34,8 @@ func TestADR_0259_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 	if closeEnforced != nil {
 		closeEnforced()
 	}
-	if err == nil || !strings.Contains(err.Error(), "ADR-0213") {
-		t.Fatalf("unauthenticated self-advertised enforced driver error = %v, want ADR-0213 fail-closed error", err)
+	if err == nil || !strings.Contains(err.Error(), "unavailable with ownership enforcement") {
+		t.Fatalf("unauthenticated self-advertised enforced driver error = %v, want ownership-enforcement fail-closed error", err)
 	}
 
 	trustedAddr := startSourceDriver(t, func(server *grpc.Server) {
