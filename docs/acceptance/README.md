@@ -133,6 +133,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Tool-result availability](tool-result-availability.md) - adds one live-only, call-ID-correlated availability projection for every effective tool result so concurrent cards expose the batch's long pole while canonical results retain ordered history. Status: proposed.
 - [Configurable Mecatl commit co-author guidance](configurable-commit-coauthor-guidance.md) — default-on, operator-only standard-prompt commit attribution for main and delegated engines, with a typed opt-out and no repository authority to disable it. Status: proposed.
 - [Server-owned provider recovery](server-provider-recovery.md) — extends shared in-process precommit recovery across parent and child model calls with cooldown and provider `Retry-After` timing, while retaining cancellation and semantic no-replay boundaries. Status: proposed; human-approved defaults and scope, with explicitly authorized stacked implementation before plan merge.
+- [Quiet benign guardrail notices](quiet-benign-hook-notices.md) — hides only completed acceptable contextual inspections by default in mecatui while retaining them for temporary or configured verbose display. Status: in-progress under the recorded direct-human process waiver.
 - [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
 - [Provider-scoped model discovery](provider-model-discovery.md) — one composition-owned provider lifecycle for shared discovery, ordered publication, context-safe admission, and truthful retry recovery. Status: draft.
 - [Delegation provider/model selectors](delegation-provider-model-selectors.md) — explicit provider/model selection for delegated work, explicit router-category selection through `DiscoverModels`, and an omission-first model-visible workflow. Status: proposed.
@@ -151,6 +152,7 @@ PR after verification. There is no cleanup or status-only PR.
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
   Combined candidate; authoritative on merge.
+- [Persist saved mecatui server CA](persist-mecatui-server-ca.md) — save a private gRPC server CA during OIDC login and restore it for saved connects without conflating it with issuer trust. Status: in-progress.
 - [Human-reviewed development contracts](human-reviewed-development-contracts.md) —
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.
