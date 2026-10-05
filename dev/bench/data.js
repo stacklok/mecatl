@@ -267104,6 +267104,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791205568515,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c65826ecc381da28e66bd93c634856823dd90fde",
+          "message": "fix(guardrails): include preparation in the review deadline (#2009)\n\nInclude evidence authorization, dependency snapshots, evidence preparation, and checker attempts in the existing 90-second guardrail review budget.\n\nStart each independent checker after its own serial preparation, preserving ordered decisions and approval handling. Reject late approvals, preserve terminal evidence failures, distinguish caller cancellation from checker outage, and join checker work before evidence cleanup. Add deterministic regression and race coverage for sibling overlap, cancellation, deadline enforcement, and health ordering.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T16:50:28+03:00",
+          "tree_id": "f18c9c694f6508a8309894ea562b65eece002d9b",
+          "url": "https://github.com/stacklok/mecatl/commit/c65826ecc381da28e66bd93c634856823dd90fde"
+        },
+        "date": 1791208980309,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -387516,6 +387550,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791208977204,
+  "lastUpdate": 1791208981337,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
