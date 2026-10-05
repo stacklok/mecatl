@@ -302,6 +302,7 @@ func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttem
 				}
 				var observed []session.NetworkAttemptPayload
 				ctx = port.WithAttemptObserver(ctx, func(o session.NetworkAttemptPayload) { observed = append(observed, o) })
+				started := time.Now()
 				got, err := recoveryDrain(ctx, t, p)
 				if mode == "recovered" {
 					if err != nil {
@@ -344,6 +345,9 @@ func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttem
 							t.Fatalf("missing %s", key)
 						}
 					}
+					if argValue(record.args, "max_attempts") != cfg.MaxAttempts {
+						t.Fatalf("max_attempts=%v, want %d", argValue(record.args, "max_attempts"), cfg.MaxAttempts)
+					}
 					if strings.Contains(fmt.Sprint(record), "recovery_budget_exhausted") {
 						t.Fatal("new serialized reason")
 					}
@@ -371,6 +375,9 @@ func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttem
 					}
 				}
 				last := records[len(records)-1]
+				if wantRemaining := max(cfg.RecoveryBudget-time.Since(started), 0); argValue(last.args, "remaining_budget") != wantRemaining {
+					t.Fatalf("remaining_budget=%v, want %s", argValue(last.args, "remaining_budget"), wantRemaining)
+				}
 				if argValue(last.args, "decision") != wantDecision || argValue(last.args, "attempt") != wantCalls || argValue(last.args, "source") != wantSource {
 					t.Fatalf("terminal/recovered log=%+v, want %s/%d/%s", last, wantDecision, wantCalls, wantSource)
 				}
