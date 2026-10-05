@@ -19,7 +19,8 @@ they are active.
 
 Press `ctrl+t` to open `/toolcalls` and inspect complete call details for the
 current session. You can use it during a run or when revisiting its transcript.
-`f9` reveals speaker headings, per-turn token and timing summaries, full
+Skill calls show the selected skill's name in both the conversation and inspector
+list. `f9` reveals speaker headings, per-turn token and timing summaries, full
 reasoning summaries, permanent non-tool error details, and the changed-files
 appendix. User prompts and assistant prose remain visible in the normal view.
 You can rebind both actions in the [Keybindings](./keybindings.md) settings.

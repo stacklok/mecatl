@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func TestSkillIntentRequiresReceivedStringName(t *testing.T) {
+	for _, tc := range []struct{ args, want string }{
+		{`{"name":"test-writer","asset":"references/style.md"}`, "test-writer"},
+		{`{"asset":"references/style.md"}`, "Skill"},
+		{`{"name":42}`, "Skill"},
+		{`{"name":"  "}`, "Skill"},
+		{`not json`, "Skill"},
+	} {
+		if got := toolcallIntentFor("Skill", tc.args); got != tc.want {
+			t.Errorf("Skill(%q) intent = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+	hostile := toolcallIntentFor("Skill", `{"name":"bad\u001b]8;;https://example.com\u0007\n\t\u202e界😀"}`)
+	if strings.ContainsAny(hostile, "\x1b\a\n\r\t") || !strings.Contains(hostile, "bad") || !strings.Contains(hostile, "界😀") {
+		t.Fatalf("Skill name is not safe single-line text: %q", hostile)
+	}
+}
+
 func TestToolcallPresentations(t *testing.T) {
 	tests := []struct {
 		name       string

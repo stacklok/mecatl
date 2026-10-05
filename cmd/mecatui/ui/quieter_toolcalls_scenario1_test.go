@@ -13,6 +13,38 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
+func TestSkillSummaryIncludesNameOnConversationAndInspector(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 24},
+		client.ToolCallMsg{ID: "skill", Name: "Skill", Args: `{"name":"test-writer","asset":"references/style.md"}`},
+		client.ToolResultMsg{CallID: "skill", Content: "loaded"},
+	)
+	for _, width := range []int{28, 100} {
+		m.rend.setWidth(width)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		rows := blockRows(frame, toolBlockID(t, m.conv.scrollback, "skill"))
+		if len(rows) != 1 || strings.TrimSpace(stripANSIstr(rows[0])) != "✓ Skill · test-writer" || ansi.StringWidth(rows[0]) > width {
+			t.Fatalf("width %d Skill conversation line = %q, want one bounded named row", width, rows)
+		}
+	}
+	m.phase = phaseIdle
+	model, _ := m.runToolcalls()
+	for _, width := range []int{52, 100} {
+		list, _ := toolcallsForTest(t, model.(Model)).Render(width, 24)
+		var skillRow string
+		for _, row := range strings.Split(stripANSIstr(list), "\n") {
+			if strings.Contains(row, "✓ Skill") {
+				skillRow = row
+				break
+			}
+		}
+		if !strings.Contains(skillRow, "✓ Skill · test-writer") || ansi.StringWidth(skillRow) > width {
+			t.Fatalf("width %d Skill inspector row lost its bounded name: %q", width, skillRow)
+		}
+	}
+}
+
 func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.ToolCallMsg{ID: "read", Name: "Read", Args: `{"path":"greeting.txt"}`})
@@ -114,7 +146,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	}
 	inspector.selected = failedEntry.index
 	inspector.refreshDetail(&m.conv.scrollback)
-	if inspector.detailEntry == nil || !strings.Contains(strings.Join(toolcallDetailLines(*inspector.detailEntry), "\n"), "Identity · ✗ Read · failed") {
+	if inspector.detailEntry == nil || !strings.Contains(strings.Join(toolcallDetailLines(*inspector.detailEntry), "\n"), "✗ Read · failed") {
 		t.Fatalf("failed inspector detail lost its status word: %#v", inspector.detailEntry)
 	}
 	inspector.selected = mcpEntry.index

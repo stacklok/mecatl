@@ -282,6 +282,14 @@ func argumentSummary(raw json.RawMessage) string {
 }
 
 func toolcallIntent(name string, fields map[string]json.RawMessage) string {
+	if name == "Skill" {
+		var skillName string
+		if json.Unmarshal(fields["name"], &skillName) == nil {
+			if display := terminaltext.SanitizeSingleLine(skillName); strings.TrimSpace(display) != "" {
+				return display
+			}
+		}
+	}
 	if presentation, ok := toolcallPresentations[name]; ok {
 		values := make([]string, 0, len(presentation.intentKeys))
 		for _, key := range presentation.intentKeys {
@@ -620,8 +628,7 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 func (s *toolcallsState) styledToolcallIdentity(row toolcallDetailRow) string {
 	nameStyle := s.deps.theme.Style("toolName")
 	statusStyle := s.deps.theme.Style(row.statusStyle)
-	return nameStyle.Render("Identity · ") +
-		statusStyle.Render(row.statusGlyph) +
+	return statusStyle.Render(row.statusGlyph) +
 		nameStyle.Render(" "+terminaltext.Sanitize(row.identityName)+" · ") +
 		statusStyle.Render(row.statusText)
 }
@@ -668,7 +675,7 @@ func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 	glyph, status, style := entry.state.status()
 
 	lines := []toolcallDetailRow{
-		{text: "Identity · " + glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
+		{text: glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
 		{text: "Call: " + terminaltext.Sanitize(entry.callID), label: "Call:", kind: toolcallField},
 		{text: "Arguments:", kind: toolcallHeading},
 	}

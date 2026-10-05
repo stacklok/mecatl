@@ -30,6 +30,25 @@ func inspectorOpenDetail(t *testing.T, m *Model) *toolcallsState {
 	return toolcallsForTest(t, *m)
 }
 
+func TestMecatuiToolcallsInspector_DetailOmitsRedundantIdentityLabel(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("skill", "Skill", `{"name":"test-writer"}`)
+	m.conv.resolveTool("skill", "Identity · forged", false)
+	s := inspectorOpenDetail(t, &m)
+	s.refreshDetail(&m.conv.scrollback)
+	rows := toolcallDetailLines(*s.detailEntry)
+	if len(rows) < 2 || rows[0] != "✓ Skill · done" || rows[1] != "Call: skill" {
+		t.Fatalf("detail identity header = %q", rows)
+	}
+	styled := strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n")
+	if !strings.HasPrefix(stripANSIstr(styled), "✓ Skill · done\nCall: skill") {
+		t.Fatalf("styled identity header = %q", stripANSIstr(styled))
+	}
+	if !strings.Contains(styled, "Identity · forged") {
+		t.Fatal("removing chrome label discarded received result text")
+	}
+}
+
 func TestMecatuiToolcallsInspector_DetailUsesToolPaletteAndKeepsResultsFlush(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.conv.addTool("styled", "Read", `{"path":"safe\u001b[31m","options":{"mode":"full"}}`)
@@ -249,7 +268,7 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 				if s.compact {
 					t.Fatalf("narrow detail unexpectedly used compact fallback: %q", detail)
 				}
-				if plain := stripANSIstr(detail); !strings.Contains(plain, "Identity · "+glyph+" Read · "+status) {
+				if plain := stripANSIstr(detail); !strings.Contains(plain, glyph+" Read · "+status) || strings.Contains(plain, "Identity · "+glyph) {
 					t.Fatalf("detail lacks non-color status %q: %q", status, plain)
 				}
 				if !strings.Contains(detail, th.Style(slot).Render(glyph)) || !strings.Contains(detail, th.Style(slot).Render(status)) {
