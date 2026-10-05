@@ -295970,6 +295970,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791205572206,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c65826ecc381da28e66bd93c634856823dd90fde",
+          "message": "fix(guardrails): include preparation in the review deadline (#2009)\n\nInclude evidence authorization, dependency snapshots, evidence preparation, and checker attempts in the existing 90-second guardrail review budget.\n\nStart each independent checker after its own serial preparation, preserving ordered decisions and approval handling. Reject late approvals, preserve terminal evidence failures, distinguish caller cancellation from checker outage, and join checker work before evidence cleanup. Add deterministic regression and race coverage for sibling overlap, cancellation, deadline enforcement, and health ordering.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T16:50:28+03:00",
+          "tree_id": "f18c9c694f6508a8309894ea562b65eece002d9b",
+          "url": "https://github.com/stacklok/mecatl/commit/c65826ecc381da28e66bd93c634856823dd90fde"
+        },
+        "date": 1791208984704,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3322.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -387550,6 +387589,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791208981337,
+  "lastUpdate": 1791208985447,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
