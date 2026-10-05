@@ -12,8 +12,8 @@ import (
 )
 
 // TestADR_0352_Scenario7_UserJourney pins AC7.1 from the Jev router plan: the
-// compact fallback cue, expanded card, and all three F6 family details preserve
-// actual-model authority and optional-number presence from real client events.
+// compact fallback cues and all three F6 family details preserve actual-model
+// authority and optional-number presence from real client events.
 func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	confidence, threshold := 0.42, 0.50
 	decision := &client.RoutingDecision{
@@ -82,25 +82,20 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 		t.Errorf("compact card replaced the actual model or retained a mutable decision pointer:\n%s", compact)
 	}
 
-	expanded := stripANSIstr(r.renderSnapshot(0, subBlock, true))
-	assertRoutingDetail(t, "expanded completed Subagent card", expanded)
-	if got := strings.Count(expanded, "candidate: medium"); got != 1 {
-		t.Errorf("expanded fallback duplicated compact candidate cue %d times:\n%s", got, expanded)
-	}
 	acceptedBlock, ok := m.conv.scrollback.SnapshotForCall("accepted-call")
 	if !ok {
 		t.Fatal("accepted Subagent card was not created")
 	}
-	acceptedExpanded := stripANSIstr(r.renderSnapshot(0, acceptedBlock, true))
-	assertAcceptedRoutingDetail(t, "expanded accepted Subagent card", acceptedExpanded)
+	acceptedCompact := stripANSIstr(r.renderSnapshot(1, acceptedBlock, false))
+	if !strings.Contains(acceptedCompact, "model: gpt-6-astra") || strings.Contains(acceptedCompact, "mutated-candidate") {
+		t.Errorf("accepted compact card lost the actual model: %q", acceptedCompact)
+	}
 	teamBlock, ok := m.conv.scrollback.SnapshotForCall("team-call")
 	if !ok {
 		t.Fatal("Team card was not created")
 	}
 	teamPayload := teamBlock.Payload.(scrollback.TeamCardSnapshot)
 	teamPresentation := teamCardPresentationFromSnapshot(teamPayload)
-	completedTeamExpanded := stripANSIstr(r.renderSnapshot(0, teamBlock, true))
-	assertRoutingDetail(t, "expanded completed Team card", completedTeamExpanded)
 	for _, tc := range []struct {
 		name, want string
 		stopped    bool
@@ -116,18 +111,17 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 			terminal.lanes[0].stopped = tc.stopped
 			terminal.lanes[0].stopReason = teamStopReasonCancelled
 			terminal.lanes[0].errorRounds = tc.retries
-			view := stripANSIstr(r.renderTeamPresentation(terminal, true, 100))
+			view := teamLaneLine(&terminal.lanes[0], teamNameWidth(terminal.lanes, []int{0}), true)
 			if !strings.Contains(view, "lead [lead] · "+tc.want+" ·") || strings.Contains(view, "Read…") {
 				t.Errorf("completed Team lane did not show %q:\n%s", tc.want, view)
 			}
-			assertRoutingDetail(t, "completed Team lane "+tc.name, view)
 		})
 	}
 
 	// Historic team.end events carried no per-member routing decision. Their compact
 	// terminal summary remains exactly the pre-router one-line fallback.
 	historicalTeam := teamCardPresentation{done: true, rounds: 1, stop: "end_turn"}
-	if got, want := stripANSIstr(r.renderTeamPresentation(historicalTeam, false, 0)), "team · 1 round · ↑0 ↓0 · stop:done"; got != want {
+	if got, want := stripANSIstr(r.renderTeamPresentation(historicalTeam, 0)), "team · 1 round · ↑0 ↓0 · stop:done"; got != want {
 		t.Errorf("historical compact completed Team = %q, want %q", got, want)
 	}
 
@@ -205,12 +199,6 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 			if !strings.Contains(out, "backend: jev") {
 				t.Errorf("routing detail disappeared at width %d:\n%s", width, out)
 			}
-			cardRenderer := newTestRenderer()
-			cardRenderer.width = width
-			completedTeam := stripANSIstr(cardRenderer.renderSnapshot(0, teamBlock, true))
-			if strings.TrimSpace(completedTeam) == "" || !strings.Contains(completedTeam, "backend: jev") {
-				t.Errorf("completed Team expanded routing detail disappeared at width %d:\n%s", width, completedTeam)
-			}
 			if width > 0 {
 				for row, line := range strings.Split(out, "\n") {
 					if got := maxLineWidth(line); got > width {
@@ -251,7 +239,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 		}
 	}
 
-	compareGolden(t, "jev_routing_user_journey.golden", []byte(expanded+"\n\n"+views["Subagent focus"]+"\n"))
+	compareGolden(t, "jev_routing_user_journey.golden", []byte(views["Subagent focus"]+"\n"))
 }
 
 func assertAcceptedRoutingDetail(t *testing.T, surface, out string) {

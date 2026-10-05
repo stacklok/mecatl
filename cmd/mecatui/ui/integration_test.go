@@ -229,7 +229,7 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	m = applyAll(m,
 		client.ToolCallMsg{ID: "e1", Name: "Edit", Args: `{"path":"x.go","old_string":"foo","new_string":"bar"}`},
 	)
-	view := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	view := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(view, "- foo") || !strings.Contains(view, "+ bar") {
 		t.Errorf("expected diff lines in conversation, got:\n%s", view)
 	}
@@ -238,19 +238,21 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	}
 }
 
-// TestExpandToolsToggle asserts ctrl+t flips the global expand flag.
-func TestExpandToolsToggle(t *testing.T) {
+// TestToolcallsShortcutOpensInspector asserts ctrl+t opens the current-session
+// inspector without changing the legacy expansion state.
+func TestToolcallsShortcutOpensInspector(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	if m.expandTools {
-		t.Fatal("expandTools should start false")
+	m.phase = phaseIdle
+	if m.expandConversation {
+		t.Fatal("expandConversation should start false")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if !m.expandTools {
-		t.Error("ctrl+t should set expandTools true")
+	if m.expandConversation || toolcallsForTest(t, m) == nil {
+		t.Error("ctrl+t should open the inspector without changing expandConversation")
 	}
 	// The footer is now the minimal "? help · … · ctrl+c quit" line; the full
-	// chord list (including "ctrl+t … details") moved into the "?" help overlay.
+	// chord list moved into the "?" help overlay.
 	footer := stripANSIstr(m.renderFooter())
 	if !strings.Contains(footer, "? help") || !strings.Contains(footer, "ctrl+c quit") {
 		t.Errorf("footer should carry the minimal help line:\n%s", footer)
@@ -258,16 +260,12 @@ func TestExpandToolsToggle(t *testing.T) {
 	if strings.Contains(footer, "ctrl+t details") {
 		t.Errorf("footer should no longer carry the full chord list:\n%s", footer)
 	}
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.expandTools {
-		t.Error("ctrl+t should toggle expandTools back to false")
-	}
 }
 
 // TestReasoningBlockCollapsedThenExpanded asserts a reasoning delta renders as a
 // dim, collapsed one-line "reasoning summary" header by default (the full text
-// hidden), and that ctrl+t expands it to show the streamed reasoning text under
-// a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
+// hidden), and that the retained expansion state shows the streamed reasoning text
+// under a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
 // assistant answer of the same turn.
 func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
@@ -280,8 +278,8 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	)
 
 	// Collapsed (default): the "reasoning summary" header is shown, body hidden.
-	collapsed := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
-	if !strings.Contains(collapsed, "reasoning summary · 2 lines · ctrl+t expand") {
+	collapsed := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	if !strings.Contains(collapsed, "reasoning summary · 2 lines · f9 expand") {
 		t.Errorf("expected collapsed reasoning-summary header, got:\n%s", collapsed)
 	}
 	if strings.Contains(collapsed, "inspect the file") {
@@ -296,9 +294,10 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 		t.Errorf("reasoning (%d) should render above the answer (%d):\n%s", ri, ai, collapsed)
 	}
 
-	// Expanded (ctrl+t): the caveat + the full reasoning text become visible.
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	// f9 expands reasoning; Toolcalls never changes this state.
+	m, _ = pressKey(m, f9)
+	// Expanded: the caveat + the full reasoning text become visible.
+	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(expanded, "may not reflect its actual process") {
 		t.Errorf("expanded reasoning should carry the lossy-summary caveat:\n%s", expanded)
 	}
@@ -344,7 +343,7 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 	if got := strings.Count(view, "reasoning summary"); got != 1 {
 		t.Errorf("want exactly one reasoning region, got %d:\n%s", got, view)
 	}
-	if !strings.Contains(view, "reasoning summary · 2 lines · ctrl+t expand") {
+	if !strings.Contains(view, "reasoning summary · 2 lines · f9 expand") {
 		t.Errorf("merged reasoning should report 2 lines:\n%s", view)
 	}
 	// Reasoning above both answer fragments.
@@ -370,8 +369,8 @@ func TestReasoningLiveAffordance(t *testing.T) {
 	if !strings.Contains(live, "reasoning…") {
 		t.Errorf("streaming reasoning (no answer yet) should show the live affordance:\n%s", live)
 	}
-	if strings.Contains(live, "ctrl+t expand") {
-		t.Errorf("live reasoning should not yet show the static expand hint:\n%s", live)
+	if !strings.Contains(live, "reasoning… · f9 expand") {
+		t.Errorf("live reasoning must advertise its detail toggle:\n%s", live)
 	}
 
 	// Answer text begins → flips to the static, expandable header.
@@ -380,7 +379,7 @@ func TestReasoningLiveAffordance(t *testing.T) {
 	if strings.Contains(settled, "reasoning…") {
 		t.Errorf("reasoning should stop showing the live affordance once answer begins:\n%s", settled)
 	}
-	if !strings.Contains(settled, "reasoning summary · 1 line · ctrl+t expand") {
+	if !strings.Contains(settled, "reasoning summary · 1 line · f9 expand") {
 		t.Errorf("settled reasoning should show the static header:\n%s", settled)
 	}
 }
@@ -394,7 +393,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	m.phase = phaseRunning
 
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100})
-	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(withDur, "↑1.2K ↓340 · 4.1s") {
 		t.Errorf("expected cost-first per-turn stat line with duration, got:\n%s", withDur)
 	}
@@ -405,7 +404,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	// A turn with substantial tokens but no duration (no clock) omits the elapsed
 	// segment but still renders (it is not trivial).
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 500, OutputTokens: 20}, DurationMs: 0})
-	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(noDur, "↑500 ↓20") {
 		t.Errorf("expected per-turn stat line, got:\n%s", noDur)
 	}
@@ -428,7 +427,8 @@ func TestTurnStatCacheReachesScrollback(t *testing.T) {
 		// Non-trivial tokens (so the stat line is not suppressed) with an 88% cache rate.
 		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1500, OutputTokens: 300, CacheReadTokens: 1320}, DurationMs: 4100},
 	)
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF9})
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(got, "88% cached") {
 		t.Errorf("rendered scrollback missing the per-turn cache facet %q; got %q", "88% cached", got)
 	}
@@ -452,7 +452,7 @@ func TestTurnEndTrivialSuppressed(t *testing.T) {
 
 	// A turn over the duration threshold is NOT trivial even with tiny tokens.
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 10, OutputTokens: 0}, DurationMs: 1500})
-	view := stripANSIstr(m.rend.renderConversation(&m.conv, false))
+	view := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(view, "↑10 ↓0 · 1.5s") {
 		t.Errorf("a turn with a measurable duration should not be suppressed:\n%s", view)
 	}

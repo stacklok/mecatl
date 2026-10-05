@@ -101,8 +101,48 @@ func TestToolCallMetadataAtDoesNotExposeResultPayload(t *testing.T) {
 	if allocs := testing.AllocsPerRun(100, func() { _, _ = c.ToolCallMetadataAt(0) }); allocs != 0 {
 		t.Fatalf("metadata enumerator cloned result: %.0f allocations", allocs)
 	}
-	if got.ID != 1 || got.Revision != 1 || got.CallID != "read" || got.Name != "Read" || got.Arguments != `{"path":"x"}` || !got.Resolved || !got.Failed {
+	if got.ID != 1 || got.Revision != 1 || got.CallID != "read" || got.Name != "Read" || got.Arguments != `{"path":"x"}` || !got.ResultReceived || got.Provisional || got.Terminal || !got.ResultError || got.LifecycleFailed {
 		t.Fatalf("metadata = %#v", got)
+	}
+}
+
+func TestToolCallMetadataLifecycleSignals(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*Conversation)
+		want  ToolCallMetadata
+	}{
+		{"provisional tool", func(c *Conversation) {
+			c.Tools().Add(ToolCall{ID: "call", Name: "Read"})
+			c.Tools().ResolveAvailable("call", ToolResult{})
+		}, ToolCallMetadata{ResultReceived: true, Provisional: true}},
+		{"failed tool lifecycle", func(c *Conversation) {
+			c.Tools().Add(ToolCall{ID: "call", Name: "Read"})
+			c.Tools().Finish("call", true)
+		}, ToolCallMetadata{Terminal: true, LifecycleFailed: true}},
+		{"terminal subagent", func(c *Conversation) {
+			c.Tools().Add(ToolCall{ID: "call", Name: "Subagent"})
+			c.Subagents().Start("call", SubagentStart{})
+			c.Subagents().Update("call", SubagentUpdate{Done: true, Stop: "end_turn"})
+		}, ToolCallMetadata{Terminal: true, Stop: "end_turn"}},
+		{"terminal team", func(c *Conversation) {
+			c.Tools().Add(ToolCall{ID: "call", Name: "Team"})
+			c.Teams().Start("call", TeamStart{})
+			c.Teams().Update("call", TeamUpdate{Done: true, Stop: "error"})
+		}, ToolCallMetadata{Terminal: true, Stop: "error"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var c Conversation
+			test.setup(&c)
+			got, ok := c.ToolCallMetadataAt(0)
+			if !ok {
+				t.Fatal("metadata missing")
+			}
+			if got.ResultReceived != test.want.ResultReceived || got.Provisional != test.want.Provisional || got.Terminal != test.want.Terminal || got.ResultError != test.want.ResultError || got.LifecycleFailed != test.want.LifecycleFailed || got.Stop != test.want.Stop {
+				t.Fatalf("signals = %#v, want %#v", got, test.want)
+			}
+		})
 	}
 }
 

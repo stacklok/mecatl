@@ -46,7 +46,7 @@ func TestMecatuiToolcallsInspector_Scenario1_ResumeProjection(t *testing.T) {
 	m.relayout()
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	if len(s.entries) != 1 || s.entries[0].name != "Read" {
+	if len(s.entries) != 1 || s.entries[0].fullName != "Read" {
 		t.Fatalf("resumed inventory: %#v", s.entries)
 	}
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -80,8 +80,8 @@ func TestMecatuiToolcallsInspector_Scenario1_TopLevelDelegationsOnly(t *testing.
 		t.Fatalf("top-level entries = %#v; want four parents and no nested child tools", s.entries)
 	}
 	for i, name := range []string{"Read", "Subagent", "Team", "Grep"} {
-		if s.entries[i].name != name {
-			t.Fatalf("entry %d name = %q, want %q", i, s.entries[i].name, name)
+		if s.entries[i].fullName != name {
+			t.Fatalf("entry %d name = %q, want %q", i, s.entries[i].fullName, name)
 		}
 	}
 	if !m.conv.scrollback.Tools().Resolve("sub", scrollback.ToolResult{Body: "child complete"}) ||
@@ -89,7 +89,7 @@ func TestMecatuiToolcallsInspector_Scenario1_TopLevelDelegationsOnly(t *testing.
 		t.Fatal("could not resolve specialized parent calls")
 	}
 	m.syncToolcalls()
-	if !s.entries[1].resolved || s.entries[1].failed || !s.entries[2].resolved || !s.entries[2].failed {
+	if s.entries[1].state != toolcallDone || s.entries[2].state != toolcallFailed {
 		t.Fatalf("delegation parent result state did not update in place: %#v", s.entries)
 	}
 }
@@ -178,7 +178,7 @@ func TestMecatuiToolcallsInspector_Scenario1_StableLiveSelection(t *testing.T) {
 	}
 	m.conv.resolveTool("call-0", "done", false)
 	m.syncToolcalls()
-	if got, want := s.selected, 0; got != want || !s.entries[0].resolved {
+	if got, want := s.selected, 0; got != want || s.entries[0].state != toolcallDone {
 		t.Fatalf("result changed selected row or did not update it: selected=%d entry=%#v", got, s.entries[0])
 	}
 	s.selected = len(s.entries) - 1
@@ -314,7 +314,7 @@ func TestMecatuiToolcallsInspector_Scenario3_SessionReplacementClosesInspector(t
 	m.conv.addTool("reused", "Write", `{"path":"successor"}`)
 	m = openToolcallsForTest(t, m)
 	fresh := toolcallsForTest(t, m)
-	if len(fresh.entries) != 1 || fresh.entries[0].name != "Write" || fresh.detail || fresh == s {
+	if len(fresh.entries) != 1 || fresh.entries[0].fullName != "Write" || fresh.detail || fresh == s {
 		t.Fatalf("reused call ID retained prior session state: %#v", fresh)
 	}
 }
@@ -357,7 +357,7 @@ func TestMecatuiToolcallsInspector_Scenario3_LoadedSessionReplacement(t *testing
 	m = updated.(Model)
 	m = openToolcallsForTest(t, m)
 	fresh := toolcallsForTest(t, m)
-	if fresh == s || len(fresh.entries) != 1 || fresh.entries[0].name != "Write" {
+	if fresh == s || len(fresh.entries) != 1 || fresh.entries[0].fullName != "Write" {
 		t.Fatalf("target inventory leaked source: %#v", fresh.entries)
 	}
 	fresh.Render(80, 12)
@@ -373,18 +373,18 @@ func TestMecatuiToolcallsInspector_Scenario4_CoreToolPresentation(t *testing.T) 
 	calls := []struct {
 		id, name, args, wantIntent string
 	}{
-		{"read", "Read", `{"path":"src/main.go","offset":12,"limit":20,"extra":"kept"}`, "Read src/main.go"},
-		{"list", "ListDir", `{"path":"src","depth":2}`, "List src"},
-		{"glob", "Glob", `{"pattern":"**/*.go","path":"cmd"}`, "Find **/*.go"},
-		{"grep", "Grep", `{"pattern":"TODO","path":"cmd"}`, "Search TODO"},
-		{"edit", "Edit", `{"path":"a.go","old_string":"old","new_string":"new","extra":true}`, "Edit a.go"},
-		{"write", "Write", `{"path":"a.go","content":"complete replacement"}`, "Write a.go"},
-		{"copy", "Copy", `{"source":"a.go","destination":"b.go"}`, "Copy a.go → b.go"},
-		{"move", "Move", `{"source":"a.go","destination":"b.go"}`, "Move a.go → b.go"},
-		{"remove", "Remove", `{"path":"old.go"}`, "Remove old.go"},
-		{"shell", "Shell", `{"command":"go test ./..."}`, "Run go test ./..."},
-		{"web", "WebFetch", `{"url":"https://example.invalid/docs"}`, "Fetch https://example.invalid/docs"},
-		{"resource", "FetchMcpResource", `{"uri":"mcp://docs/readme"}`, "Fetch mcp://docs/readme"},
+		{"read", "Read", `{"path":"src/main.go","offset":12,"limit":20,"extra":"kept"}`, "src/main.go"},
+		{"list", "ListDir", `{"path":"src","depth":2}`, "src"},
+		{"glob", "Glob", `{"pattern":"**/*.go","path":"cmd"}`, "**/*.go"},
+		{"grep", "Grep", `{"pattern":"TODO","path":"cmd"}`, "TODO"},
+		{"edit", "Edit", `{"path":"a.go","old_string":"old","new_string":"new","extra":true}`, "a.go"},
+		{"write", "Write", `{"path":"a.go","content":"complete replacement"}`, "a.go"},
+		{"copy", "Copy", `{"source":"a.go","destination":"b.go"}`, "a.go → b.go"},
+		{"move", "Move", `{"source":"a.go","destination":"b.go"}`, "a.go → b.go"},
+		{"remove", "Remove", `{"path":"old.go"}`, "old.go"},
+		{"shell", "Shell", `{"command":"go test ./..."}`, "go test ./..."},
+		{"web", "WebFetch", `{"url":"https://example.invalid/docs"}`, "https://example.invalid/docs"},
+		{"resource", "FetchMcpResource", `{"uri":"mcp://docs/readme"}`, "mcp://docs/readme"},
 	}
 	for _, call := range calls {
 		m.conv.addTool(call.id, call.name, call.args)
@@ -436,7 +436,7 @@ func TestMecatuiToolcallsInspector_Scenario4_GenericFallbackAndLifecycle(t *test
 	m.conv.addTool("array", "odd-array", `["not","an","object"]`)
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	for i, want := range []string{"future-tool useful target", "mcp__docs__lookup needle", "Subagent delegate this", "odd", "odd-array"} {
+	for i, want := range []string{"useful target", "needle", "delegate this", "odd", "odd-array"} {
 		if got := s.entries[i].intent; !strings.Contains(got, want) || strings.Contains(got, `{"`) || strings.Contains(got, "\x1b[") {
 			t.Fatalf("generic list %d = %q, want %q", i, got, want)
 		}
@@ -494,20 +494,20 @@ func TestMecatuiToolcallsInspector_Scenario4_NestedArgumentsAndEmptyKeys(t *test
 		{
 			name: "nested target intent", tool: "future-tool",
 			args:   `{"target":{"path":"one","revision":2},"other":[null,true,3.25],"empty":{},"items":[]}`,
-			intent: "future-tool 2 fields",
+			intent: "2 fields",
 			want:   []string{"Target:", "  Path: one", "  Revision: 2", "Other:", "  [0]: null", "  [1]: true", "  [2]: 3.25", "Empty: (empty object)", "Items: (empty array)"},
 		},
 		{
 			name: "array target and unicode key", tool: "mcp__lookup",
 			args:   `{"target":[{"étiquette":"safe"},null],"payload":{"notes":"\u001b[31m"}}`,
-			intent: "mcp__lookup 2 items",
+			intent: "2 items",
 			want:   []string{"Target:", "  [0]:", "    Étiquette: safe", "  [1]: null", "Payload:", "  Notes:"},
 			absent: []string{"\x1b[31m", `[{"étiquette"`},
 		},
 		{
 			name: "hostile controls and long nested values", tool: "Read",
 			args:   `{"path":"safe","extra":{"\u001b[31m":"\u001b]8;;evil\u0007"},"content":"` + strings.Repeat("large-value-", 30) + `"}`,
-			intent: "Read safe",
+			intent: "safe",
 			want:   []string{"Extra:", strings.Repeat("large-value-", 30)},
 			absent: []string{"\x1b[31m", "\x1b]8;;evil"},
 		},
@@ -549,7 +549,7 @@ func TestMecatuiToolcallsInspector_Scenario4_LargeListIntentDoesNotBuildDetail(t
 	m.conv.addTool("large", "Subagent", args)
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	if got := s.entries[0].intent; got != "Subagent delegate" || ansi.StringWidth(got) > 120 {
+	if got := s.entries[0].intent; got != "delegate" || ansi.StringWidth(got) > 120 {
 		t.Fatalf("large list intent = %q", got)
 	}
 	// Parsing the top-level object is required, but the list must not expand
@@ -575,7 +575,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 	)
 	s := inspectorOpenDetail(t, &m)
 	lines := strings.Join(toolcallDetailLines(*s.detailEntry), "\n")
-	for _, want := range []string{"Identity", "Arguments", "Error", "Structured content", "Resources", "Read", "failed", "alpha", `{"count":2}`, "report", "mcp://reports/latest"} {
+	for _, want := range []string{"✗ Read · failed", "Arguments", "Error", "Structured content", "Resources", "alpha", `{"count":2}`, "report", "mcp://reports/latest"} {
 		if !strings.Contains(lines, want) {
 			t.Errorf("detail lines missing %q: %q", want, lines)
 		}
@@ -597,7 +597,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 		s.width = 0
 		s.follow = false
 		got := inspectorDetail(t, s, width, 40)
-		for _, want := range []string{"Identity", "Arguments", "Error", "Structured content", "Resources"} {
+		for _, want := range []string{"✗ Read · failed", "Arguments", "Error", "Structured content", "Resources"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("width %d detail missing %q: %q", width, want, got)
 			}
@@ -608,14 +608,14 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 		t.Fatalf("inspector changed canonical result: got %q, want %q", entry.result.Body, readResult)
 	}
 	previous := -1
-	for _, row := range []string{"Identity ·", "Arguments:", "Error:", "Structured content", "Resources"} {
+	for _, row := range []string{"✗ Read · failed", "Arguments:", "Error:", "Structured content", "Resources"} {
 		pos := strings.Index(lines, row)
 		if pos <= previous {
 			t.Fatalf("section %q missing or out of order in %q", row, lines)
 		}
 		previous = pos
 	}
-	okResult := toolcallDetailLines(toolcallDetail{name: "Shell", resolved: true, resultReceived: true, result: scrollback.ToolResult{Body: "     1\tnot a Read row"}})
+	okResult := toolcallDetailLines(toolcallDetail{name: "Shell", state: toolcallDone, resultReceived: true, result: scrollback.ToolResult{Body: "     1\tnot a Read row"}})
 	if got := strings.Join(okResult, "\n"); !strings.Contains(got, "Result:\n     1\tnot a Read row") || strings.Contains(got, "Error:") {
 		t.Errorf("successful non-Read result changed: %q", got)
 	}

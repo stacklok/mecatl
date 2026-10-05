@@ -72,7 +72,6 @@ type approvalSurface struct {
 	sessionID    string
 	modelID      string
 	debugSession bool
-	expandTools  bool
 
 	// hits is the current render frame's verdict hit map.
 	hits map[HitID]client.Verdict
@@ -113,13 +112,12 @@ func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) 
 }
 
 func (s *approvalSurface) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	if key.Matches(msg, s.deps.keys.ExpandTools) {
-		if s.approvalExpandToggle() {
-			s.intent = nil
+	if key.Matches(msg, s.deps.keys.Toolcalls) {
+		if isPlanAsk(s.ask.Tool) {
 			return nil, true, false
 		}
-		s.expandTools = !s.expandTools
-		s.intent = setExpandToolsIntent{expand: s.expandTools}
+		s.approvalExpandToggle()
+		s.intent = nil
 		return nil, true, false
 	}
 	cmd, intent := s.onApprovalKey(msg)
@@ -240,10 +238,6 @@ type approvalRetractedIntent struct {
 }
 
 func (approvalRetractedIntent) isSurfaceIntent() {}
-
-type setExpandToolsIntent struct{ expand bool }
-
-func (setExpandToolsIntent) isSurfaceIntent() {}
 
 func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 	intent := s.intent
@@ -998,7 +992,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 		// the full-screen args view on ctrl+t (a conditional hint hid the affordance
 		// on exactly the short asks that still benefit from the full view).
 		hk := s.deps.marks
-		hint := hk.expandTools + " full args"
+		hint := hk.toolcalls + " full args"
 		if argsRegion.maxOffset > 0 {
 			hint = "… " + hk.scroll + " scroll · " + hint
 		}
@@ -1021,7 +1015,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	if ask.offerAlways {
 		actionRows++
 	}
-	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… ctrl+t details"))
+	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… "+s.deps.marks.toolcalls+" details"))
 	b.Reset()
 	b.WriteString(preActions)
 

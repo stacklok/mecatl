@@ -93,8 +93,8 @@ func TestCoalescedFinalContentIdentical(t *testing.T) {
 		uncoalesced.refreshView()
 	}
 
-	gotConv := coalesced.rend.renderConversation(&coalesced.conv, coalesced.expandTools)
-	wantConv := uncoalesced.rend.renderConversation(&uncoalesced.conv, uncoalesced.expandTools)
+	gotConv := coalesced.rend.renderConversation(&coalesced.conv, coalesced.expandConversation)
+	wantConv := uncoalesced.rend.renderConversation(&uncoalesced.conv, uncoalesced.expandConversation)
 	if gotConv != wantConv {
 		t.Errorf("renderConversation differs between coalesced and un-coalesced paths:\n got %q\nwant %q",
 			stripANSIstr(gotConv), stripANSIstr(wantConv))
@@ -116,7 +116,7 @@ func TestTailFlushedAtTurnEnd(t *testing.T) {
 		client.AssistantDeltaMsg{Turn: 1, Text: "world"},
 		client.TurnEndMsg{Turn: 1},
 	)
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(got, "Hello world") {
 		t.Errorf("turn-end flush lost the tail; want 'Hello world' in:\n%s", got)
 	}
@@ -134,7 +134,7 @@ func TestTailFlushedAtResult(t *testing.T) {
 		client.AssistantDeltaMsg{Turn: 1, Text: "world"},
 		client.ResultMsg{Stop: "end_turn"},
 	)
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(got, "Hello world") {
 		t.Errorf("result flush lost the tail; want 'Hello world' in:\n%s", got)
 	}
@@ -169,7 +169,7 @@ func TestTailFlushedAtPermissionAsk(t *testing.T) {
 	if m.viewDirty {
 		t.Error("expected viewDirty=false: the permission.ask boundary must force-flush the tail")
 	}
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(got, "pending tail before the ask") {
 		t.Errorf("permission.ask flush lost the tail; want it in:\n%s", got)
 	}
@@ -215,7 +215,7 @@ func TestTickQuiescentNoRearmAndFinalFlush(t *testing.T) {
 	if m.viewDirty {
 		t.Error("the quiescent tick must still flush the final dirty frame (viewDirty=false)")
 	}
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(got, "final dirty frame") {
 		t.Errorf("final dirty frame lost at quiescence; want it in:\n%s", got)
 	}

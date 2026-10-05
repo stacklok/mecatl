@@ -920,9 +920,8 @@ type Model struct {
 	contextUnknown   bool
 	contextEstimated bool
 
-	// expandTools toggles all tool-result bodies (and Edit/Write diffs) between
-	// the line-capped view and the full view. Flipped by ctrl+t.
-	expandTools bool
+	// expandConversation reveals turn headings/stats, full reasoning, errors, and changed files.
+	expandConversation bool
 
 	// Changed-file membership and the synthetic appendix identity belong to conv.
 	// streamCh is the current run's reader channel; WaitForMsg drains it.

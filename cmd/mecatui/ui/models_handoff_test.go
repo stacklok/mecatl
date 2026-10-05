@@ -78,7 +78,7 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 		t.Fatalf("adopted state = phase:%v session:%q, want idle target", m.phase, m.sessionID)
 	}
 	view := stripANSIstr(m.View().Content)
-	for _, text := range []string{"target user", "target assistant before tool", "Read", "target tool result", "target assistant after tool"} {
+	for _, text := range []string{"target user", "target assistant before tool", "✓ Read · target.txt", "target assistant after tool"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("adopted transcript omitted %q:\n%s", text, view)
 		}

@@ -55,13 +55,13 @@ func TestMecatuiToolcallsInspector_Scenario4_ListIntentRefreshesWithCardRevision
 	m.conv.addTool("write", "Write", `{"path":"first","content":"`+content+`"}`)
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	if got := s.entries[0].intent; got != "Write first" {
+	if got := s.entries[0].intent; got != "first" {
 		t.Fatalf("initial intent: %q", got)
 	}
 	initialRevision := s.entries[0].revision
 	m.conv.resolveTool("write", "first result", false)
 	m.syncToolcalls()
-	if got := s.entries[0]; got.revision != initialRevision+1 || got.intent != "Write first" || !got.resolved {
+	if got := s.entries[0]; got.revision != initialRevision+1 || got.intent != "first" || got.state != toolcallDone {
 		t.Fatalf("result lifecycle entry = %+v", got)
 	}
 	runtime.GC()
@@ -82,13 +82,13 @@ func TestMecatuiToolcallsInspector_Scenario4_ListIntentRefreshesWithCardRevision
 		t.Fatal("reconcile failed")
 	}
 	m.syncToolcalls()
-	if got := s.entries[1]; got.revision != pendingRevision+1 || got.intent != "Write after" || s.entries[s.selected].blockID != selected {
+	if got := s.entries[1]; got.revision != pendingRevision+1 || got.intent != "after" || s.entries[s.selected].blockID != selected {
 		t.Fatalf("reconciled entry or selection stale: %+v", s.entries)
 	}
 	reconciledRevision := s.entries[1].revision
 	m.conv.resolveTool("pending", "done", false)
 	m.syncToolcalls()
-	if got := s.entries[1]; got.revision != reconciledRevision+1 || got.intent != "Write after" || !got.resolved {
+	if got := s.entries[1]; got.revision != reconciledRevision+1 || got.intent != "after" || got.state != toolcallDone {
 		t.Fatalf("result lifecycle changed reconciled entry: %+v", got)
 	}
 }

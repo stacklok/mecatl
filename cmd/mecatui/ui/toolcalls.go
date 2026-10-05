@@ -33,19 +33,14 @@ func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
 }
 
 type toolcallEntry struct {
-	blockID  scrollback.BlockID
-	revision uint64
-	index    int
-	name     string
-	intent   string
-	resolved bool
-	failed   bool
+	toolcallProjection
+	index int
 }
 
 type toolcallDetail struct {
 	callID, name, intent string
 	result               scrollback.ToolResult
-	resolved, failed     bool
+	state                toolcallProjectionState
 	resultReceived       bool
 }
 
@@ -148,38 +143,30 @@ type toolcallDetailRow struct {
 	statusStyle             string
 }
 
-func toolcallStatus(resolved, failed bool) (glyph, text, style string) {
-	switch {
-	case failed:
-		return "✗", statusFailed, "toolErr"
-	case resolved:
-		return "✓", statusDone, "toolOk"
-	default:
-		return "…", "running", "toolName"
-	}
-}
-
 type toolcallPresentation struct {
-	intentAction string
 	intentKeys   []string
 	argumentKeys []string
+	stringIntent bool
+	quoteFirst   bool
+	intentJoin   string
 }
 
 const toolSourceArg = "source"
 
 var toolcallPresentations = map[string]toolcallPresentation{
-	"Read":             {intentAction: "Read", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "offset", "limit"}},
-	"ListDir":          {intentAction: "List", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "depth"}},
-	"Glob":             {intentAction: "Find", intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
-	"Grep":             {intentAction: "Search", intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
-	toolEditName:       {intentAction: "Edit", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "old_string", "new_string"}},
-	toolWriteName:      {intentAction: "Write", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "content"}},
-	"Copy":             {intentAction: "Copy", intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
-	"Move":             {intentAction: "Move", intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
-	"Remove":           {intentAction: "Remove", intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg}},
-	"Shell":            {intentAction: "Run", intentKeys: []string{"command"}, argumentKeys: []string{"command"}},
-	"WebFetch":         {intentAction: "Fetch", intentKeys: []string{toolURLArg}, argumentKeys: []string{toolURLArg}},
-	"FetchMcpResource": {intentAction: "Fetch", intentKeys: []string{"uri"}, argumentKeys: []string{"uri"}},
+	"Read":             {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "offset", "limit"}},
+	"ListDir":          {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "depth"}},
+	"Glob":             {intentKeys: []string{"pattern"}, argumentKeys: []string{"pattern", toolPathArg}},
+	"Grep":             {intentKeys: []string{"pattern", toolPathArg}, argumentKeys: []string{"pattern", toolPathArg}, stringIntent: true, quoteFirst: true, intentJoin: " in "},
+	toolEditName:       {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "old_string", "new_string"}},
+	toolWriteName:      {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg, "content"}},
+	"Copy":             {intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
+	"Move":             {intentKeys: []string{toolSourceArg, "destination"}, argumentKeys: []string{toolSourceArg, "destination"}},
+	"Remove":           {intentKeys: []string{toolPathArg}, argumentKeys: []string{toolPathArg}},
+	"Shell":            {intentKeys: []string{"command"}, argumentKeys: []string{"command"}},
+	"WebFetch":         {intentKeys: []string{toolURLArg}, argumentKeys: []string{toolURLArg}},
+	"FetchMcpResource": {intentKeys: []string{"uri"}, argumentKeys: []string{"uri"}},
+	"Skill":            {intentKeys: []string{"name"}, stringIntent: true},
 }
 
 func toolcallArgumentLines(name, arguments string) []string {
@@ -299,18 +286,52 @@ func argumentSummary(raw json.RawMessage) string {
 
 func toolcallIntent(name string, fields map[string]json.RawMessage) string {
 	if presentation, ok := toolcallPresentations[name]; ok {
-		values := make([]string, len(presentation.intentKeys))
-		for i, key := range presentation.intentKeys {
-			values[i] = argumentSummary(fields[key])
+		values := make([]string, 0, len(presentation.intentKeys))
+		for _, key := range presentation.intentKeys {
+			var value string
+			if presentation.stringIntent {
+				if json.Unmarshal(fields[key], &value) != nil {
+					continue
+				}
+			} else {
+				value = argumentSummary(fields[key])
+			}
+			if value = terminaltext.SanitizeSingleLine(value); strings.TrimSpace(value) != "" {
+				if presentation.quoteFirst && key == presentation.intentKeys[0] {
+					value = fmt.Sprintf("%q", value)
+				}
+				values = append(values, value)
+			}
 		}
-		return presentation.intentAction + " " + strings.Join(values, " → ")
+		if len(values) > 0 {
+			separator := " → "
+			if presentation.intentJoin != "" {
+				separator = presentation.intentJoin
+			}
+			return strings.Join(values, separator)
+		}
+		return terminaltext.SanitizeSingleLine(name)
 	}
-	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task"} {
+	for _, key := range []string{"target", toolPathArg, "uri", toolURLArg, "command", "query", "prompt", "task", "goal"} {
 		if raw, ok := fields[key]; ok {
-			return terminaltext.SanitizeSingleLine(name) + " " + argumentSummary(raw)
+			if value := argumentSummary(raw); value != "" {
+				return terminaltext.SanitizeSingleLine(value)
+			}
 		}
 	}
 	return terminaltext.SanitizeSingleLine(name)
+}
+
+func (p toolcallProjection) summary() string {
+	summary := p.displayName
+	if !p.settled() {
+		_, status, _ := p.state.status()
+		summary = status + " · " + summary
+	}
+	if p.intent != "" && p.intent != p.displayName {
+		summary += " · " + p.intent
+	}
+	return summary
 }
 
 func argumentValue(raw json.RawMessage) string {
@@ -362,17 +383,11 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 		if !ok {
 			continue
 		}
-		intent := cached[metadata.ID].intent
+		projection := cached[metadata.ID].toolcallProjection
 		if old, ok := cached[metadata.ID]; !ok || old.revision != metadata.Revision {
-			intent = ansi.Truncate(terminaltext.SanitizeSingleLine(toolcallIntentFor(metadata.Name, metadata.Arguments)), 120, "…")
+			projection = projectToolCall(metadata)
 		}
-		entries = append(entries, toolcallEntry{
-			blockID: metadata.ID, revision: metadata.Revision, index: i,
-			name:     ansi.Truncate(terminaltext.SanitizeSingleLine(metadata.Name), 120, "…"),
-			intent:   intent,
-			resolved: metadata.Resolved,
-			failed:   metadata.Failed || subagentStopErrored(metadata.Stop),
-		})
+		entries = append(entries, toolcallEntry{toolcallProjection: projection, index: i})
 	}
 	return entries
 }
@@ -433,8 +448,8 @@ func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
 	case scrollback.TeamCardSnapshot:
 		call, result, received = card.Call, card.Result, card.Resolved
 	}
-	s.detailEntry = &toolcallDetail{callID: call.ID, name: call.Name, intent: call.Arguments, result: result,
-		resolved: entry.resolved, failed: entry.failed, resultReceived: received}
+	s.detailEntry = &toolcallDetail{callID: call.ID, name: entry.fullName, intent: call.Arguments, result: result,
+		state: entry.state, resultReceived: received}
 }
 
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
@@ -481,8 +496,8 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	items := make([]bounded.ListItem, len(s.entries))
 	for i, entry := range s.entries {
-		glyph, status, _ := toolcallStatus(entry.resolved, entry.failed)
-		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: status + " · " + entry.name + " · " + entry.intent, StatusCells: [2]string{glyph}}
+		glyph, _, _ := entry.state.status()
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: ansi.Truncate(entry.summary(), 120, "…"), StatusCells: [2]string{glyph}}
 	}
 	s.list.SetGeometry(width, bodyHeight, 2, bounded.Clip)
 	s.list.SetItems(items)
@@ -511,7 +526,7 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		presentation := presentListRow(row, s.deps.theme.Style("toolName"), s.deps.theme.Style("toolArgs"))
 		statusStyle := s.deps.theme.Style("toolName")
 		if row.ItemIndex >= 0 && row.ItemIndex < len(s.entries) {
-			_, _, slot := toolcallStatus(s.entries[row.ItemIndex].resolved, s.entries[row.ItemIndex].failed)
+			_, _, slot := s.entries[row.ItemIndex].state.status()
 			statusStyle = s.deps.theme.Style(slot)
 		}
 		y := len(body)
@@ -623,8 +638,7 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 func (s *toolcallsState) styledToolcallIdentity(row toolcallDetailRow) string {
 	nameStyle := s.deps.theme.Style("toolName")
 	statusStyle := s.deps.theme.Style(row.statusStyle)
-	return nameStyle.Render("Identity · ") +
-		statusStyle.Render(row.statusGlyph) +
+	return statusStyle.Render(row.statusGlyph) +
 		nameStyle.Render(" "+terminaltext.Sanitize(row.identityName)+" · ") +
 		statusStyle.Render(row.statusText)
 }
@@ -668,10 +682,10 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 }
 
 func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
-	glyph, status, style := toolcallStatus(entry.resolved, entry.failed)
+	glyph, status, style := entry.state.status()
 
 	lines := []toolcallDetailRow{
-		{text: "Identity · " + glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
+		{text: glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
 		{text: "Call: " + terminaltext.Sanitize(entry.callID), label: "Call:", kind: toolcallField},
 		{text: "Arguments:", kind: toolcallHeading},
 	}
@@ -682,7 +696,7 @@ func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 
 	result := entry.result
 	lines = append(lines, toolcallDetailRow{})
-	if entry.failed {
+	if entry.state == toolcallFailed {
 		lines = append(lines, toolcallDetailRow{text: "Error:", kind: toolcallError})
 	} else {
 		lines = append(lines, toolcallDetailRow{text: "Result:", kind: toolcallHeading})

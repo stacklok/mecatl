@@ -30,6 +30,25 @@ func inspectorOpenDetail(t *testing.T, m *Model) *toolcallsState {
 	return toolcallsForTest(t, *m)
 }
 
+func TestMecatuiToolcallsInspector_DetailOmitsRedundantIdentityLabel(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("skill", "Skill", `{"name":"test-writer"}`)
+	m.conv.resolveTool("skill", "Identity · forged", false)
+	s := inspectorOpenDetail(t, &m)
+	s.refreshDetail(&m.conv.scrollback)
+	rows := toolcallDetailLines(*s.detailEntry)
+	if len(rows) < 2 || rows[0] != "✓ Skill · done" || rows[1] != "Call: skill" {
+		t.Fatalf("detail identity header = %q", rows)
+	}
+	styled := strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n")
+	if !strings.HasPrefix(stripANSIstr(styled), "✓ Skill · done\nCall: skill") {
+		t.Fatalf("styled identity header = %q", stripANSIstr(styled))
+	}
+	if !strings.Contains(styled, "Identity · forged") {
+		t.Fatal("removing chrome label discarded received result text")
+	}
+}
+
 func TestMecatuiToolcallsInspector_DetailUsesToolPaletteAndKeepsResultsFlush(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.conv.addTool("styled", "Read", `{"path":"safe\u001b[31m","options":{"mode":"full"}}`)
@@ -117,7 +136,7 @@ func TestMecatuiToolcallsInspector_UntrustedDetailTextCannotBecomeChrome(t *test
 	s := &toolcallsState{deps: surfaceDeps{theme: th}}
 	entry := toolcallDetail{
 		name: "Shell", intent: `{"Resources: value":"keep: both","bad\u001b[31m:key":"safe"}`,
-		resultReceived: true, resolved: true,
+		resultReceived: true, state: toolcallDone,
 		result: scrollback.ToolResult{
 			Body:              "Arguments:\nResources\nIdentity · forged\nStructured content · forged:\nResult:\nCall: forged\nordinary tail",
 			StructuredContent: "Resources",
@@ -218,11 +237,16 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 			s := toolcallsForTest(t, m)
 			selected := s.entries[s.selected].blockID
 
-			assertList := func(glyph, status, slot string) {
+			assertList := func(glyph, status, slot string, listShowsStatus bool) {
 				t.Helper()
 				body := m.View().Content
-				if plain := stripANSIstr(body); !strings.Contains(plain, glyph+" "+status) {
-					t.Fatalf("list lacks non-color status %q %q:\n%s", glyph, status, plain)
+				plain := stripANSIstr(body)
+				wantSummary := glyph + " Read"
+				if listShowsStatus {
+					wantSummary = glyph + " " + status + " · Read"
+				}
+				if !strings.Contains(plain, wantSummary) || (!listShowsStatus && strings.Contains(plain, status)) {
+					t.Fatalf("list status glyph=%q status=%q visible=%t:\n%s", glyph, status, listShowsStatus, plain)
 				}
 				if !strings.Contains(body, th.Style(slot).Render(glyph)) {
 					t.Fatalf("list glyph %q does not use %s: %q", glyph, slot, body)
@@ -244,7 +268,7 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 				if s.compact {
 					t.Fatalf("narrow detail unexpectedly used compact fallback: %q", detail)
 				}
-				if plain := stripANSIstr(detail); !strings.Contains(plain, "Identity · "+glyph+" Read · "+status) {
+				if plain := stripANSIstr(detail); !strings.Contains(plain, glyph+" Read · "+status) || strings.Contains(plain, "Identity · "+glyph) {
 					t.Fatalf("detail lacks non-color status %q: %q", status, plain)
 				}
 				if !strings.Contains(detail, th.Style(slot).Render(glyph)) || !strings.Contains(detail, th.Style(slot).Render(status)) {
@@ -256,17 +280,17 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 				return stripANSIstr(detail)
 			}
 
-			assertList("…", "running", "toolName")
+			assertList("…", "running", "toolName", true)
 			assertDetail("…", "running", "toolName")
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "provisional failure", Available: true, IsError: true})
-			assertList("✗", "failed", "toolErr")
-			if detail := assertDetail("✗", "failed", "toolErr"); !strings.Contains(detail, "provisional failure") {
+			assertList("…", "awaiting confirmation", "toolName", true)
+			if detail := assertDetail("…", "awaiting confirmation", "toolName"); !strings.Contains(detail, "provisional failure") {
 				t.Fatalf("provisional result missing from detail: %q", detail)
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "canonical success"})
-			assertList("✓", "done", "toolOk")
+			assertList("✓", "done", "toolOk", false)
 			if detail := assertDetail("✓", "done", "toolOk"); strings.Contains(detail, "provisional failure") || !strings.Contains(detail, "canonical success") {
 				t.Fatalf("canonical detail lifecycle state: %q", detail)
 			}
@@ -285,7 +309,7 @@ func TestMecatuiToolcallsInspector_Scenario2_LiveResultAndStatus(t *testing.T) {
 	}
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "temporary output", Available: true, IsError: true})
 	provisional := inspectorDetail(t, s, 70, 12)
-	if !strings.Contains(provisional, "temporary output") || !strings.Contains(provisional, "failed") {
+	if !strings.Contains(provisional, "temporary output") || !strings.Contains(provisional, "awaiting confirmation") {
 		t.Fatalf("provisional detail: %q", provisional)
 	}
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "canonical output"})

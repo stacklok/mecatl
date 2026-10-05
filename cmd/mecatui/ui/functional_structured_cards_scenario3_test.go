@@ -42,13 +42,15 @@ func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettled
 
 	c.addTool("changed-call", "Read", `{"path":"changed.txt"}`)
 	r.renderConversationFrame(&c.scrollback, false)
-	prepares = r.cardPrepares
+	// A settled call renders a projection line rather than a prepared card, so the
+	// revision guard is measured as exactly one block re-render.
+	renders = r.blockRenders
 	if !c.resolveTool("changed-call", "changed result", false) {
 		t.Fatal("resolve changed tool")
 	}
 	r.renderConversationFrame(&c.scrollback, false)
-	if got := r.cardPrepares; got != prepares+1 {
-		t.Fatalf("one content revision prepared %d cards, want one", got-prepares)
+	if got := r.blockRenders; got != renders+1 {
+		t.Fatalf("one content revision rendered %d blocks, want one", got-renders)
 	}
 }
 
@@ -90,7 +92,7 @@ func TestMecatuiFunctionalConversationCards_Scenario3_AnchorsAndSelectionSurvive
 	point := scenario3SelectionPoint(t, initial, conversationRegionArguments, "ARGUMENT-MARKER")
 
 	c.addNotice("unrelated append")
-	c.resolveTool("call", "late result", false)
+	c.resolveAvailableTool("call", "late result", false)
 	r.setWidth(58)
 	reflowed := r.renderConversationFrame(&c.scrollback, true)
 	if _, _, ok := resolveSelectionPoint(reflowed, point); !ok {
@@ -101,9 +103,10 @@ func TestMecatuiFunctionalConversationCards_Scenario3_AnchorsAndSelectionSurvive
 		t.Fatal("logical reading anchor did not survive card reflow")
 	}
 
+	// A conversation detail toggle leaves the tool argument row and its selection intact.
 	collapsed := r.renderConversationFrame(&c.scrollback, false)
-	if _, _, ok := resolveSelectionPoint(collapsed, point); ok {
-		t.Fatal("selection survived after collapse hid its prepared argument row")
+	if _, _, ok := resolveSelectionPoint(collapsed, point); !ok {
+		t.Fatal("selection lost after conversation detail toggle changed no tool rows")
 	}
 
 }
@@ -165,8 +168,8 @@ func TestMecatuiFunctionalConversationCards_Scenario3_IncrementalCacheFastPath(t
 		t.Fatal("resolve non-tail tool")
 	}
 	r.renderConversationFrame(&c.scrollback, false)
-	if r.cardPrepares != prepares+1 {
-		t.Fatalf("non-tail mutation prepared %d cards, want 1", r.cardPrepares-prepares)
+	if r.blockRenders != renders+1 {
+		t.Fatalf("non-tail mutation rendered %d blocks, want 1", r.blockRenders-renders)
 	}
 	if len(first.provenance) == 0 {
 		t.Fatal("initial deep frame lacked provenance")

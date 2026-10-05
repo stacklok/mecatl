@@ -1,11 +1,7 @@
 package ui
 
-// Tests for inline agent-team visibility: a Team tool card renders a BOUNDED
-// per-member projection of the team's run (a team header, one calm lane line per
-// member while live, per-member message/tool traces when expanded, and a resolved
-// stat line with rounds + summed usage + stop reason). Member content is bounded
-// server-side; the lanes are attributed to the Team card by ParentCallID and
-// never enter the parent conversation.
+// Tests for live inline team status and bounded member lanes. Detailed member
+// activity remains in the Agents view.
 
 import (
 	"strings"
@@ -25,13 +21,13 @@ func roster() []client.TeamMemberSpec {
 
 // teamCard builds a Team tool block, applies the given team.* projection via the
 // conversation accumulators (by ParentCallID == toolID), and renders it.
-func teamCard(t *testing.T, expand bool, build func(c *conversation)) string {
+func teamCard(t *testing.T, build func(c *conversation)) string {
 	t.Helper()
 	r := newTestRenderer()
 	c := &conversation{}
 	c.addTool("t1", "Team", `{"goal":"ship the feature"}`)
 	build(c)
-	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], expand))
+	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 }
 
 // member builds a TeamMember msg for the canonical team t1.
@@ -90,10 +86,10 @@ func TestTeamMemberRoutesByName(t *testing.T) {
 }
 
 // TestTeamLiveCollapsed asserts the default live card: a team header with the
-// member count + ctrl+t affordance, and one calm lane line per member naming the
+// member count + Agents affordance, and one calm lane line per member naming the
 // current tool/state and token totals — with the lead tagged.
 func TestTeamLiveCollapsed(t *testing.T) {
-	out := teamCard(t, false, func(c *conversation) {
+	out := teamCard(t, func(c *conversation) {
 		c.startTeamCard("t1", "", roster())
 		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 		c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
@@ -101,8 +97,8 @@ func TestTeamLiveCollapsed(t *testing.T) {
 	if !strings.Contains(out, "team ·") || !strings.Contains(out, "2 members") {
 		t.Errorf("live card should show a team header with the member count, got %q", out)
 	}
-	if !strings.Contains(out, "ctrl+t trace") {
-		t.Errorf("live card should advertise the ctrl+t trace, got %q", out)
+	if !strings.Contains(out, "f6 agents") {
+		t.Errorf("live card should advertise the f6 agents, got %q", out)
 	}
 	if !strings.Contains(out, "[lead]") {
 		t.Errorf("lead member should be tagged [lead], got %q", out)
@@ -128,7 +124,7 @@ func TestTeamLeadAnchoredFirst(t *testing.T) {
 		{Name: "builder", Mutating: true},
 		{Name: "lead", Lead: true, Mutating: true},
 	}
-	out := teamCard(t, false, func(c *conversation) {
+	out := teamCard(t, func(c *conversation) {
 		c.startTeamCard("t1", "", leadLast)
 	})
 	lines := strings.Split(out, "\n")
@@ -266,7 +262,7 @@ func TestTeamLaneCapRollup(t *testing.T) {
 	for i := 0; i < maxTeamLanes+3; i++ {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
-	out := teamCard(t, false, func(c *conversation) {
+	out := teamCard(t, func(c *conversation) {
 		c.startTeamCard("t1", "", big)
 	})
 	laneLines := 0
@@ -298,66 +294,9 @@ func TestTeamLiveNoFlicker(t *testing.T) {
 	}
 }
 
-// TestTeamExpandedTrace asserts the expanded (ctrl+t) card shows, per member, the
-// forwarded message lines (clamped) and tool chips with ✓/✗ glyphs.
-func TestTeamExpandedTrace(t *testing.T) {
-	out := teamCard(t, true, func(c *conversation) {
-		c.startTeamCard("t1", "", roster())
-		c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "searching for the bug"}))
-		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
-		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
-		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Read", IsError: true}))
-	})
-	if !strings.Contains(out, "searching for the bug") {
-		t.Errorf("expanded card should show the member message line, got %q", out)
-	}
-	if !strings.Contains(out, "Grep") || !strings.Contains(out, "Read") {
-		t.Errorf("expanded card should show member tool chips, got %q", out)
-	}
-	if !strings.Contains(out, "✓") || !strings.Contains(out, "✗") {
-		t.Errorf("expanded chips should carry ok/error glyphs, got %q", out)
-	}
-	// The bounded result preview (Detail) renders next to the chip; the result
-	// preview supersedes the call's arg preview.
-	if !strings.Contains(out, "3 matches in dispatch.go") {
-		t.Errorf("expanded chip should render its Detail preview, got %q", out)
-	}
-}
-
-// TestTeamExpandedSeparatesMembers asserts the expanded view inserts a blank line
-// between members' trace blocks so boundaries are clear at 3+ members.
-func TestTeamExpandedSeparatesMembers(t *testing.T) {
-	out := teamCard(t, true, func(c *conversation) {
-		c.startTeamCard("t1", "", []client.TeamMemberSpec{
-			{Name: "lead", Lead: true, Mutating: true},
-			{Name: "scout"},
-			{Name: "builder", Mutating: true},
-		})
-		c.updateTeamCardMember(member("lead", "message.delta", client.TeamMsg{Text: "planning"}))
-		c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "scanning"}))
-		c.updateTeamCardMember(member("builder", "message.delta", client.TeamMsg{Text: "editing"}))
-	})
-	// Each member's trace block is preceded by a blank line (after the first). The
-	// card border pads every line, so a separator line is whitespace-only between
-	// two content lines — detect a blank (or whitespace-only) line that is not the
-	// card's top/bottom border.
-	lines := strings.Split(out, "\n")
-	separators := 0
-	for i := 1; i < len(lines)-1; i++ {
-		if strings.TrimSpace(strings.Trim(lines[i], "│ ")) == "" &&
-			strings.Contains(lines[i-1], "│") && strings.Contains(lines[i+1], "│") {
-			separators++
-		}
-	}
-	if separators < 2 {
-		t.Errorf("expanded view should separate the 3 members with blank lines, got %d: %q", separators, out)
-	}
-}
-
-// TestTeamExpandedCapsTrace asserts a single member lane's trace is capped at
+// TestTeamLaneCapsTrace asserts a single member lane's trace is capped at
 // maxTeamTrace, dropping the oldest entries.
-func TestTeamExpandedCapsTrace(t *testing.T) {
+func TestTeamLaneCapsTrace(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
 	c.startTeamCard("t1", "", roster())
@@ -383,46 +322,28 @@ func TestTeamMessageCoalesces(t *testing.T) {
 	}
 }
 
-// TestTeamResolved asserts the resolved card: a muted stat line with the round
-// count, summed team usage, and the human stop label, plus the Team tool's joined
-// summary rendered via the normal result body path.
+// TestTeamResolved asserts a settled Team card is projected as one shared semantic line.
 func TestTeamResolved(t *testing.T) {
-	out := teamCard(t, false, func(c *conversation) {
+	out := teamCard(t, func(c *conversation) {
 		c.startTeamCard("t1", "", roster())
 		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
 		c.resolveTool("t1", "team shipped the feature", false)
 	})
-	if !strings.Contains(out, "4 rounds") {
-		t.Errorf("resolved card should show the round count, got %q", out)
-	}
-	if !strings.Contains(out, "stop:done") {
-		t.Errorf("resolved card should map end_turn → stop:done, got %q", out)
-	}
-	if !strings.Contains(out, "↑5.2K") {
-		t.Errorf("resolved card should show summed team usage, got %q", out)
-	}
-	if !strings.Contains(out, "team shipped the feature") {
-		t.Errorf("resolved card should render the joined summary via the result body, got %q", out)
+	if got, want := out, " ✓ Team · ship the feature"; got != want {
+		t.Errorf("settled team line = %q, want %q", got, want)
 	}
 }
 
-// TestTeamErrorResolves asserts a Team tool error resolves the card with a "✗"
-// glyph and stop:error, with the error text in the result slot.
+// TestTeamErrorResolves asserts a settled Team error has the shared failed line.
 func TestTeamErrorResolves(t *testing.T) {
-	out := teamCard(t, false, func(c *conversation) {
+	out := teamCard(t, func(c *conversation) {
 		c.startTeamCard("t1", "", roster())
 		c.finishTeamCard("t1", "", 1, "error", client.Usage{}, nil)
 		c.resolveTool("t1", "Team: the run failed", true)
 	})
-	if !strings.Contains(out, "✗") {
-		t.Errorf("errored card should carry the error glyph, got %q", out)
-	}
-	if !strings.Contains(out, "stop:error") {
-		t.Errorf("errored card should show stop:error, got %q", out)
-	}
-	if !strings.Contains(out, "the run failed") {
-		t.Errorf("errored card should render the error text, got %q", out)
+	if got, want := out, " ✗ Team · ship the feature"; got != want {
+		t.Errorf("failed team line = %q, want %q", got, want)
 	}
 }
 
@@ -435,7 +356,7 @@ func TestTeamManyMembersLegible(t *testing.T) {
 		{Name: "builder", Mutating: true},
 		{Name: "tester", Mutating: true},
 	}
-	out := teamCard(t, false, func(c *conversation) {
+	out := teamCard(t, func(c *conversation) {
 		c.startTeamCard("t1", "", big)
 		c.updateTeamCardMember(member("builder", "tool.call", client.TeamMsg{ToolName: "Write"}))
 	})

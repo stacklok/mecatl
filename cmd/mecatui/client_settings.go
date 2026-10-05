@@ -328,8 +328,8 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 	return out
 }
 
-// applyKeyOverridesToDeps parses and validates CLI/YAML keymap overrides and applies them to deps.
-// Lives in package main to avoid adding imports to main.go; this file imports keymap.
+// applyKeyOverridesToDeps parses, validates, and applies the merged keymap
+// overrides to deps.
 //
 // TWO layers merge PER ACTION (a higher layer rebinds only the actions it
 // names), lowest to highest precedence:

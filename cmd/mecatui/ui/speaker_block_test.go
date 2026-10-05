@@ -23,7 +23,7 @@ func TestSpeakerLabels(t *testing.T) {
 	}
 
 	asst := testSnapshot(1, scrollback.AssistantCardSnapshot{Text: "the answer"})
-	got = stripANSIstr(r.renderSnapshot(1, asst, false))
+	got = stripANSIstr(r.renderSnapshot(1, asst, true))
 	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "● mecatl") {
 		t.Errorf("assistant block must lead with %q, got first line %q", "● mecatl", first)
 	}

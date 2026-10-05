@@ -282,8 +282,8 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 	}
 	footer := stripANSIstr(m.renderFooter())
 	for _, marker := range []string{selectAll + " select all", copySelection + " copy"} {
-		if !strings.Contains(footer, marker) {
-			t.Errorf("footer missing overridden marker %q:\n%s", marker, footer)
+		if strings.Contains(footer, marker) {
+			t.Errorf("footer retained editor marker %q:\n%s", marker, footer)
 		}
 	}
 	for _, marker := range []string{"ctrl+g select all", "ctrl+y copy"} {
@@ -319,8 +319,8 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 	}
 }
 
-// TestSelectionShortcutsRenderDefaults proves the prompt-selection bindings are
-// visible on both persistent UI surfaces with their default chords.
+// TestSelectionShortcutsRenderDefaults proves the prompt-selection bindings
+// remain visible in help, while the footer prioritizes session inspection.
 func TestSelectionShortcutsRenderDefaults(t *testing.T) {
 	const (
 		selectAll     = "ctrl+g select all"
@@ -357,9 +357,14 @@ func TestSelectionShortcutsRenderDefaults(t *testing.T) {
 			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
 		)
 		got := stripANSIstr(m.renderFooter())
-		for _, want := range []string{selectAll, copySelection} {
+		for _, want := range []string{"ctrl+t tool calls", "f9 session details"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("footer should contain %q: %q", want, got)
+			}
+		}
+		for _, stale := range []string{selectAll, copySelection} {
+			if strings.Contains(got, stale) {
+				t.Errorf("footer should leave editor shortcut %q in help: %q", stale, got)
 			}
 		}
 	})
@@ -388,7 +393,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		"Prompts":       {"ctrl+f8"},
 		"Agents":        {"ctrl+f9"},
 		"ModeSwitch":    {"ctrl+f10"},
-		"ExpandTools":   {"ctrl+f11"},
+		"Toolcalls":     {"ctrl+f11"},
 		"Help":          {"ctrl+f12"},
 		"Quit":          {"ctrl+f13"},
 		"ScrollU":       {"ctrl+f14"},
@@ -421,7 +426,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Agents", match: "inspect agents", want: "ctrl+f9", absent: "f6", occurs: 1},
 		{name: "Effort", match: "choose reasoning effort", want: "ctrl+f5", absent: "f7", occurs: 1},
 		{name: "ModeSwitch", match: "change permission mode", want: "ctrl+f10", absent: "shift+tab", occurs: 1},
-		{name: "ExpandTools", match: "show or hide tool details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
+		{name: "Toolcalls", match: "open tool calls", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
 		{name: "Help", match: "open this help; the shortcut", want: "ctrl+f12 or /help", absent: "? or /help", occurs: 1},
 		{name: "Quit", match: "the first clears the prompt", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},
 		{name: "Scroll", match: "scroll the conversation", want: "ctrl+f14/ctrl+f15", absent: "pgup", occurs: 1},
