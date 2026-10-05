@@ -142,7 +142,15 @@ per-sub-agent-provider switching all treat it as data. Its wire-divergences (the
 REQUIRED `max_tokens`, the model-class-dependent extended-thinking config which is ON
 and model-aware, and the `(thinking,signature[],redacted)` reasoning-replay list packed
 into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction, not in
-the DTO. `UseMock` short-circuits to a single synthetic
+the DTO. Anthropic model listings preserve the difference between missing thinking
+metadata and explicit unsupported metadata. Explicitly reported adaptive or manual
+support selects the corresponding mode; an explicit unsupported result disables
+thinking. When thinking metadata is missing, the Messages adapter uses model-ID
+fallback: Claude 5 Opus, Sonnet, Fable, and Mythos use adaptive thinking with
+summarized display, including exact `anthropic/claude-...` OpenRouter IDs. Older
+thinking-capable models retain their manual-budget mode, and incapable models
+omit thinking. A failed listing or missing exact model entry retains the catalog
+floor and this request fallback. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
 ### Operator-defined OIDC providers
