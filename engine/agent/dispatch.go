@@ -252,11 +252,12 @@ func closeInboundAssessment(assessment inboundAssessment) {
 	}
 }
 
-func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, out map[session.ToolCallID]session.ToolResult) (prepared []readBatchPending, cancelled bool) {
+func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, out map[session.ToolCallID]session.ToolResult, opened *int) (prepared []readBatchPending, cancelled bool) {
 	defer closePreparedOnCancel(&prepared, &cancelled)
 	for _, c := range batch {
 		c := c
 		e.openCard(r, turnIdx, c)
+		*opened++
 		if sess.Mode == session.ModePlan && c.Name == presentPlanToolName {
 			res, cancelled := e.surfacePlanAsk(ctx, r, sess, turnIdx, c)
 			if cancelled {
@@ -326,11 +327,33 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 // runReadBatch runs a batch of read-only tool calls concurrently. Permission and
 // trusted mutation remain serial, reviewer calls fan out privately, decisions and
 // asks drain in call order, and only then do approved tools execute concurrently.
-func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, enqueue time.Time) (map[session.ToolCallID]session.ToolResult, bool) {
-	out := make(map[session.ToolCallID]session.ToolResult, len(batch))
-	prepared, cancelled := e.prepareReadBatch(ctx, r, sess, env, turnIdx, batch, out)
+func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, enqueue time.Time) (out map[session.ToolCallID]session.ToolResult, cancelled bool) {
+	out = make(map[session.ToolCallID]session.ToolResult, len(batch))
+	opened := 0
+	defer func() {
+		if !cancelled {
+			return
+		}
+		for i, c := range batch {
+			if _, ok := out[c.ID]; ok {
+				continue
+			}
+			if i >= opened {
+				e.openCard(r, turnIdx, c)
+			}
+			message := withheldResultText + ": dispatch was cancelled before execution"
+			if sess.Mode == session.ModePlan && c.Name == presentPlanToolName {
+				// Match Session's cancellation close-out for an interrupted plan ask.
+				message = "tool call interrupted by cancellation"
+			}
+			res := session.NewToolError(c.ID, message)
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+			out[c.ID] = res
+		}
+	}()
+	prepared, cancelled := e.prepareReadBatch(ctx, r, sess, env, turnIdx, batch, out, &opened)
 	if cancelled {
-		return nil, true
+		return out, true
 	}
 	defer closeActionAssessments(prepared)
 
@@ -351,7 +374,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	reviewWG.Wait()
 	if ctx.Err() != nil {
 		r.recordCompletedActionUsage(ctx, sess, prepared)
-		return nil, true
+		return out, true
 	}
 
 	// Drain private assessments in original call order. This is the only phase that
@@ -364,7 +387,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 			p.assessment.usageConsumed = true
 			if cancelled {
 				r.recordCompletedActionUsage(ctx, sess, prepared[i+1:])
-				return nil, true
+				return out, true
 			}
 			if !proceed {
 				out[p.call.ID] = res
@@ -380,7 +403,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 		if p.assessment != nil {
 			allowed, askCancelled, reason := e.reauthorizeAction(ctx, r, sess, env, turnIdx, p.call, &p.auth)
 			if askCancelled {
-				return nil, true
+				return out, true
 			}
 			if !allowed || !e.revalidateAuthorizedActionDependencies(ctx, r, sess, env, p.call.ID, p.assessment.action.dependencies) {
 				if reason == "" {
