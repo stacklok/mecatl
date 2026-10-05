@@ -27,7 +27,7 @@ that ADR 0353's own text does not name: [`Config.RootAuthority`](../../internal/
 
 ## Human decisions
 
-- [x] Should the `PermissionMode` tighten-only clamp (`plan < default < acceptEdits`) use a small local ordinal table now, or block on PR #1730's still-unmerged permission-mode vocabulary (now `docs/adr/0365-one-permission-mode-vocabulary.md`, having renumbered itself once already since it collided with an unrelated Studio ADR) landing first? — Decision: define a small local ordinal table now; reconcile later if #1730 lands a different shape.
+- [x] Should the `PermissionMode` tighten-only clamp (`plan < default < acceptEdits`) use a small local ordinal table now, or block on PR #1730's still-unmerged permission-mode vocabulary (now `docs/adr/0375-one-permission-mode-vocabulary.md`, having renumbered itself twice after colliding with unrelated ADRs) landing first? — Decision: define a small local ordinal table now; reconcile later if #1730 lands a different shape.
 - [x] Should `AgentDefSessionEngineFactory` (the new per-session engine factory this plan introduces) ever accept a tool-widening input parameter, for symmetry with the existing `SessionEngineWithToolsFactory`? — Decision: no, never — the security property "the catalog is built exclusively from the def's tools" must be structurally impossible to violate, not merely a documented convention.
 - [x] Is failing closed (refusing to resume) an acceptable v1 cost for restart/MCP-resume on an agent-bound session, or does the motivating mecak8s Slack-bot deployment need session continuity across a pod restart badly enough to pull the larger persist-authority-and-rebuild-through-it fix (issue #1796) into this plan? — Decision: fail closed now for simplicity, matching ADR 0353's own stated v1 scope; keep #1796 as a separate follow-up.
 - [x] `memory: project` for an agent-bound session: should `resolveAgentMemoryHead` be extended to thread the session's own resolved placement (`EnvironmentRef`) into its "project" root, or should it keep reading the single process-wide `cfg.Workspace` unmodified? — Decision: implement the placement-aware version. This is real new work (today's code, including the exploratory Slice A branch, does not do this — `resolveAgentMemoryHead` is called unchanged), but it closes a real cross-placement leak risk and is what ADR 0353's own text already claims is true.
@@ -410,7 +410,7 @@ does, that is a sign the transitive closure broke and AC3.3/AC3.4 should catch i
 | Per-caller authorization on which `agent_definition_name` values a caller may request — including the def's own `hooks:` local-command-execution surface this grants, not just its tool selection | deployment-level access control (separate mecak8s deployments) | ADR 0353 named non-goal |
 | Persisting the def's authority so restart/MCP-resume can rebuild the SAME restricted catalog instead of failing closed | [issue #1796](https://github.com/stacklok/mecatl/issues/1796) | ADR 0353 Consequences |
 | Session-configurable operator posture (strict/trusted/auto/yolo) | [issue #1784](https://github.com/stacklok/mecatl/issues/1784) | ADR 0353 named non-goal |
-| PR #1730's own permission-mode vocabulary (ADR 0365) | PR #1730 (independent, non-conflicting work) | not this plan's concern |
+| PR #1730's own permission-mode vocabulary (ADR 0375) | PR #1730 (independent, non-conflicting work) | not this plan's concern |
 
 ## Definition of done
 

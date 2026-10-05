@@ -1,4 +1,4 @@
-# ADR 0365 — One named permission-mode vocabulary, and two admission gates
+# ADR 0375 — One named permission-mode vocabulary, and two admission gates
 
 - Status: Proposed
 - Date: 2026-09-22
