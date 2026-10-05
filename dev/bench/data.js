@@ -297161,6 +297161,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791213024272,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ff693ed93df447cc59f78f359c9ca0b3c488f14d",
+          "message": "test: time execution qualification image and lifecycle stages (#2088)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T11:17:19-07:00",
+          "tree_id": "7eb7705febcd2d001e0768c43d9502af16cbd429",
+          "url": "https://github.com/stacklok/mecatl/commit/ff693ed93df447cc59f78f359c9ca0b3c488f14d"
+        },
+        "date": 1791224990427,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3323,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -389083,6 +389122,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791224986685,
+  "lastUpdate": 1791224991128,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
