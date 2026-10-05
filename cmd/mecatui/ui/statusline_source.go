@@ -58,6 +58,10 @@ func (m Model) statusLineWaitCmd() tea.Cmd {
 	}
 }
 
+// HumanizeTokens exposes the shared token formatter for mecatui's post-teardown
+// exit summary.
+func HumanizeTokens(n int64) string { return renderfmt.HumanizeTokens(n) }
+
 func usageAtom(raw int64) customization.UsageAtom {
 	return customization.UsageAtom{Raw: raw, Human: renderfmt.HumanizeTokens(raw)}
 }

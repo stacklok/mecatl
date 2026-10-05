@@ -89,9 +89,19 @@ A connected session prints the ID record; to resume it, use
 
 When the session snapshot is available, **Model calls** counts model calls begun
 in the chat, and **Tokens (main)** shows lifetime input and output tokens for
-that chat. Nonzero cache-read and cache-write counts appear separately, not
-added to input or output. Title-generation tokens and the latest context-meter
-reading are not included. If the snapshot is unavailable, the exact embedded
+the chat's agent runs. **Tokens (aux)** appears when auxiliary model work, such
+as title generation, compaction, routing, reviewers, or guardrails, used tokens
+in the chat. Counts are abbreviated, for example `29.7K` or `1.2M`. Nonzero
+cache-read and cache-write counts appear separately, not added to input or
+output. The latest context-meter reading is not included:
+
+```text
+Model calls: 12
+Tokens (main): 29.7K input, 1.8K output, 6.4K cache read
+Tokens (aux): 2.1K input, 85 output
+```
+
+If the snapshot is unavailable, the exact embedded
 resume command and ID record still appear without a summary. An ID that cannot
 be safely displayed as a single terminal line retains its JSON ID record but
 has no copyable command.

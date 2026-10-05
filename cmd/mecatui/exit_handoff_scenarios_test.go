@@ -92,10 +92,13 @@ func TestMecatuiExitHandoff_Scenario1_AuthoritativeSummary(t *testing.T) {
 		if id != "final" {
 			t.Fatalf("requested session %q, want final", id)
 		}
-		return client.SessionSnapshot{Title: "Server display title", State: "completed", Turns: 7, Usage: client.Usage{InputTokens: 42, OutputTokens: 13, CacheReadTokens: 9, CacheWriteTokens: 3}, ContextOccupancy: &client.ContextOccupancy{InputTokens: 999}}, nil
+		return client.SessionSnapshot{Title: "Server display title", State: "completed", Turns: 7,
+			Usage:            client.Usage{InputTokens: 1_234_567, OutputTokens: 13_400, CacheReadTokens: 9, CacheWriteTokens: 3},
+			AuxiliaryUsage:   client.Usage{InputTokens: 2_500, OutputTokens: 40, CacheReadTokens: 1_000},
+			ContextOccupancy: &client.ContextOccupancy{InputTokens: 999}}, nil
 	})
 	got := handoffOutput(t, "final", true, get, nil, false)
-	for _, line := range []string{"Session: Server display title\n", "Model calls: 7\n", "Tokens (main): 42 input, 13 output, 9 cache read, 3 cache write\n"} {
+	for _, line := range []string{"Session: Server display title\n", "Model calls: 7\n", "Tokens (main): 1.2M input, 13.4K output, 9 cache read, 3 cache write\nTokens (aux): 2.5K input, 40 output, 1K cache read\n"} {
 		if !strings.Contains(got, line) {
 			t.Fatalf("missing %q: %q", line, got)
 		}
@@ -106,7 +109,7 @@ func TestMecatuiExitHandoff_Scenario1_AuthoritativeSummary(t *testing.T) {
 	got = handoffOutput(t, "final", true, handoffSnapshotGetter(func(context.Context, string) (client.SessionSnapshot, error) {
 		return client.SessionSnapshot{State: "completed", Turns: 0}, nil
 	}), nil, false)
-	if strings.Contains(got, "Session:") || strings.Contains(got, "cache read") || !strings.Contains(got, "Model calls: 0\n") {
+	if strings.Contains(got, "Session:") || strings.Contains(got, "cache read") || strings.Contains(got, "Tokens (aux)") || !strings.Contains(got, "Model calls: 0\n") {
 		t.Fatalf("empty title/zero cache = %q", got)
 	}
 }

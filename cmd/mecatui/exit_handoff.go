@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 )
 
 const finalSessionHandoffPrefix = "mecatui: final-session-id="
@@ -48,20 +49,30 @@ func finishFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, inter
 		if title := strings.TrimSpace(terminaltext.SanitizeSingleLine(snapshot.Title)); title != "" {
 			_, _ = fmt.Fprintf(&human, "Session: %s\n", title)
 		}
-		_, _ = fmt.Fprintf(&human, "Model calls: %d\nTokens (main): %d input, %d output", snapshot.Turns, snapshot.Usage.InputTokens, snapshot.Usage.OutputTokens)
-		if snapshot.Usage.CacheReadTokens != 0 {
-			_, _ = fmt.Fprintf(&human, ", %d cache read", snapshot.Usage.CacheReadTokens)
+		_, _ = fmt.Fprintf(&human, "Model calls: %d\n", snapshot.Turns)
+		writeHandoffTokens(&human, "main", snapshot.Usage)
+		if snapshot.AuxiliaryUsage != (client.Usage{}) {
+			writeHandoffTokens(&human, "aux", snapshot.AuxiliaryUsage)
 		}
-		if snapshot.Usage.CacheWriteTokens != 0 {
-			_, _ = fmt.Fprintf(&human, ", %d cache write", snapshot.Usage.CacheWriteTokens)
-		}
-		human.WriteByte('\n')
 	}
 	if safeHandoffID(id) {
 		_, _ = fmt.Fprintf(&human, "Resume: mecatui --resume '%s'\n", strings.ReplaceAll(id, "'", "'\"'\"'"))
 		human.WriteString("Or: mecatui --resume-latest (may select a different chat)\n")
 	}
 	_, _ = io.WriteString(w, human.String())
+}
+
+// writeHandoffTokens writes one humanized usage line; cache counts are labelled
+// components of input, never summed with it.
+func writeHandoffTokens(b *strings.Builder, label string, u client.Usage) {
+	_, _ = fmt.Fprintf(b, "Tokens (%s): %s input, %s output", label, ui.HumanizeTokens(u.InputTokens), ui.HumanizeTokens(u.OutputTokens))
+	if u.CacheReadTokens != 0 {
+		_, _ = fmt.Fprintf(b, ", %s cache read", ui.HumanizeTokens(u.CacheReadTokens))
+	}
+	if u.CacheWriteTokens != 0 {
+		_, _ = fmt.Fprintf(b, ", %s cache write", ui.HumanizeTokens(u.CacheWriteTokens))
+	}
+	b.WriteByte('\n')
 }
 
 func safeHandoffID(id string) bool {

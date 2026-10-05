@@ -25,6 +25,9 @@ type SessionSnapshot struct {
 	// Usage is the canonical cumulative main-session ledger. It is distinct from
 	// ContextOccupancy, which is only the latest context-meter display state.
 	Usage Usage
+	// AuxiliaryUsage is the sum of every non-main canonical usage bucket (title
+	// generation, compaction, reflection, routing, reviewers, guardrails, judges).
+	AuxiliaryUsage Usage
 	// ContextOccupancy is nil when a legacy or pre-turn snapshot has no known
 	// context-meter numerator.
 	ContextOccupancy *ContextOccupancy
@@ -54,6 +57,22 @@ func contextOccupancyFrom(occupancy *mecatlv1.ContextOccupancy) *ContextOccupanc
 	return &ContextOccupancy{InputTokens: occupancy.GetInputTokens(), Estimated: occupancy.GetEstimated()}
 }
 
+func auxiliaryUsageFrom(buckets map[string]*mecatlv1.TokenUsage) Usage {
+	var total Usage
+	for kind, bucket := range buckets {
+		if kind == "main" {
+			continue
+		}
+		u := usageFrom(bucket.GetTotal())
+		total.InputTokens += u.InputTokens
+		total.OutputTokens += u.OutputTokens
+		total.CacheReadTokens += u.CacheReadTokens
+		total.CacheWriteTokens += u.CacheWriteTokens
+		total.ReasoningTokens += u.ReasoningTokens
+	}
+	return total
+}
+
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 	return snapshotFromWithGlobalCapabilities(s, Capabilities{})
 }
@@ -70,6 +89,7 @@ func snapshotFromWithGlobalCapabilities(s *mecatlv1.Session, global Capabilities
 		CreatedAt:        s.GetCreatedAtUnix(),
 		ResolvedModel:    resolvedModelFrom(s.GetResolvedModel()),
 		Usage:            usageFrom(s.GetTokenUsage()["main"].GetTotal()),
+		AuxiliaryUsage:   auxiliaryUsageFrom(s.GetTokenUsage()),
 		ContextOccupancy: contextOccupancyFrom(s.GetLatestContextOccupancy()),
 		Title:            titleFromProto(s),
 		TitleProvenance:  titleProvenanceFromProto(s),
