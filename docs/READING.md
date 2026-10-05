@@ -4,9 +4,7 @@ This is the canonical reader map for this repo. It is a **self-contained index**
 organized by audience. Pick the row that fits. Every link points to an existing
 living guide (the code as it exists today) or a reference.
 
-**Living docs** describe **current behavior** (architecture pages, the usage guide).
-**ADRs** in `docs/adr/` are **frozen rationale on demand** — reach for them to
-understand a decision's *why*, never as the primary introduction to a feature.
+These pages describe **current behavior**. Git history holds past design rationale.
 
 ---
 
