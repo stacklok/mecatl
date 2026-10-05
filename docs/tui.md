@@ -36,12 +36,10 @@ for the operator-facing meaning of safety controls.
 ## Layout and navigation
 
 The frame is a stack of header, conversation, optional transient regions,
-activity line, prompt, and footer
-([ADR 0376](adr/0376-mecatui-status-surfaces-and-activity-line.md)).
-`cmd/mecatui/ui/layout.go` derives that stack for rendering, viewport sizing,
-and mouse hit testing. Add regions there so a transient shrinks
-the conversation instead of displacing the footer. Measure the rendered frame
-rather than maintaining a second set of row offsets.
+activity line, prompt, and footer. `cmd/mecatui/ui/layout.go` derives that stack
+for rendering, viewport sizing, and mouse hit testing. Add regions there so a
+transient shrinks the conversation instead of displacing the footer. Measure the
+rendered frame rather than maintaining a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render. The parent owns their
@@ -102,8 +100,8 @@ high-risk posture badge uses a fixed, contrast-checked danger style rather than
 a theme-controlled color.
 
 Choose the lifetime of a notice deliberately. Put durable conversation facts in
-scrollback; use the activity line above the prompt for advisories and activity
-whose outcome belongs elsewhere. An error or failed action needs visible feedback, not a
+scrollback; use the activity line for advisories and activity whose outcome
+belongs elsewhere. An error or failed action needs visible feedback, not a
 silent reset or an optimistic success claim. Do not show raw transport or
 credential material in a notice.
 

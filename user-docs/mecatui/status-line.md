@@ -17,11 +17,9 @@ sessions cannot change it.
 
 With no `status_customization:` entry, `mecatui` uses its shipped responsive
 templates. The header includes the active session title at every width and the
-remote target in its full variant. Keyboard help, the header
-posture/scroll/changed-file indicators, and the activity line above the input
-box remain part of the client interface; customization cannot remove them. The
-activity line shows whether `mecatui` is ready, thinking, running a tool,
-waiting for approval, or connecting. In a debug session, the header also keeps a
+remote target in its full variant. Keyboard help and the header
+posture/scroll/changed-file indicators remain part of the client interface;
+customization cannot remove them. In a debug session, the header also keeps a
 `⚠ DEBUG target` cue ahead of generated content and a privacy disclosure below
 it, even if a custom header is empty.
 
