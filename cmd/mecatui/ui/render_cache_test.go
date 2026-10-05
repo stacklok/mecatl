@@ -540,8 +540,8 @@ func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 		renderTickMsg{},
 	)
 	got := m.rend.renderConversation(&m.conv, m.expandTools)
-	if !strings.Contains(stripANSIstr(got), "ok: 12 passed") {
-		t.Errorf("non-tail resolve through Update must render the result (stale cached card?), got:\n%s", stripANSIstr(got))
+	if !strings.Contains(stripANSIstr(got), "✓ done · Shell · Run go test ./...") {
+		t.Errorf("non-tail resolve through Update must render the settled summary (stale cached card?), got:\n%s", stripANSIstr(got))
 	}
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
@@ -672,8 +672,8 @@ func TestIncrementalJoinTailChangesMidScrollback(t *testing.T) {
 		t.Fatalf("post-non-tail-resolve incremental join diverged from fresh oracle (stale prefix served past the changed index?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("non-tail resolve must render the result through the incremental path (stale prefix?)")
+	if !strings.Contains(stripANSIstr(got), "✓ done · Shell · Run go test ./...") {
+		t.Error("non-tail resolve must render the settled summary through the incremental path (stale prefix?)")
 	}
 }
 
@@ -942,8 +942,8 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 		t.Fatalf("path-switch served a STALE prefix: lines join diverged from fresh oracle after a string-path re-render of a non-tail block\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("the resolved card must render through the line path after the path switch (stale prefix served?)")
+	if !strings.Contains(stripANSIstr(got), "✓ done · Shell · Run go test ./...") {
+		t.Error("the resolved summary must render through the line path after the path switch (stale prefix served?)")
 	}
 }
 
@@ -989,8 +989,8 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 		t.Fatalf("multi-block frame: incremental join diverged from fresh oracle (firstChanged took max not min?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("the mid-block resolve must render (firstChanged must be the MIN changed index)")
+	if !strings.Contains(stripANSIstr(got), "✓ done · Read · Read f.go") {
+		t.Error("the mid-block settled summary must render (firstChanged must be the MIN changed index)")
 	}
 }
 

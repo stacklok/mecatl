@@ -383,7 +383,7 @@ func TestLogicalConversationAnchors_Scenario1_ChangingFrame(t *testing.T) {
 		m, _ := selModel(t)
 		m = applyAll(m, tea.WindowSizeMsg{Width: 34, Height: 30})
 		m.conv.addTool("read", "Read", `{"path":"a/very/long/path/for/wrapping.txt"}`)
-		m.conv.resolveTool("read", marker+" survives a narrow tool card reflow", false)
+		m.conv.resolveAvailableTool("read", marker+" survives a narrow tool card reflow", false)
 		m.expandTools = true
 		m.refreshView()
 		line := lineIndexContaining(m.vp.GetContent(), marker)

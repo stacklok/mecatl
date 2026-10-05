@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
@@ -43,9 +45,16 @@ func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPre
 
 // renderToolSnapshot is the ordinary-tool renderer boundary. It adapts the sealed
 // logical snapshot directly into immutable presentation input and keeps cache and
-// frame provenance renderer-owned.
+// frame provenance renderer-owned. A settled call collapses to the same semantic
+// one-line projection the /toolcalls inspector lists; complete arguments and
+// results remain in the inspector.
 func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		if metadata, ok := scrollback.ToolCallMetadataOf(s); ok {
+			if projection := projectToolCall(metadata); projection.settled() {
+				return r.renderSettledToolLine(blockID, projection)
+			}
+		}
 		presentation := toolCardPresentationFromSnapshot(p)
 		prepared := r.prepareTypedToolCard(presentation, expand)
 		out := prepared.Text()
@@ -57,6 +66,28 @@ func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 			rows: blockProvenanceRows(prepared.Prepared, blockID, scrollback.KindTool, r.indent, r.width),
 		}
 	})
+}
+
+func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProjection) blockRenderOutput {
+	glyph, status, style := projection.state.status()
+	line := r.th.Style(style).Render(glyph) + " " + status + " · " + projection.displayName + " · " + projection.intent
+	indent := 0
+	width := r.width
+	if r.width > r.indent {
+		indent = r.indent
+		width = r.contentWidth()
+	}
+	line = ansi.Truncate(line, width, "…")
+	if indent > 0 {
+		line = strings.Repeat(" ", indent) + line
+	}
+	return blockRenderOutput{
+		text: line,
+		rows: []renderedRow{{
+			blockID: blockID, region: conversationRegionBody, text: true,
+			kind: scrollback.KindTool, indent: indent, leading: indent, span: graphemeCount(ansi.Strip(line)),
+		}},
+	}
 }
 
 func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool) preparedToolCard {

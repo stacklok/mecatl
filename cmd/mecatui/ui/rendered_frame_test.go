@@ -22,7 +22,7 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	c.appendReasoning("considering options")
 	c.appendAssistant("a visible answer")
 	c.addTool("call-1", "Read", `{"path":"main.go"}`)
-	c.resolveTool("call-1", "package main", false, client.ContentBlock{
+	c.resolveAvailableTool("call-1", "package main", false, client.ContentBlock{
 		Kind: client.ContentBlockResourceLink,
 		Name: "rendered artifact",
 		URL:  "file:///workspace/main.go",
@@ -179,7 +179,7 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 
 	assertFrame("fresh", 1)
 	assertFrame("steady cache hit", 1)
-	if !c.resolveTool("call", "package main", false) {
+	if !c.resolveAvailableTool("call", "package main", false) {
 		t.Fatal("resolveTool failed")
 	}
 	assertFrame("tool mutation", 2)
@@ -204,7 +204,7 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testing.T) {
 	c := &conversation{}
 	c.addTool("call", "Read", `{"path":"TOOLARGMARKER deliberately wraps across the card"}`)
-	c.resolveTool("call", "TOOLRESULTMARKER deliberately wraps across the card   ", false)
+	c.resolveAvailableTool("call", "TOOLRESULTMARKER deliberately wraps across the card   ", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
 	narrow := r.renderConversationFrame(&c.scrollback, true)
@@ -438,7 +438,7 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 	c := &conversation{}
 	c.addTool("unresolved", "Read", `{"path":"`+green+`UNRESOLVED-`+strings.Repeat("argument-", 12)+reset+`"}`)
 	c.addTool("resolved", "Read", `{"path":"`+blue+`RESOLVED-`+strings.Repeat("argument-", 12)+reset+`"}`)
-	c.resolveTool("resolved", blue+`RESOLVED-`+strings.Repeat("result ", 24)+reset, false)
+	c.resolveAvailableTool("resolved", blue+`RESOLVED-`+strings.Repeat("result ", 24)+reset, false)
 	r := newCacheRenderer()
 
 	widths := make([]int, 0, 124)

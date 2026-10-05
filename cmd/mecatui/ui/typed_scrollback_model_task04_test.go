@@ -134,7 +134,7 @@ func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolSnapshotAdapterPreser
 				t.Run(tc.name, func(t *testing.T) {
 					var c conversation
 					c.addTool("call", tc.tool, tc.args)
-					if tc.result != "" && !c.resolveTool("call", tc.result, tc.isError, tc.artifacts...) {
+					if tc.result != "" && !c.resolveAvailableTool("call", tc.result, tc.isError, tc.artifacts...) {
 						t.Fatal("resolve typed tool")
 					}
 					snapshot := c.scrollback.SnapshotAt(0)

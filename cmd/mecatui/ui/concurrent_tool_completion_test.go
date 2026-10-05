@@ -126,7 +126,14 @@ func assertConcurrentCards(t *testing.T, m Model, fastGlyph, slowName string) {
 	r := newTestRenderer()
 	fast := stripANSIstr(r.renderSnapshot(0, blocks[0], false))
 	slow := stripANSIstr(r.renderSnapshot(1, blocks[1], false))
-	if !strings.Contains(fast, fastGlyph) || strings.Contains(fast, "… ") {
+	// Ordinary tools and Parallel settle to the quiet `✓ done · Name · intent`
+	// line; Subagent/Team cards keep their bordered `✓ Name` header.
+	glyph, name, _ := strings.Cut(fastGlyph, " ")
+	settledLine := glyph + " " + statusDone + " · " + name
+	if glyph == "✗" {
+		settledLine = glyph + " " + statusFailed + " · " + name
+	}
+	if (!strings.Contains(fast, fastGlyph) && !strings.Contains(fast, settledLine)) || strings.Contains(fast, "… ") {
 		t.Fatalf("completed card did not settle independently: %q", fast)
 	}
 	if !strings.Contains(slow, "… "+slowName) {

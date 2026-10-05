@@ -99,10 +99,21 @@ type ToolCallMetadata struct {
 // without detaching its payload. It returns false for non-tool cards.
 func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
 	card := c.cards[i]
+	return toolCallMetadata(card.id, card.revision, card.payload)
+}
+
+// ToolCallMetadataOf returns the same compact projection as ToolCallMetadataAt
+// for an already detached snapshot, so a renderer that loaded a snapshot after a
+// cache miss does not reinterpret tool lifecycle fields itself.
+func ToolCallMetadataOf(s BlockSnapshot) (ToolCallMetadata, bool) {
+	return toolCallMetadata(s.ID, s.Revision, s.Payload)
+}
+
+func toolCallMetadata(id BlockID, revision uint64, payload PayloadSnapshot) (ToolCallMetadata, bool) {
 	var call ToolCall
 	var resultReceived, provisional, terminal, resultError, lifecycleFailed bool
 	var stop string
-	switch payload := card.payload.(type) {
+	switch payload := payload.(type) {
 	case ToolCardSnapshot:
 		call = payload.Call
 		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Finished
@@ -125,7 +136,7 @@ func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
 		return ToolCallMetadata{}, false
 	}
 	return ToolCallMetadata{
-		ID: card.id, Revision: card.revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
+		ID: id, Revision: revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
 		ResultReceived: resultReceived, Provisional: provisional, Terminal: terminal,
 		ResultError: resultError, LifecycleFailed: lifecycleFailed, Stop: stop,
 	}, true

@@ -99,7 +99,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	// one-line result.
 	c := &conversation{}
 	c.addTool("call-1", "Read", `{"argument_one":"one","argument_two":"two","argument_three":"three","argument_four":"four"}`)
-	c.resolveTool("call-1", "RESULT_MARKER", false)
+	c.resolveAvailableTool("call-1", "RESULT_MARKER", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
 	toolFrame := r.renderConversationFrame(&c.scrollback, true)
@@ -164,7 +164,7 @@ func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
 	// section has a different wrapped height.
 	c := &conversation{}
 	c.addTool("call-1", "Read", `{"argument_one":"one","argument_two":"two","argument_three":"three","argument_four":"four"}`)
-	c.resolveTool("call-1", "RESULT_MARKER", false)
+	c.resolveAvailableTool("call-1", "RESULT_MARKER", false)
 	r := newCacheRenderer()
 	r.setWidth(80)
 	frame := r.renderConversationFrame(&c.scrollback, false)
