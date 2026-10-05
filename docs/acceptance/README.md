@@ -128,6 +128,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Public documentation journeys](user-docs-journeys.md) — separates user, operator, and builder journeys while preserving canonical capability ownership, released guidance, and published URLs. Status: draft.
+
 - [Visible reasoning summaries across provider protocols](visible-reasoning-summaries.md) — proposed Bounded contract for incomplete Anthropic capabilities, Claude 5 adaptive fallback, and unconditional requested Responses summaries. Status: proposed; awaiting Plan / Interface review.
 
 - [Mecatui exit handoff](mecatui-exit-handoff.md) - an exact embedded-session resume command, qualified latest alternative, and authoritative session summary after clean exit, while preserving the machine-readable ID record. Status: landed in this implementation candidate; authoritative on merge.
