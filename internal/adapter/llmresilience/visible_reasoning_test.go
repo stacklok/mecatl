@@ -15,9 +15,12 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/provider/anthropic"
 	openaiadapter "github.com/stacklok/mecatl/provider/openai"
+	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
 func TestVisibleReasoning_Scenario3_SummaryEventsStayDisplayOnly(t *testing.T) {
@@ -180,6 +183,52 @@ func TestUnsupportedSummaryHTTP400CannotExecuteTool(t *testing.T) {
 			}
 			if requests != 1 || counter.calls != 0 {
 				t.Errorf("requests = %d, tool executions = %d, want 1 and 0", requests, counter.calls)
+			}
+		})
+	}
+}
+
+func TestVisibleReasoning_Scenario3_NonResponsesAdaptersOmitReasoningFields(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		newProvider func(string) port.LLMProvider
+	}{
+		{"messages", func(url string) port.LLMProvider {
+			return anthropic.New(anthropic.WithAPIKey("test-key"), anthropic.WithBaseURL(url))
+		}},
+		{"chat", func(url string) port.LLMProvider {
+			return openaichat.New(openaichat.WithAPIKey("test-key"), openaichat.WithBaseURL(url))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var err error
+				body, err = io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"fixture error"}}`)
+			}))
+			defer srv.Close()
+			seq, err := tc.newProvider(srv.URL).Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hello")}})
+			if err == nil {
+				for range seq {
+				}
+			}
+			if len(body) == 0 {
+				t.Fatal("protocol adapter sent no HTTP request")
+			}
+			var payload map[string]json.RawMessage
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("decode protocol request: %v", err)
+			}
+			if _, ok := payload["reasoning"]; ok {
+				t.Errorf("Responses reasoning request leaked into %s", tc.name)
+			}
+			if _, ok := payload["include"]; ok {
+				t.Errorf("Responses replay include leaked into %s", tc.name)
 			}
 		})
 	}
