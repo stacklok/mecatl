@@ -4,7 +4,7 @@
 **Work classification:** Bounded — extends the existing in-process provider-resilience policy and host composition without changing an engine, wire, persistence, authority, or deployment boundary.
 **Decision record:** None — the directing human chose server/runtime ownership and explicitly requested no ADR; this plan records bounded operating policy rather than a new durable architecture boundary.
 **Phase:** live-run provider recovery
-**Status:** landed, 2026-09-25, in this implementation candidate; authoritative only on human merge. Implements human-approved contract `13a055fef4b4fbd57b239f488c9659a866bbddb6` under the recorded stacked-delivery override; [Plan / Interface PR #1912](https://github.com/stacklok/mecatl/pull/1912) remains subject to human merge.
+**Status:** implementation in progress against the human-approved amendment of 2026-10-05; final verification and human merge remain pending. The earlier candidate implemented `13a055fef4b4fbd57b239f488c9659a866bbddb6` under the recorded stacked-delivery override; [Plan / Interface PR #1912](https://github.com/stacklok/mecatl/pull/1912) remains subject to human merge.
 **Delivery:** Split, with an explicit human-authorized stacked implementation before plan merge. The Plan / Interface and Implementation PRs remain separate and require human merge.
 **Expected tasks:** deferred to orchestration
 **Source baseline:** `20f1220e90c124a355ff103c63defdf279e68279`
@@ -18,10 +18,13 @@ coordinator, durable continuation, or an engine/wire/persistence contract.
 ## Human decisions
 
 - [x] Runtime ownership and decision-record route — Decision: the directing human approved shared server/runtime-owned recovery, not a TUI timer, and explicitly requested no ADR. Frozen ADR 0239 remains unchanged.
-- [x] Command defaults and exposure — Decision: 30m recovery budget and 60 actual wrapper calls (initial included) per model step for `mecated`, `mecak8s`, embedded `mecatui`, and `mecatequi`; expose `--llm-recovery-budget` and `--llm-max-attempts` on all four (mecatui flags configure only its embedded server), reject negative budget and explicitly nonpositive attempts, add no settings-YAML key, keep zero-valued `app.Config` inert, and give `mecatequi` the existing host parity defaults 300s/180s/5/30s for per-attempt/idle/threshold/cooldown. The approved extra-cost limitation is that this is not a task-wide spend budget: distinct model steps may each recover, and engine token ceilings are checked at turn boundaries rather than between wrapper retries. Existing shorter auxiliary-check deadlines (30s) and guardrail-down policy remain effective without bypass; scheduled fires retain their dominant 30m wall timeout and `StopTimeout` record.
+- [x] Command defaults and exposure — Decision: 30m recovery budget and 60 actual wrapper calls (initial included) per model step for `mecated`, `mecak8s`, embedded `mecatui`, and `mecatequi`; expose `--llm-recovery-budget` and `--llm-max-attempts` on all four (mecatui flags configure only its embedded server), reject negative budget and explicitly nonpositive attempts, add no settings-YAML key, keep zero-valued `app.Config` inert, and give `mecatequi` the existing host parity defaults 300s/180s/5/30s for per-attempt/idle/threshold/cooldown. The approved extra-cost limitation is that this is not a task-wide spend budget: distinct model steps may each recover, and engine token ceilings are checked at turn boundaries rather than between wrapper retries. Existing caller-owned auxiliary deadlines and guardrail-down policy remain effective without bypass; contextual review retains its approved 90s total deadline and at most three review attempts. Scheduled fires retain their dominant 30m wall timeout and `StopTimeout` record.
 - [x] Initial recovery scope — Decision: live-process, active stream operations, including returned iterators, only. Disconnect/cancellation and process shutdown still stop recovery; closing mecatui or restarting a host does not continue or resume a run. Broader detached/restart recovery requires a separately reviewed durable coordinator.
 - [x] First-increment observability — Decision: existing active-run UI spinner plus injected INFO operational logs and existing durable `network.attempt` observations only. `network.attempt` remains log/timeline evidence, not TUI-visible; a remote client cannot distinguish provider cooldown from other active waits, and `--quiet` provides no operational-log feedback. Dedicated durable recovery reasons are absent. These limitations are accepted; a live countdown/new event is excluded.
 - [x] Stacked delivery override — Decision: the directing human said "lovely, do an implementation in a stacked pr in a work tree", authorizing implementation against this reviewed plan before its PR merges. This overrides the merged-plan entry checkpoint for this work only; verification, contract-drift checks, and human merge authority remain unchanged.
+
+- [x] Cache-cost policy - Decision: on 2026-10-05 the directing human approved retaining availability-based recovery independently of prompt-cache TTL. Keep the existing recovery limits and cache controls; add no cache-expiry state, ignore-TTL flag, automatic TTL change, or cache-specific startup/runtime notice. Explain possible cache-write/input charges in the owning choose-models troubleshooting page.
+- [x] Amendment boundary - Decision: on 2026-10-05 the directing human approved preserving the current contextual-review deadline/retry policy, clarifying AC1.3 at the provider-neutral usage boundary, and treating the inherited accounting and provider-error-display defects as prerequisite fixes. The amendment does not authorize reviewer retry redesign, partial raw-provider usage recovery, or a new spend budget. Feature-local removal of obsolete automatic-retry helpers and redundant internal configuration remains part of the implementation.
 
 ## Interface contract
 
@@ -47,8 +50,8 @@ uses the decorator's semantic buffering and composed provider constructors/remin
   - verify: `TestServerProviderRecovery_Scenario1_RootAndDirectWriteChildRecoverBeforeTerminal`
 - AC1.2: After semantic visibility, failure is terminal and no replay occurs; a clean completion flushes tentative pure-tool/whitespace output under the existing semantic boundary.
   - verify: `TestServerProviderRecovery_Scenario1_VisibleFailureNeverReplays`
-- AC1.3: Failed precommit text, reasoning, and tentative tool assembly never escape or dispatch. Usage received from every discarded attempt is accounted exactly once on eventual success, exhaustion, or cancellation; no retry erases or doubles it. Engine token ceilings remain enforced at turn boundaries, not between wrapper retries.
-  - verify: `TestServerProviderRecovery_Scenario1_TentativeAssemblyAndDiscardedUsageExactlyOnce`
+- AC1.3: Failed precommit text, reasoning, and tentative tool assembly never escape or dispatch. Every `ChunkUsage` accepted from the inner `LLMProvider`, including prior discarded-attempt usage and current-attempt usage buffered before iterator delivery, reaches result and session accounting exactly once on success, exhaustion, or cancellation. Cancellation before or during buffered delivery preserves this accounting without delivering canceled semantic output, dispatching tools, treating buffered `ChunkDone` as success, or pulling a live continuation to recover usage. No retry erases or doubles usage; unreported provider billing is not estimated. Engine token ceilings remain enforced at turn boundaries, not between wrapper retries.
+  - verify: `TestServerProviderRecovery_Scenario1_TentativeAssemblyAndDiscardedUsageExactlyOnce`; `TestServerProviderRecovery_Scenario1_CanceledBufferedUsageReachesEngineExactlyOnce` (real-engine proof with deterministic cancellation before and during buffered delivery, prior/current usage separated by tentative chunks, a successful no-double-count control, result/session totals, no dispatch, and iterator cleanup).
 
 ### Scenario 2 — Provider timing and physical request accounting are safe
 
@@ -93,8 +96,8 @@ they must not reset recovery time. Shorter caller deadlines remain authoritative
   - verify: `TestServerProviderRecovery_Scenario4_RecoveryDeadlineCannotCancelVisibleStream`
 - AC4.4: A zero recovery budget disables extended cooldown/provider-hint waiting but preserves ordinary max-attempt backoff. If that ordinary backoff already satisfies a valid not-before, retry is allowed; if additional waiting is required, stop retryable+precommit rather than calling early. A later explicit manual retry is a new action with a new budget.
   - verify: `TestServerProviderRecovery_Scenario4_ZeroBudgetHonorsNotBeforeWithoutEarlyCall`
-- AC4.5: Composed auxiliary checks retain their shorter 30s caller deadlines and existing guardrail-down policy without bypass. Scheduled fires retain their 30m wall timeout (or configured tighter bound), measured from fire start, and record `StopTimeout` when it wins over per-step recovery. Focused integration tests use shortened injected bounds, not real-time 30s/30m waits.
-  - verify: `TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines`
+- AC4.5: Composed auxiliary checks retain their caller-owned deadlines and existing checker-down policy without bypass. The [contextual-review contract](contextual-guardrails.md#human-decisions) retains one 90s total deadline across initialization, evidence gathering, and at most three review attempts; provider recovery and review retries cannot reset that deadline, and a tighter caller deadline wins. This plan preserves review-level retry eligibility; per-model-step attempt limits are not an aggregate review-call budget. Scheduled fires retain their 30m wall timeout (or configured tighter bound), measured from fire start, and record `StopTimeout` when it wins over per-step recovery. Focused integration tests exercise actual deadline expiry through shortened injected bounds, not manual cancellation in place of expiry or real-time 90s/30m waits.
+  - verify: `TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines`; assert reviewer-owned and tighter-caller expiry, a non-resetting total deadline across retries, and checker-down enforcement through real tool dispatch for both warn/fail policies.
 
 ### Scenario 5 — Four hosts agree and mecatui stops duplicating recovery
 
@@ -136,7 +139,7 @@ The [existing validator](../../engine/session/event.go) requires `Attempt >= 1`,
   - verify: `TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttemptVocabulary`
 - AC7.2: Composition tests prove each host's actual sink destination and failure/quiet policy: daemon/k8s operational sink, mecatequi stderr, and embedded mecatui's file or `--quiet` discard. Log-delivery failure cannot change retry policy or outcome; synchronous diagnostics may block on their writer, and no asynchronous sink is added. Diagnostics and observer callbacks execute outside the breaker mutex; a blocked observer neither holds the admission mutex nor prevents another waiter's cancellation.
   - verify: `TestServerProviderRecovery_Scenario7_HostLogDeliveryPolicy`; `TestServerProviderRecovery_Scenario7_BlockedObserverDoesNotHoldAdmissionMutex`
-- AC7.3: Implementation updates the owning contributor resilience section to replace stale first-raw-chunk wording with the verified semantic boundary, updates `docs/tui.md` to describe server-owned recovery/manual retry, and updates the public choose-models troubleshooting owner plus the applicable daemon, mecak8s, mecatequi, and embedded-mecatui flag references/links.
+- AC7.3: Implementation updates the owning contributor resilience section to replace stale first-raw-chunk wording with the verified semantic boundary, updates `docs/tui.md` and the public [gRPC retry reference](../../user-docs/reference/grpc-api.md) to describe server-owned recovery and explicit manual retry, and updates the applicable daemon, mecak8s, mecatequi, and embedded-mecatui flag references/links. The [choose-models troubleshooting owner](../../user-docs/features/choose-models.md) explains that recovery can outlast prompt-cache retention and incur cache-write/input charges; matching requests do not guarantee cache hits, and longer cache TTLs can have higher write prices. It links to current provider documentation rather than promising exact expiry or billing. Other guides link to that explanation instead of duplicating it.
   - verify: inspection — compare the owning documentation against the composed runtime tests; `task docs` and `task site:build` validate references and rendering without pinning arbitrary prose in Go tests.
 
 ## Out of scope
@@ -148,6 +151,26 @@ The [existing validator](../../engine/session/event.go) requires `Attempt >= 1`,
 | New settings-YAML recovery keys | Future operator-config review | Command flags only for the proposed default. |
 | Changes to standalone provider-library retry defaults or catalog/auth SDK retries | Provider-specific work | Disable SDK retries only in production inference composition/remints. |
 | Changes to frozen ADR 0239 text | None | Record replacement current operating behavior in living docs; do not rewrite the historical automatic-once clause. |
+| Cache-TTL recovery cutoff, cache-expiry tracking, ignore-TTL flag, or cache-specific notices | Separate cost-policy proposal if needed | Retain availability-based recovery and disclose the cost trade-off in documentation. |
+| Contextual-review retry ownership or a shared review/provider attempt budget | Separate contextual-guardrails contract change | Preserve the approved review retries within their existing total deadline. |
+| Raw-provider partial usage recovery, billing reconciliation, task-wide spend limits, or provider-wide retry throttling | Separate provider/accounting or budget work | Preserve known provider-neutral usage here; add no estimates, ledger, or budget subsystem. |
+
+## Integration prerequisites
+
+Two inherited defects require separately scoped fixes before this implementation can
+claim acceptance. The implementation PR must link their fixes and identify the integrated
+candidate used for verification; merely opening follow-up issues does not satisfy these
+criteria.
+
+- **Cancellation accounting (AC1.3):** fix the [engine's stream-consumption boundary](../../engine/agent/loop.go) and [resilience buffered handoff](../../internal/adapter/llmresilience/llmresilience.go) so known usage cannot be stranded behind canceled semantic chunks. Reuse the existing session ledger and verify result/session totals through the real engine.
+- **Provider error display (security contract and AC2.2):** fix HTTP and in-band error projections in the three provider adapters. Use safe outward messages while preserving original causes, `errors.As`, context-overflow classification, status/timing metadata, and explicit retry vetoes. Test synthetic secret canaries in rendered `message`, `code`, and `type` fields through terminal results and transport output, plus unchanged classification. Sanitizing only a URL or testing an ignored response field is insufficient.
+
+The recovery implementation retains feature-local cleanup: remove unused automatic-retry
+helpers and their dedicated tests, redundant caller-level SDK retry options, and dead
+internal diagnostic/timing methods; consolidate the three internal resilience-config
+projections while preserving protocol-specific constructors and manual retry. Keep the
+private Retry-After parsers and shared adapter conformance coverage; this plan adds no
+shared provider module or exported engine helper.
 
 ## Definition of done
 
@@ -156,9 +179,11 @@ The [existing validator](../../engine/session/event.go) requires `Attempt >= 1`,
 3. The offline demo still shows a tool call, permission ask/approval, and result.
 4. The implementation PR links the Plan / Interface PR and approved commit and reports interface conformance.
 5. `/panel-review` reports no ship blockers or unwaived reviewer failures.
+6. Both integration prerequisites are incorporated and their affected acceptance proofs pass on the final candidate. Revalidate the implementation against this amendment before claiming interface conformance or marking the plan `landed`.
 
 ## Deferred decisions and known risks
 
+- Recovery can outlast a cached prefix and incur cache-write/input charges. [Anthropic's cache lifetime](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) starts at the request that writes or reads the entry, not response completion, and reuse refreshes it. [OpenAI cache reuse](https://developers.openai.com/api/docs/guides/prompt-caching) also depends on model, prefix, and routing. A last-success timestamp is therefore not an authoritative expiry clock; neither TTL nor a matching request guarantees a hit, and a later cache write can make subsequent retries warm again.
 - The 60-call cap is a hard ceiling, not a promise of 30 minutes of recovery; provider repair can make physical HTTP request count exceed outer attempts.
 - A long valid provider delay intentionally fails closed instead of being treated as absent, which can terminally pause a run until a new explicit action.
 - The recommended live-process scope solves an overnight failure only while the client/transport remains connected; it deliberately does not satisfy the broader close-client/restart aspiration.
