@@ -142,6 +142,41 @@ func Validate(res Resolved) error {
 	if err := rejectScopeCollisions(res, globalOpen, "global"); err != nil {
 		return err
 	}
+	// 3d) Toolcalls is also live in the approval modal; report verdict
+	// collisions before general global collisions for a useful diagnostic.
+	if err := validateToolcallsVerdicts(res); err != nil {
+		return err
+	}
+	// The two conversation actions must not shadow existing default global keys
+	// even when only one side of the collision is explicitly overridden.
+	defaults := map[string][]string{
+		"Submit": {"enter"}, "Newline": {"shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"},
+		"Cancel": {"esc"}, "ClearPrompt": {"ctrl+u"}, "EditBack": {"up"},
+		"Paste": {"ctrl+v"}, "SelectAll": {"ctrl+g"}, "CopySelection": {"ctrl+y"},
+		"Quit": {"ctrl+c"}, "QuitD": {"ctrl+d"}, "Suspend": {"ctrl+z"},
+		"ScrollU": {"pgup"}, "ScrollD": {"pgdown"}, "ScrollTop": {"home"}, "ScrollBottom": {"end"},
+		"ModeSwitch": {"shift+tab"}, "MCPPanel": {"ctrl+o"}, "Resources": {"ctrl+r"},
+		"Prompts": {"f8"}, "Agents": {"f6"}, "Effort": {"f7"},
+		"Toolcalls": {"ctrl+t"}, "ExpandConversation": {"f9"}, "Help": {"?"},
+	}
+	for _, action := range []string{"Toolcalls", "ExpandConversation"} {
+		chords := res.ByAction[action]
+		if len(chords) == 0 {
+			chords = defaults[action]
+		}
+		for other, fallback := range defaults {
+			if other == action {
+				continue
+			}
+			effective := res.ByAction[other]
+			if len(effective) == 0 {
+				effective = fallback
+			}
+			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
+				return err
+			}
+		}
+	}
 	// 3b) RawArgs and Refresh share default chord r in disjoint surfaces; an
 	// explicit rebind of either must keep them disjoint. With both at their
 	// defaults the two surfaces never coexist (an overlay never owns the keyboard
@@ -176,11 +211,6 @@ func Validate(res Resolved) error {
 				return err
 			}
 		}
-	}
-	// 3d) Toolcalls is live in the approval modal, so its effective binding must
-	// not shadow any effective verdict binding. Defaults participate too.
-	if err := validateToolcallsVerdicts(res); err != nil {
-		return err
 	}
 	// 4) Approval consistency: Deny must not collide with Allow/AllowAlways/Submit/Cancel.
 	deny := res.ByAction["Deny"]
