@@ -46,11 +46,13 @@ application path, with direct gRPC or HTTP/SSE integration and CI automation
 available as distinct workflows. Exact Go symbols belong on pkg.go.dev; this
 site explains how to assemble and use them.
 
-Studio is intended to be a first-class client for knowledge workers, but its external docs
-serve operators. They explain evaluation, deployment, access, configuration,
-upgrades, and troubleshooting. End-user guidance belongs in the product. Trimming
-the existing external walkthroughs must preserve guidance continuity rather than
-leave users with an instruction to wait for a future manual.
+Studio is intended to be a first-class client for knowledge workers. Its operator
+guide explains evaluation, deployment, access, configuration, upgrades, and
+troubleshooting. In-app help has not been proposed or accepted and is not a
+dependency of this restructure. The recommended home for browser-client tasks is
+a guide under Use Mecatl, which administrators can share with their teams. Keep
+the current instructions accessible until that placement is confirmed and the
+replacement is available.
 
 ## Navigation and orientation
 
@@ -108,13 +110,10 @@ Deploy, and Build, plus the existing community links. Capabilities and Reference
 remain easy to reach through the sidebar and contextual links; they do not need
 extra primary CTAs.
 
-Preserve the homepage's product statement, educational CTA, immediate local-use
-CTA, and prominent Kubernetes action. Below that orientation, route readers to
-Use Mecatl, Deploy and operate, and Build with the Go engine. Replace the current
-“Four deployment options” framing: a terminal client, Kubernetes service, CI
-runtime, and embedded library answer different questions. The Kubernetes action
-should land on the evaluation tutorial, with production deployment as its next
-step, rather than sending a new reader into the full operational runbook.
+Homepage redesign and copy changes are out of scope. Preserve the product
+statement, existing cards, headings, and deliberate CTA set. Change only links
+and entry points needed by the documentation restructure. The Kubernetes action
+should reach the evaluation tutorial, with production deployment as its next step.
 
 Directory roots can remain `mecatui/`, `operating/`, `building/`, `features/`, and
 `reference/`. Rendered labels express the reader model. Renaming those roots
@@ -152,7 +151,7 @@ tree. The [public authoring contract](../../user-docs/_README.md) and
 **Acceptance:**
 - AC1.1: The sidebar exposes Use Mecatl, Deploy and operate, and Build with Mecatl as peers; grouped Capabilities and Reference are reachable without expanding the primary navbar CTA set.
   - verify: inspection — rendered sidebar, navbar, and section indexes establish reader reachability and ordering.
-- AC1.2: Orientation explains client, engine, execution, and durable-state relationships before routing; the homepage uses the approved audience treatment and the Kubernetes CTA reaches the Kind tutorial.
+- AC1.2: Orientation explains client, engine, execution, and durable-state relationships before routing; the homepage retains its existing copy and cards, with only necessary link/entry-point corrections, and the Kubernetes CTA reaches the Kind tutorial.
   - verify: inspection — follow homepage and introduction links in a rendered preview and compare them with the resolved human decision.
 - AC1.3: The cloud-native explanation distinguishes current architecture from roadmap and links to the session pod-replacement exercise; remote, Kubernetes, and embedding guides link back at relevant moments.
   - verify: inspection — follow both directions of these links and verify roadmap wording against current shipped behavior.
@@ -212,10 +211,10 @@ MCP and trusted-context mounting with deployment configuration, gateway identity
 with access, and event follower sizing with observation. These names are proposed
 for review; the final split should follow tasks rather than source subsystems.
 
-The shared CLI surface also needs a home. Prefer a generated server CLI reference
-that distinguishes `mecated` and `mecak8s`; a curated reference is an explicit
-alternative for review. Keep flags needed by each workflow in its guide. Do not
-remove the current inventories until their unique defaults and constraints have
+The shared CLI surface uses a generated server CLI reference that distinguishes
+`mecated` and `mecak8s`, following the existing `mecatui` reference approach.
+This approach is selected and already spiked in the restructuring draft branch.
+Keep flags needed by each workflow in its guide. Do not remove the current inventories until their unique defaults and constraints have
 a verified destination.
 
 Release availability and experimental status are different questions. The public
@@ -225,10 +224,11 @@ commands. Verify current delivery evidence, retain supported operating procedure
 and keep contributor qualification in its confirmed internal owner. Do not move
 an unreleased procedure into a new public page and call the problem solved.
 
-Studio's page likewise needs an audience correction: retain a short explanation
-of what users receive and a complete operator journey. Its detailed chat,
-appearance, and review-settings walkthroughs can be trimmed when essential
-replacement guidance is accessible in the product.
+Studio's operator page retains a short explanation of what users receive and a
+complete operator journey. The recommended companion guide under Use Mecatl owns
+chat, browser installation, sign-in recovery, and personal settings. Confirm that
+placement before moving those instructions; in-app help is not an accepted
+replacement. Administrators can use the user guide when supporting their teams.
 
 Use the [existing deployment material](../../user-docs/building/deployment/index.md),
 [native execution contract](native-kubernetes-execution.md), and
@@ -238,7 +238,7 @@ Use the [existing deployment material](../../user-docs/building/deployment/index
 - AC3.1: The operator overview presents mecated as a lightweight start and mecak8s as the recommended shared-team destination, including small teams. CI and embedding are contextual links to Building, not peer long-running deployments.
   - verify: inspection — follow both operator paths and verify the concise comparison replaces the duplicated decision tree.
 - AC3.2: Supported prerequisites, startup, identity/TLS, storage/execution, observation, scaling, failover, recovery, and upgrades are discoverable through the approved workflow split. The CLI reference preserves all current unique flag information and binary-specific differences before inventories are removed.
-  - verify: inspection — compare source guides and flag registration/help against destinations; run a generator freshness check if generation is selected, or verify curated reference completeness against current help if it is not; follow each operator workflow in the rendered site.
+  - verify: inspection — compare source guides and flag registration/help against destinations; run a generator freshness check against current trusted help; follow each operator workflow in the rendered site.
 - AC3.3: Shared-deployment guidance describes trusted teams and current ownership, placement, and filesystem limits. Public tasks contain only verified released procedures; internal qualification retains its confirmed owner.
   - verify: inspection — compare claims with current composition, release artifacts, architecture, and the resolved material-retirement decisions.
 - AC3.4: Studio externally serves operators and has a short client-capability overview; necessary user guidance has an accessible home under the approved transition.
@@ -388,19 +388,26 @@ and changed inbound anchor. It is not a new public documentation page.
 
 ## Human decisions
 
-- [ ] Approve the target ownership and page-disposition contract, including Use Mecatl, CI under Building, Brood Box public retirement, and stable capability URLs.
-- [ ] Approve the proposed operator-guide split and page names in the operator journey.
-- [ ] Choose the server CLI reference strategy. Recommendation: generate `reference/server-cli.md` from trusted flag registration/help, distinguish binary-specific flags, and add a read-only freshness check; keep current flag inventories until the replacement is verified.
-- [ ] Confirm the internal homes and current delivery status of native Kubernetes and Darwin qualification material. Recommended owners are the existing native-execution acceptance plan and microVM architecture guide; public procedures remain only for verified released paths.
-- [ ] Approve Studio's transition: retain a short capability overview plus operator guidance externally; ensure replacement guidance for essential user tasks is accessible before removing their only usable instructions; a separate product follow-up may defer the trim but does not satisfy guidance continuity.
-- [ ] Approve the homepage treatment: preserve the hero and small CTA set, route Kubernetes evaluation to the Kind tutorial, and replace the mixed deployment cards with audience routing below product orientation.
+The directing human authorized the recommendations and waived the separate
+plan-merge checkpoint before implementation. On 2026-10-05, they clarified that
+Ozz (`@JAORMX`) had verbally confirmed the Brood Box guide could be dropped,
+limited homepage scope to necessary link/entry-point corrections, and confirmed
+the generated server CLI approach. Studio user-guide placement remains a
+recommendation for confirmation; in-app help has not been accepted.
+
+- [x] Approve the target ownership and page-disposition contract, including Use Mecatl, CI under Building, Brood Box public retirement, and stable capability URLs.
+- [x] Approve the proposed operator-guide split and page names in the operator journey.
+- [x] Select the generated server CLI reference approach, following the mecatui approach and the spike already in the restructure draft branch: generate `reference/server-cli.md` from trusted flag registration/help, distinguish binary-specific flags, and add a read-only freshness check; keep current flag inventories until the replacement is verified.
+- [x] Confirm the internal homes and current delivery status of native Kubernetes and Darwin qualification material. Recommended owners are the existing native-execution acceptance plan and microVM architecture guide; public procedures remain only for verified released paths.
+- [ ] Confirm Studio user-guide placement. In-app help has not been proposed or accepted. Recommendation: a browser-client guide under Use Mecatl, linked from the operator guide for administrators supporting their teams. Preserve essential user instructions until the replacement is available.
+- [x] Limit homepage changes to necessary links and entry points. Preserve existing copy, cards, headings, and CTAs; homepage redesign is out of scope.
 
 ## Interface contract
 
 - **gRPC / protobuf:** None — documentation explains existing services and wire behavior; messages, routes, and protocol semantics do not change.
 - **Exported Go APIs / interfaces:** None — public Go symbols and compatibility guarantees are unchanged; symbol lookup links to pkg.go.dev.
 - **Tool schemas:** None — tool names, arguments, results, and execution behavior are unchanged.
-- **CLI / config:** None — existing flags, keys, defaults, and precedence remain unchanged. A documentation generator may read existing registration/help; it must not modify command behavior. Its strategy requires the human decision above.
+- **CLI / config:** None — existing flags, keys, defaults, and precedence remain unchanged. A documentation generator may read existing registration/help; it must not modify command behavior. The generated approach has been selected by the directing human.
 - **Events / persistence:** None — session, event, ownership, and storage contracts remain unchanged.
 - **Security / authority:** None — docs accurately describe existing trusted-team, ownership, placement, permission, and filesystem boundaries; no stronger isolation is introduced or promised.
 - **Compatibility / migration:** Preserve existing published URLs with explicit slugs where ownership remains clear. For every moved or retired published route, map the old URL to its semantic destination in `website/vercel.json`. Update inbound anchors, preserve necessary anchor compatibility, and verify old and canonical routes. Directory names remain `mecatui/`, `operating/`, `building/`, `features/`, and `reference/`; navigation labels carry the audience language. No runtime data migration occurs.
@@ -409,7 +416,8 @@ and changed inbound anchor. It is not a new public documentation page.
 
 - Runtime behavior, public APIs, CLI/config semantics, persistence, deployment defaults, and stronger tenant isolation.
 - Removing Brood-derived runtime dependencies, binaries, images, charts, or release jobs.
-- New Studio product guidance implementation; record any necessary product follow-up separately.
+- Homepage redesign or copy changes beyond necessary links and entry points.
+- New Studio in-app help implementation; record any necessary product follow-up separately.
 - A first-party generated Go symbol reference, renamed directory roots, or a manual sidebar.
 - Promise of roadmap delivery dates, exhaustive rewriting, and raw line reduction as a success metric.
 - Implementation, publication of public content, or merging this PR during plan preparation.
@@ -418,13 +426,14 @@ and changed inbound anchor. It is not a new public documentation page.
 
 Plan preparation is complete when this draft is indexed, passes the acceptance-plan
 checker and `task docs`, and is available in a draft Plan / Interface PR. Resolve
-every Human decisions item before marking it proposed; human merge supplies the
-approved baseline.
+every Human decisions item before marking it proposed. The directing human has
+waived the separate plan-merge checkpoint for this restructure.
 
 Implementation is complete when the existing restructuring work is reconciled
 with current main and all six reader journeys have been reviewed. The
 implementation PR records topic-preservation and URL-audit evidence, links the
-approved plan commit, and reports conformance or separately approved amendments.
+plan and the human-authorized checkpoint waiver, and reports conformance or
+separately approved amendments.
 
 Run `task docs`, `task site:build`, `git diff --check`, applicable SDK/CLI freshness
 checks, and `task ac-trace-strict` for the landed candidate. Independently review
@@ -446,6 +455,6 @@ Any newly discovered material decision requires an explicit plan amendment.
 **Work classification:** Bounded — establish reader journeys, canonical documentation ownership, and published URL continuity without changing runtime architecture.
 **Decision record:** None — this is an editorial and navigation contract; runtime, API, deployment, and trust-boundary decisions remain unchanged.
 **Phase:** Public documentation consolidation
-**Status:** draft, 2026-10-05. Remaining documentation restructure; open choices are recorded in Human decisions.
-**Delivery:** Split. Review the remaining scope and content destinations before implementation.
-**Expected tasks:** Deferred to orchestration after human decisions are resolved.
+**Status:** draft, 2026-10-05. Implementation authorized; clarified decisions and the remaining Studio placement recommendation are recorded in Human decisions.
+**Delivery:** Separate plan and implementation branches; the directing human waived the plan-merge checkpoint and authorized implementation of the recommendations.
+**Expected tasks:** Implementation authorized; preserve existing Studio user guidance until its replacement placement is confirmed.
