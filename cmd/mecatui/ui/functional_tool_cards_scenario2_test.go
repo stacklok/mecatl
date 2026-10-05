@@ -15,12 +15,12 @@ func TestMecatuiFunctionalConversationCards_Scenario2_ReadCardWrapsExactlyOnce(t
 	result := "read-result-" + strings.Repeat("x", bodyWidth+7) + "\nshort-read-row"
 	presentation := toolCardPresentation{name: "Read", arguments: `{"path":"README.md"}`, resolved: true, result: result}
 
-	prepared := r.prepareTypedToolCard(presentation, true)
+	prepared := r.prepareTypedToolCard(presentation, true, toolcallDone)
 	if len(prepared.Lines) != len(prepared.Rows) {
 		t.Fatalf("prepared lines/rows = %d/%d, want lockstep", len(prepared.Lines), len(prepared.Rows))
 	}
 	out := strings.Join(prepared.Lines, "\n")
-	if got := stripANSIstr(r.prepareTypedToolCard(presentation, true).render()); got != stripANSIstr(out) {
+	if got := stripANSIstr(r.prepareTypedToolCard(presentation, true, toolcallDone).render()); got != stripANSIstr(out) {
 		t.Fatalf("main tool renderer did not use functional preparation\n got: %q\nwant: %q", got, stripANSIstr(out))
 	}
 	plainRows := strings.Split(stripANSIstr(out), "\n")
@@ -60,11 +60,15 @@ func TestMecatuiFunctionalConversationCards_Scenario2_ToolVariantsPreserveWidthA
 	prepare := func(r *renderer, card any, expanded bool) preparedToolCard {
 		switch p := card.(type) {
 		case toolCardPresentation:
-			return r.prepareTypedToolCard(p, expanded)
+			state := toolcallPending
+			if p.resolved {
+				state = toolcallDone
+			}
+			return r.prepareTypedToolCard(p, expanded, state)
 		case subagentCardPresentation:
-			return r.prepareSubagentCard(p, expanded)
+			return r.prepareSubagentCard(p, expanded, toolcallPending)
 		case teamCardPresentation:
-			return r.prepareTeamCard(p, expanded)
+			return r.prepareTeamCard(p, expanded, toolcallPending)
 		default:
 			panic("unknown card")
 		}
@@ -84,8 +88,9 @@ func TestMecatuiFunctionalConversationCards_Scenario2_ToolVariantsPreserveWidthA
 					if expanded {
 						want = variant.expandedWant
 					}
+					// Ignore wrap points: the status-prefixed header may split a name across bordered rows.
 					compact := strings.Map(func(r rune) rune {
-						if unicode.IsSpace(r) {
+						if unicode.IsSpace(r) || r == '│' {
 							return -1
 						}
 						return r

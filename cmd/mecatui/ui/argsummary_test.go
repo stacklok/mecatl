@@ -22,7 +22,7 @@ func mustJSON(t *testing.T, v any) string {
 // the real card path, so the head/args/result wiring is exercised end to end.
 func (r *renderer) renderToolBlock(name, args string, expand bool) string {
 	p := toolCardPresentation{name: name, arguments: args}
-	return r.prepareTypedToolCard(p, expand).render()
+	return r.prepareTypedToolCard(p, expand, toolcallPending).render()
 }
 
 // longBody is a ~4 KB, 72-line string used to exercise the collapsed long-string
@@ -443,7 +443,7 @@ func TestMCPCardExpandedGolden(t *testing.T) {
 // builds an unresolved call-only block for the args goldens).
 func (r *renderer) renderResolvedToolBlock(name, args, body string, blocks []client.ContentBlock, expand bool) string {
 	p := toolCardPresentation{name: name, arguments: args, resolved: true, result: body, artifacts: blocks}
-	return r.prepareTypedToolCard(p, expand).render()
+	return r.prepareTypedToolCard(p, expand, toolcallDone).render()
 }
 
 // TestMCPCardBlocksGolden pins a resolved MCP card whose result carries typed

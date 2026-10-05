@@ -100,11 +100,11 @@ func TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth(t *testing.T) {
 			var out string
 			switch card := tc.card.(type) {
 			case toolCardPresentation:
-				out = r.prepareTypedToolCard(card, true).render()
+				out = r.prepareTypedToolCard(card, true, toolcallPending).render()
 			case subagentCardPresentation:
-				out = r.prepareSubagentCard(card, true).render()
+				out = r.prepareSubagentCard(card, true, toolcallPending).render()
 			case teamCardPresentation:
-				out = r.prepareTeamCard(card, true).render()
+				out = r.prepareTeamCard(card, true, toolcallPending).render()
 			}
 			out = stripANSIstr(out)
 			for i, line := range strings.Split(out, "\n") {
@@ -143,7 +143,11 @@ func TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant(t *testing.T
 			{name: "Edit", arguments: `{"path":"` + strings.Repeat("P", sourceRun) + `","old_string":"` + strings.Repeat("B", sourceRun) + `","new_string":"` + strings.Repeat("C", sourceRun) + `"}`},
 		}
 		for _, card := range cards {
-			out := stripANSIstr(r.prepareTypedToolCard(card, true).render())
+			state := toolcallPending
+			if card.resolved {
+				state = toolcallDone
+			}
+			out := stripANSIstr(r.prepareTypedToolCard(card, true, state).render())
 			for _, row := range strings.Split(out, "\n") {
 				if maxLineWidth(row) > cardWidth {
 					t.Errorf("row exceeds card width")

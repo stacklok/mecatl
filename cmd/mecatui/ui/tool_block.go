@@ -27,8 +27,6 @@ type toolCardPresentation struct {
 	name      string
 	arguments string
 	resolved  bool
-	finished  bool
-	failed    bool
 	result    string
 	isError   bool
 	artifacts []client.ContentBlock
@@ -37,7 +35,6 @@ type toolCardPresentation struct {
 func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPresentation {
 	return toolCardPresentation{
 		name: p.Call.Name, arguments: p.Call.Arguments, resolved: p.Resolved,
-		finished: p.Finished, failed: p.Failed,
 		result: p.Result.Body, isError: p.Result.IsError,
 		artifacts: contentBlocks(p.Result.Artifacts),
 	}
@@ -90,18 +87,12 @@ func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProj
 	}
 }
 
-func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool, projected ...toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool, state toolcallProjectionState) preparedToolCard {
 	r.cardPrepares++
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
 	theme := r.blockTheme()
 
-	state := projectToolCall(scrollback.ToolCallMetadata{
-		ResultReceived: p.resolved, ResultError: p.isError, Terminal: p.finished, LifecycleFailed: p.failed,
-	}).state
-	if len(projected) > 0 {
-		state = projected[0]
-	}
 	glyphText, status, style := state.status()
 	glyph := r.th.Style(style).Render(glyphText)
 	mcpName, isMCP := mcpTitle(p.name)
@@ -109,9 +100,7 @@ func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool, pro
 	if isMCP {
 		headLabel = mcpName
 	}
-	if len(projected) > 0 {
-		headLabel = status + " · " + headLabel
-	}
+	headLabel = status + " · " + headLabel
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
 		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(p.name), bodyWidth)
@@ -239,25 +228,19 @@ func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 	})
 }
 
-func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool, projected ...toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool, state toolcallProjectionState) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand, projected...)
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand, state)
 }
 
-func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool, projected ...toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool, state toolcallProjectionState) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand, projected...)
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand, state)
 }
 
-func (r *renderer) prepareDelegationCard(name string, resolved, done bool, stop, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool, projected ...toolcallProjectionState) preparedToolCard {
+func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool, state toolcallProjectionState) preparedToolCard {
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
-	state := projectToolCall(scrollback.ToolCallMetadata{
-		ResultReceived: resolved, ResultError: isError, Terminal: done, Stop: stop,
-	}).state
-	if len(projected) > 0 {
-		state = projected[0]
-	}
 	glyphText, status, style := state.status()
 	glyph := r.th.Style(style).Render(glyphText)
 	mcpName, isMCP := mcpTitle(name)
@@ -265,9 +248,7 @@ func (r *renderer) prepareDelegationCard(name string, resolved, done bool, stop,
 	if isMCP {
 		headLabel = mcpName
 	}
-	if len(projected) > 0 {
-		headLabel = status + " · " + headLabel
-	}
+	headLabel = status + " · " + headLabel
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
 		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(name), bodyWidth)

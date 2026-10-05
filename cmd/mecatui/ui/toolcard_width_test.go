@@ -759,7 +759,7 @@ func TestToolCardWidthUnchangedAtCap(t *testing.T) {
 }
 
 func (r *renderer) renderTool(p *toolCardPresentation, expand bool) string {
-	return r.prepareTypedToolCard(*p, expand).render()
+	return r.prepareTypedToolCard(*p, expand, toolcallDone).render()
 }
 func (r *renderer) renderToolResult(p *toolCardPresentation, expand bool, bodyWidth int) string {
 	return r.renderTypedToolResult(p.result, p.isError, p.artifacts, expand, bodyWidth)
@@ -782,9 +782,9 @@ func TestDelegationToolArgsWrapBeforeStyle(t *testing.T) {
 			var prepared preparedToolCard
 			switch p := tc.card.(type) {
 			case subagentCardPresentation:
-				prepared = r.prepareSubagentCard(p, false)
+				prepared = r.prepareSubagentCard(p, false, toolcallPending)
 			case teamCardPresentation:
-				prepared = r.prepareTeamCard(p, false)
+				prepared = r.prepareTeamCard(p, false, toolcallPending)
 			}
 			out := stripANSIstr(prepared.Text())
 			for _, line := range strings.Split(out, "\n") {
