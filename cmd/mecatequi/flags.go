@@ -143,7 +143,7 @@ type flags struct {
 	// explicit --posture so composition lets CLI out-rank the settings.yaml key.
 	posture        string
 	postureFlagSet bool
-	// permissionMode is the raw --permission-mode token (ADR 0365), validated at
+	// permissionMode is the raw --permission-mode token (ADR 0375), validated at
 	// parse time; permissionModeFlagSet records it was passed explicitly.
 	permissionMode        string
 	permissionModeFlagSet bool
@@ -488,7 +488,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 
 		Posture:        app.ParsePosture(f.posture),
 		PostureFlagSet: f.postureFlagSet,
-		// Permission mode (ADR 0365): an explicit token out-ranks the deprecated
+		// Permission mode (ADR 0375): an explicit token out-ranks the deprecated
 		// --posture in app.Build's foldPermissionMode.
 		PermissionMode:        f.permissionMode,
 		PermissionModeFlagSet: f.permissionModeFlagSet,

@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// permissionModeHelp is the --permission-mode usage line (ADR 0365). It names
+// permissionModeHelp is the --permission-mode usage line (ADR 0375). It names
 // both halves a token sets and their lifetimes, and lists every valid token from
 // the composition table so help and parsing cannot drift.
 var permissionModeHelp = "Permission mode, one of: " + strings.Join(app.PermissionModeNames(), ", ") +
@@ -46,6 +46,6 @@ func warnDeprecatedPermissionFlags(diag port.Diagnostics, f flags) {
 		replacement = tok.Name
 	}
 	diag.Log(context.Background(), port.LevelWarn,
-		"--posture is DEPRECATED; use --permission-mode instead (ADR 0365)",
+		"--posture is DEPRECATED; use --permission-mode instead (ADR 0375)",
 		"posture", f.posture, "replacement", "--permission-mode "+replacement)
 }

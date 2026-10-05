@@ -12,8 +12,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// adr0365Model is a live model bound to a session whose server reports posture.
-func adr0365Model(t *testing.T, conv *fakeConv, posture string, embedded bool) Model {
+// adr0375Model is a live model bound to a session whose server reports posture.
+func adr0375Model(t *testing.T, conv *fakeConv, posture string, embedded bool) Model {
 	t.Helper()
 	m := newTestModelFromDeps(Deps{
 		Session:  conv,
@@ -46,12 +46,12 @@ func cycleMode(t *testing.T, m Model) Model {
 	return applyAll(m, cmd())
 }
 
-// TestADR_0365_ModeSwitchCycleUnchanged pins AC5.1: the session mode cycle offers
-// exactly the three session modes in the same order as before ADR 0365. No
+// TestADR_0375_ModeSwitchCycleUnchanged pins AC5.1: the session mode cycle offers
+// exactly the three session modes in the same order as before ADR 0375. No
 // posture-bearing token becomes reachable from the keybinding.
-func TestADR_0365_ModeSwitchCycleUnchanged(t *testing.T) {
+func TestADR_0375_ModeSwitchCycleUnchanged(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-	m := adr0365Model(t, conv, postureStrict, true)
+	m := adr0375Model(t, conv, postureStrict, true)
 	want := []string{"plan", "accept-edits", "default", "plan"}
 	for range want {
 		m = cycleMode(t, m)
@@ -65,16 +65,16 @@ func TestADR_0365_ModeSwitchCycleUnchanged(t *testing.T) {
 	}
 }
 
-// TestADR_0365_HelpOverlayShowsVocabularyAndScopeSplit pins AC5.2: every token is
+// TestADR_0375_HelpOverlayShowsVocabularyAndScopeSplit pins AC5.2: every token is
 // listed with its posture half marked process-wide and its session half marked as
 // the new-session default, with the exact invocation and the statement that
 // cycling the session mode never changes the posture half.
-func TestADR_0365_HelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
+func TestADR_0375_HelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-	m := adr0365Model(t, conv, postureStrict, true)
+	m := adr0375Model(t, conv, postureStrict, true)
 	body := stripANSIstr(renderHelpOverlay(m.deps.Theme, m.caps, 200, 0, 0, m.helpKeyMarkings(), m.deps.Embedded))
 
-	// The ADR 0365 table, written out independently of PermissionModeVocabulary.
+	// The ADR 0375 table, written out independently of PermissionModeVocabulary.
 	want := []struct{ token, posture, session string }{
 		{"plan", "strict", "plan"},
 		{"default", "strict", "default"},
@@ -111,10 +111,10 @@ func TestADR_0365_HelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 	}
 }
 
-// TestADR_0365_HeaderShowsPostureWhenAboveStrict pins AC5.3: the header shows the
+// TestADR_0375_HeaderShowsPostureWhenAboveStrict pins AC5.3: the header shows the
 // session mode, and a posture badge for every tier above strict (trusted now
 // included), sourced from the server-reported caps.Posture.
-func TestADR_0365_HeaderShowsPostureWhenAboveStrict(t *testing.T) {
+func TestADR_0375_HeaderShowsPostureWhenAboveStrict(t *testing.T) {
 	cases := []struct {
 		posture string
 		badge   string // "" = no badge
@@ -127,7 +127,7 @@ func TestADR_0365_HeaderShowsPostureWhenAboveStrict(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.posture, func(t *testing.T) {
 			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-			m := adr0365Model(t, conv, tc.posture, true)
+			m := adr0375Model(t, conv, tc.posture, true)
 			header := stripANSIstr(m.renderHeader())
 			if got := statusMode(m); got != "default" {
 				t.Errorf("status mode = %q, want default", got)
@@ -146,12 +146,12 @@ func TestADR_0365_HeaderShowsPostureWhenAboveStrict(t *testing.T) {
 	}
 }
 
-// TestADR_0365_HeaderKeepsPostureAcrossModeCycle pins AC5.4: under auto, cycling
+// TestADR_0375_HeaderKeepsPostureAcrossModeCycle pins AC5.4: under auto, cycling
 // the session mode through plan and back to default keeps the auto badge on every
 // frame, including the pending frame before the server confirms each switch.
-func TestADR_0365_HeaderKeepsPostureAcrossModeCycle(t *testing.T) {
+func TestADR_0375_HeaderKeepsPostureAcrossModeCycle(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-	m := adr0365Model(t, conv, postureAuto, true)
+	m := adr0375Model(t, conv, postureAuto, true)
 	assertAuto := func(step, wantMode string) {
 		t.Helper()
 		header := stripANSIstr(m.renderHeader())
@@ -175,13 +175,13 @@ func TestADR_0365_HeaderKeepsPostureAcrossModeCycle(t *testing.T) {
 	}
 }
 
-// TestADR_0365_HelpOverlayNamesWhoseRestart pins AC5.5: the embedded server's
+// TestADR_0375_HelpOverlayNamesWhoseRestart pins AC5.5: the embedded server's
 // help gives the mecatui relaunch invocation; under `mecatui connect` it names
 // the server operator's mecated restart and offers no local invocation.
-func TestADR_0365_HelpOverlayNamesWhoseRestart(t *testing.T) {
+func TestADR_0375_HelpOverlayNamesWhoseRestart(t *testing.T) {
 	render := func(embedded bool) string {
 		conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-		m := adr0365Model(t, conv, postureAuto, embedded)
+		m := adr0375Model(t, conv, postureAuto, embedded)
 		return stripANSIstr(renderHelpOverlay(m.deps.Theme, m.caps, 200, 0, 0, m.helpKeyMarkings(), m.deps.Embedded))
 	}
 	embedded := render(true)
@@ -200,7 +200,7 @@ func TestADR_0365_HelpOverlayNamesWhoseRestart(t *testing.T) {
 	}
 }
 
-// TestModeServerDefaultRequestsUnspecifiedAndReadsBack pins the ADR 0365 session
+// TestModeServerDefaultRequestsUnspecifiedAndReadsBack pins the ADR 0375 session
 // half under ModeServerDefault: the first create requests no mode, so the server's
 // default applies, and the header shows the mode the server reports rather than
 // guessing "default".

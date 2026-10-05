@@ -215,7 +215,7 @@ const yoloBoltPrefix = "⚡️ "
 // fit/shed math. It surfaces the SERVER-WIDE posture (m.caps.Posture) whenever it is
 // above strict — strict/unknown render NO badge, so the steady-state frame and the
 // goldens stay byte-identical. It is DISTINCT from the per-session `mode` segment, and a
-// session-mode cycle never changes it (ADR 0365).
+// session-mode cycle never changes it (ADR 0375).
 //
 // Tiers:
 //   - trusted → warning-styled inline text "trusted".
@@ -242,7 +242,7 @@ func (m Model) postureBadgeRender() (styled string, plainWidth int) {
 		}
 		return pill, w
 	case postureTrusted:
-		// Above strict (ADR 0365, AC5.3): the project's rules and instructions are
+		// Above strict (ADR 0375, AC5.3): the project's rules and instructions are
 		// honoured process-wide, so the header must not read as a plain default
 		// session. Warning-styled text, no glyph, quieter than auto's.
 		return m.deps.Theme.Style("warning").Render(trustedBadgeText), lipgloss.Width(trustedBadgeText)

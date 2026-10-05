@@ -139,7 +139,7 @@ type Resolver struct {
 	// files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorPosture string
 
-	// operatorPermissionMode is the OPERATOR-TIER permissionMode: token (ADR 0365),
+	// operatorPermissionMode is the OPERATOR-TIER permissionMode: token (ADR 0375),
 	// captured exactly like operatorPosture: user-global + CLI tiers only, CLI
 	// first-non-empty wins, a project-tier occurrence is ignored with a WARN.
 	operatorPermissionMode string
@@ -1067,7 +1067,7 @@ func (r *Resolver) warnIgnoredProjectPermissionScalars(cfg *Config, path, root s
 			"file", path, "root", root)
 	}
 	// PermissionMode is OPERATOR-TIER ONLY for the same reason as posture (ADR
-	// 0365): a repo naming its own permission mode could raise the automation
+	// 0375): a repo naming its own permission mode could raise the automation
 	// posture.
 	if strings.TrimSpace(cfg.PermissionMode) != "" {
 		r.diag.Log(context.Background(), port.LevelWarn,

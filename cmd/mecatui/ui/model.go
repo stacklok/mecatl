@@ -292,7 +292,7 @@ type Deps struct {
 	Mode           string
 	Model          string
 	// ModeServerDefault asks the server to choose the first session's permission
-	// mode (ADR 0365): no --permission-mode or --mode was given, so the create
+	// mode (ADR 0375): no --permission-mode or --mode was given, so the create
 	// carries an unspecified mode and the server's configured default applies
 	// (embedded: the operator's permissionMode: key; connect: the remote server's
 	// own default). The created session's mode is read back with GetSession, so the

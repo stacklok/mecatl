@@ -1475,7 +1475,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
-		// ADR 0365 named token: Build resolves its posture half and puts its
+		// ADR 0375 named token: Build resolves its posture half and puts its
 		// session half on the server's DefaultMode. An explicit flag out-ranks the
 		// deprecated --posture and both YAML keys.
 		PermissionMode:        cfg.permissionMode,

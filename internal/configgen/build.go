@@ -402,7 +402,7 @@ func permissionModeSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "permissionMode",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER named permission mode (ADR 0365): plan, default, accept-edits, trusted, " +
+		Doc: "OPERATOR-TIER named permission mode (ADR 0375): plan, default, accept-edits, trusted, " +
 			"trusted-accept-edits, auto, or yolo. Each token sets two things: the process-wide posture, " +
 			"fixed at startup, and the mode new sessions start in, which each session may change. auto " +
 			"and yolo refuse to start without a guardrails checker unless guardrails are explicitly off. " +
@@ -424,7 +424,7 @@ func postureSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "posture",
 		Tier: TierOperator,
-		Doc: "DEPRECATED: use permissionMode: instead (ADR 0365); still honoured with a WARN for one release. " +
+		Doc: "DEPRECATED: use permissionMode: instead (ADR 0375); still honoured with a WARN for one release. " +
 			"OPERATOR-TIER posture-ladder scalar: strict < trusted < auto < yolo (the graduated " +
 			"trust/automation tier). A project-tier posture: is IGNORED with a WARN (a project " +
 			"cannot raise the automation posture). Empty = keep the CLI/default.",

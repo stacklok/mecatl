@@ -13,7 +13,7 @@ import (
 
 // TestPostureBadgeShownForAutoYolo asserts the header renders the auto/yolo chrome
 // badge when the server reports an allow-all posture, the quieter trusted badge for
-// trusted (ADR 0365), and NO badge for strict (and an empty/older-server posture) —
+// trusted (ADR 0375), and NO badge for strict (and an empty/older-server posture) —
 // the goldens-stability guarantee. Under
 // MECATUI_NO_EMOJI the yolo badge is the clean " YOLO " pill with NO lightning bolt and
 // NO VS16; auto is "⚠ auto". The badge is sourced from caps.Posture (SessionReadyMsg),
