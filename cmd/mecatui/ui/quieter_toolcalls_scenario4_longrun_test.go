@@ -28,6 +28,10 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	assistantID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
 	m = applyAll(m, client.CompactionMsg{Text: "readable long-run notice"})
 	noticeID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
+	// Keep this bordered card before the selected settled call. Its collapse must
+	// restore the selected block, selection, and later tail-follow semantically.
+	m.conv.addTool("live", "Read", `{"path":"live-call-with-a-readable-target.txt"}`)
+	liveID := toolBlockID(t, m.conv.scrollback, "live")
 	for i := 0; i < settled; i++ {
 		id := fmt.Sprintf("settled-%03d", i)
 		path := fmt.Sprintf("settled-%03d.txt", i)
@@ -41,9 +45,7 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 			t.Fatalf("resolve %q", id)
 		}
 	}
-	m.conv.addTool("live", "Read", `{"path":"live-call-with-a-readable-target.txt"}`)
 	m.conv.appendAssistant("ordinary assistant block after the run")
-	endingAssistantID := uint64(m.conv.testBlocks()[len(m.conv.testBlocks())-1].ID)
 	m.phase = phaseIdle
 	m.refreshView()
 
@@ -53,7 +55,8 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 		firstID := toolBlockID(t, m.conv.scrollback, "settled-000")
 		assertLongRunGap(t, frame, userID, assistantID, 1)
 		assertLongRunGap(t, frame, assistantID, noticeID, 1)
-		assertLongRunGap(t, frame, noticeID, firstID, 1)
+		assertLongRunGap(t, frame, noticeID, liveID, 1)
+		assertLongRunGap(t, frame, liveID, firstID, 0)
 		for i := 0; i < settled; i++ {
 			id := toolBlockID(t, m.conv.scrollback, fmt.Sprintf("settled-%03d", i))
 			rows := blockRows(frame, id)
@@ -97,10 +100,14 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	m.refreshView()
 	for _, width := range []int{28, 100} {
 		m.rend.setWidth(width)
-		assertLongRunGap(t, m.rend.renderConversationFrame(&m.conv.scrollback, false), toolBlockID(t, m.conv.scrollback, "live"), endingAssistantID, 1)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		rows := blockRows(frame, liveID)
+		if len(rows) != 1 || strings.ContainsAny(rows[0], "╭╮╰╯┌┐└┘─│") {
+			t.Fatalf("width %d settled preceding call = %q, want one borderless line", width, rows)
+		}
 	}
 	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != anchorID {
-		t.Fatalf("settling a later card moved semantic anchor to block %d, want %d", got, anchorID)
+		t.Fatalf("settling a preceding card moved semantic anchor to block %d, want %d", got, anchorID)
 	}
 	if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != selectedWord {
 		t.Fatalf("settling a later card lost selection = %q (active=%t)", selectedText(m.vp.GetContent(), m.sel), m.sel.active)

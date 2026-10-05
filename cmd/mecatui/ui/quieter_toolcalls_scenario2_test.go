@@ -101,6 +101,36 @@ func TestMecatuiQuieterToolCalls_Scenario2_InspectorShortcutAndFocus(t *testing.
 					t.Fatalf("shortcut inspector render differs from /toolcalls:\n got %q\nwant %q", body, refBody)
 				}
 
+				// List and detail own their ordinary key input. No inspector key may
+				// submit the hidden draft or mutate transcript/tool state, and handled
+				// keys emit no command that could carry approval/control traffic.
+				beforeBlocks, beforeEntries := m.conv.scrollback.Len(), len(toolcallsForTest(t, m).entries)
+				beforePhase, beforeDraft := m.phase, m.prompt.Value()
+				compactBefore := toolcallsForTest(t, m).compact
+				for _, key := range []tea.KeyPressMsg{{Code: 'x'}, {Code: tea.KeyEnter}} {
+					var cmd tea.Cmd
+					m, cmd = pressKey(m, key)
+					if cmd != nil {
+						t.Fatalf("inspector list key %q emitted command output", key)
+					}
+					if m.conv.scrollback.Len() != beforeBlocks || len(toolcallsForTest(t, m).entries) != beforeEntries || m.phase != beforePhase || m.prompt.Value() != beforeDraft {
+						t.Fatalf("inspector list key %q changed hidden state: blocks=%d entries=%d phase=%v draft=%q", key, m.conv.scrollback.Len(), len(toolcallsForTest(t, m).entries), m.phase, m.prompt.Value())
+					}
+				}
+				if !compactBefore {
+					if !toolcallsForTest(t, m).detail {
+						t.Fatal("list Enter did not reach inspector detail")
+					}
+					for _, key := range []tea.KeyPressMsg{{Code: 'y'}, {Code: tea.KeyEnter}} {
+						var cmd tea.Cmd
+						m, cmd = pressKey(m, key)
+						if cmd != nil || m.conv.scrollback.Len() != beforeBlocks || len(toolcallsForTest(t, m).entries) != beforeEntries || m.phase != beforePhase || m.prompt.Value() != beforeDraft {
+							t.Fatalf("inspector detail key %q leaked into transcript, control output, or prompt", key)
+						}
+					}
+					m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+				}
+
 				// A call and its result arrive through Update while the inspector is open.
 				m = applyAll(m,
 					client.ToolCallMsg{ID: "late", Name: "Read", Args: `{"path":"late.go"}`},

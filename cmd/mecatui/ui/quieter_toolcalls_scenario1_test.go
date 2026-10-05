@@ -117,7 +117,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 		client.ToolCallMsg{ID: "mcp", Name: "mcp__github__issue_write", Args: `{"target":"issue-1"}`}, client.ToolResultMsg{CallID: "mcp", Content: "mcp result"},
 		client.ToolCallMsg{ID: "unknown", Name: "Mystery", Args: `{"task":"investigate"}`}, client.ToolResultMsg{CallID: "unknown", Content: "unknown result"},
 		client.ToolCallMsg{ID: "malformed", Name: "Broken", Args: `{"path":`}, client.ToolResultMsg{CallID: "malformed", Content: "malformed result"},
-		client.ToolCallMsg{ID: "hostile", Name: "Bad\x1b]8;;https://bad\a\n\t\u202e界😀", Args: `{"prompt":"\u001b[31mwide 界😀\n\t\u202e"}`}, client.ToolResultMsg{CallID: "hostile", Content: "hostile result"},
+		client.ToolCallMsg{ID: "hostile", Name: "Bad\x1b]8;;https://bad\a\n\t\u202e界😀", Args: `{"prompt":"\u001b[31mwide 界😀\n\t\u202e"}`}, client.ToolResultMsg{CallID: "hostile", Content: "\x1b]8;;https://bad\aresult wide 界😀\n\t\u202e"},
 	)
 	m.conv.addTool("subagent", "Subagent", `{"prompt":"investigate the loop"}`)
 	applySubagentTo(&m.conv, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "subagent", ChildID: "child", Goal: "investigate the loop"})
@@ -181,6 +181,31 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 		if !ok || inspector.detailEntry == nil || inspector.detailEntry.name != entry.fullName || inspector.detailEntry.intent != metadata.Arguments || inspector.detailEntry.result.Body == "" {
 			t.Fatalf("detail for %q lost received name, arguments, or result: %#v", entry.fullName, inspector.detailEntry)
 		}
+	}
+
+	// The inspector must sanitize and bound the same hostile data at its own
+	// narrow list/detail seam while retaining the complete received detail.
+	inspector := toolcallsForTest(t, modal.(Model))
+	hostile := toolcallEntryByID(t, inspector.entries, "hostile", m.conv.scrollback)
+	inspector.selected = hostile.index
+	list, _ = inspector.Render(52, 20)
+	inspector.detail = true
+	inspector.refreshDetail(&m.conv.scrollback)
+	detail, _ := inspector.Render(52, 20)
+	for surface, body := range map[string]string{"list": list, "detail": detail} {
+		plain := stripANSIstr(body)
+		if strings.Contains(body, "\x1b]") || strings.Contains(body, "\x1b[31m") {
+			t.Fatalf("hostile %s emitted untrusted terminal controls: %q", surface, body)
+		}
+		for _, row := range strings.Split(plain, "\n") {
+			if strings.ContainsAny(row, "\x1b\n\r\t") || ansi.StringWidth(row) > 52 {
+				t.Fatalf("hostile %s row overflows or retains controls: %q", surface, row)
+			}
+		}
+	}
+	plainDetail := stripANSIstr(detail)
+	if !strings.Contains(plainDetail, "result wide 界😀") || !strings.Contains(plainDetail, "wide 界😀") {
+		t.Fatalf("hostile full received arguments/result are not reachable in detail: %q", plainDetail)
 	}
 }
 
