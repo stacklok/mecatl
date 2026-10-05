@@ -6,6 +6,16 @@
     ":semanticCommitTypeAll(chore)",
     ":semanticCommitScope(deps)"
   ],
+  "description": "Keep dependency/test exclusions; package rules below exclude examples except the Slack bot's published image",
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**"
+  ],
   "labels": ["dependencies"],
   "schedule": ["every weekend"],
   "vulnerabilityAlerts": {
@@ -17,6 +27,14 @@
   "prHourlyLimit": 2,
   "postUpdateOptions": ["gomodTidyAll", "gomodUpdateImportPaths"],
   "packageRules": [
+    {
+      "description": "Unlike ignorePaths, matchFileNames supports negative patterns: keep other examples disabled while updating the released Slack bot image",
+      "matchFileNames": [
+        "**/examples/**",
+        "!sdk/typescript/examples/slack-bot/docker/bot.Dockerfile"
+      ],
+      "enabled": false
+    },
     {
       "description": "In-repo Go modules resolve through go.work and replace directives; their published version floors and the Helm chart's own image tag are bumped deliberately by the release process",
       "matchPackageNames": [
@@ -120,6 +138,13 @@
       "matchDatasources": ["docker"],
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
       "groupName": "docker images"
+    },
+    {
+      "description": "Review Slack bot Chainguard builder (latest-dev) and runtime (latest) digest updates together; their tags preserve the separate update channels",
+      "matchManagers": ["dockerfile"],
+      "matchFileNames": ["sdk/typescript/examples/slack-bot/docker/bot.Dockerfile"],
+      "matchPackageNames": ["cgr.dev/chainguard/node"],
+      "groupName": "slack bot base images"
     },
     {
       "description": "Website (Docusaurus docs site): one PR for routine updates; majors land separately so one needing config work doesn't hold up the rest",
