@@ -27,93 +27,158 @@ approval. Unchecked items intentionally keep this plan draft.
 ## Human decisions
 
 - [ ] Approve whole-batch reconsideration when new or changed applicable guidance was absent from the generating request, including new-file writes and same-batch reads/mutations.
-- [ ] Approve the bounded guarantee: structured file tools are covered; Shell, MCP/custom tools without target metadata, Glob, and Grep remain opaque. Their ordinary authorization stays unchanged; the model and operator receive an explicit coverage limitation rather than a claim that arbitrary Shell writes are covered.
+- [ ] Approve the bounded guarantee: structured file tools are covered; Shell, MCP/custom tools, ListDir, Glob, and Grep remain opaque. Their ordinary authorization stays unchanged; the model and operator receive an explicit coverage limitation rather than a claim that arbitrary Shell writes are covered.
 - [ ] Approve lexical, source-relative hierarchy and trusted subtree mapping, including blocking covered out-of-root operands instead of silently editing without applicable guidance.
 - [ ] Approve project-chain refresh at request and action boundaries, replacing the root-only/per-run contract only for the new scoped integration. Other ephemeral sources retain their lifetime.
 - [ ] Approve limits of 32 distinct batch targets, 64 directory components, 64 KiB per instruction file, and 256 KiB total framed project instructions, with visible failure rather than truncation or fallback.
 - [ ] Retain existing project-trust admission, first-encounter probing, and remembered-trust anchor policy; AGENTS-only repositories require an existing explicit trust mechanism if no current probe triggers a prompt.
 - [ ] Approve additive bounded-read transport operations, coordinated MicroVM runtime support, and fail-closed behavior with older runtimes; the external MicroVM implementation/release is a delivery dependency, not satisfied by an offline daemon fixture.
-- [ ] Approve the additive engine interfaces and the narrower compatibility changes specified below, including root-only nested-CLAUDE exclusion and preserved source composition.
+- [x] Reuse existing contracts instead of parallel interfaces — Decision: the operator requested reuse and minimal additions. Extend the existing assembler and manifest, reuse operand extraction and bounded reads, and keep one `Deps.Instructions` path; no new interfaces or instruction result types.
+- [ ] Approve the exact breaking assembly signature, metadata fields, and lifetime/migration rules below, including hierarchy through RootAssembler and global custom-source refresh.
 
 ## Interface contract
 
-- **gRPC / protobuf:** No public harness RPC or inspection endpoint. Add `FILE_OPERATION_READ_BOUNDED = 12` to `mecatl.execution.v1.FileOperation` and `int64 max_bytes = 9` to its `FileRequest`; existing numbers and ordinary READ semantics remain unchanged. Native execution uses `executionenv.OpFileReadBounded Operation = "file.read_bounded"` and `FileRequest.MaxBytes int64` (`json:"max_bytes,omitempty"`). The MicroVM private workspace protocol adds operation `read_bounded` and `MaxBytes int64` (`json:"max_bytes,omitempty"`) to `workspaceRequest`. Both additions follow the bounded transport contract below; regenerate protobuf/reference output in implementation.
-- **Exported Go APIs / interfaces:** Add the exact engine declarations below. Existing `InstructionAssembler`, `RootAssembler`, `DiscoverInstructions`, `Tool`, and `Workspace` signatures and their direct-call behavior remain compatible. `agent.Deps.ScopedInstructions` is additive and nil preserves the existing engine embedding behavior. Source selection wrappers and built-in production factories must carry the new optional capability without losing registration provenance.
-- **Tool schemas:** None — existing input fields and JSON schemas remain unchanged. Built-in Read/Edit/Write/Remove expose their `path` as metadata; Copy/Move expose both `source` and `destination`. No command parsing or arbitrary JSON-field inference supplies targets. Deferral uses ordinary error tool results with the fixed reason token `instruction_context_changed`, saying the calls did not execute and require reconsideration. Malformed arguments receive their normal validation error, not empty target coverage.
-- **CLI / config:** None — no user/model source-path selector, feature toggle, or new YAML key. Existing trusted source registrations explicitly opt into the scoped interface. Production repository registrations use it by default; explicitly registered legacy assemblers remain global contributions. Existing instruction source order, exclusions, and `combine`/`replace` policy remain operator-owned.
+- **gRPC / protobuf:** No public harness RPC or inspection endpoint. Add `FILE_OPERATION_READ_BOUNDED = 12` to `mecatl.execution.v1.FileOperation`, reusing the existing `FileRequest.limit = 8` field as a byte maximum for this operation only. Existing numbers, field types, and ordinary READ semantics remain unchanged. Native execution adds `executionenv.OpFileReadBounded Operation = "file.read_bounded"` and reuses its existing `FileRequest.Limit`; no new protobuf or native request field. The MicroVM private workspace request has no limit field, so add operation `read_bounded` and `MaxBytes int64` (`json:"max_bytes,omitempty"`) there. Both additions follow the bounded transport contract below; regenerate protobuf/reference output in implementation.
+- **Exported Go APIs / interfaces:** Extend existing `InstructionAssembler.Assemble` and its manifest-aware path with explicit target input, extend `InstructionManifest` with scope metadata, and update the existing `RootAssembler` as declared below. Reuse `tool.LocalFileOperands`, `tool.WorkspaceReader`, and `tool.BoundedWorkspaceReader`. `agent.Deps.Instructions` remains the only assembly dependency. No new interface or instruction result type; this deliberately changes the existing exported assembly API rather than adding a compatibility pipeline.
+- **Tool schemas:** None — existing input fields and JSON schemas remain unchanged. Use `tool.LocalFileOperands` only for the covered built-in names Read/Edit/Write/Remove (`path`) and Copy/Move (`source`, `destination`). Deliberately exclude its Shell branch and ListDir from activation. Preserve the helper's existing behavior for its other callers. Validate the complete required operand set before accepting coverage: the helper's empty or partial return on malformed input is not success. No command parsing or arbitrary JSON-field inference supplies targets; custom/MCP tools remain opaque. Deferral uses ordinary error tool results with the fixed reason token `instruction_context_changed`, saying the calls did not execute and require reconsideration.
+- **CLI / config:** None — no user/model source-path selector, feature toggle, or new YAML key. Existing trusted source registrations implement the revised assembly contract; target-independent sources return global contributions. Production repository registrations use the updated RootAssembler. Existing instruction source order, exclusions, and `combine`/`replace` policy remain operator-owned.
 - **Events / persistence:** None — scoped bodies, active target sets, and visibility fingerprints are ephemeral. Ordinary paired deferral results may persist, but contain no instruction bodies. Existing request manifests retain kind/provenance/byte accounting. Injected diagnostics report safe logical scope metadata; no new durable event is introduced. The run owns the bounded active-target/fingerprint state and releases it at termination. No watchers, background refreshers, or persistent scope cache.
 - **Security / authority:** Resolve only selected and admitted sources under their retained binding. Project context stays user-role/project provenance. Explicit user instructions override repository guidance, never system/developer safety or tool authorization. Target metadata cannot register or select a source, open host ancestors, change placement, or mint execution ReadLedger evidence. Admission is not a synthetic Read tool invocation and does not bypass existing source authorization. Deny/Ask, effective-argument checks, CAS, create-only writes, and child restrictions remain independent.
-- **Compatibility / migration:** Additive engine declarations require API snapshots and an Added changelog entry. Production activation, fail-closed project-context errors, limits, action reconsideration, and freshness are deliberate behavioral changes requiring a Changed entry. Preserve root AGENTS-first/blank-or-missing CLAUDE fallback; nested CLAUDE is ignored. ADR 0374 partially supersedes ADRs 0359 and 0043 and the root-only/per-run assertions of the harness-context acceptance record. Keep the old RootAssembler unit proof; replace the production root-only compatibility proof with scoped integration proofs. No stored-session migration and no rewriting frozen decisions.
+- **Compatibility / migration:** Extend the existing assembler and discovery APIs in place. Their target parameters, RootAssembler source type/behavior, and refresh/error rules are deliberate exported-engine changes requiring updated call sites, API snapshots, and a classified Changed changelog entry. External implementations accept explicit targets (ignoring them if global) and forward them through wrappers. No deprecated assembler, old-signature shim, frozen root-only discovery API, or parallel assembly dependency. Nil/empty targets retain the root case within the same implementation. Preserve root AGENTS-first/blank-or-missing CLAUDE fallback and exclusion of nested CLAUDE. ADR 0374 partially supersedes ADRs 0359 and 0043 and the root-only/per-run assertions of the harness-context acceptance record. Extend existing discovery and RootAssembler tests with hierarchy scenarios rather than maintaining legacy variants. No stored-session migration and no rewriting frozen decisions.
 
-### Exact additive engine declarations
+### Existing engine contracts to extend
+
+Reuse `tool.LocalFileOperands` and `tool.BoundedWorkspaceReader`; neither needs a
+new interface. Keep `agent.Deps.Instructions` as the single composition input,
+`InstructionAssembler` as the single assembly contract, and messages plus aligned
+`InstructionManifest` rows as the result. The exact changed declarations are:
 
 ```go
-// engine/tool: optional capability on the registered tool implementation.
-// Paths use the same execution namespace as the tool's operands.
-type InstructionTargeter interface {
-    InstructionTargets(args json.RawMessage) ([]string, error)
+// engine/prompt: change the existing assembly contract.
+type InstructionAssembler interface {
+    Assemble(ctx context.Context, targets []string) ([]session.Message, error)
 }
 
-// engine/prompt: a source-owned, confined, bounded instruction read.
-// Reads at most maxBytes+1 bytes; oversized content returns an error, never a prefix.
-// Missing files wrap fs.ErrNotExist. No execution read evidence is created.
-type InstructionFileReader interface {
-    ReadInstruction(ctx context.Context, path string, maxBytes int64) ([]byte, error)
+// Extend the existing metadata; no second instruction result type.
+type InstructionManifest struct {
+    Kind       string
+    Provenance string
+    SourceID   string // trusted registration ID, or engine-assigned composition identity
+    SourcePath string // canonical source-relative instruction file
+    ScopePath  string // canonical execution-relative directory; "." includes the root
 }
 
-type ScopedInstruction struct {
-    SourceID   string // assigned by trusted registration
-    SourcePath string // source-relative file, never a host path
-    ScopePath  string // execution-relative directory; "." applies to the whole root
-    Message    session.Message     // project bodies are user-role text; legacy messages retain their representation
-    Manifest   InstructionManifest // stamped/validated by trusted composition
+// Keep the existing concrete source-bound assembler.
+type RootAssembler struct {
+    Source       tool.WorkspaceReader
+    TargetPrefix string // trusted source-relative directory; empty means "."
 }
 
-type ScopedInstructionAssembler interface {
-    AssembleForTargets(ctx context.Context, targets []string) ([]ScopedInstruction, error)
-}
-
-type HierarchyAssembler struct {
-    Source       InstructionFileReader
-    SourceID     string
-    TargetPrefix string // validated source-relative directory; "." is identity mapping
-}
-
-func (a HierarchyAssembler) Assemble(ctx context.Context) ([]session.Message, error)
-func (a HierarchyAssembler) AssembleWithManifest(ctx context.Context) ([]session.Message, []InstructionManifest, error)
-func (a HierarchyAssembler) AssembleForTargets(ctx context.Context, targets []string) ([]ScopedInstruction, error)
-
-// engine/agent: additional field on Deps.
-// ScopedInstructions prompt.ScopedInstructionAssembler
+func (a RootAssembler) Assemble(ctx context.Context, targets []string) ([]session.Message, error)
+func (a RootAssembler) AssembleWithManifest(ctx context.Context, targets []string) ([]session.Message, []InstructionManifest, error)
+func AssembleWithManifest(ctx context.Context, a InstructionAssembler, targets []string) ([]session.Message, []InstructionManifest, error)
+func DiscoverInstructions(ctx context.Context, ws tool.WorkspaceReader, targets []string) ([]session.Message, error)
 ```
 
-`AssembleForTargets` accepts canonical slash-separated execution-relative **file
-operands**, sorted and deduplicated by the engine; no absolute paths, empty paths,
-`..` components, or source selectors. An empty list selects root guidance only.
-`Assemble` is the root-only compatibility view for registration through existing
-`HarnessSourceRegistration[prompt.InstructionAssembler]`. `AssembleWithManifest`
-returns instruction/project metadata in the root view for both value and pointer
-receivers, so a fixed driver registration cannot promote project content through
-the legacy path. The hierarchy reader is
-bound at construction, not passed per call. A nil reader is a configuration error.
-The existing bounded workspace seam can implement `ReadInstruction` by discarding
-the returned version; supporting it never records that version in a ledger.
+Every existing implementation's `Assemble` and optional `AssembleWithManifest`
+method gains the same `targets []string` parameter, including `MultiAssembler`,
+`SoulAssembler`, `MemoryIndexAssembler`, `RulesAssembler`, `UserModelAssembler`,
+and the internal registration, policy, and generation wrappers. Target-independent
+leaves ignore it. `MultiAssembler` retains its existing fields and constructor;
+wrappers forward targets without altering source order, admission, or ownership.
+There is no new tool interface, reader interface, assembly interface, result type,
+assembly context object, or second `Deps` instruction field.
 
-The production factory moves the selected project instruction chain into
-`Deps.ScopedInstructions`, without also injecting it through `Deps.Instructions`.
-Soul, memory, rules, and user-model fragments stay in `Deps.Instructions` with
-existing per-run behavior. Within the selected project chain, scoped assemblers
-receive targets; legacy assemblers contribute global messages through their
-existing manifest/provenance validation. The internal composition wrapper preserves
-those legacy messages and their original tiers. Empty `SourcePath` and `ScopePath`
-identify a legacy global contribution; hierarchy contributions require both fields
-and project provenance. Registration wrappers assign `SourceID`, stamp/validate
-`Manifest`, and reject non-user-role or non-text hierarchy payloads before the
-engine adds canonical provenance/scope framing. Source-supplied metadata cannot
-raise authority. Legacy sources in this selected instruction chain refresh at the
-same boundaries as scoped sources; this deliberately differs from their direct
-`Deps.Instructions` per-run use. Soul/memory/rules/user-model sources outside that
-chain retain their existing lifetime.
+Coverage follows the effective dispatch registration, not just the call's name.
+Use the existing run-overlay/catalog resolution: an `ExtraTools` shadow is opaque,
+even when named `Write`. Registering a catalog tool under one of the six covered
+built-in keys is the trusted composition's explicit commitment to that key's file-
+operand semantics; custom tools with different semantics must use different keys.
+No new registration mechanism is introduced. Do not call `Spec()` again to infer
+coverage; use existing registration keys and overlay resolution information.
+
+Targets are sorted, deduplicated, canonical slash-separated execution-relative
+operands. The engine rejects empty operands, escapes, and invalid paths before
+assembly; absolute operands are normalized as described below. A nil/empty slice
+means no file-specific target: load the source-root-to-`TargetPrefix` chain that
+governs the execution root. Sources remain construction-bound; target input cannot
+select a workspace. Do not hide targets or caches in `context.Context`.
+
+`RootAssembler.Source` narrows from `tool.Workspace` to the existing read-only
+`tool.WorkspaceReader`. A nil source still contributes nothing. For a non-nil
+source, hierarchy reads require its existing optional `BoundedWorkspaceReader`
+capability, use `ReadVersionBounded`, and discard the version without entering a
+ReadLedger. Read-only source wrappers forward that bounded capability without
+exposing mutation or runner capabilities. No unbounded fallback is allowed.
+`DiscoverInstructions` gains target input and uses the same hierarchy discovery
+with identity mapping. `RootAssembler` supplies its trusted prefix to that shared
+implementation. Empty targets exercise the root case, not a retained legacy path.
+The existing name denotes the admitted source root; it does not limit discovery
+to that root's single file.
+
+RootAssembler's value and pointer views retain instruction/project provenance.
+Registration wrappers stamp `SourceID` and validate provenance before accepting
+scope metadata; a fixed driver registration cannot promote project content. For
+direct engine embeddings without a registration ID, the engine assigns a stable
+within-run composition-position identity. Empty `SourcePath` and `ScopePath`
+identify a global contribution. Scoped rows require both fields, project provenance,
+and user-role text messages; reject malformed metadata before canonical scope
+framing. Keep every message paired with exactly one manifest row, including global
+operator/driver messages in their existing representation and tier.
+
+### One composition path, run-owned static snapshots
+
+The run traverses the existing `MultiAssembler` value/pointer tree in order and
+snapshots direct `SoulAssembler`, `MemoryIndexAssembler`, `RulesAssembler`, and
+`UserModelAssembler` leaves once per run. Cache by composition position, not content
+or shared adapter identity, in private run-owned state. Preserve message/manifest
+pairs together. An initial static-leaf error is warned once and cached as an empty
+contribution for that run; discard partial results. There is no shared mutable
+cache on assemblers, source bindings, or `Deps`, and no exported cache API.
+
+Every other leaf, including the existing opaque selected-source policy/generation
+wrapper, is assembled at each specified boundary with the current targets. The
+engine must not unwrap that wrapper to cache individual selected sources: admission
+and whole-source combine/replace still execute inside the existing composition.
+A selected source that produces global guidance remains part of that live chain,
+even if its internal implementation uses a target-independent assembler. General
+custom assemblers migrate to this boundary-refresh contract; no compatibility
+pipeline is added to retain their old signature or implicit per-run caching.
+
+Publish refreshed fragments and their manifests atomically after successful
+assembly. Provider requests, request-token accounting, request manifests, and
+contextual action-review instruction facts must consume the same effective view.
+Scope metadata is assembled even when durable request evidence is disabled; that
+flag controls evidence emission, not activation correctness. A hierarchy/source
+failure stops affected work as specified below, rather than using stale guidance.
+Discard static snapshots, active targets, and visibility evidence at run end;
+children and subsequent runs create their own state.
+
+Repeated assembly must not retain another child generation hold on every call.
+The existing child/binding lifecycle owns one retained hold per active child run,
+released on completion or cancellation; each assembly uses a separately balanced
+short-lived observation borrow. Do not install a new cancellation callback per
+refresh or deduplicate across children with a shared `sync.Once`. Parent retirement
+still waits for existing holders, and final cleanup waits for in-flight observations.
+This is internal lifetime accounting, not a new source or assembly interface.
+
+Contextual reviews combine shared genuine task/plan-approval facts with the current
+run's action-applicable instruction facts. Do not overwrite shared `reviewRoot`
+instructions with a child scope or keep the initial project slice as an additional
+stale fact. Keep local instruction facts separate from shared task state and bind
+cached reviews/repeat approvals to the existing action digest plus run identity and
+its effective instruction fingerprint. At execution admission, check both the
+existing shared principal revision and that local fingerprint. An effective change
+invalidates affected local evidence; an identical refresh does not increment a
+revision or cause a review loop. Concurrent parent/sibling scope changes must not
+replace one another's facts. These are private state changes using the existing
+review request/fact types, not new exported interfaces.
+
+Operator-profile facts already refresh through `Deps.OperatorProfileSource` into
+the volatile system suffix. Preserve that path and its existing failure behavior;
+do not move it into instruction-fragment caching. The static `UserModelAssembler`
+rule above applies only to embeddings explicitly using that existing adapter.
+
 
 ### Resolution and mapping
 
@@ -130,7 +195,7 @@ matches on path-component boundaries. Root/ancestor scopes above `TargetPrefix`
 map to execution scope `.` while retaining their ordered source paths; descendants
 map by removing that trusted prefix. Equal bytes in distinct scopes remain distinct.
 Shared hierarchy ancestors are deduplicated by source ID and logical source path,
-not content. Global legacy messages are never path-deduplicated: retain every
+not content. Global messages are never path-deduplicated: retain every
 message and matching manifest row in original order.
 Sibling scopes are emitted in lexical path order and explicitly do not govern one
 another. The source's entire applicable contribution then participates in the
@@ -144,7 +209,8 @@ they do not establish or deny mapping. A session rooted at `repo/website` with a
 source explicitly admitted at `repo` uses trusted `TargetPrefix: "website"`.
 If only `repo/website` was admitted, resolution stops there. No upward host walk
 looks for another root or infers a Git repository. A non-filesystem implementation
-can implement `ScopedInstructionAssembler` directly over equivalent logical keys.
+can implement the revised `InstructionAssembler` and its existing optional
+manifest-aware method directly over equivalent logical keys.
 
 The engine normalizes relative operands and in-root absolute operands against the
 execution namespace's existing root semantics, then passes only relative paths to
@@ -164,8 +230,9 @@ this is namespace-operation guidance, not recursive loading of descendants.
    provider requests, re-resolve the bounded active target set. Render fresh
    ephemeral project context alongside the unchanged other fragments. Record which
    scopes and bytes this exact request exposed to the model.
-2. Before dispatching a model batch, collect all covered operands from registered
-   implementations, validate them, and resolve their union. Existing denial and
+2. Before dispatching a model batch, collect covered built-in operands through
+   `LocalFileOperands`, validate the complete required set, and resolve their union.
+   Existing denial and
    argument validation still apply. If a covered action requires any added,
    changed, removed, or differently selected applicable instruction compared with
    its generating request, execute **none of that batch**, pair every call with a
@@ -216,8 +283,13 @@ added to no-FS sessions merely to prepare context.
 The existing MicroVM `read` and native execution READ return whole-file payloads;
 a client-side length check cannot satisfy this plan's bound. The additive
 `read_bounded` operations read a confined regular file at the execution side with
-`0 < max_bytes <= 65536`, allocate at most `max_bytes+1` raw file bytes, and return
-all content or an error. They never return a successful prefix. Responses reuse
+a maximum `0 < bound <= 65536`, allocate at most `bound+1` raw file bytes, and
+return all content or an error. Native execution carries that byte bound in the
+existing `limit` field; MicroVM carries it in `max_bytes`. Existing list/grep
+uses of `limit` retain their item-count meaning. A distinct operation is necessary:
+an older server could ignore a limit on ordinary READ and perform an unbounded
+read, whereas an unknown bounded-read operation is rejected. The new operations
+never return a successful prefix. Responses reuse
 existing data/version fields; automatic discovery discards versions. JSON/base64
 and protobuf envelope overhead remains covered by existing transport frame limits.
 Client decoding must apply a bound derived from the requested maximum before
@@ -295,16 +367,16 @@ accurate byte counts; no new public inspection API is required.
 
 ### Scenario 1 — Hierarchy reaches the actual provider request
 
-The [root-only baseline](../../engine/prompt/builder.go) is retained as a legacy
-API while the factory selects scoped integration under
-[ADR 0374](../adr/0374-agents-instruction-hierarchy.md).
+Extend [existing discovery](../../engine/prompt/builder.go) and RootAssembler in
+place under [ADR 0374](../adr/0374-agents-instruction-hierarchy.md); root and nested
+cases share the same target-aware implementation.
 
 **Acceptance:**
 - AC1.1: A nested target automatically receives root, package, and deeper AGENTS in order, with nearest-conflict framing and explicit user-priority framing, without a manual instruction-file read or root pointer.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario1_ProviderHierarchy`
-- AC1.2: Missing/blank root AGENTS uses root CLAUDE, genuine errors do not, and nested CLAUDE never contributes. The legacy RootAssembler remains root-only. Both root/scoped hierarchy views retain project provenance, including when a fixed driver registration tries to promote them.
+- AC1.2: Missing/blank root AGENTS uses root CLAUDE, genuine errors do not, and nested CLAUDE never contributes. DiscoverInstructions and RootAssembler resolve root and nested targets through the same extended discovery. Root and nested messages retain project provenance, including when a fixed driver registration tries to promote them.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario1_FallbackCompatibility`
-- AC1.3: Sibling-only transitions replace active scopes; a two-target request frames both independently, deduplicates shared hierarchy ancestors, and preserves identical text from different scopes and all global legacy messages. Narrowing `[website, services]` to `[website]` removes services even without deferral. Operator source combine/replace precedence remains separate from directory precedence.
+- AC1.3: Sibling-only transitions replace active scopes; a two-target request frames both independently, deduplicates shared hierarchy ancestors, and preserves identical text from different scopes and all global messages. Narrowing `[website, services]` to `[website]` removes services even without deferral. Operator source combine/replace precedence remains separate from directory precedence.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario1_SiblingsAndSourcePrecedence`
 
 ### Scenario 2 — Guidance precedes the decision that executes
@@ -317,9 +389,9 @@ while adding reconsideration before effects.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario2_BeforeMutation`
 - AC2.2: Copy and Move resolve both operands; Remove and directory namespace operations use operand-parent scopes. An invalid operand cannot turn the gate off. Initial deferral executes no mixed-batch tool.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario2_MultiPathAndMixedBatch`
-- AC2.3: Effective-argument rewrites, permission Ask/deny, and changed guidance during approval cannot execute an unreviewed target; a post-dispatch change closes only the unexecuted suffix. An AGENTS edit earlier in a batch forces fresh guidance for later mutations. Under `replace`, a source contributing only website guidance continues to win over a fallback root source when rechecking the service mutation in the same website/service batch.
-  - verify: `TestADR_0374_AgentsHierarchy_Scenario2_ReentryAndEffectiveArguments`
-- AC2.4: Opaque Shell/custom/MCP calls preserve ordinary permission outcomes, do not infer paths from payloads, and carry the coverage limitation through the real factory's model-visible protocol instruction and delivered diagnostics.
+- AC2.3: Effective-argument rewrites, permission Ask/deny, and changed guidance during approval cannot execute an unreviewed target; a post-dispatch change closes only the unexecuted suffix. An AGENTS edit earlier in a batch forces fresh guidance for later mutations. Under `replace`, a source contributing only website guidance continues to win over a fallback root source when rechecking the service mutation in the same website/service batch. Changed guidance invalidates affected cached reviews/approvals; unchanged refresh does not. Concurrent parent/child review facts stay scoped to their own run.
+  - verify: `TestADR_0374_AgentsHierarchy_Scenario2_ReentryAndEffectiveArguments`; `TestADR_0374_AgentsHierarchy_Scenario2_RunScopedReviewFacts`
+- AC2.4: Opaque Shell/custom/MCP calls preserve ordinary permission outcomes, do not infer paths from payloads, and carry the coverage limitation through the real factory's model-visible protocol instruction and delivered diagnostics. A run overlay named Write remains opaque; covered catalog registrations follow the explicit built-in operand contract without extra Spec calls.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario2_OpaqueCoverage`
 
 ### Scenario 3 — Source authority is independent of execution
@@ -344,7 +416,7 @@ and [binding lifetime](../../internal/app/harness_context_generation_test.go).
 **Acceptance:**
 - AC4.1: Ordinary isolated/direct-write Subagent, Parallel, and parented Team workers map their relative targets through the inherited parent source binding, never poisoned child checkout instructions. Each child assembles its own bounded active set. Specialist/internal-reviewer exclusions and no-FS attenuation remain effective.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario4_WorkerInheritance`
-- AC4.2: Concurrent children, child cancellation, and parent retirement preserve source-borrow ownership until the final holder releases; scopes from one run cannot affect another. Cold reopen rebinds current authorized context rather than recovering a host anchor from execution paths.
+- AC4.2: Concurrent children, repeated boundary refreshes, child cancellation, and parent retirement preserve source-borrow ownership until the final holder releases. Each child run retains at most one lifetime hold/cancellation callback, with balanced per-observation borrows and no growth proportional to refresh count. Scopes from one run cannot affect another. Cold reopen rebinds current authorized context rather than recovering a host anchor from execution paths.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario4_BindingLifetime`
 
 ### Scenario 5 — Refresh survives continuation without persisted instruction bodies
@@ -353,11 +425,11 @@ Partially supersede [ADR 0043](../adr/0043-ephemeral-turn0-instruction-fragments
 only for scoped project context.
 
 **Acceptance:**
-- AC5.1: Created, changed, blanked, removed, and renamed instruction files are observed at the next specified boundary; unrelated per-run fragments do not refresh. Compaction and new runs receive current applicable guidance without fragment accumulation in snapshots or event-folded history.
-  - verify: `TestADR_0374_AgentsHierarchy_Scenario5_RefreshAndCompaction`
+- AC5.1: Created, changed, blanked, removed, and renamed instruction files are observed at the next specified boundary; counted static leaves assemble once per run while selected-source wrappers refresh without bypassing admission or replacement. Independent runs sharing the same assembler instances have isolated snapshots. Static-leaf failures warn once and contribute no partial results; live hierarchy failures stop affected work. Compaction and new runs receive current applicable guidance without fragment accumulation in snapshots or event-folded history. OperatorProfileSource retains its independent per-request refresh.
+  - verify: `TestADR_0374_AgentsHierarchy_Scenario5_RefreshAndCompaction`; `TestADR_0374_AgentsHierarchy_Scenario5_SingleChainLifetimes`
 - AC5.2: In-process approval continuation revalidates visibility; restart/reopen of a pending covered mutation requires a fresh model decision with current source bytes, retains valid pairing, and does not reuse permission approval for changed arguments.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario5_ApprovalRestart`
-- AC5.3: The run-owned active set and fingerprints have explicit cleanup and restart-loss decisions in ADR 0027's maintained inventories; no watcher or durable scope cache is introduced.
+- AC5.3: The run-owned static snapshots, active set, and fingerprints have explicit cleanup and restart-loss decisions in ADR 0027's maintained inventories; no watcher or durable scope cache is introduced.
   - verify: inspection — review the run owner and both ADR 0027 inventory rows against implementation.
 
 ### Scenario 6 — Failures and incomplete coverage are visible
@@ -382,7 +454,7 @@ Follow [ADR 0374](../adr/0374-agents-instruction-hierarchy.md),
 [documentation ownership contract](../development-process.md#documentation-change-review).
 
 **Acceptance:**
-- AC7.1: A factory-to-provider offline conformance fixture exercises a fresh Write decision, sibling transition, source/execution separation, and approval continuation with real dispatch. Existing source/execution, generation, and MicroVM harness-context proofs remain green; real client/placement integration against an offline MicroVM protocol fixture includes no-FS, child poison, restart, and ledger separation. This does not prove the external runtime implementation.
+- AC7.1: A factory-to-provider offline conformance fixture exercises a fresh Write decision, sibling transition, source/execution separation, and approval continuation with real dispatch through the single Deps.Instructions chain. Scope delivery and action-review facts remain correct with durable evidence enabled or disabled; emitted request manifests match the provider's fragment view. Existing source/execution, generation, and MicroVM harness-context proofs remain green; real client/placement integration against an offline MicroVM protocol fixture includes no-FS, child poison, restart, and ledger separation. This does not prove the external runtime implementation.
   - verify: `TestADR_0374_AgentsHierarchy_Scenario7_FactoryConformance`; `TestADR_0374_AgentsHierarchy_Scenario7_MicroVMConformance`
 - AC7.2: The owning public guide documents exact scope, precedence, refresh, limits, trust prerequisites, and opaque-tool limitations; context architecture reflects the shipped lifecycle. API snapshots and classified changelog entries match the approved declarations. Structural provider tests claim delivery/framing/order, not arbitrary live-model obedience.
   - verify: inspection — review the two owning pages and API/changelog diff; run `task api:check`, `task docs`, and `task site:build`.

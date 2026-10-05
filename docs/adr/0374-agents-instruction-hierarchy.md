@@ -32,6 +32,22 @@ The [acceptance plan](../acceptance/agents-instruction-hierarchy.md) owns exact
 interfaces, limits, error outcomes, and proofs. Its unchecked decisions require
 human review before implementation; the following is the recommended design.
 
+### Extend the existing composition
+
+Pass explicit targets through `InstructionAssembler`, `MultiAssembler`, and the
+existing manifest-aware path. Extend `InstructionManifest` with applicability and
+source metadata. Extend `RootAssembler` and `DiscoverInstructions` in place;
+root and nested cases use one discovery implementation. Reuse `WorkspaceReader`
+and `BoundedWorkspaceReader` for source reads and `LocalFileOperands` for covered
+built-in targets. Keep `Deps.Instructions` as the only assembly dependency.
+
+The signature change is intentional. No deprecated root assembler, compatibility
+shim, parallel scoped interface, or second instruction result type is needed.
+Static built-in fragments are snapshotted in private run state by their position
+in the existing MultiAssembler tree; the selected instruction-source wrapper
+remains live and retains its admission, provenance, and combine/replace logic.
+Targets are ordinary arguments, not hidden context values or shared mutable state.
+
 ### Resolve directory scopes inside an admitted source
 
 Use the source's logical root and a trusted execution-to-source subtree mapping.
@@ -50,8 +66,9 @@ and its subtree mapping were explicitly admitted.
 
 ### Reconsider actions when guidance was not visible
 
-Covered tools expose concrete operand metadata through an optional tool interface.
-The engine resolves the whole batch before effects. If applicable instructions
+The engine reuses `LocalFileOperands` for the covered built-in file tools,
+validating the complete operand set and excluding Shell inference. It resolves
+the whole batch before effects. If applicable instructions
 were absent or different in the generating request, close the batch with paired
 not-executed results and ask the model for a new decision with current guidance.
 This covers first-write creation and same-batch Read/Edit without relying on the
@@ -64,7 +81,7 @@ Permission approval and instruction visibility are separate facts. A restarted
 run cannot recover ephemeral visibility proof from old tool arguments or approval;
 it must obtain a new model decision before a pending covered mutation executes.
 
-Shell and tools without concrete operand metadata retain ordinary authorization.
+Shell, custom/MCP tools, and search/listing tools retain ordinary authorization.
 Their effects cannot be exhaustively inferred from command strings or arbitrary
 JSON keys. State this coverage limit in model instructions, operator diagnostics,
 and the owning guide. The hierarchy protocol is a guidance-delivery guarantee for
@@ -74,8 +91,11 @@ covered operands, not a filesystem sandbox or proof of live-model obedience.
 
 Keep the most recent batch's bounded target set on the run, replacing it at scope
 transitions. Assemble its applicable project chain before inference and recheck it
-at action boundaries. Other ephemeral fragments retain their existing per-run
-lifetime. Automatically injected project instruction bodies never enter persisted
+at action boundaries. Direct soul, memory-index, rules, and user-model assembler
+leaves retain per-run snapshots; the host's operator-profile facts retain their
+separate per-request system-suffix refresh. The exact custom-source migration and
+static-leaf failure behavior are specified in the plan. Automatically injected
+project instruction bodies never enter persisted
 conversation, events, or snapshots; explicit Read tool results retain their normal
 history contract. Compaction preserves the genuine user conversation and reassembly
 supplies current scoped context independently.
@@ -135,9 +155,9 @@ not provide a transaction between source reads and execution. Directory namespac
 operations use operand-parent guidance without scanning all descendants. Opaque
 commands retain a documented gap in automatic target discovery.
 
-The implementation adds optional engine interfaces and changes production
-project-context behavior. Existing direct-call root assemblers and nil scoped
-engine dependencies stay compatible. The engine API snapshots and classified
-changelog record the additive interfaces and behavioral changes. Frozen predecessor
-ADRs remain intact; this record narrowly replaces their incompatible discovery and
-freshness decisions if approved.
+The implementation extends existing engine contracts instead of deprecating or
+duplicating them. API snapshots and a classified Changed changelog entry record
+the target-aware assembly/discovery signatures, scope metadata, and behavior.
+Callers and adapters migrate together; there is no root-only compatibility branch.
+Frozen predecessor ADRs remain intact; this record narrowly replaces their
+incompatible discovery and freshness decisions if approved.
