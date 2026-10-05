@@ -82,10 +82,10 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 			return entry.Reasoning, true
 		}
 	}
-	// Preserve the configured default's existing inventory-floor presence without
-	// storing that floor as a live observation.
+	// Preserve the configured default's presence floor for non-Messages protocols.
+	// Anthropic's missing live row is not an explicit unsupported declaration.
 	if reg != nil && modelID != "" {
-		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID {
+		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID && entry.protocol != protocolAnthropicMessages {
 			return false, true
 		}
 	}

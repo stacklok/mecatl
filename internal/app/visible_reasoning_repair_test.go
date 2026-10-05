@@ -71,11 +71,13 @@ func exerciseAnthropicThinkingComposition(t *testing.T, model, capabilities, wan
 			default: // Later title requests must not block the stream.
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "event: message_start\n"+`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"`+model+`","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}`+"\n\n"+
-				"event: content_block_start\n"+`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`+"\n\n"+
-				"event: content_block_delta\n"+`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"visible summary"}}`+"\n\n"+
-				"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n"+
-				"event: message_delta\n"+`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`+"\n\n"+
+			_, _ = io.WriteString(w, "event: message_start\n"+`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"`+model+`","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}`+"\n\n")
+			if _, ok := body["thinking"]; ok {
+				_, _ = io.WriteString(w, "event: content_block_start\n"+`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`+"\n\n"+
+					"event: content_block_delta\n"+`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"visible summary"}}`+"\n\n"+
+					"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n")
+			}
+			_, _ = io.WriteString(w, "event: message_delta\n"+`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`+"\n\n"+
 				"event: message_stop\n"+`data: {"type":"message_stop"}`+"\n\n")
 		default:
 			http.Error(w, "unexpected path", http.StatusNotFound)
@@ -83,7 +85,7 @@ func exerciseAnthropicThinkingComposition(t *testing.T, model, capabilities, wan
 	}))
 	defer upstream.Close()
 	cfg := Config{
-		Workspace: t.TempDir(), StoreDir: t.TempDir(), MemoryDir: t.TempDir(), NoSoul: true,
+		Workspace: t.TempDir(), StoreDir: t.TempDir(), MemoryDir: t.TempDir(), UserModelDir: t.TempDir(), NoSoul: true,
 		DefaultProvider: "gateway", DefaultModel: model, ReasoningEffort: "high", LLMMaxAttempts: 1,
 		ProviderDefinitions:   permconfig.ProviderDefinitions{"gateway": {ID: "gateway", BaseURL: upstream.URL, DefaultModel: model, APIFlavor: "anthropic-messages", Auth: permconfig.ProviderAuth{Method: "api_key"}}},
 		CustomProviderAPIKeys: map[string]string{"gateway": key}, envDetector: fakeEnv(nil),
@@ -125,8 +127,8 @@ func exerciseAnthropicThinkingComposition(t *testing.T, model, capabilities, wan
 			seen = true
 		}
 	})
-	if !seen {
-		t.Error("stream did not project thinking delta as reasoning.delta")
+	if seen != (wantMode != "") {
+		t.Errorf("reasoning.delta observed = %v, want %v", seen, wantMode != "")
 	}
 	var request map[string]any
 	select {

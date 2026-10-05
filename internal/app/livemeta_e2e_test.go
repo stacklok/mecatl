@@ -103,6 +103,7 @@ func TestADR_0016_MissingThinkingCapabilityUsesModelFallback(t *testing.T) {
 		``,
 		`"capabilities":{}`,
 		`"capabilities":{"thinking":{}}`,
+		`"capabilities":{"thinking":{"supported":true}}`,
 		`"capabilities":{"thinking":{"supported":true,"types":{}}}`,
 	} {
 		t.Run(capabilities, func(t *testing.T) {
