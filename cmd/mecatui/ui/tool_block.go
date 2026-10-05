@@ -50,13 +50,13 @@ func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPre
 // results remain in the inspector.
 func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
-		if metadata, ok := scrollback.ToolCallMetadataOf(s); ok {
-			if projection := projectToolCall(metadata); projection.settled() {
-				return r.renderSettledToolLine(blockID, projection)
-			}
+		metadata, _ := scrollback.ToolCallMetadataOf(s)
+		projection := projectToolCall(metadata)
+		if projection.settled() {
+			return r.renderSettledToolLine(blockID, projection)
 		}
 		presentation := toolCardPresentationFromSnapshot(p)
-		prepared := r.prepareTypedToolCard(presentation, expand)
+		prepared := r.prepareTypedToolCard(presentation, expand, projection.state)
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -90,25 +90,27 @@ func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProj
 	}
 }
 
-func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool) preparedToolCard {
+func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool, projected ...toolcallProjectionState) preparedToolCard {
 	r.cardPrepares++
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
 	theme := r.blockTheme()
 
-	var glyph, glyphText string
-	switch {
-	case !p.resolved && !p.finished:
-		glyphText, glyph = "…", r.th.Style("toolName").Render("…")
-	case (p.resolved && p.isError) || (!p.resolved && p.failed):
-		glyphText, glyph = "✗", r.th.Style("toolErr").Render("✗")
-	default:
-		glyphText, glyph = "✓", r.th.Style("toolOk").Render("✓")
+	state := projectToolCall(scrollback.ToolCallMetadata{
+		ResultReceived: p.resolved, ResultError: p.isError, Terminal: p.finished, LifecycleFailed: p.failed,
+	}).state
+	if len(projected) > 0 {
+		state = projected[0]
 	}
+	glyphText, status, style := state.status()
+	glyph := r.th.Style(style).Render(glyphText)
 	mcpName, isMCP := mcpTitle(p.name)
 	headLabel := terminaltext.Sanitize(p.name)
 	if isMCP {
 		headLabel = mcpName
+	}
+	if len(projected) > 0 {
+		headLabel = status + " · " + headLabel
 	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
@@ -203,13 +205,13 @@ func (p preparedToolCard) render() string {
 // presentation value. Cache storage and frame provenance remain renderer-owned.
 func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
-		if metadata, ok := scrollback.ToolCallMetadataOf(s); ok {
-			if projection := projectToolCall(metadata); projection.settled() {
-				return r.renderSettledToolLine(blockID, projection)
-			}
+		metadata, _ := scrollback.ToolCallMetadataOf(s)
+		projection := projectToolCall(metadata)
+		if projection.settled() {
+			return r.renderSettledToolLine(blockID, projection)
 		}
 		r.cardPrepares++
-		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), expand).Prepared
+		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), expand, projection.state).Prepared
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -222,13 +224,13 @@ func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p
 // presentation value. The Agents overlay continues to use its existing ui.block path.
 func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.TeamCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
-		if metadata, ok := scrollback.ToolCallMetadataOf(s); ok {
-			if projection := projectToolCall(metadata); projection.settled() {
-				return r.renderSettledToolLine(blockID, projection)
-			}
+		metadata, _ := scrollback.ToolCallMetadataOf(s)
+		projection := projectToolCall(metadata)
+		if projection.settled() {
+			return r.renderSettledToolLine(blockID, projection)
 		}
 		r.cardPrepares++
-		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), expand).Prepared
+		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), expand, projection.state).Prepared
 		out := prepared.Text()
 		if r.width > r.indent {
 			out = r.indentLines(out)
@@ -237,32 +239,34 @@ func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 	})
 }
 
-func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool) preparedToolCard {
+func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool, projected ...toolcallProjectionState) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand)
+	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand, projected...)
 }
 
-func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool) preparedToolCard {
+func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool, projected ...toolcallProjectionState) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand)
+	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand, projected...)
 }
 
-func (r *renderer) prepareDelegationCard(name string, resolved, done bool, stop, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool) preparedToolCard {
+func (r *renderer) prepareDelegationCard(name string, resolved, done bool, stop, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool, projected ...toolcallProjectionState) preparedToolCard {
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
-	var glyph, glyphText string
-	switch {
-	case !resolved && !done:
-		glyphText, glyph = "…", r.th.Style("toolName").Render("…")
-	case (resolved && isError) || (!resolved && done && subagentStopErrored(stop)):
-		glyphText, glyph = "✗", r.th.Style("toolErr").Render("✗")
-	default:
-		glyphText, glyph = "✓", r.th.Style("toolOk").Render("✓")
+	state := projectToolCall(scrollback.ToolCallMetadata{
+		ResultReceived: resolved, ResultError: isError, Terminal: done, Stop: stop,
+	}).state
+	if len(projected) > 0 {
+		state = projected[0]
 	}
+	glyphText, status, style := state.status()
+	glyph := r.th.Style(style).Render(glyphText)
 	mcpName, isMCP := mcpTitle(name)
 	headLabel := terminaltext.Sanitize(name)
 	if isMCP {
 		headLabel = mcpName
+	}
+	if len(projected) > 0 {
+		headLabel = status + " · " + headLabel
 	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
