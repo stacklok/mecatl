@@ -1136,8 +1136,8 @@ if `--anonymous` is also present), then explicit
 `--anonymous`, then a saved enrollment. A clean registry/target miss dials without a
 credential for both local and remote targets; only an actual server `Unauthenticated`
 response establishes that caller authentication is required. Explicit anonymous bypasses
-the registry even when enrollment exists, while corrupt or unreadable registry, keyring,
-or credential state never silently degrades ([ADR 0293](adr/0293-mecatui-anonymous-connect.md)).
+saved credentials without weakening server TLS verification. Saved authentication fails
+closed on corrupt or unreadable state ([ADR 0293](adr/0293-mecatui-anonymous-connect.md)).
 Remote credential-free targets still default to verified TLS, and plaintext requires an
 explicit `--tls=false`; no private IP, DNS name, or Tailscale-like target weakens that policy.
 In a credential-free Tailscale deployment, tailnet membership and ACLs are the shared
