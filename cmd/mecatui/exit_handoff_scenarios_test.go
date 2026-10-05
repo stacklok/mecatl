@@ -82,7 +82,7 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedResumeAfterTeardown(t *testing.T) 
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[0], finalSessionHandoffPrefix)), &decoded); err != nil || decoded != "final chat" {
 		t.Fatalf("ID record = %q, decoded=%q, err=%v", lines[0], decoded, err)
 	}
-	if !strings.Contains(got, "Resume: mecatui --resume 'final chat'\n") || !strings.Contains(got, "Or: mecatui --resume-latest (may select a different chat)\n") {
+	if !strings.Contains(got, "Resume:        mecatui --resume 'final chat'\n") || !strings.Contains(got, "               mecatui --resume-latest (may select a different chat)\n") {
 		t.Fatalf("missing exact/qualified continuation: %q", got)
 	}
 }
@@ -98,10 +98,15 @@ func TestMecatuiExitHandoff_Scenario1_AuthoritativeSummary(t *testing.T) {
 			ContextOccupancy: &client.ContextOccupancy{InputTokens: 999}}, nil
 	})
 	got := handoffOutput(t, "final", true, get, nil, false)
-	for _, line := range []string{"Session: Server display title\n", "Model calls: 7\n", "Tokens (main): 1.2M input, 13.4K output, 9 cache read, 3 cache write\nTokens (aux): 2.5K input, 40 output, 1K cache read\n"} {
-		if !strings.Contains(got, line) {
-			t.Fatalf("missing %q: %q", line, got)
-		}
+	want := "Session ID:    final\n" +
+		"Title:         Server display title\n" +
+		"Model calls:   7\n" +
+		"Tokens (main): 1.2M input, 13.4K output, 9 cache read, 3 cache write\n" +
+		"Tokens (aux):  2.5K input, 40 output, 1K cache read\n" +
+		"Resume:        mecatui --resume 'final'\n" +
+		"               mecatui --resume-latest (may select a different chat)\n"
+	if !strings.HasSuffix(got, "\n"+want) {
+		t.Fatalf("aligned summary = %q, want suffix %q", got, want)
 	}
 	if strings.Contains(got, "999") {
 		t.Fatalf("context meter leaked into lifetime totals: %q", got)
@@ -109,7 +114,7 @@ func TestMecatuiExitHandoff_Scenario1_AuthoritativeSummary(t *testing.T) {
 	got = handoffOutput(t, "final", true, handoffSnapshotGetter(func(context.Context, string) (client.SessionSnapshot, error) {
 		return client.SessionSnapshot{State: "completed", Turns: 0}, nil
 	}), nil, false)
-	if strings.Contains(got, "Session:") || strings.Contains(got, "cache read") || strings.Contains(got, "Tokens (aux)") || !strings.Contains(got, "Model calls: 0\n") {
+	if strings.Contains(got, "Title:") || strings.Contains(got, "cache read") || strings.Contains(got, "Tokens (aux)") || !strings.Contains(got, "Model calls:   0\n") {
 		t.Fatalf("empty title/zero cache = %q", got)
 	}
 }
@@ -119,8 +124,8 @@ func TestMecatuiExitHandoff_Scenario1_SafePresentation(t *testing.T) {
 	got := handoffOutput(t, id, true, nil, nil, false)
 	line := ""
 	for _, l := range strings.Split(got, "\n") {
-		if strings.HasPrefix(l, "Resume: ") {
-			line = strings.TrimPrefix(l, "Resume: ")
+		if strings.HasPrefix(l, "Resume:") {
+			line = strings.TrimSpace(strings.TrimPrefix(l, "Resume:"))
 		}
 	}
 	if line == "" {
@@ -134,14 +139,14 @@ func TestMecatuiExitHandoff_Scenario1_SafePresentation(t *testing.T) {
 	for _, unsafeID := range []string{"two\nlines", "escape\x1b[31m", "bidi\u202eright"} {
 		got := handoffOutput(t, unsafeID, true, nil, nil, false)
 		quoted, _ := json.Marshal(unsafeID)
-		if !strings.Contains(got, finalSessionHandoffPrefix+string(quoted)+"\n") || strings.Contains(got, "Resume:") || strings.Contains(got, "Or:") {
+		if !strings.Contains(got, finalSessionHandoffPrefix+string(quoted)+"\n") || strings.Contains(got, "Resume:") || strings.Contains(got, "--resume-latest") || strings.Contains(got, "Session ID:") {
 			t.Fatalf("unsafe ID %q: %q", unsafeID, got)
 		}
 	}
 	got = handoffOutput(t, "final", true, handoffSnapshotGetter(func(context.Context, string) (client.SessionSnapshot, error) {
 		return client.SessionSnapshot{State: "completed", Title: "ok\nFAKE LINE\x1b[31m\u202eevil", Turns: 1}, nil
 	}), nil, false)
-	if strings.Contains(got, "\x1b") || strings.Contains(got, "\u202e") || strings.Contains(got, "\nFAKE LINE") || strings.Count(got, "Session:") != 1 || !strings.Contains(got, "Session: okFAKE LINE[31mevil\n") {
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\u202e") || strings.Contains(got, "\nFAKE LINE") || strings.Count(got, "Title:") != 1 || !strings.Contains(got, "Title:         okFAKE LINE[31mevil\n") {
 		t.Fatalf("untrusted title controls/lines: %q", got)
 	}
 }
@@ -166,7 +171,7 @@ func TestMecatuiExitHandoff_Scenario2_SnapshotUnavailable(t *testing.T) {
 			if time.Since(start) > 2*time.Second {
 				t.Fatalf("snapshot blocked cleanup beyond deadline: %s", time.Since(start))
 			}
-			if !strings.Contains(got, finalSessionHandoffPrefix+`"final"`+"\n") || !strings.Contains(got, "Resume: mecatui --resume 'final'\n") || strings.Contains(got, "Session:") || strings.Contains(got, "Model calls:") || strings.Contains(got, "Tokens (main):") {
+			if !strings.Contains(got, finalSessionHandoffPrefix+`"final"`+"\n") || !strings.Contains(got, "Resume:        mecatui --resume 'final'\n") || strings.Contains(got, "Title:") || strings.Contains(got, "Model calls:") || strings.Contains(got, "Tokens (main):") {
 				t.Fatalf("failed snapshot must retain only safe guidance: %q", got)
 			}
 		})

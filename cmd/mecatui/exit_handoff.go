@@ -44,35 +44,46 @@ func finishFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, inter
 		return
 	}
 	id := reporter.ActiveSessionID()
+	safeID := safeHandoffID(id)
 	var human strings.Builder
+	if safeID {
+		writeHandoffField(&human, "Session ID:", id)
+	}
 	if available {
 		if title := strings.TrimSpace(terminaltext.SanitizeSingleLine(snapshot.Title)); title != "" {
-			_, _ = fmt.Fprintf(&human, "Session: %s\n", title)
+			writeHandoffField(&human, "Title:", title)
 		}
-		_, _ = fmt.Fprintf(&human, "Model calls: %d\n", snapshot.Turns)
-		writeHandoffTokens(&human, "main", snapshot.Usage)
+		writeHandoffField(&human, "Model calls:", fmt.Sprint(snapshot.Turns))
+		writeHandoffField(&human, "Tokens (main):", handoffTokens(snapshot.Usage))
 		if snapshot.AuxiliaryUsage != (client.Usage{}) {
-			writeHandoffTokens(&human, "aux", snapshot.AuxiliaryUsage)
+			writeHandoffField(&human, "Tokens (aux):", handoffTokens(snapshot.AuxiliaryUsage))
 		}
 	}
-	if safeHandoffID(id) {
-		_, _ = fmt.Fprintf(&human, "Resume: mecatui --resume '%s'\n", strings.ReplaceAll(id, "'", "'\"'\"'"))
-		human.WriteString("Or: mecatui --resume-latest (may select a different chat)\n")
+	if safeID {
+		writeHandoffField(&human, "Resume:", "mecatui --resume '"+strings.ReplaceAll(id, "'", "'\"'\"'")+"'")
+		writeHandoffField(&human, "", "mecatui --resume-latest (may select a different chat)")
 	}
 	_, _ = io.WriteString(w, human.String())
 }
 
-// writeHandoffTokens writes one humanized usage line; cache counts are labelled
+// handoffLabelWidth aligns values after the widest label, "Tokens (main): ".
+const handoffLabelWidth = len("Tokens (main): ")
+
+func writeHandoffField(b *strings.Builder, label, value string) {
+	_, _ = fmt.Fprintf(b, "%-*s%s\n", handoffLabelWidth, label, value)
+}
+
+// handoffTokens humanizes one usage value; cache counts are labelled
 // components of input, never summed with it.
-func writeHandoffTokens(b *strings.Builder, label string, u client.Usage) {
-	_, _ = fmt.Fprintf(b, "Tokens (%s): %s input, %s output", label, ui.HumanizeTokens(u.InputTokens), ui.HumanizeTokens(u.OutputTokens))
+func handoffTokens(u client.Usage) string {
+	s := ui.HumanizeTokens(u.InputTokens) + " input, " + ui.HumanizeTokens(u.OutputTokens) + " output"
 	if u.CacheReadTokens != 0 {
-		_, _ = fmt.Fprintf(b, ", %s cache read", ui.HumanizeTokens(u.CacheReadTokens))
+		s += ", " + ui.HumanizeTokens(u.CacheReadTokens) + " cache read"
 	}
 	if u.CacheWriteTokens != 0 {
-		_, _ = fmt.Fprintf(b, ", %s cache write", ui.HumanizeTokens(u.CacheWriteTokens))
+		s += ", " + ui.HumanizeTokens(u.CacheWriteTokens) + " cache write"
 	}
-	b.WriteByte('\n')
+	return s
 }
 
 func safeHandoffID(id string) bool {
