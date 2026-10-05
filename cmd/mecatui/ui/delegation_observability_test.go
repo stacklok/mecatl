@@ -52,6 +52,51 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	}
 }
 
+// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews retains the
+// historical AC3.2 name after the newer mecatui-quieter-conversation-tool-calls plan
+// retired ctrl+t card expansion. Bounded preview content remains observable in the
+// actual f6 Agents focus, which is the newer plan's replacement route.
+func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *testing.T) {
+	const rawMessage = "child message must stay out of the parent conversation"
+	longMessage := strings.Repeat("m", maxTraceMessageLen+40)
+	m := newMCPModel(t, aztec(), nil)
+	m = seedSubagents(m, "p1",
+		startSub("p1", "c1", "audit auth"),
+		toolSubPreview("p1", "c1", "tool.call", "Grep", "pattern: auth", 1),
+		toolSubPreview("p1", "c1", "tool.call", "Read", "file: auth.go", 2),
+		toolSubPreview("p1", "c1", "tool.result", "Read", "found the auth boundary", 2),
+		toolSubPreview("p1", "c1", "message.delta", "", rawMessage+longMessage, 2),
+	)
+
+	// Before f6 opens the Agents overlay, child content must not spill into the parent
+	// conversation. This absence assertion is mutation-proven below.
+	conversation := stripANSIstr(m.View().Content)
+	if strings.Contains(conversation, rawMessage) {
+		t.Errorf("child content spilled into the parent conversation: %q", conversation)
+	}
+
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.subagents.view != subagentFocus {
+		t.Fatalf("enter should focus the child in the f6 Agents view, view = %v", m.subagents.view)
+	}
+	focus := stripANSIstr(m.View().Content)
+	if !strings.Contains(focus, "✓ Grep — pattern: auth") {
+		t.Errorf("Agents focus should show the child tool args preview, got %q", focus)
+	}
+	if !strings.Contains(focus, "✓ Read — found the auth boundary") {
+		t.Errorf("Agents focus should show the child tool result preview, got %q", focus)
+	}
+	if strings.Contains(focus, rawMessage+longMessage) {
+		t.Errorf("Agents focus must cap child message lines, got %q", focus)
+	}
+	if !strings.Contains(focus, rawMessage+strings.Repeat("m", 16)) {
+		t.Errorf("Agents focus should retain the capped child message prefix, got %q", focus)
+	}
+}
+
 // TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews pins AC3.3:
 // the Parallel f6 group focus renders each branch's interleaved trace (tool
 // chips with bounded previews + capped message lines) below its roster line, in
