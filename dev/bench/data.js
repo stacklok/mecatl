@@ -293588,6 +293588,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791187624180,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c51713188e0a7bd4db2bbf77dd471386d730c36",
+          "message": "fix(mecatui): persist trusted server CA certificates (#1233)\n\nPersist target-specific gRPC server CA references separately from OIDC issuer trust. Restore saved trust on later connects while preserving explicit CA precedence and restricting credential-independent lookups to the actual dial target.\n\nAdd offline TLS RPC regressions for saved credentials, explicit authentication modes, and wrong or missing trust roots.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T12:50:57+03:00",
+          "tree_id": "15c1f5a9372f3675e3497decfcee984adde716fd",
+          "url": "https://github.com/stacklok/mecatl/commit/4c51713188e0a7bd4db2bbf77dd471386d730c36"
+        },
+        "date": 1791194615665,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -384484,6 +384523,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791194612439,
+  "lastUpdate": 1791194617124,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
