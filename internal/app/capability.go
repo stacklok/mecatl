@@ -63,7 +63,10 @@ func modelCapability(reg *providerRegistry, providerID, modelID string) port.Pro
 // modelReasoningSupport reports whether the (provider, model) is known to support
 // reasoning-effort, and whether that fact is KNOWN at all (ADR 0055 capability
 // gate). It mirrors modelCapability's precedence: (1) LIVE-FIRST — a live meta
-// entry's Reasoning bit is authoritative when present; (2) CATALOG floor — the
+// entry's Reasoning bit is authoritative when its support is known. Anthropic
+// listings retain omitted thinking support as unknown, even when the row is
+// present; the public boolean inventory remains false for that omission.
+// (2) CATALOG floor — the
 // embedded catalog's SupportsReasoning; (3) UNKNOWN — neither source describes the
 // model (a passthrough/uncatalogued model), so known=false and the caller
 // FAILS-OPEN (sends effort anyway; the provider 400s honestly if it really cannot
@@ -76,6 +79,9 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	// (1) Live-first.
 	if reg != nil && reg.meta != nil {
 		if entry, ok := reg.meta.lookup(providerID, modelID); ok {
+			if entry.anthropicThinking {
+				return entry.Reasoning, entry.Thinking.Known
+			}
 			return entry.Reasoning, true
 		}
 	}

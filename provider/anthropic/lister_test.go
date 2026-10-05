@@ -139,6 +139,7 @@ func TestVisibleReasoning_Scenario1_ExplicitCapabilitiesWin(t *testing.T) {
 		adaptive, manual   bool
 	}{
 		{name: "unsupported", capabilities: `{"thinking":{"supported":false}}`},
+		{name: "unsupported overrides contradictory types", capabilities: `{"thinking":{"supported":false,"types":{"adaptive":{"supported":true},"enabled":{"supported":true}}}}`},
 		{name: "adaptive", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":true}}}}`, adaptive: true},
 		{name: "manual", capabilities: `{"thinking":{"supported":true,"types":{"enabled":{"supported":true}}}}`, manual: true},
 	} {

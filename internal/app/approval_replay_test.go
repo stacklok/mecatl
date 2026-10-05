@@ -22,6 +22,7 @@ import (
 // import.
 type sseEvent struct {
 	Type  string `json:"type"`
+	Text  string `json:"text"`
 	RunID string `json:"run_id"`
 	Ask   struct {
 		AskID string `json:"ask_id"`

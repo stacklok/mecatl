@@ -164,6 +164,7 @@ func mapModelInfo(info sdk.ModelInfo) Model {
 	thinkingKnown := caps.JSON.Thinking.Valid() &&
 		((caps.Thinking.JSON.Supported.Valid() && !caps.Thinking.Supported) ||
 			caps.Thinking.Types.JSON.Adaptive.Valid() || caps.Thinking.Types.JSON.Enabled.Valid())
+	unsupported := caps.JSON.Thinking.Valid() && caps.Thinking.JSON.Supported.Valid() && !caps.Thinking.Supported
 	return Model{
 		ID:           info.ID,
 		DisplayName:  info.DisplayName,
@@ -172,8 +173,8 @@ func mapModelInfo(info sdk.ModelInfo) Model {
 		Image:        caps.ImageInput.Supported,
 		Thinking: ThinkingDescriptor{
 			Known:    thinkingKnown,
-			Adaptive: caps.Thinking.Types.Adaptive.Supported,
-			Enabled:  caps.Thinking.Types.Enabled.Supported,
+			Adaptive: !unsupported && caps.Thinking.Types.Adaptive.Supported,
+			Enabled:  !unsupported && caps.Thinking.Types.Enabled.Supported,
 		},
 	}
 }

@@ -43,14 +43,15 @@ func anyProviderHasLister(reg *providerRegistry) bool {
 // modelEntry is source-neutral observed metadata. Nil modalities mean unknown;
 // a non-nil declaration, including an empty one, is authoritative.
 type modelEntry struct {
-	ID              string
-	DisplayName     string
-	ContextLimit    int
-	OutputLimit     int
-	InputModalities []string
-	Reasoning       bool
-	ToolCall        bool
-	Thinking        thinkingDescriptor
+	ID                string
+	DisplayName       string
+	ContextLimit      int
+	OutputLimit       int
+	InputModalities   []string
+	Reasoning         bool
+	ToolCall          bool
+	Thinking          thinkingDescriptor
+	anthropicThinking bool // this Anthropic listing distinguishes unknown from explicit unsupported
 }
 
 type thinkingDescriptor struct{ Known, Adaptive, Enabled bool }
@@ -148,7 +149,7 @@ func (l anthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 			mods = append(mods, "image")
 		}
 		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: mods,
-			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, ToolCall: true,
+			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, ToolCall: true, anthropicThinking: true,
 			Thinking: thinkingDescriptor{Known: m.Thinking.Known, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}})
 	}
 	return out, nil

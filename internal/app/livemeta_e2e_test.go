@@ -131,6 +131,11 @@ func TestADR_0016_MissingThinkingCapabilityUsesModelFallback(t *testing.T) {
 			if known {
 				t.Fatal("missing thinking capability metadata became known unsupported; want prefix fallback")
 			}
+			fragment := ""
+			if capabilities != "" {
+				fragment = "," + capabilities
+			}
+			exerciseAnthropicThinkingComposition(t, "claude-opus-4-8", fragment, "adaptive", "high", false)
 		})
 	}
 }
