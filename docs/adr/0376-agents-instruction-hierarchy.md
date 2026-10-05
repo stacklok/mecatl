@@ -1,4 +1,4 @@
-# ADR 0375 - Target-scoped AGENTS instruction hierarchy
+# ADR 0376 - Target-scoped AGENTS instruction hierarchy
 
 - Status: Draft; exact interfaces and discovery/retention ceilings remain open in the acceptance plan
 - Date: 2026-10-05

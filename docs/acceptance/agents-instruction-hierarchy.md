@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — changes instruction applicability, source-relative mapping, and ephemeral project context.
-**Decision record:** [ADR 0375](../adr/0375-agents-instruction-hierarchy.md)
+**Decision record:** [ADR 0376](../adr/0376-agents-instruction-hierarchy.md)
 **Phase:** Target-scoped project instructions
 **Status:** draft, 2026-10-05. The choices recorded below are authorized; exact material interfaces and discovery limits still need human review. No implementation approval, merge, or shipment is claimed.
 **Delivery:** Split. Plan/interface PR first; implementation follows the approved plan checkpoint. The operator requested an implementation PR stacked on the plan PR, subject to explicit pre-merge approval of the identified plan commit; otherwise plan merge is the approval event.
@@ -32,7 +32,7 @@ The first model request receives guidance from the root through the starting fol
 - **CLI / config:** None — no new source selector, feature toggle, or YAML key. Source registrations retain operator-selected order, admission, and whole-source `combine`/`replace` semantics.
 - **Events / persistence:** None — discovered bodies and scope state stay run-local, not automatically persisted in tool history, events, or snapshots. Existing manifests account for request contributions; existing injected diagnostics/projections carry safe truncation, omission, and source-unavailable warnings. Explicit Read results retain their existing persistence contract.
 - **Security / authority:** Source reads stay within the selected, admitted binding, including child isolation and no-FS attenuation. No target opens a host ancestor, changes placement, grants native run access, or mints ReadLedger evidence. User requests outrank repository guidance but not system/developer rules or tool permissions. Deny/Ask, effective-argument authorization, CAS, read-before-edit, and create-only rules are unchanged. Instruction loading failures cannot grant or revoke tool authority.
-- **Compatibility / migration:** Change the existing exported assembler/discovery contract in place after the unchecked signature decision; update callers, API snapshots, and a classified engine changelog entry. Preserve one `Deps.Instructions` composition path, manifest/message alignment, the root case with no new scopes, and existing source trust. No legacy parallel pipeline, persisted-session migration, or rewrite of frozen predecessor ADRs. ADR 0375 would narrowly supersede root-only/per-run project guidance in [ADR 0359](../adr/0359-harness-context-source-authority.md) and [ADR 0043](../adr/0043-ephemeral-turn0-instruction-fragments.md) if approved.
+- **Compatibility / migration:** Change the existing exported assembler/discovery contract in place after the unchecked signature decision; update callers, API snapshots, and a classified engine changelog entry. Preserve one `Deps.Instructions` composition path, manifest/message alignment, the root case with no new scopes, and existing source trust. No legacy parallel pipeline, persisted-session migration, or rewrite of frozen predecessor ADRs. ADR 0376 would narrowly supersede root-only/per-run project guidance in [ADR 0359](../adr/0359-harness-context-source-authority.md) and [ADR 0043](../adr/0043-ephemeral-turn0-instruction-fragments.md) if approved.
 
 ### One selected-source composition path
 
@@ -62,15 +62,15 @@ A native execution-backed source is usable only when its existing binding and ru
 
 ### Scenario 1 - Hierarchy reaches provider context
 
-Extend [existing discovery](../../engine/prompt/builder.go) and the single `RootAssembler` path under [ADR 0375](../adr/0375-agents-instruction-hierarchy.md).
+Extend [existing discovery](../../engine/prompt/builder.go) and the single `RootAssembler` path under [ADR 0376](../adr/0376-agents-instruction-hierarchy.md).
 
 **Acceptance:**
 - AC1.1: First request includes admitted root-to-starting-folder guidance; an encountered nested target causes its ancestor and nearest directory instructions to appear in the next request, not automatically in persisted results. Explicit Read retains its ordinary result behavior. Mentioning a path in chat alone has no nested activation guarantee.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario1_ProviderHierarchy`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario1_ProviderHierarchy`
 - AC1.2: In each directory, missing or blank AGENTS selects CLAUDE; a genuine AGENTS read error cannot select fallback. Ancestor order, nearest-conflict precedence, nonconflicting ancestors, and project/user-role provenance hold across root and nested discovery.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario1_FallbackCompatibility`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario1_FallbackCompatibility`
 - AC1.3: A later sibling stays in scope alongside earlier encountered scopes within the run bound; siblings do not govern each other. Shared ancestors are deduplicated without deduplicating distinct scopes or global contributions. The website/services example proves whole-source replacement suppresses lower-priority B in a mixed view, while services-only selects B; diagnostics identify omission.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario1_SiblingsAndSourcePrecedence`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario1_SiblingsAndSourcePrecedence`
 
 ### Scenario 2 - Discovery does not gate file effects
 
@@ -78,11 +78,11 @@ Preserve [dispatch and permission invariants](../../AGENTS.md#implementation-bou
 
 **Acceptance:**
 - AC2.1: Same-batch Read/Edit and first-touch Write/Copy/Move/Remove execute under ordinary permissions even when new guidance has not reached the model; the next request includes discovered scopes. No instruction-specific deferral, retry result, fingerprint, or rollback is created. Every executed call keeps ordinary paired results.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario2_BestEffortEffects`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario2_BestEffortEffects`
 - AC2.2: The corrected `LocalFileOperands` supplies both Copy/Move operands; incomplete/malformed operand sets do not count as scope discovery or bypass normal tool validation. Effective-argument rewrites still receive normal authorization, and read-before-edit, CAS, create-only, and Deny/Ask checks hold without an instruction-specific effective-call gate.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario2_OperandsAndAuthorization`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario2_OperandsAndAuthorization`
 - AC2.3: Shell, custom/MCP, search/listing tools, and an opaque run-overlay shadow do not trigger structured-scope discovery. A real factory delivers a model-visible limitation, while ordinary permissions for those tools remain unchanged.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario2_OpaqueCoverage`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario2_OpaqueCoverage`
 
 ### Scenario 3 - Authority remains with the admitted source
 
@@ -90,11 +90,11 @@ Retain [ADR 0359](../adr/0359-harness-context-source-authority.md)'s admission a
 
 **Acceptance:**
 - AC3.1: Distinct source/execution roots, trusted subtree mapping, and virtual sources use only selected admitted logical paths. A default source selected at a starting subfolder does not read poisoned parent or repository-root guidance, even when that ancestor is trusted; an explicitly selected admitted broader source is the positive control and may contribute its own ancestors. An unselected host/execution file or out-of-root operand cannot cause an ancestor walk or a new source selection.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario3_SourceMapping`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario3_SourceMapping`
 - AC3.2: Backend symlink containment, cancellation, and source authorization remain intact; discovery creates no execution ReadLedger evidence. No-FS and isolated/direct-write children retain existing source inheritance, exclusions, and independent bounded run scope state without reading poisoned child checkout guidance.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario3_ContainmentAndChildren`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario3_ContainmentAndChildren`
 - AC3.3: Native execution-backed selection without a binding/run grant reports the source unavailable and continues authorized tools. A usable source requires an independently qualified native enablement path; an unavailable native source alone does not block hierarchy completion.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario3_NativeUnavailable`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario3_NativeUnavailable`
 
 ### Scenario 4 - Bounded instruction loading stays visible
 
@@ -102,19 +102,19 @@ Use [injected diagnostics](../architecture/observability.md), distinct from dura
 
 **Acceptance:**
 - AC4.1: Across automatically selected sources, the 32 KiB starting content default truncates on UTF-8 character boundaries or omits later text, marks exactly which guidance is partial in model context, and emits a safe user-visible diagnostic/projection warning. Invalid UTF-8 is never delivered. Crossing content or discovery-work ceilings stops additional instruction loading without stopping a normally authorized mutation.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario4_BoundedGuidance`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario4_BoundedGuidance`
 - AC4.2: Counted remote-adapter discovery (including absent candidates, per-directory fallback, multiple sources, and disjoint deep targets) motivates a finite numeric budget and latency assumption before approval. No next probe after exhaustion, no traversal outside root, and no false claim that existing whole-file reads preallocate to the content bound; existing envelope limits remain effective.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario4_DiscoveryCosts`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario4_DiscoveryCosts`
 - AC4.3: Missing/blank files are absence; genuine read errors, containment failure, cancellation, and unavailable native access produce safe warnings without silent fallback to another namespace. Existing request-token accounting reflects the actual framed text; automatic bodies do not accumulate in history or snapshots across continuation, compaction, or a new run.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario4_WarningsAndContinuation`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario4_WarningsAndContinuation`
 
 ### Scenario 5 - Composition and documentation match the shipped scope
 
-Follow [ADR 0375](../adr/0375-agents-instruction-hierarchy.md), [engine compatibility](../../engine/COMPATIBILITY.md) and the [documentation ownership contract](../development-process.md#documentation-change-review).
+Follow [ADR 0376](../adr/0376-agents-instruction-hierarchy.md), [engine compatibility](../../engine/COMPATIBILITY.md) and the [documentation ownership contract](../development-process.md#documentation-change-review).
 
 **Acceptance:**
 - AC5.1: Factory-to-provider offline proof uses one `Deps.Instructions` path, actual source admission, request manifests aligned to emitted fragments, and value/pointer MultiAssembler/RootAssembler/RulesAssembler composition preserving unrelated leaves. Existing source/execution and MicroVM offline client tests stay green; a fixture does not prove a separate native enablement issue complete.
-  - verify: `TestADR_0375_AgentsHierarchy_Scenario5_FactoryConformance`
+  - verify: `TestADR_0376_AgentsHierarchy_Scenario5_FactoryConformance`
 - AC5.2: The owning public guide and context architecture are updated during implementation to describe starting-folder chain, best-effort next-request discovery, retained bounded scopes, per-directory fallback, whole-source replacement, trust prerequisites, and opaque-tool/first-touch limitations. API snapshots and classified changelog match the finally approved signatures; structural tests claim delivery, not live-model obedience.
   - verify: inspection — review owning pages and API/changelog diff; run `task api:check`, `task docs`, and `task site:build`.
 
