@@ -84,6 +84,13 @@ networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
   serviceSubnet: 10.96.0.0/12
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
+    syncFrequency: 5s
 EOF
 fi
 if [ -n "$kind_config" ]; then

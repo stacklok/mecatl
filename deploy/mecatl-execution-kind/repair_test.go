@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 func scriptRange(t *testing.T, file, start, end string) string {
@@ -19,6 +21,53 @@ func scriptRange(t *testing.T, file, start, end string) string {
 		t.Fatalf("missing script range in %s", file)
 	}
 	return body[i:j]
+}
+
+func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
+	create := scriptRange(t, "run.sh", "kind_config=\n", "\nphase_done cluster")
+	for _, profile := range []string{"production", "development"} {
+		t.Run(profile, func(t *testing.T) {
+			state := t.TempDir()
+			out, err := runStep(t, state, "kind() { :; }\n"+create,
+				"state="+state, "cluster=owned", "kubeconfig="+filepath.Join(state, "kubeconfig"), "MECATL_EXECUTION_QUAL_PROFILE="+profile)
+			if err != nil {
+				t.Fatalf("render kind cluster config: %v: %s", err, out)
+			}
+			data, err := os.ReadFile(filepath.Join(state, "kind.yaml"))
+			if profile == "development" {
+				if !os.IsNotExist(err) {
+					t.Fatalf("development fixture unexpectedly wrote Kind config: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cluster struct {
+				Nodes []struct {
+					Role                 string   `yaml:"role"`
+					KubeadmConfigPatches []string `yaml:"kubeadmConfigPatches"`
+				} `yaml:"nodes"`
+			}
+			if err := yaml.Unmarshal(data, &cluster); err != nil {
+				t.Fatal(err)
+			}
+			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != 1 {
+				t.Fatalf("production Kind kubelet patch missing: %+v", cluster.Nodes)
+			}
+			var patch struct {
+				APIVersion    string `yaml:"apiVersion"`
+				Kind          string `yaml:"kind"`
+				SyncFrequency string `yaml:"syncFrequency"`
+			}
+			if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[0]), &patch); err != nil {
+				t.Fatal(err)
+			}
+			if patch.APIVersion != "kubelet.config.k8s.io/v1beta1" || patch.Kind != "KubeletConfiguration" || patch.SyncFrequency != "5s" {
+				t.Fatalf("production Kind kubelet patch = %+v", patch)
+			}
+		})
+	}
 }
 
 func TestProductionHelmSkipsOnlyTheManuallyInstalledLegacyCRD(t *testing.T) {
