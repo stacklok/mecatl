@@ -115,14 +115,8 @@ func Validate(res Resolved) error {
 		return err
 	}
 	// 1) Reject bare printable runes on globalOpen actions.
-	for action, chords := range res.ByAction {
-		if _, isGlobal := globalOpen[action]; isGlobal {
-			for _, c := range chords {
-				if isBarePrintableRune(c) {
-					return fmt.Errorf("bare printable chord %q not allowed for global action %q", c, action)
-				}
-			}
-		}
+	if err := validateGlobalBarePrintableRunes(res); err != nil {
+		return err
 	}
 	// 2) Reject collisions within overlayInternal scope.
 	if err := rejectScopeCollisions(res, overlayInternal, "overlay-internal"); err != nil {
@@ -190,6 +184,20 @@ func Validate(res Resolved) error {
 	// a chord would arm one and confirm the other (an armed ctrl+c confirmed by
 	// ctrl+d) — the two quit keys must never share a chord.
 	return rejectPairOverlap(res.ByAction["Quit"], res.ByAction["QuitD"], "Quit", "QuitD")
+}
+
+func validateGlobalBarePrintableRunes(res Resolved) error {
+	for action, chords := range res.ByAction {
+		if _, isGlobal := globalOpen[action]; !isGlobal {
+			continue
+		}
+		for _, chord := range chords {
+			if isBarePrintableRune(chord) {
+				return fmt.Errorf("bare printable chord %q not allowed for global action %q", chord, action)
+			}
+		}
+	}
+	return nil
 }
 
 func validateConversationDefaultGlobalCollisions(res Resolved) error {
