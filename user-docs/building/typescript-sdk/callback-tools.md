@@ -121,4 +121,4 @@ session creation.
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for callback schemas, handlers, results, and error types.
 - [MCP client](/features/security-and-execution/mcp-client.md)
-- [Tool catalog extension point](/building/extension-points/tool-catalog.md)
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md)

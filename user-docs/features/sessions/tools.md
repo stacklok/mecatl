@@ -95,7 +95,7 @@ variables only to built-in main runners. See
 [Configure Mecatl](/operating/settings.md#configure-the-command-runner) for
 precedence and credential-boundary details. This applies whether or not a client
 requests the `no-fs` session profile. See
-[Run mecated standalone](/operating/mecated.md#flag-reference).
+[Run mecated standalone](/reference/server-cli.md#mecated-serve).
 
 ### Managed temporary storage (Linux and macOS)
 
@@ -186,5 +186,5 @@ for discovery, activation, and slash-command behavior.
 - [MCP client](/features/security-and-execution/mcp-client.md) to connect
   external MCP servers. Their catalog names use the `mcp__<server>__<tool>`
   format.
-- [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md) to
   add custom tools, configure skills, and control what the model can see.

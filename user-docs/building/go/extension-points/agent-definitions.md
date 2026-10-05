@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/agent-definitions
 sidebar_position: 8
 title: Agent definitions
 description:

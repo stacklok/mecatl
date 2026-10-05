@@ -39,7 +39,7 @@ committing sizeable prose edits if you want the diff to stay clean; skip it
 for small, targeted changes.
 
 `user-docs/.prettierignore` excludes the generated reference pages
-(`reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
+(`reference/server-cli.md`, `reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
 `reference/typescript-sdk-api/node.md`) so prettier never fights their own
 generators — see [`../user-docs/_README.md`](../user-docs/_README.md#verify-behavior).
 
@@ -65,7 +65,7 @@ slug renames, render correctly in GitHub's markdown preview, and are portable if
 
 ```markdown
 [The agent loop](/features/sessions/agent-loop.md)
-[Overview](/building/extension-points/index.md)
+[Overview](/building/go/extension-points/index.md)
 [Cloud-native harness](/cloud-native-harness.md)
 ```
 

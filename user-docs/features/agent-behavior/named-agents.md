@@ -61,7 +61,7 @@ Common fields are:
 |`permissionMode`|Specialist mode such as `default`, `plan`, or `acceptEdits`.|
 |`memory`|Optional read-only `user` or `project` memory tier.|
 
-See [Agent definitions](/building/extension-points/agent-definitions.md) for the
+See [Agent definitions](/building/go/extension-points/agent-definitions.md) for the
 complete field reference.
 
 A definition's body is instructions to the specialist. Keep it focused on the
@@ -182,7 +182,7 @@ subject to the server's permission and trust policy.
 
 ## Next steps
 
-- [Agent definitions extension point](/building/extension-points/agent-definitions.md)
+- [Agent definitions extension point](/building/go/extension-points/agent-definitions.md)
   for the complete field and source contract.
 - [Subagents, teams and parallel](/features/agent-behavior/subagents-and-teams.md)
   for delegation behavior and child lifecycle.

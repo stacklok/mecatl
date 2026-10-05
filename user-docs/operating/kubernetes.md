@@ -159,5 +159,5 @@ task mecak8s:kind-destroy
   authentication, Redis, and production Helm values.
 - [Connect to a server](/mecatui/remote-servers.md) for TLS, bearer token, and
   OIDC client workflows.
-- [Choose how to run Mecatl](./choose-deployment.md) to compare `mecated`,
+- [Choose how to run Mecatl](./index.md) to compare `mecated`,
   `mecak8s`, `mecatequi`, and an embedded engine.

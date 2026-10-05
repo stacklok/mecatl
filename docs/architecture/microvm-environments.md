@@ -8,7 +8,7 @@
 **Prerequisites:** [the ports](ports.md), especially `tool.Environment`, `Workspace`, bound
 `CommandRunner`, and durable `EnvironmentRef` reattachment.
 
-**Follow-on:** [the operator runbook](../../user-docs/building/deployment/microvm-environments.md).
+**Follow-on:** [the operator runbook](../../user-docs/operating/microvm-environments.md).
 
 The backend is opt-in and lives outside the engine. Root composition talks to local
 microvmd; go-microvm/libkrun and artifact machinery do not enter the importable engine.

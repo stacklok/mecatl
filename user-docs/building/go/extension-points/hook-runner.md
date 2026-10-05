@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/hook-runner
 sidebar_position: 5
 title: HookRunner
 description:

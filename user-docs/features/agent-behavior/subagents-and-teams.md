@@ -68,7 +68,7 @@ them.
 
 Direct-write calls run serially and never overlap sibling tool calls. They work
 with `fork`, `resume`, and `output_schema`, but not `background`. See
-[Agent definitions](/building/extension-points/agent-definitions.md) for routing
+[Agent definitions](/building/go/extension-points/agent-definitions.md) for routing
 restrictions on explicit agent and model combinations.
 
 ### Background subagents
@@ -158,7 +158,7 @@ classifying for that run. Delegation events report why routing was skipped or
 why a target was unavailable.
 
 See
-[Choose models and providers](/features/sessions/choose-models.md#configure-aliases-slots-and-task-routing)
+[Configure model routing](/features/sessions/model-routing.md#configure-aliases-slots-and-task-routing)
 for the routing schema. `--subagent-model-router=false` disables a configured
 router.
 
@@ -176,6 +176,6 @@ router.
 
 - [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
   for delegated approval behavior.
-- [Agent definitions](/building/extension-points/agent-definitions.md) to define
+- [Agent definitions](/building/go/extension-points/agent-definitions.md) to define
   named specialists.
 - [Core tools](/features/sessions/tools.md) for the rest of the default catalog.

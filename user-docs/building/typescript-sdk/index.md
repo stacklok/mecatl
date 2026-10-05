@@ -3,7 +3,7 @@ title: TypeScript SDK
 description:
   Build Node.js, Bun, Deno, and browser applications that create and control
   Mecatl sessions.
-sidebar_position: 1
+sidebar_position: 0
 ---
 
 # TypeScript SDK
@@ -12,10 +12,7 @@ Use `@stacklok-oss/mecatl-sdk` to create sessions, run agents, handle approvals,
 follow durable activity, and call the rest of the Mecatl API from TypeScript.
 The package supports Node.js, Bun, Deno, and browser applications.
 
-The Deno integration described here is unreleased and excluded from SDK v0.1.0.
-Its first supported SDK release has not been assigned.
-
-Start with [Use the TypeScript SDK](/building/getting-started/typescript-sdk.md)
+Start with [Use the TypeScript SDK](/building/typescript-sdk/first-run.md)
 to run one prompt against a private offline daemon.
 
 ## Choose a workflow

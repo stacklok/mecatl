@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/project-rules
 sidebar_position: 9
 title: Project rules
 description:

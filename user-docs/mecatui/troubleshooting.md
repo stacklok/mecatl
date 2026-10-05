@@ -1,5 +1,5 @@
 ---
-sidebar_position: 10
+sidebar_position: 12
 title: Troubleshoot mecatui
 description:
   Diagnose mecatui startup, connection, authentication, TLS, and session
@@ -27,7 +27,7 @@ mecatui --mock --workspace "$PWD"
 
 Do not put provider secrets in command-line flags. For provider credentials and
 server-side selection, use
-[Run mecated standalone](/operating/mecated.md#provider-and-model).
+[Run mecated standalone](/reference/server-cli.md#mecated-serve).
 
 ## Provider is not configured or credentials are unavailable
 
@@ -108,7 +108,7 @@ and key, issuer trust, and network and TLS settings:
 - During logout, an unavailable enrollment requires checking the provider
   configuration and `mecatui providers status PROVIDER`.
 
-The [provider configuration guide](/operating/mecated.md#configure-providers)
+The [provider configuration guide](/operating/mecated/configure-providers-and-storage.md#configure-providers)
 and [credential store reference](/reference/configuration.md#credential_store)
 describe the supported schema.
 
@@ -140,7 +140,7 @@ Identify the failure before changing the client configuration:
 A bearer token is allowed over plaintext loopback, but `mecatui` refuses it over
 explicit non-loopback plaintext. Saved OIDC authentication always uses verified
 TLS, even for loopback. See [Connect to a server](./remote-servers.md) and the
-operator [server flag reference](/operating/mecated.md#flag-reference).
+operator [server flag reference](/reference/server-cli.md#mecated-serve).
 
 If `mecatui login` reports `storage_unavailable`, follow the stage-specific
 action in the same message. An issuer CA read failure means checking the login
@@ -154,7 +154,7 @@ directory under your XDG config home.
 For an embedded session, `--workspace` is the local checkout. For a connected
 session, the server configures the workspace in its own filesystem. Ask the
 operator which paths are available. See
-[Connect the client](./remote-servers.md#connect-the-client).
+[Connect the client](./remote-servers.md#connect-with-a-bearer-token).
 
 ## A provider error says retrying will not help
 

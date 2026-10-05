@@ -459,7 +459,7 @@ for the full flag tables. The pointers below are the starting points:
 | User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/agent-behavior/memory.md) |
 | Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/agent-behavior/memory.md) |
 | Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) |
-| Session leasing | `--session-lease-*` | [Run mecated standalone](/operating/mecated.md#multi-replica) |
+| Session leasing | `--session-lease-*` | [Run mecated standalone](/operating/mecated/operate-instance.md#multi-replica) |
 
 The model slots / aliases above also have CLI twins (`--model-slot` /
 `--model-alias`); the guardrails checker model has `--guardrails-model`; the

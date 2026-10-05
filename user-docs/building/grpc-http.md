@@ -40,7 +40,7 @@ Node.js and Bun applications can connect through gRPC. Browser applications use
 HTTP and SSE through a same-origin backend-for-frontend.
 
 Start with the
-[TypeScript SDK quickstart](/building/getting-started/typescript-sdk.md), then
+[TypeScript SDK quickstart](/building/typescript-sdk/first-run.md), then
 continue with the guide for your application:
 
 - [Connect an application](/building/typescript-sdk/connect.md) to use an
@@ -127,7 +127,7 @@ configuration before clients connect. See
 TLS/mTLS, OIDC caller identity, rate limits, and health endpoints.
 
 Browser clients also require an allowed origin. See
-[Browsers and CORS](/operating/mecated.md#browsers-and-cors). In production, put
+[Browsers and CORS](/operating/mecated/secure-and-expose.md#browsers-and-cors). In production, put
 a same-origin backend-for-frontend in front of `mecated` so browser JavaScript
 does not receive the server bearer token.
 
@@ -139,3 +139,10 @@ does not receive the server bearer token.
   TypeScript SDK.
 - [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
   through either transport.
+
+## Own a private daemon
+
+For a client-owned process, [host a private daemon](local-daemon.md) with a
+private socket, readiness file, and parent-liveness channel. TypeScript
+applications can use [SDK spawn](typescript-sdk/local-daemon.md) to manage that
+lifecycle.

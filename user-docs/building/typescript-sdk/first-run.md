@@ -1,5 +1,6 @@
 ---
-sidebar_position: 4
+slug: /building/getting-started/typescript-sdk
+sidebar_position: 1
 title: Use the TypeScript SDK
 description:
   Run your first Mecatl prompt from TypeScript against a private offline daemon.

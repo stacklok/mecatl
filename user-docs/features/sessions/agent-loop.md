@@ -173,5 +173,5 @@ and crash recovery.
   for how the permission rule engine and model-based guardrails work.
 - [Hook system](/features/security-and-execution/hooks.md) for lifecycle hooks
   that fire before and after tool calls, prompts, and sessions.
-- [Extension points](/building/extension-points/index.md) to replace providers,
+- [Extension points](/building/go/extension-points/index.md) to replace providers,
   stores, policies, and other capabilities.

@@ -39,39 +39,9 @@ durable storage. A connected client uses the server's capabilities.
 |Interactive permission approvals|Opt|Headless by default|✓|
 |ACP editor integration|✓, `mecated acp` only|No|No|
 
-## Choose a deployment
-
-### Use `mecated` for a general client/server deployment
-
-`mecated` is the general-purpose server for environments outside Kubernetes. It
-serves gRPC and HTTP/SSE, can use local or configured storage, and supports
-optional server features such as MCP, schedules, and ACP.
-
-Choose `mecated` for separate client and server processes, a host-local
-workspace, ACP editor integration, or direct control of storage and networking.
-
-### Use `mecak8s` for Kubernetes-native operation
-
-`mecak8s` serves the same agent and APIs with cloud-native defaults: Redis
-stores session state and durable events, Kubernetes leases coordinate ownership
-across replicas, and readiness/drain behavior suits a deployment controller.
-
-When an operator configures a workspace, its filesystem tools and any Shell
-command run in the harness pod namespace, not on a remote caller’s machine.
-Without `--workspace`, `mecak8s` creates no-FS sessions by default. `mecak8s` is
-headless by default, so unresolved permission asks need an explicit
-headless-reviewer strategy or are denied. ACP is intentionally not available in
-this deployment.
-
-### Use embedded `mecatui` for local interactive work
-
-Running bare `mecatui` starts an in-process server behind a private Unix gRPC
-socket. It uses local server configuration and displays permission requests in
-the TUI.
-
-Its durable store defaults to a per-workspace JSONL location under XDG state.
-Use `--no-store` for in-memory state or `--store-dir` to choose another
-location.
+For deployment tasks, start with [Deploy and operate Mecatl](/operating/index.md).
+This matrix compares capabilities; the operator journey explains the service
+lifecycle, durability, and coordination choices.
 
 ## Workspace and Shell execution
 
@@ -98,6 +68,6 @@ support it.
 
 ## Related information
 
-- [Deployment decision](/operating/choose-deployment.md)
+- [Deployment decision](/operating/index.md)
 - [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
 - [Execution environments](/features/security-and-execution/execution-environments.md)

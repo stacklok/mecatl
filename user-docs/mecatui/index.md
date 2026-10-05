@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
-title: Use mecatui
+title: Use Mecatl
 description:
   Use mecatui to run local or remote sessions, inspect tools, and manage
   approvals.
 ---
 
-# Use mecatui
+# Use Mecatl
 
 `mecatui` is Mecatl's interactive terminal client. Use it to work with an agent,
 inspect tool activity, respond to permission requests, and resume sessions.
@@ -24,26 +24,8 @@ private Mecatl server in the same process.
 - Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer. This
   is separate from local provider configuration and credentials.
 
-Configure providers for an embedded local server with the `providers` command:
-
-```sh
-mecatui providers setup
-mecatui providers
-```
-
-`setup` configures an embedded server; `add NAME` defines a custom provider, and
-`login`, `logout`, and `set-default` manage it. For credential sources, secret
-safety, and provider selection, see
-[Choose models and providers](/features/sessions/choose-models.md). The
-[standalone deployment guide](/operating/mecated.md#configure-providers) owns
-the operator `providers` and `credential_store` schema.
-
-`mecatui login ADDRESS` authenticates this client to a remote server; it does
-not configure that server's providers. ToolHive is external and owns its LLM
-credentials and lifecycle; use `thv llm` tooling for ToolHive setup.
-
-Follow [Connect to a server](./remote-servers.md) when you are ready to move the
-server out of your local process.
+For local model access, follow [Choose models and providers](/features/sessions/choose-models.md#set-up-a-local-provider).
+For an operator-provided deployment, follow [Connect to a remote deployment](./remote-servers.md).
 
 ## Guides
 

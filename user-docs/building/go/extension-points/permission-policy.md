@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/permission-policy
 sidebar_position: 6
 title: PermissionPolicy
 description:
@@ -173,6 +174,24 @@ Calls to `Evaluate` are on the tool-dispatch path. Use bounded timeouts and
 cache external decisions where appropriate. Return a clear reason for asks and
 denials so the client and model can respond. Implement `Learn` as a no-op when
 the external policy system does not support session-scoped rules.
+
+## Contextual guardrail extension contracts
+
+Embedded hosts may supply `agent.Deps.ToolReviewer`, `ReviewEvidencePreparer`, and
+`ReviewDetails`. Optional `ReviewPolicyProvider.GuardrailReviewPolicy(toolName,
+job, operationalFailure)` reports applicability and enforcement; optional
+`ReviewMetadataProvider.GuardrailReviewMetadata(toolName, job)` returns only
+machine-safe rule and checker-route metadata.
+
+A `ReviewGrantStore` must mint a purpose-separated keyed digest over the exact
+session, environment revision, caller authority, effective call, target, and all
+eligible versioned dependencies. A false eligibility result disables repeat
+approval; `ArmGrant(digest, sessionID)` stores only that digest for the session. `ReviewDetail`
+always carries both `RootSessionID` and the reviewed `SessionID`; sinks must bind
+child visibility and cleanup to the explicit root. Approval clients should call
+`Run.ResolveApproval` with the pending ask ID, review ID, guardrail purpose, and
+verdict atomically. Result release cannot use the legacy approval shortcut.
+
 
 ## Test the policy
 

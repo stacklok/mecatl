@@ -1,164 +1,41 @@
 ---
-sidebar_position: 7
+sidebar_position: 130
 title: Local microVM environments
 description: Run filesystem and shell tools in a repository-scoped local microVM.
 ---
 
 # Local microVM environments
 
-Use the released `microvm-local` path on Linux amd64 with KVM to run model-controlled
+Use the qualified `microvm-local` path on Linux amd64 with KVM to run model-controlled
 filesystem and shell tools in a local microVM. Providers, MCP, hooks, credentials, memory,
 and the Mecatl server remain on the host. It is for one local operator and Git repository.
-The unmerged Darwin arm64 implementation admits Apple Silicon macOS 15 or newer with
+The experimental Darwin arm64 implementation admits Apple Silicon macOS 15 or newer with
 Hypervisor.framework, but it has not completed a native real-VM or signed-release
 qualification and is not released support. Linux arm64, remote placement, multi-user
 sharing, and non-Git sources are not available. Recurring and one-shot schedules are
 supported on the same repository-scoped VM and use durable logical worktrees.
 
-[Install `mecatui`](/mecatui/installation.md) and published, release-stamped `mecated` binaries before
-use. `mecatui` runs the embedded server; `mecated` supplies the local `microvm doctor`,
-`status`, and `delete` administration commands and does not need to remain running.
-Source builds are for the separate repository-developer workflow, not ordinary local
-installation. Linux requires Git, Python 3, read-write `/dev/kvm`, and enabled
-unprivileged user namespaces. The experimental Darwin path requires a non-root Apple
-Silicon host on macOS 15 or newer with Hypervisor.framework. Follow the
-[Darwin source qualification procedure](#qualify-the-experimental-darwin-source-path)
-on this page. The [microVM architecture](https://github.com/stacklok/mecatl/blob/main/docs/architecture/microvm-environments.md)
-describes the placement and isolation boundaries.
+Linux requires Git, Python 3, read-write `/dev/kvm`, and enabled unprivileged
+user namespaces. `mecatui` runs the embedded server; `mecated` supplies the local
+`microvm doctor`, `status`, and `delete` commands and does not need to remain
+running for that embedded journey. The deployment must have the matching
+release artifacts described below.
 
-> **Evidence boundary:** `task e2e:microvm` is the opt-in deterministic
-> production-composed journey for Linux amd64 KVM and experimental Darwin arm64
-> HVF. It uses the mock provider and never contacts OpenRouter. Linux has
-> automated gate evidence. The Darwin command is executable but has not yet run
-> on physical Apple Silicon. Separately, on 2026-09-10, a manual qualification
-> used OpenRouter `openai/gpt-5-mini` through the public
-> HTTP create and prompt APIs. Write, Read, and Bash ran in the Wolfi guest as UID 65532, the
-> marker stayed out of the source checkout, and the same session reattached after restarting
-> only mecated while microvmd remained alive. Doctor and status were healthy. No credential,
-> private placement ref, socket, or host path was retained; this is not a microvmd-restart claim.
->
-> The Darwin unit, ownership-xattr, and launch-lifecycle tests have only been cross-compiled
-> locally on Linux for this unmerged implementation. The macOS CI job has not run for the
-> change, and no native Apple Silicon real-VM or signed-candidate journey has run.
+## Verify the installation
 
-## Qualify the experimental Darwin source path
-
-Repository developers can exercise the implemented Darwin path on a non-root Apple Silicon
-host running macOS 15 or newer with Hypervisor.framework. Artifact preparation uses the
-current-platform development descriptor and pinned go-microvm v0.0.41 runtime and firmware.
-The following agent run is offline and uses no provider credential or paid model.
-
-The provider-offline production-composed journey prepares the current-platform
-release fixture and runs the scripted mock-provider checks:
+The runtime needs release-stamped host binaries and the matching signed microVM
+artifact descriptor and bundles. A normal CLI archive alone does not establish
+that the release supplies this execution path. Before configuring placement,
+check the selected release's artifacts and run:
 
 ```sh
-task e2e:microvm
+mecated microvm doctor
 ```
 
-This journey requires artifact-network access during preparation. It exercises guest Read,
-Write, and Shell operations, fixed UID 65532, host-path and source isolation, isolated-child
-merge and conflict handling, graceful microvmd restart, and exact reattachment. It does not
-contact an LLM provider.
-
-For an interactive developer check through the public HTTP API, prepare the artifacts and
-source binaries:
-
-```sh
-task microvm:dev:prepare
-task microvm:dev:build
-QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
-mkdir -p "$QUAL_ROOT/config" "$QUAL_ROOT/runtime" "$QUAL_ROOT/state"
-cat >"$QUAL_ROOT/mock.json" <<'JSON'
-{"turns":[
-  {"tool_calls":[{"id":"shell-uid","name":"Shell","args":{"command":"id -u && pwd"}}]},
-  {"tool_calls":[{"id":"write-proof","name":"Write","args":{"path":"darwin-vm-proof.txt","content":"darwin microvm proof\n"}}]},
-  {"tool_calls":[{"id":"read-proof","name":"Read","args":{"path":"darwin-vm-proof.txt"}}]},
-  {"text":"offline Darwin microVM check complete"}
-]}
-JSON
-```
-
-Start the development server from the repository root:
-
-```sh
-QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
-export XDG_STATE_HOME="$QUAL_ROOT/state"
-export XDG_CONFIG_HOME="$QUAL_ROOT/config"
-export XDG_RUNTIME_DIR="$QUAL_ROOT/runtime"
-.scratch/microvm-dev/bin/mecated serve --headless --posture auto \
-  --store-dir="$QUAL_ROOT/sessions" \
-  --default-placement microvm-local \
-  --mock-script="$QUAL_ROOT/mock.json" \
-  --microvm-dev-release="$(pwd)/.scratch/microvm-dev/darwin-arm64/release.json" \
-  --microvm-dev-acknowledge-untrusted-local-artifacts
-```
-
-In a second terminal, create and prompt a session through the public HTTP API. Set the same
-private XDG roots so local administration inspects the server's state:
-
-```sh
-QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
-export XDG_STATE_HOME="$QUAL_ROOT/state"
-export XDG_CONFIG_HOME="$QUAL_ROOT/config"
-export XDG_RUNTIME_DIR="$QUAL_ROOT/runtime"
-curl -sS -X POST http://127.0.0.1:8081/v1/sessions \
-  -H 'Content-Type: application/json' -d '{}'
-SESSION_ID=copy-from-create-response
-curl -sS -N -X POST \
-  "http://127.0.0.1:8081/v1/sessions/${SESSION_ID}/prompt" \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Run the scripted offline Darwin microVM check."}'
-test ! -e darwin-vm-proof.txt
-.scratch/microvm-dev/bin/mecated microvm doctor
-.scratch/microvm-dev/bin/mecated microvm status
-```
-
-Confirm that Shell reports UID 65532, Write and Read use the logical worktree, the marker is
-absent from the source checkout, and doctor/status are healthy. To check exact normal restart
-reattachment, replace the mock script before restarting:
-
-```sh
-cat >"$QUAL_ROOT/mock.json" <<'JSON'
-{"turns":[
-  {"tool_calls":[{"id":"read-after-restart","name":"Read","args":{"path":"darwin-vm-proof.txt"}}]},
-  {"text":"offline Darwin microVM restart check complete"}
-]}
-JSON
-```
-
-Stop and restart only the `mecated serve` command with the same XDG roots and store directory,
-then prompt the same `SESSION_ID` to read `darwin-vm-proof.txt`.
-
-This procedure is qualification work, not an installation path. Released support still
-requires the native journey and a non-publishing signed-candidate journey. If the Darwin
-launch supervisor dies while its runner retains the ownership lock, replacement fails closed
-and reports that operator recovery is required. Mecatl does not signal a stored PID or fall
-back to host execution.
-
-Install and verify both host binaries (set `VERSION` to the release tag):
-
-```sh
-VERSION=vX.Y.Z
-PLATFORM=linux-amd64
-mkdir -p "$HOME/.local/bin" .scratch/mecatl-host-release
-cd .scratch/mecatl-host-release
-for BINARY in mecatui mecated; do
-  gh release download "$VERSION" --repo stacklok/mecatl \
-    --pattern "${BINARY}-${VERSION}-${PLATFORM}" \
-    --pattern "${BINARY}-${VERSION}-${PLATFORM}.sha256" \
-    --pattern "${BINARY}-${VERSION}-${PLATFORM}.sigstore.json"
-  cosign verify-blob \
-    --bundle "${BINARY}-${VERSION}-${PLATFORM}.sigstore.json" \
-    --certificate-identity "https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/${VERSION}" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    "${BINARY}-${VERSION}-${PLATFORM}"
-  gh attestation verify "${BINARY}-${VERSION}-${PLATFORM}" --repo stacklok/mecatl
-  sha256sum --check "${BINARY}-${VERSION}-${PLATFORM}.sha256"
-  install -m 0755 "${BINARY}-${VERSION}-${PLATFORM}" "$HOME/.local/bin/${BINARY}"
-done
-export PATH="$HOME/.local/bin:$PATH"
-cd ../..
-```
+Doctor checks prerequisites and artifact admission without booting a repository
+VM. Continue only when it reports a ready installation. If the release does not
+include the required artifacts, use a release that does; source-build
+qualification belongs to the contributor workflow.
 
 ## Embedded mecatui journey
 
@@ -397,3 +274,8 @@ is stopped, `microvm status` reports that inventory is unavailable because durab
 records can still exist. A conflicting requested release or egress policy, corrupt
 configuration, live prior daemon with an unavailable socket, or uncertain process identity
 fails without rewriting active configuration, deleting state, or replacing repository data.
+
+## Next steps
+
+- [Operate mecated](/operating/mecated.md) to configure the host service.
+- [Execution environments](/features/security-and-execution/execution-environments.md) explains placement and reattachment.

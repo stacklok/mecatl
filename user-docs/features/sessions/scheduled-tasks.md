@@ -37,8 +37,9 @@ replicas from firing the same slot. A leader lease limits polling to one
 replica, while the atomic claim remains the duplicate-execution safeguard.
 
 A crash after a claim can skip that slot. Recurring schedules continue at the
-next slot. A one-shot schedule can be lost, so use an external job system when
-the work requires stronger delivery guarantees. Each successful claim creates a
+next slot. By default a one-shot schedule can be lost. Opt-in retry can repeat the work,
+so tasks using it must tolerate duplicate effects; use an external job system
+when you need stronger delivery guarantees. Each successful claim creates a
 fresh session whose record preserves the conversation, tool calls, usage,
 terminal state, and fire result.
 
@@ -120,18 +121,69 @@ Scheduled fires are headless: no person is available to approve a tool call. Use
 a read-leaning mode or explicitly configure the permissions and mutation posture
 the task requires.
 
-A recurring schedule uses its configured misfire policy after a missed slot. A
-one-shot may be lost if the process crashes after its slot is claimed and before
-execution completes; use an external job system when that work cannot be lost. A
-fire that times out or is interrupted remains recoverable through the normal
-session lifecycle.
+### Missed slots and overlap
+
+The default misfire policy fires once immediately for a missed recurring slot,
+then resumes the cadence. It does not replay every missed occurrence. Choose
+`skip` when a stale run would be misleading.
+
+New schedules suppress overlapping fires by default. The prior fire's session
+lease determines whether it is still active across replicas. A released or
+expired lease permits later work; a stale session pointer alone does not block
+the schedule forever. Manual firing also rejects an overlapping active fire.
+
+### One-shot retry
+
+`one_shot_retry` is off by default. Enable it for a one-shot task that can safely
+run more than once: the scheduler can re-arm a fire lost in a crash or ending in
+an error. `one_shot_max_retries` defaults to three when retry is enabled and no
+budget is supplied. The durable retry counter limits re-arming across restarts.
+Recurring schedules reject this setting and use their misfire policy instead.
+
+A re-armed one-shot starts with fresh context, even when carried context is enabled.
+Retry is at least once within its configured budget, not an exactly-once guarantee.
+
+### Carried context
+
+`carry_context` is off by default. When enabled, Mecatl loads the prior fire's
+conversation and includes it as fenced untrusted data in the new prompt. It is
+background information, not replayed conversation or fresh authority. If the prior
+session cannot be loaded, the fire continues with fresh context and a diagnostic.
+Persist durable task state in memory or files when later runs must reload it.
+
+### Deadlines and orphaned fires
+
+The supplied deployment uses a 30-minute fire deadline unless the schedule supplies
+its own nonzero `fire_timeout`. A deadline ends the run in a recoverable timeout
+state. Inspect the fire before deciding whether to continue it manually.
+
+The scheduler reconciles its latest orphaned in-flight fire after a crash. A claim
+lost before session creation becomes an error fire record; a fire lost during its
+run becomes an error record with a cancelled, recoverable session. Failed
+reconciliation is retried on later ticks. This cleanup records what happened; it
+is separate from opt-in one-shot retry. Older orphaned fire sessions beyond the
+latest schedule state are not covered by this sweep.
+
+### Delivery to the originating conversation
+
+Schedules created in a conversation can deliver start and completion notes back
+to that origin when the deployment supplies a delivery queue and the origin
+remains authorized. A busy origin drains queued notes at a turn boundary; an
+origin waiting for approval drains them when its approval pause resumes. An idle
+or terminal origin can start a delivery turn. Delivery failure does not fail the
+recorded fire: its result remains available for inspection.
+
+Notes treat scheduled output as untrusted data and preserve
+the origin's permission policy. Missing, unauthorized, or short-lived child
+origins fall back to inspecting the fire record. There is no external webhook
+callback guarantee.
 
 ## Limitations
 
-- Every fire starts with fresh context. Persist state in memory or files and
-  instruct later prompts to reload it when continuity is needed.
-- Results are pull-based in the current deployment: inspect the fire record or
-  session rather than expecting a pushed callback.
+- Every fire starts a separate session; optional carried context supplies only
+  fenced background data.
+- Fire records remain the inspection source even when origin-conversation
+  delivery is enabled.
 - A shareable multi-replica store needs a suitable lease and its own durability,
   authentication, and TLS configuration.
 - Retained fire sessions and event logs may contain sensitive plaintext; protect
@@ -140,5 +192,5 @@ session lifecycle.
 ## Next steps
 
 - [Session continuity](/features/sessions/session-continuity.md)
-- [Mecatl deployment choices](/operating/choose-deployment.md)
+- [Mecatl deployment choices](/operating/index.md)
 - [Scheduled task API reference](/reference/grpc-api.md)

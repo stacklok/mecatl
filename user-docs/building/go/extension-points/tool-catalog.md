@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/tool-catalog
 sidebar_position: 7
 title: Tool catalog
 description: Add custom tools and instruction bundles to the Mecatl agent loop.

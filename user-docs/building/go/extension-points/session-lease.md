@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/session-lease
 sidebar_position: 4
 title: SessionLease
 description:
@@ -164,4 +165,4 @@ tokens, idempotency, and session isolation.
 
 - [Implement session storage](session-store.md).
 - [Deploy Mecatl on Kubernetes](/operating/mecak8s.md).
-- [Choose a deployment](/operating/choose-deployment.md).
+- [Choose a deployment](/operating/index.md).

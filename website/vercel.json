@@ -2,6 +2,26 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "redirects": [
     {
+      "source": "/docs/building/deployment/mecatui",
+      "destination": "/docs/mecatui",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/deployment/grpc-http",
+      "destination": "/docs/building/grpc-http",
+      "permanent": true
+    },
+    {
+      "source": "/docs/operating/mecatui",
+      "destination": "/docs/mecatui",
+      "permanent": true
+    },
+    {
+      "source": "/docs/operating/choose-deployment",
+      "destination": "/docs/operating",
+      "permanent": true
+    },
+    {
       "source": "/docs/install",
       "destination": "/docs/mecatui/installation",
       "permanent": true
@@ -28,7 +48,7 @@
     },
     {
       "source": "/docs/building/getting-started/deployment-decision",
-      "destination": "/docs/operating/choose-deployment",
+      "destination": "/docs/operating",
       "permanent": true
     },
     {
@@ -49,11 +69,6 @@
     {
       "source": "/docs/building/what-you-get/core-tools",
       "destination": "/docs/features/tools",
-      "permanent": true
-    },
-    {
-      "source": "/docs/building/what-you-get/engine-and-session",
-      "destination": "/docs/building/embed-engine",
       "permanent": true
     },
     {

@@ -52,9 +52,6 @@ and shutdown arguments. Application-supplied `args` cannot replace those values.
 
 ## Start a daemon from Deno
 
-This example requires a build of the unreleased Deno integration. SDK v0.1.0
-does not include it.
-
 Import `spawn()` from `@stacklok-oss/mecatl-sdk/deno`. Deno starts the daemon
 with `Deno.Command` and connects through an ephemeral loopback gRPC listener
 using the shared ConnectRPC transport. The HTTP listener is disabled.
@@ -149,6 +146,8 @@ continues the remaining cleanup steps.
   application or one-shot query.
 
 ## Related information
+
+- [Private daemon hosting contract](/building/local-daemon.md) for custom wrappers.
 
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for all `spawn()` and `query()` options.

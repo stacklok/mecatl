@@ -63,7 +63,7 @@ the catalog. It controls server-side compaction and the reported context window.
 Set it to the limit the provider accepts. For per-model values, use operator-global
 [`models.context_windows`](/reference/configuration.md#models), keyed by exact
 provider ID and final model ID after alias and slot resolution. See the
-[daemon recovery guidance](/operating/mecated.md#context-discovery-recovery)
+[daemon recovery guidance](/operating/mecated/configure-providers-and-storage.md#context-discovery-recovery)
 for applying that configuration.
 
 The equivalent server flag is available to `mecatui`'s embedded server. It does
@@ -152,7 +152,7 @@ provider, model, token counter, and context-window resolution remain unchanged.
 For the loop's preservation guarantees and terminal behavior, see
 [The agent loop](/features/sessions/agent-loop.md). For provider capability and
 adapter requirements, see
-[LLMProvider](/building/extension-points/llm-provider.md).
+[LLMProvider](/building/go/extension-points/llm-provider.md).
 
 ## Next steps
 

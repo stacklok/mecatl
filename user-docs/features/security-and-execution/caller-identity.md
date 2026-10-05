@@ -231,7 +231,7 @@ These controls answer different questions:
 
 For the full Kubernetes overlay, JWKS cache behavior, and troubleshooting steps,
 see
-[Configure caller identity](/operating/mecak8s.md#configure-caller-identity).
+[Configure caller identity](/operating/mecak8s/identity-and-client-access.md#configure-caller-identity).
 
 ## Next steps
 

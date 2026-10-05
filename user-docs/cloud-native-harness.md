@@ -20,6 +20,12 @@ clients, execution environments, model providers, tools, and durable state sit
 outside it behind explicit boundaries. The same loop can run locally, as a
 service, or on Kubernetes without being replaced.
 
+| Harness | What changes when it moves to a server? |
+|---|---|
+| Desktop | Client, loop, workspace, and local state usually remain coupled to one machine. |
+| Containerized desktop | The coupled runtime moves into a container; replacing it still requires handling its workspace and state. |
+| Cloud-native | Clients, loop, execution, and durable state have separate owners, so workers can be replaced while services retain state. |
+
 ## Explode the harness into its parts
 
 A cloud-native harness separates the parts that a desktop harness often keeps
@@ -46,7 +52,7 @@ runtime.
 The loop can be versioned, rolled out, logged, and observed like any other
 application component. In a Kubernetes deployment, workers can be replaced
 during normal operations without making durable sessions disappear. See
-[Choose how to run Mecatl](/operating/choose-deployment.md) and
+[Deploy and operate Mecatl](/operating/index.md) and
 [deploy `mecak8s`](/operating/mecak8s.md).
 
 ### Keep sessions beyond a worker
@@ -69,7 +75,7 @@ Shell remains an available, governed capability when it is needed. The direction
 is to make it less necessary by expanding purpose-built, permissioned tools and
 service integrations for common agent tasks. See
 [Execution environments](/features/security-and-execution/execution-environments.md)
-and [extension points](/building/extension-points/index.md).
+and [extension points](/building/go/extension-points/index.md).
 
 ### Serve more than one kind of client
 
@@ -87,12 +93,11 @@ it separates the runtime from the client that you use to interact with it.
 Tools such as Claude Code, Claude Desktop, and Codex generally bundle the user
 interface, agent loop, context, and tools together on your machine. Mecatl
 breaks those pieces apart. Its engine can run locally or remotely on Kubernetes,
-while `mecatui` and future web or desktop interfaces act as clients connected to
-the same runtime.
+while `mecatui` and Studio act as clients connected to the same runtime.
 
 You can build another client on top of Mecatl using the
 [gRPC or HTTP/SSE APIs](/building/grpc-http.md) or the
-[TypeScript SDK](/building/getting-started/typescript-sdk.md). An existing
+[TypeScript SDK](/building/typescript-sdk/first-run.md). An existing
 harness would need a dedicated integration to hand its agent loop over to
 Mecatl.
 
@@ -101,8 +106,8 @@ Mecatl.
 Mecatl is early, and the cloud-native harness is a direction as well as a
 current architecture. We are working toward:
 
-- **More clients.** Mecatl already supports the TUI, gRPC, HTTP/SSE, and the
-  TypeScript SDK. Next are web, desktop, and mobile clients, along with new
+- **More clients.** Mecatl already supports the TUI, Studio, gRPC, HTTP/SSE, and the
+  TypeScript SDK. Future directions include desktop and mobile clients, along with new
   interaction models such as Slack and collaborative documents, all over the
   same client/server core. See the
   [TypeScript SDK](https://github.com/stacklok/mecatl/tree/main/sdk/typescript)
@@ -130,8 +135,8 @@ operator and capability guides describe what Mecatl supports today.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/operating/choose-deployment.md).
+- [See a session survive its pod](/operating/kubernetes.md#replace-the-sessions-pod).
 - [Deploy `mecak8s`](/operating/mecak8s.md) on Kubernetes.
 - [Understand session continuity](/features/sessions/session-continuity.md).
-- [Explore extension points](/building/extension-points/index.md) for your own
+- [Explore extension points](/building/go/extension-points/index.md) for your own
   integrations.

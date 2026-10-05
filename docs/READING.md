@@ -40,6 +40,9 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 ### After the architecture pages
 
+- [Qualify local microVM source builds](architecture/microvm-qualification.md) - contributor artifact preparation and offline guest checks.
+- [Qualify native Kubernetes execution](architecture/native-execution-qualification.md) - contributor mock/live fixtures, credential isolation, and sanitized evidence.
+
 - [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
 - [Drafts](drafts/README.md) — proposals, not current behavior.
 - [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
@@ -50,14 +53,12 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 ## Operator
 
-| Step | Page |
-| --- | --- |
-| 1 | [Project README](../README.md) — feature overview and quick start |
-| 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
-| 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
-| 4 | [Run `mecated` standalone](../user-docs/operating/mecated.md) |
-| Optional | [Local microVM environments](../user-docs/operating/microvm-environments.md) |
-| Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
+Start with [Deploy and operate Mecatl](../user-docs/operating/index.md). Use the
+[lightweight server guide](../user-docs/operating/mecated.md), then the
+[Kubernetes tutorial](../user-docs/operating/kubernetes.md) and
+[shared deployment guide](../user-docs/operating/mecak8s.md). The
+[capability matrix](../user-docs/features/get-oriented/capability-matrix.md)
+compares availability; public operator pages own procedures and prerequisites.
 
 ---
 
@@ -67,7 +68,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | --- | --- |
 | 1 | [Building on mecatl](../user-docs/building/index.md) |
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
-| 3 | [Extension points](../user-docs/building/extension-points/index.md) |
+| 3 | [Extension points](../user-docs/building/go/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |
-| Persistence | [Built-in stores and remote drivers](../user-docs/building/extension-points/session-store.md) — external Go integration |
+| Persistence | [Built-in stores and remote drivers](../user-docs/building/go/extension-points/session-store.md) — external Go integration |
 | Adapter releases | [`adapters/COMPATIBILITY.md`](../adapters/COMPATIBILITY.md) — public exports, wire compatibility, and independent module releases |

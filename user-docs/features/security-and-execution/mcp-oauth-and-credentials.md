@@ -378,7 +378,10 @@ enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
 requires a single replica. The chart enforces `replicaCount: 1` and the
 `Recreate` strategy, so broker mode does not provide high availability.
 
-The legacy bearer path is simpler for a server that does not need OAuth:
+## Bearer tokens for flag-configured servers
+
+For a flag-configured server, set `MCP_<NAME>_TOKEN`, where `<NAME>` is the
+uppercased server name. This is useful when the server does not need OAuth:
 
 ```sh
 export MCP_GITHUB_TOKEN='value-from-your-secret-manager'
@@ -387,8 +390,11 @@ mecated serve --mcp-server github=https://mcp.example.com/github
 
 The token is read at startup, sent as an Authorization bearer header, and never
 logged. Token-bearing URLs must use HTTPS, except for loopback HTTP endpoints.
-Server names are case-insensitively unique and must be safe for the derived
-environment-variable name.
+Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique.
+
+The repeatable `--mcp-server-insecure-http <NAME>` flag permits a named server to
+send its token over off-host HTTP. Use this only when network controls and
+short-lived tokens make cleartext transport acceptable.
 
 ## Runtime behavior and limitations
 
@@ -432,5 +438,5 @@ For the complete operator profile rules, see the
 ## Next steps
 
 - [Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
-- [Mecatl deployment choices](/operating/choose-deployment.md)
+- [Mecatl deployment choices](/operating/index.md)
 - [MCP client](/features/security-and-execution/mcp-client.md)

@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/llm-provider
 sidebar_position: 2
 title: LLMProvider
 description:

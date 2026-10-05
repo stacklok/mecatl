@@ -29,6 +29,8 @@ repeating the same explanation for each way of running Mecatl.
   creating, selecting, and continuing sessions.
 - [Choose models and providers](./sessions/choose-models.md) covers provider,
   model, and reasoning-effort selection.
+- [Model routing](./sessions/model-routing.md) assigns models to internal calls
+  and delegated tasks, and explains routing decisions.
 - [Multimodal input](./sessions/multimodal-input.md) covers image and other
   content blocks supported by the selected provider.
 - [Context windows](./sessions/context-windows.md) covers model context-window
@@ -71,3 +73,10 @@ repeating the same explanation for each way of running Mecatl.
   covers workspaces, shells, forks, and environment persistence.
 - [Hook system](./security-and-execution/hooks.md) covers lifecycle hooks that
   observe, block, or transform agent activity.
+
+## Understand runtime behavior
+
+- [Observability and resilience](./runtime/observability-and-resilience.md)
+  explains runtime signals, model-call recovery, and product metrics.
+- [Collect metrics, traces, and diagnostics](/operating/observability.md)
+  covers operator collection and endpoint configuration.

@@ -190,6 +190,48 @@ If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait
 for it to settle, then retry `/clear`.
 
+## A short key reference
+
+Use `?` on an empty prompt for the live help overlay. The everyday defaults are
+`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
+to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
+not support steering, `enter` queues a follow-up while a run is active. See
+[Keybindings](./keybindings.md) for approval controls, remapping, and the
+complete reference.
+
+## Inspect the broker catalogue
+
+On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
+broker catalogue: enrollment state, connector names, catalogue state, and tool
+counts. Opening and refresh read only that local state; they do not probe an
+upstream, refresh credentials, or enroll connectors. When the owner-authorized
+session is stably idle and the enrollment controller is wired, `/mcp` (or Ctrl+O)
+offers `c connect tools` after a fresh session, completed turns, a prior
+connection, a failed/terminal attempt, or a broker-process restart. A persisted
+name or inventory row never proves live connectivity: after restart the panel
+truthfully reports broker state unavailable and protected tools remain
+unavailable until the owner explicitly refreshes this same session.
+Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
+second refresh are blocked until the existing operation settles. The existing
+browser flow continues without a reopen-browser action. A running or awaiting
+session does not offer refresh. Setup is destructive and bundle-wide: starting
+it withdraws broker tools, and cancellation or failure leaves them unavailable.
+Use `/mcp-refresh` for this broker flow. `/tools-connect` remains a deprecated
+broker-only alias, and `/tools-cancel` cancels pending setup.
+
+ToolHive remains the sole custodian of upstream OAuth presentation, callback
+state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only
+its opaque enrollment control. The operator configures broker availability; see [MCP network access and credentials](/operating/mecak8s/identity-and-client-access.md#maintain-mcp-network-access-and-credentials).
+The panel still requires the existing authenticated verified principal and a
+matching owned session; broker-only and direct-MCP compositions remain
+mutually exclusive, so broker-only sessions do not offer direct resources,
+prompts, or groups.
+
+The panel is not an upstream health check. It requires the authenticated owner
+of the session. Broker-only sessions do not expose direct MCP resources,
+prompts, or groups.
+
+
 ## Next steps
 
 - [Manage sessions](./sessions.md) to resume, inspect, fork, or clear a chat.

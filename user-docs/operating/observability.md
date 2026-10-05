@@ -1,12 +1,11 @@
 ---
 sidebar_position: 140
-title: Observability and resilience
+title: Collect metrics, traces, and diagnostics
 description:
-  Monitor Mecatl runs with metrics, traces, diagnostics, audit records, and
-  resilient model calls.
+  Collect operational metrics, traces, diagnostics, and tool audit records.
 ---
 
-# Observability and resilience
+# Collect metrics, traces, and diagnostics
 
 Mecatl exposes metrics, traces, structured logs, and tool audit records. Its
 model-provider wrapper also handles transient failures and stalled streams.
@@ -86,42 +85,9 @@ context or use its cancellation state to drop events.
 
 ## Model-call resilience
 
-Mecatl can retry a transient provider failure while a model step remains
-precommit. It buffers reasoning, whitespace, tool assembly, usage, and other
-provider metadata until meaningful assistant text becomes visible or the step
-completes cleanly. A failure after that semantic boundary is terminal and is
-never replayed. Raw stream activity still resets the idle watchdog, so a
-precommit idle timeout can recover while a visible-stream idle timeout ends the
-step.
-
-The server-owned recovery window and attempt cap apply to each model step. See
-[Choose models and providers](/features/choose-models.md#a-provider-error-ended-a-model-step)
-for defaults, cost implications, manual retry, and deployment links.
-
-### Prompt caching
-
-Provider-side prompt caching is enabled for Anthropic, OpenAI Responses, and
-OpenRouter. The current OpenAI Chat Completions route uses no cache dialect.
-
-|Flag|Default|Purpose|
-|-|-|-|
-|`--no-prompt-cache`|`false`|Disable provider caching.|
-|`--anthropic-cache-ttl`|`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`; API default (`5m`) elsewhere|Set Anthropic cache breakpoints to `5m` or `1h`.|
-
-Use `mecatl_tokens_total` and `mecatl_cache_hit_ratio` to confirm cache use.
-
-### Failure diagnostics
-
-Retry decisions and breaker transitions go to structured diagnostics without raw
-errors or request content. The event log also receives sanitized
-`network.attempt` records. `InspectSession {"view":"network"}` returns bounded
-retry and terminal decisions without prompts, credentials, or response bodies.
-Each attempt also carries a bounded structural summary — whether the
-provider's protocol terminal was actually observed, and a closed outcome
-(complete, incomplete, stream error, or cancelled) — covering successful and
-cancelled streams as well as failures, so a session that finished without
-error but produced unexpected output can still be distinguished from one whose
-stream was cut off or errored in transport.
+For retries, circuit breakers, stream timeouts, caching, and bounded network
+inspection, see [Observability and resilience](/features/runtime/observability-and-resilience.md).
+Configure their deployment controls through the [server CLI reference](/reference/server-cli.md).
 
 ## Structured diagnostics
 
@@ -152,39 +118,32 @@ entry. It can be absent on cache hits.
 `port.ToolCallRecorder` receives one record per tool execution, including queue
 and execution time. With `--store-dir`, `jsonlstore` writes `.tools.jsonl`
 sidecars and feeds the tool count and duration metrics. See the
-[session store extension point](/building/extension-points/session-store.md) for
+[session store extension point](/building/go/extension-points/session-store.md) for
 record ownership and naming.
 
 ## Anonymous product metrics
 
-Mecatl separately reports aggregate adoption metrics to Stacklok by default.
-These metrics include version, OS and architecture, a random installation ID,
-enabled feature families, provider family, binary name, and coarse counts and
-durations. Tool names are limited to built-ins or the category `mcp`.
-
-The report excludes prompts, file paths, MCP server and tool names, session and
-run IDs, model IDs, and other free text. A one-time stderr notice appears before
-the first report.
-
-Disable product metrics with any of these controls:
-
-- `--product-metrics=false`
-- `MECATL_PRODUCT_METRICS=false`
-- A truthy `DO_NOT_TRACK` value
-- `telemetry.productMetrics.enabled: false` in user-global settings
-
-`MECATL_PRODUCT_METRICS=true` overrides `DO_NOT_TRACK`. Project settings cannot
-change the operator's choice. Use `--product-metrics-dry-run` to print the
-observations instead of sending them.
+[Anonymous product metrics](/features/runtime/observability-and-resilience.md#anonymous-product-metrics)
+are separate from your operational collection. The operator controls reporting
+through flags, environment, or user-global settings.
 
 The Helm chart stores `mecak8s`'s random installation ID in a ConfigMap and
 passes it as `MECATL_PRODUCT_METRICS_INSTALL_ID`, so it survives pod restarts
 without a persistent volume. Delete the ConfigMap to reset the ID, or disable
-reporting with one of the controls above.
+reporting with one of the controls in the capability guide.
 
 ## Next steps
 
 - [Run `mecated`](/operating/mecated.md) to configure the admin listener, OTLP
   export, and durable storage.
-- [Session store extension point](/building/extension-points/session-store.md)
+- [Session store extension point](/building/go/extension-points/session-store.md)
   to provide custom persistence and audit recording.
+
+## Related topics
+
+<span id="retry-and-circuit-breaker" />
+<span id="timeouts" />
+<span id="prompt-caching" />
+<span id="failure-diagnostics" />
+
+[Observability and resilience](/features/runtime/observability-and-resilience.md)

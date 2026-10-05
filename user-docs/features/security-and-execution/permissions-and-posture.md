@@ -19,7 +19,7 @@ Permissions always apply. Guardrails require an operator-configured checker
 model.
 
 For a custom authorization implementation, see
-[PermissionPolicy](/building/extension-points/permission-policy.md).
+[PermissionPolicy](/building/go/extension-points/permission-policy.md).
 
 ## Availability
 
@@ -189,7 +189,10 @@ rules are dropped or demoted to approval rather than widening access.
 Each child receives an authority set that can only narrow the parent's
 capabilities. The child runtime posture, an operator-owned specialist ceiling,
 and call-level restrictions can remove capabilities. A child cannot regain a
-capability omitted by its parent.
+capability omitted by its parent. Derivation consumes one remaining delegation
+hop before allocating the child runtime. The child persists its derived set;
+resuming checks that it remains contained by the current parent's authority,
+without consuming another hop.
 
 An agent definition's `tools:` and `disallowedTools:` fields narrow that
 specialist. Definitions from an explicit operator `--agents-dir` can establish a
@@ -201,9 +204,17 @@ evaluator can add denials based on operator-owned policy, but it cannot grant a
 missing capability. The explicit `noop` evaluator is intended for local or demo
 deployments. A bound session without its configured evaluator fails closed.
 
+Cedar requires verified owner identity. Its operator-owned policy is loaded once
+at startup; an absent, unreadable, or invalid policy prevents startup. Permission
+policy and authority are independent checks: approving a tool call cannot restore
+a capability excluded from the child's set or denied by Cedar. See
+[Configure a Cedar authority policy](/operating/mecated/secure-and-expose.md#configure-a-cedar-authority-policy)
+for the daemon setup and a workspace-boundary example.
+
 MCP authority applies to the addressed tool, such as
 `mcp__github__list_pull_requests`, rather than granting access to an entire MCP
-server.
+server. Resource operations use a separate capability for each server; granting
+a tool does not grant access to that server's resources.
 
 ## Project trust
 
@@ -284,7 +295,7 @@ replacement actions are not supported.
 - `strict` preserves the built-in read-allow and mutate-ask floor.
 - `auto` and `yolo` preserve denies and configured asks.
 - Headless server deployments can leave main-session asks waiting for a client.
-  [`mecatequi` cancels its one-shot run](/operating/mecatequi.md#headless-posture-and-permission-asks)
+  [`mecatequi` cancels its one-shot run](/building/ci/mecatequi.md#headless-posture-and-permission-asks)
   when an ask surfaces. Headless child asks use the fail-safe child path instead
   of waiting for a client.
 - Project files are untrusted by default. Do not enable project trust for a
@@ -298,7 +309,7 @@ replacement actions are not supported.
 
 ## Next steps
 
-- [PermissionPolicy](/building/extension-points/permission-policy.md) to replace
+- [PermissionPolicy](/building/go/extension-points/permission-policy.md) to replace
   the supplied permission policy in an embedding.
 - [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md)
   for project-ingestion behavior.

@@ -113,5 +113,5 @@ No external memory service, embedding provider, or vector database is required.
 
 ## Next steps
 
-- [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md) to
   provide memory tools, skills, or custom tools.

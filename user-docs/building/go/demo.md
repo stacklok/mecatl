@@ -1,5 +1,6 @@
 ---
-sidebar_position: 1
+slug: /building/getting-started/demo
+sidebar_position: 7
 title: See it in 60 seconds
 description:
   Run the offline Mecatl demo to see tools, approvals, teams, and subagents in
@@ -145,7 +146,7 @@ charges.
 
 - [Build your first agent](./first-agent.md) to embed the engine in a Go
   application.
-- [Choose how to run Mecatl](/operating/choose-deployment.md) to select a
+- [Choose how to run Mecatl](/operating/index.md) to select a
   deployment topology.
 - [Explore the agent loop](/features/sessions/agent-loop.md) to understand the
   events and control flow shown by the demo.

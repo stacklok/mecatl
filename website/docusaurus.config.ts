@@ -135,7 +135,7 @@ const config: Config = {
         {
           to: '/docs/operating',
           position: 'left',
-          label: 'Operate',
+          label: 'Deploy',
         },
         {
           to: '/docs/building',

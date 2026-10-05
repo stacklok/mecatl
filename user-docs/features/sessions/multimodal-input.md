@@ -128,7 +128,7 @@ For the wire definitions and exact event flow, see
 [Drive via gRPC / HTTP](/building/grpc-http.md) and
 [the HTTP/SSE API guide](/reference/http-sse-api.md). For provider adapter
 capability requirements, see
-[LLM provider extension points](/building/extension-points/llm-provider.md).
+[LLM provider extension points](/building/go/extension-points/llm-provider.md).
 
 ## Next steps
 

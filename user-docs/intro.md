@@ -40,15 +40,15 @@ and its implications.
 
 ## Start with the journey that fits your work
 
-### [Use `mecatui`](/mecatui/index.md)
+### [Use Mecatl](/mecatui/index.md)
 
 Run local sessions in your workspace or connect the terminal client to your
 organization's Mecatl service.
 
 ### [Deploy and operate Mecatl](/operating/index.md)
 
-Run a shared `mecated` service, deploy `mecak8s` on Kubernetes, or use
-`mecatequi` for one task in CI.
+Start with a lightweight `mecated` service, then use `mecak8s` for shared-team
+state, coordination, and scaling.
 
 ### [Build with Mecatl](/building/index.md)
 

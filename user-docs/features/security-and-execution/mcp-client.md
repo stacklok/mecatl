@@ -34,34 +34,14 @@ mecated serve \
 `mecated`, `mecatequi`, and `mecak8s` accept this flag. Embedded `mecatui`
 servers instead read operator profiles from `~/.config/mecatl/settings.yaml`.
 
-For bearer authentication, set `MCP_<NAME>_TOKEN`, where `<NAME>` is the
-uppercased server name. Mecatl sends the value in the `Authorization` header and
-does not log it. Names must match `[A-Za-z0-9_]+` and must be unique without
-regard to case.
+### Authenticate a configured server
 
-A token-bearing URL must use HTTPS, except for loopback HTTP. The repeatable
-`--mcp-server-insecure-http <name>` flag permits one named server to use
-off-host HTTP. Use it only when network controls and short-lived tokens make
-cleartext transport acceptable.
-
-```sh
-export MCP_GITHUB_TOKEN=<TOKEN>
-mecated serve --mcp-server github=https://mcp.example.com/github
-```
-
-### OAuth operator profiles
-
-Configure OAuth through an operator `mcp.servers` profile, then authorize a
-mutable local profile:
-
-```sh
-mecated mcp login SERVER [--no-browser] [--file PATH | --permission-config PATH ...]
-```
-
-See
+Use an operator `mcp.servers` profile for OAuth or deployment-managed credentials,
+or the bearer-token convention for a flag-configured server. See
 [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
-for profile configuration, encrypted storage, dynamic client registration,
-rotation, and recovery.
+for setup, HTTPS requirements, login, encrypted custody, rotation, and recovery.
+Authentication identifies the MCP connection; namespaced tool permissions still
+control what each session may call.
 
 ### ToolHive discovery
 
@@ -213,7 +193,7 @@ per-session engines can remain open, so close sessions you no longer need with
 
 ## Next steps
 
-- [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md) to
   add custom tools and control the catalog exposed to the model.
 - [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
   to configure authentication and rotation.

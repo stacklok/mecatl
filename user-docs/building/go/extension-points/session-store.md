@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points/session-store
 sidebar_position: 3
 title: SessionStore and EventLog
 description:
@@ -59,51 +60,13 @@ func loadSnapshot(ctx context.Context, dir string, id session.SessionID) (*sessi
 ```
 
 `New` creates directories, probes atomic replacement and file/directory sync,
-and reaps abandoned temporary generations. The published `adapters/v0.1.1`
-release does not contain `OpenReader`; the following read-only API requires a
-build containing this change. Use `OpenReader` for an existing
-store when the process must not write to its source. It returns a separate
-`*jsonlstore.Reader` with `List`, `MetaList`, `PageSessionMetadata`, `Load`,
-`ReadSessionLineage`, `Read`, and `ReadAfter` (including follow cursors). It has
-no save, delete, append, schedule, or repair methods. Prepare a store with a
-writable `New` instance before switching to read-only access:
-
-```go
-func loadReadOnlySnapshot(ctx context.Context, dir string, id session.SessionID) (*session.Session, error) {
-    reader, err := jsonlstore.OpenReader(dir)
-    if err != nil {
-        return nil, err
-    }
-    return reader.Load(ctx, id)
-}
-```
-
-`OpenReader` requires existing directories and uses existing lock files with
-shared, context-cancellable locks. It does not create missing files, rebuild
-catalogs, or clean up stale artifacts. `List`, `Load`, lineage queries, and
-event reads remain available without a current metadata catalog. For `MetaList`
-and bounded paging, first call `MetaList` or `PageSessionMetadata` on the
-writable store to prepare the derivative catalog at the same canonical path.
-A missing or invalid catalog returns an error. Saves by a concurrent writer
-invalidate that catalog: paging is unavailable until the writable owner
-refreshes it. Invalidation detected during a metadata read also fails the read;
-continuation requests return `port.ErrSessionMetadataCursorRestart`. Pass
-metadata cursors back to `Reader`, not to the writable `Store`: reader cursors
-also track the number of rows consumed so a truncated catalog cannot report a
-complete final page. Each page reads at most `Limit+1` rows without scanning
-previous pages. Catalog fingerprints include the absolute directory path, so a
-backup relocated to a different path cannot use its copied catalog for paging;
-prepare the catalog at the destination with a writable owner if paging is
-needed. Existing lock files are required for the relevant family and lineage
-partitions; missing locks return an error rather than silently treating data
-as absent. `New` still requires write access even if you only call `Load`.
+and reaps abandoned temporary generations. It requires write access even when
+an application calls only `Load`. Use a separate copy of the store when
+inspecting data that must remain untouched.
 
 JSONL has no `Store.Close`. Operations own their file handles; event iterators
 retain handles until iteration ends. Finish iteration, break out of the range,
-or cancel its context, and let the iterator return. `Reader` checks cancellation
-between snapshots, metadata rows, lineage records, and replayed events.
-Cancellation cannot interrupt an in-progress filesystem call or your code while
-it is handling a yielded record.
+or cancel its context, and let the iterator return.
 
 ### Open Redis storage
 
@@ -422,16 +385,50 @@ snapshot remains authoritative.
 
 ## Load from events
 
-`engine/adapter/eventsource` folds an event log into a session when an
-event-sourced backend has no snapshot. The caller must supply creation metadata,
-including the session ID, permission mode, limits, environment reference,
-provider and model selection, and creation time. Events do not contain all of
-these values.
+Mecatl normally persists a session as a snapshot. A host that uses an
+append-only event log as its system of record can implement
+`port.SessionStore.Load` by folding events into a `*session.Session`. The
+reference implementation is `engine/adapter/eventsource.Fold`.
 
-Event replay restores conversation content, usage, lifecycle state, and the
-latest complete compaction boundary. It cannot restore provider-private replay
-fields that were never present in the event log. Use snapshot persistence when
-exact provider replay fidelity is required.
+### Required reconstruction
+
+|Field|Round-trip obligation|Event source|
+|-|-|-|
+|`Conversation` with valid tool-call pairing|Required|`EvUserPrompt`, `EvMessageDelta`, `EvToolCall`, `EvToolResult`, and the pre-compaction head from `EvCompactionArchive`|
+|`State`|Required|The terminal `EvResult.Stop`; an unanswered `EvPermissionAsk` means awaiting, and no terminal event means idle|
+|Recorded stop reason|Required|`EvResult.Stop`|
+|`PendingAsk` while awaiting approval|Required|The trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult`|
+|Cumulative `Usage`|Required|The sum of every per-run `EvResult.Usage`|
+|Title metadata|Required|Authoritative values from `eventsource.SessionMeta`; an empty legacy title falls back to the first client `EvUserPrompt`|
+|Creation metadata|Required, supplied separately|`eventsource.SessionMeta`|
+|Run counters|Latest run segment only|`EvTurnStart` and `EvToolResult`|
+|Diagnostics binding, ask ID serials, and context|Rebuilt at runtime|Not event-backed|
+
+Events do not contain creation metadata such as the session ID, limits,
+environment identity, profile, provider, model, owner, or creation time. The
+caller must supply this data through `eventsource.SessionMeta`.
+
+`EvUserPrompt` carries client prompts and harness-generated continuations, so a
+fold can reconstruct the conversation in stream order. Its `synthetic` field is
+server-authored origin metadata for replay clients only; `true` identifies a
+harness continuation, absent/false means genuine or legacy-unknown; and a fold
+does not consult it: the reconstructed conversation is the same either way.
+
+### Replay-fidelity limitation
+
+The event stream does not contain three provider-private replay fields:
+
+- `Message.Reasoning`, the provider reasoning replay blob
+- `Message.ProviderPhase`, the OpenAI Responses phase marker
+- `ToolCall.ItemID`, the provider-assigned item ID
+
+`EvReasoningDelta` contains a readable summary, not the opaque replay value. A
+fold must not place it in `Message.Reasoning`.
+
+A folded session provides byte-identical replay only for providers that do not
+use these fields. Mecatl resumes its own sessions from snapshots, which retain
+them. Event-log systems that need reasoning-provider replay must store the
+opaque values in a richer event schema.
 
 ## Run the conformance suites
 

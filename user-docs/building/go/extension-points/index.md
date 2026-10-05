@@ -1,4 +1,5 @@
 ---
+slug: /building/extension-points
 sidebar_position: 1
 title: Extension points and ports
 description:
@@ -49,7 +50,7 @@ them directly:
 |-|-|
 |`tool.FileSystem`|Underlying filesystem operations|
 |`tool.Workspace`|Version-aware reads and conditional writes|
-|`tool.Environment`|A workspace, its identity, and an optional command runner|
+|`tool.Environment`|A workspace, read ledger, environment identity, and optional command runner|
 |`tool.EnvironmentForker`|Create an isolated child environment|
 |`tool.EnvironmentMerger`|Merge a child environment into its parent|
 
@@ -108,6 +109,22 @@ func TestStoreConformance(t *testing.T) {
 
 The extension-point pages identify the contract and conformance suite for each
 interface.
+
+## Reflection integration
+
+The optional `learning` package selects bounded evidence from a run and can
+produce evidence-backed reflection proposals. `learning.MaterializeEvidence`
+returns canonical evidence and an immutable manifest, or a content-free reason
+for abstaining. Persist the manifest with a staged proposal so review uses the
+same evidence rather than rerunning selection.
+
+The package defines interfaces for learned-skill validation, content-addressed
+versions, evaluation, review, and activation. Reference adapters provide
+in-memory storage and validation. Your embedding application owns proposal
+persistence, review authorization, scheduling, and transport. Use the
+[learning API](https://pkg.go.dev/github.com/stacklok/mecatl/engine/learning) for
+symbols and the [evidence contract](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
+for selection and output validation.
 
 ## Next steps
 

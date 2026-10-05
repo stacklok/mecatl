@@ -1,5 +1,5 @@
 ---
-sidebar_position: 140
+sidebar_position: 150
 title: Mecatl Studio web UI
 description:
   Run the early-access Studio browser UI against a Mecatl deployment with the
@@ -104,62 +104,17 @@ current state. **Recent changes** below the list records the 20 most recent
 lifecycle events. The list itself shows the first 100 learned skills, and Studio
 shows no further ones.
 
-### Inspect delegated activity
+### Client guidance
 
-When a run delegates work, its transcript shows an activity card for each
-observed Subagent, Parallel group, or Team member. Select a card to open that
-work in the activity panel. Select **Activity** in the chat header to open the
-session roster instead. The panel opens only when you select one of these
-controls.
+Studio explains settings ownership in the settings pages: personal choices stay
+in the browser, while deployment-managed provider, model, posture, and storage
+facts are read-only. Appearance controls explain theme and palette choices.
+Delegated-activity panels explain their observed history and incomplete replay.
+Users can open **Keyboard shortcuts** from **Settings > About** for bindings and
+available features.
 
-Use the **Subagents**, **Parallel**, and **Teams** tabs to inspect observed
-states, tool summaries, branch winners, team tasks and findings, and stop
-reasons. A selected child, branch, or member shows its 12 most recent trace
-entries and the number of older entries omitted. If replay history is
-incomplete, Studio marks it as incomplete and leaves unobserved outcomes
-unknown. Close the panel with Escape or its close button to return focus to the
-control that opened it.
-
-## Review settings
-
-Open `/workspace/settings/profile` for personal preferences. Every settings
-section has its own URL, so you can bookmark or reload it. The section list is
-available in the desktop sidebar and the mobile selector.
-
-|Section|Source|Owner and available action|
-|-|-|-|
-|Profile|Browser preferences; signed-in account from the BFF session|Personal display choices; account identity is read-only.|
-|Appearance|Browser preferences|Personal theme and interface choices.|
-|Agent|Browser display preferences; BFF runtime capabilities|Personal name and avatar; deployment-managed behavior is read-only.|
-|Permissions|BFF runtime capability|Deployment-managed posture, read-only.|
-|Providers|BFF settings inventory and provider detail|Deployment-managed provider facts, read-only.|
-|Models|BFF settings inventory; browser visibility preference|Personal picker visibility; deployment-managed default and routing are read-only.|
-|MCP tools|BFF runtime capabilities|Deployment-managed availability, read-only.|
-|Storage|BFF storage health|Deployment-managed health, read-only.|
-|Memory|BFF user-memory reads|Personal facts and approved consolidation actions; store settings are deployment-managed.|
-|Learning|BFF learning and reflection reads|Personal proposal decisions; learning configuration is deployment-managed.|
-|Diagnostics|BFF runtime, settings inventory, and storage health|Deployment-managed facts, read-only.|
-|Labs|Studio availability and BFF runtime capabilities|Deployment-managed availability, read-only.|
-|About|BFF runtime, settings inventory, and sign-in session|Deployment and Studio build facts are read-only; the signed-in user can sign out.|
-
-**Providers** shows each provider's status and model count. A provider detail
-page shows its models and a sanitized display endpoint when the daemon reports
-one. **Models** shows IDs, providers, context limits, and image and reasoning
-support. The **Visible** switch affects model pickers in this browser. Provider
-credentials, the default model, and routing remain under deployment control.
-
-**Memory** lists the user's facts. A fact detail opens at
-`/workspace/memory?item=<KEY>`; existing links using
-`/workspace/settings/memory?item=<KEY>` lead to the same fact. A key containing
-`/` stays intact in the `item` query value.
-
-**About** identifies three separate builds: the Studio image release tag,
-the installed TypeScript SDK version, and the connected daemon's build ID. It
-also shows the daemon implementation, runtime source, connection, and deployment
-label reported by the BFF. A fact the BFF cannot report appears as **Not
-reported**. Local Studio builds have no image release tag. The **Copy support
-summary** action includes these displayed build and runtime facts. About links
-to this documentation, problem reporting, and the shortcuts reference.
+**About** identifies the Studio image, installed SDK, and connected daemon
+builds. Ask users for **Copy support summary** when diagnosing a deployment issue.
 
 ## Install Studio in your browser
 
@@ -173,19 +128,6 @@ BFF and Mecatl deployment for agent actions. A loaded window reports an
 unavailable connection if that link drops. For a fully offline launch, the
 browser handles the missing connection; Studio does not provide an offline
 starting page.
-
-## Set your appearance
-
-1. Open **Settings**, then **Personalise**.
-1. Under **Appearance**, choose **Light**, **Dark**, or **System** for the theme.
-   System follows your device's light or dark setting.
-1. Choose **Default**, **Aztec**, **Mono**, or **Solar** for the palette. The
-   palette choice does not change your theme.
-
-Studio applies both choices when the page loads and updates other open Studio
-tabs on the same origin. The default is the System theme with the Stacklok green
-palette. If browser storage is unavailable, your choices work until you reload
-the page. Inter and Merriweather fonts load from Studio's own origin.
 
 ## Use a chat
 

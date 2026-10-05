@@ -152,5 +152,5 @@ for the default matchers, enforcement modes, and approval flow.
 
 - [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
   for permission evaluation and the model-backed guardrail checker.
-- [HookRunner extension point](/building/extension-points/hook-runner.md) to
+- [HookRunner extension point](/building/go/extension-points/hook-runner.md) to
   implement a custom hook runner.

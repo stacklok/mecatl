@@ -44,7 +44,7 @@ schema, defaults, and allowed configuration tiers.
 For the daemon and Kubernetes operating details, see
 [Run mecated standalone](./mecated.md) and
 [Cloud-native k8s with mecak8s](./mecak8s.md). For one-shot CI ownership, see
-[Single-shot CI with mecatequi](./mecatequi.md).
+[Single-shot CI with mecatequi](/building/ci/mecatequi.md).
 
 ## Ownership and precedence
 
@@ -178,43 +178,12 @@ complete schema.
 
 ## Configure provider credentials
 
-Keep provider credentials in the process environment or in an owner-readable
-`auth.yaml` file:
-
-```yaml
-providers:
-  anthropic:
-    api_key: <ANTHROPIC_API_KEY>
-  openai:
-    api_key: <OPENAI_API_KEY>
-  openai-codex:
-    oauth:
-      access_token: <CHATGPT_CODEX_ACCESS_TOKEN>
-      account_id: <ACCOUNT_ID> # Optional when present in the token.
-      expires_at: 2026-09-30T12:00:00Z # Optional when present in the token.
-  openrouter:
-    api_key: <OPENROUTER_API_KEY>
-  opencode:
-    api_key: <OPENCODE_API_KEY>
-```
-
-For API-key providers, a matching environment variable takes precedence over the
-file entry. `openai-codex` is file-only and accepts only the `oauth` mapping
-shown above. The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
-`~/.config/mecatl/auth.yaml`; `--api-key-file` selects another path.
-
-The parser reports unknown providers, fields, duplicate keys, and invalid
-credential formats without printing values. A missing conventional file is not
-an error. A missing explicit `--api-key-file` path produces a warning. On Unix,
-Mecatl also warns when group or other users can read the file. Use mode `0600`
-on a shared host and restart the process after replacing a credential.
-
-The experimental `openai-codex` provider reads one token snapshot at startup and
-has no login or refresh flow. When both the token and file include an account or
-expiry claim, the values must agree, and the earlier expiry applies. Mode `0600`
-blocks other users, but another process running as the same user can still read
-the plaintext file. Use a dedicated operating-system account or a stronger
-sandbox when you need isolation from same-user processes.
+Model provider setup is covered in [Choose models and providers](/features/sessions/choose-models.md).
+For a service, keep credential custody with its operator: supply credentials to
+the process or an operator-owned credential file, and restrict file access to
+the service account. [Configure providers and storage](/operating/mecated/configure-providers-and-storage.md)
+explains daemon-specific paths, precedence, and reload behavior. Kubernetes and
+CI deployments own their Secret and workflow-secret handling in their guides.
 
 ## Embedded and connected mecatui
 

@@ -1,5 +1,6 @@
 ---
-sidebar_position: 0
+slug: /building/getting-started/first-agent
+sidebar_position: 2
 title: Build your first agent
 description: Install the importable Mecatl engine and build a working Go agent.
 ---
@@ -147,19 +148,19 @@ The engine supplies the agent loop but leaves storage, authentication,
 transport, retry policy, and observability to the embedding application.
 
 Pin the engine and provider module versions together, and review
-[API stability](/building/api-stability.md) before upgrading.
+[API stability](/building/go/api-stability.md) before upgrading.
 
 ## Next steps
 
-- [Explore the engine and session model](/building/embed-engine.md) to
+- [Explore the engine and session model](engine-and-session.md) to
   understand `Engine`, `Session`, `Run`, and `Environment`.
-- [Implement the tool catalog](/building/extension-points/tool-catalog.md) to
+- [Implement the tool catalog](/building/go/extension-points/tool-catalog.md) to
   register local tools or connect MCP tools.
-- [Embed the engine directly](/building/embed-engine.md) to plan a production
+- [Embed the engine directly](/building/go/embed-engine.md) to plan a production
   host around the engine.
 
 ## Related information
 
-- [PermissionPolicy](/building/extension-points/permission-policy.md)
-- [API stability](/building/api-stability.md)
+- [PermissionPolicy](/building/go/extension-points/permission-policy.md)
+- [API stability](/building/go/api-stability.md)
 - [First-agent examples](https://github.com/stacklok/mecatl/tree/main/examples)

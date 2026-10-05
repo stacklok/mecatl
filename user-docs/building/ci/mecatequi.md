@@ -1,5 +1,6 @@
 ---
-sidebar_position: 40
+slug: /operating/mecatequi
+sidebar_position: 2
 title: Single-shot CI with mecatequi
 description:
   Run one bounded Mecatl prompt in CI and produce a patch, summary, and exit
@@ -269,7 +270,7 @@ ChatGPT Codex OAuth snapshot in owner-only `auth.yaml`, pass
 restart the job when it expires or is rejected. It uses an undocumented private
 backend and a separate billing identity from public OpenAI API credit. There is
 no login or refresh flow. See
-[Configure provider credentials](./settings.md#configure-provider-credentials).
+[Configure provider credentials](/operating/settings.md#configure-provider-credentials).
 
 ### Telemetry
 
@@ -336,7 +337,7 @@ exits 2.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/operating/choose-deployment.md) for other
+- [Choose how to run Mecatl](/operating/index.md) for other
   deployment options.
 - [Run mecated standalone](/operating/mecated.md) for interactive clients and
   durable sessions.

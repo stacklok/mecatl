@@ -54,8 +54,6 @@ headers.
 
 ## Connect from Deno
 
-The Deno integration is unreleased and excluded from SDK v0.1.0.
-
 Import `connect()` from the Deno entry point and pass the gRPC listener's HTTP
 or HTTPS authority. Deno uses the same ConnectRPC transport as Node.js and Bun:
 
