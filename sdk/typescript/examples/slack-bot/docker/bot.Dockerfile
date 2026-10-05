@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # Release and local-development image for the Slack bot example.
 # Build context is sdk/typescript: build the in-tree SDK before installing the
 # bot's file:../.. dependency. Only production artifacts reach the runtime.
