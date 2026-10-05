@@ -263524,6 +263524,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791160162897,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8154675fbeb3d385f2a4651fda83a24a2547f5fb",
+          "message": "mecatui: aligned, humanized exit summary with aux usage (#2083)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T19:25:50-07:00",
+          "tree_id": "24655e071f43e15b9809eb0ac49c7c90ef6ab916",
+          "url": "https://github.com/stacklok/mecatl/commit/8154675fbeb3d385f2a4651fda83a24a2547f5fb"
+        },
+        "date": 1791167841201,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -382406,6 +382440,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791167838371,
+  "lastUpdate": 1791167842058,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
