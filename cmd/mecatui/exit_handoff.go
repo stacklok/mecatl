@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 )
 
 const finalSessionHandoffPrefix = "mecatui: final-session-id="
@@ -78,12 +78,12 @@ func writeHandoffField(b *strings.Builder, label, value string) {
 // handoffTokens humanizes one usage value; cache counts are labelled
 // components of input, never summed with it.
 func handoffTokens(u client.Usage) string {
-	s := ui.HumanizeTokens(u.InputTokens) + " input, " + ui.HumanizeTokens(u.OutputTokens) + " output"
+	s := renderfmt.HumanizeTokens(u.InputTokens) + " input, " + renderfmt.HumanizeTokens(u.OutputTokens) + " output"
 	if u.CacheReadTokens != 0 {
-		s += ", " + ui.HumanizeTokens(u.CacheReadTokens) + " cache read"
+		s += ", " + renderfmt.HumanizeTokens(u.CacheReadTokens) + " cache read"
 	}
 	if u.CacheWriteTokens != 0 {
-		s += ", " + ui.HumanizeTokens(u.CacheWriteTokens) + " cache write"
+		s += ", " + renderfmt.HumanizeTokens(u.CacheWriteTokens) + " cache write"
 	}
 	return s
 }

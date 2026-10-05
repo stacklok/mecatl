@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
 )
 
 // modelsView is the active /models overlay.
