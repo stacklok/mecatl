@@ -263882,6 +263882,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791167841201,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3eee33c9c511b4a1e1e6093645d6c1168ba4dc33",
+          "message": "fix: deterministic MCP authorization repeated-initial-control status (#2085)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T19:52:55-07:00",
+          "tree_id": "17f9579dd33dc00c255a5c1a688f4d6cc354d9a7",
+          "url": "https://github.com/stacklok/mecatl/commit/3eee33c9c511b4a1e1e6093645d6c1168ba4dc33"
+        },
+        "date": 1791169430618,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -382917,6 +382951,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791169427517,
+  "lastUpdate": 1791169431647,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
