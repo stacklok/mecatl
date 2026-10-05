@@ -7342,7 +7342,7 @@ func buildWritableSubagentTargetEngineFactory(cfg Config, provReg *providerRegis
 			provider = entry.provider
 		}
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
-		deps := writableExplorerDeps(cfg, provider, model, "task:read-write:model="+model, windowFn, mainRunner)
+		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
 		return agent.NewEngine(deps), true
 	}
 }
@@ -7917,7 +7917,7 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 				}
 				childProvider = entry.provider
 			}
-			return newNoFSChild("task:model="+model, childProvider, model, childWindowFor(cfg, provReg, providerID, model)), true
+			return newNoFSChild("task:model="+model, childProvider, providerID, model, childWindowFor(cfg, provReg, providerID, model)), true
 		}),
 		agent.WithSubagentEngineFactory(func(overrideModel string) (*agent.Engine, bool) {
 			overrideModel = strings.TrimSpace(overrideModel)
@@ -8170,7 +8170,7 @@ func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *pro
 			return nil, false
 		}
 		windowFn := childWindowFor(cfg, provReg, target.Provider, target.Model)
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, target.Model, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, windowFn,
 			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
@@ -8201,7 +8201,7 @@ func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, prov
 		if !found || !entry.available || entry.provider == nil {
 			return nil, false
 		}
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable:target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, target.Model, childWindowFor(cfg, provReg, target.Provider, target.Model),
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable:target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, childWindowFor(cfg, provReg, target.Provider, target.Model),
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil, skillIdx, defaultHooks, mainRunner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {

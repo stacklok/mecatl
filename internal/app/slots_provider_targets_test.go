@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -69,7 +70,7 @@ func TestProviderAwareAuxiliaryConsumersPreserveProvider(t *testing.T) {
 		cfg.ModelSlots[slot] = "utility"
 	}
 
-	deps := engineDepsForProvider(cfg, parent, cfg.Model, func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), nil, nil, nil)
+	deps := engineDepsForProvider(cfg, parent, session.ProviderModelID{ProviderID: parentID, ModelID: cfg.Model}, func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), nil, nil, nil)
 	compactor, ok := deps.Compactor.(agent.CascadeCompactor)
 	if !ok || compactor.LLM != target || compactor.Model != "target-model" {
 		t.Fatalf("compactor target = %T/%q, want isolated target provider/model", compactor.LLM, compactor.Model)
