@@ -153,8 +153,12 @@ func TestSemanticAttemptFlushesEveryTentativeKindInExactOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	if !reflect.DeepEqual(got, chunks) {
-		t.Fatalf("chunks differ\n got: %#v\nwant: %#v", got, chunks)
+	// Accounting already accepted during establishment precedes semantic chunks;
+	// the semantic subsequence still preserves its exact wire order.
+	want := append([]port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}}, chunks[:5]...)
+	want = append(want, chunks[6:]...)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("chunks differ\n got: %#v\nwant: %#v", got, want)
 	}
 }
 
