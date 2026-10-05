@@ -457,6 +457,10 @@ func scanCurrentSnapshotDir(ctx context.Context, root *os.Root, byID map[session
 	if err != nil {
 		return fmt.Errorf("jsonlstore: list store dir: %w", err)
 	}
+	return scanCurrentSnapshotEntries(ctx, root, entries, byID)
+}
+
+func scanCurrentSnapshotEntries(ctx context.Context, root *os.Root, entries []fs.DirEntry, byID map[session.SessionID]snapshotFile) error {
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -466,6 +470,9 @@ func scanCurrentSnapshotDir(ctx context.Context, root *os.Root, byID map[session
 		}
 		info, err := entry.Info()
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return fmt.Errorf("jsonlstore: inspect current snapshot %q: %w", entry.Name(), err)
 		}
 		header, present, hasHeader, err := readCurrentSnapshotHeader(root, entry.Name())
@@ -473,7 +480,7 @@ func scanCurrentSnapshotDir(ctx context.Context, root *os.Root, byID map[session
 			return fmt.Errorf("jsonlstore: inspect current snapshot %q: %w", entry.Name(), err)
 		}
 		if !present {
-			return fmt.Errorf("jsonlstore: current snapshot %q disappeared during inventory", entry.Name())
+			continue
 		}
 		if hasHeader {
 			id := header.Metadata.ID
@@ -489,7 +496,7 @@ func scanCurrentSnapshotDir(ctx context.Context, root *os.Root, byID map[session
 			return fmt.Errorf("jsonlstore: read current snapshot %q: %w", entry.Name(), err)
 		}
 		if !present {
-			return fmt.Errorf("jsonlstore: current snapshot %q disappeared during inventory", entry.Name())
+			continue
 		}
 		id := current.Metadata.ID
 		if id == "" {
