@@ -297955,6 +297955,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791241986028,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b61a4a57ba6f4f43a0ae255aaad95583204d3b5f",
+          "message": "feat(mecatui): quiet settled tool calls and open inspector from shortcut (#2089)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T16:29:30-07:00",
+          "tree_id": "653d87c47d315a2e3f5767fbcbc9eac1342dfcb8",
+          "url": "https://github.com/stacklok/mecatl/commit/b61a4a57ba6f4f43a0ae255aaad95583204d3b5f"
+        },
+        "date": 1791243704111,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -390105,6 +390144,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791243700937,
+  "lastUpdate": 1791243705113,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
