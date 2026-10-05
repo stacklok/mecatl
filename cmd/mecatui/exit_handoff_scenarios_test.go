@@ -73,14 +73,9 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedResumeAfterTeardown(t *testing.T) 
 	got := stderr.String()
 	teardown := strings.Index(got, "\x1b[?1049l")
 	cleanup := strings.Index(got, "cleanup-complete\n")
-	line := strings.Index(got, finalSessionHandoffPrefix)
-	if teardown < 0 || cleanup <= teardown || line <= cleanup || strings.Count(got, finalSessionHandoffPrefix) != 1 {
-		t.Fatalf("teardown/cleanup/ID record order = %q", got)
-	}
-	lines := strings.Split(got[line:], "\n")
-	var decoded string
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[0], finalSessionHandoffPrefix)), &decoded); err != nil || decoded != "final chat" {
-		t.Fatalf("ID record = %q, decoded=%q, err=%v", lines[0], decoded, err)
+	line := strings.Index(got, "\nSession ID:    final chat\n")
+	if teardown < 0 || cleanup <= teardown || line <= cleanup || strings.Contains(got, finalSessionHandoffPrefix) {
+		t.Fatalf("teardown/cleanup/session ID order = %q", got)
 	}
 	if !strings.Contains(got, "Resume:        mecatui --resume 'final chat'\n") || !strings.Contains(got, "               mecatui --resume-latest (may select a different chat)\n") {
 		t.Fatalf("missing exact/qualified continuation: %q", got)
@@ -105,7 +100,7 @@ func TestMecatuiExitHandoff_Scenario1_AuthoritativeSummary(t *testing.T) {
 		"Tokens (aux):  2.5K input, 40 output, 1K cache read\n" +
 		"Resume:        mecatui --resume 'final'\n" +
 		"               mecatui --resume-latest (may select a different chat)\n"
-	if !strings.HasSuffix(got, "\n"+want) {
+	if got != "\n"+want {
 		t.Fatalf("aligned summary = %q, want suffix %q", got, want)
 	}
 	if strings.Contains(got, "999") {
@@ -171,7 +166,7 @@ func TestMecatuiExitHandoff_Scenario2_SnapshotUnavailable(t *testing.T) {
 			if time.Since(start) > 2*time.Second {
 				t.Fatalf("snapshot blocked cleanup beyond deadline: %s", time.Since(start))
 			}
-			if !strings.Contains(got, finalSessionHandoffPrefix+`"final"`+"\n") || !strings.Contains(got, "Resume:        mecatui --resume 'final'\n") || strings.Contains(got, "Title:") || strings.Contains(got, "Model calls:") || strings.Contains(got, "Tokens (main):") {
+			if got != "\nSession ID:    final\nResume:        mecatui --resume 'final'\n               mecatui --resume-latest (may select a different chat)\n" || strings.Contains(got, "Title:") || strings.Contains(got, "Model calls:") || strings.Contains(got, "Tokens (main):") {
 				t.Fatalf("failed snapshot must retain only safe guidance: %q", got)
 			}
 		})

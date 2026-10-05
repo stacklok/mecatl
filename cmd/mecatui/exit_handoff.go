@@ -40,15 +40,19 @@ func finishFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, inter
 		cancel()
 	}
 	cleanup()
-	if !shouldWriteFinalSessionHandoff(final, runErr, interrupted) || !writeFinalSessionHandoff(w, final) || !embedded || !ok {
+	if !shouldWriteFinalSessionHandoff(final, runErr, interrupted) || !ok {
 		return
 	}
 	id := reporter.ActiveSessionID()
-	safeID := safeHandoffID(id)
-	var human strings.Builder
-	if safeID {
-		writeHandoffField(&human, "Session ID:", id)
+	// Connected mode, and an ID unsafe to print as one terminal line, keep the
+	// JSON-quoted record; an embedded safe ID gets the aligned human summary instead.
+	if !embedded || id == "" || !utf8.ValidString(id) || !safeHandoffID(id) {
+		writeFinalSessionHandoff(w, final)
+		return
 	}
+	var human strings.Builder
+	human.WriteByte('\n')
+	writeHandoffField(&human, "Session ID:", id)
 	if available {
 		if title := strings.TrimSpace(terminaltext.SanitizeSingleLine(snapshot.Title)); title != "" {
 			writeHandoffField(&human, "Title:", title)
@@ -59,10 +63,8 @@ func finishFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, inter
 			writeHandoffField(&human, "Tokens (aux):", handoffTokens(snapshot.AuxiliaryUsage))
 		}
 	}
-	if safeID {
-		writeHandoffField(&human, "Resume:", "mecatui --resume '"+strings.ReplaceAll(id, "'", "'\"'\"'")+"'")
-		writeHandoffField(&human, "", "mecatui --resume-latest (may select a different chat)")
-	}
+	writeHandoffField(&human, "Resume:", "mecatui --resume '"+strings.ReplaceAll(id, "'", "'\"'\"'")+"'")
+	writeHandoffField(&human, "", "mecatui --resume-latest (may select a different chat)")
 	_, _ = io.WriteString(w, human.String())
 }
 

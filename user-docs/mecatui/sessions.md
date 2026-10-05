@@ -70,17 +70,9 @@ use another supported client or control path. Repeating the unchanged command
 will not add watch support. Plan approvals and guardrail reviews use their existing
 dedicated flows and cannot be recovered this way.
 
-To get the active session ID, run `/session` and press `c` to copy it. On a
-normal exit, `mecatui` writes a JSON-quoted ID record to standard error:
-
-```text
-mecatui: final-session-id="01JOPAQUESESSIONID"
-```
-
-A blank line separates the exit record from startup notices. `mecatui` does not
-print the embedded server's private socket address.
-
-After an embedded session ends normally, an aligned summary follows the record:
+To get the active session ID, run `/session` and press `c` to copy it. When an
+embedded session ends normally, `mecatui` writes an aligned summary to standard
+error:
 
 ```text
 Session ID:    01JOPAQUESESSIONID
@@ -94,8 +86,17 @@ Resume:        mecatui --resume '01JOPAQUESESSIONID'
 
 The shell-quoted `mecatui --resume` command returns to that exact final chat.
 The `--resume-latest` alternative below it looks for the newest eligible chat
-and can select a different one. A connected session prints only the ID record;
-to resume it, use `mecatui connect <ADDRESS> --resume <SESSION_ID>` with the
+and can select a different one. A blank line separates the summary from startup
+notices, and `mecatui` does not print the embedded server's private socket
+address.
+
+A connected session instead prints a JSON-quoted ID record:
+
+```text
+mecatui: final-session-id="01JOPAQUESESSIONID"
+```
+
+To resume it, use `mecatui connect <ADDRESS> --resume <SESSION_ID>` with the
 original server address.
 
 **Model calls** counts model calls begun in the chat, and **Tokens (main)**
@@ -107,9 +108,9 @@ cache-write counts appear separately, not added to input or output. The latest
 context-meter reading is not included.
 
 If the session snapshot is unavailable, the title, model-call, and token lines
-are omitted; the ID record, session ID, and resume commands still appear. An ID
-that cannot be safely displayed as a single terminal line retains its JSON ID
-record but has no session ID line or copyable command.
+are omitted; the session ID and resume commands still appear. An embedded ID
+that cannot be safely displayed as a single terminal line gets the JSON-quoted
+ID record instead of the summary.
 
 ## Inspect the active session during a run
 
