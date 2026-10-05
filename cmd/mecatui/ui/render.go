@@ -1687,25 +1687,6 @@ func subagentStopLabel(stop string) string {
 	}
 }
 
-// humanizeDuration renders a millisecond wall-clock duration compactly: sub-second
-// as "Nms", under a minute as "N.Ns", else "Nm Ns". A non-positive duration (no
-// clock) renders as "0ms".
-func humanizeDuration(ms int64) string {
-	if ms <= 0 {
-		return "0ms"
-	}
-	if ms < 1000 {
-		return strconv.FormatInt(ms, 10) + "ms"
-	}
-	secs := float64(ms) / 1000.0
-	if secs < 60 {
-		return trimDecimal(secs) + "s"
-	}
-	m := int64(secs) / 60
-	s := int64(secs) % 60
-	return strconv.FormatInt(m, 10) + "m " + strconv.FormatInt(s, 10) + "s"
-}
-
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
 	wrapped := wrapResultDisplayLines(lines, bodyWidth)
 	if len(wrapped) > maxToolResultLines {

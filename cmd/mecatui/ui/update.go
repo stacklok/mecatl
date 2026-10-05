@@ -1387,7 +1387,7 @@ func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
 	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
 	var detailCmd tea.Cmd
 	// Benign reviews are retained (hidden by default), so they fetch live detail
-	// too; ExpandTools or hook_notices.show_benign reveals it with the summary.
+	// too; ExpandConversation or hook_notices.show_benign reveals it with the summary.
 	if r != nil && msg.Guardrail.Disposition != "ask_action" && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
 		m.guardrailDetailRequest++
 		r.beginDetailRequest(m.guardrailDetailRequest)

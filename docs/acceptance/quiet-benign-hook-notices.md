@@ -16,7 +16,7 @@ Mecatui uses the contextual guardrail event's existing machine fields to disting
 ## Human decisions
 
 - [x] Default visibility — Decision: a review with a non-empty review ID, recognized `action` or `inbound` job, completed inspection, acceptable assessment, and disposition `execute` or `release_result` is benign and hidden by default; every other or unknown combination remains visible.
-- [x] Explicit reveal — Decision: the existing rebindable `ExpandTools` action (`ctrl+t` by default) temporarily reveals retained benign notices, and client setting `hook_notices.show_benign: true` makes them visible by default.
+- [x] Explicit reveal — Decision: `ExpandConversation` (`f9` by default) temporarily reveals retained benign notices in live and replay views; `Toolcalls` (`ctrl+t` by default, including its deprecated `ExpandTools` input alias) opens the inspector instead. Client setting `hook_notices.show_benign: true` keeps benign notices visible by default. The directing human authorized the replacement on 2026-10-05: “Let's tie those to F9.”
 - [x] Configuration ownership — Decision: visibility is local mecatui presentation configuration with no server, project, or new CLI surface.
 - [x] Contract amendment — Decision: after contextual guardrails landed, remove the obsolete exported-engine/protobuf proposal and use the already-shipped structured guardrail metadata instead.
 - [x] Reconcile with #2002 — Decision: the directing human instructed “bring them back under the original plan”. #2002 dropped routine reviews unless `--debug`; this plan restores retain-and-hide on #2002's per-review notice model. Each review keeps one notice with its live detail folded in; benign reviews also fetch that detail; `--debug` keeps benign notices visible; a routine final outcome never replaces a resolved approval receipt; a mismatched detail identity fails visible while a detail RPC error on a benign review stays hidden.
@@ -26,7 +26,7 @@ Mecatui uses the contextual guardrail event's existing machine fields to disting
 - **gRPC / protobuf:** None — existing `Hook.guardrail` review metadata and guardrail-detail RPC fields already carry the required classification and text; no enum, message, field, or RPC changes.
 - **Exported Go APIs / interfaces:** None — changes remain inside `cmd/mecatui` client and UI implementation; `engine/` and public SDK contracts remain unchanged.
 - **Tool schemas:** None — model-facing tool names and schemas do not change.
-- **CLI / config:** Add optional strict client YAML `hook_notices.show_benign` in `$XDG_CONFIG_HOME/mecatui/settings.yaml`, default `false`. `true` keeps benign hook and detail notices visible while conversation details are collapsed. The existing rebindable `ExpandTools` action reveals retained benign notices while expanded. No CLI flag, server setting, or project-tier setting.
+- **CLI / config:** Add optional strict client YAML `hook_notices.show_benign` in `$XDG_CONFIG_HOME/mecatui/settings.yaml`, default `false`. `true` keeps benign hook and detail notices visible while conversation details are collapsed. The rebindable `ExpandConversation` action (`f9` by default) reveals retained benign notices temporarily in live and replay views; `Toolcalls` (`ctrl+t` by default) does not reveal them. No guardrail-specific CLI flag, server setting, or project-tier setting.
 - **Events / persistence:** No event or persistence change. Mecatui derives benign presentation only when the review ID is non-empty, the job is `action` or `inbound`, `inspection=complete`, `assessment=acceptable`, and disposition is `execute` or `release_result`. Durable guardrail hook events remain captured for live and replay rendering. Live-only detail RPC responses remain conversation blocks for the requesting active session but are not made durable by this work.
 - **Security / authority:** Presentation never changes inspection, holding, release, execution, approval, diagnostics, or permission authority. Missing identity/job metadata and every unknown, unresolved, prohibited, operational-failure, advisory, ask, withhold, deny, and warning disposition fail visible. Live details are accepted only for the requesting session and exact review ID; stale-session responses are discarded, mismatched identities fail visible, and approval details remain on their matching approval surface. Classification uses structured fields only, never checker-authored prose.
 - **Compatibility / migration:** Existing servers already provide the structured fields. Older clients either remain noisy or, after #2002, omit routine reviews; neither loses server data. New clients hide only the exact known-benign combination and display older, absent, or unknown metadata. No persisted-data migration.
@@ -52,7 +52,7 @@ Mecatui applies presentation policy after event capture and preserves the existi
 **Acceptance:**
 - AC2.1: With shipped defaults, benign live hook cards and their correlated live detail notices remain in conversation state but contribute no rendered lines; attention-worthy hooks, details, approvals, and existing error surfaces remain visible. Detail responses from a stale session are discarded, while an in-session response with a mismatched review ID fails visible without displaying the mismatched text.
   - verify: `TestQuietBenignGuardrailNotices_Scenario2_DefaultLiveVisibility`, `TestQuietBenignGuardrailNotices_Scenario2_DetailResponseIdentity`
-- AC2.2: A replayed benign guardrail hook remains captured and hidden by default. The existing `ExpandTools` action reveals retained benign live and replay blocks, then hides them again without mutation, duplication, or re-fetching.
+- AC2.2: A replayed benign guardrail hook remains captured and hidden by default. `ExpandConversation` (`f9` by default) reveals retained benign live and replay blocks, then hides them again without mutation, duplication, or re-fetching; `Toolcalls` (`ctrl+t` by default) does not toggle their visibility.
   - verify: `TestQuietBenignGuardrailNotices_Scenario2_ExpandLiveAndReplay`
 - AC2.3: Multiple consecutive benign hook/detail blocks create no blank-row residue while hidden; when shown, their sanitized text remains ordered, width-bounded, and cache-equivalent.
   - verify: `TestQuietBenignGuardrailNotices_Scenario2_RenderingAndCache`
@@ -79,7 +79,8 @@ The local setting follows the ownership rules in `user-docs/mecatui/customizatio
 | New engine hook outcomes or protobuf decisions | Never for this behavior | Existing structured guardrail metadata is sufficient. |
 | Persisting live-only guardrail detail responses | Separate design | Durable hooks retain machine review evidence; detail lifetime is unchanged. |
 | Parsing checker prose to determine visibility | Never | Structured machine fields are authoritative and unknown values fail visible. |
-| A new keybinding, slash command, CLI flag, server setting, or project setting | Later design | Reuse `ExpandTools`; persistent policy belongs only to strict client settings. |
+| A guardrail-only keybinding, slash command, CLI flag, server setting, or project setting | Later design | Reuse `ExpandConversation`; persistent policy belongs only to strict client settings. |
+| Attaching guardrail notices to tool-call scrollback and rendering them with the call | [#2117](https://github.com/stacklok/mecatl/issues/2117) | Keep separate retained notices in this slice; preserve their visibility and lifetime until correlation and replay are designed. |
 
 ## Definition of done
 
@@ -91,5 +92,5 @@ The local setting follows the ownership rules in `user-docs/mecatui/customizatio
 
 ## Deferred decisions and known risks
 
-- `ExpandTools` is deliberately global: revealing tool details also reveals benign guardrail notices. A separate guardrail-only control is deferred unless use shows the shared details state is too broad.
+- `ExpandConversation` reveals conversation details and benign guardrail notices without expanding tool results. Correlating notices with their tool calls is tracked in [#2117](https://github.com/stacklok/mecatl/issues/2117).
 - Live detail text remains unavailable in historical replay because ADR 0363 defines it as live-only; the durable hook summary remains available and follows the same benign visibility policy.

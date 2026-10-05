@@ -37,9 +37,10 @@ conversation details are collapsed. Findings, outages, unresolved reviews,
 approval requests, withheld results, denied actions, warnings, and unknown
 outcomes remain visible.
 
-Press your configured `ExpandTools` keybinding (`ctrl+t` by default) to show
-retained benign notices temporarily. To keep them visible while details are
-collapsed, add this setting to `$XDG_CONFIG_HOME/mecatui/settings.yaml`:
+Press your configured `ExpandConversation` keybinding (`f9` by default) to show
+retained benign notices temporarily in live and replayed conversations. To keep
+them visible while details are collapsed, add this setting to
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`:
 
 ```yaml
 hook_notices:

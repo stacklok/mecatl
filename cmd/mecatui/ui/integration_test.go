@@ -427,7 +427,8 @@ func TestTurnStatCacheReachesScrollback(t *testing.T) {
 		// Non-trivial tokens (so the stat line is not suppressed) with an 88% cache rate.
 		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1500, OutputTokens: 300, CacheReadTokens: 1320}, DurationMs: 4100},
 	)
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF9})
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(got, "88% cached") {
 		t.Errorf("rendered scrollback missing the per-turn cache facet %q; got %q", "88% cached", got)
 	}

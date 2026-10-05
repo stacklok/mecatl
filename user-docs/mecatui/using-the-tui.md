@@ -26,12 +26,13 @@ appendix. User prompts and assistant prose remain visible in the normal view.
 You can rebind both actions in the [Keybindings](./keybindings.md) settings.
 `f9` does not expand tool results.
 
-`ctrl+t` also reveals routine guardrail checks: completed, acceptable reviews
-that allowed the action or released its result. They are hidden by default;
-guardrail findings, outages, unresolved reviews, and approval-related outcomes
-remain visible. Press `ctrl+t` again to hide them. To keep routine checks
+`f9` also reveals retained routine guardrail checks: completed, acceptable
+reviews that allowed the action or released its result. They are hidden by
+default; guardrail findings, outages, unresolved reviews, and approval-related
+outcomes remain visible. Press `f9` again to hide routine checks. To keep them
 visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
+`ctrl+t` opens `/toolcalls`; it does not toggle guardrail notices.
 
 ## Attach a local file
 
