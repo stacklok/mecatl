@@ -1006,6 +1006,9 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		opts = append(opts, openai.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openai.New(opts...)
+		if id == providerOpenAICodex {
+			llm = codexRemediationProvider{LLMProvider: llm}
+		}
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
 			BaseBackoff:       llmBaseBackoff,

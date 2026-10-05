@@ -1,8 +1,10 @@
 package openai
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,19 +80,26 @@ func TestInBandErrorDisplayPreservesRawClassification(t *testing.T) {
 	for _, mode := range []string{"error", "response.failed"} {
 		for _, tc := range []struct {
 			message string
+			code    string
+			param   string
 			want    session.RetryDisposition
 			status  int
 		}{
-			{"Bearer synthetic-classification-canary", session.RetryDispositionRetryable, 503},
-			{"input exceeds the context length: Bearer synthetic-classification-canary", session.RetryDispositionPermanent, 0},
+			{"Bearer synthetic-classification-canary", "server_error", "", session.RetryDispositionRetryable, 503},
+			{"input exceeds the context length: Bearer synthetic-classification-canary", "server_error", "", session.RetryDispositionPermanent, 0},
+			{"Bearer synthetic-classification-canary", "context length exceeded: synthetic-classification-canary", "", session.RetryDispositionPermanent, 0},
+			{"Bearer synthetic-classification-canary", "server_error", "context length exceeded: synthetic-classification-canary", session.RetryDispositionPermanent, 503},
 		} {
+			if mode == "response.failed" && tc.param != "" {
+				continue // only top-level errors carry param
+			}
 			t.Run(mode+fmt.Sprint(tc.want), func(t *testing.T) {
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "text/event-stream")
 					if mode == "error" {
-						fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":\"server_error\",\"message\":%q}\n\n", tc.message)
+						fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":%q,\"message\":%q,\"param\":%q}\n\n", tc.code, tc.message, tc.param)
 					} else {
-						fmt.Fprintf(w, "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":%q}}}\n\n", tc.message)
+						fmt.Fprintf(w, "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":%q,\"message\":%q}}}\n\n", tc.code, tc.message)
 					}
 				}))
 				defer srv.Close()
@@ -107,7 +116,45 @@ func TestInBandErrorDisplayPreservesRawClassification(t *testing.T) {
 	}
 }
 
+func TestResponseBodyErrorDisplayPreservesCause(t *testing.T) {
+	cause := &displayVetoError{}
+	p := New(WithAPIKey("synthetic"), WithBaseURL("https://fixture.invalid"), WithHTTPClient(&http.Client{Transport: displayBodyTransport{cause}}))
+	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if err != nil {
+		t.Fatalf("stream establishment failed: %v", err)
+	}
+	var text string
+	for chunk, streamErr := range seq {
+		if chunk.Kind == port.ChunkText {
+			text += chunk.Text
+		}
+		if streamErr != nil {
+			err = streamErr
+		}
+	}
+	if text != "hello" || !errors.Is(err, cause) {
+		t.Fatalf("body error did not follow valid SSE text: text=%q, err=%v", text, err)
+	}
+	var veto interface{ Retryable() bool }
+	if !errors.As(err, &veto) || veto.Retryable() {
+		t.Fatal("body read retry veto lost")
+	}
+	if strings.Contains(fmt.Sprintf("%+v", err), "synthetic-transport-canary") {
+		t.Fatalf("unsafe body read display: %v", err)
+	}
+}
+
+type displayBodyTransport struct{ cause *displayVetoError }
+
+func (r displayBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	const event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Request: req,
+		Body: io.NopCloser(io.MultiReader(strings.NewReader(event), r.cause))}, nil
+}
+
 type displayVetoError struct{}
+
+func (e *displayVetoError) Read([]byte) (int, error) { return 0, e }
 
 func (*displayVetoError) Error() string   { return "Bearer synthetic-transport-canary" }
 func (*displayVetoError) Retryable() bool { return false }

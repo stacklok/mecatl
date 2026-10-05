@@ -481,6 +481,9 @@ func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
 		msg = anthropicHTTPErrorMessage(sdkErr)
+		if kind := string(sdkErr.Type()); isContextOverflowMessage(kind) {
+			msg = kind
+		}
 		status = sdkErr.StatusCode
 		// SSE error envelopes arrive through the SDK with HTTP 200. Display
 		// their known error category, without changing causal retry metadata.

@@ -360,6 +360,13 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 			}
 		}
 		msg = sdkErr.Message
+		label := sdkErr.Code
+		if strings.TrimSpace(label) == "" {
+			label = sdkErr.Type
+		}
+		if isContextOverflowMessage(label) {
+			msg = label
+		}
 		display = port.AppendHTTPErrorDisplay(providerErrorText(status, msg), sdkErr.Request, requestID)
 	}
 	if metadata.correlationID == "" && completionID != "" {

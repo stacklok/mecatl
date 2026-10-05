@@ -74,10 +74,9 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 // with no real client.
 //
 // A terminal failure event (the top-level "error" event, or a "response.failed"
-// status) is reported as a non-nil error carrying the provider's human-readable
-// message rather than as a bare StopError chunk: the loop surfaces a stream
-// error verbatim, so the real reason ("rate_limit_exceeded: ...", "<model> is
-// not a valid model ID", ...) reaches the result instead of an opaque "error".
+// status) returns a non-nil error with a closed, harness-authored display category.
+// Raw provider fields remain private classification inputs and metadata; they
+// must not reach the loop's verbatim error projection.
 //
 // Unknown / unhandled event types (the long tail of audio, image, web/file
 // search, MCP, reasoning-part, content-part, *.added / in_progress, etc.) are
@@ -221,7 +220,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		return nil, &responseStreamError{
-			msg:      "response failed: " + responseErrorString(event.Response.Error),
+			msg:      event.Response.Error.Message,
 			status:   providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
 			metadata: responseErrorMetadata(event.Response.Error, event.Response.ID),
 		}
@@ -234,9 +233,10 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		return nil, &responseStreamError{
-			msg:      "stream error: " + streamErrorString(event),
-			status:   providerErrorStatus(event.Code, event.Message),
-			metadata: streamErrorMetadata(event.Code, event.Message, st.responseID),
+			msg:           event.Message,
+			paramOverflow: isContextOverflowMessage(event.Param),
+			status:        providerErrorStatus(event.Code, event.Message),
+			metadata:      streamErrorMetadata(event.Code, event.Message, st.responseID),
 		}
 
 	default:
@@ -279,21 +279,6 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 	), nil
 }
 
-// responseErrorString renders a Responses ResponseError (on a failed response)
-// as "code: message", tolerating either part being absent.
-func responseErrorString(e responses.ResponseError) string {
-	switch {
-	case e.Message != "" && e.Code != "":
-		return fmt.Sprintf("%s: %s", e.Code, e.Message)
-	case e.Message != "":
-		return e.Message
-	case e.Code != "":
-		return string(e.Code)
-	default:
-		return "unknown error"
-	}
-}
-
 func observedResponseID(event responses.ResponseStreamEventUnion) string {
 	switch event.Type {
 	case "response.created", "response.in_progress", "response.completed", "response.incomplete", "response.failed", "response.queued":
@@ -319,24 +304,6 @@ func streamErrorMetadata(code, message, responseID string) providerErrorMetadata
 	return metadata
 }
 
-// streamErrorString renders a top-level "error" event union as "code: message",
-// optionally appending the offending param, tolerating absent parts.
-func streamErrorString(event responses.ResponseStreamEventUnion) string {
-	msg := event.Message
-	switch {
-	case msg != "" && event.Code != "":
-		msg = fmt.Sprintf("%s: %s", event.Code, msg)
-	case msg == "" && event.Code != "":
-		msg = event.Code
-	case msg == "":
-		msg = "unknown error"
-	}
-	if event.Param != "" {
-		msg = fmt.Sprintf("%s (param: %s)", msg, event.Param)
-	}
-	return msg
-}
-
 // Provider error metadata is programmatic only; arbitrary provider strings must
 // not be copied into display, logs, or events without their own sanitization.
 type providerErrorMetadata struct {
@@ -348,12 +315,16 @@ type providerErrorMetadata struct {
 }
 
 type responseStreamError struct {
-	msg      string // private raw classification input; never rendered
-	status   int    // HTTP-status equivalent; 0 means unknown/non-retryable
-	metadata providerErrorMetadata
+	msg           string // private raw classification input; never rendered
+	status        int    // HTTP-status equivalent; 0 means unknown/non-retryable
+	metadata      providerErrorMetadata
+	paramOverflow bool // preserve classification without retaining or formatting raw param
 }
 
 func (e *responseStreamError) Error() string {
+	if isContextOverflowMessage(e.metadata.providerCode) {
+		return "provider request failed: context window exceeded"
+	}
 	switch e.metadata.providerCode {
 	case "content_filter", "content_policy_violation":
 		return "provider request failed: content filter blocked the response"
@@ -364,6 +335,9 @@ func (e *responseStreamError) Error() string {
 	case "invalid_encrypted_content":
 		return "provider request failed: invalid encrypted content"
 	default:
+		if e.paramOverflow {
+			return "provider request failed: context window exceeded"
+		}
 		return providerErrorText(e.status, e.msg)
 	}
 }
@@ -434,7 +408,7 @@ func (e *responseStreamError) StatusCode() int { return e.status }
 
 // RetryDisposition implements session.RetryDispositionError.
 func (e *responseStreamError) RetryDisposition() session.RetryDisposition {
-	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+	if e.paramOverflow || isContextOverflowMessage(e.msg) || isContextOverflowMessage(e.metadata.providerCode) || e.status != 0 && !retryableStatus(e.status) {
 		return session.RetryDispositionPermanent
 	}
 	if retryableStatus(e.status) {
