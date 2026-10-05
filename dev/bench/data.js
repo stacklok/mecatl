@@ -295573,6 +295573,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791202416508,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b1280662b1add8b4f5bd0844198849ef12442e4",
+          "message": "feat(app): default Anthropic prompt-cache TTL to 1h (#2102)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-05T15:53:52+03:00",
+          "tree_id": "ebaeac41cd4364919ad0c3ff395cd99f990de76a",
+          "url": "https://github.com/stacklok/mecatl/commit/6b1280662b1add8b4f5bd0844198849ef12442e4"
+        },
+        "date": 1791205572206,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3288,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 79,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -387039,6 +387078,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791205569237,
+  "lastUpdate": 1791205572818,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
