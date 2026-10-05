@@ -149,7 +149,7 @@ func (l anthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 		}
 		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: mods,
 			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, ToolCall: true,
-			Thinking: thinkingDescriptor{Known: true, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}})
+			Thinking: thinkingDescriptor{Known: m.Thinking.Known, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}})
 	}
 	return out, nil
 }
