@@ -266,6 +266,36 @@ func TestMecatuiQuieterToolCalls_Scenario2_ContextualShortcutAndOverrides(t *tes
 		}
 	})
 
+	t.Run("approval detail and focus keys remain functional", func(t *testing.T) {
+		m := shellAskModel(t, longShellArgs)
+		askID := approvalSurfaceOf(t, m).ask.AskID
+		m, _ = pressKey(m, ctrlT)
+		s := assertApprovalPending(t, m, askID, "")
+		if !s.argsViewOpen {
+			t.Fatal("precondition: Toolcalls did not open approval details")
+		}
+		m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r'})
+		s = assertApprovalPending(t, m, askID, "")
+		if !s.argsViewRaw {
+			t.Fatal("RawArgs did not toggle in approval details")
+		}
+		m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
+		s = assertApprovalPending(t, m, askID, "")
+		if s.ask.focusedVerdict != client.VerdictAllowAlways {
+			t.Fatalf("tab focused %v, want allow always", s.ask.focusedVerdict)
+		}
+		m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyRight})
+		s = assertApprovalPending(t, m, askID, "")
+		if s.ask.focusedVerdict != client.VerdictDeny {
+			t.Fatalf("right focused %v, want deny", s.ask.focusedVerdict)
+		}
+		m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyLeft})
+		s = assertApprovalPending(t, m, askID, "")
+		if s.ask.focusedVerdict != client.VerdictAllowAlways {
+			t.Fatalf("left focused %v, want allow always", s.ask.focusedVerdict)
+		}
+	})
+
 	t.Run("Validate rejects verdict overlap", func(t *testing.T) {
 		for _, tc := range []struct {
 			verdict   string

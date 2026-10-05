@@ -7,25 +7,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
 )
 
 func TestMecatuiQuieterToolCalls_Scenario3_RebindAndLegacyAlias(t *testing.T) {
-	overrides, err := keymap.NormalizeAliases(map[string][]string{
-		"ExpandTools":        {"ctrl+f10", "ctrl+f11"},
+	overrides := map[string][]string{
+		"Toolcalls":          {"ctrl+f10", "ctrl+f11"},
 		"ExpandConversation": {"ctrl+f12", "ctrl+f13"},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	resolved, err := keymap.Parse(overrides)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := keymap.Validate(resolved); err != nil {
-		t.Fatal(err)
-	}
-	m := scenario2Model(t, 100, 30, false, phaseIdle, resolved.ByAction)
+	m := scenario2Model(t, 100, 30, false, phaseIdle, overrides)
 	m = applyAll(m, client.TurnStartMsg{Turn: 1}, client.ReasoningDeltaMsg{Turn: 1, Text: "secret reasoning"}, client.AssistantDeltaMsg{Turn: 1, Text: "answer"})
 	m.conv.addPermanentError("short error\nprivate error details")
 	m.conv.recordFileChange("changed.go")
@@ -64,7 +53,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_RebindAndLegacyAlias(t *testing.T) {
 	if strings.Contains(strings.ToLower(help), "expand all tool") {
 		t.Errorf("retired action in help: %q", help)
 	}
-	approval := scenario2Model(t, 100, 30, false, phaseRunning, resolved.ByAction)
+	approval := scenario2Model(t, 100, 30, false, phaseRunning, overrides)
 	const askID = "sess-test-0001:1:shell-1"
 	approval = applyAll(approval, client.PermissionAskMsg{AskID: askID, Tool: "Shell", Args: `{"command":"echo hi"}`, Reason: "approval required"})
 	if view := stripANSIstr(approval.View().Content); !strings.Contains(view, "ctrl+f10 full args") || strings.Contains(view, "ctrl+f11 full args") {

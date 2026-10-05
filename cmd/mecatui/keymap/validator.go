@@ -77,24 +77,6 @@ var (
 	}
 )
 
-// NormalizeAliases returns a copy of one keymap source with the deprecated
-// ExpandTools input alias renamed to Toolcalls. A source cannot name both.
-func NormalizeAliases(in map[string][]string) (map[string][]string, error) {
-	if _, hasAlias := in["ExpandTools"]; hasAlias {
-		if _, hasCanonical := in[actionToolcalls]; hasCanonical {
-			return nil, fmt.Errorf("ExpandTools and %s cannot both be set in one source", actionToolcalls)
-		}
-	}
-	out := make(map[string][]string, len(in))
-	for action, chords := range in {
-		if action == "ExpandTools" {
-			action = actionToolcalls
-		}
-		out[action] = append([]string(nil), chords...)
-	}
-	return out, nil
-}
-
 // Parse normalises the input map, rejecting unknown action names and empty chords.
 func Parse(in map[string][]string) (Resolved, error) {
 	out := Resolved{ByAction: make(map[string][]string, len(in))}
@@ -126,6 +108,12 @@ func Parse(in map[string][]string) (Resolved, error) {
 
 // Validate enforces invariant rules over the resolved mapping.
 func Validate(res Resolved) error {
+	// Toolcalls is also live in the approval modal. Validate the modal's
+	// first-consumed detail and focus keys before generic global rules so their
+	// collision diagnostics identify the shadowed approval action.
+	if err := validateToolcallsApprovalKeys(res); err != nil {
+		return err
+	}
 	// 1) Reject bare printable runes on globalOpen actions.
 	for action, chords := range res.ByAction {
 		if _, isGlobal := globalOpen[action]; isGlobal {
@@ -231,6 +219,33 @@ func validateConversationDefaultGlobalCollisions(res Resolved) error {
 			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func validateToolcallsApprovalKeys(res Resolved) error {
+	toolcalls := res.ByAction[actionToolcalls]
+	if len(toolcalls) == 0 {
+		toolcalls = []string{"ctrl+t"}
+	}
+	rawArgs := res.ByAction["RawArgs"]
+	if len(rawArgs) == 0 {
+		rawArgs = []string{"r"}
+	}
+	if err := rejectPairOverlap(toolcalls, rawArgs, actionToolcalls, "RawArgs"); err != nil {
+		return err
+	}
+	for _, key := range []struct {
+		action string
+		chord  string
+	}{
+		{"Tab", "tab"},
+		{"Left", "left"},
+		{"Right", "right"},
+	} {
+		if err := rejectPairOverlap(toolcalls, []string{key.chord}, actionToolcalls, key.action); err != nil {
+			return err
 		}
 	}
 	return nil

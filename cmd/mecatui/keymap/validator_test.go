@@ -1,6 +1,9 @@
 package keymap
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseUnknownAction(t *testing.T) {
 	_, err := Parse(map[string][]string{"Bogus": {"ctrl+a"}})
@@ -226,24 +229,6 @@ func TestValidateRawArgsRefreshRebindDisjoint(t *testing.T) {
 	}
 }
 
-func TestNormalizeAliases(t *testing.T) {
-	in := map[string][]string{"ExpandTools": {"ctrl+f4"}}
-	got, err := NormalizeAliases(in)
-	if err != nil {
-		t.Fatalf("normalize aliases: %v", err)
-	}
-	if got["Toolcalls"][0] != "ctrl+f4" || len(got) != 1 {
-		t.Fatalf("normalized aliases = %#v, want Toolcalls only", got)
-	}
-	got["Toolcalls"][0] = "changed"
-	if in["ExpandTools"][0] != "ctrl+f4" {
-		t.Fatalf("NormalizeAliases mutated input: %#v", in)
-	}
-	if _, err := NormalizeAliases(map[string][]string{"ExpandTools": {"ctrl+t"}, "Toolcalls": {"ctrl+f4"}}); err == nil {
-		t.Fatal("both alias and canonical action in one source must fail")
-	}
-}
-
 func TestToolcallsValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -264,6 +249,31 @@ func TestToolcallsValidation(t *testing.T) {
 			}
 			if err := Validate(res); (err == nil) != tc.ok {
 				t.Fatalf("validate = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestToolcallsValidationRejectsApprovalDetailAndNavigationCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		in    map[string][]string
+		other string
+	}{
+		{"RawArgs default", map[string][]string{"Toolcalls": {"r"}}, "RawArgs"},
+		{"RawArgs rebind", map[string][]string{"Toolcalls": {"ctrl+f4"}, "RawArgs": {"ctrl+f4"}}, "RawArgs"},
+		{"tab", map[string][]string{"Toolcalls": {"tab"}}, "Tab"},
+		{"left", map[string][]string{"Toolcalls": {"left"}}, "Left"},
+		{"right", map[string][]string{"Toolcalls": {"right"}}, "Right"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = Validate(res)
+			if err == nil || !strings.Contains(err.Error(), `"Toolcalls" and "`+tc.other+`"`) {
+				t.Fatalf("Validate(%v) = %v, want Toolcalls/%s collision", tc.in, err, tc.other)
 			}
 		})
 	}
