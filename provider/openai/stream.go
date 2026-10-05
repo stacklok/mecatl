@@ -93,7 +93,7 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 //   - response.output_item.done (function_call) -> ChunkToolCall
 //   - response.completed                    -> ChunkReasoningItem (packed)? then ChunkUsage, ChunkDone(end_turn)
 //   - response.incomplete                   -> ChunkUsage then ChunkDone(error)
-//   - response.failed / error               -> non-nil error (provider message)
+//   - response.failed / error               -> non-nil error (safe category/status display)
 //
 // The reasoning summary deltas (ChunkReasoning) and the reasoning replay blob
 // (ChunkReasoningItem) are deliberately distinct: the summary is human-readable

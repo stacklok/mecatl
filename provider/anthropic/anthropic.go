@@ -385,7 +385,7 @@ func (p *Provider) sessionCaps() port.ProviderCapabilities {
 // anthropicStreamError carries typed retry disposition for terminal stream errors so
 // the llmresilience layer can distinguish permanent client-side rejections (4xx
 // other than 408/429) from transient failures (5xx, rate limits, unknown). It
-// carries the SDK error for Unwrap and a human-readable message for Error().
+// carries the SDK error for Unwrap and renders a safe category/status for Error().
 type anthropicStreamError struct {
 	err      error  // original SDK/transport error (for Unwrap)
 	msg      string // private raw classification input; never rendered
