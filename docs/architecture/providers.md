@@ -149,8 +149,11 @@ thinking. When thinking metadata is missing, the Messages adapter uses model-ID
 fallback: Claude 5 Opus, Sonnet, Fable, and Mythos use adaptive thinking with
 summarized display, including exact `anthropic/claude-...` OpenRouter IDs. Older
 thinking-capable models retain their manual-budget mode, and incapable models
-omit thinking. A failed listing or missing exact model entry retains the catalog
-floor and this request fallback. `UseMock` short-circuits to a single synthetic
+omit thinking. A configured reasoning effort remains on the request when the
+listing omits thinking support; an explicit unsupported declaration drops that
+effort. The public inventory's boolean reasoning flag stays false for unknown
+support and is not the effort gate. A failed listing or missing exact model entry
+retains the catalog floor and this request fallback. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
 ### Operator-defined OIDC providers

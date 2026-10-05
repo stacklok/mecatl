@@ -533,6 +533,12 @@ including:
 - reasoning support; and
 - context limit when known.
 
+The reasoning flag is boolean: `false` can mean that an Anthropic-compatible
+model listing did not report thinking support, not that the model explicitly
+rejects it. Mecatl keeps a configured reasoning effort when support is unknown;
+an explicit unsupported declaration suppresses it. A compatible endpoint can
+still reject the request, in which case Mecatl reports the provider error.
+
 They do not expose API keys or provider-private credentials. The inventory is
 server-specific and depends on the providers and credentials configured at startup.
 Each `ListModels` request, including client startup and SDK requests, can refresh
