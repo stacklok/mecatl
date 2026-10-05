@@ -159,6 +159,22 @@ it("shows an empty Markdown surface with theme-aware styles and formats selected
   expect(view.state.selection.main.from).toBe(view.state.doc.length - 2);
 });
 
+it("offers visible brief and automatic-feedback controls", () => {
+  mount(true);
+  const automaticFeedback = screen.getByRole("switch", { name: "Automatic feedback" });
+  expect(automaticFeedback.getAttribute("data-state")).toBe("checked");
+  fireEvent.click(automaticFeedback);
+  expect(automaticFeedback.getAttribute("data-state")).toBe("unchecked");
+  expect(screen.getByText("Off: checks run only when you select Read this now.")).toBeTruthy();
+
+  const addBrief = screen.getByRole("button", { name: "Add brief" });
+  expect(addBrief.className).toContain("border");
+  addBrief.focus();
+  expect(document.activeElement).toBe(addBrief);
+  fireEvent.click(addBrief);
+  expect(screen.getByRole("textbox", { name: /Writing brief/ })).toBeTruthy();
+});
+
 it.each([
   ["heading", "# Draft"],
   ["bold", "**Draft**"],
@@ -318,7 +334,7 @@ it("sends author edits via the generated SDK, never inserts model text, and supp
   expect(requests.map((r) => r.body.document?.content)).toEqual(["Opening"]);
   expect(await screen.findByText("What evidence supports this assumption?")).toBeTruthy();
   expect(editor.textContent).toBe("Opening");
-  fireEvent.click(screen.getByRole("button", { name: "Quiet · on request" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
   expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Message Mecatl" }));
   act(() => view.dispatch({ changes: { from: 7, insert: " updated" }, userEvent: "input.type" }));
@@ -401,7 +417,7 @@ it("uses a brief, explicit pause/read, revisitable decisions, and cautious quote
   const view = EditorView.findFromDOM(editor as HTMLElement);
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Costs are unknown." } }));
-  fireEvent.click(screen.getByRole("button", { name: "Quiet · on request" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
   fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
   await screen.findByText("Why the expense?");
   expect(requests[0]?.body).toMatchObject({ brief: "Audience: operators" });
@@ -515,7 +531,7 @@ it("keeps a local draft only after opt-in, restores it, and forgets only on conf
   const view = EditorView.findFromDOM(editor as HTMLElement);
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Saved draft" } }));
-  fireEvent.click(screen.getByRole("button", { name: "Quiet · on request" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
   fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
   fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
     target: { value: "Restored audience" },

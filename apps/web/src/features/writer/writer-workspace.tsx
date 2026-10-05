@@ -10,7 +10,14 @@ import {
   StateEffect,
   StateField,
 } from "@codemirror/state";
-import { Decoration, drawSelection, EditorView, keymap, placeholder } from "@codemirror/view";
+import {
+  Decoration,
+  drawSelection,
+  EditorView,
+  keymap,
+  lineNumbers,
+  placeholder,
+} from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { discussWriter, observeWriter } from "@mecatl-studio/contracts/generated";
 import { getRuntimeOptions, getRuntimeSettingsOptions } from "@mecatl-studio/contracts/query";
@@ -23,6 +30,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
+import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { ChatComposer, type ComposerModelOption } from "../chat/chat-composer";
 import { ChatTranscript } from "../chat/chat-transcript";
@@ -226,6 +234,7 @@ function WriterEditor({ available }: { available: boolean }) {
           syntaxHighlighting(writerHighlight),
           placeholder("Start writing in Markdown…"),
           drawSelection(),
+          lineNumbers(),
           keymap.of([
             { key: "Mod-b", run: (view) => formatMarkdown(view, "bold") },
             { key: "Mod-i", run: (view) => formatMarkdown(view, "italic") },
@@ -246,6 +255,11 @@ function WriterEditor({ available }: { available: boolean }) {
               color: "var(--foreground)",
             },
             ".cm-scroller": { overflow: "auto", fontFamily: "inherit", lineHeight: "1.8" },
+            ".cm-gutters": {
+              backgroundColor: "var(--muted)",
+              color: "var(--muted-foreground)",
+              border: "none",
+            },
             ".cm-content": {
               padding: "2rem 1.5rem",
               maxWidth: "75ch",
@@ -468,7 +482,7 @@ function WriterEditor({ available }: { available: boolean }) {
           {!briefEditing ? (
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Button
-                variant="link"
+                variant="outline"
                 size="sm"
                 onClick={() => {
                   setBriefInput(core.brief);
@@ -599,20 +613,27 @@ function WriterEditor({ available }: { available: boolean }) {
         aria-label="Writer observations"
         className="flex h-[40%] min-h-0 w-full shrink-0 flex-col border-t bg-muted/20 lg:h-full lg:w-[360px] lg:border-l lg:border-t-0"
       >
-        <div className="flex items-center justify-between gap-2 border-b p-4 text-sm">
+        <div className="flex flex-col gap-3 border-b p-4 text-sm">
           <h2 className="font-semibold">Observations</h2>
-          <Button
-            aria-pressed={core.paused}
-            variant="outline"
-            size="sm"
-            onClick={() => core.setPaused(!core.paused)}
-            type="button"
+          <label
+            className="flex min-h-11 items-center justify-between gap-3"
+            htmlFor="automatic-feedback"
           >
-            {core.paused ? "On request · turn on" : "Quiet · on request"}
-          </Button>
+            <span>Automatic feedback</span>
+            <Switch
+              aria-label="Automatic feedback"
+              checked={!core.paused}
+              id="automatic-feedback"
+              onCheckedChange={(checked) => core.setPaused(checked !== true)}
+            />
+          </label>
+          {core.paused && (
+            <p className="text-xs text-muted-foreground">
+              Off: checks run only when you select Read this now.
+            </p>
+          )}
           <Button
-            variant="outline"
-            size="sm"
+            className="w-full"
             disabled={!available || core.busy !== undefined}
             onClick={() => void core.readNow()}
             type="button"

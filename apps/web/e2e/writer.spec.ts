@@ -95,7 +95,10 @@ test("Writer stays author-owned through observation, discussion, and undo", asyn
   await page.getByRole("textbox", { name: /Author decision/ }).fill("Costs outside scope");
   await page.getByRole("button", { name: "Confirm decision" }).click();
   await page.getByRole("button", { name: "Addressed" }).click();
-  await page.getByRole("button", { name: "Quiet · on request" }).click();
+  const automaticFeedback = page.getByRole("switch", { name: "Automatic feedback" });
+  await expect(automaticFeedback).toBeChecked();
+  await automaticFeedback.click();
+  await expect(automaticFeedback).not.toBeChecked();
   await page.getByRole("button", { name: "Read this now" }).click();
   await expect.poll(() => offlineBff.requestsFor("POST", "/api/v1/writer/observe").length).toBe(2);
   expect(offlineBff.requestsFor("POST", "/api/v1/writer/observe")[1]?.postDataJSON()).toMatchObject(
@@ -107,6 +110,57 @@ test("Writer stays author-owned through observation, discussion, and undo", asyn
   await expect(editor).toHaveText("Second draft");
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(editor).toHaveText("First draft");
+});
+
+test("Writer feedback controls fit without clipping at desktop and mobile widths", async ({
+  offlineBff,
+  page,
+}, testInfo) => {
+  offlineBff.json("GET", "/api/v1/auth/session", {
+    account: "offline-writer",
+    mode: "oidc",
+    status: "authenticated",
+  });
+  offlineBff.json("GET", "/api/v1/status", { connection: "reachable", signInRequired: false });
+  offlineBff.json("GET", "/api/v1/runtime", { experimentalWriter: true });
+  offlineBff.json("GET", "/api/v1/settings/runtime", { modelsSupported: false, models: [] });
+  offlineBff.json("GET", "/api/v1/storage/health", { status: "healthy" });
+  offlineBff.json("GET", "/api/v1/sessions", { complete: true, items: [] });
+  offlineBff.json("POST", "/api/v1/writer/observe", { status: "silent" });
+
+  await page.goto("/workspace/writer");
+  const sidebar = page.getByRole("complementary", { name: "Writer observations" });
+  const title = sidebar.getByRole("heading", { name: "Observations" });
+  const automaticFeedback = sidebar.getByRole("switch", { name: "Automatic feedback" });
+  const readNow = sidebar.getByRole("button", { name: "Read this now" });
+  const addBrief = page.getByRole("button", { name: "Add brief" });
+  await expect(automaticFeedback).toBeChecked();
+  await expect(addBrief).toBeVisible();
+  await addBrief.focus();
+  await expect(addBrief).toBeFocused();
+  await addBrief.click();
+  await expect(page.getByRole("textbox", { name: /Writing brief/ })).toBeVisible();
+
+  const sidebarBox = await sidebar.boundingBox();
+  const [titleBox, feedbackBox, readNowBox] = await Promise.all([
+    title.boundingBox(),
+    automaticFeedback.boundingBox(),
+    readNow.boundingBox(),
+  ]);
+  if (!sidebarBox || !titleBox || !feedbackBox || !readNowBox)
+    throw new Error("Writer feedback controls are not laid out");
+  if (testInfo.project.name === "chromium-desktop") expect(sidebarBox.width).toBe(360);
+  for (const box of [titleBox, feedbackBox, readNowBox]) {
+    expect(box.x).toBeGreaterThanOrEqual(sidebarBox.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width);
+    expect(box.y).toBeGreaterThanOrEqual(sidebarBox.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(sidebarBox.y + sidebarBox.height);
+  }
+  expect(titleBox.y + titleBox.height).toBeLessThanOrEqual(feedbackBox.y);
+  expect(feedbackBox.y + feedbackBox.height).toBeLessThanOrEqual(readNowBox.y);
+  await expect
+    .poll(() => sidebar.evaluate((element) => element.scrollWidth <= element.clientWidth))
+    .toBe(true);
 });
 
 test("Reveal passage scrolls to the first of reversed quotes only on author request", async ({
@@ -141,6 +195,46 @@ test("Reveal passage scrolls to the first of reversed quotes only on author requ
   await page.getByRole("button", { name: "Reveal passage" }).click();
   await expect(page.locator(".cm-writer-passage")).toHaveCount(2);
   await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(before);
+});
+
+test("Writer shows native line numbers for Markdown lines through editing and undo", async ({
+  offlineBff,
+  page,
+}) => {
+  offlineBff.json("GET", "/api/v1/auth/session", {
+    account: "offline-writer",
+    mode: "oidc",
+    status: "authenticated",
+  });
+  offlineBff.json("GET", "/api/v1/status", { connection: "reachable", signInRequired: false });
+  offlineBff.json("GET", "/api/v1/runtime", { experimentalWriter: true });
+  offlineBff.json("GET", "/api/v1/settings/runtime", { modelsSupported: false, models: [] });
+  offlineBff.json("GET", "/api/v1/storage/health", { status: "healthy" });
+  offlineBff.json("GET", "/api/v1/sessions", { complete: true, items: [] });
+  offlineBff.json("POST", "/api/v1/writer/observe", { status: "silent" });
+
+  await page.goto("/workspace/writer");
+  const editor = page.getByRole("textbox", { name: "Writer document" });
+  const lineNumbers = page.locator(".cm-lineNumbers .cm-gutterElement:visible");
+  const draftLines = [
+    `A Markdown line that is deliberately long enough to wrap in the Writer surface. ${"More text ".repeat(20)}`,
+    "Second line",
+    "Third line",
+  ];
+  const draft = draftLines.join("\n");
+  await editor.fill(draft);
+  await expect(editor.locator(".cm-line")).toHaveText(draftLines);
+  await expect(lineNumbers).toHaveText(["1", "2", "3"]);
+
+  // Let CodeMirror close the initial input history event before adding a line.
+  await page.waitForTimeout(600);
+  await editor.press("End");
+  await editor.press("Enter");
+  await editor.pressSequentially("Fourth line");
+  await expect(lineNumbers).toHaveText(["1", "2", "3", "4"]);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(editor.locator(".cm-line")).toHaveText(draftLines);
+  await expect(lineNumbers).toHaveText(["1", "2", "3"]);
 });
 
 test("Writer draws one empty-editor caret on the placeholder line in light and dark themes", async ({

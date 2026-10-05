@@ -86,21 +86,22 @@ workspace navigation. The default is off, and the value must be exactly `1`.
 :::
 
 Use Writer with non-sensitive text that you wrote yourself. Write Markdown in the
-highlighted document surface. Use **H1**, **B**, and **I** to toggle formatting
-(or Ctrl/⌘+Alt+1, Ctrl/⌘+B, and Ctrl/⌘+I); **Undo** and **Redo** affect only your
-edits. Choose a provider/model from the deployment's model inventory, or leave
-**Deployment default** selected. Filter by model name, ID, or provider; models
-hidden in your browser's **Models** settings remain hidden. The choice applies
-to subsequent checks and discussions.
+highlighted document surface. The muted line-number gutter is visible by default;
+wrapped visual lines retain the number of their Markdown line. Use **H1**, **B**,
+and **I** to toggle formatting (or Ctrl/⌘+Alt+1, Ctrl/⌘+B, and Ctrl/⌘+I); **Undo**
+and **Redo** affect only your edits. Choose a provider/model from the deployment's
+model inventory, or leave **Deployment default** selected. Filter by model name,
+ID, or provider; models hidden in your browser's **Models** settings remain hidden.
+The choice applies to subsequent checks and discussions.
 
-Select **Add brief** above the document if you want to describe its audience,
-purpose, or the feedback you want. Apply, edit, or clear this optional brief at
-any time. Changing it does not immediately analyze or edit your draft; select
-**Read this now** to check the current text against the new brief. Writer waits
-for meaningful edits and a quiet interval between automatic checks, including
-when the last check was silent. Choose **Quiet · on request** to stop automatic
-checks, or **On request · turn on** to resume. **Read this now** and **Ask Writer**
-work while automatic checks are paused and before any observation appears.
+Select the outlined **Add brief** button above the document if you want to describe
+its audience, purpose, or the feedback you want. Apply, edit, or clear this optional
+brief at any time. Changing it does not immediately analyze or edit your draft;
+select **Read this now** to check the current text against the new brief. Writer
+waits for meaningful edits and a quiet interval between automatic checks, including
+when the last check was silent. Turn off **Automatic feedback** to run checks only
+when you select **Read this now**. **Read this now** and **Ask Writer** work while
+automatic feedback is off and before any observation appears.
 
 Open observations remain in the active list. **Addressed** and **Not relevant** move threads into collapsed **History**; expand it to revisit or reopen them. Select **Open thread** to revisit a question and its conversation. Discussion alone does not close it. The general conversation is separate from these threads. Confirm an optional author decision on a thread if you want future checks to consider it. Up to 100 decisions stay in context even when their observations are old; clear one before adding another at the limit. Writer does not infer such decisions. A quote under an observation can be revealed in the current document: **Reveal passage** scrolls to the first match without moving the caret or changing undo history; automatic feedback never scrolls. Missing or repeated passages are marked as earlier-draft/changed rather than linked to a guessed location.
 Writer never edits your text. Ask explicitly if you want wording suggestions.
