@@ -262808,6 +262808,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791153007939,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d7541d6c0d39017ea560c85ee8f2be1c89b684fb",
+          "message": "fix: return and fence auxiliary usage results (#1904)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-04T16:49:33-07:00",
+          "tree_id": "208c4d4d76d598768172c5b3cae4f3a960e4be7e",
+          "url": "https://github.com/stacklok/mecatl/commit/d7541d6c0d39017ea560c85ee8f2be1c89b684fb"
+        },
+        "date": 1791158493387,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -381384,6 +381418,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791158490868,
+  "lastUpdate": 1791158494250,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
