@@ -590,6 +590,15 @@ session as authoritative.
 
 ## Troubleshooting
 
+### A provider request failed
+
+OpenAI Responses, Chat Completions, and Anthropic errors show a failure category
+or status, such as `503 Service Unavailable`, instead of the provider's raw error
+message. Raw messages can contain reflected credentials or request content. When
+an HTTP error includes a sanitized target and request ID, use them to locate the
+request in your provider's support tools. Context-window and content-filter
+failures retain their specific categories.
+
 ### Model context metadata is unavailable
 
 You can send the first prompt in a new or resumed session without opening

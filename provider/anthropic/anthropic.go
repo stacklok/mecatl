@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
+	"net/http"
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -386,7 +388,8 @@ func (p *Provider) sessionCaps() port.ProviderCapabilities {
 // carries the SDK error for Unwrap and a human-readable message for Error().
 type anthropicStreamError struct {
 	err      error  // original SDK/transport error (for Unwrap)
-	msg      string // human-readable Error() string
+	msg      string // private raw classification input; never rendered
+	display  string // safe target/correlation projection when present
 	status   int    // HTTP-status equivalent; 0 = unknown
 	metadata providerErrorMetadata
 }
@@ -399,7 +402,12 @@ type providerErrorMetadata struct {
 	correlationID   string
 }
 
-func (e *anthropicStreamError) Error() string             { return e.msg }
+func (e *anthropicStreamError) Error() string {
+	if e.display != "" {
+		return e.display
+	}
+	return providerErrorText(e.status, e.msg)
+}
 func (e *anthropicStreamError) Unwrap() error             { return e.err }
 func (e *anthropicStreamError) StatusCode() int           { return e.status }
 func (e *anthropicStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
@@ -441,32 +449,27 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
-// anthropicHTTPErrorText projects only the structured API envelope for display.
-// sdk.Error.Error includes the request URL, request ID, and raw response body, so it
-// must remain unwrap-only.
-func anthropicHTTPErrorText(err *sdk.Error) string {
+// anthropicHTTPErrorMessage extracts private classification input, not display text.
+func anthropicHTTPErrorMessage(err *sdk.Error) string {
 	var envelope struct {
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal([]byte(err.RawJSON()), &envelope)
-	return structuredHTTPErrorText(string(err.Type()), envelope.Error.Message)
+	return envelope.Error.Message
 }
 
-func structuredHTTPErrorText(kind, message string) string {
-	kind = strings.TrimSpace(kind)
-	message = strings.TrimSpace(message)
-	switch {
-	case kind != "" && message != "":
-		return kind + ": " + message
-	case kind != "":
-		return kind
-	case message != "":
-		return message
-	default:
-		return "provider request failed"
+// providerErrorText renders only harness/standard-library text. Raw messages
+// remain private classification inputs, never display fragments.
+func providerErrorText(status int, message string) string {
+	if isContextOverflowMessage(message) {
+		return "provider request failed: context window exceeded"
 	}
+	if text := http.StatusText(status); text != "" {
+		return fmt.Sprintf("provider request failed (%d %s)", status, text)
+	}
+	return "provider request failed"
 }
 
 // anthropicStreamErr wraps the given error while retaining the SDK error in the
@@ -474,10 +477,18 @@ func structuredHTTPErrorText(kind, message string) string {
 func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 	var sdkErr *sdk.Error
 	status := 0
+	display := ""
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
-		msg = port.AppendHTTPErrorDisplay(anthropicHTTPErrorText(sdkErr), sdkErr.Request, sdkErr.RequestID)
+		msg = anthropicHTTPErrorMessage(sdkErr)
 		status = sdkErr.StatusCode
+		// SSE error envelopes arrive through the SDK with HTTP 200. Display
+		// their known error category, without changing causal retry metadata.
+		displayStatus := status
+		if status == http.StatusOK {
+			displayStatus = anthropicErrorTypeToStatus(string(sdkErr.Type()))
+		}
+		display = port.AppendHTTPErrorDisplay(providerErrorText(displayStatus, msg), sdkErr.Request, sdkErr.RequestID)
 		metadata.httpStatus = status
 		metadata.providerCode = string(sdkErr.Type())
 		if sdkErr.RequestID != "" {
@@ -485,7 +496,7 @@ func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 			metadata.correlationID = sdkErr.RequestID
 		}
 	}
-	return &anthropicStreamError{err: err, msg: msg, status: status, metadata: metadata}
+	return &anthropicStreamError{err: err, msg: msg, display: display, status: status, metadata: metadata}
 }
 
 // Compile-time assertion that Provider satisfies the port.

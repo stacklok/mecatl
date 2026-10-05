@@ -25,6 +25,7 @@ package openaichat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"net/http"
 	"strings"
@@ -262,7 +263,8 @@ var _ port.LLMProvider = (*Provider)(nil)
 // Unwrap and a human-readable message for Error().
 type openaichatStreamError struct {
 	err      error  // original SDK/transport error (for Unwrap)
-	msg      string // human-readable Error() string
+	msg      string // private raw classification input; never rendered
+	display  string // safe target/correlation projection when present
 	status   int    // HTTP-status equivalent; 0 = unknown
 	metadata providerErrorMetadata
 }
@@ -275,7 +277,12 @@ type providerErrorMetadata struct {
 	correlationID   string
 }
 
-func (e *openaichatStreamError) Error() string             { return e.msg }
+func (e *openaichatStreamError) Error() string {
+	if e.display != "" {
+		return e.display
+	}
+	return providerErrorText(e.status, e.msg)
+}
 func (e *openaichatStreamError) Unwrap() error             { return e.err }
 func (e *openaichatStreamError) StatusCode() int           { return e.status }
 func (e *openaichatStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
@@ -316,22 +323,16 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
-func structuredHTTPErrorText(code, kind, message string) string {
-	label := strings.TrimSpace(code)
-	if label == "" {
-		label = strings.TrimSpace(kind)
+// providerErrorText renders only harness/standard-library text. Raw messages
+// remain private classification inputs, never display fragments.
+func providerErrorText(status int, message string) string {
+	if isContextOverflowMessage(message) {
+		return "provider request failed: context window exceeded"
 	}
-	message = strings.TrimSpace(message)
-	switch {
-	case label != "" && message != "":
-		return label + ": " + message
-	case label != "":
-		return label
-	case message != "":
-		return message
-	default:
-		return "provider request failed"
+	if text := http.StatusText(status); text != "" {
+		return fmt.Sprintf("provider request failed (%d %s)", status, text)
 	}
+	return "provider request failed"
 }
 
 // openaichatStreamErr wraps the given error as an openaichatStreamError while
@@ -339,6 +340,7 @@ func structuredHTTPErrorText(code, kind, message string) string {
 func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamError {
 	var sdkErr *oai.Error
 	status := 0
+	display := ""
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
 		metadata.providerCode = sdkErr.Code
@@ -357,13 +359,14 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 				metadata.correlationID = requestID
 			}
 		}
-		msg = port.AppendHTTPErrorDisplay(structuredHTTPErrorText(sdkErr.Code, sdkErr.Type, sdkErr.Message), sdkErr.Request, requestID)
+		msg = sdkErr.Message
+		display = port.AppendHTTPErrorDisplay(providerErrorText(status, msg), sdkErr.Request, requestID)
 	}
 	if metadata.correlationID == "" && completionID != "" {
 		metadata.correlationKind = "completion"
 		metadata.correlationID = completionID
 	}
-	return &openaichatStreamError{err: err, msg: msg, status: status, metadata: metadata}
+	return &openaichatStreamError{err: err, msg: msg, display: display, status: status, metadata: metadata}
 }
 
 func openaichatErrorCodeToStatus(code string) int {

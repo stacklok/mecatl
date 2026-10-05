@@ -419,7 +419,7 @@ func TestTranslateErrorEvent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a terminal error from the error event")
 	}
-	if got := err.Error(); got != "stream error: overloaded_error: Overloaded" {
+	if got := err.Error(); got != "provider request failed (503 Service Unavailable)" {
 		t.Errorf("error = %q", got)
 	}
 }
@@ -551,12 +551,10 @@ func TestAnthropicStreamErrorRetryDisposition(t *testing.T) {
 	}
 }
 
-// TestAnthropicStreamErrorErrorMessageUnchanged pins the invariant that wrapping
-// the error event does not change the Error() string.
-func TestAnthropicStreamErrorErrorMessageUnchanged(t *testing.T) {
+func TestAnthropicStreamErrorSafeCategory(t *testing.T) {
 	e := &anthropicStreamError{msg: "stream error: overloaded_error: Overloaded", status: 503}
-	if got := e.Error(); got != "stream error: overloaded_error: Overloaded" {
-		t.Errorf("Error() = %q, want unchanged message", got)
+	if got := e.Error(); got != "provider request failed (503 Service Unavailable)" {
+		t.Errorf("Error() = %q, want safe overload category", got)
 	}
 }
 

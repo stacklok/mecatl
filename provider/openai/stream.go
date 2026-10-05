@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	oai "github.com/openai/openai-go/v3"
@@ -336,14 +337,8 @@ func streamErrorString(event responses.ResponseStreamEventUnion) string {
 	return msg
 }
 
-// responseStreamError is a typed error returned by the stream translator for
-// response.failed and top-level error events. It preserves the original
-// human-readable message AND carries an HTTP-status equivalent so the
-// llmresilience DefaultClassifier (which checks for interface{ StatusCode() int })
-// can classify transient codes (e.g. 429 rate-limit) as retryable.
-//
-// The human-readable Error() string retains the in-band event text. Structured
-// HTTP rejections add only the safe target/ID projection in httpMetadataError.
+// Provider error metadata is programmatic only; arbitrary provider strings must
+// not be copied into display, logs, or events without their own sanitization.
 type providerErrorMetadata struct {
 	httpStatus      int
 	inBandStatus    int
@@ -353,12 +348,25 @@ type providerErrorMetadata struct {
 }
 
 type responseStreamError struct {
-	msg      string // human-readable, e.g. "response failed: rate_limit_exceeded: Too Many Requests"
+	msg      string // private raw classification input; never rendered
 	status   int    // HTTP-status equivalent; 0 means unknown/non-retryable
 	metadata providerErrorMetadata
 }
 
-func (e *responseStreamError) Error() string             { return e.msg }
+func (e *responseStreamError) Error() string {
+	switch e.metadata.providerCode {
+	case "content_filter", "content_policy_violation":
+		return "provider request failed: content filter blocked the response"
+	case "context_length_exceeded":
+		return "provider request failed: context window exceeded"
+	case "invalid_request_error", "invalid_prompt":
+		return "provider request failed: invalid request"
+	case "invalid_encrypted_content":
+		return "provider request failed: invalid encrypted content"
+	default:
+		return providerErrorText(e.status, e.msg)
+	}
+}
 func (e *responseStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
 func (e *responseStreamError) ProviderInBandStatus() int { return e.metadata.inBandStatus }
 func (e *responseStreamError) ProviderErrorCode() string { return e.metadata.providerCode }
@@ -383,28 +391,22 @@ func (e *httpMetadataError) ProviderErrorCode() string            { return e.met
 func (e *httpMetadataError) ProviderErrorCorrelationKind() string { return e.metadata.correlationKind }
 func (e *httpMetadataError) ProviderErrorCorrelationID() string   { return e.metadata.correlationID }
 
-func structuredHTTPErrorText(code, kind, message string) string {
-	label := strings.TrimSpace(code)
-	if label == "" {
-		label = strings.TrimSpace(kind)
+// providerErrorText renders only harness/standard-library text. Raw messages
+// remain private classification inputs, never display fragments.
+func providerErrorText(status int, message string) string {
+	if isContextOverflowMessage(message) {
+		return "provider request failed: context window exceeded"
 	}
-	message = strings.TrimSpace(message)
-	switch {
-	case label != "" && message != "":
-		return label + ": " + message
-	case label != "":
-		return label
-	case message != "":
-		return message
-	default:
-		return "provider request failed"
+	if text := http.StatusText(status); text != "" {
+		return fmt.Sprintf("provider request failed (%d %s)", status, text)
 	}
+	return "provider request failed"
 }
 
 func withHTTPErrorMetadata(err error) error {
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) {
-		return err
+		return &httpMetadataError{err: err, message: "provider request failed"}
 	}
 	metadata := providerErrorMetadata{
 		httpStatus:   apiErr.StatusCode,
@@ -420,7 +422,7 @@ func withHTTPErrorMetadata(err error) error {
 	}
 	return &httpMetadataError{
 		err:      err,
-		message:  port.AppendHTTPErrorDisplay(structuredHTTPErrorText(apiErr.Code, apiErr.Type, apiErr.Message), apiErr.Request, requestID),
+		message:  port.AppendHTTPErrorDisplay(providerErrorText(apiErr.StatusCode, apiErr.Message), apiErr.Request, requestID),
 		metadata: metadata,
 	}
 }
@@ -542,15 +544,8 @@ func incompleteReason(r responses.Response) string {
 	return string(r.Status)
 }
 
-// incompleteMessage renders a human-readable terminal message for a
-// response.incomplete event, keyed on the incomplete_details.reason. The loop
-// prefixes this with "agent: stream: ", so it reads naturally lowercased after
-// that prefix. The raw reason token is kept visible in every branch for
-// diagnosability, and an unknown/future reason falls back to the plain
-// "response incomplete: <reason>" form (forward-compatible — the reason enum is
-// never hard-coded exhaustively). This is a presentation choice only: it does
-// NOT affect retry classification (the caller returns the bare, non-retryable
-// error verbatim alongside the usage chunk).
+// incompleteMessage renders known reasons using harness-authored text. Unknown
+// reasons are untrusted and must not be reflected into terminal errors.
 func incompleteMessage(r responses.Response) string {
 	reason := incompleteReason(r)
 	switch reason {
@@ -564,7 +559,7 @@ func incompleteMessage(r responses.Response) string {
 		return "the response was cut off at the provider's max output token limit " +
 			"(reason: max_output_tokens)."
 	default:
-		return fmt.Sprintf("response incomplete: %s", reason)
+		return "response incomplete: unknown reason"
 	}
 }
 
