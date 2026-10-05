@@ -57,10 +57,11 @@ func buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
 	}
 
 	params := responses.ResponseNewParams{
-		Model: req.Model,
-		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: items},
-		Tools: tools,
-		Store: oai.Bool(false),
+		Model:     req.Model,
+		Input:     responses.ResponseNewParamsInputUnion{OfInputItemList: items},
+		Tools:     tools,
+		Store:     oai.Bool(false),
+		Reasoning: shared.ReasoningParam{Summary: shared.ReasoningSummaryAuto},
 		Include: []responses.ResponseIncludable{
 			responses.ResponseIncludableReasoningEncryptedContent,
 		},
@@ -97,10 +98,11 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 	}
 
 	params := responses.ResponseNewParams{
-		Model: req.Model,
-		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: items},
-		Tools: tools,
-		Store: oai.Bool(false),
+		Model:     req.Model,
+		Input:     responses.ResponseNewParamsInputUnion{OfInputItemList: items},
+		Tools:     tools,
+		Store:     oai.Bool(false),
+		Reasoning: shared.ReasoningParam{Summary: shared.ReasoningSummaryAuto},
 		Include: []responses.ResponseIncludable{
 			responses.ResponseIncludableReasoningEncryptedContent,
 		},
@@ -109,7 +111,7 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 		params.Instructions = oai.String(instr)
 	}
 	if mapped, ok := reasoningEffortFor(p.effort); ok {
-		params.Reasoning = shared.ReasoningParam{Effort: mapped}
+		params.Reasoning.Effort = mapped
 	}
 	p.applyCacheDialect(&params, req)
 	return params, nil

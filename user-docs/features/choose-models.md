@@ -473,6 +473,12 @@ mapping belongs in the
 [configuration reference](/reference/configuration.md#reasoning-effort), not in
 the selection workflow.
 
+OpenAI Responses providers request display summaries automatically, regardless
+of your effort setting. A model can complete without producing a summary. If a
+compatible endpoint rejects the summary request, Mecatl reports the provider
+error rather than retrying with a different request. Anthropic Messages and
+Chat Completions have their own request behavior.
+
 ## API journey
 
 API clients can either omit provider/model fields and use the server defaults,

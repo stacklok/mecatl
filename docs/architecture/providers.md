@@ -35,6 +35,10 @@
   packed reasoning entry records how many calls preceded it and the adapter
   rebuilds the sequence — the stateless-replay rule is to pass prior output items
   back untouched.
+- Every Responses request asks for `reasoning.summary: "auto"`, including when
+  effort is unset. OpenAI, OpenRouter, and configured compatible endpoints use
+  this shared adapter. An endpoint that rejects the option returns its provider
+  error; the adapter does not retry without it.
 - `Store: false` plus `Include: [reasoning.encrypted_content]` so reasoning
   survives across turns statelessly. A turn may carry SEVERAL reasoning items,
   each with `encrypted_content` bound to its own `rs_…` item id, so the adapter
