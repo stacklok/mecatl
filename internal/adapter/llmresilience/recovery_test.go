@@ -287,6 +287,45 @@ func TestServerProviderRecovery_Scenario4_NonSlidingBudgetAndActualCallCap(t *te
 	})
 }
 
+func TestRecoveryWindowStopJoinsInFlightTimerCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		callbackStarted := make(chan struct{})
+		releaseCallback := make(chan struct{})
+		defer func() {
+			select {
+			case <-releaseCallback:
+			default:
+				close(releaseCallback)
+			}
+		}()
+		r := &recoveryWindow{ctx: ctx, cancel: func() {
+			close(callbackStarted)
+			<-releaseCallback
+			cancel()
+		}}
+		r.start(time.Now(), time.Second)
+		time.Sleep(time.Second)
+		<-callbackStarted
+		stopped := make(chan struct{})
+		go func() {
+			r.stop(time.Now())
+			close(stopped)
+		}()
+		synctest.Wait()
+		select {
+		case <-stopped:
+			t.Fatal("stop returned while timer callback was still in flight")
+		default:
+		}
+		close(releaseCallback)
+		<-stopped
+		if ctx.Err() == nil {
+			t.Fatal("timer callback did not complete")
+		}
+	})
+}
+
 func TestServerProviderRecovery_Scenario4_RecoveryDeadlineCannotCancelVisibleStream(t *testing.T) {
 	for _, kind := range []port.ChunkKind{port.ChunkText, port.ChunkDone} {
 		t.Run(fmt.Sprint("commit races expiry ", kind), func(t *testing.T) {

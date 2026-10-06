@@ -13,9 +13,6 @@ import (
 	"testing"
 	"time"
 
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
-	openaioption "github.com/openai/openai-go/v3/option"
-
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -24,9 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	anthropicprovider "github.com/stacklok/mecatl/provider/anthropic"
-	openairesponse "github.com/stacklok/mecatl/provider/openai"
-	openaichatprovider "github.com/stacklok/mecatl/provider/openaichat"
 )
 
 func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
@@ -61,11 +55,11 @@ func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
 					if protocol == "codex" {
 						id = providerOpenAICodex
 					}
-					entry = newOpenAICompatEntry(cfg, id, "synthetic", upstream.URL, openairesponse.WithMaxRetries(0))
+					entry = newOpenAICompatEntry(cfg, id, "synthetic", upstream.URL)
 				case "chat":
-					entry = newOpenCodeEntry(cfg, providerOpenCode, "synthetic", upstream.URL, openaichatprovider.WithRequestOption(openaioption.WithMaxRetries(0)))
+					entry = newOpenCodeEntry(cfg, providerOpenCode, "synthetic", upstream.URL)
 				case "anthropic":
-					entry = newAnthropicEntryFor(cfg, providerAnthropic, "synthetic", upstream.URL, newLiveMetaStore(), false, anthropicprovider.WithRequestOption(anthropicoption.WithMaxRetries(0)))
+					entry = newAnthropicEntryFor(cfg, providerAnthropic, "synthetic", upstream.URL, newLiveMetaStore(), false)
 				}
 				eng := agent.NewEngine(agent.Deps{LLM: entry.provider, Model: "test-model", Catalog: tool.NewCatalog(), Diagnostics: diag, EnableDurableEvidence: true})
 				store := memstore.New()
@@ -149,14 +143,13 @@ func TestProviderErrorDisplayThroughAttemptExhaustion(t *testing.T) {
 			diag := newCapturingDiagnostics()
 			cfg := Config{LLMMaxAttempts: 2, Diagnostics: diag}
 			var entry providerEntry
-			// Disable SDK retries so request counts measure outer attempts only.
 			switch protocol {
 			case "responses":
-				entry = newOpenAICompatEntry(cfg, providerOpenAI, "synthetic", srv.URL, openairesponse.WithMaxRetries(0))
+				entry = newOpenAICompatEntry(cfg, providerOpenAI, "synthetic", srv.URL)
 			case "chat":
-				entry = newOpenCodeEntry(cfg, providerOpenCode, "synthetic", srv.URL, openaichatprovider.WithRequestOption(openaioption.WithMaxRetries(0)))
+				entry = newOpenCodeEntry(cfg, providerOpenCode, "synthetic", srv.URL)
 			case "anthropic":
-				entry = newAnthropicEntryFor(cfg, providerAnthropic, "synthetic", srv.URL, newLiveMetaStore(), false, anthropicprovider.WithRequestOption(anthropicoption.WithMaxRetries(0)))
+				entry = newAnthropicEntryFor(cfg, providerAnthropic, "synthetic", srv.URL, newLiveMetaStore(), false)
 			}
 			eng := agent.NewEngine(agent.Deps{LLM: entry.provider, Model: "test-model", Catalog: tool.NewCatalog(), Diagnostics: diag, EnableDurableEvidence: true})
 			sess := session.New("display-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(0, 0))

@@ -234,12 +234,23 @@ func TestRecoveryBudgetAcrossConstructorsAndRemints(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					var hits atomic.Int32
+					initialResponseEmitted := make(chan time.Time, 1)
+					secondRequestArrived := make(chan time.Time, 1)
 					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 						w.Header().Set("Content-Type", "application/json")
-						if hits.Add(1) == 1 {
+						switch hits.Add(1) {
+						case 1:
+							time.Sleep(250 * time.Millisecond)
 							w.Header().Set("Retry-After", "1")
+							initialResponseEmitted <- time.Now()
+							w.WriteHeader(http.StatusServiceUnavailable)
+							w.(http.Flusher).Flush()
+						case 2:
+							secondRequestArrived <- time.Now()
+							w.WriteHeader(http.StatusServiceUnavailable)
+						default:
+							w.WriteHeader(http.StatusServiceUnavailable)
 						}
-						w.WriteHeader(http.StatusServiceUnavailable)
 						_, _ = io.WriteString(w, `{"error":{"code":"server_error","message":"unavailable"}}`)
 					}))
 					defer srv.Close()
@@ -248,12 +259,25 @@ func TestRecoveryBudgetAcrossConstructorsAndRemints(t *testing.T) {
 					if remint {
 						llm = entry.remint("high", llm.Capabilities())
 					}
-					start := time.Now()
 					if err := providerStreamError(t, llm); err == nil {
 						t.Fatal("expected terminal provider failure")
 					}
-					if got := hits.Load(); got != 2 || time.Since(start) < 900*time.Millisecond {
-						t.Fatalf("calls=%d elapsed=%s: recovery budget or Retry-After lost", got, time.Since(start))
+					if got := hits.Load(); got != 2 {
+						t.Fatalf("calls=%d, want 2: recovery budget or Retry-After lost", got)
+					}
+					var emitted, arrived time.Time
+					select {
+					case emitted = <-initialResponseEmitted:
+					default:
+						t.Fatal("missing initial response emission timestamp")
+					}
+					select {
+					case arrived = <-secondRequestArrived:
+					default:
+						t.Fatal("missing second request arrival timestamp")
+					}
+					if delay := arrived.Sub(emitted); delay < time.Second {
+						t.Fatalf("retry after header emission=%s, want >=1s: Retry-After lost", delay)
 					}
 				})
 			}

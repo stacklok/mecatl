@@ -206,6 +206,16 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 	}
 }
 
+type checkerDownCountingTool struct {
+	stubTool
+	executions atomic.Int32
+}
+
+func (t *checkerDownCountingTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	t.executions.Add(1)
+	return t.stubTool.Execute(ctx, call, env)
+}
+
 func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *testing.T) {
 	for _, policy := range []string{"warn", "fail"} {
 		t.Run(policy, func(t *testing.T) {
@@ -228,7 +238,8 @@ func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *tes
 			reviewer := buildGuardrailsActionReviewer(cfg, regForTest(entry.provider, providerOpenAI, cfg.Model), entry.provider, providerOpenAI, nil)
 			reviewer.(*guardrailActionReviewer).base.(*contextualToolReviewer).deadline = 250 * time.Millisecond
 			catalog := tool.NewCatalog()
-			catalog.MustRegister(stubTool{name: "Grep"})
+			checkedTool := &checkerDownCountingTool{stubTool: stubTool{name: "Grep"}}
+			catalog.MustRegister(checkedTool)
 			deps := agent.Deps{
 				LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("checked", "Grep", []byte(`{}`))), mockllm.TextTurn("done")),
 				Catalog: catalog, Model: "parent-model",
@@ -240,8 +251,16 @@ func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *tes
 				session.Limits{}, time.Unix(1, 0))
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			seen := false
+			seen, timeoutEvidence, warnings := false, 0, 0
 			for ev := range agent.NewEngine(deps).Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"}).Events() {
+				if ev.Hook != nil && ev.Hook.Guardrail != nil {
+					if ev.Hook.Guardrail.ReasonCode == string(agent.ReviewFailureTimeout) {
+						timeoutEvidence++
+					}
+					if ev.Hook.Guardrail.Disposition == "pass_advisory" {
+						warnings++
+					}
+				}
 				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "checked" {
 					seen = true
 					if ev.ToolResult.IsError != (policy == "fail") {
@@ -249,8 +268,12 @@ func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *tes
 					}
 				}
 			}
-			if !seen || requests.Load() != 2 {
-				t.Fatalf("checker-down policy %s result=%v requests=%d", policy, seen, requests.Load())
+			wantExecutions, wantWarnings := int32(0), 0
+			if policy == "warn" {
+				wantExecutions, wantWarnings = 1, 1
+			}
+			if !seen || requests.Load() != 2 || checkedTool.executions.Load() != wantExecutions || warnings != wantWarnings || timeoutEvidence != 1 {
+				t.Fatalf("checker-down policy %s result=%v requests=%d executions=%d warnings=%d timeout_evidence=%d", policy, seen, requests.Load(), checkedTool.executions.Load(), warnings, timeoutEvidence)
 			}
 		})
 	}
