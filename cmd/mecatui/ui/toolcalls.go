@@ -440,6 +440,8 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 // setEntries preserves an earlier reader's block identity while new calls arrive.
 // A reader already following the newest row advances to the new newest row.
 func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
+	s.hitItems = nil
+	s.previewHits = nil
 	if opening {
 		s.listFollow = true
 	}

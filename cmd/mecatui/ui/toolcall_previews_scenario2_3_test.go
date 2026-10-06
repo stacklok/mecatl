@@ -90,6 +90,17 @@ func TestMecatuiToolcallPreviews_Scenario2_LiveSelectionAndEviction(t *testing.T
 	if s.selected != 1 {
 		t.Fatalf("reflow moved selected trace slot: %d", s.selected)
 	}
+	_, staleRegions := s.Render(90, 24)
+	var stalePreview HitID
+	for _, region := range staleRegions {
+		if _, ok := s.previewHits[region.hit]; ok {
+			stalePreview = region.hit
+			break
+		}
+	}
+	if stalePreview == 0 {
+		t.Fatal("preview has no hit target")
+	}
 	for i := 0; i < maxTraceEntries; i++ {
 		m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.call", ToolName: "Write"})
 	}
@@ -97,6 +108,28 @@ func TestMecatuiToolcallPreviews_Scenario2_LiveSelectionAndEviction(t *testing.T
 	if s.entries[s.selected].fullName != "Subagent" {
 		t.Fatalf("eviction selected another preview: %#v", s.entries[s.selected])
 	}
+	// A hit belongs to the rendered frame, not the list index that happens to
+	// occupy its old slot after an eviction.
+	s.HandleMsg(surfaceHitMsg{ID: stalePreview})
+	if s.selected != 0 || s.detail {
+		t.Fatalf("stale preview hit opened a replacement row: selected=%d detail=%t entries=%#v", s.selected, s.detail, s.entries)
+	}
+	_, freshRegions := s.Render(90, 24)
+	var freshPreview HitID
+	for _, region := range freshRegions {
+		if s.previewHits[region.hit] == 1 {
+			freshPreview = region.hit
+			break
+		}
+	}
+	if freshPreview == 0 {
+		t.Fatal("current preview has no hit target")
+	}
+	s.HandleMsg(surfaceHitMsg{ID: freshPreview})
+	if s.selected != 1 || !s.detail || s.entries[s.selected].fullName != "Write" {
+		t.Fatalf("current preview hit did not open its intended row: selected=%d detail=%t entry=%#v", s.selected, s.detail, s.entries[s.selected])
+	}
+	s.detail = false
 	s.Render(90, 24)
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !s.detail {
