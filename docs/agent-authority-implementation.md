@@ -143,7 +143,7 @@ broker-owned admission state.
 
 Exact receipts and JTI tracking remain process-local. Restart must fail closed,
 not imply durable single-use protection. Retrieving a started receipt is not a
-new dispatch. The main's [interactive flow](agent-authority.md#4-interactive-execution-flow)
+new dispatch. The main's [interactive flow](agent-authority.md#5-interactive-execution-flow)
 is a normative design, not an execution trace of I or W.
 
 ### B, W and S: credential continuity is not subject continuity
@@ -172,6 +172,57 @@ details or introduce a new opaque user-evidence platform here.
 
 Complete the identity/broker foundation first. These are requirements to implement
 or decisions to select, not claims already satisfied by the snapshots.
+
+### Reusable identity and run-scoped delegation
+
+The intended lifetime model now separates a reusable, short-lived agent credential,
+run-scoped delegated access and per-call admission. This is not I's implemented
+profile: I binds the agent SVID to an exact invocation and tracks its JTI as
+single-use. Move occurrence/replay enforcement into call admission before allowing
+identity-credential reuse; do not merely remove the existing checks.
+
+Define the trusted run binding, creation/termination authority, actor transitions
+for children, credential-cache partitioning, renewal limits and restart behavior.
+One run may use multiple resource-specific or renewed access tokens, but none may
+outlive its authorized use merely because a provider refresh token remains valid.
+Select how the execution boundary checks run status and how already-issued tokens
+are treated after cancellation. OAuth exchange alone does not establish these
+semantics. The relationship to the newer broker SessionService, and the concrete
+identity/delegation interface split, remain design work rather than selected RPCs.
+
+### User evidence, exchange and account association
+
+- Qualify I's freshness, replay and lifetime rules and workload/invocation binding.
+  Prove rejection of stale, substituted or mismatched evidence. Decide how human
+  evidence constrains exchange lifetime without assuming I's issuer receives it.
+- Select the **authorized association mechanism** linking Mecatl `(Issuer, Subject)`,
+  ToolHive canonical user and provider account, including recovery. Equal subjects,
+  callback state and PKCE do not prove identity equivalence. Recovery must retain
+  or authoritatively resolve canonical subject identity, not just credentials.
+- Reuse the existing ToolHive auth-code access token as `subject_token`, never owner,
+  `ExternalBinding`, an attachment handle or `tsid`. Permit exchange in the broker
+  registration, which currently uses authorization code + refresh,
+  `openid`/`offline_access` and `client_secret_basic`. Select eligible resources,
+  scopes and subject/actor/policy lifetime bounds, and the broker's SVID client-auth
+  integration independently of harness-to-broker authentication.
+- Select a distinct actor-validation/exchange profile and authorized presenter
+  association. Broker-admission audience is not automatically AS actor audience:
+  choose a separate credential or explicitly compatible profile, not casual audience
+  widening or a workload token relabelled as agent identity.
+- Resolve an authorized local credential link from validated subject and broker
+  connection state, then pass it to ToolHive session construction. Verified user,
+  tenant, provider, connection/revision and target must agree; never copy an arbitrary
+  external `tsid`. Follow the continuity brief rather than inventing a new issuance
+  API, signing tier or consent-record platform.
+- Define the scope, lifetime and withdrawal/revalidation rules for both user/account
+  and actor/presenter associations, including effects on new exchanges and
+  already-issued tokens. A valid token or connected provider account must not by
+  itself preserve a withdrawn association.
+- Specify revocation behavior and residual lifetime of self-contained bearers,
+  including any live execution checks/introspection. Fresh Mecatl authentication
+  and broker exact-operation admission remain independent of refresh and exchange.
+
+These decisions are foundation work, not deferred to mandates or scheduled consent.
 
 ### Session-scoped definitions and uniform identity
 
@@ -242,40 +293,6 @@ execution paths must remain rejected rather than gaining credential issuance
 implicitly. The concrete core representation and migration remain to be selected;
 these requirements do not mandate constructing every root through an `AgentDef`
 or replacing the existing root/child engine builders.
-
-### User evidence, exchange and account association
-
-- Qualify I's freshness, replay and lifetime rules and workload/invocation binding.
-  Prove rejection of stale, substituted or mismatched evidence. Decide how human
-  evidence constrains exchange lifetime without assuming I's issuer receives it.
-- Select the **authorized association mechanism** linking Mecatl `(Issuer, Subject)`,
-  ToolHive canonical user and provider account, including recovery. Equal subjects,
-  callback state and PKCE do not prove identity equivalence. Recovery must retain
-  or authoritatively resolve canonical subject identity, not just credentials.
-- Reuse the existing ToolHive auth-code access token as `subject_token`, never owner,
-  `ExternalBinding`, an attachment handle or `tsid`. Permit exchange in the broker
-  registration, which currently uses authorization code + refresh,
-  `openid`/`offline_access` and `client_secret_basic`. Select eligible resources,
-  scopes and subject/actor/policy lifetime bounds, and the broker's SVID client-auth
-  integration independently of harness-to-broker authentication.
-- Select a distinct actor-validation/exchange profile and authorized presenter
-  association. Broker-admission audience is not automatically AS actor audience:
-  choose a separate credential or explicitly compatible profile, not casual audience
-  widening or a workload token relabelled as agent identity.
-- Resolve an authorized local credential link from validated subject and broker
-  connection state, then pass it to ToolHive session construction. Verified user,
-  tenant, provider, connection/revision and target must agree; never copy an arbitrary
-  external `tsid`. Follow the continuity brief rather than inventing a new issuance
-  API, signing tier or consent-record platform.
-- Define the scope, lifetime and withdrawal/revalidation rules for both user/account
-  and actor/presenter associations, including effects on new exchanges and
-  already-issued tokens. A valid token or connected provider account must not by
-  itself preserve a withdrawn association.
-- Specify revocation behavior and residual lifetime of self-contained bearers,
-  including any live execution checks/introspection. Fresh Mecatl authentication
-  and broker exact-operation admission remain independent of refresh and exchange.
-
-These decisions are foundation work, not deferred to mandates or scheduled consent.
 
 ### Integration, deployment and A–D qualification
 

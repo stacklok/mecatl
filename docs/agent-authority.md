@@ -65,7 +65,15 @@ It does not independently prove which agent inside Mecatl made the call. A compr
 
 **Identity never grants authority or proves consent.** The broker applies applicable authorization to the verified user, workload, logical agent and actual operation, not Mecatl's permission verdict. A separate signer or broker-audience claim does not turn trusted harness attestation into independent human proof. This design builds on authorization checks, not a new approval UI, opaque user-evidence platform, standing-grant store or mandate system.
 
-## 3. Identity progression
+## 3. Credential roles and lifetimes
+
+The logical-agent identity is stable, but its credentials expire and are renewed. A short-lived agent credential can be reused across calls and runs while its audience, permitted presenter and any issuance restrictions still apply. It identifies the agent; it is not a one-use permission for a particular call. The same agent identity does not make credentials with different restrictions interchangeable.
+
+Delegated access is scoped to a run: one execution started by a user request, not the whole conversation session. The run's authorization binds the user, acting agent, permitted resources and limits. A run can require several access tokens—for different resources or because an earlier token expired—but each must remain within that authorization. Changing the acting agent, including delegation to a specialist, requires an authorized actor transition rather than reusing a token that names another agent.
+
+The broker checks the run binding and current authority before each operation, as well as admitting the exact call. Creating a fresh token at run start is not enough to prevent its use in another run. Ending or cancelling the run stops new admission and renewal under that run. An already-issued bearer can still be accepted until expiry by a recipient that does not check run status; short lifetimes limit that exposure but do not provide immediate revocation. Renewing agent, ToolHive or provider credentials does not extend the run's authority or replace required fresh user evidence.
+
+## 4. Identity progression
 
 At every stage the harness (`mecak8s`) is a client of one
 logical broker deployment; the model does not authenticate or request credentials.
@@ -150,7 +158,7 @@ flowchart LR
 Both broker endpoints must verify mTLS identity. A TLS-terminating ingress requires explicitly trusted identity propagation; an ordinary forwarded header is not proof.
 Certificate rotation, bundle refresh and connection renewal must preserve that check, with no silent bearer fallback. D authenticates the harness, not its agents, and does not automatically bind an OAuth access token to the certificate. Neither C nor D proves user consent or isolates agents sharing a harness.
 
-## 4. Interactive execution flow
+## 5. Interactive execution flow
 
 The flow separates provider setup from admission of each exact operation. It uses an OAuth-protected upstream requiring its native provider credential, rather than a backend that directly accepts the delegated token. Operation and scope names are illustrative, not wire names.
 
@@ -159,6 +167,10 @@ The exchange reuses the broker's existing ToolHive authorization-code access tok
 The broker must establish which ToolHive user and connected provider account Alice is allowed to use. Her Mecatl login and GitHub account can have different identifiers; matching names or identifiers alone do not establish that they belong together. The browser authorization flow protects the sign-in transaction, but does not by itself prove that the account connected in the browser belongs to the user making the Mecatl request.
 
 Each interactive operation still requires Alice to be authenticated to Mecatl, the broker to check Mecatl’s current authentication report for that request, and policy to permit the operation. Being able to refresh a stored token keeps the connection usable; it does not authorize the next action.
+
+### Execution sequence
+
+The sequence shows one call within a run. Agent issuance and delegated-token exchange occur only when a suitable valid credential is unavailable; the run and exact-call checks apply to every invocation.
 
 ```mermaid
 sequenceDiagram
@@ -188,17 +200,22 @@ sequenceDiagram
     Note over U,P: Authorize and execute one exact operation
     U->>H: Read PR 42 as code-reviewer, with current authentication
     H->>H: Resolve agent and narrowed authority, then apply permissions/hooks
-    H->>I: Workload authentication + owner and effective execution facts
-    I-->>H: Constrained short-lived logical-agent credential
-    H->>H: Verify credential against requested execution facts
-    H->>B: Workload + agent credential + exact call + fresh user evidence
-    B->>B: Verify identities, bindings and exact call, then apply Cedar
+    opt No suitable valid agent credential
+        H->>I: Workload authentication + resolved agent identity and issuance restrictions
+        I-->>H: Short-lived reusable logical-agent credential
+    end
+    H->>H: Verify agent credential and its restrictions for this execution
+    H->>B: Workload + agent credential + run binding + exact call + fresh user evidence
+    B->>B: Verify identities, active run and exact call, then apply Cedar
     Note over B,V: Denial stops before invocation credential selection or dispatch
-    B->>B: Obtain current ToolHive subject token from guarded custody/refresh
-    B->>A: subject_token + actor_token + broker client auth + eligible resource/scopes
-    A->>A: Validate subject, distinct actor/presenter and authorized association
-    A->>A: Bound access/lifetime and resolve authorized local credential link
-    A-->>B: Delegated token: sub=user, act.sub=agent, client_id=broker client
+    opt No suitable valid delegated token for this run and resource
+        B->>B: Obtain current ToolHive subject token from guarded custody/refresh
+        B->>A: subject_token + actor_token + broker client auth + eligible resource/scopes
+        A->>A: Validate subject, distinct actor/presenter and authorized association
+        A->>A: Bound access/lifetime and resolve authorized local credential link
+        A-->>B: Delegated token: sub=user, act.sub=agent, client_id=broker client
+        B->>B: Bind delegated token to the authorized run
+    end
     B->>V: Delegated token + independently admitted exact operation
     V->>V: Validate token and operation policy, then load authorized connection
     V->>P: Exact operation with native provider access credential
@@ -225,7 +242,7 @@ These claims identify the parties and intended recipient; they do not specify or
 The protected resource validates issuer, audience, expiry and bounded access,
 applies operation policy and resolves only the authorized user/tenant/target's provider connection. `tsid` is a ToolHive-local credential link, outside SPIFFE's identity responsibility. It must come from validated subject and authoritative connection state, never an arbitrary external claim or caller-selected storage key.
 
-## 5. Credential custody and safety boundaries
+## 6. Credential custody and safety boundaries
 
 - **Human login bearers terminate at Mecatl's edge.** They are transient, never saved for downstream or scheduled use. Fresh harness-attested evidence is not the bearer, a stored owner, an attachment or an authorization grant.
 - **Agent credentials enter trusted Mecatl memory, not model content.** Client code verifies and attaches them without exposing them in arguments, results, conversation history, logs or environment variables. Model-hidden is not process-safe and does not guarantee secure memory erasure.
