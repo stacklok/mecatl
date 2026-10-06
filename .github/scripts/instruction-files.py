@@ -9,7 +9,8 @@ Limits and their basis:
   - Agent and skill descriptions: at most 1024 characters (Agent Skills spec);
     every session loads them.
 Every AGENTS.md needs a sibling CLAUDE.md symlink to it, and every
-`task <name>` an AGENTS.md mentions must exist.
+`task <name>` an AGENTS.md mentions must exist. The removed ADR and
+acceptance-plan directories must stay removed.
 
 Usage: instruction-files.py [--root DIR] [--tasks-file FILE]
 --tasks-file lists one valid task name per line instead of asking `task`.
@@ -29,6 +30,10 @@ AGENTS_MAX_LINES = 199
 CHAIN_MAX_BYTES = 32 * 1024
 RULE_MAX_LINES = 25
 DESCRIPTION_MAX_CHARS = 1024
+
+# The ADR / acceptance-plan process was removed; these paths must not return.
+REMOVED_DIRS = ("docs/adr/", "docs/acceptance/", "docs/superpowers/", ".claude/plans/")
+REMOVED_HINT = "put plan or design notes in the PR description or an issue; current behavior belongs in docs/ or user-docs/"
 
 TASK_REF = re.compile(r"(?:^|\s)task ([a-z0-9][a-z0-9:_.-]*[a-z0-9])")
 FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.S | re.M)
@@ -121,6 +126,8 @@ def check(root: Path, tasks_file: Path | None) -> list[str]:
                 errors.append(f"{rel}: mentions `task {name}`, which does not exist")
 
     for rel in sorted(files):
+        if rel.as_posix().startswith(REMOVED_DIRS):
+            errors.append(f"{rel}: this directory was removed; {REMOVED_HINT}")
         parts = rel.parts
         if parts[:2] == (".claude", "rules") and rel.suffix == ".md":
             lines = line_count(root / rel)

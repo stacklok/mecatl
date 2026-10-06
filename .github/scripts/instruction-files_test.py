@@ -88,6 +88,14 @@ case("long folded agent description fails", False, "reviewer.md: description is"
 case("long inline skill description fails", False, "SKILL.md: description is",
      edit=lambda f, l: f.__setitem__(".claude/skills/release/SKILL.md",
                                      "---\nname: release\ndescription: " + "a" * 1025 + "\n---\n"))
+case("file under removed docs/adr fails", False, "docs/adr/0400-new.md: this directory was removed",
+     edit=lambda f, l: f.__setitem__("docs/adr/0400-new.md", "# ADR\n"))
+case("file under removed docs/acceptance fails", False, "docs/acceptance/plan.md: this directory was removed",
+     edit=lambda f, l: f.__setitem__("docs/acceptance/plan.md", "# Plan\n"))
+case("file under removed .claude/plans fails", False, ".claude/plans/x.md: this directory was removed",
+     edit=lambda f, l: f.__setitem__(".claude/plans/x.md", "# Plan\n"))
+case("similar path outside removed dirs passes", True,
+     edit=lambda f, l: f.__setitem__("docs/adr-notes.md", "# Not an ADR dir\n"))
 case("missing description fails", False, "no description",
      edit=lambda f, l: f.__setitem__(".claude/skills/release/SKILL.md", "---\nname: release\n---\n"))
 
