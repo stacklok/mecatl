@@ -163,6 +163,18 @@ func TestMecatuiToolcallPreviews_Scenario2_LiveSelectionAndEviction(t *testing.T
 	if !s.detail {
 		t.Fatal("parent no longer selectable")
 	}
+	// An eviction can replace the same visible slot with another call bearing the
+	// same name. Its serial changes, so that row is not the selected preview.
+	ambiguous := previewFixture(t)
+	ambiguousInspector := toolcallsForTest(t, ambiguous)
+	ambiguousInspector.selected = 1
+	for range maxTraceEntries {
+		ambiguous.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.call", ToolName: "Read", Detail: "replacement"})
+	}
+	ambiguous.syncToolcalls()
+	if ambiguousInspector.selected != 0 || ambiguousInspector.entries[ambiguousInspector.selected].fullName != "Subagent" {
+		t.Fatalf("same-name replacement selected another child preview: selected=%d entries=%#v", ambiguousInspector.selected, ambiguousInspector.entries)
+	}
 	pending := previewFixture(t)
 	pendingInspector := toolcallsForTest(t, pending)
 	pending.conv.resolveTool("parent", "parent failed", true)
@@ -365,5 +377,26 @@ func TestMecatuiToolcallPreviews_Scenario3_OwnerBoundaries(t *testing.T) {
 	got, _ := approval.runToolcalls()
 	if got.(Model).modal != nil {
 		t.Fatal("inspector stole approval surface")
+	}
+
+	// An approval owns F6 just as it owns its detail/raw and verdict controls.
+	approval = shellAskModel(t, longShellArgs)
+	askID := approvalSurfaceOf(t, approval).ask.AskID
+	approval, _ = pressKey(approval, ctrlT)
+	approval, _ = pressKey(approval, tea.KeyPressMsg{Code: 'r'})
+	approval, _ = pressKey(approval, tea.KeyPressMsg{Code: tea.KeyTab})
+	approval, _ = pressKey(approval, tea.KeyPressMsg{Code: tea.KeyRight})
+	before := assertApprovalPending(t, approval, askID, "")
+	if !before.argsViewOpen || !before.argsViewRaw || before.ask.focusedVerdict != client.VerdictDeny {
+		t.Fatalf("approval precondition lost: %#v", before)
+	}
+	updated, _ := approval.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	approval = updated.(Model)
+	after := assertApprovalPending(t, approval, askID, "")
+	if !after.argsViewOpen || !after.argsViewRaw || after.ask.focusedVerdict != client.VerdictDeny {
+		t.Fatalf("F6 changed approval-owned state: %#v", after)
+	}
+	if _, ok := approval.modal.(*toolcallsState); ok {
+		t.Fatal("F6 opened the inspector over approval")
 	}
 }
