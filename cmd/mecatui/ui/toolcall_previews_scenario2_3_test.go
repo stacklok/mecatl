@@ -71,6 +71,34 @@ func TestMecatuiToolcallPreviews_Scenario2_SubagentRowsAndDetail(t *testing.T) {
 }
 
 func TestMecatuiToolcallPreviews_Scenario2_LiveSelectionAndEviction(t *testing.T) {
+	// Drive the public reducer while the inspector is already open: live child
+	// activity must refresh its derived rows before subagent.end.
+	live := newToolcallsInspectorModel(t)
+	live = applyAll(live, client.ToolCallMsg{ID: "live-parent", Name: "Subagent", Args: `{"task":"investigate"}`})
+	live = openToolcallsForTest(t, live)
+	liveInspector := toolcallsForTest(t, live)
+	if len(liveInspector.entries) != 1 {
+		t.Fatalf("open inspector entries: %#v", liveInspector.entries)
+	}
+	for _, msg := range []client.SubagentMsg{
+		{Kind: client.SubagentStart, ParentCallID: "live-parent", ChildID: "live-child"},
+		{Kind: client.SubagentTool, ParentCallID: "live-parent", ChildID: "live-child", InnerKind: "tool.call", ToolName: "Read", Detail: "live args"},
+	} {
+		updated, _ := live.Update(msg)
+		live = updated.(Model)
+	}
+	liveInspector = toolcallsForTest(t, live)
+	if len(liveInspector.entries) != 2 || liveInspector.entries[1].trace.Detail != "live args" || liveInspector.entries[1].trace.Resolved {
+		t.Fatalf("live call did not add a pending preview: %#v", liveInspector.entries)
+	}
+	liveInspector.selected = 1
+	updated, _ := live.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "live-parent", ChildID: "live-child", InnerKind: "tool.result", ToolName: "Read", Detail: "live result"})
+	live = updated.(Model)
+	liveInspector = toolcallsForTest(t, live)
+	if liveInspector.selected != 1 || !liveInspector.entries[1].trace.Resolved || liveInspector.entries[1].trace.Detail != "live result" {
+		t.Fatalf("live result moved selection or did not update in place: %#v", liveInspector.entries)
+	}
+
 	m := previewFixture(t)
 	s := toolcallsForTest(t, m)
 	s.selected = 1
@@ -219,6 +247,50 @@ func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *te
 	if blocked[len(blocked)-1].name != "unattributed result (Read)" || blocked[len(blocked)-2].resolved {
 		t.Fatalf("unresolved eviction guessed a result: %#v", blocked)
 	}
+	// Exercise each real delegation reducer into its owning UI surface.
+	subagent := newMCPModel(t, aztec(), nil)
+	subagent = seedSubagents(subagent, "sub-parent",
+		startSub("sub-parent", "sub-child", "inspect"),
+		toolSubPreview("sub-parent", "sub-child", "tool.call", "Read", "sub args", 1),
+	)
+	if card := subagent.conv.testSubagentCard("sub-parent"); card == nil || len(card.trace) != 1 || card.trace[0].detail != "sub args" || card.trace[0].resolved {
+		t.Fatalf("Subagent event did not produce pending inline trace: %#v", card)
+	}
+	subagentModel, _ := subagent.Update(toolSubPreview("sub-parent", "sub-child", "tool.result", "Read", "sub result", 1))
+	subagent = subagentModel.(Model)
+	if card := subagent.conv.testSubagentCard("sub-parent"); card == nil || !card.trace[0].resolved || card.trace[0].detail != "sub result" {
+		t.Fatalf("Subagent event did not update its inline trace in place: %#v", card)
+	}
+	parallel := newMCPModel(t, aztec(), nil)
+	parallel = seedParallel(parallel, "parallel-parent",
+		startPar("parallel-parent", "all", 1),
+		branchStartPar("parallel-parent", 0, "branch", "inspect"),
+		branchToolParPreview("parallel-parent", 0, "tool.call", "Read", "parallel args", 1),
+	)
+	parallelModel, _ := parallel.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	parallel = parallelModel.(Model)
+	parallelModel, _ = parallel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	parallel = parallelModel.(Model)
+	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "Read") || !strings.Contains(view, "parallel args") {
+		t.Fatalf("Parallel F6 omitted live pending trace: %q", view)
+	}
+	team := newMCPModel(t, aztec(), nil)
+	team.conv.addTool("team-parent", "Team", `{}`)
+	for _, msg := range []client.TeamMsg{
+		{Kind: client.TeamStart, ParentCallID: "team-parent", TeamID: "team", Roster: []client.TeamMemberSpec{{Name: "member"}}},
+		{Kind: client.TeamMember, ParentCallID: "team-parent", TeamID: "team", Member: "member", InnerKind: "tool.call", ToolName: "Read", Detail: "team args"},
+	} {
+		teamModel, _ := team.Update(msg)
+		team = teamModel.(Model)
+	}
+	teamModel, _ := team.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	team = teamModel.(Model)
+	teamModel, _ = team.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	team = teamModel.(Model)
+	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "Read") || !strings.Contains(view, "team args") {
+		t.Fatalf("Team F6 omitted live pending trace: %q", view)
+	}
+
 	m := previewFixture(t)
 	s := toolcallsForTest(t, m)
 	const hostile = "unsafe\x1b[2J"

@@ -1453,9 +1453,9 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterEvent()
 	case client.SubagentMsg:
 		m.applySubagent(msg)
+		m.syncToolcalls()
 		if msg.Kind == client.SubagentEnd {
 			m.activeTool = m.conv.latestPendingToolName()
-			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.TeamMsg:
