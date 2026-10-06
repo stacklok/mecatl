@@ -269968,6 +269968,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791273571139,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e12939d79fa5a70192c0c23a40596ab2f23bb028",
+          "message": "fix(mecatui): clarify provisional tool status (#2130)\n\nReplace the provisional tool-result label with “result received · finalizing” so it does not imply a user approval request. Preserve result lifecycle and permission behavior, update regression expectations and owning documentation.\n\nFixes #2128\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-06T11:18:39+03:00",
+          "tree_id": "e98734c77775c65d3d0b99098400434ffff6dccd",
+          "url": "https://github.com/stacklok/mecatl/commit/e12939d79fa5a70192c0c23a40596ab2f23bb028"
+        },
+        "date": 1791275487286,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -391604,6 +391638,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791275484086,
+  "lastUpdate": 1791275488297,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
