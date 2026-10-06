@@ -269252,6 +269252,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791243700149,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e0685aaf14604655c16b34d6ddf3eccd8e4818cc",
+          "message": "fix(lint): make non-Linux stubs pass staticcheck SA4023 on macOS (#2129)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T03:33:18-04:00",
+          "tree_id": "ee393cb70c262c3eeb71beedbd1a1789f0246ce3",
+          "url": "https://github.com/stacklok/mecatl/commit/e0685aaf14604655c16b34d6ddf3eccd8e4818cc"
+        },
+        "date": 1791272737974,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -390582,6 +390616,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791272735065,
+  "lastUpdate": 1791272739094,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
