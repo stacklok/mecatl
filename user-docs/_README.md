@@ -152,7 +152,6 @@ For a sibling in the same directory, use a relative `.md` path. Do not use a
 Start with the applicable implementation source:
 
 - `docs/architecture/*.md` for subsystem behavior
-- `docs/adr/*.md` for the design rationale
 - `contracts/proto/` for gRPC messages and services
 - command flag registration, configuration schemas, handlers, and adapters for
   deployed behavior
@@ -193,4 +192,4 @@ links. `task site:format` is optional prose/list/table normalization; nothing in
 CI checks formatting. It skips the generated reference pages listed above
 (`user-docs/.prettierignore`) so it never fights their own generators. Do not
 put working plans, authoring ledgers, or internal implementation queues in
-`user-docs/`; keep them in issues, project planning, or an acceptance plan.
+`user-docs/`; keep them in issues or pull request descriptions.

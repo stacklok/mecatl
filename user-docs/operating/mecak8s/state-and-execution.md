@@ -126,8 +126,7 @@ address back because a URL's userinfo can carry a password, and these errors lan
 the operator's log.
 
 Client-certificate (mTLS) authentication is **not supported**: the shared
-`toolhive-core/redisconn` connection layer cannot express it
-([ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-secure-external-redis.md)),
+`toolhive-core/redisconn` connection layer cannot express it,
 and it is tracked upstream at
 [toolhive-core#240](https://github.com/stacklok/toolhive-core/issues/240).
 

@@ -386,7 +386,7 @@ guides for retention and billing details before choosing a cache setting.
 For an embedded terminal session, set `--llm-recovery-budget` and
 `--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
 server owns these values. Daemon, Kubernetes, and CI configuration is described
-in [LLM resilience](/building/deployment/mecated.md#llm-resilience).
+in [Model-call resilience](/features/runtime/observability-and-resilience.md#model-call-resilience).
 
 ### A provider request failed
 

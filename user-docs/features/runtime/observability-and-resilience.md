@@ -24,31 +24,39 @@ embedders supply their own provider wrappers.
 
 ### Retry and circuit breaker
 
-Mecatl retries transient failures only before the first response content is
-committed. Retryable failures include rate limits, server errors, network
-errors, establishment timeouts, and malformed initial SSE frames. It does not
-retry other client errors, caller cancellations, or failures after streaming
-begins.
+Mecatl retries transient failures while a model step has not exposed meaningful
+assistant text. Reasoning, whitespace, tool assembly, usage, and provider metadata
+are buffered until that boundary or a clean completion. Failures after visible
+output are terminal, so recovery does not replay visible text or completed tool
+calls. Direct engine embedders supply their own recovery policy.
 
 |Flag|Default|Purpose|
 |-|-|-|
-|`--llm-max-attempts`|`3`|Limit the initial call plus retries.|
-|`--llm-breaker-threshold`|`5`|Open the breaker after consecutive transient failures. `0` disables it.|
-|`--llm-breaker-cooldown`|`30s`|Wait before a half-open trial.|
+|`--llm-recovery-budget`|`30m`|Limit recovery of one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting.|
+|`--llm-max-attempts`|`60`|Limit calls for one precommit step, including the initial call.|
+|`--llm-breaker-threshold`|`5`|Open the breaker after consecutive transient establishment failures. `0` disables it.|
+|`--llm-breaker-cooldown`|`30s`|Wait before one half-open probe.|
+
+These are server-owned command-line controls; `settings.yaml` has no equivalent
+recovery-policy keys. Connected clients use the server's policy. Review
+[per-step limits and provider costs](/features/sessions/choose-models.md#a-provider-error-ended-a-model-step)
+before raising the defaults: discarded attempts can still be billed, and each
+model step has its own limits.
 
 A successful call resets the breaker. Permanent client errors other than 408 or
 429 and caller cancellations do not count toward the threshold. Exhausted
-retries produce an `ExhaustedError`; an open breaker produces a `BreakerError`.
+recovery produces an `ExhaustedError`; an open breaker produces a `BreakerError`.
 
 ### Timeouts
 
 |Flag|Default|Purpose|
 |-|-|-|
-|`--llm-per-attempt-timeout`|`300s`|Limit connection and time to first committed content. `0` disables it.|
-|`--llm-stream-idle-timeout`|`180s`|Limit the gap between later stream chunks. `0` disables it.|
+|`--llm-per-attempt-timeout`|`300s`|Limit connection and time to the first raw chunk. `0` disables it; an active stream is not interrupted by this timer.|
+|`--llm-stream-idle-timeout`|`180s`|Limit gaps between raw chunks after activity starts. `0` disables it.|
 
-An establishment timeout is retryable. A stream-idle timeout is terminal because
-replaying a partially visible response could duplicate work.
+Raw stream activity resets the idle watchdog even before semantic output becomes
+visible. Establishment timeouts and precommit idle stalls can recover. A failure
+or idle timeout after visible output is terminal.
 
 ### Prompt caching
 

@@ -251,9 +251,9 @@ corrupt both.
 |`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call.|
 
 For shared recovery semantics and cost implications, see
-[provider recovery limits and cost](/features/choose-models.md#a-provider-error-ended-a-model-step).
+[provider recovery limits and cost](/features/sessions/choose-models.md#a-provider-error-ended-a-model-step).
 The daemon's
-[LLM resilience reference](/building/deployment/mecated.md#llm-resilience) lists
+[model-call resilience guide](/features/runtime/observability-and-resilience.md#model-call-resilience) lists
 the remaining tuning flags.
 
 ### Provider keys
@@ -276,8 +276,7 @@ no login or refresh flow. See
 
 `mecatequi` can push metrics and traces to an OTLP collector and flush them
 before exit. Telemetry is off when both endpoint flags are empty. See
-[ADR 0098](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0098-headless-telemetry.md)
-and [Key flags](#key-flags).
+[Key flags](#key-flags).
 
 |Flag|Default|Notes|
 |-|-|-|

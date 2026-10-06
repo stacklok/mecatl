@@ -41,7 +41,6 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 ### After the architecture pages
 
 - [Qualify local microVM source builds](architecture/microvm-environments.md#qualify-local-microvm-source-builds) - contributor artifact preparation and offline guest checks.
-- [Qualify native Kubernetes execution](acceptance/native-kubernetes-execution.md#run-native-execution-qualification) - contributor mock/live fixtures, credential isolation, and sanitized evidence.
 
 - [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
 - [Drafts](drafts/README.md) — proposals, not current behavior.

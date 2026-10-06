@@ -164,7 +164,7 @@ mecated serve --headless --default-placement microvm-local
 
 Release binaries verify and prepare the required runtime when the deployment selects
 `microvm-local`. Source builds do not support this profile; repository developers can
-use the separate [developer source workflow](./user-docs/building/deployment/microvm-environments.md#qualify-the-experimental-darwin-source-path).
+use the separate [developer source workflow](./docs/architecture/microvm-environments.md#qualify-local-microvm-source-builds).
 `microvm doctor` and `microvm status` are read-only `mecated` administration commands.
 Guest IPv4 egress is permissive by default; external IPv6 is unrouted and unsupported.
 The local host operator can instead select `deny-all` or `allowlist` in

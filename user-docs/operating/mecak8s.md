@@ -134,7 +134,7 @@ the values file if you need a fixed name.
 |Session ownership|Kubernetes Leases|
 |Filesystem|No filesystem access|
 |Network binds|Pod network on `0.0.0.0`|
-|[Metrics and OpenTelemetry](../what-you-get/observability.md)|Opt-in|
+|[Metrics and OpenTelemetry](/operating/observability.md)|Opt-in|
 
 Project-provided instructions, skills, agents, and read-only child Shell access
 still require explicit project trust. `mecak8s` does not include ACP, local

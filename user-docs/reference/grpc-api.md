@@ -65,9 +65,9 @@ semantic-version protocol.
 |`ClearSession(ClearSessionRequest) → ClearSessionResponse`|unary|create a distinct empty-history successor. With no `worktree_selector`, inherit the source's exact placement and labels; a fresh source-scoped selector may choose one currently eligible worktree. The source is unchanged and failures publish nothing|
 |`ForkSession(ForkSessionRequest) → ForkSessionResponse`|unary|create a history-carrying successor. Placement inherits exactly unless a fresh source-scoped `worktree_selector` is supplied; provider/model/reasoning overrides and placement resolve atomically. The source must be owned and at a legal turn boundary; failure creates no partial successor|
 |`Converse(stream ConverseRequest) → stream ConverseResponse`|bidi|drive one agent run; the first frame is either a new `Prompt` or prompt-free `RetryStart`|
-|`ApprovePlan(ApprovePlanRequest) → stream Event`|server-stream|atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode, issue #206 / [ADR 0069](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0069-plan-approval-gate.md)) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`.|
+|`ApprovePlan(ApprovePlanRequest) → stream Event`|server-stream|atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`.|
 |`StreamSessionEvents(StreamSessionEventsRequest) → stream Event`|server-stream|replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips.** `UserPrompt.synthetic=true` identifies a server-authored continuation; absent/false means genuine or legacy-unknown. Clients must not infer origin from text. The scheduled-delivery live exception is unchanged|
-|`WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse`|server-stream|**durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0250-durable-cursors-and-watch.md)): replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`)|
+|`WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse`|server-stream|**durable replay-then-follow**: replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`)|
 |`ListSessions(ListSessionsRequest) → ListSessionsResponse`|unary|the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore`|
 
 `WatchSessionEvents` also returns `watch_capacity` with `RESOURCE_EXHAUSTED`
@@ -119,8 +119,6 @@ marked read-only—surfaces a fresh ordinary `PermissionAsk` that the client
 resolves with `ResumeApproval`. Denies remain absolute, headless calls deny, and
 allow-always executes only the current call: it is not learned and the next call
 asks again. The target is never entered, leased, or mutated by evidence reads.
-See
-[ADR 0256](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0256-session-debugger-evidence-and-reporting.md).
 
 **Client-provided MCP servers.** `CreateSessionRequest.mcp_servers` mounts
 streaming-HTTP MCP servers for the lifetime of the created session, via a
@@ -129,8 +127,7 @@ another session. Each entry carries `name`, `url`, `type` (`"http"`, or empty
 with a `url`), and optional `headers`.
 
 The field is **listener-scoped** as a separate outbound-network/credential
-policy
-([ADR 0248](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0248-sdk-compatibility-and-error-contract.md)),
+policy,
 not as workspace authority. Exactly one topology accepts it: a
 `--grpc-unix-socket` listener with `--http-addr ""`. Every other deployment,
 loopback TCP included, refuses every non-empty value with `UNIMPLEMENTED` / code
@@ -392,7 +389,6 @@ clean, reopen-able terminal), `no_progress`, `cancelled`, `error`. A child's
 stop (on `subagent.end` / in a Subagent result) may additionally be
 `structured_output` — a structured-output child that exhausted its validation
 retries. A plan-approval allow emits `plan_approved` — the clean terminal
-([ADR 0069](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0069-plan-approval-gate.md))
 that flips the session out of plan mode at the terminal boundary.
 
 `error` includes an upstream provider content filter blocking a response. Some

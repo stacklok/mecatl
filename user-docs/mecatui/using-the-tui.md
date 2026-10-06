@@ -92,7 +92,7 @@ validation behavior.
 ## When a model stream fails
 
 The server recovers transient failures before model output becomes visible,
-within its configured [recovery limits](/features/choose-models.md#a-provider-error-ended-a-model-step).
+within its configured [recovery limits](/features/sessions/choose-models.md#a-provider-error-ended-a-model-step).
 If recovery ends in a terminal failure, use `/retry`; `mecatui` does not start
 another run automatically. The same command retries a `retryable + visible`
 failure, including one reopened from storage.
@@ -194,7 +194,7 @@ for it to settle, then retry `/clear`.
 
 Use `?` on an empty prompt for the live help overlay. The everyday defaults are
 `enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
-to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
+to open `/toolcalls`, `f9` to reveal conversation details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
 not support steering, `enter` queues a follow-up while a run is active. See
 [Keybindings](./keybindings.md) for approval controls, remapping, and the
 complete reference.

@@ -87,6 +87,22 @@ a restart. The startup and readiness probes use a 3-second kubelet timeout so th
 
 For collector configuration, use [observability](/operating/observability.md). Diagnose identity failures in [client access](identity-and-client-access.md#troubleshooting-start-here).
 
+## Configure model recovery
+
+Use `extraArgs` to set the server-owned recovery policy. Defaults are a 30-minute
+recovery window and at most 60 calls for each model step. For example:
+
+```yaml
+extraArgs:
+  - --llm-recovery-budget=10m
+  - --llm-max-attempts=12
+```
+
+Recovery ends when semantic output becomes visible; a later failure is terminal.
+Review [per-step limits and provider costs](/features/sessions/choose-models.md#a-provider-error-ended-a-model-step)
+and the remaining [resilience controls](/features/runtime/observability-and-resilience.md#model-call-resilience)
+before changing this policy.
+
 ## Next steps
 
 - [Scale, recover, and upgrade](/operating/mecak8s/scale-recover-and-upgrade.md).

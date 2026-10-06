@@ -205,13 +205,18 @@ Flags:
   --llm-breaker-threshold int
         consecutive LLM failures that open the circuit breaker (0 disables) (default 5)
   --llm-max-attempts int
-        max LLM stream-establish attempts (initial call plus retries) (default 3)
+        maximum attempts for one precommit model step (initial request included)
+        (default 60)
   --llm-per-attempt-timeout duration
         timeout for connecting to an LLM stream and receiving its first chunk. It does
         not interrupt an active stream. Set 0 to disable. (default 5m0s)
+  --llm-recovery-budget duration
+        maximum time spent recovering a model step before semantic output (default
+        30m0s)
   --llm-stream-idle-timeout duration
-        max idle gap between LLM stream chunks after the first chunk; a longer stall
-        terminates the turn (0 disables) (default 3m0s)
+        max idle gap between LLM stream chunks after the first chunk; the watchdog
+        bounds each gap, so precommit timeouts may recover while visible stalls are
+        terminal (0 disables) (default 3m0s)
   --log-level string
         minimum log level: debug, info (default), warn, or error (default "info")
   --main-retention duration
@@ -661,14 +666,18 @@ Usage: mecak8s [flags]
         Consecutive LLM failures that open the circuit breaker. Zero disables it
         (default 5)
   --llm-max-attempts int
-        Maximum attempts to establish an LLM stream, including the initial attempt
-        (default 3)
+        maximum attempts for one precommit model step (initial request included)
+        (default 60)
   --llm-per-attempt-timeout duration
         Timeout for connecting to an LLM stream and receiving its first chunk. Does not
         stop an active stream; zero disables the timeout (default 5m0s)
+  --llm-recovery-budget duration
+        Maximum time spent recovering a model step before semantic output (default
+        30m0s)
   --llm-stream-idle-timeout duration
-        Maximum idle gap between LLM stream chunks. A longer gap ends the turn; zero
-        disables the timeout (default 3m0s)
+        Maximum idle gap between LLM stream chunks. The watchdog bounds each chunk gap;
+        before semantic output a timed-out attempt may recover, while visible stalls
+        are terminal. Zero disables the timeout (default 3m0s)
   --log-level string
         minimum log level: debug, info (default), warn, or error (default "info")
   --main-retention duration
