@@ -298352,6 +298352,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791243704111,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e0685aaf14604655c16b34d6ddf3eccd8e4818cc",
+          "message": "fix(lint): make non-Linux stubs pass staticcheck SA4023 on macOS (#2129)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T03:33:18-04:00",
+          "tree_id": "ee393cb70c262c3eeb71beedbd1a1789f0246ce3",
+          "url": "https://github.com/stacklok/mecatl/commit/e0685aaf14604655c16b34d6ddf3eccd8e4818cc"
+        },
+        "date": 1791272741961,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3277.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 78,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -390616,6 +390655,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791272739094,
+  "lastUpdate": 1791272742758,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
