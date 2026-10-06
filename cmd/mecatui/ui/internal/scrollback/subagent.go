@@ -20,16 +20,18 @@ type RoutingDecision struct {
 // Float64 returns a pointer to v for optional scalar fields.
 func Float64(v float64) *float64 { return &v }
 
-// TraceEntry is one delegation preview event. At most MaxTraceEntries trailing
-// entries are retained when an update is stored.
+// TraceEntry is one retained delegation preview. A Subagent update holds at most
+// 128 tool calls and 12 message previews per child lane, interleaved in event order.
 type TraceEntry struct {
-	Kind, Text, ToolName, Detail           string
-	Error, Resolved, Unattributed, Blocked bool
-	Serial                                 uint64
+	Lane                         string // child session ID when multiple children share a Subagent card
+	ID                           string // child tool-call ID, scoped to its lane
+	Kind, Text, ToolName, Detail string
+	Error, Resolved, Blocked     bool
+	Serial                       uint64
 }
 
-// MaxTraceEntries bounds retained delegation trace entries.
-const MaxTraceEntries = 12
+// MaxTraceEntries bounds tool calls plus independently retained message previews.
+const MaxTraceEntries = 128 + 12
 
 // SubagentStart describes a started delegated child.
 type SubagentStart struct {

@@ -26,7 +26,7 @@ func scrollRouting(in *client.RoutingDecision) scrollback.RoutingDecision {
 func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 	out := make([]scrollback.TraceEntry, len(in))
 	for i, t := range in {
-		out[i] = scrollback.TraceEntry{Text: t.text, ToolName: t.name, Detail: t.detail, Error: t.isError, Resolved: t.resolved, Unattributed: t.unattributed, Blocked: t.blocked, Serial: t.serial}
+		out[i] = scrollback.TraceEntry{Lane: t.lane, ID: t.id, Text: t.text, ToolName: t.name, Detail: t.detail, Error: t.isError, Resolved: t.resolved, Blocked: t.blocked, Serial: t.serial}
 		if t.kind == teamTraceTool {
 			out[i].Kind = toolKind
 		} else {
@@ -39,7 +39,7 @@ func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 func traceFromScroll(in []scrollback.TraceEntry) []teamTrace {
 	out := make([]teamTrace, len(in))
 	for i, t := range in {
-		out[i] = teamTrace{text: t.Text, name: t.ToolName, detail: t.Detail, isError: t.Error, resolved: t.Resolved, unattributed: t.Unattributed, blocked: t.Blocked, serial: t.Serial}
+		out[i] = teamTrace{lane: t.Lane, id: t.ID, text: t.Text, name: t.ToolName, detail: t.Detail, isError: t.Error, resolved: t.Resolved, blocked: t.Blocked, serial: t.Serial}
 		if t.Kind == "tool" {
 			out[i].kind = teamTraceTool
 		} else {
@@ -69,7 +69,7 @@ func (c *conversation) applySubagentTyped(msg client.SubagentMsg) {
 		}
 		u := p.Update
 		u.ToolCount, u.Usage = msg.ToolCount, scrollUsage(msg.Usage)
-		trace, current := routeTraceEvent(traceFromScroll(u.Trace), u.Current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
+		trace, current := routeTraceEvent(traceFromScroll(u.Trace), u.Current, msg.InnerKind, msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.Text, msg.IsError, msg.ChildID)
 		u.Trace, u.Current = scrollTrace(trace), current
 		c.scrollback.Subagents().Update(msg.ParentCallID, u)
 	case client.SubagentEnd:
@@ -166,9 +166,9 @@ func applyTeamMemberUpdate(update *scrollback.TeamUpdate, msg client.TeamMsg) {
 		lane.Trace = scrollTrace(traceAppendMessage(traceFromScroll(lane.Trace), msg.Text))
 	case "tool.call":
 		lane.Idle, lane.Current, lane.ToolCount = false, msg.ToolName, lane.ToolCount+1
-		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail))
+		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.ToolName, msg.Detail))
 	case "tool.result":
-		lane.Trace = scrollTrace(traceMarkToolResult(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail, msg.IsError))
+		lane.Trace = scrollTrace(traceMarkToolResult(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.IsError))
 	case "turn.end":
 		lane.Idle, lane.Usage, lane.ContextUsed = false, sumScrollUsage(lane.Usage, msg.Usage), msg.Usage.InputTokens
 		if msg.ContextWindow > 0 {

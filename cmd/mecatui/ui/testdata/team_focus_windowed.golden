@@ -8,15 +8,15 @@
   ┃  agent · scout                                                                               ┃
   ┃  ◆ · scout [lead] · Read… · ↑0 ↓0                                                            ┃
   ┃                                                                                              ┃
-  ┃    … Read · pending — file-06.go                                                             ┃
-  ┃    ? unattributed result… · unattributed result — 106 lines                                  ┃
-  ┃    … Read · pending — file-07.go                                                             ┃
-  ┃    ? unattributed result… · unattributed result — 107 lines                                  ┃
-  ┃    … Read · pending — file-08.go                                                             ┃
-  ┃    ? unattributed result… · unattributed result — 108 lines                                  ┃
-  ┃    … Read · pending — file-09.go                                                             ┃
+  ┃    investigating the whole subsystem                                                         ┃
+  ┃    ✓ Read · success — 100 lines                                                              ┃
+  ┃    … Read · pending — file-01.go                                                             ┃
+  ┃    … Read · pending — file-02.go                                                             ┃
+  ┃    … Read · pending — file-03.go                                                             ┃
+  ┃    … Read · pending — file-04.go                                                             ┃
+  ┃    … Read · pending — file-05.go                                                             ┃
   ┃                                                                                              ┃
-  ┃  lines 1–7 of 12 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                              ┃
+  ┃  lines 1–7 of 129 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                             ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

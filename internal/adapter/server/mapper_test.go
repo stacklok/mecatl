@@ -33,6 +33,79 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
 
+func TestDelegationChildToolCallIDBackstop(t *testing.T) {
+	for _, id := range []session.ToolCallID{"bad\xff", session.ToolCallID(strings.Repeat("x", 257))} {
+		for _, kind := range []session.EventType{session.EvToolCall, session.EvToolResult, ""} {
+			for _, tc := range []struct {
+				name string
+				ev   session.Event
+				get  func(*mecatlv1.Event) (string, string, string)
+			}{
+				{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+					p := e.GetSubagent()
+					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
+				}},
+				{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+					p := e.GetParallel()
+					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
+				}},
+				{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+					p := e.GetTeam()
+					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
+				}},
+			} {
+				t.Run(tc.name+"/"+string(kind)+"/"+string(id[:3]), func(t *testing.T) {
+					wire, err := proto.Marshal(toProto(tc.ev))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var decoded mecatlv1.Event
+					if err := proto.Unmarshal(wire, &decoded); err != nil {
+						t.Fatal(err)
+					}
+					gotID, gotKind, gotName := tc.get(&decoded)
+					if gotID != "" || gotKind != "" || gotName != "" {
+						t.Fatalf("unsafe preview correlated: id=%q kind=%q name=%q", gotID, gotKind, gotName)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDelegationChildToolCallIDMapping(t *testing.T) {
+	for _, inner := range []session.EventType{session.EvToolCall, session.EvToolResult, session.EvMessageDelta, session.EvResult} {
+		id := session.ToolCallID("")
+		if inner == session.EvToolCall || inner == session.EvToolResult {
+			id = "exact-child-id"
+		}
+		for _, tc := range []struct {
+			name string
+			ev   session.Event
+			get  func(*mecatlv1.Event) string
+		}{
+			{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetSubagent().GetChildToolCallId() }},
+			{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetParallel().GetChildToolCallId() }},
+			{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetTeam().GetChildToolCallId() }},
+		} {
+			t.Run(tc.name+"/"+string(inner), func(t *testing.T) {
+				pb := toProto(tc.ev)
+				wire, err := proto.Marshal(pb)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded mecatlv1.Event
+				if err := proto.Unmarshal(wire, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if got := tc.get(&decoded); got != string(id) {
+					t.Fatalf("wire ID = %q, want %q", got, id)
+				}
+			})
+		}
+	}
+}
+
 func TestResumableSessionStatusMetrics_Scenario2_GetSessionProjection(t *testing.T) {
 	for _, kind := range []session.SessionKind{
 		session.SessionKindMain,

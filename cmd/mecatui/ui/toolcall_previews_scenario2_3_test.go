@@ -1,385 +1,614 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-func previewFixture(t *testing.T) Model {
-	t.Helper()
-	m := newToolcallsInspectorModel(t)
-	m.conv.addTool("parent", "Subagent", `{"task":"investigate"}`)
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child-A"})
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child-A", InnerKind: "tool.call", ToolName: "Read", Detail: "arguments"})
-	return openToolcallsForTest(t, m)
-}
-
-func TestMecatuiToolcallPreviews_Scenario2_SubagentRowsAndDetail(t *testing.T) {
-	m := previewFixture(t)
-	s := toolcallsForTest(t, m)
-	m.conv.subagentFleet = []subagentLane{{childID: "child-A", trace: []teamTrace{{kind: teamTraceTool, name: "UNRELATED", detail: "foreign"}}}}
-	m.syncToolcalls()
-	foreign, _ := s.Render(90, 24)
-	if len(s.entries) != 2 || strings.Contains(stripANSIstr(foreign), "UNRELATED") {
-		t.Fatalf("inspector borrowed F6 activity: %#v", s.entries)
+func TestDelegationTraceRejectsMalformedIDsPerLane(t *testing.T) {
+	valid := strings.Repeat("é", 128)
+	trace := traceAppendTool(nil, valid, "Read", "a", "a")
+	trace = traceAppendTool(trace, valid, "Read", "b", "b")
+	for _, id := range []string{"bad\xff", strings.Repeat("x", 257)} {
+		trace = traceAppendTool(trace, id, "Read", "must not retain", "a")
+		trace = traceMarkToolResult(trace, id, "Read", "must not resolve", true, "a")
 	}
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "message.delta", Text: "message-not-a-tool"})
-	m.syncToolcalls()
-	if len(s.entries) != 2 {
-		t.Fatalf("child message became tool row: %#v", s.entries)
+	if len(trace) != 2 || trace[0].id != valid || trace[1].id != valid || trace[0].resolved || trace[1].resolved {
+		t.Fatalf("malformed ID retained: %+v", trace)
 	}
-	if s.entries[0].fullName != "Subagent" {
-		t.Fatalf("inventory: %#v", s.entries)
-	}
-	list, regions := s.Render(90, 24)
-	if !strings.Contains(stripANSIstr(list), "preview") || !strings.Contains(stripANSIstr(list), "Read") || !strings.Contains(stripANSIstr(list), "pending") || !strings.Contains(stripANSIstr(list), "parent parent") || !strings.Contains(stripANSIstr(list), "child child-A") {
-		t.Fatalf("preview list: %q", list)
-	}
-	clicked := false
-	for _, region := range regions {
-		if s.previewHits[region.hit] == 1 {
-			s.HandleMsg(surfaceHitMsg{ID: region.hit})
-			clicked = true
-			break
-		}
-	}
-	if !clicked || s.selected != 1 || !s.detail {
-		t.Fatalf("preview click did not open its own detail: clicked=%t selected=%d detail=%t", clicked, s.selected, s.detail)
-	}
-	s.refreshDetail(&m.conv.scrollback)
-	detail := inspectorDetail(t, s, 90, 24)
-	for _, want := range []string{"Read", "arguments", "child-A", "preview", "incomplete"} {
-		if !strings.Contains(detail, want) {
-			t.Errorf("missing %q: %q", want, detail)
-		}
-	}
-	for _, fabricated := range []string{"Arguments:", "Result:", "Call: parent", "✓ Read"} {
-		if strings.Contains(detail, fabricated) {
-			t.Errorf("preview claimed complete child detail %q: %q", fabricated, detail)
-		}
-	}
-	s.selected = 0
-	s.refreshDetail(&m.conv.scrollback)
-	if parent := inspectorDetail(t, s, 90, 24); !strings.Contains(parent, "investigate") {
-		t.Fatalf("parent arguments lost: %q", parent)
+	trace = traceMarkToolResult(trace, valid, "Read", "done", false, "b")
+	if trace[0].resolved || !trace[1].resolved || trace[0].detail != "a" {
+		t.Fatalf("lane correlation lost: %+v", trace)
 	}
 }
 
-func TestMecatuiToolcallPreviews_Scenario2_LiveSelectionAndEviction(t *testing.T) {
-	// Drive the public reducer while the inspector is already open: live child
-	// activity must refresh its derived rows before subagent.end.
-	live := newToolcallsInspectorModel(t)
-	live = applyAll(live, client.ToolCallMsg{ID: "live-parent", Name: "Subagent", Args: `{"task":"investigate"}`})
-	live = openToolcallsForTest(t, live)
-	liveInspector := toolcallsForTest(t, live)
-	if len(liveInspector.entries) != 1 {
-		t.Fatalf("open inspector entries: %#v", liveInspector.entries)
+func TestDelegationTraceRetentionAndPairing(t *testing.T) {
+	var trace []teamTrace
+	for i := 0; i < 129; i++ {
+		id := fmt.Sprint(i)
+		trace = traceAppendTool(trace, id, "Read", id)
+		trace = traceAppendMessage(trace, "message")
 	}
-	for _, msg := range []client.SubagentMsg{
-		{Kind: client.SubagentStart, ParentCallID: "live-parent", ChildID: "live-child"},
-		{Kind: client.SubagentTool, ParentCallID: "live-parent", ChildID: "live-child", InnerKind: "tool.call", ToolName: "Read", Detail: "live args"},
-	} {
-		updated, _ := live.Update(msg)
-		live = updated.(Model)
-	}
-	liveInspector = toolcallsForTest(t, live)
-	if len(liveInspector.entries) != 2 || liveInspector.entries[1].trace.Detail != "live args" || liveInspector.entries[1].trace.Resolved {
-		t.Fatalf("live call did not add a pending preview: %#v", liveInspector.entries)
-	}
-	liveInspector.selected = 1
-	updated, _ := live.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "live-parent", ChildID: "live-child", InnerKind: "tool.result", ToolName: "Read", Detail: "live result"})
-	live = updated.(Model)
-	liveInspector = toolcallsForTest(t, live)
-	if liveInspector.selected != 1 || !liveInspector.entries[1].trace.Resolved || liveInspector.entries[1].trace.Detail != "live result" {
-		t.Fatalf("live result moved selection or did not update in place: %#v", liveInspector.entries)
-	}
-
-	m := previewFixture(t)
-	s := toolcallsForTest(t, m)
-	s.selected = 1
-	s.listFollow = true
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.result", ToolName: "Read", Detail: "result"})
-	m.syncToolcalls()
-	if s.selected != 1 || !s.entries[1].trace.Resolved || s.entries[1].trace.Detail != "result" {
-		t.Fatalf("result moved selection or did not update preview: %#v", s.entries)
-	}
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.call", ToolName: "Write", Detail: "next"})
-	m.syncToolcalls()
-	if s.selected != 1 {
-		t.Fatalf("append moved selected trace slot: %d", s.selected)
-	}
-	s.Render(70, 24)
-	s.Render(90, 24)
-	if s.selected != 1 {
-		t.Fatalf("reflow moved selected trace slot: %d", s.selected)
-	}
-	_, staleRegions := s.Render(90, 24)
-	var stalePreview HitID
-	for _, region := range staleRegions {
-		if _, ok := s.previewHits[region.hit]; ok {
-			stalePreview = region.hit
-			break
+	calls, messages := 0, 0
+	for _, row := range trace {
+		if row.kind == teamTraceTool {
+			calls++
+		} else {
+			messages++
 		}
 	}
-	if stalePreview == 0 {
-		t.Fatal("preview has no hit target")
+	if calls != 128 || messages != 12 || trace[0].id == "0" {
+		t.Fatalf("retention: calls=%d messages=%d first=%+v", calls, messages, trace[0])
+	}
+	before := len(trace)
+	trace = traceMarkToolResult(trace, "0", "Read", "evicted", false)
+	trace = traceMarkToolResult(trace, "missing", "Read", "orphan", false)
+	trace = traceMarkToolResult(trace, "", "Read", "legacy", false)
+	if len(trace) != before {
+		t.Fatal("result fabricated a row")
+	}
+	trace = traceMarkToolResult(trace, "128", "Read", "resolved", true)
+	for _, row := range trace {
+		if row.kind != teamTraceTool {
+			continue
+		}
+		if row.id == "128" {
+			if !row.resolved || !row.isError || row.detail != "resolved" {
+				t.Fatalf("wrong match: %+v", row)
+			}
+		} else if row.resolved {
+			t.Fatalf("other call resolved: %+v", row)
+		}
+	}
+	trace = traceMarkToolResult(trace, "128", "Read", "duplicate", false)
+	if trace[len(trace)-2].detail == "duplicate" {
+		t.Fatal("duplicate result changed status")
+	}
+}
+
+func TestDelegationOutOfOrderAndDuplicateCalls(t *testing.T) {
+	trace := traceMarkToolResult(nil, "id", "Read", "early", false)
+	trace = traceAppendTool(trace, "id", "Read", "args")
+	trace = traceAppendTool(trace, "id", "Read", "replayed args")
+	if len(trace) != 1 || trace[0].resolved || trace[0].detail != "args" {
+		t.Fatalf("out of order or replay fabricated a call: %+v", trace)
+	}
+	trace = traceMarkToolResult(trace, "id", "Read", "done", false)
+	trace = traceAppendTool(trace, "id", "Read", "late replay")
+	if len(trace) != 1 || !trace[0].resolved || trace[0].detail != "done" {
+		t.Fatalf("late replay changed call: %+v", trace)
+	}
+}
+
+func TestDelegationLegacyPairingAndLaneScoping(t *testing.T) {
+	trace := traceAppendTool(nil, "", "Read", "legacy")
+	trace = traceMarkToolResult(trace, "", "Read", "legacy result", false)
+	trace = traceAppendTool(trace, "id", "Read", "identified")
+	if !trace[0].resolved || trace[1].resolved {
+		t.Fatalf("legacy matched ID call: %+v", trace)
+	}
+	trace = traceMarkToolResult(trace, "", "Read", "again", true)
+	if trace[0].isError || trace[0].detail != "legacy result" {
+		t.Fatalf("duplicate changed legacy: %+v", trace)
+	}
+	trace = traceMarkToolResult(trace, "id", "Read", "identified result", true)
+	if !trace[1].resolved || !trace[1].isError {
+		t.Fatalf("ID result: %+v", trace)
+	}
+	mixed := traceAppendTool(traceAppendTool(nil, "", "Read", "legacy"), "id", "Read", "identified")
+	mixed = traceMarkToolResult(mixed, "", "Read", "uncertain", false)
+	if mixed[0].resolved || mixed[1].resolved {
+		t.Fatalf("mixed IDs guessed legacy: %+v", mixed)
+	}
+	ambiguous := traceAppendTool(traceAppendTool(nil, "", "Read", "a"), "", "Read", "b")
+	ambiguous = traceMarkToolResult(ambiguous, "", "Read", "ambiguous", false)
+	if len(ambiguous) != 2 || ambiguous[0].resolved || ambiguous[1].resolved {
+		t.Fatalf("ambiguous legacy: %+v", ambiguous)
 	}
 	for i := 0; i < maxTraceEntries; i++ {
-		m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.call", ToolName: "Write"})
+		ambiguous = traceAppendTool(ambiguous, fmt.Sprint(i), "Read", "next")
 	}
-	m.syncToolcalls()
-	if s.entries[s.selected].fullName != "Subagent" {
-		t.Fatalf("eviction selected another preview: %#v", s.entries[s.selected])
+	ambiguous = traceMarkToolResult(ambiguous, "", "Read", "late", false)
+	if ambiguous[len(ambiguous)-1].resolved {
+		t.Fatal("legacy result after eviction guessed status")
 	}
-	// A hit belongs to the rendered frame, not the list index that happens to
-	// occupy its old slot after an eviction.
-	s.HandleMsg(surfaceHitMsg{ID: stalePreview})
-	if s.selected != 0 || s.detail {
-		t.Fatalf("stale preview hit opened a replacement row: selected=%d detail=%t entries=%#v", s.selected, s.detail, s.entries)
-	}
-	_, freshRegions := s.Render(90, 24)
-	var freshPreview HitID
-	for _, region := range freshRegions {
-		if s.previewHits[region.hit] == 1 {
-			freshPreview = region.hit
-			break
-		}
-	}
-	if freshPreview == 0 {
-		t.Fatal("current preview has no hit target")
-	}
-	s.HandleMsg(surfaceHitMsg{ID: freshPreview})
-	if s.selected != 1 || !s.detail || s.entries[s.selected].fullName != "Write" {
-		t.Fatalf("current preview hit did not open its intended row: selected=%d detail=%t entry=%#v", s.selected, s.detail, s.entries[s.selected])
-	}
-	s.detail = false
-	s.Render(90, 24)
-	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !s.detail {
-		t.Fatal("parent no longer selectable")
-	}
-	// An eviction can replace the same visible slot with another call bearing the
-	// same name. Its serial changes, so that row is not the selected preview.
-	ambiguous := previewFixture(t)
-	ambiguousInspector := toolcallsForTest(t, ambiguous)
-	ambiguousInspector.selected = 1
-	for range maxTraceEntries {
-		ambiguous.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.call", ToolName: "Read", Detail: "replacement"})
-	}
-	ambiguous.syncToolcalls()
-	if ambiguousInspector.selected != 0 || ambiguousInspector.entries[ambiguousInspector.selected].fullName != "Subagent" {
-		t.Fatalf("same-name replacement selected another child preview: selected=%d entries=%#v", ambiguousInspector.selected, ambiguousInspector.entries)
-	}
-	pending := previewFixture(t)
-	pendingInspector := toolcallsForTest(t, pending)
-	pending.conv.resolveTool("parent", "parent failed", true)
-	pending.syncToolcalls()
-	if glyph, _ := tracePreviewStatus(pendingInspector.entries[1].trace); glyph != "…" {
-		t.Fatalf("parent result fabricated child success: %q", glyph)
+	// Identical IDs in different child lanes cannot cross-contaminate.
+	other := traceAppendTool(nil, "id", "Read", "other")
+	if other[0].resolved || other[0].detail != "other" {
+		t.Fatal("lane state leaked")
 	}
 }
 
-func TestMecatuiToolcallPreviews_Scenario2_ReloadAndSessionIsolation(t *testing.T) {
-	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: t.Context(), Resume: &client.ResumeSelection{Row: client.SessionListItem{ID: "loaded"}, Transcript: client.SessionTranscript{Messages: []client.ConversationMessage{{Role: "assistant", ToolCalls: []client.ConvToolCall{{ID: "parent", Name: "Subagent", Args: `{"task":"loaded"}`}}}}}}})
-	m.width, m.height = 90, 24
-	m.relayout()
+func TestSubagentScrollbackRetentionWithInterleavedMessages(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("parent", "Subagent", `{}`)
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child"})
+	for i := 0; i < 129; i++ {
+		id := fmt.Sprint(i)
+		m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: id, ToolName: "Read", Detail: id})
+		m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "message.delta", Text: "message"})
+	}
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "0", ToolName: "Read", Detail: "evicted"})
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "128", ToolName: "Read", Detail: "ok"})
+	card, ok := m.conv.subagentCard("parent")
+	if !ok || len(card.Update.Trace) != 140 {
+		t.Fatalf("serialized trace length: %d", len(card.Update.Trace))
+	}
+	calls := 0
+	for _, row := range card.Update.Trace {
+		if row.Kind != toolKind {
+			continue
+		}
+		calls++
+		if row.ID == "0" || (row.Resolved != (row.ID == "128")) {
+			t.Fatalf("evicted or wrongly matched: %+v", row)
+		}
+	}
+	if calls != 128 {
+		t.Fatalf("retained calls = %d", calls)
+	}
 	m = openToolcallsForTest(t, m)
 	s := toolcallsForTest(t, m)
-	s.selected = 0
-	s.detail = true
+	s.selected, s.detail = 0, true
 	s.refreshDetail(&m.conv.scrollback)
-	if got := inspectorDetail(t, s, 90, 24); !strings.Contains(got, "activity preview unavailable; history may be incomplete") {
-		t.Fatalf("reload availability: %q", got)
-	}
-	if len(s.entries) != 1 {
-		t.Fatalf("borrowed previews: %#v", s.entries)
-	}
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child-replayed"})
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.call", ToolName: "Grep", Detail: "recent-only"})
-	m.syncToolcalls()
-	if len(s.entries) != 2 || s.entries[1].trace.Detail != "recent-only" {
-		t.Fatalf("recent projection not shown: %#v", s.entries)
-	}
-	s.selected = 0
-	s.refreshDetail(&m.conv.scrollback)
-	if got := inspectorDetail(t, s, 90, 24); !strings.Contains(got, "history may be incomplete") || strings.Contains(got, "activity preview unavailable") {
-		t.Fatalf("replayed activity caveat: %q", got)
-	}
-	replacement := newToolcallsInspectorModel(t)
-	replacement.conv.addTool("parent", "Subagent", `{"task":"other session"}`)
-	replacement = openToolcallsForTest(t, replacement)
-	if other := toolcallsForTest(t, replacement); len(other.entries) != 1 || other.entries[0].intent != "other session" {
-		t.Fatalf("overlapping call ID borrowed previous session: %#v", other.entries)
+	if len(s.entries) != 1 || len(s.detailEntry.childTools) != 128 {
+		t.Fatalf("parent detail retention: %+v", s.detailEntry)
 	}
 }
 
-func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *testing.T) {
-	trace := traceAppendTool(nil, "Read", "args")
-	r := (&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)
-	if got := stripANSIstr(r); strings.Contains(got, "✓ Read") || !strings.Contains(got, "Read · pending") {
-		t.Fatalf("call-only should be visibly pending: %q", got)
+func TestSubagentSharedParentChildLaneRetentionAndPairing(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("parent", "Subagent", `{}`)
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "a"})
+	send := func(child, kind, id, detail string) {
+		m.conv.applySubagentTyped(client.SubagentMsg{
+			Kind: client.SubagentTool, ParentCallID: "parent", ChildID: child,
+			InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: detail, Text: detail,
+		})
 	}
-	trace = traceMarkToolResult(trace, "Read", "result", false)
-	if got := stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)); !strings.Contains(got, "✓ Read · success — result") {
-		t.Fatalf("observed result: %#v", trace)
+	// A resumed child has its own tool-call ID namespace under the same parent.
+	send("a", "tool.call", "shared", "a args")
+	send("b", "tool.call", "shared", "b args")
+	send("a", "tool.result", "shared", "a result")
+	before, _ := m.conv.subagentCard("parent")
+	if len(before.Update.Trace) != 2 || !before.Update.Trace[0].Resolved || before.Update.Trace[0].Detail != "a result" || before.Update.Trace[1].Resolved || before.Update.Trace[1].Detail != "b args" {
+		t.Fatalf("shared ID crossed child lanes: %+v", before.Update.Trace)
 	}
-	failed := traceMarkToolResult(traceAppendTool(nil, "Grep", "pattern"), "Grep", "not found", true)
-	if got := stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(failed)); !strings.Contains(got, "✗ Grep · error — not found") {
-		t.Fatalf("observed error not rendered: %q", got)
+	for i := 0; i < 128; i++ {
+		id := fmt.Sprintf("a-%d", i)
+		send("a", "tool.call", id, id)
+		send("a", "message.delta", "", id)
+		if i < 127 {
+			id = fmt.Sprintf("b-%d", i)
+			send("b", "tool.call", id, id)
+			send("b", "message.delta", "", id)
+		}
 	}
-	if orphan := traceMarkToolResult(nil, "Read", "orphan", false); !orphan[0].unattributed || orphan[0].resolved {
-		t.Fatalf("result-only fabricated call: %#v", orphan)
+	send("b", "tool.result", "shared", "b result") // same ID as a, but b's call is retained
+	send("a", "tool.result", "shared", "evicted")
+	send("b", "tool.result", "b-0", "b retained")
+	send("a", "tool.result", "a-0", "a retained")
+	card, ok := m.conv.subagentCard("parent")
+	if !ok {
+		t.Fatal("missing parent card")
 	}
-	trace = traceAppendTool(trace, "Read", "second")
-	trace = traceMarkToolResult(trace, "Read", "ambiguous", true)
-	if trace[0].detail != "result" || trace[1].detail != "second" || !strings.Contains(stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)), "unattributed") {
-		t.Fatalf("ambiguous result changed a call: %#v", trace)
+	calls := map[string]int{}
+	messages := map[string]int{}
+	for _, row := range card.Update.Trace {
+		switch row.Kind {
+		case toolKind:
+			calls[row.Lane]++
+			switch row.Lane + "/" + row.ID {
+			case "a/shared":
+				t.Fatalf("evicted call retained: %+v", row)
+			case "b/shared":
+				if !row.Resolved || row.Detail != "b result" {
+					t.Fatalf("wrong shared ID match: %+v", row)
+				}
+			case "b/b-0":
+				if !row.Resolved || row.Detail != "b retained" {
+					t.Fatalf("wrong b match: %+v", row)
+				}
+			case "a/a-0":
+				if !row.Resolved || row.Detail != "a retained" {
+					t.Fatalf("wrong a match: %+v", row)
+				}
+			default:
+				if row.Resolved {
+					t.Fatalf("cross-lane result: %+v", row)
+				}
+			}
+		case "message":
+			messages[row.Lane]++
+		}
 	}
-	trace = traceMarkToolResult(trace, "", "nameless", true)
-	if !strings.Contains(stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)), "unattributed") {
-		t.Fatalf("nameless result lost: %#v", trace)
+	if calls["a"] != 128 || calls["b"] != 128 || messages["a"] != 12 || messages["b"] != 12 {
+		t.Fatalf("per-lane retention: calls=%v messages=%v", calls, messages)
 	}
-	mixed := traceAppendTool(nil, "Read", "pending")
-	mixed = traceAppendTool(mixed, "Read", "previously resolved")
-	mixed[1].resolved = true
-	mixed = traceMarkToolResult(mixed, "Read", "ambiguous", false)
-	if mixed[0].resolved || !mixed[len(mixed)-1].unattributed {
-		t.Fatalf("resolved duplicate allowed a guessed match: %#v", mixed)
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	s.selected, s.detail = 0, true
+	s.refreshDetail(&m.conv.scrollback)
+	if len(s.entries) != 1 || len(s.detailEntry.childTools) != 256 {
+		t.Fatalf("parent detail lost child lanes: entries=%d tools=%d", len(s.entries), len(s.detailEntry.childTools))
 	}
-	blocked := traceAppendTool(nil, "Glob", "first")
-	for i := 0; i < maxTraceEntries; i++ {
-		blocked = traceAppendTool(blocked, "Read", "later")
+	for _, row := range s.detailEntry.childTools {
+		if row.Lane == "b" && row.ID == "shared" && (!row.Resolved || row.Detail != "b result") {
+			t.Fatalf("parent detail has wrong result: %+v", row)
+		}
 	}
-	blocked = traceMarkToolResult(blocked, "Read", "must-not-attach", false)
-	if blocked[len(blocked)-1].name != "unattributed result (Read)" || blocked[len(blocked)-2].resolved {
-		t.Fatalf("unresolved eviction guessed a result: %#v", blocked)
+}
+
+func TestSubagentSharedParentLegacyBlockIsPerChild(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("parent", "Subagent", `{}`)
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "a"})
+	send := func(child, kind, id, detail string) {
+		m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: child, InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: detail})
 	}
-	// Exercise each real delegation reducer into its owning UI surface.
-	subagent := newMCPModel(t, aztec(), nil)
-	subagent = seedSubagents(subagent, "sub-parent",
-		startSub("sub-parent", "sub-child", "inspect"),
-		toolSubPreview("sub-parent", "sub-child", "tool.call", "Read", "sub args", 1),
-	)
-	if card := subagent.conv.testSubagentCard("sub-parent"); card == nil || len(card.trace) != 1 || card.trace[0].detail != "sub args" || card.trace[0].resolved {
-		t.Fatalf("Subagent event did not produce pending inline trace: %#v", card)
+	send("a", "tool.call", "", "old legacy")
+	send("b", "tool.call", "", "b legacy")
+	for i := 0; i < 128; i++ {
+		send("a", "tool.call", fmt.Sprint(i), "a call")
 	}
-	subagentModel, _ := subagent.Update(toolSubPreview("sub-parent", "sub-child", "tool.result", "Read", "sub result", 1))
-	subagent = subagentModel.(Model)
-	if card := subagent.conv.testSubagentCard("sub-parent"); card == nil || !card.trace[0].resolved || card.trace[0].detail != "sub result" {
-		t.Fatalf("Subagent event did not update its inline trace in place: %#v", card)
+	send("a", "tool.call", "", "new legacy")
+	send("b", "tool.result", "", "b result")
+	send("a", "tool.result", "", "must not guess")
+	card, _ := m.conv.subagentCard("parent")
+	for _, row := range card.Update.Trace {
+		if row.Lane == "b" && (!row.Resolved || row.Detail != "b result") {
+			t.Fatalf("other lane blocked legacy: %+v", row)
+		}
+		if row.Lane == "a" && row.ID == "" && row.Resolved {
+			t.Fatalf("evicted legacy matched new call: %+v", row)
+		}
 	}
-	parallel := newMCPModel(t, aztec(), nil)
-	parallel = seedParallel(parallel, "parallel-parent",
-		startPar("parallel-parent", "all", 1),
-		branchStartPar("parallel-parent", 0, "branch", "inspect"),
-		branchToolParPreview("parallel-parent", 0, "tool.call", "Read", "parallel args", 1),
-	)
-	parallelModel, _ := parallel.Update(tea.KeyPressMsg{Code: tea.KeyF6})
-	parallel = parallelModel.(Model)
-	parallelModel, _ = parallel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	parallel = parallelModel.(Model)
-	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "Read · pending") || !strings.Contains(view, "parallel args") {
-		t.Fatalf("Parallel F6 omitted pending trace status: %q", view)
+}
+
+func TestToolcallsParentDetailLiveChildSummary(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m = applyAll(m, client.ToolCallMsg{ID: "parent", Name: "Subagent", Args: `{"task":"investigate"}`})
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	s.detail = true
+	s.selected = 0
+	for _, msg := range []client.SubagentMsg{
+		{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child"},
+		{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "one", ToolName: "Read", Detail: "args"},
+	} {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
 	}
-	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.result", "Read", "parallel result", 1))
-	parallel = parallelModel.(Model)
-	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "Read · success") || !strings.Contains(view, "parallel result") {
-		t.Fatalf("Parallel F6 omitted result status: %q", view)
+	s = toolcallsForTest(t, m)
+	if len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "… Read · pending — args") {
+		t.Fatalf("live detail not updated: %+v", s.detailEntry)
 	}
-	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.call", "Read", "second args", 1))
-	parallel = parallelModel.(Model)
-	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.call", "Read", "third args", 1))
-	parallel = parallelModel.(Model)
-	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.result", "Read", "ambiguous result", 1))
-	parallel = parallelModel.(Model)
-	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "unattributed result") {
-		t.Fatalf("Parallel F6 guessed an ambiguous result: %q", view)
+	updated, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "one", ToolName: "Read", Detail: "done", IsError: true})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.selected != 0 || len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "✗ Read · error — done") {
+		t.Fatalf("result did not refresh parent: %+v", s.detailEntry)
+	}
+	updated, _ = m.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "two", ToolName: "Grep", Detail: "next"})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "… Grep · pending") {
+		t.Fatal("child call entered list or detail did not refresh")
+	}
+	if m.subagents.view != subagentRoster {
+		t.Fatal("inspector changed F6 state")
+	}
+	for i := 0; i < 30; i++ {
+		updated, _ = m.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: fmt.Sprint(i + 10), ToolName: "Read"})
+		m = updated.(Model)
+	}
+	s = toolcallsForTest(t, m)
+	s.Render(60, 12)
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyHome})
+	s.Render(60, 12)
+	before := s.window.Offset()
+	updated, _ = m.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "two", ToolName: "Grep", Detail: "live result"})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	s.Render(60, 12)
+	if s.selected != 0 || s.window.Offset() != before || !strings.Contains(strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n"), "live result") {
+		t.Fatalf("live scroll/selection lost: selected=%d offset=%d want=%d", s.selected, s.window.Offset(), before)
+	}
+}
+
+func TestDelegationReducerIDPairingAcrossFamilies(t *testing.T) {
+	sub := newMCPModel(t, aztec(), nil)
+	sub = seedSubagents(sub, "sub-parent", startSub("sub-parent", "child", "goal"))
+	for _, event := range []client.SubagentMsg{
+		{Kind: client.SubagentTool, ParentCallID: "sub-parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "first", ToolName: "Read", Detail: "first"},
+		{Kind: client.SubagentTool, ParentCallID: "sub-parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "second", ToolName: "Read", Detail: "second"},
+		{Kind: client.SubagentTool, ParentCallID: "sub-parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "first", ToolName: "Read", Detail: "done"},
+	} {
+		updated, _ := sub.Update(event)
+		sub = updated.(Model)
+	}
+	if card := sub.conv.testSubagentCard("sub-parent"); card == nil || !card.trace[0].resolved || card.trace[1].resolved || card.trace[1].detail != "second" {
+		t.Fatalf("subagent pairing: %+v", card)
+	}
+	par := newMCPModel(t, aztec(), nil)
+	par = seedParallel(par, "parallel-parent", startPar("parallel-parent", "all", 1), branchStartPar("parallel-parent", 0, "branch", "goal"))
+	for _, event := range []client.ParallelMsg{
+		{Kind: client.ParallelBranchTool, ParentCallID: "parallel-parent", BranchIndex: 0, InnerKind: "tool.call", ChildToolCallID: "first", ToolName: "Read", Detail: "first"},
+		{Kind: client.ParallelBranchTool, ParentCallID: "parallel-parent", BranchIndex: 0, InnerKind: "tool.call", ChildToolCallID: "second", ToolName: "Read", Detail: "second"},
+		{Kind: client.ParallelBranchTool, ParentCallID: "parallel-parent", BranchIndex: 0, InnerKind: "tool.result", ChildToolCallID: "first", ToolName: "Read", Detail: "done"},
+	} {
+		updated, _ := par.Update(event)
+		par = updated.(Model)
+	}
+	trace := par.conv.parallelGroups[0].branches[0].trace
+	if len(trace) != 2 || !trace[0].resolved || trace[1].resolved {
+		t.Fatalf("parallel pairing: %+v", trace)
 	}
 	team := newMCPModel(t, aztec(), nil)
 	team.conv.addTool("team-parent", "Team", `{}`)
-	for _, msg := range []client.TeamMsg{
-		{Kind: client.TeamStart, ParentCallID: "team-parent", TeamID: "team", Roster: []client.TeamMemberSpec{{Name: "member"}}},
-		{Kind: client.TeamMember, ParentCallID: "team-parent", TeamID: "team", Member: "member", InnerKind: "tool.call", ToolName: "Read", Detail: "team args"},
+	updated, _ := team.Update(client.TeamMsg{Kind: client.TeamStart, ParentCallID: "team-parent", TeamID: "team", Roster: []client.TeamMemberSpec{{Name: "a"}, {Name: "b"}}})
+	team = updated.(Model)
+	for _, event := range []client.TeamMsg{
+		{Kind: client.TeamMember, ParentCallID: "team-parent", Member: "a", InnerKind: "tool.call", ChildToolCallID: "shared", ToolName: "Read"},
+		{Kind: client.TeamMember, ParentCallID: "team-parent", Member: "b", InnerKind: "tool.call", ChildToolCallID: "shared", ToolName: "Read"},
+		{Kind: client.TeamMember, ParentCallID: "team-parent", Member: "a", InnerKind: "tool.result", ChildToolCallID: "shared", ToolName: "Read"},
 	} {
-		teamModel, _ := team.Update(msg)
-		team = teamModel.(Model)
+		updated, _ = team.Update(event)
+		team = updated.(Model)
 	}
-	teamModel, _ := team.Update(tea.KeyPressMsg{Code: tea.KeyF6})
-	team = teamModel.(Model)
-	teamModel, _ = team.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	team = teamModel.(Model)
-	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "Read · pending") || !strings.Contains(view, "team args") {
-		t.Fatalf("Team F6 omitted pending trace status: %q", view)
+	card, ok := team.conv.teamCard("team-parent")
+	if !ok || !card.Update.Lanes[0].Trace[0].Resolved || card.Update.Lanes[1].Trace[0].Resolved {
+		t.Fatalf("team lane scope: %+v", card)
 	}
-	teamModel, _ = team.Update(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "team-parent", TeamID: "team", Member: "member", InnerKind: "tool.result", ToolName: "Read", Detail: "team result"})
-	team = teamModel.(Model)
-	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "Read · success") || !strings.Contains(view, "team result") {
-		t.Fatalf("Team F6 omitted result status: %q", view)
-	}
-	teamModel, _ = team.Update(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "team-parent", TeamID: "team", Member: "member", InnerKind: "tool.result", Detail: "nameless result"})
-	team = teamModel.(Model)
-	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "unattributed result") {
-		t.Fatalf("Team F6 dropped a nameless result: %q", view)
-	}
+}
 
-	m := previewFixture(t)
-	s := toolcallsForTest(t, m)
-	const hostile = "unsafe\x1b[2J"
-	long := hostile + strings.Repeat("z", 200)
-	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", InnerKind: "tool.result", ToolName: "Read", Detail: long})
-	m.syncToolcalls()
-	if !s.entries[1].trace.Resolved {
-		t.Fatalf("observed result missing: %#v", s.entries[1])
+func TestParallelBranchPreviewRetentionAndPairingPerBranch(t *testing.T) {
+	var c conversation
+	send := func(branch int, kind, id, detail string) {
+		c.parallelBranchTool(client.ParallelMsg{
+			ParentCallID: "parent", BranchIndex: branch, InnerKind: kind,
+			ChildToolCallID: id, ToolName: "Read", Detail: detail, Text: detail,
+		})
 	}
-	for _, width := range []int{50, 90} {
-		list, _ := s.Render(width, 20)
-		inline := (&renderer{th: testTheme(), traceWidth: width}).renderTrace(traceFromScroll(s.entries[1].prefix))
-		for surface, body := range map[string]string{"list": list, "inline": inline} {
-			if strings.Contains(body, "\x1b[2J") {
-				t.Errorf("%s emitted hostile control", surface)
+	for branch := 0; branch < 2; branch++ {
+		send(branch, "tool.call", "shared", "shared args")
+	}
+	for i := 0; i < 127; i++ {
+		for branch := 0; branch < 2; branch++ {
+			id := fmt.Sprintf("%d-%d", branch, i)
+			if i == 0 {
+				id = "retained" // Same ID and name in both branches.
 			}
-			for _, row := range strings.Split(stripANSIstr(body), "\n") {
-				if len([]rune(row)) > width {
-					t.Errorf("%s overflow at %d: %q", surface, width, row)
-				}
+			send(branch, "tool.call", id, id+" args")
+			if i < 12 {
+				send(branch, "message.delta", "", fmt.Sprintf("message %d", i))
 			}
 		}
-		if !strings.Contains(stripANSIstr(list), "unsafe[2J") || !strings.Contains(stripANSIstr(inline), "unsafe[2J") {
-			t.Errorf("latest preview differs across views: list=%q inline=%q", list, inline)
+	}
+	send(0, "tool.call", "extra", "extra args") // 129th call in branch 0 only.
+	send(0, "tool.result", "shared", "evicted result")
+	send(0, "tool.result", "retained", "branch 0 result")
+	send(1, "tool.result", "1-1", "branch 1 result")
+	if len(c.parallelGroups) != 1 || len(c.parallelGroups[0].branches) != 2 {
+		t.Fatalf("parallel groups: %+v", c.parallelGroups)
+	}
+	for branch, lane := range c.parallelGroups[0].branches {
+		assertDelegationLanePreview(t, lane.trace, branch, "branch")
+	}
+}
+
+func TestTeamMemberPreviewRetentionAndPairingPerMember(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("parent", "Team", `{}`)
+	m.conv.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: "parent", TeamID: "team", Roster: []client.TeamMemberSpec{{Name: "a"}, {Name: "b"}}})
+	send := func(member, kind, id, detail string) {
+		m.conv.applyTeamTyped(client.TeamMsg{
+			Kind: client.TeamMember, ParentCallID: "parent", Member: member,
+			InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: detail, Text: detail,
+		})
+	}
+	for _, member := range []string{"a", "b"} {
+		send(member, "tool.call", "shared", "shared args")
+	}
+	for i := 0; i < 127; i++ {
+		for branch, member := range []string{"a", "b"} {
+			id := fmt.Sprintf("%d-%d", branch, i)
+			if i == 0 {
+				id = "retained" // Same ID and name in both members.
+			}
+			send(member, "tool.call", id, id+" args")
+			if i < 12 {
+				send(member, "message.delta", "", fmt.Sprintf("message %d", i))
+			}
+		}
+	}
+	send("a", "tool.call", "extra", "extra args") // 129th call in member a only.
+	send("a", "tool.result", "shared", "evicted result")
+	send("a", "tool.result", "retained", "branch 0 result")
+	send("b", "tool.result", "1-1", "branch 1 result")
+	card, ok := m.conv.teamCard("parent")
+	if !ok || len(card.Update.Lanes) != 2 {
+		t.Fatalf("team card: %+v", card)
+	}
+	for branch, lane := range card.Update.Lanes {
+		assertDelegationLanePreview(t, traceFromScroll(lane.Trace), branch, lane.Name)
+	}
+}
+
+func assertDelegationLanePreview(t *testing.T, trace []teamTrace, branch int, label string) {
+	t.Helper()
+	calls, messages := 0, 0
+	sharedSeen, retainedSeen := false, false
+	for _, row := range trace {
+		switch row.kind {
+		case teamTraceMessage:
+			if want := fmt.Sprintf("message %d", messages); row.text != want {
+				t.Fatalf("%s message %d = %q, want %q", label, messages, row.text, want)
+			}
+			messages++
+		case teamTraceTool:
+			calls++
+			if branch == 0 && row.id == "shared" {
+				t.Fatalf("%s retained evicted call: %+v", label, row)
+			}
+			wantDetail := row.id + " args"
+			if row.id == "shared" {
+				sharedSeen = true
+				wantDetail = "shared args"
+			}
+			if row.id == "retained" {
+				retainedSeen = true
+			}
+			if (branch == 0 && row.id == "retained") || (branch == 1 && row.id == "1-1") {
+				wantDetail = fmt.Sprintf("branch %d result", branch)
+			}
+			resolvedID := "retained"
+			if branch == 1 {
+				resolvedID = "1-1"
+			}
+			if row.resolved != (row.id == resolvedID) || row.detail != wantDetail {
+				t.Fatalf("%s wrong result or preview: %+v, want detail %q", label, row, wantDetail)
+			}
+		}
+	}
+	if calls != 128 || messages != 12 || !retainedSeen || sharedSeen != (branch == 1) {
+		t.Fatalf("%s retained %d calls, %d messages, shared=%t, retained=%t; want 128, 12, %t, true", label, calls, messages, sharedSeen, retainedSeen, branch == 1)
+	}
+}
+
+func TestDelegationIDLessResultRequiresToolName(t *testing.T) {
+	for _, family := range []string{"Subagent", "Parallel", "Team"} {
+		t.Run(family, func(t *testing.T) {
+			m := newToolcallsInspectorModel(t)
+			m.conv.addTool("parent", family, `{}`)
+			var send func(kind, name, detail string)
+			var trace func() []teamTrace
+			switch family {
+			case "Subagent":
+				m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child"})
+				send = func(kind, name, detail string) {
+					m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: kind, ToolName: name, Detail: detail})
+				}
+				trace = func() []teamTrace {
+					card, _ := m.conv.subagentCard("parent")
+					return traceFromScroll(card.Update.Trace)
+				}
+			case "Parallel":
+				send = func(kind, name, detail string) {
+					m.conv.parallelBranchTool(client.ParallelMsg{ParentCallID: "parent", BranchIndex: 0, InnerKind: kind, ToolName: name, Detail: detail})
+				}
+				trace = func() []teamTrace { return m.conv.parallelGroups[0].branches[0].trace }
+			case "Team":
+				m.conv.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: "parent", TeamID: "team", Roster: []client.TeamMemberSpec{{Name: "member"}}})
+				send = func(kind, name, detail string) {
+					m.conv.applyTeamTyped(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "parent", Member: "member", InnerKind: kind, ToolName: name, Detail: detail})
+				}
+				trace = func() []teamTrace {
+					card, _ := m.conv.teamCard("parent")
+					return traceFromScroll(card.Update.Lanes[0].Trace)
+				}
+			}
+			send("tool.call", "Read", "args")
+			for _, name := range []string{"", "Grep"} {
+				send("tool.result", name, "must not match")
+				if got := trace(); len(got) != 1 || got[0].resolved || got[0].detail != "args" {
+					t.Fatalf("ID-less result without matching name %q correlated: %+v", name, got)
+				}
+			}
+			send("tool.result", "Read", "matched")
+			if got := trace(); len(got) != 1 || !got[0].resolved || got[0].detail != "matched" {
+				t.Fatalf("unique named legacy result not paired: %+v", got)
+			}
+		})
+	}
+}
+
+func TestChildSummarySanitizesBoundedPreview(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("parent", "Subagent", `{}`)
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child"})
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "id", ToolName: "Read", Detail: "args"})
+	m.conv.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "id", ToolName: "Read", Detail: "unsafe\x1b[2J" + strings.Repeat("z", 300)})
+	m = openToolcallsForTest(t, m)
+	s := toolcallsForTest(t, m)
+	s.selected, s.detail = 0, true
+	s.refreshDetail(&m.conv.scrollback)
+	rows := strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n")
+	if strings.Contains(rows, "\x1b[2J") || !strings.Contains(stripANSIstr(rows), "unsafe[2J") || len([]rune(s.detailEntry.childTools[0].Detail)) > maxTraceDetailLen {
+		t.Fatalf("unsafe or unbounded summary: %q", rows)
+	}
+	for _, width := range []int{12, 20} {
+		content := s.styledToolcallDetailLinesAtWidth(*s.detailEntry, width)
+		for i, row := range toolcallDetailRows(*s.detailEntry) {
+			if row.kind != toolcallChildSummary {
+				continue
+			}
+			if got := toolcallRowCounts(content, width)[i]; got != 1 {
+				t.Errorf("width %d child summary rows = %d, want one", width, got)
+			}
+			if got := ansi.StringWidth(content[i]); got > width {
+				t.Errorf("width %d child summary width = %d", width, got)
+			}
+		}
+		s.window, s.width, s.follow = new(bounded.Viewport), 0, false
+		body := s.renderDetail(width, 24, "Tool calls", func(_ lipgloss.Style, text string) string { return text })
+		if strings.Contains(body, "\x1b[2J") {
+			t.Fatalf("width %d rendered unsafe child text: %q", width, body)
 		}
 	}
 }
 
-func TestMecatuiToolcallPreviews_Scenario3_OwnerBoundaries(t *testing.T) {
-	m := previewFixture(t)
-	m.subagents = subagentState{view: subagentFocus, child: "child-A"}
-	m.parallel = parallelState{view: parallelGroupView, group: "parallel"}
-	m.conv.addTool("parallel", "Parallel", "{}")
-	m.conv.addTool("team", "Team", "{}")
-	m.syncToolcalls()
-	s := toolcallsForTest(t, m)
-	if len(s.entries) != 4 {
-		t.Fatalf("inspector should add only Subagent preview: %#v", s.entries)
+func TestChildSummaryResizePreservesAnchor(t *testing.T) {
+	s := &toolcallsState{deps: surfaceDeps{theme: testTheme()}, detailEntry: &toolcallDetail{
+		name: "Subagent", callID: "parent", historyCaveat: true,
+		childTools:     []scrollback.TraceEntry{{Kind: toolKind, ToolName: "Read", Detail: strings.Repeat("preview ", 40)}},
+		intent:         `{"task":"` + strings.Repeat("task ", 30) + `"}`,
+		resultReceived: true, result: scrollback.ToolResult{Body: strings.Repeat("result\n", 20)},
+	}}
+	entry := *s.detailEntry
+	wide, narrow := 60, 12
+	wideContent := s.styledToolcallDetailLinesAtWidth(entry, wide)
+	narrowContent := s.styledToolcallDetailLinesAtWidth(entry, narrow)
+	child := -1
+	wideStart, narrowStart := 0, 0
+	for i, row := range toolcallDetailRows(entry) {
+		if row.kind == toolcallChildSummary {
+			child = i
+			break
+		}
+		wideStart += toolcallRowCounts(wideContent, wide)[i]
+		narrowStart += toolcallRowCounts(narrowContent, narrow)[i]
 	}
-	if _, ok := m.conv.scrollback.SnapshotAt(s.entries[0].index).Payload.(scrollback.SubagentCardSnapshot); !ok {
-		t.Fatal("preview not parented to scrollback")
+	if child < 0 || toolcallRowCounts(wideContent, wide)[child] != 1 || toolcallRowCounts(narrowContent, narrow)[child] != 1 {
+		t.Fatal("child summary did not remain a single physical row")
 	}
-	if m.subagents.view != subagentFocus || m.subagents.child != "child-A" || m.parallel.view != parallelGroupView || m.parallel.group != "parallel" {
-		t.Fatalf("inspector moved F6 selection: sub=%#v parallel=%#v", m.subagents, m.parallel)
+	line := func(_ lipgloss.Style, text string) string { return text }
+	s.renderDetail(wide, 5, "Tool calls", line)
+	s.follow = false
+	s.window.SetOffset(wideStart, len(toolcallRowCounts(wideContent, wide)))
+	s.recordAnchor()
+	s.renderDetail(narrow, 5, "Tool calls", line)
+	if got := s.window.Offset(); got != narrowStart {
+		t.Fatalf("resize offset = %d, want child summary at %d", got, narrowStart)
 	}
+}
+
+func TestToolcallsApprovalOwnership(t *testing.T) {
 	approval := newToolcallsInspectorModel(t)
 	approval.phase = phaseAwaitingApproval
 	got, _ := approval.runToolcalls()
 	if got.(Model).modal != nil {
 		t.Fatal("inspector stole approval surface")
 	}
-
-	// An approval owns F6 just as it owns its detail/raw and verdict controls.
 	approval = shellAskModel(t, longShellArgs)
 	askID := approvalSurfaceOf(t, approval).ask.AskID
 	approval, _ = pressKey(approval, ctrlT)
@@ -391,12 +620,11 @@ func TestMecatuiToolcallPreviews_Scenario3_OwnerBoundaries(t *testing.T) {
 		t.Fatalf("approval precondition lost: %#v", before)
 	}
 	updated, _ := approval.Update(tea.KeyPressMsg{Code: tea.KeyF6})
-	approval = updated.(Model)
-	after := assertApprovalPending(t, approval, askID, "")
+	after := assertApprovalPending(t, updated.(Model), askID, "")
 	if !after.argsViewOpen || !after.argsViewRaw || after.ask.focusedVerdict != client.VerdictDeny {
 		t.Fatalf("F6 changed approval-owned state: %#v", after)
 	}
-	if _, ok := approval.modal.(*toolcallsState); ok {
-		t.Fatal("F6 opened the inspector over approval")
+	if _, ok := updated.(Model).modal.(*toolcallsState); ok {
+		t.Fatal("F6 opened inspector over approval")
 	}
 }

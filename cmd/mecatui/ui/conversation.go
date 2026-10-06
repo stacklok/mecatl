@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
@@ -10,13 +11,13 @@ import (
 
 const toolKind = "tool"
 
-// maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
-// a fleet lane, a parallel branch, a team member) retains for the expanded/focus
-// view, mirroring the line-cap idiom used elsewhere (e.g. maxToolResultLines).
-// Older entries are dropped once the cap is reached so a long investigation never
-// unbounds the card. Shared by all three delegation families (ADR 0079 — the trace
-// model is one shape).
-const maxTraceEntries = 12
+// Delegation traces retain the most recent 128 calls and, independently, 12
+// message previews in each child lane. All three delegation families share the
+// same pairing and retention policy.
+const (
+	maxTraceEntries  = 128 // retained tool calls per lane
+	maxTraceMessages = 12  // retained message previews per lane
+)
 
 // maxSubagentTrace is kept as the subagent-facing alias of the shared trace cap so
 // existing call sites stay readable; it is the same constant.
@@ -34,7 +35,7 @@ type teamTraceKind int
 
 const (
 	teamTraceMessage teamTraceKind = iota // a forwarded child/member/branch message line
-	teamTraceTool                         // a child/member/branch tool call or unattributed result
+	teamTraceTool                         // a child/member/branch tool call
 )
 
 // teamTrace is one capped entry in a delegation lane's trace — shared by the Team
@@ -45,21 +46,19 @@ const (
 // argument or result preview shown next to the chip in the expanded view.
 // All text is bounded server-side (clamp-scrubbed, ≤200 runes); the ui caps it again on render.
 type teamTrace struct {
-	kind         teamTraceKind
-	text         string // message text (teamTraceMessage)
-	name         string // tool name (teamTraceTool)
-	detail       string // bounded arg/result preview (teamTraceTool)
-	resolved     bool   // an observed, safely associated result
-	unattributed bool   // result could not be associated with a retained call
-	blocked      bool   // an unresolved call was evicted from this lane
-	serial       uint64 // UI-local slot generation, never a child tool-call ID
-	isError      bool   // tool errored (teamTraceTool)
+	id       string // child tool-call ID, scoped to this lane; empty for legacy events
+	lane     string // child session ID for a shared Subagent parent card
+	kind     teamTraceKind
+	text     string // message text (teamTraceMessage)
+	name     string // tool name (teamTraceTool)
+	detail   string // bounded arg/result preview (teamTraceTool)
+	resolved bool   // an observed, safely associated result
+	blocked  bool   // a pending ID-less call was evicted from this lane
+	serial   uint64 // UI-local slot generation, never a child tool-call ID
+	isError  bool   // tool errored (teamTraceTool)
 }
 
 func (t teamTrace) cue() (glyph, status string) {
-	if t.unattributed {
-		return "?", "unattributed result"
-	}
 	if !t.resolved {
 		return "…", "pending"
 	}
@@ -69,26 +68,38 @@ func (t teamTrace) cue() (glyph, status string) {
 	return "✓", "success"
 }
 
-// pushTrace appends a trace entry to a lane slice and enforces the shared cap,
-// dropping the oldest entries once it overflows. It is the single accumulator
-// behind every delegation family's trace (subagent inline + fleet, parallel
-// branch, team member), so the cap can never drift between surfaces.
+// pushTrace retains independent budgets for calls and message previews.
 func pushTrace(trace []teamTrace, t teamTrace) []teamTrace {
 	if len(trace) > 0 {
 		t.serial = trace[len(trace)-1].serial + 1
-		t.blocked = t.blocked || trace[len(trace)-1].blocked
-	} else {
+	}
+	for i := len(trace) - 1; i >= 0; i-- {
+		if trace[i].lane == t.lane {
+			t.blocked = trace[i].blocked
+			break
+		}
+	}
+	if t.serial == 0 {
 		t.serial = 1
 	}
 	trace = append(trace, t)
-	if len(trace) > maxTraceEntries {
-		if dropped := trace[0]; dropped.kind == teamTraceTool && !dropped.resolved && !dropped.unattributed {
-			t.blocked = true
+	limit := maxTraceEntries
+	if t.kind == teamTraceMessage {
+		limit = maxTraceMessages
+	}
+	count := 0
+	for _, entry := range trace {
+		if entry.lane == t.lane && entry.kind == t.kind {
+			count++
 		}
-		trace = trace[len(trace)-maxTraceEntries:]
-		if t.blocked {
-			for i := range trace {
-				trace[i].blocked = true
+	}
+	if count > limit {
+		for i, entry := range trace {
+			if entry.lane == t.lane && entry.kind == t.kind {
+				if entry.kind == teamTraceTool && entry.id == "" && !entry.resolved {
+					trace[len(trace)-1].blocked = true
+				}
+				return append(trace[:i], trace[i+1:]...)
 			}
 		}
 	}
@@ -98,57 +109,95 @@ func pushTrace(trace []teamTrace, t teamTrace) []teamTrace {
 // traceAppendMessage adds a message line to a lane trace. Consecutive
 // message.delta fragments coalesce onto the trailing message entry (so streamed
 // text reads as one line, not a chip storm); a new line is started when the last
-// entry is a tool chip. The trace stays capped at maxTraceEntries.
-func traceAppendMessage(trace []teamTrace, text string) []teamTrace {
+// entry is a tool chip. Message previews stay capped at maxTraceMessages.
+func traceAppendMessage(trace []teamTrace, text string, lane ...string) []teamTrace {
 	if text == "" {
 		return trace
 	}
-	if n := len(trace); n > 0 && trace[n-1].kind == teamTraceMessage {
-		trace[n-1].text += text
+	child := ""
+	if len(lane) != 0 {
+		child = lane[0]
+	}
+	text = truncate(terminaltext.SanitizeSingleLine(text), maxTraceMessageLen)
+	if n := len(trace); n > 0 && trace[n-1].kind == teamTraceMessage && trace[n-1].lane == child {
+		trace[n-1].text = truncate(trace[n-1].text+text, maxTraceMessageLen)
 		return trace
 	}
-	return pushTrace(trace, teamTrace{kind: teamTraceMessage, text: text})
+	return pushTrace(trace, teamTrace{kind: teamTraceMessage, text: text, lane: child})
 }
+
+func admitTraceID(id string) bool { return len(id) <= 256 && utf8.ValidString(id) }
 
 // traceAppendTool adds a tool chip (pending; error + result detail resolved later
 // by traceMarkToolResult). detail here is the call's bounded arg preview.
-func traceAppendTool(trace []teamTrace, name, detail string) []teamTrace {
-	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: name, detail: detail})
-}
-
-// traceMarkToolResult updates only a unique retained unresolved call when no
-// unresolved call has fallen out of this lane's rolling trace.
-func traceMarkToolResult(trace []teamTrace, name, detail string, isError bool) []teamTrace {
-	match := -1
-	blocked := len(trace) > 0 && trace[len(trace)-1].blocked
-	if name != "" && !blocked {
-		for i := range trace {
-			if t := trace[i]; t.kind == teamTraceTool && !t.unattributed && t.name == name {
-				if match >= 0 {
-					match = -1
-					break
-				}
-				if !t.resolved {
-					match = i
-				} else {
-					match = -1
-					break
-				}
+func traceAppendTool(trace []teamTrace, id, name, detail string, lane ...string) []teamTrace {
+	if id != "" && !admitTraceID(id) {
+		return trace
+	}
+	child := ""
+	if len(lane) != 0 {
+		child = lane[0]
+	}
+	if id != "" {
+		for _, t := range trace {
+			if t.lane == child && t.kind == teamTraceTool && t.id == id {
+				return trace
 			}
 		}
 	}
+	return pushTrace(trace, teamTrace{kind: teamTraceTool, lane: child, id: id, name: truncate(terminaltext.SanitizeSingleLine(name), maxTraceToolNameLen), detail: truncate(terminaltext.SanitizeSingleLine(detail), maxTraceDetailLen)})
+}
+
+// A result can resolve only an exact retained pending ID, or an unambiguous
+// ID-less legacy call of the same name. Evicted legacy calls make name matching
+// uncertain for the rest of the lane; an ID-bearing call is never a fallback.
+func traceMarkToolResult(trace []teamTrace, id, name, detail string, isError bool, lane ...string) []teamTrace {
+	if id != "" && !admitTraceID(id) {
+		return trace
+	}
+	child := ""
+	if len(lane) != 0 {
+		child = lane[0]
+	}
+	match := traceResultMatch(trace, id, name, child)
 	if match >= 0 {
 		trace[match].resolved, trace[match].isError = true, isError
 		if detail != "" {
-			trace[match].detail = detail
+			trace[match].detail = truncate(terminaltext.SanitizeSingleLine(detail), maxTraceDetailLen)
 		}
-		return trace
 	}
-	label := "unattributed result"
-	if name != "" {
-		label += " (" + name + ")"
+	return trace
+}
+
+func traceResultMatch(trace []teamTrace, id, name, child string) int {
+	match := -1
+	blocked := false
+	for i := len(trace) - 1; i >= 0; i-- {
+		if trace[i].lane == child {
+			blocked = trace[i].blocked
+			break
+		}
 	}
-	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: label, detail: detail, isError: isError, unattributed: true})
+	if id != "" {
+		for i, t := range trace {
+			if t.lane == child && t.kind == teamTraceTool && t.id == id {
+				if match >= 0 || t.resolved {
+					return -1
+				}
+				match = i
+			}
+		}
+	} else if name != "" && !blocked {
+		for i, t := range trace {
+			if t.lane == child && t.kind == teamTraceTool && t.name == name {
+				if match >= 0 || t.resolved || t.id != "" {
+					return -1
+				}
+				match = i
+			}
+		}
+	}
+	return match
 }
 
 // teamLane is the live projection of one team member's activity, accumulated from
@@ -470,19 +519,16 @@ func cloneRoutingDecision(in *client.RoutingDecision) *client.RoutingDecision {
 // team member), so the semantics (coalesce message deltas, resolve result onto the
 // pending chip) can never drift between surfaces. It returns the updated trace and
 // the lane's live current-tool name (cleared by nothing but the end accumulator).
-func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, text string, isError bool) ([]teamTrace, string) {
+func routeTraceEvent(trace []teamTrace, current, innerKind, id, toolName, detail, text string, isError bool, lane ...string) ([]teamTrace, string) {
 	switch innerKind {
 	case "message.delta", "result":
-		trace = traceAppendMessage(trace, text)
+		trace = traceAppendMessage(trace, text, lane...)
 	case "tool.result":
-		trace = traceMarkToolResult(trace, toolName, detail, isError)
-		if toolName != "" {
-			current = toolName
-		}
+		trace = traceMarkToolResult(trace, id, toolName, detail, isError, lane...)
 	default: // "tool.call" — or an older server's kind-less subagent.tool/branch_tool
 		if toolName != "" {
 			current = toolName
-			trace = traceAppendTool(trace, toolName, detail)
+			trace = traceAppendTool(trace, id, toolName, detail, lane...)
 		}
 	}
 	return trace, current
@@ -538,7 +584,7 @@ func (c *conversation) fleetTool(msg client.SubagentMsg) {
 	// still overwrites with the authoritative terminal figure via fleetEnd.
 	ln.toolCount = msg.ToolCount
 	ln.usage = msg.Usage
-	ln.trace, ln.current = routeTraceEvent(ln.trace, ln.current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
+	ln.trace, ln.current = routeTraceEvent(ln.trace, ln.current, msg.InnerKind, msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 }
 
 // fleetEnd records the resolved end stats on the fleet lane (done gates them), so the
@@ -739,7 +785,7 @@ func (c *conversation) parallelBranchTool(msg client.ParallelMsg) {
 	br := c.parallelGroupFor(msg.ParentCallID).parallelBranchFor(msg.BranchIndex)
 	br.isError = msg.IsError
 	br.toolCount = msg.ToolCount
-	br.trace, br.current = routeTraceEvent(br.trace, br.current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
+	br.trace, br.current = routeTraceEvent(br.trace, br.current, msg.InnerKind, msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 }
 
 // parallelBranchEnd records a branch's resolved terminal stats (done gates them).

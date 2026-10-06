@@ -17,13 +17,17 @@ settled calls keep their full arguments and results in the inspector. When
 `mecatui` receives a result before its final update, it keeps the card open
 and shows `result received · finalizing`.
 
-A Subagent call's detail includes bounded previews of currently retained child
-tool activity. A pending child call has no safely associated result yet. The
-server scrubs controls and caps preview length, but these previews are not
-complete child calls or guaranteed secret redaction. A reconstructed session
-can show a Subagent call without activity; its detail notes that history may
-be incomplete. Press `f6` for the Agents view to navigate Subagent children,
-Parallel branches, and Team members, including their task and findings views.
+A Subagent call's detail shows one-line ✓/✗/pending summaries of up to
+128 retained child tool calls, without child drilldown. The server scrubs
+controls and caps preview length; previews are neither complete child calls
+nor guaranteed secret redaction. Results without a matching retained call are
+omitted rather than shown as new rows. A reconstructed session may have no
+Subagent activity preview and notes that history may be incomplete. Press
+`f6` for the Agents view to navigate Subagent children, Parallel branches,
+and Team members, including their task and findings views. Each lane retains
+up to 128 tool calls and 12 independent message previews. Child previews with
+invalid UTF-8 or IDs longer than 256 bytes are omitted; child execution and
+the parent session are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
 per-turn usage, permanent error details, and changed files. Tool results stay in

@@ -917,6 +917,10 @@ type SubagentPayload struct {
 	// ToolName is the name of a child tool that just ran. Set on EvSubagentTool
 	// only. It is the tool NAME alone — never the child's tool args or result.
 	ToolName string
+	// ChildToolCallID is the exact child call/result ID for tool.call/tool.result
+	// projections only. It is scoped by ChildID; older and non-tool events leave it empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether the child tool call failed. Set on EvSubagentTool
 	// only.
 	IsError bool
@@ -1069,6 +1073,10 @@ type ParallelPayload struct {
 	// ToolName is the name of a branch's child tool that just ran. Set on the
 	// branch_tool kind only. It is the tool NAME alone — never branch args/result.
 	ToolName string
+	// ChildToolCallID is the exact branch call/result ID for tool.call/tool.result
+	// projections only, scoped by the branch lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether that branch tool call failed. Set on branch_tool only.
 	IsError bool
 	// ToolCount is the running (branch_tool) or final (branch_end) number of a branch's
@@ -1373,6 +1381,10 @@ type TeamPayload struct {
 	// ToolName is the name of a member tool that was called. Set on EvTeamMember
 	// for tool.call / tool.result inner kinds.
 	ToolName string
+	// ChildToolCallID is the exact member call/result ID for tool.call/tool.result
+	// projections only, scoped by the member lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// Detail is a BOUNDED preview of a member tool call's args (tool.call) or
 	// result body (tool.result) — capped at maxTeamPreview runes. It is never the
 	// raw, unbounded args/result body. Set on EvTeamMember for tool.* inner kinds.

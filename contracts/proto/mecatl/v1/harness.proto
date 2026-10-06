@@ -2393,6 +2393,8 @@ message Subagent {
   // routing_decision is the optional bounded configured-router evidence captured
   // on subagent.start. Historical events and deployments without a router omit it.
   optional RoutingDecision routing_decision = 19;
+  // Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise.
+  string child_tool_call_id = 20;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -2527,6 +2529,8 @@ message Team {
   // on team.end (the terminal disposition stays the closed-enum reason). Mirrors
   // Subagent.cause (field 17).
   string cause = 19;
+  // Exact member tool.call/tool.result ID, scoped by member_session_id; empty otherwise.
+  string child_tool_call_id = 20;
 }
 
 // Parallel is the BOUNDED observability projection carried by the three parallel.*
@@ -2644,6 +2648,8 @@ message Parallel {
   // routing_decision is the optional bounded configured-router evidence captured
   // on branch_start. Historical events and deployments without a router omit it.
   optional RoutingDecision routing_decision = 26;
+  // Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise.
+  string child_tool_call_id = 27;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors

@@ -8,6 +8,110 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 )
 
+func TestDelegationPreviewIDByteLimit(t *testing.T) {
+	id := session.ToolCallID(strings.Repeat("é", 128)) // exactly 256 bytes
+	if !previewChildToolCallID(id) || previewChildToolCallID(id+"x") {
+		t.Fatal("child preview ID bound must be measured in bytes")
+	}
+	call := session.NewToolCall(id, "Read", []byte(`{}`))
+	var projected []session.Event
+	projectChildEvent(func(ev session.Event) { projected = append(projected, ev) }, session.Event{Type: session.EvToolCall, ToolCall: &call}, map[session.ToolCallID]string{}, "parent", "child", 0, session.Usage{})
+	if len(projected) != 1 || projected[0].Subagent.ChildToolCallID != id {
+		t.Fatalf("boundary ID lost: %+v", projected)
+	}
+}
+
+func TestDelegationRejectsMalformedChildPreviewIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   session.ToolCallID
+	}{
+		{"invalid UTF-8", session.ToolCallID("bad\xff")},
+		{"oversized", session.ToolCallID(strings.Repeat("x", 257))},
+	} {
+		for _, kind := range []session.EventType{session.EvToolCall, session.EvToolResult} {
+			t.Run(tc.name+"/"+string(kind), func(t *testing.T) {
+				call := session.NewToolCall(tc.id, "Read", []byte(`{}`))
+				result := session.NewToolResult(tc.id, "ok")
+				ev := session.Event{Type: kind, ToolCall: &call, ToolResult: &result}
+				var projected []session.Event
+				names := map[session.ToolCallID]string{}
+				branch := branchEmitter{emit: func(e session.Event) { projected = append(projected, e) }, parentCallID: "parent"}.branchTool(0)
+				count, _ := projectChildEvent(func(e session.Event) { projected = append(projected, e); branch(e) }, ev, names, "parent", "child", 0, session.Usage{})
+				if teamEv, ok := projectTeamEvent("parent", "team", TeamEvent{Member: "a", Event: ev}); ok {
+					projected = append(projected, teamEv)
+				}
+				if len(projected) != 0 || len(names) != 0 {
+					t.Fatalf("malformed ID leaked into previews: %+v names=%v", projected, names)
+				}
+				want := 0
+				if kind == session.EvToolCall {
+					want = 1
+				}
+				if count != want {
+					t.Fatalf("started count = %d, want %d", count, want)
+				}
+				if call.ID != tc.id || result.CallID != tc.id {
+					t.Fatal("child call/result ID changed")
+				}
+			})
+		}
+	}
+}
+
+func TestDelegationChildToolCallIDs(t *testing.T) {
+	call := session.NewToolCall("child-call-7", "Read", []byte(`{"path":"x"}`))
+	result := session.NewToolResult(call.ID, "ok")
+	inner := []session.Event{
+		{Type: session.EvToolCall, ToolCall: &call},
+		{Type: session.EvToolResult, ToolResult: &result},
+		{Type: session.EvMessageDelta, Text: "working"},
+		{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{Usage: session.Usage{InputTokens: 1}}},
+	}
+	var projected []session.Event
+	names := make(map[session.ToolCallID]string)
+	branch := branchEmitter{emit: func(ev session.Event) { projected = append(projected, ev) }, parentCallID: "parent"}.branchTool(2)
+	for _, ev := range inner {
+		projectChildEvent(func(ev session.Event) {
+			projected = append(projected, ev)
+			branch(ev)
+		}, ev, names, "parent", "subagent-1", 0, session.Usage{})
+		teamEv, ok := projectTeamEvent("parent", "team-1", TeamEvent{Member: "scout", MemberSessionID: "member-1", Event: ev})
+		if !ok {
+			t.Fatalf("team projection dropped %s", ev.Type)
+		}
+		projected = append(projected, teamEv)
+	}
+	if len(projected) != 12 {
+		t.Fatalf("projected %d events, want 12", len(projected))
+	}
+	for i, ev := range projected {
+		var id session.ToolCallID
+		var kind session.EventType
+		switch {
+		case ev.Subagent != nil:
+			id, kind = ev.Subagent.ChildToolCallID, ev.Subagent.InnerKind
+		case ev.Parallel != nil:
+			id, kind = ev.Parallel.ChildToolCallID, ev.Parallel.InnerKind
+			if ev.Parallel.BranchIndex != 2 {
+				t.Fatalf("branch lane = %d", ev.Parallel.BranchIndex)
+			}
+		case ev.Team != nil:
+			id, kind = ev.Team.ChildToolCallID, ev.Team.InnerKind
+			if ev.Team.MemberSessionID != "member-1" {
+				t.Fatalf("member lane = %q", ev.Team.MemberSessionID)
+			}
+		}
+		want := session.ToolCallID("")
+		if kind == session.EvToolCall || kind == session.EvToolResult {
+			want = call.ID
+		}
+		if id != want {
+			t.Errorf("projection %d (%s) ID = %q, want %q", i, kind, id, want)
+		}
+	}
+}
+
 // TestProjectTeamEventTurnEndContextMeter asserts the turn.end projection carries
 // the per-member context-meter fields: ContextUsed is THIS turn's input-token
 // count (current occupancy, the meter numerator — an assignment, not a sum) and

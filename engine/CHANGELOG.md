@@ -22,6 +22,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   calculation used by instruction discovery and pending target reservations.
   Added (minor).
 
+- **Delegated tool-call correlation** — adds optional `ChildToolCallID` to
+  `session.SubagentPayload`, `session.ParallelPayload`, and `session.TeamPayload`
+  for child tool.call/tool.result projections, scoped by child lane. Added (minor).
+
 - **Live tool-result availability** — adds `session.EvToolResultAvailable` for
   safe display payloads ahead of the canonical `tool.result`. Added (minor).
 

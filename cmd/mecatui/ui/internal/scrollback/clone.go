@@ -40,13 +40,40 @@ func cloneTrace(in []TraceEntry) []TraceEntry {
 	return slices.Clone(in)
 }
 
+func cloneSubagentTrace(in []TraceEntry) []TraceEntry {
+	// A parent card can contain several resumed child sessions. Bound each
+	// session independently without changing the interleaved event order.
+	type counts struct{ tools, messages int }
+	perLane := make(map[string]counts)
+	out := make([]TraceEntry, 0, min(len(in), MaxTraceEntries))
+	for i := len(in) - 1; i >= 0; i-- {
+		entry := in[i]
+		count := perLane[entry.Lane]
+		if entry.Kind == "message" {
+			if count.messages >= 12 {
+				continue
+			}
+			count.messages++
+		} else {
+			if count.tools >= 128 {
+				continue
+			}
+			count.tools++
+		}
+		perLane[entry.Lane] = count
+		out = append(out, entry)
+	}
+	slices.Reverse(out)
+	return out
+}
+
 func cloneSubagentStart(in SubagentStart) SubagentStart {
 	in.Routing = cloneRouting(in.Routing)
 	return in
 }
 
 func cloneSubagentUpdate(in SubagentUpdate) SubagentUpdate {
-	in.Trace = cloneTrace(in.Trace)
+	in.Trace = cloneSubagentTrace(in.Trace)
 	in.Artifacts = cloneArtifacts(in.Artifacts)
 	return in
 }

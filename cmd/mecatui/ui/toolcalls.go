@@ -35,24 +35,16 @@ func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
 
 type toolcallEntry struct {
 	toolcallProjection
-	index        int
-	preview      bool
-	slot         int
-	trace        scrollback.TraceEntry
-	prefix       []scrollback.TraceEntry // retained slot identities, not preview content
-	childID      string
-	parentCallID string
-	hasActivity  bool
+	index       int
+	hasActivity bool
 }
 
 type toolcallDetail struct {
+	childTools           []scrollback.TraceEntry
 	callID, name, intent string
 	result               scrollback.ToolResult
 	state                toolcallProjectionState
 	resultReceived       bool
-	preview              bool
-	trace                scrollback.TraceEntry
-	childID              string
 	historyCaveat        bool
 	hasActivity          bool
 }
@@ -80,7 +72,6 @@ type toolcallsState struct {
 	listFollow  bool
 	compact     bool
 	hitItems    map[HitID]scrollback.BlockID // visible rows' parent block IDs
-	previewHits map[HitID]int
 }
 
 func (*toolcallsState) modalPlacement() modalPlacement { return modalPlacementFill }
@@ -102,14 +93,10 @@ func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		return nil, true, false
 	}
 	index := -1
-	if i, ok := s.previewHits[hit.ID]; ok {
-		index = i
-	} else {
-		for i, entry := range s.entries {
-			if entry.blockID == blockID && !entry.preview {
-				index = i
-				break
-			}
+	for i, entry := range s.entries {
+		if entry.blockID == blockID {
+			index = i
+			break
 		}
 	}
 	if index < 0 || index >= len(s.entries) {
@@ -154,6 +141,7 @@ const (
 	toolcallIdentity
 	toolcallHeading
 	toolcallError
+	toolcallChildSummary
 	toolcallArgument
 	toolcallDiffMeta
 	toolcallDiffRemove
@@ -404,9 +392,7 @@ func (m Model) toolcallEntries() []toolcallEntry { return m.toolcallEntriesSince
 func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 	cached := make(map[scrollback.BlockID]toolcallEntry, len(previous))
 	for _, entry := range previous {
-		if !entry.preview {
-			cached[entry.blockID] = entry
-		}
+		cached[entry.blockID] = entry
 	}
 	entries := make([]toolcallEntry, 0)
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
@@ -427,16 +413,6 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 			continue
 		}
 		entries[len(entries)-1].hasActivity = len(card.Update.Trace) > 0
-		for slot, trace := range card.Update.Trace {
-			if trace.Kind != toolKind {
-				continue
-			}
-			name := terminaltext.SanitizeSingleLine(trace.ToolName)
-			entries = append(entries, toolcallEntry{
-				toolcallProjection: toolcallProjection{blockID: metadata.ID, displayName: name, fullName: name, state: toolcallPending},
-				index:              i, preview: true, slot: slot, trace: trace, prefix: append([]scrollback.TraceEntry(nil), card.Update.Trace[:slot+1]...), childID: card.Start.ChildID, parentCallID: metadata.CallID,
-			})
-		}
 	}
 	return entries
 }
@@ -445,22 +421,21 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 // A reader already following the newest row advances to the new newest row.
 func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 	s.hitItems = nil
-	s.previewHits = nil
 	if opening {
 		s.listFollow = true
 	}
 	following := s.followingToolcallList(opening)
-	selected, old := s.previousToolcallSelection(following)
+	selected := s.previousToolcallSelection(following)
 	s.entries = entries
 	if len(entries) == 0 {
 		s.selected = 0
 		return
 	}
 	if following {
-		s.selectLatestTopLevelToolcall()
+		s.selected = len(entries) - 1
 		return
 	}
-	if selected := stableToolcallSelection(entries, selected, old); selected >= 0 {
+	if selected := stableToolcallSelection(entries, selected); selected >= 0 {
 		s.selected = selected
 		return
 	}
@@ -468,53 +443,23 @@ func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 }
 
 func (s *toolcallsState) followingToolcallList(opening bool) bool {
-	return !s.detail && (opening || (s.listFollow && len(s.entries) > 0 && s.selected == len(s.entries)-1 && !s.entries[s.selected].preview))
+	return !s.detail && (opening || (s.listFollow && len(s.entries) > 0 && s.selected == len(s.entries)-1))
 }
 
-func (s *toolcallsState) previousToolcallSelection(following bool) (scrollback.BlockID, toolcallEntry) {
+func (s *toolcallsState) previousToolcallSelection(following bool) scrollback.BlockID {
 	if following || s.selected < 0 || s.selected >= len(s.entries) {
-		return 0, toolcallEntry{}
+		return 0
 	}
-	entry := s.entries[s.selected]
-	return entry.blockID, entry
+	return s.entries[s.selected].blockID
 }
 
-func (s *toolcallsState) selectLatestTopLevelToolcall() {
-	s.selected = len(s.entries) - 1
-	for s.selected > 0 && s.entries[s.selected].preview {
-		s.selected--
-	}
-}
-
-func stableToolcallSelection(entries []toolcallEntry, blockID scrollback.BlockID, old toolcallEntry) int {
-	parent := -1
-	for i := range entries {
-		entry := entries[i]
-		if entry.blockID != blockID {
-			continue
-		}
-		if !entry.preview {
-			parent = i
-			continue
-		}
-		if stableToolcallPreview(entry, old) {
+func stableToolcallSelection(entries []toolcallEntry, blockID scrollback.BlockID) int {
+	for i, entry := range entries {
+		if entry.blockID == blockID {
 			return i
 		}
 	}
-	return parent
-}
-
-func stableToolcallPreview(entry, old toolcallEntry) bool {
-	if !old.preview || entry.slot != old.slot || len(entry.prefix) != len(old.prefix) {
-		return false
-	}
-	for i, before := range old.prefix {
-		after := entry.prefix[i]
-		if before.Serial == 0 || before.Kind != after.Kind || before.ToolName != after.ToolName || before.Serial != after.Serial {
-			return false
-		}
-	}
-	return true
+	return -1
 }
 
 func (m *Model) syncToolcalls() {
@@ -536,29 +481,26 @@ func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
 	var call scrollback.ToolCall
 	var result scrollback.ToolResult
 	var received bool
+	var childTools []scrollback.TraceEntry
 	switch card := snapshot.Payload.(type) {
 	case scrollback.ToolCardSnapshot:
 		call, result, received = card.Call, card.Result, card.Resolved
 	case scrollback.SubagentCardSnapshot:
 		call, result, received = card.Call, card.Result, card.Resolved
+		for _, trace := range card.Update.Trace {
+			if trace.Kind == toolKind {
+				childTools = append(childTools, trace)
+			}
+		}
 	case scrollback.TeamCardSnapshot:
 		call, result, received = card.Call, card.Result, card.Resolved
 	}
-	if entry.preview {
-		s.detailEntry = &toolcallDetail{preview: true, name: entry.fullName, trace: entry.trace, childID: entry.childID, callID: call.ID}
-		return
-	}
-	s.detailEntry = &toolcallDetail{callID: call.ID, name: entry.fullName, intent: call.Arguments, result: result,
+	s.detailEntry = &toolcallDetail{callID: call.ID, name: entry.fullName, intent: call.Arguments, result: result, childTools: childTools,
 		state: entry.state, resultReceived: received, historyCaveat: entry.fullName == "Subagent", hasActivity: entry.hasActivity}
 }
 
 func tracePreviewStatus(t scrollback.TraceEntry) (glyph, status string) {
-	return (teamTrace{resolved: t.Resolved, unattributed: t.Unattributed, isError: t.Error}).cue()
-}
-
-func tracePreviewStatusText(t scrollback.TraceEntry) string {
-	_, status := tracePreviewStatus(t)
-	return status
+	return (teamTrace{resolved: t.Resolved, isError: t.Error}).cue()
 }
 
 func tracePreviewText(t scrollback.TraceEntry) string {
@@ -610,23 +552,7 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	items := make([]bounded.ListItem, len(s.entries))
 	for i, entry := range s.entries {
 		glyph, _, _ := entry.state.status()
-		text := entry.summary()
-		id := fmt.Sprintf("%d", entry.blockID)
-		if entry.preview {
-			glyph, _ = tracePreviewStatus(entry.trace)
-			text = "  ↳ tool preview · " + entry.fullName + " · " + tracePreviewStatusText(entry.trace)
-			if detail := tracePreviewText(entry.trace); detail != "" {
-				text += " — " + detail
-			}
-			if entry.childID != "" {
-				text += " · child " + entry.childID
-			}
-			if entry.parentCallID != "" {
-				text += " · parent " + entry.parentCallID
-			}
-			id = fmt.Sprintf("%d:%d", entry.blockID, entry.slot)
-		}
-		items[i] = bounded.ListItem{ID: id, Text: ansi.Truncate(terminaltext.SanitizeSingleLine(text), 120, "…"), StatusCells: [2]string{glyph}}
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: ansi.Truncate(terminaltext.SanitizeSingleLine(entry.summary()), 120, "…"), StatusCells: [2]string{glyph}}
 	}
 	s.list.SetGeometry(width, bodyHeight, 2, bounded.Clip)
 	s.list.SetItems(items)
@@ -648,7 +574,6 @@ func toolcallsPanel(body []string, height int, footer string) string {
 func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, width int, line func(lipgloss.Style, string) string) ([]string, []ClickableRegion) {
 	regions := make([]ClickableRegion, 0, len(view.Rows))
 	s.hitItems = make(map[HitID]scrollback.BlockID, len(view.Rows))
-	s.previewHits = make(map[HitID]int)
 	if view.Above > 0 {
 		body = append(body, line(s.deps.theme.Style("muted"), fmt.Sprintf("↑ %d items", view.Above)))
 	}
@@ -658,15 +583,6 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		if row.ItemIndex >= 0 && row.ItemIndex < len(s.entries) {
 			entry := s.entries[row.ItemIndex]
 			_, _, slot := entry.state.status()
-			if entry.preview {
-				glyph, _ := tracePreviewStatus(entry.trace)
-				switch glyph {
-				case "✗":
-					slot = "toolErr"
-				case "✓":
-					slot = "toolOk"
-				}
-			}
 			statusStyle = s.deps.theme.Style(slot)
 		}
 		y := len(body)
@@ -679,9 +595,6 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		if x1 > 0 {
 			regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
 			s.hitItems[id] = s.entries[row.ItemIndex].blockID
-			if s.entries[row.ItemIndex].preview {
-				s.previewHits[id] = row.ItemIndex
-			}
 		}
 	}
 	if view.Below > 0 {
@@ -712,9 +625,9 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 	}
 	header := []string{title, ""}
 	footer := line(s.deps.theme.Style("muted"), s.deps.marks.navUp+"/"+s.deps.marks.navDown+" · "+s.deps.marks.scroll+" · "+s.deps.marks.jumpTopFull+"/"+s.deps.marks.jumpEndFull+" · "+s.deps.marks.closeOnly+" back")
-	content := s.styledToolcallDetailLines(entry)
+	content := s.styledToolcallDetailLinesAtWidth(entry, width)
 	if !s.follow && s.width > 0 && s.width != width {
-		oldRows := toolcallRowCounts(content, s.width)
+		oldRows := toolcallRowCounts(s.styledToolcallDetailLinesAtWidth(entry, s.width), s.width)
 		newRows := toolcallRowCounts(content, width)
 		oldStart, newStart, totalNew := 0, 0, 0
 		for _, count := range newRows {
@@ -749,6 +662,17 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 	return strings.Join(append(header, footer), "\n")
 }
 
+func (s *toolcallsState) styledToolcallDetailLinesAtWidth(entry toolcallDetail, width int) []string {
+	rows := toolcallDetailRows(entry)
+	content := s.styledToolcallDetailLines(entry)
+	for i, row := range rows {
+		if row.kind == toolcallChildSummary {
+			content[i] = ansi.Cut(content[i], 0, width) + "\x1b[0m"
+		}
+	}
+	return content
+}
+
 func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []string {
 	rows := toolcallDetailRows(entry)
 	content := make([]string, len(rows))
@@ -761,6 +685,10 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 			content[i] = s.deps.theme.Style("toolName").Render(text)
 		case toolcallError:
 			content[i] = s.deps.theme.Style("errorText").Render(text)
+		case toolcallChildSummary:
+			content[i] = s.deps.theme.Style(row.statusStyle).Render(row.statusGlyph) +
+				s.deps.theme.Style("toolName").Render(" "+terminaltext.Sanitize(row.identityName)) +
+				s.deps.theme.Style("muted").Render(" · "+terminaltext.Sanitize(row.statusText))
 		case toolcallArgument:
 			label := "  " + terminaltext.Sanitize(row.label)
 			value := strings.TrimPrefix(text, terminaltext.Sanitize(row.label))
@@ -812,7 +740,7 @@ func (s *toolcallsState) recordAnchor() {
 		return
 	}
 	start := 0
-	for _, count := range toolcallRowCounts(s.styledToolcallDetailLines(*s.detailEntry), s.width) {
+	for _, count := range toolcallRowCounts(s.styledToolcallDetailLinesAtWidth(*s.detailEntry, s.width), s.width) {
 		if s.window.Offset() < start+count {
 			s.anchor = (s.window.Offset() - start) * s.width
 			return
@@ -864,26 +792,7 @@ func editRequestSideRows(text, prefix, field string, kind toolcallRowKind) []too
 }
 
 func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
-	if entry.preview {
-		return previewToolcallDetailRows(entry)
-	}
 	return topLevelToolcallDetailRows(entry)
-}
-
-func previewToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
-	glyph, status := tracePreviewStatus(entry.trace)
-	rows := []toolcallDetailRow{{text: glyph + " " + truncate(terminaltext.SanitizeSingleLine(entry.name), maxTraceToolNameLen) + " · " + status + " · bounded tool preview", kind: toolcallHeading}}
-	if entry.callID != "" {
-		rows = append(rows, toolcallDetailRow{text: "Parent call: " + terminaltext.SanitizeSingleLine(entry.callID), kind: toolcallField, label: "Parent call:"})
-	}
-	if entry.childID != "" {
-		rows = append(rows, toolcallDetailRow{text: "Child: " + terminaltext.SanitizeSingleLine(entry.childID), kind: toolcallField, label: "Child:"})
-	}
-	rows = append(rows, toolcallDetailRow{text: "Recent activity preview; history may be incomplete. Server previews scrub controls and cap length; they do not guarantee secret redaction or complete arguments and results."})
-	if entry.trace.Detail != "" {
-		rows = append(rows, toolcallDetailRow{text: "Available preview: " + tracePreviewText(entry.trace), kind: toolcallField, label: "Available preview:"})
-	}
-	return rows
 }
 
 func toolcallRequestArgumentRows(name, arguments string) []toolcallDetailRow {
@@ -894,6 +803,29 @@ func toolcallRequestArgumentRows(name, arguments string) []toolcallDetailRow {
 		}
 	}
 	return append([]toolcallDetailRow{{text: "Arguments:", kind: toolcallHeading}}, toolcallArgumentRows(name, arguments)...)
+}
+
+func childToolSummaryRows(tools []scrollback.TraceEntry) []toolcallDetailRow {
+	if len(tools) == 0 {
+		return nil
+	}
+	rows := []toolcallDetailRow{{text: "Recent child tools (bounded previews):", kind: toolcallHeading}}
+	for _, t := range tools {
+		glyph, status := tracePreviewStatus(t)
+		style := "muted"
+		if t.Resolved {
+			style = "toolOk"
+			if t.Error {
+				style = "toolErr"
+			}
+		}
+		name := truncate(terminaltext.SanitizeSingleLine(t.ToolName), maxTraceToolNameLen)
+		if preview := tracePreviewText(t); preview != "" {
+			status += " — " + preview
+		}
+		rows = append(rows, toolcallDetailRow{text: glyph + " " + name + " · " + status, kind: toolcallChildSummary, identityName: name, statusGlyph: glyph, statusText: status, statusStyle: style})
+	}
+	return rows
 }
 
 func topLevelToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
@@ -910,6 +842,7 @@ func topLevelToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 		}
 		lines = append(lines, toolcallDetailRow{text: message})
 	}
+	lines = append(lines, childToolSummaryRows(entry.childTools)...)
 	lines = append(lines, toolcallRequestArgumentRows(entry.name, entry.intent)...)
 	if !entry.resultReceived {
 		return append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Result: pending", kind: toolcallHeading})
