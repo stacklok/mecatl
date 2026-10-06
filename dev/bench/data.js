@@ -272116,6 +272116,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791292044149,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4b7abcd1ae1dbcb7b865bfb85f04bbc03ff2607f",
+          "message": "test: speed projected volume updates in Kind qualification (#2124)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-06T08:39:53-07:00",
+          "tree_id": "9675d5039713ceffa22eaa6f1931a0e87773012c",
+          "url": "https://github.com/stacklok/mecatl/commit/4b7abcd1ae1dbcb7b865bfb85f04bbc03ff2607f"
+        },
+        "date": 1791301892277,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -394670,6 +394704,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791301888919,
+  "lastUpdate": 1791301893168,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
