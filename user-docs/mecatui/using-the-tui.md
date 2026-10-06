@@ -9,11 +9,21 @@ description:
 
 # Work in the TUI
 
-Press `ctrl+t` to open `/toolcalls` and inspect calls during a run. The
-inspector also works when revisiting a session transcript. Running Edit and
-Write cards show their diffs inline; settled calls keep their full arguments and
-results in the inspector. When `mecatui` receives a result before its final update,
-it keeps the card open and shows `result received · finalizing`.
+Press `ctrl+t` to open `/toolcalls` and inspect top-level calls during a run.
+Use `↑`/`↓` to choose a row, then `enter` or click it to open its detail;
+press `esc` to return to the list. The inspector also works when revisiting a
+session transcript. Running Edit and Write cards show their request diffs inline;
+settled calls keep their full arguments and results in the inspector. When
+`mecatui` receives a result before its final update, it keeps the card open
+and shows `result received · finalizing`.
+
+A Subagent call's detail includes bounded previews of currently retained child
+tool activity. A pending child call has no safely associated result yet. The
+server scrubs controls and caps preview length, but these previews are not
+complete child calls or guaranteed secret redaction. A reconstructed session
+can show a Subagent call without activity; its detail notes that history may
+be incomplete. Press `f6` for the Agents view to navigate Subagent children,
+Parallel branches, and Team members, including their task and findings views.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
 per-turn usage, permanent error details, and changed files. Tool results stay in

@@ -23,8 +23,9 @@ func Float64(v float64) *float64 { return &v }
 // TraceEntry is one delegation preview event. At most MaxTraceEntries trailing
 // entries are retained when an update is stored.
 type TraceEntry struct {
-	Kind, Text, ToolName, Detail string
-	Error                        bool
+	Kind, Text, ToolName, Detail           string
+	Error, Resolved, Unattributed, Blocked bool
+	Serial                                 uint64
 }
 
 // MaxTraceEntries bounds retained delegation trace entries.

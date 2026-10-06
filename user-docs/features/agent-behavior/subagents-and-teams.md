@@ -26,10 +26,7 @@ For how Mecatl isolates child workspaces and handles direct writes, see
 
 ## Watch a delegation in `mecatui`
 
-In `mecatui`, press `ctrl+t` or use the `f6` agents overlay to inspect bounded
-child messages, tool arguments, and results. These previews do not enter the
-parent's model context. Interactive clients can surface child permission
-requests with an attributed, bounded summary; raw child arguments are withheld.
+In `mecatui`, the `f6` Agents view shows bounded delegation activity by child, branch, or member. `/toolcalls` lists complete received top-level calls and, beneath Subagent calls, any currently retained child tool previews. These previews are recent, capped observations rather than complete child arguments or results; they do not enter the parent's model context. See [Work in the TUI](/mecatui/using-the-tui.md) for navigation and unavailable-activity guidance. Interactive clients can surface child permission requests with an attributed, bounded summary; raw child arguments are withheld.
 
 ## Subagent
 

@@ -34,7 +34,7 @@
        ┃      breaker: 2/3 misses · closed                                                                      ┃
        ┃    bounded previews — child content is clamped + scrubbed, never in the parent conversation            ┃
        ┃                                                                                                        ┃
-       ┃    ✓ Read                                                                                              ┃
+       ┃    … Read                                                                                              ┃
        ┃                                                                                                        ┃
        ┃  esc back · ↑/↓ scroll · pgup/pgdn · home/end                                                          ┃
        ┃                                                                                                        ┃

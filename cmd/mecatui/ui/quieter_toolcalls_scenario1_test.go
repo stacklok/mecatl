@@ -207,9 +207,10 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 	entries := m.toolcallEntries()
 	m.phase = phaseIdle
 	modal, _ := m.runToolcalls()
-	list, _ := toolcallsForTest(t, modal.(Model)).Render(160, 30)
+	list, _ := toolcallsForTest(t, modal.(Model)).Render(160, max(30, len(entries)+5))
 	listText := stripANSIstr(list)
 	for _, entry := range entries {
+		if entry.preview { continue }
 		if entry.fullName == "Grep" && entry.intent != `"needle" in cmd/**/*.go` {
 			t.Fatalf("Grep intent lost pattern or search scope: %q", entry.intent)
 		}

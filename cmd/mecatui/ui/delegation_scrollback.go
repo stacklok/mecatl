@@ -26,7 +26,7 @@ func scrollRouting(in *client.RoutingDecision) scrollback.RoutingDecision {
 func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 	out := make([]scrollback.TraceEntry, len(in))
 	for i, t := range in {
-		out[i] = scrollback.TraceEntry{Text: t.text, ToolName: t.name, Detail: t.detail, Error: t.isError}
+		out[i] = scrollback.TraceEntry{Text: t.text, ToolName: t.name, Detail: t.detail, Error: t.isError, Resolved: t.resolved, Unattributed: t.unattributed, Blocked: t.blocked, Serial: t.serial}
 		if t.kind == teamTraceTool {
 			out[i].Kind = "tool"
 		} else {
@@ -39,7 +39,7 @@ func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 func traceFromScroll(in []scrollback.TraceEntry) []teamTrace {
 	out := make([]teamTrace, len(in))
 	for i, t := range in {
-		out[i] = teamTrace{text: t.Text, name: t.ToolName, detail: t.Detail, isError: t.Error}
+		out[i] = teamTrace{text: t.Text, name: t.ToolName, detail: t.Detail, isError: t.Error, resolved: t.Resolved, unattributed: t.Unattributed, blocked: t.Blocked, serial: t.Serial}
 		if t.Kind == "tool" {
 			out[i].kind = teamTraceTool
 		} else {

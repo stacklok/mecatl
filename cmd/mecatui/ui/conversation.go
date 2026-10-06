@@ -32,22 +32,39 @@ type teamTraceKind int
 
 const (
 	teamTraceMessage teamTraceKind = iota // a forwarded child/member/branch message line
-	teamTraceTool                         // a child/member/branch tool call (name + ok/error glyph)
+	teamTraceTool                         // a child/member/branch tool call or unattributed result
 )
 
 // teamTrace is one capped entry in a delegation lane's trace — shared by the Team
 // member lanes, the Subagent inline/fleet lanes, and the Parallel branch lanes
 // (ADR 0079: the trace model converged on this one shape). It is either a message
-// line (kind=teamTraceMessage, text set) or a tool chip (kind=teamTraceTool, name
-// + detail + isError set). detail is the server-bounded arg/result preview shown
-// next to the chip in the expanded view. All text is bounded server-side
-// (clamp-scrubbed, ≤200 runes); the ui caps it again on render.
+// line (kind=teamTraceMessage, text set) or a tool chip (kind=teamTraceTool,
+// name + detail + observed result status). detail is the server-bounded latest
+// argument or result preview shown next to the chip in the expanded view.
+// All text is bounded server-side (clamp-scrubbed, ≤200 runes); the ui caps it again on render.
 type teamTrace struct {
-	kind    teamTraceKind
-	text    string // message text (teamTraceMessage)
-	name    string // tool name (teamTraceTool)
-	detail  string // bounded arg/result preview (teamTraceTool)
-	isError bool   // tool errored (teamTraceTool)
+	kind         teamTraceKind
+	text         string // message text (teamTraceMessage)
+	name         string // tool name (teamTraceTool)
+	detail       string // bounded arg/result preview (teamTraceTool)
+	resolved     bool   // an observed, safely associated result
+	unattributed bool   // result could not be associated with a retained call
+	blocked      bool   // an unresolved call was evicted from this lane
+	serial       uint64 // UI-local slot generation, never a child tool-call ID
+	isError      bool   // tool errored (teamTraceTool)
+}
+
+func (t teamTrace) cue() (glyph, status string) {
+	if t.unattributed {
+		return "?", "unattributed result"
+	}
+	if !t.resolved {
+		return "…", "pending"
+	}
+	if t.isError {
+		return "✗", "error"
+	}
+	return "✓", "success"
 }
 
 // pushTrace appends a trace entry to a lane slice and enforces the shared cap,
@@ -55,9 +72,23 @@ type teamTrace struct {
 // behind every delegation family's trace (subagent inline + fleet, parallel
 // branch, team member), so the cap can never drift between surfaces.
 func pushTrace(trace []teamTrace, t teamTrace) []teamTrace {
+	if len(trace) > 0 {
+		t.serial = trace[len(trace)-1].serial + 1
+		t.blocked = t.blocked || trace[len(trace)-1].blocked
+	} else {
+		t.serial = 1
+	}
 	trace = append(trace, t)
 	if len(trace) > maxTraceEntries {
+		if dropped := trace[0]; dropped.kind == teamTraceTool && !dropped.resolved && !dropped.unattributed {
+			t.blocked = true
+		}
 		trace = trace[len(trace)-maxTraceEntries:]
+		if t.blocked {
+			for i := range trace {
+				trace[i].blocked = true
+			}
+		}
 	}
 	return trace
 }
@@ -83,23 +114,39 @@ func traceAppendTool(trace []teamTrace, name, detail string, isError bool) []tea
 	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: name, detail: detail, isError: isError})
 }
 
-// traceMarkToolResult finalises the most recent matching pending tool chip's error
-// state, and replaces its detail with the result preview when one is provided (a
-// result preview is more informative than the call's arg preview; an empty result
-// detail keeps the arg preview). If no matching pending chip is found (e.g. a
-// dropped tool.call), it appends a resolved chip so a result is never silently lost.
+// traceMarkToolResult updates only a unique retained unresolved call when no
+// unresolved call has fallen out of this lane's rolling trace.
 func traceMarkToolResult(trace []teamTrace, name, detail string, isError bool) []teamTrace {
-	for i := len(trace) - 1; i >= 0; i-- {
-		t := &trace[i]
-		if t.kind == teamTraceTool && t.name == name {
-			t.isError = isError
-			if detail != "" {
-				t.detail = detail
+	match := -1
+	blocked := len(trace) > 0 && trace[len(trace)-1].blocked
+	if name != "" && !blocked {
+		for i := range trace {
+			if t := trace[i]; t.kind == teamTraceTool && !t.unattributed && t.name == name {
+				if match >= 0 {
+					match = -1
+					break
+				}
+				if !t.resolved {
+					match = i
+				} else {
+					match = -1
+					break
+				}
 			}
-			return trace
 		}
 	}
-	return traceAppendTool(trace, name, detail, isError)
+	if match >= 0 {
+		trace[match].resolved, trace[match].isError = true, isError
+		if detail != "" {
+			trace[match].detail = detail
+		}
+		return trace
+	}
+	label := "unattributed result"
+	if name != "" {
+		label += " (" + name + ")"
+	}
+	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: label, detail: detail, isError: isError, unattributed: true})
 }
 
 // teamLane is the live projection of one team member's activity, accumulated from
@@ -433,7 +480,7 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, te
 	default: // "tool.call" — or an older server's kind-less subagent.tool/branch_tool
 		if toolName != "" {
 			current = toolName
-			trace = traceAppendTool(trace, toolName, detail, isError)
+			trace = traceAppendTool(trace, toolName, detail, false)
 		}
 	}
 	return trace, current

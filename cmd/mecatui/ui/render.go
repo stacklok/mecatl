@@ -1492,10 +1492,10 @@ func teamStopReasonLabel(reason string) string {
 // renderTrace renders a delegation lane's expanded trace — the SHARED format for
 // the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
 // lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
-// prefixed "  ") interleave with tool chips (✓/✗ name) carrying their bounded
-// arg/result preview, in arrival order. A chip with a preview gets its own line
-// ("  ✓ Grep — pattern: foo"); bare chips coalesce onto one wrapped row. Returns
-// "" for an empty trace. All text is sanitized; the previews are capped again here
+// prefixed "  ") interleave with tool chips (pending … until a result is
+// safely associated, then ✓/✗) carrying bounded argument/result previews.
+// A chip with a preview gets its own line ("  … Grep — pattern: foo"); bare
+// chips coalesce onto one wrapped row. Returns "" for an empty trace. All text is sanitized; the previews are capped again here
 // (maxTraceDetailLen / maxTraceMessageLen) on top of the server clamp — the
 // intentional double-truncation defense-in-depth.
 func (r *renderer) renderTrace(trace []teamTrace) string {
@@ -1557,10 +1557,12 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 		t := &trace[i]
 		switch t.kind {
 		case teamTraceTool:
-			glyph := "✓"
-			style := okStyle
-			if t.isError {
-				glyph = "✗"
+			glyph, _ := t.cue()
+			style := nameStyle
+			if glyph == "✓" {
+				style = okStyle
+			}
+			if glyph == "✗" {
 				style = errStyle
 			}
 			name := truncate(terminaltext.Sanitize(t.name), maxTraceToolNameLen)

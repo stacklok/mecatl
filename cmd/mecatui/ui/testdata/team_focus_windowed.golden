@@ -8,13 +8,13 @@
   ┃  agent · scout                                                                               ┃
   ┃  ◆ · scout [lead] · Read… · ↑0 ↓0                                                            ┃
   ┃                                                                                              ┃
-  ┃    ✓ Read — 100 lines                                                                        ┃
-  ┃    ✓ Read — 101 lines                                                                        ┃
-  ┃    ✓ Read — 102 lines                                                                        ┃
-  ┃    ✓ Read — 103 lines                                                                        ┃
-  ┃    ✓ Read — 104 lines                                                                        ┃
-  ┃    ✓ Read — 105 lines                                                                        ┃
-  ┃    ✓ Read — 106 lines                                                                        ┃
+  ┃    … Read — file-06.go                                                                       ┃
+  ┃    ? unattributed result… — 106 lines                                                        ┃
+  ┃    … Read — file-07.go                                                                       ┃
+  ┃    ? unattributed result… — 107 lines                                                        ┃
+  ┃    … Read — file-08.go                                                                       ┃
+  ┃    ? unattributed result… — 108 lines                                                        ┃
+  ┃    … Read — file-09.go                                                                       ┃
   ┃                                                                                              ┃
   ┃  lines 1–7 of 12 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                              ┃
   ┃                                                                                              ┃
