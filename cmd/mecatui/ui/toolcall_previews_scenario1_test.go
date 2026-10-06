@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,6 +26,11 @@ func TestMecatuiToolcallPreviews_Scenario1_EditArgumentParity(t *testing.T) {
 			t.Errorf("detail missing %q:\n%s", want, plain)
 		}
 	}
+	for _, repeated := range []string{"Old string:", "New string:"} {
+		if strings.Contains(plain, repeated) {
+			t.Errorf("Edit request is rendered twice via %q:\n%s", repeated, plain)
+		}
+	}
 	if !strings.Contains(styled, s.deps.theme.Style("diffRemove").Render("- old one")) ||
 		!strings.Contains(styled, s.deps.theme.Style("diffAdd").Render("+ new one")) {
 		t.Fatalf("Edit request sides do not retain contrasting diff styles: %q", styled)
@@ -37,6 +43,27 @@ func TestMecatuiToolcallPreviews_Scenario1_EditArgumentParity(t *testing.T) {
 	for _, want := range []string{"pkg/example.go  -2 +2 (replace all)", "- old one", "+ new one"} {
 		if !strings.Contains(stripANSIstr(inline), want) || !strings.Contains(plain, want) {
 			t.Errorf("inline and inspector disagree about %q: inline=%q detail=%q", want, stripANSIstr(inline), plain)
+		}
+	}
+
+	// The diff, not a second pair of generic fields, must preserve terminal
+	// newlines and trailing blank lines in the received replacement strings.
+	for _, tc := range []struct {
+		args string
+		want []string
+	}{
+		{`{"path":"blank.go","old_string":"old\n\n","new_string":"new"}`, []string{"blank.go  -2 +1", "- old", "- ", "+ new", `\ No newline at end of added text`}},
+		{`{"path":"newline.go","old_string":"\n","new_string":"new\n"}`, []string{"newline.go  -1 +1", "- ", "+ new"}},
+		{`{"path":"trailing.go","old_string":"old\n","new_string":"new\n\n"}`, []string{"trailing.go  -1 +2", "- old", "+ new", "+ "}},
+	} {
+		rows := toolcallDetailLines(toolcallDetail{name: "Edit", intent: tc.args})
+		start, end := slices.Index(rows, "Edit request:"), slices.Index(rows, "Arguments:")
+		if start < 0 || end < start || !slices.Equal(rows[start:end], append([]string{"Edit request:"}, tc.want...)) {
+			t.Errorf("lossless diff rows = %q, want %q", rows, tc.want)
+		}
+		got := strings.Join(rows, "\n")
+		if strings.Contains(got, "Old string:") || strings.Contains(got, "New string:") {
+			t.Errorf("lossless diff also duplicates its arguments: %q", got)
 		}
 	}
 

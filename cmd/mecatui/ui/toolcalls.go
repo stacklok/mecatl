@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -203,7 +204,7 @@ func toolcallArgumentLines(name, arguments string) []string {
 	return lines
 }
 
-func toolcallArgumentRows(name, arguments string) []toolcallDetailRow {
+func toolcallArgumentRows(name, arguments string, omit ...string) []toolcallDetailRow {
 	var fields map[string]any
 	decoder := json.NewDecoder(strings.NewReader(arguments))
 	decoder.UseNumber()
@@ -232,6 +233,9 @@ func toolcallArgumentRows(name, arguments string) []toolcallDetailRow {
 
 	lines := make([]toolcallDetailRow, 0, len(ordered))
 	for _, key := range ordered {
+		if slices.Contains(omit, key) {
+			continue
+		}
 		if value, ok := fields[key]; ok {
 			lines = appendArgumentTree(lines, argumentLabel(key), value)
 		}
@@ -836,15 +840,25 @@ func editRequestDetailRows(arguments string) []toolcallDetailRow {
 		header += " (replace all)"
 	}
 	rows := []toolcallDetailRow{{text: "Edit request:", kind: toolcallHeading}, {text: terminaltext.Sanitize(header), kind: toolcallDiffMeta}}
-	for _, line := range strings.Split(terminaltext.Sanitize(strings.TrimRight(request.oldString, "\n")), "\n") {
-		if line != "" || request.oldString != "" {
-			rows = append(rows, toolcallDetailRow{text: "- " + line, kind: toolcallDiffRemove})
-		}
+	rows = append(rows, editRequestSideRows(request.oldString, "-", "removed text", toolcallDiffRemove)...)
+	rows = append(rows, editRequestSideRows(request.newString, "+", "added text", toolcallDiffAdd)...)
+	return rows
+}
+
+func editRequestSideRows(text, prefix, field string, kind toolcallRowKind) []toolcallDetailRow {
+	if text == "" {
+		return nil
 	}
-	for _, line := range strings.Split(terminaltext.Sanitize(strings.TrimRight(request.newString, "\n")), "\n") {
-		if line != "" || request.newString != "" {
-			rows = append(rows, toolcallDetailRow{text: "+ " + line, kind: toolcallDiffAdd})
-		}
+	parts := strings.Split(text, "\n")
+	if strings.HasSuffix(text, "\n") {
+		parts = parts[:len(parts)-1]
+	}
+	rows := make([]toolcallDetailRow, 0, len(parts)+1)
+	for _, part := range parts {
+		rows = append(rows, toolcallDetailRow{text: prefix + " " + terminaltext.Sanitize(part), kind: kind})
+	}
+	if !strings.HasSuffix(text, "\n") {
+		rows = append(rows, toolcallDetailRow{text: "\\ No newline at end of " + field, kind: toolcallDiffMeta})
 	}
 	return rows
 }
@@ -872,6 +886,16 @@ func previewToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 	return rows
 }
 
+func toolcallRequestArgumentRows(name, arguments string) []toolcallDetailRow {
+	if name == "Edit" {
+		if diff := editRequestDetailRows(arguments); len(diff) > 0 {
+			rows := append(diff, toolcallDetailRow{text: "Arguments:", kind: toolcallHeading})
+			return append(rows, toolcallArgumentRows(name, arguments, "old_string", "new_string")...)
+		}
+	}
+	return append([]toolcallDetailRow{{text: "Arguments:", kind: toolcallHeading}}, toolcallArgumentRows(name, arguments)...)
+}
+
 func topLevelToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 	glyph, status, style := entry.state.status()
 
@@ -886,11 +910,7 @@ func topLevelToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 		}
 		lines = append(lines, toolcallDetailRow{text: message})
 	}
-	if entry.name == "Edit" {
-		lines = append(lines, editRequestDetailRows(entry.intent)...)
-	}
-	lines = append(lines, toolcallDetailRow{text: "Arguments:", kind: toolcallHeading})
-	lines = append(lines, toolcallArgumentRows(entry.name, entry.intent)...)
+	lines = append(lines, toolcallRequestArgumentRows(entry.name, entry.intent)...)
 	if !entry.resultReceived {
 		return append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Result: pending", kind: toolcallHeading})
 	}

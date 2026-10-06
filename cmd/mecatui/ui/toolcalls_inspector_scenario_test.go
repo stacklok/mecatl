@@ -412,7 +412,7 @@ func TestMecatuiToolcallsInspector_Scenario4_CoreToolPresentation(t *testing.T) 
 		wants []string
 	}{
 		{0, []string{"Path: src/main.go", "Offset: 12", "Limit: 20", "Extra: kept"}},
-		{4, []string{"Path: a.go", "Old string: old", "New string: new", "Extra: true"}},
+		{4, []string{"Edit request:", "a.go  -1 +1", "- old", "+ new", "Extra: true"}},
 		{5, []string{"Path: a.go", "Content: complete replacement"}},
 		{9, []string{"Command: go test ./..."}},
 	} {
