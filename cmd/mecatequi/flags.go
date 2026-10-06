@@ -101,6 +101,8 @@ type flags struct {
 	noShell           bool
 	maxRunTokens      int
 	maxTeamTokens     int
+	llmMaxAttempts    int
+	llmRecoveryBudget time.Duration
 	// maxTurns caps the session's model calls (the StopMaxTurns terminal). 0
 	// (default/unset) inherits the composition default (internal/app build.go), so
 	// it is NOT mapped onto app.Config — it is a per-SESSION limit threaded to
@@ -239,6 +241,12 @@ func parseFlags(argv []string) (flags, error) {
 	if f.prompt == "" && f.promptFile == "" {
 		return flags{}, errors.New("a prompt is required: pass --prompt <text> and/or --prompt-file <path>")
 	}
+	if f.llmRecoveryBudget < 0 {
+		return flags{}, errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if f.llmMaxAttempts <= 0 {
+		return flags{}, errors.New("--llm-max-attempts must be positive")
+	}
 	// Read the prompt file body (cmd mains may use os). An unreadable file is a
 	// SETUP failure surfaced to the caller.
 	if f.promptFile != "" {
@@ -315,6 +323,8 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per run. Child agents inherit the limit. Crossing it ends with stop_reason=budget. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "Cumulative input and output token budget for a team, checked between rounds. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "Maximum model calls for the run. Crossing the limit ends with stop_reason=max_turns. Default: 0, use the deployment default.")
+	fs.IntVar(&f.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&f.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output.")
 
 	fs.BoolVar(&f.headless, "headless", true, "Run without a human approver. Unresolved child subagent, team member, and branch permission requests are denied or sent to --subagent-ask-reviewer. Default: true. Set false to surface child permission requests. Because mecatequi has no approval interface, a surfaced request cancels the run.")
 
@@ -433,6 +443,12 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		NoShell:                f.noShell,
 		MaxRunTokens:           f.maxRunTokens,
 		MaxTeamTokens:          f.maxTeamTokens,
+		LLMMaxAttempts:         f.llmMaxAttempts,
+		LLMRecoveryBudget:      f.llmRecoveryBudget,
+		LLMPerAttemptTimeout:   300 * time.Second,
+		LLMStreamIdleTimeout:   180 * time.Second,
+		LLMBreakerThreshold:    5,
+		LLMBreakerCooldown:     30 * time.Second,
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time),
 		// consumed by app.Build's static MCP source. Nil-safe when the flag was

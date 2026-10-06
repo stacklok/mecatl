@@ -591,7 +591,6 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.sessionState = sessionStateIdle
 	}
 	m = m.syncDebugTarget()
-	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.statusContextRoot = ""
@@ -1758,10 +1757,8 @@ func (m Model) settleFailedClearSource() (Model, tea.Cmd, bool) {
 }
 
 // notifyHookStop mirrors a genuine run terminal to the host's agent lifecycle
-// hook. It is NOT called on the auto-retry (FailedStepRetryEligible) branch,
-// where the run continues — only on paths that end the run. The notifier fires
-// the terminal once per busy period and no-ops without a preceding Start, so the
-// clearPending settle path and the deferred-retry path calling it is harmless.
+// hook. The notifier fires the terminal once per busy period and no-ops without
+// a preceding Start, so the clearPending and deferred-retry paths are harmless.
 func (m Model) notifyHookStop(msg client.ResultMsg) {
 	if m.deps.AgentHook == nil {
 		return
@@ -1846,14 +1843,6 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		m.notifyHookStop(msg)
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
 		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
-	}
-	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
-		// NOT a genuine end: an automatic retry run starts now, so no Superset
-		// Stop. The retry's turn.start re-Starts (deduped, still busy), and the
-		// eventual real terminal fires Stop below.
-		m.failedStepRetryTried = true
-		rm, retryCmd := m.startFailedStepRetry()
-		return rm, tea.Batch(m.refreshCmd(), retryCmd, m.armLiveFeed())
 	}
 	// Every remaining path is a genuine run terminal that returns to idle.
 	m.notifyHookStop(msg)
@@ -3668,9 +3657,6 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.startupRetryPrompt = m.prompt.Value()
 		m.startupFirstPromptPending = true
 	}
-	// This is a genuine new user turn, so it starts a fresh one-retry budget.
-	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
-	m.failedStepRetryTried = false
 	m.promptRecovery = nil
 	// Only a plain text prompt is recoverable. Attachments, media, and staged file
 	// parts have one-shot lifecycle and must never be replayed implicitly.
@@ -3756,8 +3742,8 @@ func (m Model) submitProceedPrompt() (Model, tea.Cmd) {
 }
 
 // startFailedStepRetry opens a new Converse stream whose first frame is RetryStart.
-// It adds no user turn and consumes no queued text. Automatic retry leaves arbitrary
-// compose text untouched; the ordinary built-in dispatcher consumes a typed /retry.
+// It adds no user turn and consumes no queued text. The /retry built-in dispatcher
+// consumes the command; this function leaves unrelated compose text untouched.
 func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
 	m.phase = phaseRunning
 	m.failedStepRetryRun = true
@@ -4070,7 +4056,7 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	default:
 		// Catch-up is a FULL historical scan. Results never enter applyResult, so replay
-		// cannot trigger automatic retry, mutate usage, or append another error card.
+		// cannot settle the active run again, mutate usage, or append another error card.
 		if _, ok := msg.(client.ResultMsg); ok {
 			return m, m.waitReconnectCmd()
 		}
@@ -4922,10 +4908,9 @@ func (m *Model) refreshView() {
 // drainQueue MERGES staged follow-ups into ONE prompt only after a healthy
 // terminal. It is called after endRun has settled the model back to idle.
 //
-// Every error terminal pauses and preserves the queue. Automatic recovery from an
-// eligible failure is an exact RetryStart handled before this function; it never
-// consumes future prompts. Once that retry ends healthily, this function resumes
-// the existing FIFO drain behavior.
+// Every error terminal pauses and preserves the queue. Explicit /retry sends a
+// RetryStart without consuming future prompts. Once that retry ends healthily,
+// this function resumes the existing FIFO drain behavior.
 func (m Model) drainQueue(stop string) (tea.Model, tea.Cmd) {
 	if len(m.queued) == 0 {
 		m.queuePaused = ""

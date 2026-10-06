@@ -590,6 +590,43 @@ session as authoritative.
 
 ## Troubleshooting
 
+### A provider error ended a model step
+
+The server retries transient provider failures before meaningful assistant text is
+visible. If recovery ends in an error, use `/retry` from an idle `mecatui`
+session to ask the server to retry the failed step without duplicating your
+prompt. A failure after visible output is terminal and is not automatically
+replayed, because the model might otherwise repeat visible text or tool calls.
+
+Each model step defaults to a 30-minute recovery window and at most 60 wrapper
+calls, including the initial request. Extra provider calls can be billed even
+when Mecatl discards their precommit output. These limits apply separately to
+each model step, so they are not a task-wide spending ceiling. Engine token
+budgets are checked at turn boundaries, not between wrapper calls within one
+step. Prompt-cache retention can end while a model step is recovering; a later
+attempt can incur cache-write charges or full input charges. A matching prompt
+does not guarantee a cache hit: reuse also depends on the provider's model and
+routing, and cache lifetimes vary. A longer cache lifetime may carry a higher
+write price. Check the current [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+guides for retention and billing details before choosing a cache setting.
+
+For an embedded terminal session, set `--llm-recovery-budget` and
+`--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
+server owns these values. Daemon, Kubernetes, and CI configuration is described
+in [LLM resilience](/building/deployment/mecated.md#llm-resilience).
+
+### A provider request failed
+
+OpenAI Responses, Chat Completions, and Anthropic errors show a failure category
+or status, such as `503 Service Unavailable`, instead of the provider's raw error
+message. Raw messages can contain reflected credentials or request content. When
+an HTTP error includes a sanitized target and request ID, use them to locate the
+request in your provider's support tools. Context-window and content-filter
+failures retain their specific categories. If a manual Codex token is rejected,
+Mecatl shows its local remediation: replace the token in `auth.yaml` and
+restart Mecatl.
+
 ### Model context metadata is unavailable
 
 You can send the first prompt in a new or resumed session without opening

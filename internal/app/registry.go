@@ -15,6 +15,7 @@ import (
 	"time"
 
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	openaichatoption "github.com/openai/openai-go/v3/option"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
@@ -511,7 +512,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 			return nil, fmt.Errorf("configure OpenAI bearer token file: %w", err)
 		}
 		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, "", baseURL,
-			openai.WithHTTPClient(withRootSessionCorrelation(client)), openai.WithMaxRetries(0))
+			openai.WithHTTPClient(withRootSessionCorrelation(client)))
 	}
 
 	if entry, err := newOpenAICodexEntry(cfg); err != nil {
@@ -798,7 +799,7 @@ func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 		return providerEntry{}, fmt.Errorf("configure OIDC provider %q: %w", definition.ID, err)
 	}
 	entry := newOpenAICompatEntry(cfg, definition.ID, "transport-owned", definition.BaseURL,
-		openai.WithHTTPClient(withRootSessionCorrelation(client)), openai.WithMaxRetries(0))
+		openai.WithHTTPClient(withRootSessionCorrelation(client)))
 	entry.nativeEndpoint = true
 	entry.defaultModel = definition.DefaultModel
 	entry.lister = gatewayLister{inner: openaicompat.NewLister(definition.BaseURL, "", client)}
@@ -882,7 +883,6 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 		"policy-owned",
 		openaicodex.BaseURL,
 		openai.WithHTTPClient(policy.HTTPClientWithFinalTransport(withCodexSessionCorrelationTransport)),
-		openai.WithMaxRetries(0),
 	)
 	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}
 	return entry, nil
@@ -935,6 +935,20 @@ func providerKey(cfgKey, providerID string, detect envDetector) string {
 		}
 	}
 	return ""
+}
+
+func providerResilienceConfig(cfg Config, id string) llmresilience.Config {
+	return llmresilience.Config{
+		MaxAttempts:       cfg.LLMMaxAttempts,
+		RecoveryBudget:    cfg.LLMRecoveryBudget,
+		BaseBackoff:       llmBaseBackoff,
+		MaxBackoff:        llmMaxBackoff,
+		PerAttemptTimeout: cfg.LLMPerAttemptTimeout,
+		StreamIdleTimeout: cfg.LLMStreamIdleTimeout,
+		BreakerThreshold:  cfg.LLMBreakerThreshold,
+		BreakerCooldown:   cfg.LLMBreakerCooldown,
+		Diagnostics:       cfg.diag().With("provider", id),
+	}
 }
 
 // newOpenAICompatEntry constructs a resilience-wrapped openai-adapter provider
@@ -1005,20 +1019,12 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		// already refuse redirects and additionally inject a bearer) still wins.
 		opts = append(opts, openai.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
+		opts = append(opts, openai.WithMaxRetries(0))
 		var llm port.LLMProvider = openai.New(opts...)
-		return llmresilience.Wrap(llm, llmresilience.Config{
-			MaxAttempts:       cfg.LLMMaxAttempts,
-			BaseBackoff:       llmBaseBackoff,
-			MaxBackoff:        llmMaxBackoff,
-			PerAttemptTimeout: cfg.LLMPerAttemptTimeout,
-			StreamIdleTimeout: cfg.LLMStreamIdleTimeout,
-			BreakerThreshold:  cfg.LLMBreakerThreshold,
-			BreakerCooldown:   cfg.LLMBreakerCooldown,
-			// Provider-tag every resilience line so a multi-provider operator can tell
-			// WHICH provider stalled/opened its breaker (the lines themselves carry no
-			// provider identity otherwise).
-			Diagnostics: cfg.diag().With("provider", id),
-		})
+		if id == providerOpenAICodex {
+			llm = codexRemediationProvider{LLMProvider: llm}
+		}
+		return llmresilience.Wrap(llm, providerResilienceConfig(cfg, id))
 	}
 	// The OPERATOR-DEFAULT effort baked into the shared .provider: normalise +
 	// per-provider clamp (xhigh/max→high for openai), narrating a clamp at startup so
@@ -1079,17 +1085,9 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		opts = append(opts, openaichat.WithCacheDialect(openaichatCacheDialectFor(id, baseURL, cfg)))
 		opts = append(opts, openaichat.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
+		opts = append(opts, openaichat.WithRequestOption(openaichatoption.WithMaxRetries(0)))
 		var llm port.LLMProvider = openaichat.New(opts...)
-		return llmresilience.Wrap(llm, llmresilience.Config{
-			MaxAttempts:       cfg.LLMMaxAttempts,
-			BaseBackoff:       llmBaseBackoff,
-			MaxBackoff:        llmMaxBackoff,
-			PerAttemptTimeout: cfg.LLMPerAttemptTimeout,
-			StreamIdleTimeout: cfg.LLMStreamIdleTimeout,
-			BreakerThreshold:  cfg.LLMBreakerThreshold,
-			BreakerCooldown:   cfg.LLMBreakerCooldown,
-			Diagnostics:       cfg.diag().With("provider", id),
-		})
+		return llmresilience.Wrap(llm, providerResilienceConfig(cfg, id))
 	}
 	llm := construct(operatorDefaultEffortFor(cfg, id), opencodeStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
@@ -1199,18 +1197,9 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		opts = append(opts, anthropic.WithRequestOption(
 			anthropicoption.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))))
 		opts = append(opts, extra...)
+		opts = append(opts, anthropic.WithRequestOption(anthropicoption.WithMaxRetries(0)))
 		var llm port.LLMProvider = anthropic.New(opts...)
-		return llmresilience.Wrap(llm, llmresilience.Config{
-			MaxAttempts:       cfg.LLMMaxAttempts,
-			BaseBackoff:       llmBaseBackoff,
-			MaxBackoff:        llmMaxBackoff,
-			PerAttemptTimeout: cfg.LLMPerAttemptTimeout,
-			StreamIdleTimeout: cfg.LLMStreamIdleTimeout,
-			BreakerThreshold:  cfg.LLMBreakerThreshold,
-			BreakerCooldown:   cfg.LLMBreakerCooldown,
-			// Provider-tag every resilience line (see the openai entry).
-			Diagnostics: cfg.diag().With("provider", id),
-		})
+		return llmresilience.Wrap(llm, providerResilienceConfig(cfg, id))
 	}
 	// The OPERATOR-DEFAULT effort baked into the shared .provider (anthropic
 	// identity-maps all five tiers, so this never clamps — but it shares the one
@@ -1708,7 +1697,6 @@ func newToolhiveAnthropicEntry(cfg Config, intent toolhiveIntent, meta *liveMeta
 	entry := newAnthropicEntryFor(cfg, providerToolhiveAnthropic, "", baseURL, meta, false,
 		anthropic.WithRequestOption(
 			anthropicoption.WithHTTPClient(withRootSessionCorrelation(client)),
-			anthropicoption.WithMaxRetries(0),
 		))
 	entry.lister = anthropicLister{inner: anthropic.NewLister("", baseURL, client)}
 	entry.intentDriven = true
@@ -1773,8 +1761,7 @@ func newDirectGatewayClient(cfg Config, intent toolhiveIntent, configPath string
 
 func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, client *http.Client) providerEntry {
 	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, intent.baseURL,
-		openai.WithHTTPClient(withRootSessionCorrelation(client)),
-		openai.WithMaxRetries(0))
+		openai.WithHTTPClient(withRootSessionCorrelation(client)))
 	// The direct-mode lister shares the SAME bearer-authenticated client so
 	// the Build-time probe (probeToolhive) and the live refresh authenticate
 	// against the gateway with the real token, not the placeholder. The lister

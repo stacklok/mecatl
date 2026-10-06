@@ -90,10 +90,11 @@ validation behavior.
 
 ## When a model stream fails
 
-When the server reports a `retryable + precommit` failure, `mecatui` retries the
-model step once without adding a prompt or removing queued messages. If the
-automatic retry fails, use `/retry`. The same command retries a
-`retryable + visible` failure, including one reopened from storage.
+The server recovers transient failures before model output becomes visible,
+within its configured [recovery limits](/features/choose-models.md#a-provider-error-ended-a-model-step).
+If recovery ends in a terminal failure, use `/retry`; `mecatui` does not start
+another run automatically. The same command retries a `retryable + visible`
+failure, including one reopened from storage.
 
 `/retry` preserves the prompt textarea and queued prompts. For visible failures,
 scrollback marks the failed partial output as superseded. If no eligible failure

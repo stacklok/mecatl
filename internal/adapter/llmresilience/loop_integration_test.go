@@ -13,6 +13,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -565,6 +566,89 @@ func (p *semanticUsageBudgetProvider) Stream(_ context.Context, _ port.LLMReques
 		yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "successful", Name: "Count", Args: json.RawMessage(`{}`)}}, nil)
 		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
 	}, nil
+}
+
+// cancelAfterRecovery lets the resilience layer finish buffering before the
+// engine receives its iterator. It also models cancellation during delivery.
+type cancelAfterRecovery struct {
+	port.LLMProvider
+	cancel context.CancelFunc
+	during bool
+	onTool bool
+}
+
+func (p cancelAfterRecovery) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	seq, err := p.LLMProvider.Stream(ctx, req)
+	if err != nil {
+		return seq, err
+	}
+	if !p.during {
+		p.cancel()
+		return seq, nil
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		seq(func(chunk port.Chunk, err error) bool {
+			if (chunk.Kind == port.ChunkUsage && !p.onTool) || (chunk.Kind == port.ChunkToolCall && p.onTool) {
+				p.cancel()
+			}
+			return yield(chunk, err)
+		})
+	}, nil
+}
+
+func TestServerProviderRecovery_Scenario1_CanceledBufferedUsageReachesEngineExactlyOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		during bool
+		onTool bool
+	}{
+		{name: "before iteration"},
+		{name: "during accounting delivery", during: true},
+		{name: "during semantic delivery", during: true, onTool: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := session.Usage{InputTokens: 5, OutputTokens: 1}
+			b := session.Usage{InputTokens: 7, OutputTokens: 3}
+			call := session.ToolCall{ID: "buffered", Name: "Count", Args: json.RawMessage(`{}`)}
+			inner := mockllm.New(
+				mockllm.Turn{Chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &a}}, Err: &streamStatusError{msg: "retry", status: 503}},
+				mockllm.Turn{Chunks: []port.Chunk{
+					{Kind: port.ChunkReasoning, Text: "tentative"},
+					{Kind: port.ChunkToolCall, ToolCall: &call},
+					{Kind: port.ChunkUsage, Usage: &b},
+					{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+				}},
+			)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			llm := cancelAfterRecovery{LLMProvider: llmresilience.Wrap(inner, llmresilience.Config{MaxAttempts: 2}), cancel: cancel, during: tc.during, onTool: tc.onTool}
+			counter := &countedTool{}
+			e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, counter)})
+			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
+			sess := newSession(t, session.Limits{})
+			events := drain(e.Run(ctx, sess, env, agent.RunRequest{Text: "go"}))
+			want := a.Add(b)
+			res := lastResult(t, events)
+			if res.Stop != session.StopCancelled || res.Usage != want || sess.UsageFor(session.UsageKindMain) != want {
+				t.Fatalf("stop=%q result=%+v session=%+v, want cancelled and %+v", res.Stop, res.Usage, sess.UsageFor(session.UsageKindMain), want)
+			}
+			if inner.Calls() != 2 || counter.executions.Load() != 0 {
+				t.Fatalf("attempts=%d executions=%d, want 2/0", inner.Calls(), counter.executions.Load())
+			}
+			seenReasoning := false
+			for _, ev := range events {
+				if ev.Type == session.EvReasoningDelta {
+					seenReasoning = true
+				}
+				if ev.Type == session.EvToolCall || ev.Type == session.EvToolResult || ev.Type == session.EvTurnEnd || ev.Type == session.EvReasoningDelta && !tc.onTool {
+					t.Fatalf("cancelled semantic output escaped: %s", ev.Type)
+				}
+			}
+			if tc.onTool && !seenReasoning {
+				t.Fatal("semantic chunk before cancellation was not delivered")
+			}
+		})
+	}
 }
 
 type cancelTentativeToolProvider struct {

@@ -126,11 +126,11 @@ func TestOpenAICodexResponsesFixtures(t *testing.T) {
 			body:     readCodexFixture(t, "..", "..", "provider", "openai", "testdata", "subscription_compatibility_tool_call.sse"),
 			messages: []session.Message{session.NewUserMessage("call the tool")},
 			assert: func(t *testing.T, chunks []port.Chunk, _ *codexCapturedRequest) {
-				assertCodexChunkKinds(t, chunks, port.ChunkToolCall, port.ChunkUsage, port.ChunkDone)
-				if got := chunks[0].ToolCall; got == nil || got.ID != "call_synthetic" || got.ItemID != "function_synthetic" || got.Name != "compatibility_probe" || string(got.Args) != `{"value":"OK"}` {
+				assertCodexChunkKinds(t, chunks, port.ChunkUsage, port.ChunkToolCall, port.ChunkDone)
+				if got := chunks[1].ToolCall; got == nil || got.ID != "call_synthetic" || got.ItemID != "function_synthetic" || got.Name != "compatibility_probe" || string(got.Args) != `{"value":"OK"}` {
 					t.Fatalf("translated tool call = %+v", got)
 				}
-				assertCodexUsageAndDone(t, chunks[1], chunks[2], 1, 1, 0, 0)
+				assertCodexUsageAndDone(t, chunks[0], chunks[2], 1, 1, 0, 0)
 			},
 		},
 		{
@@ -217,12 +217,20 @@ func TestOpenAICodexResponsesFixtures(t *testing.T) {
 			t.Fatalf("Stream: %v", err)
 		}
 		var got []port.Chunk
+		var canceled bool
 		for chunk, streamErr := range seq {
 			if streamErr != nil {
-				t.Fatalf("cancellation surfaced as stream error: %v", streamErr)
+				if !errors.Is(streamErr, context.Canceled) {
+					t.Fatalf("stream error = %v, want cancellation", streamErr)
+				}
+				canceled = true
+				break
 			}
 			got = append(got, chunk)
 			cancel()
+		}
+		if !canceled {
+			t.Fatal("cancelled continuation completed without cancellation")
 		}
 		if len(got) != 1 || got[0].Kind != port.ChunkText || got[0].Text != "partial" {
 			t.Fatalf("chunks before cancellation = %+v, want exact partial text chunk", got)

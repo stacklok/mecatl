@@ -114,7 +114,7 @@ func TestResilienceLogsRetry(t *testing.T) {
 	if got := argValue(rec[0].args, "attempt"); got != 1 {
 		t.Errorf("retry attempt arg = %v, want 1", got)
 	}
-	// The backoff/backoffWith split exists so the computed duration is logged;
+	// The computed backoff is logged before waiting;
 	// guard it. With BaseBackoff=MaxBackoff=1ns the full-jitter window is [1,1ns].
 	if got, ok := argValue(rec[0].args, "backoff").(time.Duration); !ok || got != time.Nanosecond {
 		t.Errorf("retry backoff arg = %v (%T), want 1ns", argValue(rec[0].args, "backoff"), argValue(rec[0].args, "backoff"))
@@ -665,9 +665,7 @@ func TestResilienceLogsBreakerRejection(t *testing.T) {
 			t.Fatalf("call %d must fail (it is what opens the breaker)", i+1)
 		}
 	}
-	if got := len(diag.find("open circuit breaker")); got != 0 {
-		t.Fatalf("no call has been REJECTED yet, but %d rejection lines were emitted (%+v)", got, diag.records)
-	}
+	before := len(diag.find("llm provider recovery"))
 	callsBefore := f.Calls()
 
 	// Still within the cooldown: this one is rejected by allow() before the provider is
@@ -675,7 +673,7 @@ func TestResilienceLogsBreakerRejection(t *testing.T) {
 	if _, err := p.Stream(context.Background(), port.LLMRequest{Model: "m-1"}); err == nil {
 		t.Fatal("a call inside the cooldown must be rejected by the open breaker")
 	}
-	rec := diag.find("open circuit breaker")
+	rec := diag.find("llm provider recovery")[before:]
 	if len(rec) != 1 {
 		t.Fatalf("a breaker rejection must emit exactly one Info line; got %d (%+v)", len(rec), diag.records)
 	}
