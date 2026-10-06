@@ -14,7 +14,7 @@ under `docs/acceptance/studio-*.md`, which lists exactly what it ships. The publ
 `ghcr.io/stacklok/mecatl/studio`.
 
 Mecatl Studio is a browser UI for a mecatl deployment, split in three packages that form
-one self-contained pnpm workspace (pnpm 12.4.2, Node 24, see `package.json`):
+one self-contained pnpm workspace (pnpm 12.4.2, Node 26, see `package.json`):
 
 | Package                               | What it is                                                                                                                                                            |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

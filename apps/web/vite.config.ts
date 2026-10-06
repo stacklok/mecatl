@@ -3,7 +3,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [tanstackRouter({ target: "react" }), react(), tailwindcss()],
@@ -25,5 +25,10 @@ export default defineConfig({
       },
     },
     strictPort: true,
+  },
+  test: {
+    // Node 25+ ships a global Web Storage that, without --localstorage-file,
+    // shadows the jsdom localStorage/sessionStorage the browser tests rely on.
+    execArgv: ["--no-experimental-webstorage"],
   },
 });

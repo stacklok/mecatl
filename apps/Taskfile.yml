@@ -46,6 +46,12 @@ tasks:
     cmds:
       - pnpm run test
 
+  audit:
+    desc: Gate the production dependency closure (what the image ships) on the pnpm advisory database
+    deps: [install]
+    cmds:
+      - pnpm audit --prod
+
   browser:install:
     desc: Install the pinned Chromium revision for offline Studio browser journeys
     deps: [install]
