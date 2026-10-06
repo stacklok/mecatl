@@ -272474,6 +272474,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791301892277,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e731897077c75b020190f0d7b6e0b78af15082f1",
+          "message": "test(k8s): overlap qualification build and accelerate quota sync (#2140)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-06T15:25:31-07:00",
+          "tree_id": "fb238a5ac49a0be4288b7090af9d1ddff0639a17",
+          "url": "https://github.com/stacklok/mecatl/commit/e731897077c75b020190f0d7b6e0b78af15082f1"
+        },
+        "date": 1791326236888,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -395181,6 +395215,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791326233646,
+  "lastUpdate": 1791326237591,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
