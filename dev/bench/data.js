@@ -301528,6 +301528,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791292048621,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4b7abcd1ae1dbcb7b865bfb85f04bbc03ff2607f",
+          "message": "test: speed projected volume updates in Kind qualification (#2124)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-06T08:39:53-07:00",
+          "tree_id": "9675d5039713ceffa22eaa6f1931a0e87773012c",
+          "url": "https://github.com/stacklok/mecatl/commit/4b7abcd1ae1dbcb7b865bfb85f04bbc03ff2607f"
+        },
+        "date": 1791301896352,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3263.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 64,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -394704,6 +394743,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791301893168,
+  "lastUpdate": 1791301897273,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
