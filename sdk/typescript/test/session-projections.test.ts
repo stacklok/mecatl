@@ -293,6 +293,7 @@ describe("session projections", () => {
       [
         "agents",
         "audio",
+        "createWorktrees",
         "shell",
         "debugMcp",
         "image",

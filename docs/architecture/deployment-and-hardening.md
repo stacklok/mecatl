@@ -122,8 +122,7 @@ it. `DeleteSession{stop_active}` stops an active session after the run-entry loc
 real lease are held; `remove_worktree` removes only a clean, unshared server-created
 worktree under a per-path lock, never with `--force`, and keeps the branch. The one
 forced removal is create-failure rollback, which discards only the worktree that the
-failing create just added. See
-[ADR 0374](../adr/0374-server-created-session-worktrees.md).
+failing create just added.
 
 ### Multi-replica affinity, correlation, and single-writer enforcement
 

@@ -265,13 +265,15 @@ func TestTUIMultiSession_Scenario1_LegacyRevisionReattaches(t *testing.T) {
 		t.Fatalf("legacy sha-256 revision reattach: %v", err)
 	}
 
-	// The configured-root ref still requires its exact revision.
+	// The configured-root ref still requires its exact revision. The sibling's
+	// new HEAD is guaranteed to differ from the root's (the pre-commit head is the
+	// shared initial commit, which the root's exact-HEAD match would accept).
 	root := configuredLocalPlacementRef(base)
 	if _, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: root, Scope: "test"}); err != nil {
 		t.Fatalf("configured root reattach: %v", err)
 	}
 	stale := root
-	stale.Revision = head
+	stale.Revision = tmsGitOutput(t, sibling, "rev-parse", "HEAD")
 	if _, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: stale, Scope: "test"}); !errors.Is(err, server.ErrPlacementNotFound) {
 		t.Fatalf("configured root with a different revision = %v, want ErrPlacementNotFound", err)
 	}
