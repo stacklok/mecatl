@@ -510,7 +510,7 @@ func TestMCPAuthorizationGRPCControlEOFDoesNotCancelPlanApprovalContinuation(t *
 	planCall := session.NewToolCall("plan-call", "PresentPlan", json.RawMessage(`{"plan":"inspect the change"}`))
 	f := newInteractiveLifecycleFixtureWithMode(t, session.AuthorizationGranted, nil, time.Now, nil,
 		session.ModePlan, mockllm.ToolCallTurn(planCall))
-	f.attach.refreshTools = []tool.Tool{agent.NewPresentPlanTool()}
+	f.attach.tool.readOnly = true
 	stream := &recheckAuthorizationStream{
 		ctx:         t.Context(),
 		eofAfterAsk: make(chan struct{}),

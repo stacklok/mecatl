@@ -12,6 +12,43 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+func TestBrokerSessionKindCheckOfflineFixture(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Fatal("jq is required for the passive Kind fixture")
+	}
+	dir := t.TempDir()
+	kubectl := `#!/bin/sh
+printf '%s\n' "$*" >> "$CHECK_LOG"
+case "$*" in
+  *broker-config*) printf '%s\n' '{"data":{"broker.json":"{\"session_api\":{\"mode\":\"OWNERLESS\",\"deployment\":\"kind-poc-a\"},\"transport\":{\"rpc_deadline\":\"10s\",\"execute_deadline\":\"120s\"},\"protected_storage\":{\"redis\":{\"address\":\"redis.example.com:6379\"}}}"}}' ;;
+  *get\ configmap*) printf '%s\n' '{"data":{"settings.yaml":"mcp:\n  mode: broker"}}' ;;
+esac
+`
+	if err := os.WriteFile(dir+"/kubectl", []byte(kubectl), 0700); err != nil {
+		t.Fatal(err)
+	}
+	log := dir + "/calls"
+	cmd := exec.Command("sh", "broker-session-check.sh", "fixture-kubeconfig", "kind-test", "fixture", "poc")
+	cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "CHECK_LOG=" + log}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("offline Kind check: %v\n%s", err, output)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range strings.Split(strings.TrimSpace(string(calls)), "\n") {
+		if !strings.HasPrefix(call, "--kubeconfig=fixture-kubeconfig --context=kind-test --namespace=fixture ") {
+			t.Fatal("Kind command lost explicit context")
+		}
+		for _, mutation := range []string{" apply ", " delete ", " rollout restart ", " secret "} {
+			if strings.Contains(call, mutation) {
+				t.Fatal("passive Kind check mutated resources or inspected credentials")
+			}
+		}
+	}
+}
+
 const fixtureTask = "Taskfile.yml"
 
 // TestMecak8sKindFixture_Scenario1_ToolHiveFreeSetup pins the standalone

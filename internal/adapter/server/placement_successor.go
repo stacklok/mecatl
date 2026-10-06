@@ -215,37 +215,21 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 	profile := profileForSession(created)
-	var (
-		builtEngine     *sessionEngine
-		broker          *localBrokerAttachment
-		brokerCommitted bool
-	)
-	// A successor is a new broker incarnation, never a reattachment of the
-	// source. Build it before the engine so the exact tools belonging to this
-	// id are the ones the factory receives. The binding is stamped on the
-	// successor before its first durable publication; broker commit happens only
-	// after that publication succeeds.
-	if s.cfg.MCPBroker != nil {
-		broker, err = s.openFreshBrokerAttachment(mutationCtx, created.ID)
-		if err != nil {
-			return "", err
-		}
-		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
-		created.ExternalBinding = broker.attachment.Binding()
+	var builtEngine *sessionEngine
+	if s.cfg.SessionBroker != nil {
+		snapshot, openErr := s.cfg.SessionBroker.OpenSession(mutationCtx, nil)
+		if openErr != nil { return "", openErr }
+		if err := created.AdoptBrokerCatalogue(session.BrokerSessionRef(snapshot.Ref), session.BrokerCatalogueRef(snapshot.Catalogue.Ref()), snapshot.ExpiresAt, snapshot.Catalogue.ToolNames()); err != nil { return "", err }
 	}
 	governanceRoot, err := PlacementGovernanceRoot(binding)
 	if err != nil {
 		return "", err
 	}
-	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot) {
-		if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
+	if s.cfg.SessionBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot) {
+		if s.cfg.SessionBroker == nil && s.cfg.SessionEngine == nil {
 			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 		}
-		if broker != nil {
-			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), true)
-		} else {
-			builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false)
-		}
+		builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, nil, true)
 		if err != nil {
 			return "", err
 		}
@@ -292,16 +276,6 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	}
 	s.installSessionPlacement(created.ID, binding, false)
 	publishedPlacement = true
-	if broker != nil {
-		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
-		commitErr := s.commitBrokerAttachment(commitCtx, created.ID, broker)
-		cancelCommit()
-		if commitErr != nil {
-			cleanupEngine()
-			return "", fmt.Errorf("%w: %v", ErrInternal, commitErr)
-		}
-		brokerCommitted = true
-	}
 	return created.ID, nil
 }
 

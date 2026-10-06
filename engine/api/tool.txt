@@ -12,6 +12,7 @@
     ifacemethod func (CommandTemporaryScopeStreamer).RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error)
     ifacemethod func (Disclosable).Advertised() ToolSpec
     ifacemethod func (DispatchSerial).DispatchSerialTool()
+    ifacemethod func (DurableBrokerInvocation).BrokerInvocationRefs() (session.BrokerSessionRef, session.BrokerCatalogueRef)
     ifacemethod func (EnvironmentForker).Fork(ctx context.Context, base Environment, label string) (child Environment, cleanup func() error, advisory string, err error)
     ifacemethod func (EnvironmentMerger).Merge(ctx context.Context, child Environment, parent Environment) error
     ifacemethod func (FileSystem).Glob(ctx context.Context, pattern string) ([]string, error)
@@ -133,6 +134,7 @@ type CommandTemporaryScopeRunner interface{RunWithTemporaryScope(ctx context.Con
 type CommandTemporaryScopeStreamer interface{RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error); CommandStreamer}
 type Disclosable interface{Advertised() ToolSpec; Tool}
 type DispatchSerial interface{DispatchSerialTool(); Tool}
+type DurableBrokerInvocation interface{BrokerInvocationRefs() (session.BrokerSessionRef, session.BrokerCatalogueRef); DispatchSerial}
 type Environment struct{}
 type EnvironmentForker interface{Fork(ctx context.Context, base Environment, label string) (child Environment, cleanup func() error, advisory string, err error)}
 type EnvironmentMerger interface{Merge(ctx context.Context, child Environment, parent Environment) error}

@@ -39,6 +39,7 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
+	BrokerAccess    *session.BrokerAccess   `json:"broker_access,omitempty"`
 	ID              session.SessionID       `json:"id"`
 	State           session.State           `json:"state"`
 	Mode            session.PermissionMode  `json:"mode"`
@@ -368,6 +369,9 @@ func Of(s *session.Session) (Snapshot, error) {
 		// alias (and later mutate) the aggregate's own principal.
 		Owner: s.Owner.Clone(),
 	}
+	if access, ok := s.BrokerAccess(); ok {
+		snap.BrokerAccess = &access
+	}
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
 	}
@@ -420,7 +424,15 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
 
-	if err := restoreAuthority(restored, s.Authority); err != nil {
+	if s.BrokerAccess != nil {
+		// An explicitly disconnected broker session may have no tool authority.
+		if s.Authority == nil {
+			return nil, errors.New("sessnap: broker access requires authority")
+		}
+		if err := restored.BindAuthority(*s.Authority); err != nil {
+			return nil, err
+		}
+	} else if err := restoreAuthority(restored, s.Authority); err != nil {
 		return nil, err
 	}
 
@@ -485,6 +497,11 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		}
 		if err := restored.RestoreBrokerCredentialCustody(custody); err != nil {
 			return nil, fmt.Errorf("sessnap: restore broker credential custody: %w", err)
+		}
+	}
+	if s.BrokerAccess != nil {
+		if err := restored.RestoreBrokerAccess(*s.BrokerAccess); err != nil {
+			return nil, err
 		}
 	}
 	return restored, nil

@@ -7,6 +7,7 @@ oidc:
   issuer: https://identity.example.invalid
   audience: mecak8s
 broker:
+  sessionAPI: {mode: OWNERLESS, deployment: broker-session-poc-a}
   image:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   tls:

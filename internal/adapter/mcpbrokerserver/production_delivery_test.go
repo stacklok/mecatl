@@ -39,7 +39,7 @@ func TestSingletonBrokerRemediation_Scenario3_ProductionReadinessUsesRealDepende
 			if buildErr != nil {
 				return brokerRuntime{}, buildErr
 			}
-			return brokerRuntime{Service: process.Runtime, Handlers: process.Handlers, CallbackPath: "/callback", Close: process.Close}, nil
+			return brokerRuntime{Service: process.Runtime, SessionAPI: &countingService{}, Handlers: process.Handlers, CallbackPath: "/callback", Close: process.Close}, nil
 		},
 		ReadinessTimeout: time.Second,
 	})
@@ -99,7 +99,7 @@ func TestSingletonBrokerRemediation_Scenario3_ProductionDrainAndCleanup(t *testi
 				processClosed.Store(true)
 				return process.Close()
 			}
-			return brokerRuntime{Service: process.Runtime, Handlers: handlers, CallbackPath: "/callback", Close: closeProcess}, nil
+			return brokerRuntime{Service: process.Runtime, SessionAPI: &countingService{}, Handlers: handlers, CallbackPath: "/callback", Close: closeProcess}, nil
 		},
 		ReadinessTimeout: time.Second,
 	})

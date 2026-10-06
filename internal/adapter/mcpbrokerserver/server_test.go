@@ -1,7 +1,6 @@
 package mcpbrokerserver
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -30,13 +29,11 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protodesc"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	oidcadapter "github.com/stacklok/mecatl/authn/oidc"
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -77,15 +74,12 @@ func newIdentityFixture(t *testing.T) *identityFixture {
 	t.Cleanup(f.server.Close)
 	return f
 }
-
 func (f *identityFixture) caPEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.server.Certificate().Raw})
 }
-
 func (f *identityFixture) token(t *testing.T, issuer, audience string, expiry time.Time, key *rsa.PrivateKey) string {
 	return f.tokenWithSubject(t, issuer, audience, "workload-secret-identity", expiry, key)
 }
-
 func (f *identityFixture) tokenWithSubject(t *testing.T, issuer, audience, subject string, expiry time.Time, key *rsa.PrivateKey) string {
 	t.Helper()
 	if key == nil {
@@ -101,7 +95,6 @@ func (f *identityFixture) tokenWithSubject(t *testing.T, issuer, audience, subje
 	}
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
-
 func productionOIDC(f *identityFixture, staleness time.Duration) WorkloadJWTConfig {
 	return WorkloadJWTConfig{Issuer: f.server.URL, JWKSURI: f.server.URL + "/keys", Audience: testAudience, AllowedSubjects: []string{"workload-secret-identity"}, TrustedCAPEM: f.caPEM(), MaxJWKSStaleness: staleness}
 }
@@ -109,16 +102,15 @@ func productionOIDC(f *identityFixture, staleness time.Duration) WorkloadJWTConf
 func TestSingletonBrokerRemediation_Scenario3_ReadinessDoesNotLaunderStaleKeys(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	const staleness = 300 * time.Millisecond
-	srv, err := newBrokerHost(t.Context(), hostConfig{Service: &countingService{}, WorkloadJWT: productionOIDC(issuer, staleness), ReadinessTimeout: time.Second})
+	srv, err := newBrokerHost(t.Context(), hostConfig{SessionAPI: &countingService{}, WorkloadJWT: productionOIDC(issuer, staleness), ReadinessTimeout: time.Second})
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
 	defer func() { _ = srv.close(context.Background()) }()
 	token := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
 	if _, err := srv.verifier.Validate(t.Context(), token); err != nil {
-		t.Fatalf("initial validation: %v", err)
+		t.Fatal(err)
 	}
-
 	time.Sleep(200 * time.Millisecond)
 	if !srv.ready(t.Context()) {
 		t.Fatal("healthy JWKS dependency did not pass readiness")
@@ -126,74 +118,29 @@ func TestSingletonBrokerRemediation_Scenario3_ReadinessDoesNotLaunderStaleKeys(t
 	issuer.available.Store(false)
 	time.Sleep(150 * time.Millisecond)
 	if _, err := srv.verifier.Validate(t.Context(), token); !errors.Is(err, oidcadapter.ErrIdentityUnavailable) {
-		t.Fatalf("token remained valid after the original JWKS staleness bound: %v", err)
+		t.Fatalf("stale keys accepted: %v", err)
 	}
 	if srv.ready(t.Context()) {
 		t.Fatal("readiness stayed open after JWKS became unavailable")
 	}
 }
 
-type countingService struct{ reads atomic.Int32 }
+type countingService struct {
+	contract.SessionService
+	reads atomic.Int32
+}
 
-func (s *countingService) AttachSession(context.Context, session.SessionID) (contract.Attachment, contract.AttachOutcome, error) {
+func (s *countingService) OpenSession(context.Context, *contract.SessionRef) (contract.SessionSnapshot, error) {
 	s.reads.Add(1)
-	return &emptyAttachment{}, contract.AttachCreated, nil
-}
-func (s *countingService) DeleteSession(context.Context, session.SessionID) (contract.DeleteOutcome, error) {
-	s.reads.Add(1)
-	return contract.DeleteNotFound, nil
+	cat, err := contract.NewCatalogue(contract.CatalogueRef(strings.Repeat("A", 43)), nil)
+	return contract.SessionSnapshot{Ref: contract.SessionRef(strings.Repeat("A", 43)), ExpiresAt: time.Now().Add(time.Hour), Catalogue: cat}, err
 }
 
-type emptyAttachment struct{}
-
-func (*emptyAttachment) Binding() session.ExternalBinding { return "binding" }
-func (*emptyAttachment) Commit(context.Context) error     { return nil }
-func (*emptyAttachment) Abort(context.Context) error      { return nil }
-func (*emptyAttachment) Close(context.Context) (contract.CloseOutcome, error) {
-	return contract.CloseClosed, nil
-}
-func (*emptyAttachment) Tools() []tool.Tool { return nil }
-func (*emptyAttachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
-	return nil, contract.ErrAuthorizationNotFound
-}
-func (*emptyAttachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
-	return "", contract.ErrAuthorizationNotFound
-}
-func (*emptyAttachment) AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error) {
-	return "", contract.ErrAuthorizationNotFound
-}
-func (*emptyAttachment) CancelAuthorization(context.Context, session.ExternalAuthorization) (contract.CancelOutcome, error) {
-	return "", contract.ErrAuthorizationNotFound
-}
-
-type traceTool struct{}
-
-func (traceTool) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "trace_tool", Description: "trace", Schema: []byte(`{}`)}
-}
-func (traceTool) ReadOnly() bool { return true }
-func (traceTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	return session.NewToolResult(call.ID, "ok"), nil
-}
-func (traceTool) ExecutionMetadata(session.ToolCall) (contract.ExecutionMetadata, bool) {
-	return contract.ExecutionMetadata{Backend: "trace_backend", OutboundCredentialKind: contract.OutboundCredentialRouteOAuth}, true
-}
-
-type traceAttachment struct{ emptyAttachment }
-
-func (*traceAttachment) Tools() []tool.Tool { return []tool.Tool{traceTool{}} }
-
-type traceService struct{ countingService }
-
-func (*traceService) AttachSession(context.Context, session.SessionID) (contract.Attachment, contract.AttachOutcome, error) {
-	return &traceAttachment{}, contract.AttachCreated, nil
-}
-
-func startAuthenticatedBroker(t *testing.T, service contract.Service, oidc WorkloadJWTConfig, diag port.Diagnostics, observe func(string, string)) (brokerv1.BrokerServiceClient, *grpc.ClientConn, string) {
+func startAuthenticatedBroker(t *testing.T, service contract.SessionService, oidc WorkloadJWTConfig, diag port.Diagnostics, observe func(string, string)) (brokerv1.SessionServiceClient, *grpc.ClientConn, string) {
 	t.Helper()
-	srv, err := newBrokerHost(t.Context(), hostConfig{Service: service, WorkloadJWT: oidc, Diagnostics: diag, Observe: observe})
+	srv, err := newBrokerHost(t.Context(), hostConfig{SessionAPI: service, WorkloadJWT: oidc, Diagnostics: diag, Observe: observe})
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.close(context.Background()) })
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -202,28 +149,23 @@ func startAuthenticatedBroker(t *testing.T, service contract.Service, oidc Workl
 	}
 	grpcServer, err := srv.newGRPCServer(&tls.Config{Certificates: []tls.Certificate{fCertificate(t, oidc)}, MinVersion: tls.VersionTLS13})
 	if err != nil {
-		t.Fatalf("newGRPCServer: %v", err)
+		t.Fatal(err)
 	}
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
-	roots := x509.NewCertPool()
-	roots.AppendCertsFromPEM(oidc.TrustedCAPEM)
-	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: roots, ServerName: "example.com", MinVersion: tls.VersionTLS13})))
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: rootsFromPEM(t, oidc.TrustedCAPEM), ServerName: "example.com", MinVersion: tls.VersionTLS13})))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return brokerv1.NewBrokerServiceClient(conn), conn, listener.Addr().String()
+	return brokerv1.NewSessionServiceClient(conn), conn, listener.Addr().String()
 }
-
 func fCertificate(t *testing.T, oidc WorkloadJWTConfig) tls.Certificate {
 	t.Helper()
-	// Tests use the identity fixture's httptest certificate as the broker leaf.
 	block, _ := pem.Decode(oidc.TrustedCAPEM)
 	if block == nil {
 		t.Fatal("missing test certificate")
 	}
-	// Locate the matching fixture key through the registry populated by newIdentityFixture.
 	fixtureKeysMu.Lock()
 	key := fixtureKeys[string(block.Bytes)]
 	fixtureKeysMu.Unlock()
@@ -243,45 +185,34 @@ func registerFixtureKey(f *identityFixture) {
 	fixtureKeys[string(f.server.Certificate().Raw)] = f.server.TLS.Certificates[0].PrivateKey
 	fixtureKeysMu.Unlock()
 }
-
 func authContext(token string) context.Context {
 	return metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))
 }
 
-func TestSingletonBrokerRemediation_Scenario3_PublicRPCAuthenticationPrecedesBrokerState(t *testing.T) {
+func TestSessionRPCAuthenticationPrecedesBrokerState(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	service := &countingService{}
 	client, _, _ := startAuthenticatedBroker(t, service, productionOIDC(issuer, time.Minute), port.NopDiagnostics{}, nil)
-	token := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
-
 	calls := []func(context.Context) error{
 		func(ctx context.Context) error {
-			_, err := client.Attach(ctx, &brokerv1.AttachRequest{SessionId: "session"})
-			return err
-		},
-		func(ctx context.Context) error { _, err := client.Commit(ctx, &brokerv1.CommitRequest{}); return err },
-		func(ctx context.Context) error { _, err := client.Abort(ctx, &brokerv1.AbortRequest{}); return err },
-		func(ctx context.Context) error { _, err := client.Close(ctx, &brokerv1.CloseRequest{}); return err },
-		func(ctx context.Context) error {
-			_, err := client.Delete(ctx, &brokerv1.DeleteRequest{SessionId: "missing"})
-			return err
-		},
-		func(ctx context.Context) error { _, err := client.Execute(ctx, &brokerv1.ExecuteRequest{}); return err },
-		func(ctx context.Context) error {
-			_, err := client.RequestAuthorization(ctx, &brokerv1.RequestAuthorizationRequest{})
+			_, err := client.OpenSession(ctx, &brokerv1.OpenSessionRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.AbortAuthorization(ctx, &brokerv1.AbortAuthorizationRequest{})
+			_, err := client.InvokeTool(ctx, &brokerv1.InvokeToolRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.PresentAuthorization(ctx, &brokerv1.PresentAuthorizationRequest{})
+			_, err := client.CheckAuthorization(ctx, &brokerv1.CheckAuthorizationRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.AuthorizationStatus(ctx, &brokerv1.AuthorizationStatusRequest{})
+			_, err := client.BeginAuthorization(ctx, &brokerv1.BeginAuthorizationRequest{})
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := client.ObserveAuthorization(ctx, &brokerv1.ObserveAuthorizationRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
@@ -289,56 +220,48 @@ func TestSingletonBrokerRemediation_Scenario3_PublicRPCAuthenticationPrecedesBro
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.BeginWorkspaceEnrollment(ctx, &brokerv1.BeginWorkspaceEnrollmentRequest{})
+			_, err := client.ResumeTool(ctx, &brokerv1.ResumeToolRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.ObserveWorkspaceEnrollment(ctx, &brokerv1.ObserveWorkspaceEnrollmentRequest{})
+			_, err := client.BeginEnrollment(ctx, &brokerv1.BeginEnrollmentRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.CancelWorkspaceEnrollment(ctx, &brokerv1.CancelWorkspaceEnrollmentRequest{})
+			_, err := client.ObserveEnrollment(ctx, &brokerv1.ObserveEnrollmentRequest{})
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := client.CancelEnrollment(ctx, &brokerv1.CancelEnrollmentRequest{})
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := client.DisconnectTools(ctx, &brokerv1.DisconnectToolsRequest{})
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := client.DeleteSession(ctx, &brokerv1.DeleteSessionRequest{})
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := client.InspectConnectors(ctx, &brokerv1.InspectConnectorsRequest{})
 			return err
 		},
 	}
+	valid := authContext(issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil))
 	for i, call := range calls {
-		if err := call(authContext(token)); status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.Unavailable {
-			t.Fatalf("authenticated RPC %d rejected at authentication: %v", i, err)
+		if err := call(valid); status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.Unavailable {
+			t.Fatalf("authenticated RPC %d: %v", i, err)
 		}
 	}
 	before := service.reads.Load()
 	for i, call := range calls {
-		if err := call(context.Background()); status.Code(err) != codes.Unauthenticated {
-			t.Fatalf("anonymous RPC %d code = %s, want Unauthenticated", i, status.Code(err))
+		if err := call(t.Context()); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("anonymous RPC %d: %v", i, err)
 		}
 	}
-	if got := service.reads.Load(); got != before {
-		t.Fatalf("anonymous calls touched broker state: reads %d -> %d", before, got)
-	}
-}
-
-func TestCredentialContinuityUsesExistingAuthenticatedBrokerChannel(t *testing.T) {
-	issuer := newIdentityFixture(t)
-	registerFixtureKey(issuer)
-	service := &countingService{}
-	policy := productionOIDC(issuer, time.Minute)
-	policy.AllowedSubjects = []string{"workload-secret-identity", "other-workload"}
-	client, _, _ := startAuthenticatedBroker(t, service, policy, port.NopDiagnostics{}, nil)
-	first := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
-	second := issuer.tokenWithSubject(t, issuer.server.URL, testAudience, "other-workload", time.Now().Add(time.Minute), nil)
-	attached, err := client.Attach(authContext(first), &brokerv1.AttachRequest{SessionId: "bound-session"})
-	if err != nil {
-		t.Fatalf("first Attach: %v", err)
-	}
-	if _, err := client.Attach(authContext(second), &brokerv1.AttachRequest{SessionId: "bound-session", BrokerIncarnation: attached.BrokerIncarnation}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("cross-identity Attach code = %s, want PermissionDenied: %v", status.Code(err), err)
-	}
-	if got := service.reads.Load(); got != 1 {
-		t.Fatalf("cross-identity Attach touched broker state: %d reads", got)
-	}
-	denied := issuer.tokenWithSubject(t, issuer.server.URL, testAudience, "unconfigured-workload", time.Now().Add(time.Minute), nil)
-	if _, err := client.Attach(authContext(denied), &brokerv1.AttachRequest{SessionId: "other-session"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("unconfigured workload code = %s, want PermissionDenied: %v", status.Code(err), err)
+	if service.reads.Load() != before {
+		t.Fatal("anonymous calls touched broker state")
 	}
 }
 
@@ -346,8 +269,11 @@ func TestInitialProductionMCPBroker_Scenario2_RejectsInvalidIdentity(t *testing.
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	service := &countingService{}
-	client, _, brokerAddress := startAuthenticatedBroker(t, service, productionOIDC(issuer, time.Minute), port.NopDiagnostics{}, nil)
-	otherKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	client, _, address := startAuthenticatedBroker(t, service, productionOIDC(issuer, time.Minute), port.NopDiagnostics{}, nil)
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, token := range map[string]string{
 		"wrong issuer":      issuer.token(t, "https://wrong.example", testAudience, time.Now().Add(time.Minute), nil),
 		"wrong audience":    issuer.token(t, issuer.server.URL, "other", time.Now().Add(time.Minute), nil),
@@ -356,40 +282,36 @@ func TestInitialProductionMCPBroker_Scenario2_RejectsInvalidIdentity(t *testing.
 		"malformed":         "not-a-jwt",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := client.Attach(authContext(token), &brokerv1.AttachRequest{SessionId: "secret-session"})
-			if status.Code(err) != codes.Unauthenticated {
-				t.Fatalf("code = %s, want Unauthenticated: %v", status.Code(err), err)
+			if _, err := client.OpenSession(authContext(token), &brokerv1.OpenSessionRequest{}); status.Code(err) != codes.Unauthenticated {
+				t.Fatalf("invalid identity: %v", err)
 			}
 		})
 	}
 	if service.reads.Load() != 0 {
-		t.Fatal("invalid workload identity reached broker state")
+		t.Fatal("invalid identity reached broker state")
 	}
 	if err := validateTransport("0.0.0.0:8443", nil); err == nil {
-		t.Fatal("plaintext non-loopback listener was accepted")
+		t.Fatal("plaintext public listener accepted")
 	}
 	var factoryCalls atomic.Int32
-	badOIDC := hostConfig{WorkloadJWT: WorkloadJWTConfig{Issuer: "http://issuer.example", Audience: testAudience, TrustedCAPEM: issuer.caPEM(), MaxJWKSStaleness: time.Minute}, Runtime: func(context.Context) (brokerRuntime, error) {
+	_, err = newBrokerHost(t.Context(), hostConfig{WorkloadJWT: WorkloadJWTConfig{Issuer: "http://issuer.example", Audience: testAudience, TrustedCAPEM: issuer.caPEM(), MaxJWKSStaleness: time.Minute}, Runtime: func(context.Context) (brokerRuntime, error) {
 		factoryCalls.Add(1)
-		return brokerRuntime{Service: &countingService{}}, nil
-	}}
-	if _, err := newBrokerHost(t.Context(), badOIDC); err == nil {
-		t.Fatal("production accepted an HTTP issuer")
+		return brokerRuntime{SessionAPI: service}, nil
+	}})
+	if err == nil || factoryCalls.Load() != 0 {
+		t.Fatal("invalid OIDC constructed broker state")
 	}
-	if factoryCalls.Load() != 0 {
-		t.Fatal("broker state was constructed before identity configuration admission")
+	if _, err := newBrokerHost(t.Context(), hostConfig{SessionAPI: service, WorkloadJWT: productionOIDC(issuer, 0)}); err == nil {
+		t.Fatal("unbounded JWKS staleness accepted")
 	}
-	if _, err := newBrokerHost(t.Context(), hostConfig{Service: &countingService{}, WorkloadJWT: productionOIDC(issuer, 0)}); err == nil {
-		t.Fatal("production accepted unbounded JWKS staleness")
-	}
-	for _, tlsConfig := range []*tls.Config{
+	for _, cfg := range []*tls.Config{
 		{RootCAs: x509.NewCertPool(), ServerName: "example.com", MinVersion: tls.VersionTLS13},
 		{RootCAs: rootsFromPEM(t, issuer.caPEM()), ServerName: "wrong.example", MinVersion: tls.VersionTLS13},
 	} {
-		conn, err := tls.Dial("tcp", brokerAddress, tlsConfig)
+		conn, err := tls.Dial("tcp", address, cfg)
 		if err == nil {
 			_ = conn.Close()
-			t.Fatal("invalid server certificate was trusted")
+			t.Fatal("invalid server certificate trusted")
 		}
 	}
 }
@@ -424,209 +346,52 @@ func (d *boundDiagnostics) With(args ...any) port.Diagnostics {
 	return &boundDiagnostics{parent: d.parent, args: append(append([]any(nil), d.args...), args...)}
 }
 
-func hasDiagnosticRecord(records []diagnosticRecord, message string, want map[string]string) bool {
-	for _, record := range records {
-		if record.msg != message {
-			continue
-		}
-		matched := true
-		for key, expected := range want {
-			found := false
-			for i := 0; i+1 < len(record.args); i += 2 {
-				actualKey, keyOK := record.args[i].(string)
-				actualValue, valueOK := record.args[i+1].(string)
-				if keyOK && valueOK && actualKey == key && actualValue == expected {
-					found = true
-					break
-				}
-			}
-			if !found {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return true
-		}
-	}
-	return false
-}
-
-func TestBrokerTraceOmitsHandlesBindingsAndContinuitySecrets(t *testing.T) {
+func TestSessionTraceOmitsReferencesCredentialsArgumentsAndResults(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	diag := &captureDiagnostics{}
-	var labels []string
-	client, _, _ := startAuthenticatedBroker(t, &countingService{}, productionOIDC(issuer, time.Minute), diag, func(op, outcome string) { labels = append(labels, op+":"+outcome) })
-	credential := "bearer-secret-credential"
-	callbackState := "callback-state-secret"
-	presentationURL := "https://present.example/secret"
-	toolArguments := credential + callbackState + presentationURL
-	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+credential))
-	_, _ = client.Execute(ctx, &brokerv1.ExecuteRequest{Name: "secret-tool", Args: []byte(toolArguments)})
-	encoded := fmt.Sprint(diag.records)
-	for _, secret := range []string{credential, callbackState, presentationURL, toolArguments, "workload-secret-identity", issuer.server.URL} {
-		if strings.Contains(encoded, secret) || strings.Contains(strings.Join(labels, "|"), secret) {
-			t.Fatalf("secret %q reached observability: diagnostics=%s labels=%v", secret, encoded, labels)
-		}
-	}
-	allowedOps := map[string]bool{"execute": true}
-	allowedOutcomes := map[string]bool{"unauthenticated": true, "unavailable": true, "allowed": true}
-	for _, label := range labels {
-		parts := strings.Split(label, ":")
-		if len(parts) != 2 || !allowedOps[parts[0]] || !allowedOutcomes[parts[1]] {
-			t.Fatalf("unbounded metric label %q", label)
-		}
-	}
-}
-
-func TestBrokerTraceRetainsUsefulClosedFields(t *testing.T) {
-	issuer := newIdentityFixture(t)
-	registerFixtureKey(issuer)
-	diag := &captureDiagnostics{}
-	client, _, _ := startAuthenticatedBroker(t, &traceService{}, productionOIDC(issuer, time.Minute), diag, nil)
+	client, _, _ := startAuthenticatedBroker(t, &countingService{}, productionOIDC(issuer, time.Minute), diag, nil)
 	token := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
-	attached, err := client.Attach(authContext(token), &brokerv1.AttachRequest{SessionId: "trace-session"})
+	opened, err := client.OpenSession(authContext(token), &brokerv1.OpenSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Execute(authContext(token), &brokerv1.ExecuteRequest{BrokerIncarnation: attached.GetBrokerIncarnation(), Handle: attached.GetHandle(), Name: "trace_tool", CallId: "call", Args: []byte(`{"password":"never-log","callback":"https://never-log.example"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded := fmt.Sprint(diag.records)
-	for _, want := range []string{"trace_backend", "route_oauth", "operation", "outcome", "principal", "workload-secret-identity", "session", "trace-session"} {
-		if !strings.Contains(encoded, want) {
-			t.Fatalf("trace lacks %q: %s", want, encoded)
-		}
-	}
-	if !hasDiagnosticRecord(diag.records, "broker RPC", map[string]string{
-		"operation": "execute",
-		"principal": "workload-secret-identity",
-		"session":   "trace-session",
-		"tool":      "trace_tool",
-	}) {
-		t.Fatalf("RPC trace lacks workload and session correlation: %s", encoded)
-	}
-	for _, forbidden := range []string{"never-log", token, "authorization", attached.GetHandle(), attached.GetBinding(), "principal_issuer"} {
-		if strings.Contains(encoded, forbidden) {
-			t.Fatalf("trace leaked %q: %s", forbidden, encoded)
-		}
-	}
-}
-
-func TestCredentialContinuityDiagnosticsNeverDiscloseCredentialOrGuardMaterial(t *testing.T) {
-	issuer := newIdentityFixture(t)
-	registerFixtureKey(issuer)
-	diag := &captureDiagnostics{}
-	service := &continuityDiagnosticService{countingService: &countingService{}}
-	client, _, _ := startAuthenticatedBroker(t, service, productionOIDC(issuer, time.Minute), diag, nil)
-	token := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
-	ctx := authContext(token)
-
-	workload, err := contract.ContinuityPrincipalPartition(contract.ContinuityPartitionWorkload, &session.Principal{
-		Issuer: issuer.server.URL, Subject: "workload-secret-identity",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	plaintext := strings.Repeat("p", 32)
-	ciphertext := strings.Repeat("c", 32)
-	salt := strings.Repeat("s", 32)
-	guardValue := strings.Repeat("g", 32)
-	assertion := &brokerv1.CustodyAssertion{
-		Guard: &brokerv1.ContinuityGuard{
-			SessionId: "diagnostic-session", SessionIncarnation: string(session.NewIncarnationID()),
-			OwnerPartition: []byte(guardValue), WorkloadPartition: workload[:], ProfileDigest: []byte(salt), Providers: []string{"provider"},
-		},
-		RecoveryReference: base64.RawURLEncoding.EncodeToString([]byte(ciphertext)),
-		AttemptDeadline:   timestamppb.New(time.Now().Add(time.Minute)),
-	}
-	assertReason := func(err error, want brokerv1.BrokerErrorReason) {
-		t.Helper()
-		if err == nil {
-			t.Fatal("RPC succeeded, want continuity error")
-		}
-		for _, detail := range status.Convert(err).Details() {
-			if got, ok := detail.(*brokerv1.BrokerErrorDetail); ok && got.GetReason() == want {
-				return
-			}
-		}
-		t.Fatalf("RPC error %v has no reason %v", err, want)
-	}
-
-	_, err = client.CommitCredentialCustody(ctx, &brokerv1.CommitCredentialCustodyRequest{Assertion: assertion})
-	assertReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED)
-	_, err = client.RecoverCredentialAttachment(ctx, &brokerv1.RecoverCredentialAttachmentRequest{Assertion: assertion, RequestId: plaintext})
-	assertReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE)
-	_, err = client.TombstoneCredentialCustody(ctx, &brokerv1.TombstoneCredentialCustodyRequest{Assertion: assertion})
-	assertReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_REVOKED)
-
+	_, _ = client.InvokeTool(authContext(token), &brokerv1.InvokeToolRequest{SessionRef: opened.Ref, CatalogueRef: opened.Catalogue.Ref, Call: &brokerv1.Call{Name: "secret-tool", Id: "secret-call", Arguments: []byte("never-log")}})
 	diag.mu.Lock()
-	records := append([]diagnosticRecord(nil), diag.records...)
+	encoded := fmt.Sprint(diag.records)
 	diag.mu.Unlock()
-	for _, operation := range []string{"commit_credential_custody", "recover_credential_attachment", "tombstone_credential_custody"} {
-		if !hasDiagnosticRecord(records, "broker RPC", map[string]string{"operation": operation, "outcome": "FailedPrecondition"}) {
-			t.Fatalf("diagnostic sink lacks safe RPC record for %s: %v", operation, records)
+	for _, forbidden := range []string{token, opened.Ref, "secret-tool", "secret-call", "never-log", issuer.server.URL} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("diagnostics leaked %q", forbidden)
 		}
 	}
-	for _, canary := range []string{plaintext, ciphertext, salt, guardValue} {
-		for _, record := range records {
-			if strings.Contains(record.msg, canary) {
-				t.Fatalf("diagnostic message leaked %q", canary)
-			}
-			for _, arg := range record.args {
-				switch value := arg.(type) {
-				case []byte:
-					if bytes.Contains(value, []byte(canary)) {
-						t.Fatalf("diagnostic bytes leaked %q: %v", canary, record)
-					}
-				default:
-					if strings.Contains(fmt.Sprint(value), canary) {
-						t.Fatalf("diagnostic field leaked %q: %v", canary, record)
-					}
-				}
-			}
+	for _, want := range []string{"broker RPC", "open_session", "invoke_tool", "workload-secret-identity", "outcome"} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("diagnostics lack %q", want)
 		}
 	}
-}
-
-type continuityDiagnosticService struct{ *countingService }
-
-func (*continuityDiagnosticService) CommitCredentialCustody(context.Context, contract.CustodyAssertion) error {
-	return contract.ErrContinuityProfileChanged
-}
-func (*continuityDiagnosticService) RecoverCredentialAttachment(context.Context, contract.CustodyAssertion, string) (contract.RecoveredCredentialAttachment, error) {
-	return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
-}
-func (*continuityDiagnosticService) TombstoneCredentialCustody(context.Context, contract.CustodyAssertion) error {
-	return contract.ErrContinuityRevoked
 }
 
 func TestInvariant_initial_broker_callback_cannot_supply_authority(t *testing.T) {
-	var callbackCalls atomic.Int32
-	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		callbackCalls.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	})
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(http.StatusNoContent) })
 	bundle := mcpbroker.HandlerBundle{Authorization: handler, Token: handler, UpstreamCallback: handler, Discovery: handler, JWKS: handler, ProtectedResource: handler, VMCP: handler, Callback: handler}
 	issuer := newIdentityFixture(t)
-	srv, err := newBrokerHost(t.Context(), hostConfig{Service: &countingService{}, WorkloadJWT: productionOIDC(issuer, time.Minute), Handlers: bundle, CallbackPath: "/complete"})
+	srv, err := newBrokerHost(t.Context(), hostConfig{SessionAPI: &countingService{}, WorkloadJWT: productionOIDC(issuer, time.Minute), Handlers: bundle, CallbackPath: "/complete"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.close(context.Background()) })
 	for _, path := range []string{"/v1/mcp/broker/oauth/authorize", "/v1/mcp/broker/oauth/token", "/v1/mcp/broker/oauth/callback", "/v1/mcp/broker/.well-known/openid-configuration", "/v1/mcp/broker/.well-known/jwks.json", "/v1/mcp/broker/.well-known/oauth-protected-resource", "/v1/mcp/broker/mcp", "/complete?state=opaque&code=code"} {
-		recorder := httptest.NewRecorder()
-		srv.httpHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-		if recorder.Code != http.StatusNoContent {
-			t.Fatalf("route %s status=%d", path, recorder.Code)
+		w := httptest.NewRecorder()
+		srv.httpHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("route %s: %d", path, w.Code)
 		}
 	}
-	if callbackCalls.Load() != 8 {
-		t.Fatalf("mounted routes called %d times, want 8", callbackCalls.Load())
+	if calls.Load() != 8 {
+		t.Fatal("fixed routes not mounted")
 	}
-
 	catalogue, err := mcpbroker.Compile(mcpauthority.BrokerConfig{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -638,16 +403,15 @@ func TestInvariant_initial_broker_callback_cannot_supply_authority(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close() })
-	response := httptest.NewRecorder()
-	runtime.CallbackHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/complete?state=opaque&code=code&session_id=attacker&owner=attacker&backend=evil&route=evil&principal=admin", nil))
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("authority-bearing callback status = %d, want 400", response.Code)
+	w := httptest.NewRecorder()
+	runtime.CallbackHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/complete?state=opaque&code=code&session_id=attacker&owner=attacker&backend=evil&route=evil&principal=admin", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("authority-bearing callback: %d", w.Code)
 	}
-
-	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto).String())
-	for _, forbidden := range []string{"principal", "callback_state", "backend", "route"} {
+	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_session_proto).String())
+	for _, forbidden := range []string{"principal", "callback_state", "backend", "route", "custody", "broker_incarnation", "handle"} {
 		if strings.Contains(wire, forbidden) {
-			t.Fatalf("client protocol contains authority selector %q", forbidden)
+			t.Fatalf("wire contains internal selector %q", forbidden)
 		}
 	}
 }
@@ -657,30 +421,28 @@ func TestInitialProductionMCPBroker_Scenario2_JWKSFailureIsBounded(t *testing.T)
 	registerFixtureKey(issuer)
 	client, _, _ := startAuthenticatedBroker(t, &countingService{}, productionOIDC(issuer, 20*time.Millisecond), port.NopDiagnostics{}, nil)
 	token := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
-	if _, err := client.Attach(authContext(token), &brokerv1.AttachRequest{SessionId: "first"}); err != nil {
-		t.Fatalf("initial auth: %v", err)
+	if _, err := client.OpenSession(authContext(token), &brokerv1.OpenSessionRequest{}); err != nil {
+		t.Fatal(err)
 	}
 	issuer.available.Store(false)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		_, err := client.Attach(authContext(token), &brokerv1.AttachRequest{SessionId: "later"})
+		_, err := client.OpenSession(authContext(token), &brokerv1.OpenSessionRequest{})
 		if status.Code(err) == codes.Unavailable {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("stale key remained authoritative: %v", err)
+			t.Fatalf("stale keys authoritative: %v", err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if _, err := client.Attach(context.Background(), &brokerv1.AttachRequest{SessionId: "anonymous"}); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("outage downgraded to anonymous access: %v", err)
+	if _, err := client.OpenSession(t.Context(), &brokerv1.OpenSessionRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("anonymous outage: %v", err)
 	}
-	cfg := productionOIDC(issuer, maxJWKSStaleness+time.Second)
-	if _, err := newBrokerHost(t.Context(), hostConfig{Service: &countingService{}, WorkloadJWT: cfg}); err == nil {
-		t.Fatal("excessive JWKS staleness was accepted")
+	if _, err := newBrokerHost(t.Context(), hostConfig{SessionAPI: &countingService{}, WorkloadJWT: productionOIDC(issuer, maxJWKSStaleness+time.Second)}); err == nil {
+		t.Fatal("excessive staleness accepted")
 	}
 }
-
 func rootsFromPEM(t *testing.T, value []byte) *x509.CertPool {
 	t.Helper()
 	pool := x509.NewCertPool()

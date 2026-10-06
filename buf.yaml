@@ -9,6 +9,18 @@ deps:
 lint:
   use:
     - STANDARD
+  # Preserve the session contract's shared outcomes and nested enums.
+  ignore_only:
+    RPC_REQUEST_STANDARD_NAME:
+      - contracts/proto/mecatl/broker/v1/session.proto
+    RPC_RESPONSE_STANDARD_NAME:
+      - contracts/proto/mecatl/broker/v1/session.proto
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - contracts/proto/mecatl/broker/v1/session.proto
+    ENUM_VALUE_PREFIX:
+      - contracts/proto/mecatl/broker/v1/session.proto
+    ENUM_ZERO_VALUE_SUFFIX:
+      - contracts/proto/mecatl/broker/v1/session.proto
 breaking:
   use:
     - FILE

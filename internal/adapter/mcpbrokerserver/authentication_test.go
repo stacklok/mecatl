@@ -60,7 +60,7 @@ func TestWorkloadJWTVerifierKubernetesBootstrap(t *testing.T) {
 
 func TestBrokerHostUsesCompleteVerifierForReadinessAndClose(t *testing.T) {
 	verifier := &completeVerifierFake{}
-	host, err := newBrokerHost(t.Context(), hostConfig{Service: &countingService{}, Verifier: verifier})
+	host, err := newBrokerHost(t.Context(), hostConfig{SessionAPI: &countingService{}, Verifier: verifier})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,20 +81,19 @@ func TestBrokerHostUsesCompleteVerifierForReadinessAndClose(t *testing.T) {
 
 func TestOperationNameUsesGeneratedFullMethodNames(t *testing.T) {
 	for method, want := range map[string]string{
-		brokerv1.BrokerService_Attach_FullMethodName:                     "attach",
-		brokerv1.BrokerService_Commit_FullMethodName:                     "commit",
-		brokerv1.BrokerService_Abort_FullMethodName:                      "abort",
-		brokerv1.BrokerService_Close_FullMethodName:                      "close",
-		brokerv1.BrokerService_Delete_FullMethodName:                     "delete",
-		brokerv1.BrokerService_Execute_FullMethodName:                    "execute",
-		brokerv1.BrokerService_RequestAuthorization_FullMethodName:       "request_authorization",
-		brokerv1.BrokerService_AbortAuthorization_FullMethodName:         "abort_authorization",
-		brokerv1.BrokerService_PresentAuthorization_FullMethodName:       "present_authorization",
-		brokerv1.BrokerService_AuthorizationStatus_FullMethodName:        "authorization_status",
-		brokerv1.BrokerService_CancelAuthorization_FullMethodName:        "cancel_authorization",
-		brokerv1.BrokerService_BeginWorkspaceEnrollment_FullMethodName:   "begin_workspace_enrollment",
-		brokerv1.BrokerService_ObserveWorkspaceEnrollment_FullMethodName: "observe_workspace_enrollment",
-		brokerv1.BrokerService_CancelWorkspaceEnrollment_FullMethodName:  "cancel_workspace_enrollment",
+		brokerv1.SessionService_OpenSession_FullMethodName:          "open_session",
+		brokerv1.SessionService_InvokeTool_FullMethodName:           "invoke_tool",
+		brokerv1.SessionService_CheckAuthorization_FullMethodName:   "check_authorization",
+		brokerv1.SessionService_BeginAuthorization_FullMethodName:   "begin_authorization",
+		brokerv1.SessionService_ObserveAuthorization_FullMethodName: "observe_authorization",
+		brokerv1.SessionService_CancelAuthorization_FullMethodName:  "cancel_authorization",
+		brokerv1.SessionService_ResumeTool_FullMethodName:           "resume_tool",
+		brokerv1.SessionService_BeginEnrollment_FullMethodName:      "begin_enrollment",
+		brokerv1.SessionService_ObserveEnrollment_FullMethodName:    "observe_enrollment",
+		brokerv1.SessionService_CancelEnrollment_FullMethodName:     "cancel_enrollment",
+		brokerv1.SessionService_DisconnectTools_FullMethodName:      "disconnect_tools",
+		brokerv1.SessionService_DeleteSession_FullMethodName:        "delete_session",
+		brokerv1.SessionService_InspectConnectors_FullMethodName:    "inspect_connectors",
 	} {
 		if got := operationName(method); got != want {
 			t.Errorf("operationName(%q) = %q, want %q", method, got, want)

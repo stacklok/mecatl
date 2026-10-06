@@ -154,8 +154,14 @@ mounted
 {{- if and (hasKey $env "name") (eq $env.name "MECATL_DRIVER_AUTH_TOKEN") -}}{{ fail "extraEnv name \"MECATL_DRIVER_AUTH_TOKEN\" collides with the learning store token environment variable owned by the chart" }}{{- end -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.brokerSelected" -}}
+{{- if or (eq .Values.mcp.mode "broker") .Values.mcp.servers .Values.mcp.broker.callbackURL -}}true{{- end -}}
+{{- end -}}
+
 {{- define "mecak8s.validateBroker" -}}
 {{- $b := .Values.broker -}}
+{{- if ne $b.sessionAPI.mode "OWNERLESS" }}{{ fail "broker.sessionAPI.mode must be OWNERLESS" }}{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]{1,128}$" $b.sessionAPI.deployment) }}{{ fail "broker.sessionAPI.deployment is required and must be a bounded deployment identifier" }}{{- end -}}
 {{- if and $b.image.digest $b.image.tag -}}{{ fail "set at most one of broker.image.digest or broker.image.tag" }}{{- end -}}
 {{- if and $b.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" $b.image.digest)) -}}{{ fail "broker.image.digest must be a lowercase sha256 digest" }}{{- end -}}
 {{- $_ := required "broker.tls.secretName is required (including idle broker)" $b.tls.secretName -}}
@@ -188,8 +194,8 @@ app.kubernetes.io/component: credential-redis
 {{- $cs := .Values.broker.credentialStore -}}
 {{- $oauth := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
 {{- $activated := or $cs.managedRedis.enabled (ne $cs.redis.address "") (ne $cs.redis.credentialsSecret "") (ne $cs.redis.caSecret "") (ne $cs.encryption.secretName "") (ne $cs.encryption.activeID "") (gt (len $cs.encryption.keys) 0) (ne $cs.managedRedis.tlsSecret "") (ne $cs.managedRedis.aclSecret "") -}}
-{{- if and (not $oauth) $activated }}{{ fail "broker.credentialStore requires at least one OAuth MCP server" }}{{- end -}}
-{{- if $oauth -}}
+{{- if and (not (include "mecak8s.brokerSelected" .)) $activated }}{{ fail "broker.credentialStore requires broker selection" }}{{- end -}}
+{{- if include "mecak8s.brokerSelected" . -}}
 {{- if $cs.managedRedis.enabled -}}
 {{- if or (ne $cs.redis.address "") (ne $cs.redis.caSecret "") }}{{ fail "broker.credentialStore.managedRedis.enabled derives the address and CA; leave redis.address and redis.caSecret empty" }}{{- end -}}
 {{- $_ := required "broker.credentialStore.managedRedis.tlsSecret is required for managed Redis" $cs.managedRedis.tlsSecret -}}
@@ -200,6 +206,7 @@ app.kubernetes.io/component: credential-redis
 {{- if or (regexMatch "[/@?#\\s]" $addr) (not (regexMatch "^(\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9.-]+):[0-9]{1,5}$" $addr)) }}{{ fail "broker.credentialStore.redis.address must be a bare host:port" }}{{- end -}}
 {{- end -}}
 {{- $_ := required "broker.credentialStore.redis.credentialsSecret is required with OAuth MCP servers" $cs.redis.credentialsSecret -}}
+{{- if $oauth -}}
 {{- $_ := required "broker.credentialStore.encryption.secretName is required with OAuth MCP servers" $cs.encryption.secretName -}}
 {{- $_ := required "broker.credentialStore.encryption.activeID is required with OAuth MCP servers" $cs.encryption.activeID -}}
 {{- if eq (len $cs.encryption.keys) 0 }}{{ fail "broker.credentialStore.encryption.keys must list at least one KEK" }}{{- end -}}
@@ -210,6 +217,7 @@ app.kubernetes.io/component: credential-redis
 {{- if eq .id $cs.encryption.activeID }}{{- $active = add1 $active }}{{- end -}}
 {{- end -}}
 {{- if ne $active 1 }}{{ fail "broker.credentialStore.encryption.activeID must match exactly one key" }}{{- end -}}
+{{- else if or $cs.encryption.secretName $cs.encryption.activeID $cs.encryption.keys }}{{ fail "anonymous session metadata does not use credential encryption" }}{{- end -}}
 {{- $ms := dict -}}
 {{- range $name, $value := dict "dialTimeout" $cs.redis.dialTimeout "operationTimeout" $cs.redis.operationTimeout "healthTimeout" $cs.redis.healthTimeout -}}
 {{- $n := int64 (regexReplaceAll "(ms|s)$" ($value | toString) "") -}}
@@ -227,7 +235,9 @@ app.kubernetes.io/component: credential-redis
 {{- if $cs.redis.usernameKey }}{{- $_ := set $redis "username_file" "/var/run/mecabroker/credential-store/redis/username" }}{{- end -}}
 {{- if or $cs.managedRedis.enabled $cs.redis.caSecret }}{{- $_ := set $redis "ca_file" "/var/run/mecabroker/credential-store/redis/ca.pem" }}{{- end -}}
 {{- $keys := list -}}{{- range $cs.encryption.keys }}{{- $keys = append $keys (dict "id" .id "file" (printf "/var/run/mecabroker/credential-store/encryption/%s" .id)) }}{{- end -}}
-{{- dict "redis" $redis "encryption" (dict "active_id" $cs.encryption.activeID "keys" $keys) | toJson -}}
+{{- $storage := dict "redis" $redis -}}
+{{- if gt (int (include "mecak8s.brokerOAuthCount" .)) 0 }}{{- $_ := set $storage "encryption" (dict "active_id" $cs.encryption.activeID "keys" $keys) }}{{- end -}}
+{{- $storage | toJson -}}
 {{- end -}}
 
 {{- define "mecak8s.brokerConfig" -}}
@@ -247,13 +257,14 @@ app.kubernetes.io/component: credential-redis
 {{- $profile := dict "name" $server.name "url" $server.url "auth" "oauth" "oauth" $oauth -}}
 {{- if $server.auth.oauth.tools }}{{- $tools := list }}{{- range $server.auth.oauth.tools }}{{- $tools = append $tools (dict "name" .name "description" .description "schema" .inputSchema "read_only" (default false .readOnly)) }}{{- end }}{{- $_ := set $profile "tools" $tools }}{{- end -}}
 {{- $profiles = append $profiles $profile -}}
-{{- else if and $.Values.mcp.broker.callbackURL (eq $server.auth.mode "none") -}}
+{{- else if eq $server.auth.mode "none" -}}
 {{- $profiles = append $profiles (dict "name" $server.name "url" $server.url "auth" "none") -}}
 {{- end -}}
 {{- end -}}
 {{- $workload := dict "audience" .Values.broker.workloadJWT.audience "subject" (printf "system:serviceaccount:%s:%s" .Release.Namespace (include "mecak8s.fullname" .)) "trust_bundle_file" "/var/run/mecabroker/workload-jwt/ca.pem" "max_jwks_staleness" "900s" "kubernetes_bootstrap" (dict "discovery_url" "https://kubernetes.default.svc/.well-known/openid-configuration" "jwks_uri" "https://kubernetes.default.svc/openid/v1/jwks" "token_file" "/var/run/mecabroker/workload-jwt/token") -}}
-{{- $config := dict "api_version" "mecabroker.mecatl.dev/v1" "listener" (dict "public_address" "0.0.0.0:8443" "tls_cert_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.certKey) "tls_key_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.keyKey)) "workload_jwt" $workload "callback_url" .Values.mcp.broker.callbackURL "profiles" $profiles "drain" (dict "propagation_delay" "2s" "timeout" "55s" "listener_shutdown_timeout" "5s") "transport" (dict "rpc_deadline" "10s" "execute_deadline" "120s" "handle_idle_timeout" "300s" "sweep_interval" "30s" "cleanup_timeout" "10s" "max_handles" 128 "max_owners" 128 "max_receipts" 4096 "max_receipt_bytes" 8388608 "max_pending_controls" 1024 "max_active_executes" 64) "runtime" (dict "max_logical_sessions" 1024 "logical_retention" "86400s" "max_pending_auth_states" 1024) -}}
-{{- if gt (int (include "mecak8s.brokerOAuthCount" .)) 0 }}{{- $_ := set $config "protected_storage" (include "mecak8s.brokerProtectedStorage" . | fromJson) }}{{- end -}}
+{{- $config := dict "api_version" "mecabroker.mecatl.dev/v1" "listener" (dict "public_address" "0.0.0.0:8443" "tls_cert_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.certKey) "tls_key_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.keyKey)) "workload_jwt" $workload "callback_url" .Values.mcp.broker.callbackURL "profiles" $profiles "drain" (dict "propagation_delay" "2s" "timeout" "55s" "listener_shutdown_timeout" "5s") "transport" (dict "rpc_deadline" "10s" "execute_deadline" "120s") "runtime" (dict "max_logical_sessions" 1024 "logical_retention" "86400s" "sweep_interval" "30s" "max_pending_auth_states" 1024) -}}
+{{- $_ := set $config "session_api" (dict "mode" .Values.broker.sessionAPI.mode "deployment" .Values.broker.sessionAPI.deployment) -}}
+{{- $_ := set $config "protected_storage" (include "mecak8s.brokerProtectedStorage" . | fromJson) -}}
 {{- $config | toPrettyJson -}}
 {{- end -}}
 
@@ -276,6 +287,7 @@ app.kubernetes.io/component: credential-redis
 
 {{/* Validate canonical MCP input before routing OAuth entries through the singleton. */}}
 {{- define "mecak8s.validateMCP" -}}
+{{- if and (eq .Values.mcp.mode "global") (or .Values.mcp.servers .Values.mcp.broker.callbackURL) }}{{ fail "mcp.servers and mcp.broker.callbackURL are broker-only chart inputs; use host direct configuration for global mode" }}{{- end -}}
 {{- $seen := dict -}}
 {{- $ownedEnv := dict -}}
 {{- $oauthCount := 0 -}}
@@ -287,7 +299,7 @@ app.kubernetes.io/component: credential-redis
 {{- if eq $server.auth.mode "staticBearer" }}{{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" (upper $server.name)) true }}{{- $staticCount = add1 $staticCount }}{{- end -}}
 {{- if eq $server.auth.mode "oauth" }}{{- $oauthCount = add1 $oauthCount }}{{- if $server.insecureHTTP }}{{ fail (printf "mcp.servers[%s].insecureHTTP is invalid for oauth" $server.name) }}{{- end }}{{- range $scope := $server.auth.oauth.scopes }}{{- if or (eq (trim $scope) "") (regexMatch "[\x00-\x1f\x7f]" $scope) }}{{ fail (printf "mcp.servers[%s].auth.oauth.scopes must be non-blank and contain no control characters" $server.name) }}{{- end }}{{- end }}{{- end -}}
 {{- end -}}
-{{- if and (gt $oauthCount 0) (gt $staticCount 0) }}{{ fail "mcp.servers staticBearer is unsupported with broker OAuth" }}{{- end -}}
+{{- if gt $staticCount 0 }}{{ fail "mcp.servers staticBearer is unsupported in broker mode; use host direct configuration" }}{{- end -}}
 {{- if and (gt $oauthCount 0) (not .Values.oidc.enabled) }}{{ fail "mcp OAuth requires oidc.enabled=true for verified broker-control caller identity" }}{{- end -}}
 {{- if and (gt $oauthCount 0) (eq (trim .Values.mcp.broker.callbackURL) "") }}{{ fail "mcp.broker.callbackURL is required with an OAuth MCP server" }}{{- end -}}
 {{- if and (ne (trim .Values.mcp.broker.callbackURL) "") (eq $oauthCount 0) }}{{ fail "mcp.broker.callbackURL requires at least one OAuth MCP server" }}{{- end -}}
@@ -297,5 +309,5 @@ app.kubernetes.io/component: credential-redis
 {{/* Agent only selects remote authority; all routes and OAuth material belong to the broker. */}}
 {{- define "mecak8s.mcpOAuthSettings" -}}
 mcp:
-  mode: {{ if .Values.mcp.broker.callbackURL }}broker{{ else }}global{{ end }}
+  mode: {{ if include "mecak8s.brokerSelected" . }}broker{{ else }}global{{ end }}
 {{- end -}}

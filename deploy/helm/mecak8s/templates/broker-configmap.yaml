@@ -1,3 +1,6 @@
+{{- if include "mecak8s.brokerSelected" . }}
+{{- include "mecak8s.validateBroker" . -}}
+{{- include "mecak8s.validateBrokerCredentialStore" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,3 +9,4 @@ metadata:
 data:
   broker.json: |
 {{ include "mecak8s.brokerConfig" . | indent 4 }}
+{{- end }}

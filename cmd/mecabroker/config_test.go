@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
+
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -76,14 +78,14 @@ func TestManagedMCPRenderedBrokerConfigAdmitsStrictParser(t *testing.T) {
 }
 
 func validBrokerConfig() fileConfig {
-	cfg := fileConfig{APIVersion: brokerAPIVersion, CallbackURL: "https://broker.example/callback"}
+	cfg := fileConfig{APIVersion: brokerAPIVersion, CallbackURL: "https://broker.example/callback", SessionAPI: &mcpbrokerserver.SessionAPIConfig{Mode: "OWNERLESS", Deployment: "offline-a"}, ProtectedStorage: &fileProtectedStorage{Redis: fileProtectedRedis{Address: "redis.example:6379", PasswordFile: "fixture-password"}}}
 	cfg.Listener.PublicAddress, cfg.Listener.TLSCertFile, cfg.Listener.TLSKeyFile = ":8443", "cert", "key"
 	cfg.WorkloadJWT.Issuer, cfg.WorkloadJWT.JWKSURI, cfg.WorkloadJWT.Audience, cfg.WorkloadJWT.Subject, cfg.WorkloadJWT.TrustBundleFile = "https://issuer.example", "https://issuer.example/jwks", "audience", "subject", "ca.pem"
 	cfg.WorkloadJWT.MaxJWKSStaleness = duration(time.Minute)
 	cfg.Drain.PropagationDelay, cfg.Drain.Timeout, cfg.Drain.ListenerShutdownTimeout = duration(time.Second), duration(time.Second), duration(time.Second)
-	cfg.Transport.RPCDeadline, cfg.Transport.ExecuteDeadline, cfg.Transport.HandleIdleTimeout, cfg.Transport.SweepInterval, cfg.Transport.CleanupTimeout = duration(time.Second), duration(time.Second), duration(time.Second), duration(time.Second), duration(time.Second)
+	cfg.Transport.RPCDeadline, cfg.Transport.ExecuteDeadline = duration(time.Second), duration(time.Second)
 	cfg.Runtime.LogicalRetention = duration(time.Second)
-	cfg.Transport.MaxHandles, cfg.Transport.MaxOwners, cfg.Transport.MaxReceipts, cfg.Transport.MaxReceiptBytes, cfg.Transport.MaxPendingControls, cfg.Transport.MaxActiveExecutes, cfg.Runtime.MaxLogicalSessions, cfg.Runtime.MaxPendingAuthStates = 1, 1, 1, 1, 1, 1, 1, 1
+	cfg.Runtime.MaxLogicalSessions, cfg.Runtime.MaxPendingAuthStates = 1, 1
 	return cfg
 }
 

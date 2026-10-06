@@ -1,6 +1,3 @@
-{{- $oauth := false -}}
-{{- range (default .Values.mcp.servers (dig "mecatl" "mcp" "servers" nil (default dict .Values.global))) -}}{{- if eq .auth.mode "oauth" -}}{{- $oauth = true -}}{{- end -}}{{- end -}}
-{{- if or $oauth (not (default .Values.mcp.servers (dig "mecatl" "mcp" "servers" nil (default dict .Values.global)))) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,4 +6,3 @@ metadata:
 data:
   settings.yaml: |-
 {{ include "mecak8s.mcpOAuthSettings" . | indent 4 }}
-{{- end }}

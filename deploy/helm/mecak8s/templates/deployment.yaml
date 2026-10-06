@@ -4,8 +4,7 @@
 {{- include "mecak8s.validateTLS" . -}}
 {{- include "mecak8s.validateLearningStore" . -}}
 {{- include "mecak8s.validateProviderSecurity" . -}}
-{{- $mcpOAuth := false -}}
-{{- range .Values.mcp.servers }}{{- if eq .auth.mode "oauth" }}{{- $mcpOAuth = true }}{{- end }}{{- end -}}
+{{- $mcpOAuth := include "mecak8s.brokerSelected" . -}}
 {{- if $mcpOAuth }}{{- include "mecak8s.validateBroker" . }}{{- end -}}
 {{- $learningStoreEnabled := ne .Values.learning.store.endpoint "" -}}
 {{- $learningStoreTokenConfigured := and .Values.learning.store.tokenSecret .Values.learning.store.tokenKey -}}

@@ -136,52 +136,55 @@ func (h *brokerHost) authenticate(ctx context.Context, req any, info *grpc.Unary
 		h.record(ctx, operation, "unauthenticated", req)
 		return nil, status.Error(codes.Unauthenticated, "invalid workload credential")
 	}
+	if principal == nil {
+		return nil, status.Error(codes.Unauthenticated, "invalid workload credential")
+	}
 	if _, allowed := h.allowedSubjects[principal.Subject]; !allowed {
 		h.record(ctx, operation, "unauthorized", req)
 		return nil, status.Error(codes.PermissionDenied, "workload is not authorized")
 	}
 	authenticatedCtx := session.WithPrincipal(ctx, principal)
+	if !principal.IdentityWellFramed() {
+		return nil, status.Error(codes.Unauthenticated, "invalid workload credential")
+	}
+	md, _ := metadata.FromIncomingContext(ctx)
+	for key := range md {
+		if strings.Contains(key, "owner") {
+			return nil, status.Error(codes.InvalidArgument, "owner assertion metadata forbidden in OWNERLESS mode")
+		}
+	}
+	authenticatedCtx = context.WithValue(authenticatedCtx, verifiedSessionWorkloadKey{}, principal)
 	h.record(authenticatedCtx, operation, "allowed", req)
 	return handler(authenticatedCtx, req)
 }
 func operationName(method string) string {
 	switch method {
-	case brokerv1.BrokerService_Attach_FullMethodName:
-		return "attach"
-	case brokerv1.BrokerService_Commit_FullMethodName:
-		return "commit"
-	case brokerv1.BrokerService_Abort_FullMethodName:
-		return "abort"
-	case brokerv1.BrokerService_Close_FullMethodName:
-		return "close"
-	case brokerv1.BrokerService_Delete_FullMethodName:
-		return "delete"
-	case brokerv1.BrokerService_Execute_FullMethodName:
-		return "execute"
-	case brokerv1.BrokerService_RequestAuthorization_FullMethodName:
-		return "request_authorization"
-	case brokerv1.BrokerService_AbortAuthorization_FullMethodName:
-		return "abort_authorization"
-	case brokerv1.BrokerService_PresentAuthorization_FullMethodName:
-		return "present_authorization"
-	case brokerv1.BrokerService_AuthorizationStatus_FullMethodName:
-		return "authorization_status"
-	case brokerv1.BrokerService_CancelAuthorization_FullMethodName:
+	case brokerv1.SessionService_OpenSession_FullMethodName:
+		return "open_session"
+	case brokerv1.SessionService_InvokeTool_FullMethodName:
+		return "invoke_tool"
+	case brokerv1.SessionService_CheckAuthorization_FullMethodName:
+		return "check_authorization"
+	case brokerv1.SessionService_BeginAuthorization_FullMethodName:
+		return "begin_authorization"
+	case brokerv1.SessionService_ObserveAuthorization_FullMethodName:
+		return "observe_authorization"
+	case brokerv1.SessionService_CancelAuthorization_FullMethodName:
 		return "cancel_authorization"
-	case brokerv1.BrokerService_BeginWorkspaceEnrollment_FullMethodName:
-		return "begin_workspace_enrollment"
-	case brokerv1.BrokerService_ObserveWorkspaceEnrollment_FullMethodName:
-		return "observe_workspace_enrollment"
-	case brokerv1.BrokerService_CancelWorkspaceEnrollment_FullMethodName:
-		return "cancel_workspace_enrollment"
-	case brokerv1.BrokerService_StageCredentialCustody_FullMethodName:
-		return "stage_credential_custody"
-	case brokerv1.BrokerService_CommitCredentialCustody_FullMethodName:
-		return "commit_credential_custody"
-	case brokerv1.BrokerService_RecoverCredentialAttachment_FullMethodName:
-		return "recover_credential_attachment"
-	case brokerv1.BrokerService_TombstoneCredentialCustody_FullMethodName:
-		return "tombstone_credential_custody"
+	case brokerv1.SessionService_ResumeTool_FullMethodName:
+		return "resume_tool"
+	case brokerv1.SessionService_BeginEnrollment_FullMethodName:
+		return "begin_enrollment"
+	case brokerv1.SessionService_ObserveEnrollment_FullMethodName:
+		return "observe_enrollment"
+	case brokerv1.SessionService_CancelEnrollment_FullMethodName:
+		return "cancel_enrollment"
+	case brokerv1.SessionService_DisconnectTools_FullMethodName:
+		return "disconnect_tools"
+	case brokerv1.SessionService_DeleteSession_FullMethodName:
+		return "delete_session"
+	case brokerv1.SessionService_InspectConnectors_FullMethodName:
+		return "inspect_connectors"
 	default:
 		return "unknown"
 	}
@@ -191,13 +194,6 @@ func (h *brokerHost) record(ctx context.Context, operation, outcome string, req 
 	fields := []any{"operation", operation, "outcome", outcome}
 	if principal := session.PrincipalFromContext(ctx); principal != nil {
 		fields = append(fields, "principal", boundedDiagnosticPrincipal(principal.Subject))
-	}
-	if request, ok := req.(interface{ GetSessionId() string }); ok && request.GetSessionId() != "" {
-		fields = append(fields, "session", boundedDiagnosticSession(request.GetSessionId()))
-	} else if request, ok := req.(interface{ GetHandle() string }); ok {
-		if id, found := h.rpc.LogicalSessionForHandle(request.GetHandle()); found {
-			fields = append(fields, "session", boundedDiagnosticSession(string(id)))
-		}
 	}
 	if outcome == "allowed" {
 		level = port.LevelDebug

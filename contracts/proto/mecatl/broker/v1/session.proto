@@ -1,0 +1,199 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+syntax = "proto3";
+package mecatl.broker.v1;
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
+service SessionService {
+  rpc InspectConnectors(InspectConnectorsRequest) returns (InspectConnectorsResponse);
+  rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
+  rpc InvokeTool(InvokeToolRequest) returns (InvocationOutcome);
+  rpc CheckAuthorization(CheckAuthorizationRequest) returns (CheckAuthorizationResponse);
+  rpc BeginAuthorization(BeginAuthorizationRequest) returns (BrowserPrompt);
+  rpc ObserveAuthorization(ObserveAuthorizationRequest) returns (FlowStatus);
+  rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelOutcome);
+  rpc ResumeTool(ResumeToolRequest) returns (InvocationOutcome);
+  rpc BeginEnrollment(BeginEnrollmentRequest) returns (BeginEnrollmentResponse);
+  rpc ObserveEnrollment(ObserveEnrollmentRequest) returns (FlowStatus);
+  rpc CancelEnrollment(CancelEnrollmentRequest) returns (CancelOutcome);
+  rpc DisconnectTools(DisconnectToolsRequest) returns (DisconnectOutcome);
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
+}
+
+message InspectConnectorsRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+message InspectConnectorsResponse {
+  string availability = 1;
+  string enrollment_state = 2;
+  repeated ConnectorStatus connectors = 3 [(buf.validate.field).repeated.max_items = 256];
+  uint32 total_connectors = 4;
+  bool truncated = 5;
+}
+message ConnectorStatus {
+  string name = 1 [(buf.validate.field).string.max_len = 128];
+  string catalogue_state = 2;
+  uint32 tool_count = 3;
+}
+
+message OpenSessionRequest { optional string saved_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message SessionSnapshot {
+  string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true];
+  Catalogue catalogue = 3 [(buf.validate.field).required = true];
+}
+message Catalogue {
+  string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  repeated ToolDescriptor tools = 2 [
+    (buf.validate.field).repeated.max_items = 1024,
+    (buf.validate.field).cel = {
+      id: "catalogue.descriptor_bounds",
+      message: "tool names must be 1..256 bytes and schemas 1..262144 bytes",
+      expression: "this.all(t, size(bytes(t.name)) >= 1 && size(bytes(t.name)) <= 256 && size(t.schema) >= 1 && size(t.schema) <= 262144)"
+    }
+  ];
+}
+message Call { string id = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}]; string name = 2 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}]; bytes arguments = 3 [(buf.validate.field).bytes = {min_len: 1, max_len: 262144}]; }
+message InvokeToolRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; Call call = 3 [(buf.validate.field).required = true]; }
+message CheckAuthorizationRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  oneof target { option (buf.validate.oneof).required = true; Call call = 3; string authorization_ref = 4 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+}
+message FlowRef { string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true]; }
+message InvocationOutcome {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    ToolResult completed = 1 [(buf.validate.field).cel = {
+      id: "invocation.call_id_bounds",
+      message: "completed call ID must be 1..256 bytes",
+      expression: "size(bytes(this.call_id)) >= 1 && size(bytes(this.call_id)) <= 256"
+    }];
+    string authorization_required = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+    NonDispatch not_dispatched = 3;
+    google.protobuf.Empty outcome_unknown = 4;
+  }
+}
+message CheckAuthorizationResponse {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    google.protobuf.Empty ready = 1;
+    FlowRef authorization_required = 2;
+    NonDispatch not_dispatched = 3;
+  }
+}
+message BeginAuthorizationRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message ObserveAuthorizationRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message CancelAuthorizationRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message BrowserPrompt { string url = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 8192, uri: true, pattern: "^https://[^/@]+([/?#]|$)"}]; google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true]; }
+message FlowStatus {
+  oneof status {
+    option (buf.validate.oneof).required = true;
+    google.protobuf.Empty pending = 1;
+    Catalogue completed = 2;
+    google.protobuf.Empty cancelled = 3;
+    google.protobuf.Empty expired = 4;
+    FailureReason failed = 5 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+  }
+}
+message CancelOutcome {
+  enum Value { UNSPECIFIED = 0; CANCELLED = 1; ALREADY_RESOLVED = 2; }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}
+message ResumeToolRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string adopted_catalogue = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message BeginEnrollmentRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message EnrollmentStarted { string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; BrowserPrompt prompt = 2 [(buf.validate.field).required = true]; }
+message BeginEnrollmentResponse {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    EnrollmentStarted started = 1;
+    google.protobuf.Empty already_connected = 2;
+    Catalogue completed = 3;
+  }
+}
+message ObserveEnrollmentRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message CancelEnrollmentRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message DisconnectToolsRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string expected_catalogue = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message DisconnectOutcome {
+  enum Value { UNSPECIFIED = 0; DISCONNECTED = 1; ALREADY_DISCONNECTED = 2; CATALOGUE_CHANGED = 3; }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}
+message DeleteSessionRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message DeleteOutcome {
+  enum Value { UNSPECIFIED = 0; DELETED = 1; ALREADY_ABSENT = 2; }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}
+message NonDispatch { FailureReason reason = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0]; }
+enum FailureReason {
+  FAILURE_REASON_UNSPECIFIED = 0;
+  FAILURE_REASON_CATALOGUE_CHANGED = 1;
+  FAILURE_REASON_AUTHORITY_WITHDRAWN = 2;
+  FAILURE_REASON_CAPACITY = 3;
+  FAILURE_REASON_INTERRUPTED = 4;
+  FAILURE_REASON_AUTHORIZATION_FAILED = 5;
+  FAILURE_REASON_CALL_CHANGED = 6;
+  FAILURE_REASON_EXPIRED = 7;
+}
+
+// ToolDescriptor is a catalogue-frozen remote tool capability advertisement.
+message ToolDescriptor {
+  // Stable advertised tool name used by invocation, not a filesystem path.
+  string name = 1;
+  // Valid UTF-8 model-visible tool description from the broker peer.
+  string description = 2;
+  // UTF-8 JSON-object schema bytes; untrusted descriptor data, never executable content.
+  bytes schema = 3;
+  // Read-only scheduling capability.
+  bool read_only = 4;
+  // Run-local dispatch barrier capability even when read_only.
+  bool dispatch_serial = 5;
+  // Authorization request/abort capability.
+  bool authorization_capable = 6;
+}
+
+// ToolResult is a model-visible tool completion.
+message ToolResult {
+  // Exact opaque requested call identity.
+  string call_id = 1;
+  // Valid UTF-8 model-visible summary; never raw binary.
+  string content = 2;
+  // Whether content and parts represent an error.
+  bool is_error = 3;
+  // Structured text, resource, and binary content blocks.
+  repeated ResultPart parts = 4;
+}
+// ResultPart is one structured tool-result component.
+message ResultPart {
+  // Valid UTF-8 neutral content-block taxonomy.
+  string block_kind = 1;
+  // Valid UTF-8 neutral media-kind taxonomy.
+  string media_kind = 2;
+  // MIME token preserved byte-exact by the neutral layer.
+  string mime_type = 3;
+  // Raw binary, not UTF-8 text; never log or coerce to text.
+  bytes data = 4;
+  // Valid UTF-8 opaque untrusted resource URL/reference, not a local path.
+  string url = 5;
+  // Valid UTF-8 text payload.
+  string text = 6;
+  // Valid UTF-8 resource/display name.
+  string name = 7;
+  // Valid UTF-8 display title.
+  string title = 8;
+  // Valid UTF-8 description.
+  string description = 9;
+  // Declared resource size when applicable.
+  int64 size = 10;
+  // Valid UTF-8 audience labels.
+  repeated string audience = 11;
+  // Relative resource priority when applicable.
+  double priority = 12;
+  // Valid UTF-8 source last-modified presentation value.
+  string last_modified = 13;
+}

@@ -336,7 +336,7 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 		AllowedScopes: allowedScopes, RequestRefreshToken: requestRefresh,
 		Network: mcp.OAuthNetworkPolicy{AdditionalOrigins: append([]string(nil), decl.Network.AdditionalOrigins...), PrivateOrigins: append([]string(nil), decl.Network.PrivateOrigins...), MaxRedirects: decl.Network.MaxRedirects},
 	}
-	if err := loadOAuthClient(profile, decl, opts); err != nil {
+	if err := loadOAuthClient(profile, decl, opts, lookup); err != nil {
 		return nil, err
 	}
 
@@ -422,11 +422,21 @@ func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialP
 	return opts, nil
 }
 
-func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOAuthProfile, opts *mcp.OAuthOptions) error {
+func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOAuthProfile, opts *mcp.OAuthOptions, lookup func(string) (string, bool)) error {
 	if client := decl.Client.Preregistered; client != nil {
-		secret, err := readMCPClientSecretFile(client.SecretFile)
-		if err != nil {
-			return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_file", Ref: client.SecretFile, Kind: ErrMCPProfileSecret, Expected: "a non-empty client secret file", Remedy: "mount the client secret file before starting mecatl"}
+		var secret string
+		if client.SecretEnv != "" {
+			var ok bool
+			secret, ok = lookupMCPEnv(lookup, client.SecretEnv)
+			if !ok || secret == "" {
+				return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_env", Ref: client.SecretEnv, Kind: ErrMCPProfileSecret, Expected: "a non-empty secret in the referenced MECATL_* environment variable", Remedy: "set the referenced environment variable before starting mecatl"}
+			}
+		} else {
+			var err error
+			secret, err = readMCPClientSecretFile(client.SecretFile)
+			if err != nil {
+				return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_file", Ref: client.SecretFile, Kind: ErrMCPProfileSecret, Expected: "a non-empty client secret file", Remedy: "mount the client secret file before starting mecatl"}
+			}
 		}
 		opts.Client.Preregistered = &oauthex.ClientCredentials{ClientID: client.ID, ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: secret}, Issuer: decl.Issuer}
 		return nil

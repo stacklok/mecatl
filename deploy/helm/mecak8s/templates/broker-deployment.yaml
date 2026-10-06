@@ -1,6 +1,8 @@
+{{- if include "mecak8s.brokerSelected" . }}
 {{- include "mecak8s.validateBroker" . -}}
 {{- include "mecak8s.validateBrokerCredentialStore" . -}}
-{{- $credentialStore := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
+{{- $credentialStore := true -}}
+{{- $oauth := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
 {{- $cs := .Values.broker.credentialStore -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -66,7 +68,9 @@ spec:
             - {name: tmp, mountPath: /tmp}
 {{- if $credentialStore }}
             - {name: credential-redis-client, mountPath: /var/run/mecabroker/credential-store/redis, readOnly: true}
+{{- if $oauth }}
             - {name: credential-encryption, mountPath: /var/run/mecabroker/credential-store/encryption, readOnly: true}
+{{- end }}
 {{- end }}
 {{- range $index, $server := .Values.mcp.servers }}
 {{- if and (eq $server.auth.mode "oauth") (eq $server.auth.oauth.client.mode "preregistered") }}
@@ -122,6 +126,7 @@ spec:
                   items:
                     - {key: {{ $cs.redis.caKey | quote }}, path: ca.pem}
 {{- end }}
+{{- if $oauth }}
         # One exact item per KEK id; the broker reads them via os.OpenRoot.
         - name: credential-encryption
           secret:
@@ -132,6 +137,7 @@ spec:
               - {key: {{ .secretKey | quote }}, path: {{ .id | quote }}}
 {{- end }}
 {{- end }}
+{{- end }}
 {{- range $index, $server := .Values.mcp.servers }}
 {{- if and (eq $server.auth.mode "oauth") (eq $server.auth.oauth.client.mode "preregistered") }}
         - name: mcp-oauth-client-secret-{{ $index }}
@@ -140,5 +146,6 @@ spec:
             defaultMode: 0440
             items:
               - {key: {{ $server.auth.oauth.client.preregistered.secretKeyRef.key | quote }}, path: client-secret}
+{{- end }}
 {{- end }}
 {{- end }}

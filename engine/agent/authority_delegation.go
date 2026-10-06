@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
@@ -28,7 +29,14 @@ func deriveDelegatedAuthority(parent session.Authority, candidate governance.Cap
 	if err != nil {
 		return session.Authority{}, fmt.Errorf("agent: delegation authority: %w", err)
 	}
+	scope := []string{}
+	for _, name := range set.Tools {
+		if parent.BrokerToolScope == nil || slices.Contains(*parent.BrokerToolScope, name) {
+			scope = append(scope, name)
+		}
+	}
 	return session.Authority{
+		BrokerToolScope:    &scope,
 		CapabilitySet:      set,
 		Provenance:         "delegated",
 		DefinitionIdentity: parent.DefinitionIdentity,

@@ -127,8 +127,9 @@
     "mcp": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["broker", "servers"],
+      "required": ["mode", "broker", "servers"],
       "properties": {
+        "mode": {"type": "string", "enum": ["", "global", "broker"]},
         "broker": {
           "type": "object",
           "additionalProperties": false,
@@ -250,8 +251,9 @@
     },
     "broker": {
       "type": "object", "additionalProperties": false,
-      "required": ["image", "logging", "tls", "clientCA", "workloadJWT", "resources", "credentialStore"],
+      "required": ["sessionAPI", "image", "logging", "tls", "clientCA", "workloadJWT", "resources", "credentialStore"],
       "properties": {
+        "sessionAPI": {"type": "object", "additionalProperties": false, "required": ["mode", "deployment"], "properties": {"mode": {"type": "string", "enum": ["", "OWNERLESS"]}, "deployment": {"type": "string", "pattern": "^(|[A-Za-z0-9._-]{1,128})$"}}},
         "image": {"type": "object", "additionalProperties": false, "required": ["repository", "digest", "tag", "pullPolicy"], "properties": {"repository": {"type": "string", "minLength": 1}, "digest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}, "tag": {"type": "string"}, "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}}},
         "logging": {"type": "object", "additionalProperties": false, "required": ["level"], "properties": {"level": {"type": "string", "enum": ["debug", "info", "warn", "error"]}}},
         "tls": {"type": "object", "additionalProperties": false, "required": ["secretName", "certKey", "keyKey"], "properties": {"secretName": {"type": "string"}, "certKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "keyKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}}},

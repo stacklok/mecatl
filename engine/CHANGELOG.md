@@ -13,6 +13,20 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Local broker authority contributions** — adds optional
+  `session.Authority.BrokerToolScope`, required `BrokerAccess.IndependentTools`
+  and `BrokerTools`, and `CompleteWorkspaceEnrollmentWithBrokerCatalogue` for
+  atomic non-clobber enrollment. Carried/delegated scopes are finite, including
+  empty; explicit `GrantToolAuthority` can extend them. Added (minor), local
+  approved experiment only.
+
+- **Scratch broker-session host adoption** — adds `session.BrokerSessionRef`,
+  `BrokerCatalogueRef`, `BrokerAccess`, and aggregate methods for durable exact
+  catalogue adoption, withdrawal and non-replay invocation fences. Adds
+  `tool.DurableBrokerInvocation` for save-before-dispatch integration. Native
+  credential custody remains outside this opt-in host state. Added (minor);
+  scratch-only Spike, not a release contract.
+
 - **Live tool-result availability** — adds `session.EvToolResultAvailable` for
   safe display payloads ahead of the canonical `tool.result`. Added (minor).
 
@@ -357,6 +371,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Local broker authority restoration** — remote experimental records without
+  both contribution arrays now fail closed. Catalogue adoption and withdrawal
+  replace only broker contributions; explicit overlapping grants are retained
+  independently. Snapshot/event folding validate the effective union and scope
+  without inferring ownership. Changed (breaking, pre-v1 minor), local experiment
+  only; direct records without broker access retain their existing restoration.
 
 - **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
 

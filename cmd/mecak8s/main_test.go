@@ -22,6 +22,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
@@ -286,7 +287,9 @@ func TestMecak8sDefaultsToNoFS(t *testing.T) {
 	// Disable the k8s session lease: this offline test has no kubeconfig/in-cluster
 	// config, and app.Build builds a lease client when the namespace is set.
 	cfg.sessionLeaseK8sNamespace = ""
-	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	ac.MCPAuthorityDefault = mcpauthority.Global
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}
@@ -316,7 +319,9 @@ func TestMecak8sRejectsUnsupportedFilesystemProfile(t *testing.T) {
 	}
 	// Disable the k8s session lease (no kubeconfig in this offline test).
 	cfg.sessionLeaseK8sNamespace = ""
-	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	ac.MCPAuthorityDefault = mcpauthority.Global
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}
@@ -354,6 +359,7 @@ func TestMecak8sMountedWorkspaceIsServerAssigned(t *testing.T) {
 	// Disable the k8s session lease (no kubeconfig in this offline test).
 	cfg.sessionLeaseK8sNamespace = ""
 	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	ac.MCPAuthorityDefault = mcpauthority.Global
 	if ac.Workspace != mount {
 		t.Fatalf("workspace = %q, want the mount %q", ac.Workspace, mount)
 	}
@@ -400,6 +406,7 @@ func TestMecak8sFixtureRunsNoFS(t *testing.T) {
 	// the container root cannot become the agent workspace by omission).
 	cfg.sessionLeaseK8sNamespace = ""
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	appCfg.MCPAuthorityDefault = mcpauthority.Global
 	if appCfg.Workspace != "" {
 		t.Fatalf("mecak8s app workspace = %q, want empty: the container root must not be an agent workspace", appCfg.Workspace)
 	}
@@ -548,7 +555,7 @@ func TestDrainHTTPRouting(t *testing.T) {
 
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "test-token"})
 	defer auth.Close()
-	normalMux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+	normalMux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true)
 	if err != nil {
 		t.Fatalf("normalHTTPMux: %v", err)
 	}
@@ -634,7 +641,9 @@ func TestServeWiresSeparateDrainListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	ac.MCPAuthorityDefault = mcpauthority.Global
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}
@@ -644,7 +653,7 @@ func TestServeWiresSeparateDrainListener(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {})
 	}()
 
 	waitForHTTPStatus(t, "http://"+cfg.httpAddr+"/drain", http.StatusNotFound)

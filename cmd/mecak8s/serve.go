@@ -19,7 +19,6 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
@@ -42,35 +41,6 @@ func brokerControlVerifiedIdentity(cfg config, tlsCfg *tls.Config) bool {
 // explicitly loopback-only. Mirrors the equivalent guard on the working
 // acc/session-vmcp-authorization branch; this branch's HandlerBundle has no
 // caller-identity concept of its own.
-func validateBrokerControlOwnership(addr string, verifiedIdentity, ownerlessLoopback bool, handlers mcpbroker.HandlerBundle) error {
-	if handlers.Empty() {
-		return nil
-	}
-	if verifiedIdentity || ownerlessLoopback && cliconfig.IsLoopbackAddr(addr) {
-		return nil
-	}
-	return errors.New("broker controls require verified caller identity unless explicitly single-user loopback")
-}
-
-// mountBrokerHandlers registers the broker's fixed HTTP surface on mux. It
-// MUST be called AFTER every other route (health/drain/API) is already
-// registered: HandlerBundle.Mount's own registeredHandlerRouteConflict check
-// rejects a broker route that would shadow an already-registered one, which is
-// this branch's answer to the reserved-path collision review-P16-FOLLOWUPS.md
-// flagged as still needing a real-mux integration proof — calling Mount last
-// on the SAME mux the rest of serve() just built IS that proof, not a second
-// hand-maintained reserved-path list.
-func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, ownerlessLoopback bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
-	if handlers.Empty() {
-		return nil
-	}
-	if err := validateBrokerControlOwnership(addr, verifiedIdentity, ownerlessLoopback, handlers); err != nil {
-		return err
-	}
-	slog.Warn("vMCP broker mode is single-process/single-replica; a live session lease rejects non-holders without routing")
-	return handlers.Mount(mux, callbackPath)
-}
-
 // serve wires the built Service over gRPC + HTTP/SSE with k8s-native
 // operability: a DYNAMIC /readyz (drain-gated + storage-pinged via the SAME
 // store the Service serves traffic through), a drain-only listener (the preStop
@@ -95,7 +65,7 @@ func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, owne
 // non-empty) is mounted in front of the authenticated API, same as mecated —
 // it must stay reachable without credentials, and outside the drain listener
 // since it is discovery metadata, not a lifecycle operation.
-func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) (http.Handler, error) {
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool) (http.Handler, error) {
 	ready := server.ReadyFunc(func() bool {
 		if svc.IsDraining() {
 			return false
@@ -108,12 +78,6 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile serv
 	mux := http.NewServeMux()
 	server.NewHealthHandler(ready).RegisterHealth(mux)
 	mux.Handle("/", server.WithProtectedResourceMetadata(profile, auth.Middleware(server.NewHTTPHandler(svc))))
-	// Broker routes are mounted LAST, after every other route above, so
-	// HandlerBundle.Mount's own route-conflict check is checked against the
-	// real, fully-populated mux — see mountBrokerHandlers' doc comment.
-	if err := mountBrokerHandlers(mux, addr, authed, false, brokerHandlers, brokerCallbackPath); err != nil {
-		return nil, fmt.Errorf("mount MCP broker handlers: %w", err)
-	}
 	return mux, nil
 }
 
@@ -179,11 +143,11 @@ func startMetricsServer(addr string, obs observability, errCh chan<- error) (*ht
 	return metricsSrv, nil
 }
 
-func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
-	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep, brokerHandlers, brokerCallbackPath)
+func serve(ctx context.Context, cfg config, svc *server.Service, obs observability) error {
+	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep)
 }
 
-func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration)) error {
 	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -217,7 +181,7 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
 	// server TLS only authenticates the server.
 	authed := callerAuthenticationConfigured(cfg, tlsCfg)
-	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, brokerHandlers, brokerCallbackPath)
+	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed)
 	if err != nil {
 		return err
 	}

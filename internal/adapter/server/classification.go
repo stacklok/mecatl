@@ -313,6 +313,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ListSessionMcpConnectors":     {KindCallerOwned, "requires enforced ownership and a verified matching session owner before inspecting the exact broker binding"},
 	"ListGuardrailCoverage":        {KindCallerOwned, "authorizes the exact session owner before projecting its assembled authority and checker rules"},
 	"GetGuardrailReviewDetail":     {KindCallerOwned, "resolves only a live registered root/child reference and authorizes the root session owner before transient disclosure"},
+	"DisconnectWorkspaceServices":  {KindCallerOwned, "authorizes the owned idle session under run-entry lock and mutation lease before durable withdrawal"},
 	"ConnectWorkspaceServices":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before beginning or observing its broker enrollment"},
 	"RetryWorkspaceEnrollment":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before replacing the exact enrollment correlation"},
 	"CancelWorkspaceEnrollment":    {KindCallerOwned, "authorizes and locks the owned pre-prompt session before cancelling the exact enrollment correlation"},

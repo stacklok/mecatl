@@ -2024,6 +2024,19 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		ev.Turn = turnIdx
 		r.children.safeEmit(ev)
 	}
+	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
+		ref, catalogue := broker.BrokerInvocationRefs()
+		if err = sess.FenceBrokerInvocation(ref, catalogue, c.ID, e.now()); err == nil {
+			if e.deps.Store == nil {
+				err = errors.New("broker invocation requires durable storage")
+			} else {
+				err = e.deps.Store.Save(ctx, sess)
+			}
+		}
+		if err != nil {
+			return session.NewToolError(c.ID, err.Error()), 0
+		}
+	}
 	switch ct := t.(type) {
 	case childCapableTool:
 		// Child-capable tools may execute in read-batch workers. Keep their returned
@@ -2039,6 +2052,11 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		res, err = ct.ExecuteObserved(ctx, c, env, emit)
 	default:
 		res, err = t.Execute(ctx, c, env)
+	}
+	if err == nil && res.CallID == c.ID {
+		if _, ok := t.(tool.DurableBrokerInvocation); ok {
+			sess.RecordBrokerInvocationResult(c.ID)
+		}
 	}
 	if err != nil {
 		res = session.NewToolError(c.ID, fmt.Sprintf("tool %q failed: %v", c.Name, err))

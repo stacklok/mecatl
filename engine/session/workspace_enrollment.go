@@ -144,6 +144,30 @@ func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment
 	return nil
 }
 
+// CompleteWorkspaceEnrollmentWithBrokerCatalogue settles the exact enrollment
+// and replaces only its broker contribution in one validated mutation.
+func (s *Session) CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending PendingWorkspaceEnrollment, ref BrokerSessionRef, catalogue BrokerCatalogueRef, expires time.Time, names []string) error {
+	if s.pendingWorkspaceEnrollment == nil || s.pendingWorkspaceEnrollment.ID != pending.ID ||
+		s.pendingWorkspaceEnrollment.RequiredServices != pending.RequiredServices ||
+		!s.pendingWorkspaceEnrollment.ExpiresAt.Equal(pending.ExpiresAt) {
+		return fmt.Errorf("session: workspace enrollment %q is not pending", pending.ID)
+	}
+	if s.State != StateIdle || s.Conversation == nil || !s.authorityBound {
+		return fmt.Errorf("%w: workspace enrollment requires an idle bound session", ErrIllegalTransition)
+	}
+	candidate := *s
+	if access, ok := s.BrokerAccess(); ok {
+		access.Withdrawn = false
+		candidate.brokerAccess = &access
+	}
+	if err := candidate.AdoptBrokerCatalogue(ref, catalogue, expires, names); err != nil {
+		return err
+	}
+	s.Authority, s.brokerAccess = candidate.Authority, candidate.brokerAccess
+	s.pendingWorkspaceEnrollment = nil
+	return nil
+}
+
 // CompleteWorkspaceEnrollmentWithBinding atomically installs the fresh broker
 // binding and authority produced by one exact pending enrollment.
 func (s *Session) CompleteWorkspaceEnrollmentWithBinding(pending PendingWorkspaceEnrollment, binding ExternalBinding, exactTools []string) error {

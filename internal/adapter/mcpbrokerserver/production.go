@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
@@ -45,13 +46,16 @@ type ProductionConfig struct {
 	// PublicBounds sets public-listener HTTP limits. An entirely zero value selects
 	// DefaultPublicListenerConfig; a partially specified value must be valid.
 	PublicBounds PublicListenerConfig
-	// Transport configures the broker RPC adapter. An entirely zero value selects its defaults.
-	// A positive RuntimeLimits.LogicalRetention overrides its OwnerRetention so ownership state
-	// outlives each retained logical session.
+	// Transport supplies finite RPC/execution defaults and public-listener headroom.
 	Transport mcpbrokergrpc.Config
-	// RuntimeLimits bound process-owned logical sessions and pending authorization state. Their
-	// zero values select mcpbroker defaults; positive LogicalRetention also sets Transport owner retention.
+	// RuntimeLimits bound process-owned logical sessions and pending authorization state.
+	// Zero values select mcpbroker defaults.
 	RuntimeLimits mcpbroker.Limits
+	// SessionAPI requires an explicit OWNERLESS deployment partition.
+	SessionAPI *SessionAPIConfig
+	// SessionMetadataRedis reuses the native Redis configuration for anonymous-only
+	// sessions, where no credential storage exists. Lifecycle owns this client.
+	SessionMetadataRedis *mcpbroker.ProtectedRedisConfig
 }
 
 // NewProduction constructs the only production broker assembly.
@@ -65,23 +69,62 @@ func NewProduction(ctx context.Context, cfg ProductionConfig) (*Lifecycle, error
 	if err := validateTransport(cfg.PublicAddress, cfg.TLSConfig); err != nil {
 		return nil, err
 	}
+	if err := cfg.SessionAPI.Validate(cfg.ToolHive.Profiles, cfg.ToolHive.ProtectedStorage != nil || cfg.SessionMetadataRedis != nil); err != nil {
+		return nil, err
+	}
+	if r := cfg.SessionMetadataRedis; r != nil {
+		if cfg.SessionAPI == nil || cfg.ToolHive.ProtectedStorage != nil || cfg.ToolHive.AuthRedisClient != nil || cfg.ToolHive.AuthStorage != nil || r.Client == nil || !r.ClientConfig.TLS || r.ClientConfig.AllowPlaintext || r.HealthTimeout <= 0 || r.HealthTimeout > 30*time.Second {
+			return nil, errors.New("session metadata Redis configuration conflicts with native storage")
+		}
+		for _, profile := range cfg.ToolHive.Profiles {
+			if profile.Auth != "none" {
+				return nil, errors.New("session metadata Redis requires anonymous-only profiles")
+			}
+		}
+	}
 	transport := cfg.Transport
 	if transport == (mcpbrokergrpc.Config{}) {
 		transport = mcpbrokergrpc.DefaultConfig()
 	}
-	if cfg.RuntimeLimits.LogicalRetention > 0 {
-		transport.OwnerRetention = cfg.RuntimeLimits.LogicalRetention
-	}
-	broker, err := newBrokerHost(ctx, hostConfig{WorkloadJWT: cfg.WorkloadJWT, Diagnostics: cfg.Diagnostics, Transport: transport, Runtime: func(factoryCtx context.Context) (brokerRuntime, error) {
+	broker, err := newBrokerHost(ctx, hostConfig{WorkloadJWT: cfg.WorkloadJWT, Diagnostics: cfg.Diagnostics, Runtime: func(factoryCtx context.Context) (brokerRuntime, error) {
 		options := append([]mcpbroker.Option(nil), cfg.ToolHiveOptions...)
 		options = append(options, mcpbroker.WithLimits(cfg.RuntimeLimits))
 		toolHiveConfig := cfg.ToolHive
 		toolHiveConfig.Diagnostics = cfg.Diagnostics
+		toolHiveConfig.DeferAnonymousDiscovery = true
 		process, processErr := mcpbroker.NewToolHiveProcess(factoryCtx, toolHiveConfig, options...)
 		if processErr != nil {
 			return brokerRuntime{}, processErr
 		}
-		return brokerRuntime{Service: process, Handlers: process.Handlers, CallbackPath: process.CallbackPath, Close: process.Close}, nil
+		runtime := brokerRuntime{Service: process, Handlers: process.Handlers, CallbackPath: process.CallbackPath, Close: process.Close}
+		var metadata []redis.UniversalClient
+		closeMetadata := func() error { return nil }
+		if r := cfg.SessionMetadataRedis; r != nil {
+			client, err := r.Client(r.ClientConfig)
+			if err != nil {
+				_ = process.Close()
+				return brokerRuntime{}, errors.New("session metadata Redis unavailable")
+			}
+			metadata = []redis.UniversalClient{client}
+			closeMetadata = client.Close
+			healthCtx, cancel := context.WithTimeout(factoryCtx, r.HealthTimeout)
+			err = client.Ping(healthCtx).Err()
+			cancel()
+			if err != nil {
+				_ = closeMetadata()
+				_ = process.Close()
+				return brokerRuntime{}, errors.New("session metadata Redis unavailable")
+			}
+		}
+		api, apiErr := mcpbroker.NewProcessSessionAPI(process, ownerlessPartition(cfg.SessionAPI.Deployment), verifiedSessionWorkload, metadata...)
+		if apiErr != nil {
+			_ = closeMetadata()
+			_ = process.Close()
+			return brokerRuntime{}, apiErr
+		}
+		runtime.SessionAPI = api
+		runtime.Close = func() error { return errors.Join(api.Close(), process.Close(), closeMetadata()) }
+		return runtime, nil
 	}})
 	if err != nil {
 		return nil, err
@@ -105,6 +148,9 @@ func NewProduction(ctx context.Context, cfg ProductionConfig) (*Lifecycle, error
 	bounds := cfg.PublicBounds
 	if bounds == (PublicListenerConfig{}) {
 		bounds = DefaultPublicListenerConfig()
+	}
+	if bounds.ExecuteDeadline == 0 {
+		bounds.ExecuteDeadline = transport.ExecuteDeadline
 	}
 	public, err := newPublicListener(listener, broker, cfg.TLSConfig, bounds)
 	if err != nil {

@@ -71,7 +71,7 @@ func TestRunTranslatesStrictFileAndOwnsProductionLifecycle(t *testing.T) {
 	if received.AdminAddress != defaultAdminAddress || received.RuntimeLimits != (mcpbroker.Limits{MaxLogicalSessions: 7, LogicalRetention: 9 * time.Minute, SweepInterval: 11 * time.Second, MaxPendingStates: 13}) {
 		t.Fatalf("production runtime configuration = admin %q limits %+v", received.AdminAddress, received.RuntimeLimits)
 	}
-	if received.PublicAddress != ":9443" || received.Transport.MaxActiveExecutes != 17 || received.DrainTimeout != time.Minute || received.ShutdownTimeout != 3*time.Second {
+	if received.PublicAddress != ":9443" || received.Transport.ExecuteDeadline != 20*time.Second || received.DrainTimeout != time.Minute || received.ShutdownTimeout != 3*time.Second {
 		t.Fatalf("production configuration = %+v", received)
 	}
 	if len(received.ToolHive.Profiles) != 1 || received.ToolHive.Profiles[0].Name != "public" || len(received.ToolHive.Profiles[0].Static) != 0 {
@@ -92,7 +92,9 @@ func TestReadConfigStrictValidation(t *testing.T) {
 			return strings.Replace(s, `"callback_url":"https://broker.example/callback"`, `"callback_url":"http://broker.example/callback"`, 1)
 		},
 		"invalid duration": func(s string) string { return strings.Replace(s, `"rpc_deadline":"10s"`, `"rpc_deadline":"0s"`, 1) },
-		"invalid capacity": func(s string) string { return strings.Replace(s, `"max_handles":1`, `"max_handles":0`, 1) },
+		"invalid capacity": func(s string) string {
+			return strings.Replace(s, `"max_logical_sessions":7`, `"max_logical_sessions":0`, 1)
+		},
 		"invalid static schema": func(s string) string {
 			return strings.Replace(s, `"profiles":[{"name":"public","url":"https://mcp.example/api","auth":"none"}]`, `"profiles":[{"name":"private","url":"https://mcp.example/api","auth":"oauth","oauth":{"issuer":"https://issuer.example","client_id":"client","client_secret_file":"/secret"},"tools":[{"name":"bad","schema":"not-json"}]}]`, 1)
 		},
@@ -132,7 +134,7 @@ func writeConfig(t *testing.T, dir, cert, key string) fileConfig {
 }
 func quote(s string) string { raw, _ := json.Marshal(s); return string(raw) }
 func configJSON(cert, key string) string {
-	return `{"api_version":"` + brokerAPIVersion + `","listener":{"public_address":":9443","tls_cert_file":` + quote(cert) + `,"tls_key_file":` + quote(key) + `},"workload_jwt":{"issuer":"https://issuer.example","jwks_uri":"https://issuer.example/jwks","audience":"broker","subject":"agent","trust_bundle_file":` + quote(cert) + `,"max_jwks_staleness":"1m"},"callback_url":"https://broker.example/callback","profiles":[{"name":"public","url":"https://mcp.example/api","auth":"none"}],"drain":{"propagation_delay":"2s","timeout":"1m","listener_shutdown_timeout":"3s"},"transport":{"rpc_deadline":"10s","execute_deadline":"20s","handle_idle_timeout":"30s","sweep_interval":"11s","cleanup_timeout":"5s","max_handles":1,"max_owners":2,"max_receipts":3,"max_receipt_bytes":4,"max_pending_controls":5,"max_active_executes":17},"runtime":{"max_logical_sessions":7,"logical_retention":"9m","max_pending_auth_states":13}}`
+	return `{"api_version":"` + brokerAPIVersion + `","session_api":{"mode":"OWNERLESS","deployment":"offline-a"},"protected_storage":{"redis":{"address":"redis.example:6379","password_file":"fixture-password"}},"listener":{"public_address":":9443","tls_cert_file":` + quote(cert) + `,"tls_key_file":` + quote(key) + `},"workload_jwt":{"issuer":"https://issuer.example","jwks_uri":"https://issuer.example/jwks","audience":"broker","subject":"agent","trust_bundle_file":` + quote(cert) + `,"max_jwks_staleness":"1m"},"callback_url":"https://broker.example/callback","profiles":[{"name":"public","url":"https://mcp.example/api","auth":"none"}],"drain":{"propagation_delay":"2s","timeout":"1m","listener_shutdown_timeout":"3s"},"transport":{"rpc_deadline":"10s","execute_deadline":"20s"},"runtime":{"max_logical_sessions":7,"logical_retention":"9m","sweep_interval":"11s","max_pending_auth_states":13}}`
 }
 
 func writeTestIdentity(t *testing.T, dir string) (string, string) {

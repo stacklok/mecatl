@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
+	"github.com/stacklok/mecatl/engine/adapter/localauthority"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -32,8 +33,9 @@ import (
 )
 
 type lifecycleTool struct {
-	calls  atomic.Int32
-	schema json.RawMessage
+	calls    atomic.Int32
+	schema   json.RawMessage
+	readOnly bool
 	// hold, when set, runs inside Execute with the run context, so a test can
 	// hold a continuation in flight and observe whether it gets cancelled.
 	hold func(context.Context)
@@ -46,7 +48,7 @@ func (t *lifecycleTool) Spec() tool.ToolSpec {
 	}
 	return tool.ToolSpec{Name: "protected", Schema: schema}
 }
-func (*lifecycleTool) ReadOnly() bool { return false }
+func (t *lifecycleTool) ReadOnly() bool { return t.readOnly }
 func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	t.calls.Add(1)
 	if t.hold != nil {
@@ -163,18 +165,83 @@ func (*lifecycleAttachment) Close(context.Context) (brokercontract.CloseOutcome,
 }
 
 type lifecycleBroker struct {
+	brokercontract.SessionService
 	attachment *lifecycleAttachment
 	attachErr  error
+	expires    time.Time
+	catalogue  brokercontract.Catalogue
 }
 
-func (b *lifecycleBroker) AttachSession(context.Context, session.SessionID) (brokercontract.Attachment, brokercontract.AttachOutcome, error) {
+func (b *lifecycleBroker) OpenSession(context.Context, *brokercontract.SessionRef) (brokercontract.SessionSnapshot, error) {
 	if b.attachErr != nil {
-		return nil, "", b.attachErr
+		return brokercontract.SessionSnapshot{}, b.attachErr
 	}
-	return b.attachment, brokercontract.AttachReattached, nil
+	cat, err := brokercontract.NewCatalogue(brokercontract.CatalogueRef(hostProofRef(2)), b.attachment.Tools())
+	return brokercontract.SessionSnapshot{Ref: brokercontract.SessionRef(hostProofRef(1)), Catalogue: cat, ExpiresAt: b.expires}, err
 }
-func (*lifecycleBroker) DeleteSession(context.Context, session.SessionID) (brokercontract.DeleteOutcome, error) {
-	return brokercontract.DeleteDeleted, nil
+func (b *lifecycleBroker) BeginAuthorization(ctx context.Context, _ brokercontract.SessionRef, _ brokercontract.AuthorizationRef) (brokercontract.BrowserPrompt, error) {
+	if b.attachErr != nil {
+		return brokercontract.BrowserPrompt{}, b.attachErr
+	}
+	url, err := b.attachment.PresentAuthorization(ctx, session.ExternalAuthorization{})
+	return brokercontract.BrowserPrompt{URL: url, ExpiresAt: time.Now().Add(time.Hour)}, err
+}
+func (b *lifecycleBroker) ObserveAuthorization(ctx context.Context, _ brokercontract.SessionRef, _ brokercontract.AuthorizationRef) (brokercontract.FlowStatus, error) {
+	if b.attachErr != nil {
+		return brokercontract.FlowStatus{}, b.attachErr
+	}
+	status, err := b.attachment.AuthorizationStatus(ctx, session.ExternalAuthorization{})
+	if err != nil {
+		return brokercontract.FlowStatus{}, err
+	}
+	kind := brokercontract.FlowPending
+	switch status {
+	case session.AuthorizationGranted:
+		kind = brokercontract.FlowCompleted
+	case session.AuthorizationCancelled:
+		kind = brokercontract.FlowCancelled
+	case session.AuthorizationExpired:
+		kind = brokercontract.FlowExpired
+	case session.AuthorizationDenied, session.AuthorizationInterrupted, session.AuthorizationFailed, session.AuthorizationClosed:
+		kind = brokercontract.FlowFailed
+	}
+	cat := b.catalogue
+	if kind == brokercontract.FlowCompleted && cat == nil {
+		tools, err := b.attachment.RefreshGrantedAuthorizationCatalogue(ctx, session.ExternalAuthorization{})
+		if err != nil {
+			return brokercontract.FlowStatus{}, err
+		}
+		cat, err = brokercontract.NewCatalogue(brokercontract.CatalogueRef(hostProofRef(3)), tools)
+		if err != nil {
+			return brokercontract.FlowStatus{}, err
+		}
+		b.catalogue = cat
+	}
+	return brokercontract.FlowStatus{Kind: kind, Catalogue: cat}, nil
+}
+func (b *lifecycleBroker) CancelAuthorization(ctx context.Context, _ brokercontract.SessionRef, _ brokercontract.AuthorizationRef) (brokercontract.CancelResult, error) {
+	if b.attachErr != nil {
+		return 0, b.attachErr
+	}
+	out, err := b.attachment.CancelAuthorization(ctx, session.ExternalAuthorization{})
+	if out == brokercontract.CancelAlreadyResolved {
+		return brokercontract.AlreadyResolved, err
+	}
+	if out == brokercontract.CancelCancelled || out == brokercontract.CancelAlreadyCancelled {
+		return brokercontract.Cancelled, err
+	}
+	if err == nil {
+		err = ErrFailedPrecondition
+	}
+	return 0, err
+}
+func (b *lifecycleBroker) ResumeToolWrapper(_ brokercontract.SessionRef, cat brokercontract.Catalogue, name string, _ session.ToolCallID, _ brokercontract.AuthorizationRef) (tool.Tool, error) {
+	for _, t := range cat.Tools() {
+		if t.Spec().Name == name {
+			return t, nil
+		}
+	}
+	return nil, ErrFailedPrecondition
 }
 
 type lifecycleProviderContextCapture struct {
@@ -323,21 +390,24 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	store := memstore.New()
 	mutation := &lifecycleTool{}
 	attachment := &lifecycleAttachment{binding: "broker-binding", tool: mutation, status: status, url: "https://auth.example/authorize?state=live"}
-	broker := &lifecycleBroker{attachment: attachment, attachErr: attachErr}
+	broker := &lifecycleBroker{attachment: attachment, attachErr: attachErr, expires: now().Add(time.Hour)}
 	providerContext := &lifecycleProviderContextCapture{}
 	buildEngine := func(tools []tool.Tool) *agent.Engine {
 		catalog := tool.NewCatalog()
+		if mode == session.ModePlan {
+			catalog.MustRegister(agent.NewPresentPlanTool())
+		}
 		for _, one := range tools {
 			catalog.MustRegister(one)
 		}
-		return agent.NewEngine(agent.Deps{LLM: providerContext.wrap(mockllm.New(turns...)), Catalog: catalog, Policy: policy, Store: store, Model: "mock", Interactive: interactive})
+		return agent.NewEngine(agent.Deps{LLM: providerContext.wrap(mockllm.New(turns...)), Catalog: catalog, AuthorityEvaluator: localauthority.New(), Policy: policy, Store: store, Model: "mock", Interactive: interactive})
 	}
 	shared := buildEngine(nil)
 	var builtTools [][]string
 	var builtSpecs [][]mcp.ServerConfig
 	cfg := Config{
 		Engine: shared, Store: store, PlacementProvider: lifecyclePlacementProvider{}, PlacementScope: "test",
-		MCPBroker: broker, Now: now, AuthorizationTimer: timer, Interactive: interactive,
+		SessionBroker: broker, Now: now, AuthorizationTimer: timer, Interactive: interactive,
 	}
 	// Avoid spelling the MCP config type in the fixture closure by assigning the
 	// correctly typed factory separately.
@@ -359,9 +429,18 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	}
 	call := session.NewToolCall("protected-call", "protected", json.RawMessage(`{"value":1}`))
 	deferred := session.NewToolCall("deferred-call", "later", json.RawMessage(`{}`))
-	pending := session.PendingAuthorization{Authorization: session.ExternalAuthorization{ID: "authorization:1", DisplayName: "Calendar", Binding: "opaque-binding", ExpiresAt: now().Add(time.Hour)}, Call: call, Deferred: []session.ToolCall{deferred}}
+	pending := session.PendingAuthorization{Authorization: session.ExternalAuthorization{ID: hostProofRef(4), DisplayName: "Calendar", Binding: session.AuthorizationBinding(hostProofRef(1)), ExpiresAt: now().Add(time.Hour)}, Call: call, Deferred: []session.ToolCall{deferred}}
 	sess := session.New("authorization-session", mode, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, now())
-	sess.ExternalBinding = session.ExternalBinding(attachment.binding)
+	authority := session.Authority{Provenance: "test"}
+	if mode == session.ModePlan {
+		authority.CapabilitySet.Tools = []string{"PresentPlan"}
+	}
+	if err := sess.BindAuthority(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), broker.expires, []string{"protected"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -412,26 +491,6 @@ func assertAuthorizationResultBeforeResolved(t *testing.T, events []session.Even
 	}
 }
 
-func TestSingletonBrokerRemediation_Scenario2_ProtectedContinuationNeverRebinds(t *testing.T) {
-	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
-	var replacementCalls atomic.Int32
-	f.svc.cfg.MCPBrokerFactory = func(context.Context) (brokercontract.Service, func() error, error) {
-		replacementCalls.Add(1)
-		return f.broker, func() error { return nil }, nil
-	}
-	// The continuation is durably bound to the old incarnation. A replacement
-	// broker can only present a different binding, and this live control path must
-	// fail rather than invoking the pre-prompt replacement factory.
-	f.attach.binding = "replacement-binding"
-	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
-	if _, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control); !errors.Is(err, ErrBrokerBindingMismatch) {
-		t.Fatalf("protected continuation = %v, want binding mismatch", err)
-	}
-	if replacementCalls.Load() != 0 || f.attach.tool.calls.Load() != 0 {
-		t.Fatalf("continuation rebound or dispatched: factory=%d calls=%d", replacementCalls.Load(), f.attach.tool.calls.Load())
-	}
-}
-
 func TestMCPAuthorizationPresentationAndPendingAreInert(t *testing.T) {
 	now := time.Now
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, now, nil)
@@ -447,7 +506,7 @@ func TestMCPAuthorizationPresentationAndPendingAreInert(t *testing.T) {
 }
 
 func TestMCPAuthorizationTerminalStatusesPairWithoutExecuting(t *testing.T) {
-	for _, status := range []session.AuthorizationStatus{session.AuthorizationDenied, session.AuthorizationCancelled, session.AuthorizationExpired, session.AuthorizationInterrupted, session.AuthorizationFailed} {
+	for _, status := range []session.AuthorizationStatus{session.AuthorizationCancelled, session.AuthorizationExpired, session.AuthorizationInterrupted} {
 		t.Run(string(status), func(t *testing.T) {
 			f := newLifecycleFixture(t, status, nil, time.Now, nil)
 			control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
@@ -751,11 +810,11 @@ func TestMCPAuthorizationTerminalFallbackIsFullyReconstructable(t *testing.T) {
 		brokerStatus session.AuthorizationStatus
 		wantStatus   session.AuthorizationStatus
 	}{
-		{session.AuthorizationDenied, session.AuthorizationDenied},
+		{session.AuthorizationDenied, session.AuthorizationInterrupted},
 		{session.AuthorizationCancelled, session.AuthorizationCancelled},
 		{session.AuthorizationExpired, session.AuthorizationExpired},
 		{session.AuthorizationInterrupted, session.AuthorizationInterrupted},
-		{session.AuthorizationFailed, session.AuthorizationFailed},
+		{session.AuthorizationFailed, session.AuthorizationInterrupted},
 		{session.AuthorizationClosed, session.AuthorizationInterrupted},
 	}
 	for _, tc := range tests {
@@ -855,7 +914,7 @@ func TestMCPAuthorizationResolutionBackfillsMissingRequired(t *testing.T) {
 
 	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
 	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
-	if err != nil || result.Status != session.AuthorizationDenied || result.Run != nil {
+	if err != nil || result.Status != session.AuthorizationInterrupted || result.Run != nil {
 		t.Fatalf("fallback result = %+v, %v; want denied and no run", result, err)
 	}
 
@@ -877,7 +936,7 @@ func TestMCPAuthorizationResolutionBackfillsMissingRequired(t *testing.T) {
 		t.Fatalf("backfilled required event = %+v", backfilled)
 	}
 	resolved := events[len(events)-1]
-	if resolved.Type != session.EvAuthorizationResolved || resolved.Authorization == nil || resolved.Authorization.Status != session.AuthorizationDenied {
+	if resolved.Type != session.EvAuthorizationResolved || resolved.Authorization == nil || resolved.Authorization.Status != session.AuthorizationInterrupted {
 		t.Fatalf("trailing resolution event = %+v", resolved)
 	}
 	if _, err := eventsource.Fold(eventsource.SessionMeta{
@@ -1025,6 +1084,9 @@ func TestMCPAuthorizationSettlementAppendFailureStillSettles(t *testing.T) {
 	// — a committed attachment is what makes this session part of it.
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	attachment, release, err := f.svc.authorizationAttachment(t.Context(), loaded)
@@ -1860,7 +1922,7 @@ func TestMCPAuthorizationGrantedCompensationSaveFailureSettlesInsteadOfStranding
 	// 1st Save: ClaimAuthorization's own save (must succeed, landing
 	// StateRunning durably). 2nd Save: the compensating restoreAuthorizationClaim
 	// triggered by registerPrepared's failure below (must fail).
-	f.svc.cfg.Store = &failNthAuthorizationSaveStore{SessionStore: f.store, failAt: 2}
+	f.svc.cfg.Store = &failNthAuthorizationSaveStore{SessionStore: f.store, failAt: 3}
 	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
 	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
 	// The compensating restore itself failed this time (unlike the sibling
@@ -1928,6 +1990,9 @@ func TestMCPAuthorizationServiceCloseSettlesParkedCall(t *testing.T) {
 	// A committed attachment is part of the process-owned settlement inventory.
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	attachment, release, err := f.svc.authorizationAttachment(t.Context(), loaded)
@@ -2147,7 +2212,14 @@ func TestMCPAuthorizationBindingMismatchDoesNotInterrupt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded.ExternalBinding = "different-binding"
+	claimed, err := loaded.ClaimAuthorization()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed.Authorization.Binding = "different-binding"
+	if err := loaded.RestoreAuthorizationClaim(claimed); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.store.Save(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
@@ -2170,6 +2242,9 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+		t.Fatal(err)
+	}
 	if _, release, err := f.svc.authorizationAttachment(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	} else {
@@ -2190,7 +2265,7 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 		t.Fatalf("state after failed close = %q", persisted.State)
 	}
 	f.svc.mu.Lock()
-	retained := f.svc.brokerAttachments[loaded.ID] != nil
+	retained := f.svc.sessionEngines[loaded.ID] != nil
 	f.svc.mu.Unlock()
 	if !retained || !diagnostics.contains("persist external authorization settlement failed") {
 		t.Fatalf("retained=%t diagnostics=%v", retained, diagnostics.messages)
@@ -2205,7 +2280,7 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 		t.Fatalf("state after retry = %q", persisted.State)
 	}
 	f.svc.mu.Lock()
-	retained = f.svc.brokerAttachments[loaded.ID] != nil
+	retained = f.svc.sessionEngines[loaded.ID] != nil
 	f.svc.mu.Unlock()
 	if retained {
 		t.Fatal("attachment retained after successful retry")
@@ -2224,6 +2299,9 @@ func TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	if _, release, err := f.svc.authorizationAttachment(t.Context(), loaded); err != nil {

@@ -49,7 +49,8 @@ func (d *duration) UnmarshalJSON(raw []byte) error {
 func (d duration) value() time.Duration { return time.Duration(d) }
 
 type fileConfig struct {
-	APIVersion string `json:"api_version"`
+	APIVersion string                            `json:"api_version"`
+	SessionAPI *mcpbrokerserver.SessionAPIConfig `json:"session_api,omitempty"`
 	Listener   struct {
 		PublicAddress string `json:"public_address"`
 		TLSCertFile   string `json:"tls_cert_file"`
@@ -73,21 +74,13 @@ type fileConfig struct {
 		ListenerShutdownTimeout duration `json:"listener_shutdown_timeout"`
 	} `json:"drain"`
 	Transport struct {
-		RPCDeadline        duration `json:"rpc_deadline"`
-		ExecuteDeadline    duration `json:"execute_deadline"`
-		HandleIdleTimeout  duration `json:"handle_idle_timeout"`
-		SweepInterval      duration `json:"sweep_interval"`
-		CleanupTimeout     duration `json:"cleanup_timeout"`
-		MaxHandles         int      `json:"max_handles"`
-		MaxOwners          int      `json:"max_owners"`
-		MaxReceipts        int      `json:"max_receipts"`
-		MaxReceiptBytes    int      `json:"max_receipt_bytes"`
-		MaxPendingControls int      `json:"max_pending_controls"`
-		MaxActiveExecutes  int      `json:"max_active_executes"`
+		RPCDeadline     duration `json:"rpc_deadline"`
+		ExecuteDeadline duration `json:"execute_deadline"`
 	} `json:"transport"`
 	Runtime struct {
 		MaxLogicalSessions   int      `json:"max_logical_sessions"`
 		LogicalRetention     duration `json:"logical_retention"`
+		SweepInterval        duration `json:"sweep_interval,omitempty"`
 		MaxPendingAuthStates int      `json:"max_pending_auth_states"`
 	} `json:"runtime"`
 }
@@ -245,6 +238,9 @@ func (cfg fileConfig) validate() error {
 	if cfg.APIVersion != brokerAPIVersion {
 		return errors.New("broker configuration API version is required and unsupported versions are rejected")
 	}
+	if err := cfg.SessionAPI.Validate(cfg.toolHive().Profiles, cfg.ProtectedStorage != nil); err != nil {
+		return err
+	}
 	if cfg.Listener.PublicAddress == "" || cfg.Listener.TLSCertFile == "" || cfg.Listener.TLSKeyFile == "" {
 		return errors.New("complete public listener configuration is required")
 	}
@@ -284,15 +280,18 @@ func (cfg fileConfig) validate() error {
 			return err
 		}
 	}
-	for _, d := range []duration{cfg.Drain.PropagationDelay, cfg.Drain.Timeout, cfg.Drain.ListenerShutdownTimeout, cfg.Transport.RPCDeadline, cfg.Transport.ExecuteDeadline, cfg.Transport.HandleIdleTimeout, cfg.Transport.SweepInterval, cfg.Transport.CleanupTimeout, cfg.Runtime.LogicalRetention} {
+	for _, d := range []duration{cfg.Drain.PropagationDelay, cfg.Drain.Timeout, cfg.Drain.ListenerShutdownTimeout, cfg.Transport.RPCDeadline, cfg.Transport.ExecuteDeadline, cfg.Runtime.LogicalRetention} {
 		if d.value() <= 0 {
 			return errors.New("broker duration bounds must be positive")
 		}
 	}
-	for _, n := range []int{cfg.Transport.MaxHandles, cfg.Transport.MaxOwners, cfg.Transport.MaxReceipts, cfg.Transport.MaxReceiptBytes, cfg.Transport.MaxPendingControls, cfg.Transport.MaxActiveExecutes, cfg.Runtime.MaxLogicalSessions, cfg.Runtime.MaxPendingAuthStates} {
+	for _, n := range []int{cfg.Runtime.MaxLogicalSessions, cfg.Runtime.MaxPendingAuthStates} {
 		if n <= 0 {
 			return errors.New("broker capacity bounds must be positive")
 		}
+	}
+	if cfg.Runtime.SweepInterval.value() < 0 {
+		return errors.New("native runtime sweep interval must not be negative")
 	}
 	seenProfiles := make(map[string]struct{}, len(cfg.Profiles))
 	hasOAuthProfile := false
@@ -399,8 +398,8 @@ func (cfg fileConfig) validate() error {
 		return errors.New("protected storage is required for OAuth profiles")
 	}
 	if cfg.ProtectedStorage != nil {
-		if !hasOAuthProfile {
-			return errors.New("protected storage requires an OAuth profile")
+		if !hasOAuthProfile && cfg.SessionAPI == nil {
+			return errors.New("protected storage requires an OAuth profile or session API metadata")
 		}
 		if err := cfg.validateProtectedStorage(); err != nil {
 			return err
@@ -430,6 +429,18 @@ func (cfg fileConfig) validateProtectedStorage() error {
 	}
 	if health > op {
 		return errors.New("protected Redis health timeout exceeds operation timeout")
+	}
+	if cfg.SessionAPI != nil {
+		anonymousOnly := true
+		for _, profile := range cfg.Profiles {
+			anonymousOnly = anonymousOnly && profile.Auth == "none"
+		}
+		if anonymousOnly {
+			if cfg.ProtectedStorage.Encryption.ActiveID != "" || len(cfg.ProtectedStorage.Encryption.Keys) != 0 {
+				return errors.New("anonymous session metadata does not use credential encryption")
+			}
+			return nil
+		}
 	}
 	e := cfg.ProtectedStorage.Encryption
 	if !protectedKeyID.MatchString(e.ActiveID) || len(e.Keys) == 0 || len(e.Keys) > 16 {
@@ -520,12 +531,20 @@ func (cfg fileConfig) loadProductionConfig(diagnostics port.Diagnostics) (mcpbro
 }
 
 func (cfg fileConfig) productionConfig(certificate tls.Certificate, caPEM []byte, diagnostics port.Diagnostics) mcpbrokerserver.ProductionConfig {
+	var metadata *mcpbroker.ProtectedRedisConfig
+	toolHive := cfg.toolHive()
+	if cfg.SessionAPI != nil && cfg.ProtectedStorage != nil && toolHive.ProtectedStorage == nil {
+		r := cfg.ProtectedStorage.Redis.nativeConfig()
+		metadata = &r
+	}
 	return mcpbrokerserver.ProductionConfig{
-		PublicAddress: cfg.Listener.PublicAddress,
-		AdminAddress:  defaultAdminAddress,
-		TLSConfig:     &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
-		WorkloadJWT:   cfg.workloadJWTConfig(caPEM),
-		ToolHive:      cfg.toolHive(), Diagnostics: diagnostics,
+		PublicAddress:        cfg.Listener.PublicAddress,
+		SessionMetadataRedis: metadata,
+		SessionAPI:           cfg.SessionAPI,
+		AdminAddress:         defaultAdminAddress,
+		TLSConfig:            &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
+		WorkloadJWT:          cfg.workloadJWTConfig(caPEM),
+		ToolHive:             toolHive, Diagnostics: diagnostics,
 		PropagationWait: cfg.Drain.PropagationDelay.value(), DrainTimeout: cfg.Drain.Timeout.value(),
 		ShutdownTimeout: cfg.Drain.ListenerShutdownTimeout.value(),
 		PublicBounds:    mcpbrokerserver.DefaultPublicListenerConfig(),
@@ -569,20 +588,20 @@ func (cfg fileConfig) transport() mcpbrokergrpc.Config {
 	out := mcpbrokergrpc.DefaultConfig()
 	out.RPCDeadline = cfg.Transport.RPCDeadline.value()
 	out.ExecuteDeadline = cfg.Transport.ExecuteDeadline.value()
-	out.HandleIdleTimeout = cfg.Transport.HandleIdleTimeout.value()
-	out.SweepInterval = cfg.Transport.SweepInterval.value()
-	out.CleanupTimeout = cfg.Transport.CleanupTimeout.value()
-	out.MaxHandles = cfg.Transport.MaxHandles
-	out.MaxOwners = cfg.Transport.MaxOwners
-	out.MaxReceipts = cfg.Transport.MaxReceipts
-	out.MaxReceiptBytes = cfg.Transport.MaxReceiptBytes
-	out.MaxPendingControls = cfg.Transport.MaxPendingControls
-	out.MaxActiveExecutes = cfg.Transport.MaxActiveExecutes
 	return out
 }
 func (cfg fileConfig) runtimeLimits() mcpbroker.Limits {
-	return mcpbroker.Limits{MaxLogicalSessions: cfg.Runtime.MaxLogicalSessions, LogicalRetention: cfg.Runtime.LogicalRetention.value(), SweepInterval: cfg.Transport.SweepInterval.value(), MaxPendingStates: cfg.Runtime.MaxPendingAuthStates}
+	return mcpbroker.Limits{MaxLogicalSessions: cfg.Runtime.MaxLogicalSessions, LogicalRetention: cfg.Runtime.LogicalRetention.value(), SweepInterval: cfg.Runtime.SweepInterval.value(), MaxPendingStates: cfg.Runtime.MaxPendingAuthStates}
 }
+func (r fileProtectedRedis) nativeConfig() mcpbroker.ProtectedRedisConfig {
+	dial, op, health := protectedTimeouts(r)
+	clientConfig := mcpbroker.ProtectedRedisClientConfig{Addr: r.Address, UsernameFile: r.UsernameFile, PasswordFile: r.PasswordFile, CAFile: r.CAFile, TLS: true, DialTimeout: dial, OperationTimeout: op}
+	factory := func(config mcpbroker.ProtectedRedisClientConfig) (redis.UniversalClient, error) {
+		return redisstore.NewClient(redisstore.Config{Addr: config.Addr, UsernameFile: config.UsernameFile, PasswordFile: config.PasswordFile, CAFile: config.CAFile, TLS: config.TLS, AllowPlaintext: config.AllowPlaintext})
+	}
+	return mcpbroker.ProtectedRedisConfig{Client: factory, ClientConfig: clientConfig, HealthTimeout: health}
+}
+
 func (cfg fileConfig) toolHive() mcpbroker.ToolHiveConfig {
 	profiles := make([]mcpbroker.ToolHiveProfile, len(cfg.Profiles))
 	for i, profile := range cfg.Profiles {
@@ -604,18 +623,16 @@ func (cfg fileConfig) toolHive() mcpbroker.ToolHiveConfig {
 		callbackURL = cfg.CallbackURL
 	}
 	out := mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: profiles}
-	if cfg.ProtectedStorage != nil {
-		r := cfg.ProtectedStorage.Redis
-		dial, op, health := protectedTimeouts(r)
+	hasOAuth := false
+	for _, profile := range profiles {
+		hasOAuth = hasOAuth || profile.Auth == "oauth"
+	}
+	if cfg.ProtectedStorage != nil && hasOAuth {
 		keys := make([]mcpbroker.ProtectedEncryptionKey, len(cfg.ProtectedStorage.Encryption.Keys))
 		for i, k := range cfg.ProtectedStorage.Encryption.Keys {
 			keys[i] = mcpbroker.ProtectedEncryptionKey{ID: k.ID, File: k.File}
 		}
-		clientConfig := mcpbroker.ProtectedRedisClientConfig{Addr: r.Address, UsernameFile: r.UsernameFile, PasswordFile: r.PasswordFile, CAFile: r.CAFile, TLS: true, DialTimeout: dial, OperationTimeout: op}
-		factory := func(config mcpbroker.ProtectedRedisClientConfig) (redis.UniversalClient, error) {
-			return redisstore.NewClient(redisstore.Config{Addr: config.Addr, UsernameFile: config.UsernameFile, PasswordFile: config.PasswordFile, CAFile: config.CAFile, TLS: config.TLS, AllowPlaintext: config.AllowPlaintext})
-		}
-		out.ProtectedStorage = &mcpbroker.ProtectedStorageConfig{Redis: mcpbroker.ProtectedRedisConfig{Client: factory, ClientConfig: clientConfig, HealthTimeout: health}, Encryption: mcpbroker.ProtectedEncryptionConfig{ActiveID: cfg.ProtectedStorage.Encryption.ActiveID, Keys: keys}}
+		out.ProtectedStorage = &mcpbroker.ProtectedStorageConfig{Redis: cfg.ProtectedStorage.Redis.nativeConfig(), Encryption: mcpbroker.ProtectedEncryptionConfig{ActiveID: cfg.ProtectedStorage.Encryption.ActiveID, Keys: keys}}
 	}
 	return out
 }

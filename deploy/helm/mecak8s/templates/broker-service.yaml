@@ -1,3 +1,4 @@
+{{- if include "mecak8s.brokerSelected" . }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,3 +9,4 @@ spec:
   selector: {{- include "mecak8s.brokerLabels" . | nindent 4 }}
   ports:
     - {name: public, port: 8443, targetPort: public}
+{{- end }}

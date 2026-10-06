@@ -147,6 +147,11 @@ tasks:
       - task: kind-fixture-ca-refresh
       - ./bin/mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca {{.STATE}}/fixture-ca.crt
 
+  broker-session-check:
+    desc: Passively validate an already provisioned local Kind SessionService fixture (no deployment)
+    cmds:
+      - deploy/mecak8s-kind/broker-session-check.sh '{{.KUBECONFIG}}' '{{.CONTEXT}}' '{{.NAMESPACE}}' '{{.RELEASE}}'
+
   kind-status:
     desc: Show the local mecak8s Kind baseline
     cmds:

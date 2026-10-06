@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -20,42 +19,25 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
-	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCallbackSideEffects(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
-	catalogue, err := mcpbroker.Compile(mcpauthority.BrokerConfig{Routes: []permconfig.MCPServerProfile{{Name: "fixture", Auth: permconfig.MCPAuthProfile{Mode: "none"}}}}, []mcpbroker.ToolDefinition{{Backend: "fixture", Name: "read", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var executes, callbacks atomic.Int32
-	runtime, err := mcpbroker.New(catalogue, func(ctx context.Context, _ mcpbroker.SessionRef, _ string, call session.ToolCall) (session.ToolResult, error) {
-		executes.Add(1)
-		select {
-		case <-time.After(40 * time.Millisecond):
-			return session.NewToolResult(call.ID, "ok"), nil
-		case <-ctx.Done():
-			return session.ToolResult{}, ctx.Err()
-		}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	runtime := &boundedSessionService{executes: &executes}
 	transport := mcpbrokergrpc.DefaultConfig()
 	transport.ExecuteDeadline = 250 * time.Millisecond
 	server, err := newBrokerHost(t.Context(), hostConfig{
-		WorkloadJWT: productionOIDC(issuer, time.Minute), Transport: transport,
+		WorkloadJWT: productionOIDC(issuer, time.Minute),
 		Runtime: func(context.Context) (brokerRuntime, error) {
-			return brokerRuntime{Service: runtime, Handlers: mcpbroker.HandlerBundle{Callback: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			return brokerRuntime{SessionAPI: runtime, Handlers: mcpbroker.HandlerBundle{Callback: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				callbacks.Add(1)
 				w.WriteHeader(http.StatusNoContent)
-			})}, CallbackPath: "/callback", Close: runtime.Close}, nil
+			})}, CallbackPath: "/callback"}, nil
 		},
 	})
 	if err != nil {
@@ -66,6 +48,7 @@ func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCa
 		t.Fatal(err)
 	}
 	bounds := DefaultPublicListenerConfig()
+	bounds.ExecuteDeadline = transport.ExecuteDeadline
 	bounds.ReadHeaderTimeout = 100 * time.Millisecond
 	bounds.ReadTimeout = 6 * time.Second
 	bounds.WriteTimeout = 6 * time.Second
@@ -124,19 +107,35 @@ func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCa
 	if err := os.WriteFile(caPath, issuer.caPEM(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	factory := mcpbrokergrpc.NewRemoteFactory(mcpbrokergrpc.RemoteFactoryConfig{Target: listener.Addr().String(), CAFile: caPath, ServerName: "example.com", TokenFile: tokenPath, Transport: transport})
+	factory := mcpbrokergrpc.NewSessionRemoteFactory(mcpbrokergrpc.RemoteFactoryConfig{Target: listener.Addr().String(), CAFile: caPath, ServerName: "example.com", TokenFile: tokenPath, Transport: transport})
 	remote, closeRemote, err := factory(t.Context())
 	if err != nil {
 		t.Fatalf("production remote factory: %v", err)
 	}
 	defer func() { _ = closeRemote() }()
-	attachment, _, err := remote.AttachSession(t.Context(), "bounded-execute")
+	snapshot, err := remote.OpenSession(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := attachment.Tools()[0].Execute(t.Context(), session.NewToolCall("call", "read", json.RawMessage(`{}`)), tool.Environment{})
-	if err != nil || result.Content != "ok" || executes.Load() != 1 {
-		t.Fatalf("bounded gRPC Execute = %#v, %v; dispatches=%d", result, err, executes.Load())
+	out, err := remote.InvokeTool(t.Context(), snapshot.Ref, snapshot.Catalogue.Ref(), contract.Call{ID: "call", Name: "read", Arguments: []byte(`{}`)})
+	if err != nil || out.Result == nil || out.Result.Content != "ok" || executes.Load() != 1 {
+		t.Fatalf("bounded gRPC invocation = %#v, %v; dispatches=%d", out, err, executes.Load())
+	}
+}
+
+type boundedSessionService struct {
+	countingService
+	executes *atomic.Int32
+}
+
+func (s *boundedSessionService) InvokeTool(ctx context.Context, _ contract.SessionRef, _ contract.CatalogueRef, call contract.Call) (contract.InvocationOutcome, error) {
+	s.executes.Add(1)
+	select {
+	case <-time.After(40 * time.Millisecond):
+		result := session.NewToolResult(call.ID, "ok")
+		return contract.InvocationOutcome{Kind: contract.InvocationCompleted, Result: &result}, nil
+	case <-ctx.Done():
+		return contract.InvocationOutcome{}, ctx.Err()
 	}
 }
 

@@ -35,7 +35,7 @@ type PublicListenerConfig struct {
 	// MaxCallbackBytes limits a non-gRPC callback request body in bytes, including streamed bodies.
 	MaxCallbackBytes int64
 	// ExecuteDeadline is the RPC execution limit used to verify ReadTimeout and WriteTimeout
-	// have enough headroom. Zero derives it from the broker transport; it is not an unbounded limit.
+	// have enough headroom. Zero selects the finite two-minute listener default.
 	ExecuteDeadline time.Duration
 }
 
@@ -62,7 +62,7 @@ func newPublicListener(listener net.Listener, host *brokerHost, tlsConfig *tls.C
 		return nil, errors.New("mcpbrokerserver: public listener and broker are required")
 	}
 	if cfg.ExecuteDeadline == 0 {
-		cfg.ExecuteDeadline = host.executeDeadline()
+		cfg.ExecuteDeadline = 2 * time.Minute
 	}
 	if !cfg.valid() || !cfg.validForExecute() {
 		return nil, errors.New("mcpbrokerserver: public listener bounds must be positive and cover ExecuteDeadline plus the required margin")

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -15,6 +14,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
@@ -26,6 +26,7 @@ type brokerRuntime struct {
 	Handlers     mcpbroker.HandlerBundle
 	CallbackPath string
 	Close        func() error
+	SessionAPI   contract.SessionService
 }
 
 type buildBrokerRuntime func(context.Context) (brokerRuntime, error)
@@ -40,7 +41,7 @@ type hostConfig struct {
 	Diagnostics      port.Diagnostics
 	Observe          func(operation, outcome string)
 	CloseProcess     func() error
-	Transport        mcpbrokergrpc.Config
+	SessionAPI       contract.SessionService
 	ReadinessTimeout time.Duration
 	ReadinessChecks  []readinessCheck
 }
@@ -52,7 +53,7 @@ type readyBrokerService interface{ Ready(context.Context) error }
 type brokerHost struct {
 	service         contract.Service
 	verifier        workloadVerifier
-	rpc             *mcpbrokergrpc.Server
+	sessionRPC      *mcpbrokergrpc.SessionRPC
 	mux             *http.ServeMux
 	diagnostics     port.Diagnostics
 	observe         func(string, string)
@@ -66,15 +67,13 @@ type brokerHost struct {
 	closeErr   error
 }
 
-func (h *brokerHost) executeDeadline() time.Duration { return h.rpc.ExecuteDeadline() }
-
 //nolint:gocyclo // Construction is one ordered transaction with reverse-order rollback.
 func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
-	if cfg.Runtime != nil && (cfg.Service != nil || !cfg.Handlers.Empty() || cfg.CallbackPath != "" || cfg.CloseProcess != nil) {
+	if cfg.Runtime != nil && (cfg.Service != nil || !cfg.Handlers.Empty() || cfg.CallbackPath != "" || cfg.CloseProcess != nil || cfg.SessionAPI != nil) {
 		return nil, errors.New("mcpbrokerserver: factory and preconstructed broker resources are mutually exclusive")
 	}
-	if cfg.Runtime == nil && cfg.Service == nil {
-		return nil, errors.New("mcpbrokerserver: broker service is required")
+	if cfg.Runtime == nil && cfg.SessionAPI == nil {
+		return nil, errors.New("mcpbrokerserver: session service is required")
 	}
 	var verifier workloadVerifier
 	var err error
@@ -86,7 +85,7 @@ func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
 			return nil, err
 		}
 	}
-	runtime := brokerRuntime{Service: cfg.Service, Handlers: cfg.Handlers, CallbackPath: cfg.CallbackPath, Close: cfg.CloseProcess}
+	runtime := brokerRuntime{Service: cfg.Service, SessionAPI: cfg.SessionAPI, Handlers: cfg.Handlers, CallbackPath: cfg.CallbackPath, Close: cfg.CloseProcess}
 	if cfg.Runtime != nil {
 		runtime, err = cfg.Runtime(ctx)
 		if err != nil {
@@ -94,18 +93,7 @@ func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
 			return nil, fmt.Errorf("mcpbrokerserver: construct broker process: %w", err)
 		}
 	}
-	if runtime.Service == nil {
-		_ = verifier.Close()
-		if runtime.Close != nil {
-			_ = runtime.Close()
-		}
-		return nil, errors.New("mcpbrokerserver: broker factory returned no service")
-	}
-	transport := cfg.Transport
-	if transport == (mcpbrokergrpc.Config{}) {
-		transport = mcpbrokergrpc.DefaultConfig()
-	}
-	rpc, err := mcpbrokergrpc.NewServer(runtime.Service, transport)
+	rpc, err := mcpbrokergrpc.NewSessionRPC(runtime.SessionAPI)
 	if err != nil {
 		_ = verifier.Close()
 		if runtime.Close != nil {
@@ -117,7 +105,6 @@ func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
 	if diagnostics == nil {
 		diagnostics = port.NopDiagnostics{}
 	}
-	rpc.WithDiagnostics(diagnostics)
 	readyTimeout := cfg.ReadinessTimeout
 	if readyTimeout == 0 {
 		readyTimeout = 2 * time.Second
@@ -127,9 +114,11 @@ func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
 	if readyService, ok := runtime.Service.(readyBrokerService); ok {
 		checks = append(checks, readyService.Ready)
 	}
+	if readyService, ok := runtime.SessionAPI.(readyBrokerService); ok {
+		checks = append(checks, readyService.Ready)
+	}
 	admission, err := newAdmissionGate(readyTimeout, checks...)
 	if err != nil {
-		_ = rpc.Shutdown(context.Background())
 		_ = verifier.Close()
 		if runtime.Close != nil {
 			_ = runtime.Close()
@@ -140,10 +129,9 @@ func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
 	for _, subject := range cfg.WorkloadJWT.AllowedSubjects {
 		allowedSubjects[subject] = struct{}{}
 	}
-	h := &brokerHost{service: runtime.Service, verifier: verifier, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: runtime.Close, admission: admission, allowedSubjects: allowedSubjects}
+	h := &brokerHost{service: runtime.Service, verifier: verifier, sessionRPC: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: runtime.Close, admission: admission, allowedSubjects: allowedSubjects}
 	if !runtime.Handlers.Empty() {
 		if err := runtime.Handlers.Mount(h.mux, runtime.CallbackPath); err != nil {
-			_ = rpc.Shutdown(context.Background())
 			_ = verifier.Close()
 			if runtime.Close != nil {
 				_ = runtime.Close()
@@ -173,7 +161,7 @@ func (h *brokerHost) newGRPCServer(tlsConfig *tls.Config) (*grpc.Server, error) 
 		options = append(options, grpc.Creds(credentials.NewTLS(secure)))
 	}
 	server := grpc.NewServer(options...)
-	mcpbrokergrpc.RegisterServer(server, h.rpc)
+	brokerv1.RegisterSessionServiceServer(server, h.sessionRPC)
 	h.grpcServer = server
 	return server, nil
 }
@@ -187,29 +175,11 @@ func (h *brokerHost) traceRPC(ctx context.Context, req any, info *grpc.UnaryServ
 	if err != nil {
 		outcome = status.Code(err).String()
 	}
-	fields := []any{}
-	if r, ok := req.(interface {
-		GetHandle() string
-		GetName() string
-		GetArgs() []byte
-	}); ok {
-		if trace, ok := h.rpc.TraceExecution(r.GetHandle(), r.GetName(), r.GetArgs()); ok {
-			fields = append(fields, "session", boundedDiagnosticSession(trace.LogicalSession))
-			if trace.Backend != "" {
-				fields = append(fields, "backend", boundedDiagnosticName(trace.Backend), "outbound_credential_kind", trace.OutboundCredentialKind)
-			}
-		}
-	} else if r, ok := req.(interface{ GetHandle() string }); ok {
-		if trace, found := h.rpc.TraceAttachment(r.GetHandle()); found {
-			fields = append(fields, "session", boundedDiagnosticSession(trace.LogicalSession))
-		}
-	} else if r, ok := req.(interface{ GetSessionId() string }); ok && r.GetSessionId() != "" {
-		fields = append(fields, "session", boundedDiagnosticSession(r.GetSessionId()))
+	fields := []any{"operation", operationName(info.FullMethod), "outcome", outcome}
+	if principal := verifiedSessionWorkload(ctx); principal != nil {
+		fields = append(fields, "principal", boundedDiagnosticPrincipal(principal.Subject))
 	}
-	if r, ok := req.(interface{ GetName() string }); ok {
-		fields = append(fields, "tool", boundedDiagnosticName(r.GetName()))
-	}
-	h.rpc.TraceRPC(ctx, operationName(info.FullMethod), outcome, fields...)
+	h.diagnostics.Log(ctx, port.LevelDebug, "broker RPC", fields...)
 	return response, err
 }
 
@@ -224,21 +194,6 @@ func boundedDiagnosticPrincipal(subject string) string {
 		}
 	}
 	return subject
-}
-
-func boundedDiagnosticSession(id string) string { return boundedDiagnosticPrincipal(id) }
-
-func boundedDiagnosticName(name string) string {
-	const limit = 128
-	if len(name) > limit || !utf8.ValidString(name) || containsSecretMarker(name) {
-		return "[redacted]"
-	}
-	return name
-}
-
-func containsSecretMarker(value string) bool {
-	lower := strings.ToLower(value)
-	return strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "bearer")
 }
 
 func (h *brokerHost) ready(ctx context.Context) bool { return h.admission.Ready(ctx) }
@@ -263,7 +218,7 @@ func (h *brokerHost) close(ctx context.Context) error {
 				h.closeErr = errors.Join(h.closeErr, ctx.Err())
 			}
 		}
-		h.closeErr = errors.Join(h.closeErr, h.rpc.Shutdown(ctx), h.verifier.Close())
+		h.closeErr = errors.Join(h.closeErr, h.verifier.Close())
 		if h.closeProcess != nil {
 			h.closeErr = errors.Join(h.closeErr, h.closeProcess())
 		}

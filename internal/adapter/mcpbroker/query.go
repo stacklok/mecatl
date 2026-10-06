@@ -24,7 +24,10 @@ type callMcpWithQueryArgs struct {
 // attachmentQueryTool performs both the native broker call and the jq projection
 // while its attachment operation remains live. The unfiltered response therefore
 // never leaves the attachment as a model-facing ToolResult.
-type attachmentQueryTool struct{ attachment *Attachment }
+type attachmentQueryTool struct {
+	attachment *Attachment
+	targetTool func(context.Context, session.ToolCall, string) (tool.Tool, error)
+}
 
 var _ tool.AuthorizationRequester = (*attachmentQueryTool)(nil)
 
@@ -71,6 +74,9 @@ func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, str
 }
 
 func (t *attachmentQueryTool) native(ctx context.Context, call session.ToolCall, filter string) (tool.Tool, error) {
+	if t.targetTool != nil {
+		return t.targetTool(ctx, call, filter)
+	}
 	route, ok := t.attachment.lookupRoute(call.Name)
 	if !ok {
 		t.attachment.runtime.logRouteUnavailable(ctx, t.attachment.logical.ref.SessionID(), diagnosticRouteSurfaceQuery)

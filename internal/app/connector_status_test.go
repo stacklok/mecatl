@@ -1,12 +1,16 @@
 package app
 
 import (
+	"context"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
-	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
 func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
@@ -14,7 +18,23 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 		for _, owned := range []bool{false, true} {
 			cfg := Config{Workspace: t.TempDir(), StoreDir: t.TempDir(), UseMock: true, NoSoul: true, OwnershipEnforced: owned}
 			if broker {
-				cfg.MCPAuthority = mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: "https://broker.example/oauth/callback", Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}})
+				cfg.MCPAuthority = mcpauthority.NewBroker(mcpauthority.BrokerConfig{})
+				db := miniredis.RunT(t)
+				storage := redis.NewClient(&redis.Options{Addr: db.Addr()})
+				t.Cleanup(func() { _ = storage.Close() })
+				process, err := mcpbroker.NewToolHiveProcess(t.Context(), mcpbroker.ToolHiveConfig{DeferAnonymousDiscovery: true, Profiles: []mcpbroker.ToolHiveProfile{{Name: "calendar", URL: newMCPTestServer(t), Auth: "none"}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = process.Close() })
+				api, err := mcpbroker.NewSessionAPI(process, storage, func(context.Context) *session.Principal { return &session.Principal{Issuer: "test", Subject: "host"} })
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = api.Close() })
+				cfg.SessionBrokerFactory = func(context.Context) (mcpbrokergrpc.SessionHostClient, func() error, error) {
+					return authoritySessionClient{api}, func() error { return nil }, nil
+				}
 			}
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
@@ -36,8 +56,8 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 						t.Fatal(err)
 					}
 					inventory, err := built.Service.ListSessionMcpConnectors(ctx, sess.ID)
-					if err != nil || inventory.Availability != "available" || len(inventory.Connectors) != 1 {
-						t.Fatalf("real bundled inspection: %+v %v", inventory, err)
+					if err != nil || inventory.Availability != "unavailable" || inventory.EnrollmentState != "unknown" || len(inventory.Connectors) != 1 || inventory.Connectors[0].CatalogueState != "unknown" {
+						t.Fatalf("remote inspection before enrollment: %+v %v", inventory, err)
 					}
 				}
 			}

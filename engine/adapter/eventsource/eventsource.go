@@ -144,6 +144,7 @@ type SessionMeta struct {
 	// values here; Fold fails closed when their aggregate invariants do not hold.
 	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment
 	BrokerCredentialCustody    *session.BrokerCredentialCustody
+	BrokerAccess               *session.BrokerAccess
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -200,7 +201,14 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
-	if err := restoreAuthority(s, meta.Authority); err != nil {
+	if meta.BrokerAccess != nil {
+		if meta.Authority == nil {
+			return nil, fmt.Errorf("%w: broker access requires authority", ErrReconstruct)
+		}
+		if err := s.BindAuthority(*meta.Authority); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+		}
+	} else if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
@@ -224,6 +232,11 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 		}
 		if err := s.BeginWorkspaceEnrollment(*meta.PendingWorkspaceEnrollment); err != nil {
 			return nil, fmt.Errorf("%w: restore workspace enrollment: %w", ErrReconstruct, err)
+		}
+	}
+	if meta.BrokerAccess != nil {
+		if err := s.RestoreBrokerAccess(*meta.BrokerAccess); err != nil {
+			return nil, fmt.Errorf("%w: restore broker access: %w", ErrReconstruct, err)
 		}
 	}
 	if meta.BrokerCredentialCustody != nil {
