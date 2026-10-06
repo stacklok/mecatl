@@ -61,7 +61,7 @@ func (s toolcallProjectionState) status() (glyph, text, style string) {
 	case toolcallAwaitingResult:
 		return "…", "awaiting result", "toolName"
 	case toolcallProvisional:
-		return "…", "awaiting confirmation", "toolName"
+		return "…", "result received · finalizing", "toolName"
 	case toolcallDone:
 		return "✓", statusDone, "toolOk"
 	case toolcallFailed:

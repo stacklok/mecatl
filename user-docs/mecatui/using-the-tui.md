@@ -12,7 +12,8 @@ description:
 During a run, you can inspect tool calls with `ctrl+t` in `/toolcalls`. The
 inspector also works when revisiting a session transcript. Running Edit and
 Write cards show their diffs inline; settled calls keep their full arguments and
-results in the inspector.
+results in the inspector. When `mecatui` receives a result before its final update,
+it keeps the card open and shows `result received · finalizing`.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
 per-turn usage, permanent error details, and changed files. Tool results stay in
