@@ -270684,6 +270684,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791276209293,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c8366f5ee5f15a08a21f256c5adcc2752cba717",
+          "message": "fix(sdk): clear new dependency advisories in the SDK audit (#2132)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T04:37:03-04:00",
+          "tree_id": "ece551c67070c3d84fe9d42156c929a929533bb9",
+          "url": "https://github.com/stacklok/mecatl/commit/3c8366f5ee5f15a08a21f256c5adcc2752cba717"
+        },
+        "date": 1791276947562,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -392626,6 +392660,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791276944002,
+  "lastUpdate": 1791276948511,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
