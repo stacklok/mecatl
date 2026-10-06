@@ -79,13 +79,13 @@ func TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume(t *testing.T) {
 	check(m, "first", "awaiting result", false, "lost-first-result")
 	check(m, "second", "running", false, "lost-second-result")
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "temporary", Available: true})
-	check(m, "second", "awaiting confirmation", false, "")
+	check(m, "second", "result received · finalizing", false, "")
 	check(m, "first", "awaiting result", false, "lost-first-result")
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "canonical", IsError: true})
 	check(m, "second", "failed", true, "")
 	check(m, "first", "awaiting result", false, "lost-first-result")
 	m = applyAll(m, client.ToolResultMsg{CallID: "first", Content: "temporary", Available: true})
-	check(m, "first", "awaiting confirmation", false, "")
+	check(m, "first", "result received · finalizing", false, "")
 	m = applyAll(m, client.ToolResultMsg{CallID: "first", Content: "temporary"}) // identical confirmation
 	check(m, "first", "done", true, "")
 	if m.conv.scrollback.Len() != length || len(m.toolcallEntries()) != 2 || toolBlockID(t, m.conv.scrollback, "first") != firstID || toolBlockID(t, m.conv.scrollback, "second") != secondID {
