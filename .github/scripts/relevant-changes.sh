@@ -107,11 +107,21 @@ irrelevant() {
       esac
       return 0
       ;;
+    module_publication)
+      # The published adapter closure changes only when its module pins or this
+      # proof's own recipe/classifier changes. A Go source edit alone cannot
+      # alter an existing immutable tag.
+      case "$1" in
+        go.mod|go.sum|adapters/go.mod|adapters/go.sum|internal/adaptersupport/go.mod|internal/adaptersupport/go.sum|contracts/gen/go/mecatl/driver/go.mod|contracts/gen/go/mecatl/driver/go.sum|integration/microvm/go.mod|integration/microvm/go.sum|Taskfile.yml|.github/workflows/ci.yml|.github/scripts/check-module-publication*.sh|.github/scripts/relevant-changes*.sh)
+          return 1 ;;
+      esac
+      return 0
+      ;;
     microvm)
       # The runtime's nested module and direct root integration closure must run.
       # Known separate components cannot alter it; unknown paths remain fail-closed.
       case "$1" in
-        environment/microvm/*|engine/*|internal/adapter/microvm/*|internal/adapter/microvmmanager/*|internal/app/*|cmd/mecated/*|cmd/mecatui/*|go.mod|go.sum|go.work|Taskfile.yml|.golangci.yml|.github/workflows/ci.yml|.github/workflows/microvm-e2e.yml|.github/scripts/relevant-changes.sh|.github/scripts/relevant-changes_test.sh|.github/scripts/relevant-changes-workflow_test.sh|.github/scripts/race-test.sh|.github/scripts/root-race-packages.sh|.github/scripts/microvm-ci-release_test.sh|.github/scripts/install-microvm-release.sh)
+        environment/microvm/*|integration/microvm/*|engine/*|internal/adapter/microvm/*|internal/adapter/microvmmanager/*|internal/app/*|cmd/mecated/*|cmd/mecatui/*|go.mod|go.sum|go.work|Taskfile.yml|.golangci.yml|.github/workflows/ci.yml|.github/workflows/microvm-e2e.yml|.github/scripts/relevant-changes.sh|.github/scripts/relevant-changes_test.sh|.github/scripts/relevant-changes-workflow_test.sh|.github/scripts/microvm-ci-release_test.sh|.github/scripts/install-microvm-release.sh)
           return 1 ;;
         README.md|docs/*|user-docs/*|website/*|sdk/*|apps/*|authn/*|provider/*|contracts/*|deploy/*|examples/*|perf/*|cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|internal/adapter/*|internal/apicheck/*|internal/buildinfo/*|internal/codex/*|internal/fixture/*|internal/test/*)
           return 0 ;;

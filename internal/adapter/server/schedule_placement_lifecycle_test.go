@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
@@ -20,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 type schedulePlacementProvider struct {

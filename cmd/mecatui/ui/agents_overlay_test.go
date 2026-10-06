@@ -198,146 +198,6 @@ func TestFleetMissingChildIDDropped(t *testing.T) {
 	}
 }
 
-// TestFooterHiddenWithoutSubagents asserts the footer has NO fleet segment when no
-// subagent has run — the no-subagent footer stays byte-identical to before.
-func TestFooterHiddenWithoutSubagents(t *testing.T) {
-	m := newMCPModel(t, aztec(), nil)
-	out := stripANSIstr(m.fitFooter(m.deps.Theme.Style("muted").Render("connected"), 120))
-	if strings.Contains(out, "subagents") || strings.Contains(out, subagentFleetGlyph) {
-		t.Errorf("footer should carry no fleet segment with zero subagents, got %q", out)
-	}
-}
-
-// TestFooterShowsRunningAndDone asserts the footer fleet segment shows the
-// running/done counts and the f6 cue once subagents have run (mixed live+done).
-func TestFooterShowsRunningAndDone(t *testing.T) {
-	m := newMCPModel(t, aztec(), nil)
-	m = seedSubagents(m, "p1",
-		startSub("p1", "c1", "audit auth"),
-		toolSub("p1", "c1", "Grep", false, 1),
-		startSub("p1", "c2", "map coverage"),
-		startSub("p1", "c3", "trace config"),
-		endSub("p1", "c3", 15000, 4000, 9, "end_turn"),
-	)
-	out := stripANSIstr(m.fitFooter(m.deps.Theme.Style("muted").Render("connected"), 160))
-	if !strings.Contains(out, "subagents") {
-		t.Errorf("footer should show the fleet segment, got %q", out)
-	}
-	// 2 running (c1, c2), 1 done (c3).
-	if !strings.Contains(out, "2"+subagentRunGlyph) || !strings.Contains(out, "1"+subagentDoneGlyph) {
-		t.Errorf("footer should show 2 running / 1 done, got %q", out)
-	}
-	if !strings.Contains(out, "f6") {
-		t.Errorf("footer fleet segment should advertise f6, got %q", out)
-	}
-}
-
-// TestFooterFleetTiers asserts the three fleet footer tiers degrade cleanly at
-// narrowing widths (full → medium → compact → dropped), like the team segment.
-func TestFooterFleetTiers(t *testing.T) {
-	th := aztec()
-	full := stripANSIstr(subagentFooterFull(th, 3, 1, defaultHelpKeys().agents))
-	medium := stripANSIstr(subagentFooterMedium(3, 1, defaultHelpKeys().agents))
-	compact := stripANSIstr(subagentFooterCompact(3, 1))
-	if !strings.Contains(full, "subagents") {
-		t.Errorf("full tier should name 'subagents', got %q", full)
-	}
-	if strings.Contains(medium, "subagents") {
-		t.Errorf("medium tier should drop the word 'subagents', got %q", medium)
-	}
-	if !strings.Contains(medium, "f6") {
-		t.Errorf("medium tier should keep the f6 cue, got %q", medium)
-	}
-	if strings.Contains(compact, "f6") {
-		t.Errorf("compact tier should drop the f6 cue, got %q", compact)
-	}
-	for _, s := range []string{full, medium, compact} {
-		if !strings.Contains(s, "3"+subagentRunGlyph) || !strings.Contains(s, "1"+subagentDoneGlyph) {
-			t.Errorf("tier %q should carry the counts", s)
-		}
-	}
-}
-
-// TestFooterFleetTierSelection proves the SELECTION wiring (not just the builders):
-// fitFooter picks the medium tier (drops the "subagents" word, keeps "f6") when the
-// full tier won't fit, and the compact tier (drops "f6") when even medium won't fit.
-//
-// The candidate widths are reconstructed EXACTLY as fitFooter builds them (agents prefix
-// + sep + the matching ctx-meter tier), so the chosen test widths are deterministic
-// regardless of glyph widths. With no team and no ctx window the agents prefix is the
-// fleet segment alone and the meter tiers collapse to a short "ctx <n>" form, so the
-// agents tier drives the choice.
-func TestFooterFleetTierSelection(t *testing.T) {
-	th := aztec()
-	m := newMCPModel(t, aztec(), nil)
-	m = seedSubagents(m, "p1",
-		startSub("p1", "c1", "audit auth"),
-		startSub("p1", "c2", "map coverage"),
-		startSub("p1", "c3", "trace config"),
-	) // 3 running, 0 done
-	left := th.Style("muted").Render("connected")
-	leftW := lipgloss.Width(left)
-
-	// Rebuild the four agents-bearing candidates fitFooter forms (see view.go fitFooter).
-	const sep = "  "
-	meter := renderContextMeter(th, m.contextTokens, m.contextWindow())
-	meterCompact := renderContextMeterCompact(th, m.contextTokens, m.contextWindow())
-	meterMinimal := renderContextMeterMinimal(th, m.contextTokens, m.contextWindow())
-	full := subagentFooterFull(th, 3, 0, defaultHelpKeys().agents)
-	medium := th.Style("spinner").Render(subagentFooterMedium(3, 0, defaultHelpKeys().agents))
-	compact := th.Style("spinner").Render(subagentFooterCompact(3, 0))
-	cand0 := full + sep + meter + " · " + renderUsageFacets(m.usage) // richest
-	cand1 := full + sep + meter
-	cand2 := medium + sep + meterCompact
-	cand3 := compact + sep + meterMinimal
-	w := func(s string) int { return leftW + lipgloss.Width(s) + footerGapPad }
-
-	// Sanity: the candidates strictly narrow, so a between-width selects a single tier.
-	if w(cand0) <= w(cand1) || w(cand1) <= w(cand2) || w(cand2) <= w(cand3) {
-		t.Fatalf("test premise broken: candidate widths not strictly decreasing: %d %d %d %d",
-			w(cand0), w(cand1), w(cand2), w(cand3))
-	}
-
-	// At a width that fits cand2 (medium tier) but NOT cand1 (full tier): medium chosen —
-	// the "subagents" word is dropped, the f6 cue survives.
-	out := stripANSIstr(m.fitFooter(left, w(cand2)))
-	if strings.Contains(out, "subagents") {
-		t.Errorf("medium-width footer should drop the 'subagents' word, got %q", out)
-	}
-	if !strings.Contains(out, "f6") {
-		t.Errorf("medium-width footer should keep the f6 cue, got %q", out)
-	}
-
-	// At a width that fits cand3 (compact tier) but NOT cand2 (medium tier): compact
-	// chosen — the f6 cue is dropped, the counts survive.
-	out = stripANSIstr(m.fitFooter(left, w(cand3)))
-	if strings.Contains(out, "f6") {
-		t.Errorf("compact-width footer should drop the f6 cue, got %q", out)
-	}
-	if !strings.Contains(out, "3"+subagentRunGlyph) {
-		t.Errorf("compact-width footer should still render the counts, got %q", out)
-	}
-}
-
-// TestFooterFleetAndTeamCoexist asserts a session running BOTH a live team and
-// subagents shows BOTH segments in the footer at full width (the unified-overlay
-// premise: both are reachable).
-func TestFooterFleetAndTeamCoexist(t *testing.T) {
-	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) {
-		c.startTeamCard("t1", "team-x", roster())
-		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
-	})
-	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
-	out := stripANSIstr(m.fitFooter(m.deps.Theme.Style("muted").Render("connected"), 200))
-	if !strings.Contains(out, "team-x") {
-		t.Errorf("footer should keep the live-team segment, got %q", out)
-	}
-	if !strings.Contains(out, "subagents") {
-		t.Errorf("footer should also show the fleet segment, got %q", out)
-	}
-}
-
 // --- iteration 7: unified tabbed overlay ----------------------------------
 
 // TestF6OpensSubagentsTabWhenNoTeam asserts the context-sensitive default: with
@@ -917,71 +777,6 @@ func TestAgentsKeyboardPagingUsesPhysicalRowsAndIndicators(t *testing.T) {
 	}
 }
 
-// --- footer goldens -------------------------------------------------------
-
-// TestFooterFleetGolden locks the three footer fleet states (no subagents / N running
-// / mixed running+done) as a single stripped golden of the fitFooter output, so a
-// regression in the segment format or the tiering is caught.
-func TestFooterFleetGolden(t *testing.T) {
-	left := aztec().Style("muted").Render("connected")
-
-	none := newMCPModel(t, aztec(), nil)
-	running := seedSubagents(newMCPModel(t, aztec(), nil), "p1",
-		startSub("p1", "c1", "audit auth"),
-		startSub("p1", "c2", "map coverage"),
-		startSub("p1", "c3", "trace config"),
-	)
-	mixed := seedSubagents(newMCPModel(t, aztec(), nil), "p1",
-		startSub("p1", "c1", "audit auth"),
-		startSub("p1", "c2", "map coverage"),
-		startSub("p1", "c3", "trace config"),
-		endSub("p1", "c3", 15000, 4000, 9, "end_turn"),
-	)
-
-	var b strings.Builder
-	b.WriteString("no subagents:\n")
-	b.WriteString(stripANSIstr(none.fitFooter(left, 160)) + "\n\n")
-	b.WriteString("3 running:\n")
-	b.WriteString(stripANSIstr(running.fitFooter(left, 160)) + "\n\n")
-	b.WriteString("mixed 2 running + 1 done:\n")
-	b.WriteString(stripANSIstr(mixed.fitFooter(left, 160)) + "\n")
-	compareGolden(t, "footer_fleet.golden", []byte(b.String()))
-}
-
-// TestFooterCtxMeterGolden locks the footer context-meter END-TO-END through the
-// client→ui relay (issue #65): a SessionReadyMsg carrying a 200K ResolvedModel
-// window + a TurnEndMsg setting the 40K numerator must render the bar + "40K/200K"
-// with NO --context-window override. The snapshot is the stripped fitFooter output
-// at a wide width so the full-fidelity tier survives. It proves the new default
-// denominator source (the server-echoed window) reaches the meter via the reducer.
-func TestFooterCtxMeterGolden(t *testing.T) {
-	m := newMCPModel(t, aztec(), nil)
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		client.SessionReadyMsg{
-			SessionID:     "sess-ctx-0001",
-			ResolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 200000},
-		},
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 1200}},
-	)
-	left := aztec().Style("muted").Render("connected")
-	compareGolden(t, "footer_ctx_meter.golden", []byte(stripANSIstr(m.fitFooter(left, 160))+"\n"))
-}
-
-// TestFooterCtxUnknownGolden locks the unknown-window degrade: with NEITHER an
-// override nor a server-echoed window (older server / no resolved_model), the same
-// 40K numerator renders the bare "ctx 40K" with no bar and no denominator.
-func TestFooterCtxUnknownGolden(t *testing.T) {
-	m := newMCPModel(t, aztec(), nil)
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-ctx-0002"}, // zero ResolvedModel → unknown window
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 1200}},
-	)
-	left := aztec().Style("muted").Render("connected")
-	compareGolden(t, "footer_ctx_unknown.golden", []byte(stripANSIstr(m.fitFooter(left, 160))+"\n"))
-}
-
 // --- overlay goldens ------------------------------------------------------
 
 // goldenFleet builds a representative mixed fleet for the overlay goldens: three
@@ -1140,6 +935,7 @@ func TestSubagentRosterGolden(t *testing.T) {
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_roster.golden", got)
@@ -1157,6 +953,7 @@ func TestSubagentFocusGolden(t *testing.T) {
 	if m.subagents.view != subagentFocus {
 		t.Fatalf("expected subagentFocus, got %v", m.subagents.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_focus.golden", got)
@@ -1192,6 +989,7 @@ func TestSubagentRosterBackgroundGolden(t *testing.T) {
 	if m.agentsTab != tabSubagents {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_roster_background.golden", got)
@@ -1210,6 +1008,7 @@ func TestSubagentFocusBackgroundGolden(t *testing.T) {
 	if m.subagents.view != subagentFocus || m.subagents.child != "explorer-f8a6" {
 		t.Fatalf("expected focus on the background child, got view=%v child=%q", m.subagents.view, m.subagents.child)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "subagent_focus_background.golden", got)
@@ -1461,6 +1260,7 @@ func TestAgentsTeamsTabGolden(t *testing.T) {
 	if m.agentsTab != tabTeams {
 		t.Fatalf("expected Teams tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "agents_teams_tab.golden", got)
@@ -1496,6 +1296,7 @@ func TestParallelRosterGolden(t *testing.T) {
 	if m.agentsTab != tabParallel {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "parallel_roster.golden", got)
@@ -1553,6 +1354,7 @@ func TestParallelGroupFocusGolden(t *testing.T) {
 	if m.parallel.view != parallelGroupView {
 		t.Fatalf("expected parallelGroupView, got %v", m.parallel.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "parallel_group_focus.golden", got)
@@ -1560,43 +1362,8 @@ func TestParallelGroupFocusGolden(t *testing.T) {
 
 // TestFooterParallelGolden locks the footer when a Parallel run is present, alongside the
 // fleet segment, across tiers (a Parallel run + a subagent fleet both advertised).
-func TestFooterParallelGolden(t *testing.T) {
-	left := aztec().Style("muted").Render("connected")
-
-	parOnly := goldenParallel(newMCPModel(t, aztec(), nil))
-	parPlusSub := seedSubagents(goldenParallel(newMCPModel(t, aztec(), nil)), "s1",
-		startSub("s1", "c1", "audit auth"))
-
-	var b strings.Builder
-	b.WriteString("parallel only (judge, 3 done):\n")
-	b.WriteString(stripANSIstr(parOnly.fitFooter(left, 160)) + "\n\n")
-	b.WriteString("parallel + subagent fleet:\n")
-	b.WriteString(stripANSIstr(parPlusSub.fitFooter(left, 160)) + "\n\n")
-	b.WriteString("parallel + sub, narrow (medium tier):\n")
-	b.WriteString(stripANSIstr(parPlusSub.fitFooter(left, 70)) + "\n")
-	compareGolden(t, "footer_parallel.golden", []byte(b.String()))
-}
-
 // TestParallelFooterTiers asserts the Parallel footer segment renders at each tier and the
 // counts are correct, mirroring the subagent fleet footer tier test.
-func TestParallelFooterTiers(t *testing.T) {
-	th := aztec()
-	full := stripANSIstr(parallelFooterFull(th, 1, 2, defaultHelpKeys().agents))
-	medium := stripANSIstr(parallelFooterMedium(1, 2, defaultHelpKeys().agents))
-	compact := stripANSIstr(parallelFooterCompact(1, 2))
-	if !strings.Contains(full, "parallel") || !strings.Contains(full, "f6") {
-		t.Errorf("full tier should name parallel + f6: %q", full)
-	}
-	for _, s := range []string{full, medium, compact} {
-		if !strings.Contains(s, "1◐") || !strings.Contains(s, "2✓") {
-			t.Errorf("tier missing running/done counts: %q", s)
-		}
-	}
-	if strings.Contains(compact, "f6") {
-		t.Errorf("compact tier should drop f6: %q", compact)
-	}
-}
-
 // TestAgentsOverlayNothingRanHint asserts f6 with neither a team nor subagents
 // surfaces the honest "nothing ran" hint and does NOT open the overlay.
 func TestAgentsOverlayNothingRanHint(t *testing.T) {

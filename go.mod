@@ -17,7 +17,6 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260527151214-009e6338d40d
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/fsnotify/fsnotify v1.9.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofrs/flock v0.13.1
@@ -35,14 +34,16 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/procfs v0.22.0
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/stacklok/mecatl/adapters v0.1.1
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
-	github.com/stacklok/mecatl/engine v0.14.0
+	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
+	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09
+	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000
 	github.com/stacklok/toolhive v0.50.0
 	github.com/stacklok/toolhive-core v0.0.50
-	github.com/stacklok/toolhive-core/redisconn v0.0.2
 	github.com/stacklok/typesafe-go v0.1.0
 	github.com/tiktoken-go/tokenizer v0.8.0
 	github.com/zalando/go-keyring v0.2.8
@@ -71,8 +72,10 @@ require (
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.37.0
+	k8s.io/apiextensions-apiserver v0.37.0
 	k8s.io/apimachinery v0.37.0
 	k8s.io/client-go v0.37.0
+	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -106,6 +109,7 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cenkalti/backoff/v7 v7.0.0 // indirect
@@ -142,6 +146,7 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/getsentry/sentry-go v0.49.0 // indirect
 	github.com/getsentry/sentry-go/otel v0.49.0 // indirect
@@ -177,6 +182,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/mock v1.7.0-rc.1 // indirect
+	github.com/google/cel-go v0.29.2 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
@@ -255,6 +261,7 @@ require (
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
+	github.com/stacklok/toolhive-core/redisconn v0.0.2 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
@@ -288,7 +295,7 @@ require (
 	go.opentelemetry.io/otel/exporters/jaeger v1.17.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.22.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.22.0 // indirect
-	go.opentelemetry.io/otel/exporters/zipkin v1.35.0 // indirect
+	go.opentelemetry.io/otel/exporters/zipkin v1.45.0 // indirect
 	go.opentelemetry.io/otel/log v0.22.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.22.0 // indirect
 	go.starlark.net v0.0.0-20260908191801-89a6a09411d5 // indirect
@@ -311,22 +318,29 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.37.0 // indirect
+	k8s.io/apiserver v0.37.0 // indirect
+	k8s.io/component-base v0.37.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/streaming v0.37.0 // indirect
-	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.58.0 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0 // indirect
 	sigs.k8s.io/controller-runtime v0.25.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
+
+replace github.com/stacklok/mecatl/adapters => ./adapters
+
+replace github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver => ./contracts/gen/go/mecatl/driver
+
+replace github.com/stacklok/mecatl/internal/adaptersupport => ./internal/adaptersupport
 
 replace github.com/stacklok/mecatl/authn/oidc => ./authn/oidc
 

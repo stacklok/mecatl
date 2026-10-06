@@ -44,15 +44,22 @@ deploy it:
 
 ```sh
 cosign verify \
-  --certificate-identity-regexp '^https://github.com/stacklok/mecatl/' \
+  --certificate-identity https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/<VERSION> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/stacklok/mecatl/studio:<VERSION>
 
-gh attestation verify oci://ghcr.io/stacklok/mecatl/studio:<VERSION> --repo stacklok/mecatl
+gh attestation verify oci://ghcr.io/stacklok/mecatl/studio:<VERSION> \
+  --repo stacklok/mecatl \
+  --signer-workflow stacklok/mecatl/.github/workflows/release.yml \
+  --source-ref refs/tags/<VERSION>
 ```
 
-The Cosign command checks that a GitHub Actions workflow in the
-`stacklok/mecatl` repository signed the image.
+Both commands accept only a signature that the `release.yml` workflow in
+`stacklok/mecatl` produced from the `<VERSION>` tag. To deploy exactly the image
+you verified, reference it by digest,
+`ghcr.io/stacklok/mecatl/studio@sha256:<DIGEST>`;
+`docker buildx imagetools inspect ghcr.io/stacklok/mecatl/studio:<VERSION>`
+prints the digest.
 
 ## What Studio offers
 
@@ -313,9 +320,23 @@ Studio answers only requests whose `Host` is the host of `STUDIO_PUBLIC_URL`,
 so the ingress in front of it must pass the original `Host` header through.
 
 Studio listens on port `3100` on every interface inside the image, answers
-`GET /api/health` on any host name as soon as it starts, and runs as a non-root
-user. Scale it horizontally without shared storage: every
-replica needs only the same `STUDIO_SESSION_SECRET`.
+`GET /api/health` on any host name as soon as it starts, and runs as non-root
+user `65532`. It writes nothing to its own filesystem, so run it with a
+read-only root filesystem, no Linux capabilities, and privilege escalation
+disabled. In a Kubernetes pod, set this container `securityContext`:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+```
+
+Scale Studio horizontally without shared storage: every replica needs only the
+same `STUDIO_SESSION_SECRET`.
 
 ### Sign in and recover
 

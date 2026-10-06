@@ -30,7 +30,13 @@ on:
     paths:
       - cmd/mecak8s/**
       - internal/cliconfig/**
-      - internal/adapter/redisstore/**
+      - adapters/redisstore/**
+      - adapters/go.mod
+      - adapters/go.sum
+      - internal/adaptersupport/**
+      - contracts/gen/go/mecatl/driver/**
+      - go.work
+      - go.work.sum
       - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
@@ -58,7 +64,13 @@ on:
     paths:
       - cmd/mecak8s/**
       - internal/cliconfig/**
-      - internal/adapter/redisstore/**
+      - adapters/redisstore/**
+      - adapters/go.mod
+      - adapters/go.sum
+      - internal/adaptersupport/**
+      - contracts/gen/go/mecatl/driver/**
+      - go.work
+      - go.work.sum
       - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
@@ -120,6 +132,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            adapters/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -204,6 +219,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            adapters/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: 3.x

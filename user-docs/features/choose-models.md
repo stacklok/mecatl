@@ -74,11 +74,12 @@ operator-managed credential file when interactive entry is unsuitable. See
 [Run mecated standalone](/building/deployment/mecated.md#configure-providers) for
 credential-file and daemon configuration details.
 
-After setup, you may set the embedded default with
-`mecatui providers set-default PROVIDER [MODEL]`; declining leaves the current
-default unchanged. `mecatui providers` and `mecatui providers status [PROVIDER]`
-report local configuration without revealing credentials. Presence does not prove
-model access, billing, or account health.
+After credential setup, the wizard offers to set the provider as the embedded
+deployment default. This includes ToolHive after its externally managed login.
+Declining leaves the current default unchanged. You can change the selection later
+with `mecatui providers set-default PROVIDER [MODEL]`. `mecatui providers` and
+`mecatui providers status [PROVIDER]` report local configuration without revealing
+credentials. Presence does not prove model access, billing, or account health.
 
 `openai-codex` is distinct from the public `openai` API-key provider. Setup can
 reuse a locally usable manual Codex subscription token for default selection but
@@ -167,9 +168,9 @@ and any OpenAI-compatible endpoint you configure yourself.
 
 Select Anthropic models under `openrouter-anthropic` when you want more than
 the floor. That endpoint speaks the Anthropic Messages protocol, which carries
-four cache breakpoints instead of one and lets you set a cache lifetime with
-`--anthropic-cache-ttl` (`5m` or `1h`). The Responses protocol expresses
-neither.
+four cache breakpoints instead of one and a cache lifetime, which defaults to
+`1h` and can be set with `--anthropic-cache-ttl` (`5m` or `1h`). The Responses
+protocol expresses neither.
 
 This matters for cost. Anthropic caches a prompt only when the caller asks, and
 cache reads bill at a tenth of uncached input, so a long session on an unasked
@@ -361,6 +362,12 @@ These mechanisms are independent:
   up to three early genuine prompts; it never delays or changes the chat. Its
   token usage is stored separately as `session_title`, not charged to the chat's
   displayed usage or run budget.
+- **Auxiliary model calls** record provider-reported tokens in separate canonical
+  session-usage buckets. A returned result without a purpose is recorded as
+  `unknown` when its purpose cannot be determined. Model attribution is
+  independent: it is `unknown` only when the provider or model is unavailable.
+  These buckets do not change the chat's displayed usage or run budget, except
+  that the router bucket retains its internal spend limit.
 - **Router categories** select a model for a plain delegated Subagent, an
   unpinned named specialist (including `mode: "read-write"`), a Parallel branch,
   or an undefined team member from the task description. A taxonomy enables the
@@ -582,6 +589,43 @@ session as authoritative.
   availability.
 
 ## Troubleshooting
+
+### A provider error ended a model step
+
+The server retries transient provider failures before meaningful assistant text is
+visible. If recovery ends in an error, use `/retry` from an idle `mecatui`
+session to ask the server to retry the failed step without duplicating your
+prompt. A failure after visible output is terminal and is not automatically
+replayed, because the model might otherwise repeat visible text or tool calls.
+
+Each model step defaults to a 30-minute recovery window and at most 60 wrapper
+calls, including the initial request. Extra provider calls can be billed even
+when Mecatl discards their precommit output. These limits apply separately to
+each model step, so they are not a task-wide spending ceiling. Engine token
+budgets are checked at turn boundaries, not between wrapper calls within one
+step. Prompt-cache retention can end while a model step is recovering; a later
+attempt can incur cache-write charges or full input charges. A matching prompt
+does not guarantee a cache hit: reuse also depends on the provider's model and
+routing, and cache lifetimes vary. A longer cache lifetime may carry a higher
+write price. Check the current [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+guides for retention and billing details before choosing a cache setting.
+
+For an embedded terminal session, set `--llm-recovery-budget` and
+`--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
+server owns these values. Daemon, Kubernetes, and CI configuration is described
+in [LLM resilience](/building/deployment/mecated.md#llm-resilience).
+
+### A provider request failed
+
+OpenAI Responses, Chat Completions, and Anthropic errors show a failure category
+or status, such as `503 Service Unavailable`, instead of the provider's raw error
+message. Raw messages can contain reflected credentials or request content. When
+an HTTP error includes a sanitized target and request ID, use them to locate the
+request in your provider's support tools. Context-window and content-filter
+failures retain their specific categories. If a manual Codex token is rejected,
+Mecatl shows its local remediation: replace the token in `auth.yaml` and
+restart Mecatl.
 
 ### Model context metadata is unavailable
 

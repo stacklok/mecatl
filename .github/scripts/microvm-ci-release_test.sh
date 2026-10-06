@@ -6,6 +6,9 @@ taskfile="$repo_root/Taskfile.yml"
 ci="$repo_root/.github/workflows/ci.yml"
 e2e="$repo_root/.github/workflows/microvm-e2e.yml"
 release="$repo_root/.github/workflows/release.yml"
+release_pr="$repo_root/.github/workflows/create-release-pr.yml"
+release_tag="$repo_root/.github/workflows/create-release-tag.yml"
+validate_execution_images="$repo_root/.github/scripts/validate-execution-base-images.sh"
 package="$repo_root/.github/scripts/package-microvm-release.sh"
 prepare_dev="$repo_root/.github/scripts/prepare-microvm-development-release.sh"
 sign="$repo_root/.github/scripts/sign-microvm-release-evidence.sh"
@@ -32,6 +35,11 @@ forbid() {
   fi
 }
 
+# Exercise tracked defaults with an isolated registry stub: no operator Docker
+# credentials or network access, and Dockerfile contents are never executed.
+python3 "$repo_root/.github/scripts/execution-image-pins_test.py" \
+  "$repo_root" "$validate_execution_images"
+
 # Release archive creation must stay portable across GNU and BSD hosts.
 forbid 'find "$prepared/package" -mindepth 1 -printf' "$prepare_dev"
 forbid 'sort -z' "$prepare_dev"
@@ -47,7 +55,6 @@ require 'onerror=traversal_error' "$prepare_dev"
 # Ordinary PR CI must cross the nested-module boundary at every relevant gate.
 require 'environment/microvm/go.sum' "$ci"
 require 'cd environment/microvm && go build ./...' "$ci"
-require 'run: cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...' "$ci"
 require 'cd environment/microvm && golangci-lint run --config ../../.golangci.yml' "$ci"
 require 'name: MicroVM module (standalone, GOWORK=off)' "$ci"
 require "if: needs.changes.outputs.microvm_relevant == 'true'" "$ci"
@@ -61,8 +68,8 @@ for path in \
   'cmd/mecatui/**' 'go.mod' 'go.sum' 'go.work' 'Taskfile.yml' '.golangci.yml' \
   '.github/workflows/ci.yml' '.github/workflows/microvm-e2e.yml' \
   '.github/scripts/relevant-changes.sh' '.github/scripts/relevant-changes_test.sh' \
-  '.github/scripts/relevant-changes-workflow_test.sh' '.github/scripts/race-test.sh' \
-  '.github/scripts/root-race-packages.sh' '.github/scripts/microvm-ci-release_test.sh' \
+  '.github/scripts/relevant-changes-workflow_test.sh' \
+  '.github/scripts/microvm-ci-release_test.sh' \
   '.github/scripts/install-microvm-release.sh'; do
   test "$(grep -Fc "      - $path" "$e2e")" -eq 2 || {
     echo "MicroVM E2E path filter must contain $path for push and pull_request" >&2
@@ -145,60 +152,8 @@ printf '%s\n' "$publish_cli_needs" | grep -Fx '    needs: [guard, create-release
 # Every publishing job must have an explicit or transitive dependency on the
 # immutable-ref validator. This graph check catches a newly added publisher as
 # well as a one-off dependency typo.
-python3 - "$release" <<'PY'
-import re
-import sys
-
-workflow = open(sys.argv[1], encoding="utf-8").read().splitlines()
-jobs = {}
-job_lines = {}
-current = None
-for line in workflow:
-    match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
-    if match:
-        current = match.group(1)
-        jobs[current] = []
-        job_lines[current] = []
-        continue
-    if current is None:
-        continue
-    job_lines[current].append(line)
-    match = re.fullmatch(r"    needs: (.+)", line)
-    if not match:
-        continue
-    value = match.group(1).strip()
-    if value.startswith("[") and value.endswith("]"):
-        jobs[current] = [item.strip() for item in value[1:-1].split(",")]
-    else:
-        jobs[current] = [value]
-
-def reaches_validation(job, seen=None):
-    if job == "validate-release-ref":
-        return True
-    seen = set() if seen is None else seen
-    if job in seen:
-        return False
-    seen.add(job)
-    return any(reaches_validation(dep, seen) for dep in jobs.get(job, []))
-
-for job, lines in job_lines.items():
-    for producer in re.findall(r"needs\.([A-Za-z0-9_-]+)\.outputs\.", "\n".join(lines)):
-        if producer not in jobs[job]:
-            raise SystemExit(f"job {job} reads outputs without directly needing {producer}")
-
-validation = "\n".join(job_lines["validate-release-ref"])
-assert '    needs: guard' in validation
-assert '          ref: ${{ github.sha }}' in validation
-assert '        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' in validation
-assert '''      - name: Assert guard and immutable run commits agree
-        env:
-          RELEASE_COMMIT: ${{ needs.guard.outputs.commit }}
-        run: test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"''' in validation
-
-for job in sorted(name for name in jobs if name == "publish" or name.startswith("publish-")):
-    if not reaches_validation(job):
-        raise SystemExit(f"publishing job {job} bypasses validate-release-ref")
-PY
+python3 "$repo_root/.github/scripts/release-workflow-graph_test.py" \
+  "$release" "$release_pr" "$release_tag"
 # Exercise the real guard and validator agreement step with divergent on-main
 # commits; counting checkout producers alone cannot establish revision authority.
 sh "$repo_root/.github/scripts/release-tag-guard_test.sh"
@@ -291,11 +246,18 @@ printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseVersion' >/d
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseStampRequired=release' >/dev/null
 require '[ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-release.sh ]' "$release"
 
+# Build the Brood Box digest helper from its own module, as the release job does.
+require 'go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache" "linux/$goarch"' "$repo_root/environment/microvm/e2e/prepare.sh"
+test_tmp=$(mktemp -d)
+trap 'rm -rf -- "$test_tmp"' EXIT
+mkdir -p "$test_tmp/oci-digest"
+CGO_ENABLED=0 GOWORK=off go -C "$repo_root/environment/microvm" build -trimpath -buildvcs=false -ldflags='-buildid=' \
+  -o "$test_tmp/oci-digest/digest" ./cmd/mecatl-oci-tree-digest
+
 # Functional host-stamp/entrypoint contract: both real binaries consume the same
 # defaults through their package-specific version symbol. Mecated exercises its offline
 # administration entrypoint; mecatui proves the stamp reaches embedded app composition.
-host_scratch="$repo_root/.scratch/microvm-host-entrypoint-test"
-rm -rf "$host_scratch"
+host_scratch="$test_tmp/host-entrypoint"
 mkdir -p "$host_scratch/home" "$host_scratch/config" "$host_scratch/data" "$host_scratch/state" "$host_scratch/runtime"
 host_version=v0.0.0-host-contract
 host_platform=linux-amd64
@@ -340,8 +302,7 @@ go test -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
 expected_status=$(printf '{"backend":"microvm-local","configured":false,"running":false,"state":"unconfigured","error":"","remediation":"Not configured; run '\''mecated microvm doctor'\'' to check host readiness.","socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
 test "$(cat "$host_scratch/mecated.json")" = "$expected_status"
 
-scratch="$repo_root/.scratch/microvm-release-test"
-rm -rf "$scratch"
+scratch="$test_tmp/release"
 mkdir -p "$scratch/fixture/runtime" "$scratch/fixture/firmware" "$scratch/fixture/execution-image/usr/local/bin" "$scratch/fixture/execution-image/bin" "$scratch/one" "$scratch/two"
 printf 'microvmd-fixture\n' >"$scratch/fixture/mecatl-microvmd"
 printf 'guest-agent-fixture\n' >"$scratch/fixture/mecatl-guest-agent"
@@ -817,5 +778,3 @@ for kind in mecated mecatui; do
     exit 1
   fi
 done
-
-rm -rf "$scratch"

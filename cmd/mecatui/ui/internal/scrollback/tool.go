@@ -23,9 +23,10 @@ type ToolCall struct {
 // ToolResult describes a resolved tool call. IsError records an error result;
 // Artifacts are detached when stored or returned in a snapshot.
 type ToolResult struct {
-	Body      string
-	IsError   bool
-	Artifacts []Artifact
+	Body              string
+	StructuredContent string
+	IsError           bool
+	Artifacts         []Artifact
 }
 
 // ToolCardSnapshot is the detached payload for a tool call. Resolved distinguishes
@@ -36,6 +37,7 @@ type ToolCardSnapshot struct {
 	Resolved, Finished bool
 	Failed             bool
 	Result             ToolResult
+	available          bool // provisional result awaiting canonical confirmation
 }
 
 // Kind returns KindTool.
@@ -103,37 +105,56 @@ func (t ToolCards) Finish(callID string, failed bool) bool {
 	return c.replace(i, payload)
 }
 
-// Resolve records result as the terminal result for the call indexed by callID.
-// It returns false for an unknown call or a conflicting replay. An identical
-// replay succeeds without changing the card or its revision.
+// Resolve records the authoritative result for the call indexed by callID.
+// It confirms identical availability or replaces a different available result.
+// A conflicting canonical replay fails.
 func (t ToolCards) Resolve(callID string, result ToolResult) bool {
+	return t.resolve(callID, result, false)
+}
+
+// ResolveAvailable settles a pending card with a transient display result.
+func (t ToolCards) ResolveAvailable(callID string, result ToolResult) bool {
+	return t.resolve(callID, result, true)
+}
+
+func (t ToolCards) resolve(callID string, result ToolResult, available bool) bool {
 	c := t.conversation
 	i, ok := c.call(callID)
 	if !ok {
 		return false
 	}
-	switch payload := c.cards[i].payload.(type) {
+	entry := &c.cards[i]
+	var prior ToolResult
+	var resolved, provisional bool
+	switch payload := entry.payload.(type) {
 	case ToolCardSnapshot:
-		if payload.Resolved {
-			return reflect.DeepEqual(payload.Result, result)
-		}
-		payload.Resolved = true
-		payload.Result = cloneResult(result)
-		return c.replace(i, payload)
+		prior, resolved, provisional = payload.Result, payload.Resolved, payload.available
 	case SubagentCardSnapshot:
-		if payload.Resolved {
-			return reflect.DeepEqual(payload.Result, result)
-		}
-		payload.Resolved = true
-		payload.Result = cloneResult(result)
-		return c.replace(i, payload)
+		prior, resolved, provisional = payload.Result, payload.Resolved, payload.available
 	case TeamCardSnapshot:
-		if payload.Resolved {
-			return reflect.DeepEqual(payload.Result, result)
-		}
-		payload.Resolved = true
-		payload.Result = cloneResult(result)
-		return c.replace(i, payload)
+		prior, resolved, provisional = payload.Result, payload.Resolved, payload.available
+	default:
+		return false
 	}
-	return false
+	if resolved {
+		if available {
+			return provisional && reflect.DeepEqual(prior, result)
+		}
+		if !provisional {
+			return reflect.DeepEqual(prior, result)
+		}
+	}
+	var updated PayloadSnapshot
+	switch payload := entry.payload.(type) {
+	case ToolCardSnapshot:
+		payload.Resolved, payload.Result, payload.available = true, cloneResult(result), available
+		updated = payload
+	case SubagentCardSnapshot:
+		payload.Resolved, payload.Result, payload.available = true, cloneResult(result), available
+		updated = payload
+	case TeamCardSnapshot:
+		payload.Resolved, payload.Result, payload.available = true, cloneResult(result), available
+		updated = payload
+	}
+	return c.replace(i, updated)
 }

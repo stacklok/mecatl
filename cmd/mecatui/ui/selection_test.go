@@ -187,10 +187,10 @@ func TestConvTopRowMatchesRenderedBodyTop(t *testing.T) {
 // cross-check is not vacuous.
 func TestConvTopRowTracksWrappedHeader(t *testing.T) {
 	m, _ := selModel(t)
-	m.deps.Model = "openrouter/anthropic/claude-3.5-sonnet-20241022-extended"
-	m.deps.Mode = "acceptEdits"
-	m.deps.Server = "some-long-host.example.internal:50051"
-	// Resize NARROW so the joined identity line exceeds the width and wraps.
+	// The renderer-owned debug disclosure wraps at a narrow width; this exercises
+	// measured layout without relying on the removed legacy identity formatter.
+	m.deps.DebugTarget = "debug-target"
+	// Resize NARROW so the mandatory disclosure wraps.
 	mm, _ := m.onResize(tea.WindowSizeMsg{Width: 40, Height: 30})
 	m = mm.(Model)
 
@@ -262,11 +262,9 @@ func TestOnResizeUsesMeasuredHeaderHeight(t *testing.T) {
 	// pre-top-pad layout — the inputRailPadTop row.)
 	const taH, footerH, spacerH, totalH = 5, 2, 1, 30
 
-	// Wrapping case: long deps at a narrow width.
+	// Wrapping case: the renderer-owned debug disclosure at a narrow width.
 	m, _ := selModel(t)
-	m.deps.Model = "openrouter/anthropic/claude-3.5-sonnet-20241022-extended"
-	m.deps.Mode = "acceptEdits"
-	m.deps.Server = "some-long-host.example.internal:50051"
+	m.deps.DebugTarget = "debug-target"
 	mm, _ := m.onResize(tea.WindowSizeMsg{Width: 40, Height: totalH})
 	m = mm.(Model)
 	wrappedHeader := lipgloss.Height(m.renderHeader())
@@ -625,7 +623,7 @@ func TestDragReSplicesAfterDeltaUsesFreshBase(t *testing.T) {
 
 	// The grown content (post-delta) has MORE lines than at press time — record the
 	// fresh unstyled render line count so a stale (shorter) base re-splice is caught.
-	freshLineCount := strings.Count(m.rend.renderConversation(&m.conv, m.expandTools), "\n")
+	freshLineCount := strings.Count(m.rend.renderConversation(&m.conv, m.expandConversation), "\n")
 
 	// Now DRAG to extend the head along the answer line: snapshotSelection re-splices
 	// the (freshly re-captured) selBase in place — NOT a stale base.
@@ -1181,11 +1179,9 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 		tea.WindowSizeMsg{Width: 100, Height: 40},
 		client.SessionReadyMsg{SessionID: "sess-reflow-1"},
 	)
-	// A tool block whose body is long enough that ctrl+t (full vs line-capped) changes
-	// its rendered height, followed by a UNIQUE assistant marker line BELOW it.
+	// A reasoning stanza above a unique answer expands into additional rows.
 	m.conv.addUser("req")
-	m.conv.addTool("t1", "Shell", `{"cmd":"seq 40"}`)
-	m.conv.resolveTool("t1", strings.TrimRight(strings.Repeat("toolbodyline\n", 40), "\n"), false)
+	m.conv.appendReasoning("first summary line\nsecond summary line\nthird summary line")
 	const marker = "UNIQUEMARKERZZZ"
 	m.conv.appendAssistant(marker + " trailing words here")
 	m.phase = phaseIdle
@@ -1211,12 +1207,12 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 		t.Fatalf("selection snapshot %q should cover the marker", m.sel.snapshot)
 	}
 
-	// Toggle ctrl+t → the tool body expands, shifting the marker DOWN, so line index
-	// markerLine now holds a tool-body line instead of the marker.
-	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	// Expand reasoning above the selection, shifting the marker down.
+	m.expandConversation = true
+	m.refreshView()
 	afterIdx := lineIndexContaining(m.vp.GetContent(), marker)
 	if afterIdx == markerLine {
-		t.Fatalf("test setup did not shift the layout (marker stayed at line %d); ctrl+t must change the tool body height", markerLine)
+		t.Fatalf("test setup did not shift the layout (marker stayed at line %d); expanded reasoning must change the block height", markerLine)
 	}
 	if m.sel.active {
 		t.Errorf("selection should be CLEARED after a reflow changed the selected text (marker %d → %d)", markerLine, afterIdx)

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // TestPhase3ReconstructFromStoreAndLog is the cloud-native Phase 3 GATE: it drives

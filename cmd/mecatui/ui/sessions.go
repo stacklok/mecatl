@@ -59,6 +59,7 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 
 	m.sessionsActionRequestToken++
 	state := &sessionsState{
+		debug:                         m.deps.Debug,
 		view:                          sessionsPanel,
 		startup:                       startup,
 		tab:                           tabChats,
@@ -76,6 +77,7 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 		forker:                        m.deps.Session,
 		manager:                       m.deps.SessionManagement,
 		clipboard:                     m.deps.Clipboard,
+		showBenignHookNotices:         m.deps.showBenignGuardrails(),
 		actionRequestToken:            m.sessionsActionRequestToken,
 	}
 	m.modal = state
@@ -88,7 +90,9 @@ func sessionsSurface(m *Model) *sessionsState {
 }
 
 func (m Model) bindSessionID(id string) Model {
+	m.settlePendingApproval()
 	if id != m.sessionID {
+		m.conv.guardrailReviews = nil
 		m.admissionSubmission = nil
 		m.freshSessionBinding = false
 		m.compactPending = false

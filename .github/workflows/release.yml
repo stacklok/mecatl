@@ -2,6 +2,9 @@
 # example image, the Mecatl Studio image (early access, ADR 0351), the mecak8s
 # Helm chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
 # stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
+# Nested persistence modules are NOT published by root v* releases. Ordinary
+# builds and tidy use public, checksum-verified immutable dependency revisions;
+# independent release tags remain human-controlled; see adapters/COMPATIBILITY.md.
 name: Release
 
 on:
@@ -117,7 +120,7 @@ jobs:
 
   publish:
     name: Build, publish, sign, attest
-    needs: [guard, validate-release-ref]
+    needs: [guard, validate-release-ref, publish-microvm]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -143,6 +146,19 @@ jobs:
       - name: Assert checkout is the immutable run commit
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
+      - name: Download versioned microVM platform defaults
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: microvm-default-*
+          path: microvm-defaults
+          merge-multiple: true
+
+      - name: Stamp strict microVM release defaults
+        run: |
+          set -euo pipefail
+          jq -s 'map({key:.platform,value:.}) | from_entries' microvm-defaults/microvm-default-*.json > microvm-defaults.json
+          echo "MICROVM_RELEASE_DEFAULTS_B64=$(base64 -w0 microvm-defaults.json)" >> "$GITHUB_ENV"
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -152,6 +168,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
 
@@ -325,6 +344,9 @@ jobs:
           cache: true
           cache-dependency-path: |
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             environment/microvm/go.sum
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -497,13 +519,16 @@ jobs:
           else
             docker buildx imagetools inspect "${BROOD_DISCOVERY_REFERENCE}" --raw > brood-base-index.json
             resolution_evidence="sha256:$(sha256sum brood-base-index.json | cut -d' ' -f1)"
+            alpine_index="$(docker buildx imagetools inspect 'docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce' --raw)"
+            alpine_manifest="$(printf '%s\n' "${alpine_index}" | jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | if length == 1 then .[0] else error("expected exactly one Alpine linux/amd64 manifest") end')"
+            alpine_reference="docker.io/library/alpine@${alpine_manifest}"
             mkdir -p brood-tree
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off go -C environment/microvm build -trimpath -buildvcs=false -ldflags='-buildid=' -o "../../brood-tree/digest" ./cmd/mecatl-oci-tree-digest
             for arch in amd64 arm64; do
               manifest="$(jq -er --arg arch "${arch}" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] | if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' brood-base-index.json)"
               reference="ghcr.io/stacklok/brood-box/base@${manifest}"
-              CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOWORK=off go build -trimpath -buildvcs=false -ldflags='-buildid=' -o "brood-tree/digest-${arch}" ./environment/microvm/cmd/mecatl-oci-tree-digest
               mkdir -p "brood-tree/cache-${arch}"
-              tree="$(docker run --rm --platform "linux/${arch}" -v "${PWD}/brood-tree:/release" 'docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce' "/release/digest-${arch}" "${reference}" "/release/cache-${arch}")"
+              tree="$(docker run --rm --platform linux/amd64 -v "${PWD}/brood-tree:/release" "${alpine_reference}" "/release/digest" "${reference}" "/release/cache-${arch}" "linux/${arch}")"
               jq -n --arg reference "${reference}" --arg manifest_digest "${manifest}" --arg tree_digest "${tree}" \
                 --arg discovery_reference "${BROOD_DISCOVERY_REFERENCE}" --arg resolution_evidence "${resolution_evidence}" --arg platform "linux/${arch}" \
                 '{reference:$reference,manifest_digest:$manifest_digest,tree_digest:$tree_digest,discovery_reference:$discovery_reference,resolution_evidence:$resolution_evidence,platform:$platform}' > "brood-${arch}.json"
@@ -591,6 +616,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             environment/microvm/go.sum
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Download matching microVM bootstrap defaults
@@ -706,6 +734,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
 
@@ -871,6 +902,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
@@ -1012,23 +1046,17 @@ jobs:
     env:
       VERSION: ${{ needs.guard.outputs.version }}
       IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image }}
-      GO_IMAGE: ${{ vars.EXECUTION_GO_IMAGE }}
-      PROVIDER_RUNTIME_IMAGE: ${{ vars.EXECUTION_PROVIDER_RUNTIME_IMAGE }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false, fetch-depth: 1, ref: "${{ needs.guard.outputs.commit }}"}
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           version: v0.30.1
+      - name: Validate immutable base inputs
+        run: sh .github/scripts/validate-execution-base-images.sh
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v4.0.0
         with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
-      - name: Validate immutable base inputs
-        run: |
-          case "$GO_IMAGE" in *@sha256:*) ;; *) echo "EXECUTION_GO_IMAGE must be digest-pinned" >&2; exit 1;; esac
-          if [ "${{ matrix.name }}" = provider ]; then
-            case "$PROVIDER_RUNTIME_IMAGE" in *@sha256:*) ;; *) echo "EXECUTION_PROVIDER_RUNTIME_IMAGE must be digest-pinned" >&2; exit 1;; esac
-          fi
       - name: Build and push image
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -1039,9 +1067,6 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          build-args: |
-            GO_IMAGE=${{ env.GO_IMAGE }}
-            RUNTIME_IMAGE=${{ matrix.name == 'provider' && env.PROVIDER_RUNTIME_IMAGE || env.GO_IMAGE }}
           tags: |
             ${{ env.IMAGE }}:${{ env.VERSION }}
             ${{ env.IMAGE }}:latest
@@ -1115,12 +1140,12 @@ jobs:
           push-to-registry: true
           create-storage-record: false
 
-  # Not a Go binary, so this doesn't go through ko like the jobs above — a
-  # plain docker/build-push-action build of the existing dev/Compose
-  # Dockerfile. The bot's TypeScript source still lives under
-  # sdk/typescript/examples/ and isn't a published npm package (see
-  # ../sdk/typescript/examples/slack-bot/README.md); only this container
-  # image is released, from the same v* tag as mecated/mecatui/mecak8s.
+  # Not a Go binary, so this doesn't go through ko like the jobs above. The
+  # multi-stage Dockerfile builds both TypeScript packages, then copies only
+  # production artifacts into its digest-pinned Chainguard runtime image. The
+  # bot's source lives under sdk/typescript/examples/ and isn't a published npm
+  # package (see ../sdk/typescript/examples/slack-bot/README.md); only this
+  # container image is released, from the same v* tag as the Go images.
   publish-slack-bot:
     needs: [guard, validate-release-ref]
     name: Build, publish, sign, attest Slack bot example image
@@ -1216,8 +1241,8 @@ jobs:
           create-storage-record: false
 
   publish-studio:
-    needs: validate-release-ref
-    name: Build, publish, sign, attest Mecatl Studio image
+    needs: [guard, validate-release-ref]
+    name: Build, scan, sign, attest, publish Mecatl Studio image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -1227,9 +1252,7 @@ jobs:
       attestations: write # SLSA build provenance via actions/attest-build-provenance
     env:
       IMAGE: ghcr.io/${{ github.repository }}/studio
-      # On workflow_dispatch github.ref_name is the default branch, so prefer
-      # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.guard.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1245,26 +1268,16 @@ jobs:
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Two cases publish nothing, loudly, instead of failing the release or
-      # publishing a misattributed image:
-      # - a tag that predates Studio has no apps/Dockerfile to build;
-      # - a dispatch that checked out a tag other than the run's own commit
-      #   would get build provenance naming the run's commit, not the source
-      #   actually built. Re-run the workflow ON the tag to publish it.
+      # A tag that predates Studio has no apps/Dockerfile to build: publish
+      # nothing, loudly, instead of failing the release.
       - name: Decide whether this revision publishes Studio
         id: gate
-        env:
-          BUILT: ${{ steps.revision.outputs.sha }}
-          RUN_SHA: ${{ github.sha }}
         run: |
-          if [ ! -f apps/Dockerfile ]; then
+          if [ -f apps/Dockerfile ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
             echo "::notice title=Studio not published::${VERSION} predates Mecatl Studio (no apps/Dockerfile)."
             echo "publish=false" >> "$GITHUB_OUTPUT"
-          elif [ "$BUILT" != "$RUN_SHA" ]; then
-            echo "::notice title=Studio not published::${VERSION} resolves to ${BUILT}, but this run is ${RUN_SHA}; its provenance would name the wrong source. Run the workflow on ${VERSION} itself."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
@@ -1282,12 +1295,14 @@ jobs:
 
       # Build context is apps/ ONLY: Studio consumes the PUBLISHED
       # @stacklok-oss/mecatl-sdk, never the in-tree SDK (ADR 0351), so the Go
-      # root and sdk/typescript are not part of the image. Tag both the version
-      # and latest, matching the jobs above. Studio is in EARLY ACCESS and may
-      # change without notice between versions — the stability label says so,
-      # so infrastructure can wire the deployment early without mistaking it
-      # for a stable surface.
-      - name: Build and push image
+      # root and sdk/typescript are not part of the image. The image is pushed
+      # BY DIGEST, with no tag: nothing can pull it by name until the scan,
+      # signature, attestations, and their verification below have all passed,
+      # so a failed step never leaves an unsigned :latest behind. Studio is in
+      # EARLY ACCESS and may change without notice between versions — the
+      # stability label says so, so infrastructure can wire the deployment early
+      # without mistaking it for a stable surface.
+      - name: Build and push image by digest
         if: steps.gate.outputs.publish == 'true'
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -1295,18 +1310,31 @@ jobs:
           context: apps
           file: apps/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VERSION }}
-            ${{ env.IMAGE }}:latest
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.title=studio
+            org.opencontainers.image.description=Mecatl Studio web UI and its backend for frontend
+            org.opencontainers.image.documentation=https://mecatl.dev/docs/building/deployment/studio
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.revision=${{ steps.revision.outputs.sha }}
             org.opencontainers.image.vendor=Stacklok
             org.stacklok.mecatl.studio.stability=early-access
           build-args: |
             STUDIO_BUILD_ID=${{ env.VERSION }}
+
+      # Same gate as the CI studio job: refuse to sign or tag an image with a
+      # critical vulnerability that already has a fix.
+      - name: Scan image for fixable critical vulnerabilities
+        if: steps.gate.outputs.publish == 'true'
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: critical
+          output-format: table
 
       # Sign/SBOM/attest the pushed manifest list BY DIGEST, matching the
       # ko-based jobs above — never a mutable tag, so this binds to the exact
@@ -1351,6 +1379,40 @@ jobs:
           # would fail `task lint:actions`. Declare the feature off instead of
           # silently failing at it.
           create-storage-record: false
+
+      # Verify exactly what a deployment is told to verify (user-docs
+      # building/deployment/studio.md), pinned to this workflow at this tag, before
+      # the image becomes pullable by name.
+      - name: Verify signature and attestations
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ needs.validate-release-ref.outputs.signing_ref }}
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          for type in spdxjson slsaprovenance1; do
+            cosign verify-attestation --type "${type}" --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          done
+
+      # Only now give the verified digest its names. imagetools create from a
+      # single index re-points the tags without rewriting the index, so the
+      # digest stays the one signed above; the check below refuses anything else.
+      - name: Tag the verified image
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          docker buildx imagetools create --tag "${IMAGE}:${VERSION}" --tag "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+          for tag in "${VERSION}" latest; do
+            resolved=$(docker buildx imagetools inspect "${IMAGE}:${tag}" --format '{{json .Manifest}}' | jq --raw-output .digest)
+            if [ "${resolved}" != "${DIGEST}" ]; then
+              echo "${IMAGE}:${tag} resolves to ${resolved}, not the verified ${DIGEST}" >&2
+              exit 1
+            fi
+          done
 
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:
@@ -1605,6 +1667,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
 
       # GoReleaser shells out to cosign for signs: and syft for sboms:; neither

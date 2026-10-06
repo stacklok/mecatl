@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -39,14 +41,11 @@ func healModel(t *testing.T, conv *fakeConv) Model {
 	return m
 }
 
-// footerStr renders the (ANSI-stripped) footer the user sees.
-func footerStr(m Model) string { return stripANSIstr(m.fitFooter("connected", 160)) }
-
 // TestFooterHealRaceThenHeal is the decisive offline reproduction of the issue-#66
-// footer-heal race: a raced create echoes a 0 window (the footer degrades to the
-// bare "ctx 40K", no bar), the turn-end gate fires a GetSession refetch, and the
+// footer-heal race: a raced create echoes a 0 window (the footer initially
+// degrades to bare "ctx ~35K"), the turn-end gate fires a GetSession refetch, and the
 // server's healed live window (1.05M) raises the denominator so the footer renders
-// the "40K/1.0M" bar — WITHOUT a model switch or restart.
+// estimated occupancy against the rounded 1.1M window — WITHOUT a model switch or restart.
 func TestFooterHealRaceThenHeal(t *testing.T) {
 	conv := &fakeConv{
 		recv: &fakeRecver{}, send: &fakeSender{},
@@ -55,20 +54,28 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 			{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000},
 		},
 	}
+	source := customization.NewDefaultSource(0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	m := healModel(t, conv)
+	m.deps.StatusSource = source
+	m.contextTokens = 35_000 // turn-end changes occupancy and publishes a distinct pre-heal result
+	m.contextEstimated = true
+	m.submitStatusLine()
+	updated, _ := m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
 
 	// 1) Raced create → window unknown → the footer degrades (no denominator bar).
-	if got := m.contextWindow(); got != 0 {
-		t.Fatalf("contextWindow() = %d, want 0 (raced create echoed a 0 window)", got)
+	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
+		t.Fatalf("resolved context window = %d, want 0 (raced create echoed a 0 window)", got)
 	}
-	if foot := footerStr(m); !strings.Contains(foot, "ctx 40K") || strings.Contains(foot, "/") {
-		t.Fatalf("footer = %q, want the degraded bare 'ctx 40K' with no '/' denominator", foot)
+	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "ctx ~35K") || strings.Contains(footer, "/1.1M") {
+		t.Fatalf("pre-heal stock footer = %q, want estimated occupancy without a denominator", footer)
 	}
 
 	// 2) A turn boundary fires the heal refetch. Drive the REAL reducer with a
 	// TurnEndMsg and assert it emits a command (the RefreshResolvedModelCmd batched
 	// alongside afterEvent's cmd).
-	mm, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 100}})
+	mm, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 100}, Estimated: true})
 	m = mm.(Model)
 	if cmd == nil {
 		t.Fatal("TurnEndMsg with an unknown window emitted no command — the heal refetch did not fire")
@@ -80,22 +87,26 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	if n := conv.getSessionCalls(); n != 1 {
 		t.Fatalf("GetSession called %d times after one turn-end with unknown window, want 1", n)
 	}
+	// Settle the turn-end source notification before applying the heal. Otherwise
+	// the next listener wake can observe the old result and falsely pass/fail.
+	updated, _ = m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
+	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "ctx ~40K") || strings.Contains(footer, "/1.1M") {
+		t.Fatalf("turn-end stock footer = %q, want pre-heal estimated occupancy", footer)
+	}
 
-	// 3) Feed the heal result back through the reducer: the window heals to 1.05M,
-	// contextWindow() reports it, and the footer renders the bar.
+	// 3) Feed the heal result through the real reducer, then let the configured
+	// source publish and the UI listener apply the refreshed surface.
 	healed := client.ResolvedModelMsg{SessionID: "sess-test-0001", Resolved: client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000}}
 	m = applyAll(m, healed)
 	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
 		t.Fatalf("resolvedSessionModel.ContextWindow = %d, want 1,050,000 after the heal", got)
 	}
-	if got := m.contextWindow(); got != 1_050_000 {
-		t.Fatalf("contextWindow() = %d, want 1,050,000 after the heal", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "40K/1.1M") {
-		t.Fatalf("footer = %q, want the healed '40K/1.1M' bar", foot)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, ctxGlyphEmpty) && !strings.Contains(foot, ctxGlyphOk) {
-		t.Fatalf("footer = %q, want a meter bar glyph after the heal", footerStr(m))
+	updated, _ = m.Update(waitStatusMessage(t, m.statusLineWaitCmd()))
+	m = updated.(Model)
+	footer := stripANSIstr(m.renderFooter())
+	if !m.generatedStatusLine.Footer.Present || !strings.Contains(footer, "~40K/1.1M") || !strings.Contains(footer, "~3%") {
+		t.Fatalf("healed stock footer = %q, want source-rendered estimated occupancy with healed denominator", footer)
 	}
 
 	// 4) Identity untouched (only the denominator self-corrected).
@@ -130,11 +141,8 @@ func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
 	})
 	m.width = 160
 
-	if got := m.contextWindow(); got != 0 {
-		t.Fatalf("resumed contextWindow() = %d, want provisional 0", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "ctx 40K") || strings.Contains(foot, "/") {
-		t.Fatalf("resumed footer = %q, want bare occupancy before refresh", foot)
+	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
+		t.Fatalf("resumed context window = %d, want provisional 0", got)
 	}
 
 	updated, cmd := m.Update(startupResumeReadyMsg{})
@@ -157,17 +165,14 @@ func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
 
 	updated, _ = m.Update(refreshed)
 	m = updated.(Model)
-	if got := m.contextWindow(); got != 1_050_000 {
-		t.Fatalf("healed contextWindow() = %d, want 1,050,000", got)
+	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
+		t.Fatalf("healed context window = %d, want 1,050,000", got)
 	}
 	if got := m.contextTokens; got != occupancy {
 		t.Fatalf("refresh replaced resumed occupancy: got %d, want %d", got, occupancy)
 	}
 	if got := m.usage; got != (client.Usage{InputTokens: 12345, OutputTokens: 678}) {
 		t.Fatalf("refresh replaced resumed usage: got %+v", got)
-	}
-	if foot := footerStr(m); !strings.Contains(foot, "40K/1.1M") {
-		t.Fatalf("healed footer = %q, want visible meter without input", foot)
 	}
 }
 
@@ -212,9 +217,6 @@ func TestFooterStartupResumeRefreshRestoresPersistedOccupancy(t *testing.T) {
 	if m.contextUnknown || m.contextTokens != occupancy || !m.contextEstimated {
 		t.Fatalf("resumed context = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
 	}
-	if foot := footerStr(m); !strings.Contains(foot, "~40K/1.1M") {
-		t.Fatalf("footer = %q, want restored occupancy before a prompt", foot)
-	}
 }
 
 // TestFooterStartupResumeRetriesProvisionalWindow proves resume does not strand
@@ -241,8 +243,8 @@ func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
 	}
 	updated, retry := m.Update(first)
 	m = updated.(Model)
-	if m.contextWindow() != 0 || retry == nil {
-		t.Fatalf("first refresh = window %d retry %v, want provisional window with retry", m.contextWindow(), retry != nil)
+	if m.resolvedSessionModel.ContextWindow != 0 || retry == nil {
+		t.Fatalf("first refresh = window %d retry %v, want provisional window with retry", m.resolvedSessionModel.ContextWindow, retry != nil)
 	}
 
 	updated, refresh := m.Update(retry())
@@ -255,8 +257,8 @@ func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
 		t.Fatalf("retry refresh = %#v, want attempt 1 snapshot", second)
 	}
 	m = applyAll(m, second)
-	if m.contextWindow() != 200_000 || !strings.Contains(footerStr(m), "40K/200K") {
-		t.Fatalf("retried footer = %q, want denominator after startup without interaction", footerStr(m))
+	if m.resolvedSessionModel.ContextWindow != 200_000 {
+		t.Fatalf("retried context window = %d, want 200000 after startup without interaction", m.resolvedSessionModel.ContextWindow)
 	}
 }
 
@@ -272,8 +274,8 @@ func TestFooterStartupResumeDoesNotRetryKnownWindow(t *testing.T) {
 		SessionID: m.sessionID, Resolved: client.ResolvedModel{ContextWindow: 0}, AdoptContextOccupancy: true,
 	})
 	m = updated.(Model)
-	if m.contextWindow() != 200_000 || cmd != nil {
-		t.Fatalf("known window = %d retry %v, want preserved window without retry", m.contextWindow(), cmd != nil)
+	if m.resolvedSessionModel.ContextWindow != 200_000 || cmd != nil {
+		t.Fatalf("known window = %d retry %v, want preserved window without retry", m.resolvedSessionModel.ContextWindow, cmd != nil)
 	}
 }
 

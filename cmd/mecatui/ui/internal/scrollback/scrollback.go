@@ -1,6 +1,9 @@
 package scrollback
 
-import "reflect"
+import (
+	"reflect"
+	"slices"
+)
 
 // BlockID is a non-zero identifier allocated by a Conversation for a card or its
 // changed-files appendix. IDs are unique within one Conversation and are never
@@ -44,8 +47,8 @@ type PayloadSnapshot interface {
 }
 
 // BlockSnapshot is a detached view of one conversation card. ID remains stable
-// for the card's lifetime, while Revision starts at zero and advances only when
-// that card's visible payload changes.
+// for the card's lifetime. Revision starts at zero and advances when the card's
+// payload changes, including confirmation of a provisional tool result.
 type BlockSnapshot struct {
 	ID       BlockID
 	Revision uint64
@@ -75,6 +78,68 @@ type Conversation struct {
 	calls    map[string]int
 	appendix *AppendixSnapshot
 	seen     map[string]struct{}
+}
+
+// ToolCallMetadata is the compact tool-card projection used by inventories. It
+// intentionally excludes results and artifacts, whose byte payloads remain owned by
+// the conversation until a selected detail requests a detached snapshot.
+type ToolCallMetadata struct {
+	ID                      BlockID
+	Revision                uint64
+	CallID, Name, Arguments string
+	// ResultReceived reports payload.Resolved; Provisional reports an available
+	// result awaiting canonical confirmation. Terminal is lifecycle completion
+	// without implying a canonical result.
+	ResultReceived, Provisional, Terminal bool
+	ResultError, LifecycleFailed          bool
+	Stop                                  string
+}
+
+// ToolCallMetadataAt returns the compact top-level tool projection at index i
+// without detaching its payload. It returns false for non-tool cards.
+func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
+	card := c.cards[i]
+	return toolCallMetadata(card.id, card.revision, card.payload)
+}
+
+// ToolCallMetadataOf returns the same compact projection as ToolCallMetadataAt
+// for an already detached snapshot, so a renderer that loaded a snapshot after a
+// cache miss does not reinterpret tool lifecycle fields itself.
+func ToolCallMetadataOf(s BlockSnapshot) (ToolCallMetadata, bool) {
+	return toolCallMetadata(s.ID, s.Revision, s.Payload)
+}
+
+func toolCallMetadata(id BlockID, revision uint64, payload PayloadSnapshot) (ToolCallMetadata, bool) {
+	var call ToolCall
+	var resultReceived, provisional, terminal, resultError, lifecycleFailed bool
+	var stop string
+	switch payload := payload.(type) {
+	case ToolCardSnapshot:
+		call = payload.Call
+		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Finished
+		resultError, lifecycleFailed = payload.Result.IsError, payload.Failed
+	case SubagentCardSnapshot:
+		call = payload.Call
+		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Update.Done
+		resultError = payload.Result.IsError
+		if terminal {
+			stop = payload.Update.Stop
+		}
+	case TeamCardSnapshot:
+		call = payload.Call
+		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Update.Done
+		resultError = payload.Result.IsError
+		if terminal {
+			stop = payload.Update.Stop
+		}
+	default:
+		return ToolCallMetadata{}, false
+	}
+	return ToolCallMetadata{
+		ID: id, Revision: revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
+		ResultReceived: resultReceived, Provisional: provisional, Terminal: terminal,
+		ResultError: resultError, LifecycleFailed: lifecycleFailed, Stop: stop,
+	}, true
 }
 
 // Len returns the number of ordinary cards in the conversation. It excludes the
@@ -112,6 +177,10 @@ func (c *Conversation) append(payload PayloadSnapshot) BlockID {
 	c.nextID++
 	c.cards = append(c.cards, card{id: c.nextID, payload: clonePayload(payload)})
 	return c.nextID
+}
+
+func (c *Conversation) index(id BlockID) int {
+	return slices.IndexFunc(c.cards, func(card card) bool { return card.id == id })
 }
 
 func (c *Conversation) replace(i int, payload PayloadSnapshot) bool {

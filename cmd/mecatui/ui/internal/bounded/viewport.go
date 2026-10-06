@@ -58,6 +58,14 @@ func (v *Viewport) Height() int { return v.height }
 // Offset returns the current scroll offset.
 func (v *Viewport) Offset() int { return v.offset }
 
+// SetOffset positions the viewport at a physical row, clamped to its content.
+func (v *Viewport) SetOffset(offset, total int) {
+	if !v.Valid() {
+		return
+	}
+	v.offset = clampScroll(offset, total, v.height)
+}
+
 // Reset scrolls the viewport to its beginning.
 func (v *Viewport) Reset() { v.offset = 0 }
 

@@ -339,35 +339,42 @@ type WorkspaceReader interface {
 }
 
 // LocalFileOperands returns only operands whose built-in tool semantics identify
-// workspace-local files. Argument names on MCP, custom, or delegation tools are
-// payload labels and never mint local filesystem authority.
+// workspace-local files. It mirrors the built-in decoders' field matching only
+// for required path operands; it intentionally does not validate other arguments.
+// Argument names on MCP, custom, or delegation tools are payload labels and never
+// mint local filesystem authority.
 func LocalFileOperands(name string, args json.RawMessage) []string {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(args, &fields) != nil {
-		return nil
-	}
-	keys := []string(nil)
+	call := session.NewToolCall("", name, args)
 	switch name {
 	case "Read", "Edit", "Write", "Remove", "ListDir":
-		keys = []string{"path"}
+		var operands struct {
+			Path string `json:"path"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok || operands.Path == "" {
+			return nil
+		}
+		return []string{operands.Path}
 	case "Copy", "Move":
-		keys = []string{"source", "destination"}
+		var operands struct {
+			Source      string `json:"source"`
+			Destination string `json:"destination"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok || operands.Source == "" || operands.Destination == "" {
+			return nil
+		}
+		return []string{operands.Source, operands.Destination}
 	case ShellToolName:
-		var command string
-		if json.Unmarshal(fields["command"], &command) == nil {
-			if path, ok := exactLocalShellScript(command); ok {
-				return []string{path}
-			}
+		var operands struct {
+			Command string `json:"command"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok {
+			return nil
+		}
+		if path, ok := exactLocalShellScript(operands.Command); ok {
+			return []string{path}
 		}
 	}
-	paths := make([]string, 0, len(keys))
-	for _, key := range keys {
-		var path string
-		if json.Unmarshal(fields[key], &path) == nil && path != "" {
-			paths = append(paths, path)
-		}
-	}
-	return paths
+	return nil
 }
 
 func exactLocalShellScript(command string) (string, bool) {

@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
 func TestFixtureAutomaticPolicyMatchesAgentDefaults(t *testing.T) {

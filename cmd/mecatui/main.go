@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -427,6 +428,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.MCPAuthorization = cl
 	deps.WorkspaceEnrollment = cl
 	deps.OpenURL = openBrowserURL
+	applyClientPresentationSettings(settings, &deps)
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
@@ -448,22 +450,25 @@ func runWithOptions(argv []string, options runOptions) error {
 		runErr = err
 	}
 
-	runCleanup(forceExit, func() {
-		// Settle the lifecycle hook FIRST: this must complete before the restart
-		// below can build a successor notifier, or a slow hook command could
-		// deliver this generation's terminal after the next generation's busy
-		// signal and mark the host idle during a live run.
-		closeAgentLifecycleHook(agentHook)
-		_ = cl.Close()
-		transCleanup()
+	finishFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted, cfg.transportMode == modeLocal, cl, func() {
+		runCleanup(forceExit, func() {
+			// Settle the lifecycle hook FIRST: this must complete before the restart
+			// below can build a successor notifier, or a slow hook command could
+			// deliver this generation's terminal after the next generation's busy
+			// signal and mark the host idle during a live run.
+			closeAgentLifecycleHook(agentHook)
+			_ = cl.Close()
+			transCleanup()
+		})
 	})
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, restartTransport{Target: target, TLSCAFile: cfg.tlsCA})
 	}
-	if shouldWriteFinalSessionHandoff(finalModel, runErr, interrupted) {
-		writeFinalSessionHandoff(os.Stderr, finalModel)
-	}
 	return runErr
+}
+
+func applyClientPresentationSettings(settings clientSettings, deps *ui.Deps) {
+	deps.ShowBenignHookNotices = settings.HookNotices.ShowBenign
 }
 
 func applyDebugConfig(cfg config, deps *ui.Deps) {
@@ -1053,7 +1058,6 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 		diag.Log(ctx, port.LevelInfo, "mecatui: embedded server diagnostics log opened",
 			"path", diagSink.Path)
 	}
-	fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
 	if addr := srv.AdminAddr(); addr != "" {
 		paths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
 		if cfg.perfMCP {
@@ -1158,11 +1162,41 @@ func shutdownProductMetrics(pm cliconfig.ProductMetricsHandles) {
 	_ = pm.Shutdown(shutdownCtx)
 }
 
+// normalizedLookupTarget adds gRPC's default HTTPS port to bare host and IPv6
+// targets before FindTarget, without allowing resource aliases to select another
+// target's saved trust.
+func normalizedLookupTarget(target string) string {
+	if !strings.ContainsAny(target, ":/?#@") {
+		return net.JoinHostPort(target, "443")
+	}
+	if strings.HasPrefix(target, "[") && strings.HasSuffix(target, "]") {
+		host := target[1 : len(target)-1]
+		ip, _, _ := strings.Cut(host, "%")
+		if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+			return net.JoinHostPort(host, "443")
+		}
+	}
+	return target
+}
+
 // resolveRemoteTransport dials only the configured remote target. It never starts
 // an embedded server or reports embedded startup progress.
 func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (target string, dial client.DialConfig, cleanup func(), err error) {
 	dial = client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
 	if cfg.authToken != "" || cfg.anonymous {
+		registry, regErr := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+		if regErr == nil {
+			if conn, findErr := registry.FindTarget(normalizedLookupTarget(cfg.connectAddress)); findErr == nil {
+				// Explicit bearer and anonymous connects may reuse only the
+				// target's saved server trust. Their transport policy remains
+				// entirely caller-controlled; the managed-OIDC guarantee above
+				// must not be inherited with this metadata.
+				applySavedServerCA(cfg, conn, &dial)
+			}
+		}
+		// Registry open/find failures are intentionally ignored here: explicit
+		// bearer and anonymous modes do not depend on saved enrollment. A lookup
+		// is only a best-effort opportunity to reuse its non-secret server CA.
 		return cfg.connectAddress, dial, noop, nil
 	}
 
@@ -1185,6 +1219,7 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 
 	target = conn.Identity.Target
 	dial.Server = target
+	applySavedServerCA(cfg, conn, &dial)
 	if err := applySavedRemoteTLSPolicy(cfg, &dial); err != nil {
 		return target, client.DialConfig{}, noop, err
 	}
@@ -1330,7 +1365,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		NoShell:               cfg.noShell,
 		Compaction:            "heuristic",
 		Tokenizer:             "heuristic",
-		LLMMaxAttempts:        3,
+		LLMMaxAttempts:        cfg.llmMaxAttempts,
+		LLMRecoveryBudget:     cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:  cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:  cfg.llmStreamIdleTimeout,
 		ContextWindowOverride: cfg.contextWindowOverride,

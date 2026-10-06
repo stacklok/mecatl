@@ -58,13 +58,13 @@ func openArgsView(t *testing.T, m Model) Model {
 }
 
 // TestCtrlTOpensArgsViewForShellAsk pins the ctrl+t routing: a non-diff,
-// non-plan ask opens the full-screen args view WITHOUT touching m.expandTools.
+// non-plan ask opens the full-screen args view WITHOUT touching m.expandConversation.
 func TestCtrlTOpensArgsViewForShellAsk(t *testing.T) {
 	m := shellAskModel(t, longShellArgs)
-	before := m.expandTools
+	before := m.expandConversation
 	m = openArgsView(t, m)
-	if m.expandTools != before {
-		t.Errorf("ctrl+t on a non-diff ask must NOT toggle expandTools (%v → %v)", before, m.expandTools)
+	if m.expandConversation != before {
+		t.Errorf("ctrl+t on a non-diff ask must NOT toggle expandConversation (%v → %v)", before, m.expandConversation)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Errorf("phase must stay phaseAwaitingApproval with the view open, got %v", m.phase)
@@ -78,17 +78,20 @@ func TestCtrlTOpensArgsViewForShellAsk(t *testing.T) {
 	}
 }
 
-// TestCtrlTPlanAskUnchanged is the regression guard: a plan ask's ctrl+t keeps
-// toggling expandTools and never opens the args view.
+// TestCtrlTPlanAskUnchanged is the regression guard: a plan ask's ctrl+t is
+// consumed by approval without opening a detail view or changing global state.
 func TestCtrlTPlanAskUnchanged(t *testing.T) {
 	m := planAskModel(t, true)
-	before := m.expandTools
+	before := m.expandConversation
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	if approvalSurfaceOf(t, m).argsViewOpen {
 		t.Error("ctrl+t on a plan ask must NOT open the args view")
 	}
-	if m.expandTools == before {
-		t.Error("ctrl+t on a plan ask must keep toggling expandTools")
+	if _, ok := m.modal.(*toolcallsState); ok {
+		t.Error("ctrl+t on a plan ask must NOT open the tool-call inspector")
+	}
+	if m.expandConversation != before {
+		t.Error("ctrl+t on a plan ask must be a consumed no-op")
 	}
 }
 
@@ -105,15 +108,15 @@ func TestCtrlTEditAskOpensBoundedDetails(t *testing.T) {
 		Tool:  "Edit",
 		Args:  `{"path":"main.go","old_string":"` + strings.Join(lines, `\n`) + `","new_string":"b"}`,
 	})
-	before := m.expandTools
+	before := m.expandConversation
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	_ = m.View()
 	s := approvalSurfaceOf(t, m)
 	if !s.argsViewOpen || !s.argsVPReady {
 		t.Fatal("ctrl+t on an Edit ask must open the approval-details viewport")
 	}
-	if m.expandTools != before {
-		t.Error("ctrl+t on an Edit ask must not toggle expandTools")
+	if m.expandConversation != before {
+		t.Error("ctrl+t on an Edit ask must not toggle expandConversation")
 	}
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Approval details: Edit") || !strings.Contains(got, "- line0") {
 		t.Errorf("details view must render the diff, got %q", got)
@@ -211,18 +214,18 @@ func TestArgsViewEscReturnsToModal(t *testing.T) {
 }
 
 // TestArgsViewCtrlTClosesView pins the OTHER close key: ctrl+t inside the args
-// view toggles back to the modal (onExpandToolsKey's argsViewOpen branch), with
-// the modal rendering again — like esc, and without touching expandTools.
+// view toggles back to the modal (onToolcallsKey's argsViewOpen branch), with
+// the modal rendering again — like esc, and without touching expandConversation.
 func TestArgsViewCtrlTClosesView(t *testing.T) {
 	m := shellAskModel(t, longShellArgs)
-	before := m.expandTools
+	before := m.expandConversation
 	m = openArgsView(t, m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	if approvalSurfaceOf(t, m).argsViewOpen || approvalSurfaceOf(t, m).argsVPReady {
 		t.Error("ctrl+t inside the args view must close it back to the modal")
 	}
-	if m.expandTools != before {
-		t.Errorf("ctrl+t inside the args view must NOT toggle expandTools (%v → %v)", before, m.expandTools)
+	if m.expandConversation != before {
+		t.Errorf("ctrl+t inside the args view must NOT toggle expandConversation (%v → %v)", before, m.expandConversation)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Errorf("ctrl+t close must return to the modal (phaseAwaitingApproval), got %v", m.phase)
@@ -590,6 +593,7 @@ func TestWheelScrollsConversationWithoutModal(t *testing.T) {
 // TestAskArgsViewPrettyGolden locks the full-screen args view's pretty frame.
 func TestAskArgsViewPrettyGolden(t *testing.T) {
 	m := openArgsView(t, shellAskModel(t, longShellArgs))
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_view_pretty.golden", got)
 }
@@ -598,6 +602,7 @@ func TestAskArgsViewPrettyGolden(t *testing.T) {
 func TestAskArgsViewRawGolden(t *testing.T) {
 	m := openArgsView(t, shellAskModel(t, longShellArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_view_raw.golden", got)
 }
@@ -613,6 +618,7 @@ func TestAskArgsViewScrolledGolden(t *testing.T) {
 	if approvalSurfaceOf(t, m).argsVP.YOffset() != 2 {
 		t.Fatalf("the tall fixture must admit YOffset 2, got %d — the golden would be vacuous", approvalSurfaceOf(t, m).argsVP.YOffset())
 	}
+	m = goldenStatusFrame(t, m)
 	got := string(stripANSI([]byte(m.View().Content)))
 	prettyGolden, err := os.ReadFile(filepath.Join("testdata", "askargs_view_pretty.golden")) //nolint:gosec // test golden
 	if err != nil {
@@ -661,6 +667,7 @@ func tallShellCommandLines(n int) []string {
 // Shell ask (the wrapped, capped mini-viewport + hint).
 func TestAskArgsModalLongShellGolden(t *testing.T) {
 	m := shellAskModel(t, longShellArgs)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "askargs_modal_longshell.golden", got)
 }

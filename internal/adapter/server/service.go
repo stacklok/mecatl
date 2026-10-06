@@ -3787,7 +3787,8 @@ func (s *Service) WithAuthorizedSession(ctx context.Context, id session.SessionI
 // session at a turn boundary. caller is the verified transport principal; it is
 // bound to ctx only when the context has no principal, and a mismatch is rejected.
 // The operation is serialized against run entry and cross-process mutations.
-// A successful no-op neither saves nor appends events.
+// A successful no-op saves only when the compactor returned accounting; it never
+// appends compaction events.
 //
 //nolint:gocyclo // explicit authorization, state, liveness, lease, and persistence gates stay ordered.
 func (s *Service) CompactSession(ctx context.Context, id session.SessionID, caller *session.Principal) (agent.ManualCompactionResult, error) {
@@ -3851,12 +3852,19 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
-	result, err := eng.CompactSession(compactCtx, sess)
-	if err != nil {
-		return agent.ManualCompactionResult{}, err
-	}
-	if !result.Changed {
-		return result, nil
+	beforeUsage := sess.UsageFor(session.UsageKindCompaction)
+	result, compactErr := eng.CompactSession(compactCtx, sess)
+	usageChanged := sess.UsageFor(session.UsageKindCompaction) != beforeUsage
+	if compactErr != nil || !result.Changed {
+		if usageChanged {
+			if !leaseHeld() {
+				return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
+			}
+			if saveErr := s.saveSession(compactCtx, sess); saveErr != nil {
+				return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compaction usage: %v", ErrInternal, saveErr)
+			}
+		}
+		return result, compactErr
 	}
 	// The storage port has no lease-token CAS, so this is not fencing: it is the
 	// narrowest available pre-save loss check. Cancellation also lets a cooperative
@@ -8097,12 +8105,12 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 }
 
 // onLeaseLost handles a declared lease loss only when expected remains the
-// current hold. Local mutation capability is invalidated before the owning run
-// is stopped. For a durably parked awaiting run, its exact local ask is withdrawn
-// before cancellation; cancellation can then unwind only in memory and cannot
-// overwrite the durable awaiting handoff point. The lifecycle record remains until
-// its relay drains and FinishRun performs identity-safe removal. A lightweight
-// lost-owner tombstone prevents this stale Service from reacquiring the session.
+// current hold. Local mutation capability is invalidated before any live run is
+// stopped. For a durably parked awaiting run, its exact local ask is withdrawn
+// and the run remains parked at its durable authorization handoff point. The
+// lifecycle record remains until its relay drains and FinishRun performs
+// identity-safe removal. A lightweight lost-owner tombstone prevents this stale
+// Service from reacquiring the session.
 // The successor now owns durable state, so any process-local authorization expiry
 // timer and local broker transaction are also stopped/invalidated here; the
 // durable snapshot itself is never mutated. Do not acquire runEntryMu here: lease
@@ -8127,11 +8135,6 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 		s.mu.Unlock()
 		return
 	}
-	expected.valid = false
-	s.lostOwnership[id] = struct{}{}
-	s.cfg.MutationCapability.Invalidate(id)
-	leaseCancel = expected.cancel
-	lease = expected.lease
 	if current := s.runs[id]; current != nil {
 		st = current
 		run = current.run
@@ -8142,6 +8145,12 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 			}
 		}
 	}
+	// Local mutation capability is invalidated before the owning run is stopped.
+	expected.valid = false
+	s.lostOwnership[id] = struct{}{}
+	s.cfg.MutationCapability.Invalidate(id)
+	leaseCancel = expected.cancel
+	lease = expected.lease
 	if !preserveAwaiting {
 		delete(s.heldLeases, id)
 	}
@@ -8152,6 +8161,9 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	if leaseCancel != nil {
 		leaseCancel()
 	}
+	// A parked authorization remains the durable handoff point: Cancel is
+	// intentionally a no-op for its completed run. The service still marks its
+	// local run state cancelled to reject stale controls and relay saves.
 	s.cancelRegisteredRunState(id, st, nil, false)
 	if !preserveAwaiting {
 		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)

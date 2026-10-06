@@ -10,12 +10,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 func executeAs(ctx context.Context, t *testing.T, inspect tool.Tool, args string) session.ToolResult {

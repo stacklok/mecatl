@@ -1,45 +1,11 @@
 ---
 name: devops-expert
 description: >-
-  Reviews and designs the DevOps / Platform / SRE surface AROUND application
-  code: CI/CD pipelines (GitHub Actions, GitLab CI, CircleCI, Jenkins),
-  Infrastructure-as-Code (Terraform, Pulumi, OpenTofu, CloudFormation, CDK,
-  Ansible), container builds (Dockerfile, ko, BuildKit, distroless),
-  release engineering (semver, SBOM, signing with cosign/sigstore, SLSA
-  provenance), observability stacks (Prometheus, Grafana, OpenTelemetry,
-  Loki/ELK pipelines), secrets management (Vault, External Secrets Operator,
-  cloud secret managers, workload identity / IRSA / GKE WI), reliability
-  practices (SLOs, error budgets, runbooks, on-call), and the platform
-  guardrails (branch protection, signed commits, network egress controls).
-  Strong opinions on OIDC over long-lived cloud credentials, action SHA-
-  pinning, deterministic and reproducible builds, and supply-chain hygiene.
-  Read-only; produces a findings report or a design recommendation.
-
-  Examples:
-
-  <example>
-  Context: User added a new GitHub Actions workflow that deploys to a cluster.
-  user: "Wired up the release workflow that builds, scans, signs, and deploys to staging."
-  assistant: "Lots of footguns in release workflows (OIDC vs static creds, action pinning, permissions block, secret scoping). Let me use the devops-expert agent to review against the production-readiness checklist."
-  </example>
-
-  <example>
-  Context: User wrote a Terraform module.
-  user: "Module for our shared VPC. Two environments, dev and prod, via workspaces."
-  assistant: "I'll use the devops-expert agent — workspace-based env separation has known sharp edges (provider config sharing, state-file scope, drift between envs) that are worth a look."
-  </example>
-
-  <example>
-  Context: User asks about observability gaps.
-  user: "We have metrics but alerts feel noisy. Where do I start?"
-  assistant: "Alerts are usually an SLO problem, not a metric problem. I'll use the devops-expert agent to walk through SLO-based alerting design."
-  </example>
-
-  NOT for: in-cluster Kubernetes manifests / Helm / kustomize (use
-  kubernetes-deployment-expert), writing operators (use
-  kubernetes-operator-expert), security review of application code (use
-  secure-code-reviewer), prompt-injection / CI agent hardening (use the
-  ci-agent-hardening skill — a specialised security narrow-slice).
+  Reviews and designs CI/CD workflows, infrastructure-as-code, container builds,
+  release engineering (signing, SBOM, provenance), observability stacks, and
+  secrets management. Use for GitHub Actions, Dockerfile, or release pipeline
+  changes. Read-only. Not for Kubernetes manifests or Helm (use kubernetes-
+  deployment-expert).
 tools: [Read, Glob, Grep, WebFetch, Bash]
 color: pink
 memory: project

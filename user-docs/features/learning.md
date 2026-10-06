@@ -116,7 +116,10 @@ Before proposing or changing a skill, Mecatl verifies ownership, ordering, and
 content digests. Missing, unauthorized, changed, or unrecoverably compacted
 evidence fails closed.
 
-The reflection request is bounded and uses the selected reflection model. Raw
+The reflection request is bounded and uses the selected reflection model. Its
+provider-reported token usage is not included in the source session's
+`token_usage` snapshot or session summary. Operational diagnostics can note that
+usage was discarded, but they do not provide a durable usage record. Raw
 provider errors are not persisted or logged. Candidates retain enough provenance
 and evidence digests for the later review path to verify ownership and detect
 changed source content.

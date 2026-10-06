@@ -137,6 +137,9 @@ type Deps struct {
 	MCP        client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
 	Cmds       client.Commander       // slash-command discovery for the input palette; nil disables it
 	Guardrails client.GuardrailClient // contextual coverage and live-only review detail; nil disables /guardrails
+	// ShowBenignHookNotices keeps exact known-benign contextual guardrail review
+	// notices, including their live detail, visible while details are collapsed.
+	ShowBenignHookNotices bool
 	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
@@ -145,7 +148,7 @@ type Deps struct {
 	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
 	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
+	UserModel   client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
 	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
 	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
 	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact
@@ -642,7 +645,6 @@ type Model struct {
 	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
 	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
 	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
-	failedStepRetryTried         bool               // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
 	failedStepRetryRun           bool               // current Converse stream was opened with RetryStart
 	failedStepRetryAuthoritative bool               // current retry emitted turn.start and therefore called the model
 	team                         teamState          // unified f6 agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
@@ -650,8 +652,7 @@ type Model struct {
 	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	userModel                    userModelState     // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen                 uint64             // monotonic request generation; invalidates delayed detail/index responses
+	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
 	dream                        dreamState
@@ -801,6 +802,7 @@ type Model struct {
 	// guardrailStatusRequest invalidates asynchronous /guardrails and /posture
 	// coverage responses when a newer request or session wins.
 	guardrailStatusRequest uint64
+	guardrailDetailRequest uint64
 
 	// activeMode is the server-confirmed permission mode for THIS session. It is
 	// initialized from the launch mode and updated only from SessionReady/GetSession/
@@ -917,9 +919,8 @@ type Model struct {
 	contextUnknown   bool
 	contextEstimated bool
 
-	// expandTools toggles all tool-result bodies (and Edit/Write diffs) between
-	// the line-capped view and the full view. Flipped by ctrl+t.
-	expandTools bool
+	// expandConversation reveals turn headings/stats, full reasoning, errors, and changed files.
+	expandConversation bool
 
 	// Changed-file membership and the synthetic appendix identity belong to conv.
 	// streamCh is the current run's reader channel; WaitForMsg drains it.
@@ -1073,6 +1074,8 @@ func New(deps Deps) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(th.Style("spinner")))
 
 	vp := viewport.New()
+	rend := newRenderer(th, hk)
+	rend.showBenignGuardrails = deps.showBenignGuardrails()
 	// In-app text-selection highlight is rendered by the APP (styleSelection splices
 	// the "selection" theme style into the content lines inside refreshView), NOT the
 	// viewport's native SetHighlights/HighlightStyle. The native highlighter mis-placed
@@ -1087,7 +1090,7 @@ func New(deps Deps) Model {
 	m := Model{
 		deps:             deps,
 		keys:             keys,
-		rend:             newRenderer(th, hk),
+		rend:             rend,
 		hits:             &hitRegions{},
 		metrics:          &renderedSurfaceMetrics{},
 		phase:            phaseConnecting,
@@ -1224,6 +1227,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	m.settlePendingApproval()
 	(&m).retirePendingApprovalRecovery()
 	m.admissionSubmission = nil
 	m = m.resetDocumentProjection()
@@ -1274,7 +1278,6 @@ func (m Model) resetSessionDerived() Model {
 	m.queuedMedia = client.MediaResult{}
 	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""
-	m.failedStepRetryTried = false
 	m.failedStepRetryRun = false
 	m.failedStepRetryAuthoritative = false
 	// Drop staged-but-unsent media attachments: /clear wipes the session-derived

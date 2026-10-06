@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // TestResolveScheduleStore pins the --schedule-store-url override resolution

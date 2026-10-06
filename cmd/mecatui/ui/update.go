@@ -15,6 +15,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
@@ -507,7 +508,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, userModel, reflections, dream, worktrees, schedule):
+// overlays (agentsInv, reflections, dream, worktrees, schedule):
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
@@ -515,9 +516,6 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // routing.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
-		return mm, nil, true
-	}
-	if mm, handled := m.updateUserModelMsg(msg); handled {
 		return mm, nil, true
 	}
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
@@ -593,7 +591,6 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.sessionState = sessionStateIdle
 	}
 	m = m.syncDebugTarget()
-	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.statusContextRoot = ""
@@ -1137,10 +1134,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.GuardrailReviewDetailMsg:
-		if msg.Err == nil {
-			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
-			m.refreshView()
-		}
+		m.applyGuardrailDetail(msg)
+		m.refreshView()
 		return m, nil, true
 	case client.ResolvedModelMsg:
 		return m.onResolvedModelMsg(msg)
@@ -1309,8 +1304,8 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.contextEstimated = msg.Estimated
 		}
 		m.conv.endReasoningStream()
-		if !trivialTurn(msg) {
-			m.conv.addTurnStat(turnStatLine(msg))
+		if !renderfmt.TrivialTurn(msg) {
+			m.conv.addTurnStat(renderfmt.TurnStatLine(msg))
 		}
 		mm, cmd := m.afterEvent()
 		// Footer context-meter self-heal (issue #66): if the meter's denominator is
@@ -1343,13 +1338,16 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if p, ok := mutatedPath(msg.Name, msg.Args); ok {
 			m.conv.recordFileChange(p)
 		}
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolResultMsg:
-		if !m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
+		resolved := m.conv.resolveToolResult(msg)
+		if !resolved {
 			m.conv.addNotice("orphan tool result for " + msg.CallID)
 		}
 		m.activeTool = m.conv.latestPendingToolName()
 		m.toolProgress = ""
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolProgressMsg:
 		// Transient advisory line from a long-running tool: show it beside the
@@ -1377,12 +1375,25 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
-	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
-	model, cmd := m.afterEvent()
-	if msg.Guardrail == nil || m.deps.Guardrails == nil {
-		return model, cmd
+	if msg.Guardrail != nil && msg.Guardrail.ReviewID != "" {
+		if s := approvalSurfaceFor(&m); s != nil {
+			if review := s.applyGuardrailHook(msg); review != nil {
+				review.hook = msg
+				return m.afterEvent()
+			}
+		}
 	}
-	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID)
+	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
+	var detailCmd tea.Cmd
+	// Benign reviews are retained (hidden by default), so they fetch live detail
+	// too; ExpandConversation or hook_notices.show_benign reveals it with the summary.
+	if r != nil && msg.Guardrail.Disposition != "ask_action" && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
+		m.guardrailDetailRequest++
+		r.beginDetailRequest(m.guardrailDetailRequest)
+		r.show(&m.conv, guardrailPresentationText(r, m.deps.Debug))
+		detailCmd = client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID, r.requestID)
+	}
+	model, cmd := m.afterEvent()
 	return model, tea.Batch(cmd, detailCmd)
 }
 
@@ -1444,18 +1455,21 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySubagent(msg)
 		if msg.Kind == client.SubagentEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.TeamMsg:
 		m.applyTeam(msg)
 		if msg.Kind == client.TeamEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.ParallelMsg:
 		m.applyParallel(msg)
 		if msg.Kind == client.ParallelEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.ModelRetryMsg:
@@ -1743,10 +1757,8 @@ func (m Model) settleFailedClearSource() (Model, tea.Cmd, bool) {
 }
 
 // notifyHookStop mirrors a genuine run terminal to the host's agent lifecycle
-// hook. It is NOT called on the auto-retry (FailedStepRetryEligible) branch,
-// where the run continues — only on paths that end the run. The notifier fires
-// the terminal once per busy period and no-ops without a preceding Start, so the
-// clearPending settle path and the deferred-retry path calling it is harmless.
+// hook. The notifier fires the terminal once per busy period and no-ops without
+// a preceding Start, so the clearPending and deferred-retry paths are harmless.
 func (m Model) notifyHookStop(msg client.ResultMsg) {
 	if m.deps.AgentHook == nil {
 		return
@@ -1831,14 +1843,6 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		m.notifyHookStop(msg)
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
 		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
-	}
-	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
-		// NOT a genuine end: an automatic retry run starts now, so no Superset
-		// Stop. The retry's turn.start re-Starts (deduped, still busy), and the
-		// eventual real terminal fires Stop below.
-		m.failedStepRetryTried = true
-		rm, retryCmd := m.startFailedStepRetry()
-		return rm, tea.Batch(m.refreshCmd(), retryCmd, m.armLiveFeed())
 	}
 	// Every remaining path is a genuine run terminal that returns to idle.
 	m.notifyHookStop(msg)
@@ -2085,6 +2089,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 func (m Model) switchTheme(th theme.Theme) Model {
 	m.deps.Theme = th
 	m.rend = newRenderer(th, m.rend.marks)
+	m.rend.showBenignGuardrails = m.deps.showBenignGuardrails()
 	m.rend.setWidth(m.width)
 	m.sp.Style = th.Style("spinner")
 	m.refreshView()
@@ -2284,10 +2289,14 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// ctrl+t is a global render toggle (full vs capped tool output); it works in
-	// any phase and never feeds the textarea.
-	if key.Matches(msg, m.keys.ExpandTools) {
-		return m.onExpandToolsKey()
+	// Toolcalls opens the current session's inspector while idle or running. In
+	// other phases it is consumed without forwarding to the textarea.
+	if key.Matches(msg, m.keys.Toolcalls) {
+		return m.onToolcallsKey()
+	}
+
+	if mm, handled := m.onConversationDetailKey(msg); handled {
+		return mm, nil
 	}
 
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
@@ -2308,6 +2317,17 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.dispatchPhaseKey(msg)
+}
+
+func (m Model) onConversationDetailKey(msg tea.KeyPressMsg) (Model, bool) {
+	if !key.Matches(msg, m.keys.ExpandConversation) {
+		return m, false
+	}
+	if m.phase == phaseIdle || m.phase == phaseRunning || m.phase == phaseReplay {
+		m.expandConversation = !m.expandConversation
+		m.refreshView()
+	}
+	return m, true
 }
 
 func (m Model) onGlobalLifecycleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
@@ -2383,7 +2403,7 @@ func (m *Model) clampHelpScroll() {
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.userModel.view != userModelNone || m.reflections.view != reflectionsNone ||
+		m.reflections.view != reflectionsNone ||
 		m.dream.view != dreamClosed || m.effort.view != effortNone || m.worktrees.view != worktreesNone {
 		return m, false
 	}
@@ -2393,17 +2413,10 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	return m, true
 }
 
-// onExpandToolsKey is the ctrl+t handler, extracted from onKey so onKey stays
-// under the cyclomatic cap. ctrl+t is a global render toggle (full vs capped
-// tool output); inside the permission modal it ROUTES by ask type (issue #488):
-// a non-diff, non-plan ask opens/closes the full-screen ask-args view INSTEAD
-// of toggling expandTools; a plan ask or an Edit/Write (diff-capable) ask keeps
-// the in-modal expand behavior byte-for-byte. Approval emits a semantic toggle
-// intent for the latter; Model owns the global expandTools effect.
-func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
-	m.expandTools = !m.expandTools
-	m.refreshView()
-	return m, nil
+// onToolcallsKey opens the current session's inspector while the conversation owns
+// the keyboard. Other phases consume the binding without forwarding it to the prompt.
+func (m Model) onToolcallsKey() (tea.Model, tea.Cmd) {
+	return m.runToolcalls()
 }
 
 // dispatchPhaseKey is the per-phase key router, extracted from onKey so onKey
@@ -2450,7 +2463,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onSessionDetailsKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
-		m.onUserModelKey,
 		m.onReflectionsKey,
 		m.onDreamKey,
 		m.onConnectKey,
@@ -2475,12 +2487,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
-	// A clear command composed while running stays actionable if a permission ask
-	// opens before Enter is pressed. Route it ahead of the approval surface:
-	// ClearSession cancels the ask and must never become Allow/Deny/Learn.
-	if m.pendingRecovery == nil && clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
-		return m.dispatchBareBuiltin(m.prompt.Value())
-	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -2498,10 +2504,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		return m, tea.Batch(cmd, m.prompt.Focus()), true
 	}
 	return m, cmd, true
-}
-
-func clearCommandSubmitted(msg tea.KeyPressMsg, submit key.Binding, prompt string) bool {
-	return key.Matches(msg, submit) && strings.EqualFold(strings.TrimSpace(prompt), "/clear")
 }
 
 // dispatchSurfaceMsg routes a NON-input Msg through the open modal surface
@@ -2614,6 +2616,17 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 	}
 }
 
+func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
+	detail, ok := intent.(toolcallsDetailIntent)
+	if !ok {
+		return false
+	}
+	if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].blockID == detail.blockID {
+		s.refreshDetail(&m.conv.scrollback)
+	}
+	return true
+}
+
 // applySurfaceIntent applies a drained surface intent synchronously in the same
 // Tea Update. Returned commands still run asynchronously. stopSurfaceDispatch
 // tells the caller to skip common dispatch post-processing after a root-owned
@@ -2627,6 +2640,9 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 	}
 	if model, cmd, handled, stopSurfaceDispatch := m.applySessionsSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
+	}
+	if m.applyToolcallsSurfaceIntent(intent) {
+		return m, nil, false
 	}
 	return m, nil, false
 }
@@ -3512,6 +3528,7 @@ func (m Model) failStartupRunEntry(err error) Model {
 	m = m.resetDocumentProjection()
 	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
 	m.modal = &sessionsState{
+		debug:    m.deps.Debug,
 		selected: m.deps.Resume.Row,
 		inspect:  true,
 		loadErr: &startupRunEntryError{
@@ -3640,9 +3657,6 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.startupRetryPrompt = m.prompt.Value()
 		m.startupFirstPromptPending = true
 	}
-	// This is a genuine new user turn, so it starts a fresh one-retry budget.
-	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
-	m.failedStepRetryTried = false
 	m.promptRecovery = nil
 	// Only a plain text prompt is recoverable. Attachments, media, and staged file
 	// parts have one-shot lifecycle and must never be replayed implicitly.
@@ -3728,8 +3742,8 @@ func (m Model) submitProceedPrompt() (Model, tea.Cmd) {
 }
 
 // startFailedStepRetry opens a new Converse stream whose first frame is RetryStart.
-// It adds no user turn and consumes no queued text. Automatic retry leaves arbitrary
-// compose text untouched; the ordinary built-in dispatcher consumes a typed /retry.
+// It adds no user turn and consumes no queued text. The /retry built-in dispatcher
+// consumes the command; this function leaves unrelated compose text untouched.
 func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
 	m.phase = phaseRunning
 	m.failedStepRetryRun = true
@@ -4042,7 +4056,7 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	default:
 		// Catch-up is a FULL historical scan. Results never enter applyResult, so replay
-		// cannot trigger automatic retry, mutate usage, or append another error card.
+		// cannot settle the active run again, mutate usage, or append another error card.
 		if _, ok := msg.(client.ResultMsg); ok {
 			return m, m.waitReconnectCmd()
 		}
@@ -4188,6 +4202,7 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	m.settlePendingApproval()
 	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
@@ -4212,7 +4227,7 @@ func (m Model) endRun(stop string) Model {
 	// cursor-blink cmd we don't thread back here; the next keypress re-arms the blink.
 	_ = m.prompt.Focus()
 	if stop != "" {
-		text, slot := stopReasonLabel(stop)
+		text, slot := renderfmt.StopReasonLabel(stop)
 		m.statusMsg = m.deps.Theme.Style(slot).Render(text)
 	}
 	m.refreshView()
@@ -4223,6 +4238,9 @@ func (m Model) endRun(stop string) Model {
 // The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
+		if m.width <= 0 || m.vp.Height() <= 0 {
+			return m, nil
+		}
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd
 	}
@@ -4808,9 +4826,9 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // conversationContent produces the complete current projection, including the expanded
 // changed-files appendix which is outside the conversation renderer's block rows.
 func (m *Model) conversationContent() string {
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	content := strings.Join(frame.lines, "\n")
-	if m.expandTools {
+	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
 			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
 				content += "\n" + list
@@ -4839,9 +4857,9 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
-	// changed-files footer is not in play (it renders only under the global expand
+	// changed-files footer is not in play (it renders only under the conversation detail
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
 	// slice — reusing the cached prefix of settled blocks and only building the
 	// changed suffix. This skips the O(scrollback) Builder copy + strings.Split that
@@ -4849,12 +4867,12 @@ func (m *Model) refreshView() {
 	// re-renders every token, so the whole-join memo never helps streaming). The
 	// selection and footer paths both post-process the JOINED STRING, so they fall
 	// back to the byte-identical string path below.
-	if !m.sel.active && !m.expandTools {
+	if !m.sel.active && !m.expandConversation {
 		m.conversationView.replace(&m.vp, frame)
 		return
 	}
 	content := strings.Join(frame.lines, "\n")
-	if m.expandTools {
+	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
 			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
 				content += "\n" + list
@@ -4890,10 +4908,9 @@ func (m *Model) refreshView() {
 // drainQueue MERGES staged follow-ups into ONE prompt only after a healthy
 // terminal. It is called after endRun has settled the model back to idle.
 //
-// Every error terminal pauses and preserves the queue. Automatic recovery from an
-// eligible failure is an exact RetryStart handled before this function; it never
-// consumes future prompts. Once that retry ends healthily, this function resumes
-// the existing FIFO drain behavior.
+// Every error terminal pauses and preserves the queue. Explicit /retry sends a
+// RetryStart without consuming future prompts. Once that retry ends healthily,
+// this function resumes the existing FIFO drain behavior.
 func (m Model) drainQueue(stop string) (tea.Model, tea.Cmd) {
 	if len(m.queued) == 0 {
 		m.queuePaused = ""
@@ -4952,7 +4969,7 @@ func (m Model) resumeQueue() (tea.Model, tea.Cmd) {
 // done or merely hit a SIZE bound, so feeding the next staged prompt simply
 // continues the work the user lined up:
 //
-//   - ""        — treated as a clean end_turn throughout (cf. stopReasonLabel).
+//   - ""        — treated as a clean end_turn throughout (cf. renderfmt.StopReasonLabel).
 //   - end_turn  — the model finished without requesting more tools.
 //   - max_turns / max_tool_calls / budget — the run hit a per-run budget. The model was
 //     healthy; it just ran out of room. A queued follow-up ("continue", or the next
@@ -4968,7 +4985,7 @@ func (m Model) resumeQueue() (tea.Model, tea.Cmd) {
 //   - error / "closed" — the run broke or the stream ended abnormally.
 //
 // The vocabulary is the session.StopReason set plus the "closed" StreamClosed
-// sentinel; stopReasonLabel renders the same set for the footer.
+// sentinel; renderfmt.StopReasonLabel renders the same set for the footer.
 func shouldDrain(stop string) bool {
 	switch stop {
 	case "", "end_turn", "max_turns", "max_tool_calls", "budget":

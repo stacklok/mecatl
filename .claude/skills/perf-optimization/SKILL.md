@@ -20,7 +20,7 @@ metadata:
 # Perf optimization (mecatl offline harness)
 
 The companion to the regression-tracking design in
-[`docs/adr/0019-perf-tracking.md`](../../../docs/adr/0019-perf-tracking.md). This skill
+[`docs/perf-tracking.md`](../../../docs/perf-tracking.md). This skill
 is the **offline benchmark/scenario** workflow: measure → profile → optimize →
 prove → guard. For diagnosing a **running** harness via the perf MCP server, use
 the `perf-mcp-interpretation` skill instead — different tool, different signals.
@@ -95,7 +95,7 @@ benchstat .scratch/before.txt .scratch/after.txt   # go install golang.org/x/per
 
 `allocs/op` / `B/op` must drop with a statistically significant delta. Re-run
 `task perf:scenarios` and confirm the scenario KPI moved in the expected direction.
-Update the baseline snapshot in `docs/adr/0019-perf-tracking.md`.
+Update the baseline snapshot in `docs/perf-tracking.md`.
 
 ### 5. Guard — keep behaviour identical, prove the guard isn't vacuous
 
@@ -143,14 +143,14 @@ The mechanism is already wired:
   `mecated` under load.
 
 Full rationale, the per-binary decision, and the production refresh + staleness
-process live in [`perf-tracking.md` Phase 4](../../../docs/adr/0019-perf-tracking.md) —
+process live in [`perf-tracking.md` Phase 4](../../../docs/perf-tracking.md) —
 read it before touching PGO.
 
 ## See Also
 
 - [`references/playbook.md`](references/playbook.md) — pprof flag cookbook + two
   worked examples (a real win and a real NO-GO) showing the discipline end to end.
-- [`docs/adr/0019-perf-tracking.md`](../../../docs/adr/0019-perf-tracking.md) — the KPI
+- [`docs/perf-tracking.md`](../../../docs/perf-tracking.md) — the KPI
   design, gating posture, baselines, and the full roadmap.
 - `perf-mcp-interpretation` skill — the **live** counterpart (running-harness
   diagnosis via the perf MCP server).

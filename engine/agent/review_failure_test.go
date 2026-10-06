@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -49,8 +50,8 @@ type terminalFailurePolicy struct {
 	job ReviewJob
 }
 
-func (terminalFailurePolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (terminalFailurePolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (terminalFailurePolicy) Learn(session.SessionID, session.ToolCall) {}
 func (p terminalFailurePolicy) GuardrailReviewPolicy(_ string, job ReviewJob, operationalFailure bool) (bool, bool) {
@@ -63,9 +64,9 @@ type terminalFailureReviewer struct {
 	recorded error
 }
 
-func (r *terminalFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *terminalFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.reviews++
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 func (r *terminalFailureReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, operationalFailure bool) (bool, bool) {
 	return job == r.job, !operationalFailure
@@ -146,8 +147,8 @@ type consumerFailureReviewer struct {
 	err error
 }
 
-func (r consumerFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) {
-	return ToolReviewResult{Assessment: ReviewUnresolved}, r.err
+func (r consumerFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
+	return ToolReviewResult{Assessment: ReviewUnresolved}, session.AuxiliaryUsage{}, r.err
 }
 func (r consumerFailureReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, _ bool) (bool, bool) {
 	return job == r.job, true

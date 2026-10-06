@@ -468,9 +468,13 @@ func TestJevLowConfidenceCandidateSurvivesRealDelegation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainUsage := loaded.UsageFor(session.UsageKindMain)
-	if mainUsage.InputTokens != 4 || mainUsage.OutputTokens != 2 {
-		t.Fatalf("classifier usage = %+v, want exactly once 4/2", mainUsage)
+	routerUsage := loaded.UsageFor(session.UsageKindRouter)
+	if routerUsage.InputTokens != 4 || routerUsage.OutputTokens != 2 {
+		t.Fatalf("classifier usage = %+v, want exactly once 4/2", routerUsage)
+	}
+	bucket := loaded.TokenUsageSnapshot()[session.UsageKindRouter]
+	if got := bucket.Models["jev/jev-1.13.0"]; got.InputTokens != 4 || got.OutputTokens != 2 {
+		t.Fatalf("Jev router attribution = %+v, want jev/jev-1.13.0 4/2", bucket.Models)
 	}
 	if models := provider.models(); len(models) != 1 || models[0] != "inherited-model" {
 		t.Fatalf("low-confidence candidate ran instead of inherited model: %v", models)

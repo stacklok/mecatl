@@ -129,27 +129,3 @@ func TestForegroundSubagentEndNoTransientNotice(t *testing.T) {
 // keeps counting a background child that spans TURNS as running (the fleet is
 // session-scoped, keyed on subagent.end — not on turn boundaries), and flips it to
 // done when its end finally arrives.
-func TestFooterCountsCrossTurnBackgroundChild(t *testing.T) {
-	m := newMCPModel(t, aztec(), nil)
-	m = seedSubagents(m, "p1", startBgSub("p1", "subagent-p1", "long audit"))
-
-	// The turn the background child was started in ends; a new turn begins. The
-	// child is still detached-running.
-	for _, msg := range []interface{}{
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 900, OutputTokens: 100}},
-		client.TurnStartMsg{Turn: 2},
-	} {
-		mm, _ := m.Update(msg)
-		m = mm.(Model)
-	}
-	out := stripANSIstr(m.fitFooter(m.deps.Theme.Style("muted").Render("connected"), 160))
-	if !strings.Contains(out, "1"+subagentRunGlyph+" 0"+subagentDoneGlyph) {
-		t.Errorf("cross-turn background child must still count as running, got %q", out)
-	}
-
-	m = seedSubagents(m, "p2", endSub("p1", "subagent-p1", 9000, 1200, 4, "end_turn"))
-	out = stripANSIstr(m.fitFooter(m.deps.Theme.Style("muted").Render("connected"), 160))
-	if !strings.Contains(out, "0"+subagentRunGlyph+" 1"+subagentDoneGlyph) {
-		t.Errorf("ended background child must count as done, got %q", out)
-	}
-}

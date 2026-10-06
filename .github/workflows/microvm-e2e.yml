@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - environment/microvm/**
+      - integration/microvm/**
       - engine/**
       - internal/adapter/microvm/**
       - internal/adapter/microvmmanager/**
@@ -21,13 +22,12 @@ on:
       - .github/scripts/relevant-changes.sh
       - .github/scripts/relevant-changes_test.sh
       - .github/scripts/relevant-changes-workflow_test.sh
-      - .github/scripts/race-test.sh
-      - .github/scripts/root-race-packages.sh
       - .github/scripts/microvm-ci-release_test.sh
       - .github/scripts/install-microvm-release.sh
   pull_request:
     paths:
       - environment/microvm/**
+      - integration/microvm/**
       - engine/**
       - internal/adapter/microvm/**
       - internal/adapter/microvmmanager/**
@@ -44,8 +44,6 @@ on:
       - .github/scripts/relevant-changes.sh
       - .github/scripts/relevant-changes_test.sh
       - .github/scripts/relevant-changes-workflow_test.sh
-      - .github/scripts/race-test.sh
-      - .github/scripts/root-race-packages.sh
       - .github/scripts/microvm-ci-release_test.sh
       - .github/scripts/install-microvm-release.sh
   workflow_dispatch:

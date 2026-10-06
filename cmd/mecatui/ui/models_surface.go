@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
@@ -470,7 +471,7 @@ func modelCapSegments(mi client.ModelInfo) []string {
 		segs = append(segs, "reason")
 	}
 	if mi.ContextLimit > 0 {
-		segs = append(segs, humanizeTokens(mi.ContextLimit))
+		segs = append(segs, renderfmt.HumanizeTokens(mi.ContextLimit))
 	}
 	// ADR 0346: mark a row mecatl sends no cache breakpoint for. The row stays
 	// SELECTABLE, and marking rather than hiding was the explicit decision

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/filewatch"
+	"github.com/stacklok/mecatl/internal/adaptersupport/filewatch"
 )
 
 type testKeyPair struct {

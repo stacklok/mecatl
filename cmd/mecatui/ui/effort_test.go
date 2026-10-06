@@ -445,6 +445,7 @@ func TestEffortPickerGolden(t *testing.T) {
 	if m.effort.view != effortPanel {
 		t.Fatalf("view = %v, want effortPanel", m.effort.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "effort_picker.golden", got)
 }
@@ -533,25 +534,17 @@ func TestEffortPickerSwallowsOtherKeys(t *testing.T) {
 	}
 }
 
-// TestEffortRendersInHeader asserts the resolved effort appears beside the model in
-// the header when set, and is absent when unset (the footer/header live display).
-func TestEffortRendersInHeader(t *testing.T) {
+// TestEffortReachesStatusSnapshot asserts the resolved effort is submitted beside
+// the effective model when set, and remains absent when unset.
+func TestEffortReachesStatusSnapshot(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	// Unset effort: no suffix beside the model. (The inventory is not loaded here, so
-	// the header shows the raw effective model id "gpt-5", not the display name.)
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "gpt-5") {
-		t.Fatalf("header should show the model:\n%s", header)
+	if effort := m.statusLineSnapshot().Session.ReasoningEffort; effort != "" {
+		t.Fatalf("unset effort in status snapshot = %q, want empty", effort)
 	}
-	if strings.Contains(header, "· high") {
-		t.Fatalf("unset effort must not render a suffix:\n%s", header)
-	}
-	// Set effort: the suffix renders beside the model.
+
 	m.resolvedSessionModel.ReasoningEffort = "high"
-	m.refreshView()
-	header = stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "· high") {
-		t.Fatalf("a set effort should render a ` · high` suffix beside the model:\n%s", header)
+	if effort := m.statusLineSnapshot().Session.ReasoningEffort; effort != "high" {
+		t.Fatalf("status snapshot effort = %q, want high", effort)
 	}
 }
 

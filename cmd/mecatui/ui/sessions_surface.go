@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
@@ -220,6 +221,7 @@ func (s *sessionsState) openTranscript(row client.SessionListItem, inspect bool)
 	s.transcript = conversation{}
 	s.snapshot = client.SessionSnapshot{}
 	s.transcriptRend = nil
+	s.transcriptExpand = false
 	s.transcriptStuck = true
 	s.view = sessionsTranscript
 	s.transcriptSurfaceRequestToken++
@@ -248,17 +250,18 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 		c.appendReasoning(msg.Text)
 	case client.TurnEndMsg:
 		c.endReasoningStream()
-		if !trivialTurn(msg) {
-			c.addTurnStat(turnStatLine(msg))
+		if !renderfmt.TrivialTurn(msg) {
+			c.addTurnStat(renderfmt.TurnStatLine(msg))
 		}
 	case client.ToolCallMsg:
 		c.addTool(msg.ID, msg.Name, msg.Args)
 	case client.ToolResultMsg:
-		if !c.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
+		resolved := c.resolveToolResult(msg)
+		if !resolved {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:
-		c.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+		c.addGuardrailHook(msg, s.debug)
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
@@ -298,6 +301,7 @@ type sessionForker interface {
 }
 
 type sessionsState struct {
+	debug             bool
 	view              sessionsView
 	startup           bool // same /sessions renderer, with launch-only new/quit hints
 	tab               sessionsTab
@@ -342,6 +346,8 @@ type sessionsState struct {
 	transcriptVP                  viewport.Model
 	transcriptRend                *renderer
 	transcriptStuck               bool
+	transcriptExpand              bool
+	showBenignHookNotices         bool
 	transcriptRequestToken        uint64
 	transcriptSurfaceRequestToken uint64
 	pager                         client.SessionPager
@@ -369,11 +375,12 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 		s.compact = false
 		if s.transcriptRend == nil {
 			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks)
+			s.transcriptRend.showBenignGuardrails = s.showBenignHookNotices
 		}
 		s.transcriptRend.setWidth(width)
 		s.transcriptVP.SetWidth(width)
 		s.transcriptVP.SetHeight(height)
-		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, false))
+		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, s.transcriptExpand))
 		if s.transcriptStuck {
 			s.transcriptVP.GotoBottom()
 		}
@@ -385,6 +392,10 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if s.view == sessionsTranscript {
+		if key.Matches(msg, s.deps.keys.ExpandConversation) {
+			s.transcriptExpand = !s.transcriptExpand
+			return nil, true, false
+		}
 		if key.Matches(msg, s.deps.keys.Close) {
 			s.closeTranscript()
 			s.intent = sessionsPhaseIntent{phase: sessionsIntentPhaseIdle}
@@ -827,6 +838,7 @@ func (s *sessionsState) handleTranscriptLoaded(msg sessionTranscriptLoadedMsg) {
 	s.transcript = conversationFromTranscript(msg.transcript.Messages)
 	s.snapshot = msg.snapshot
 	s.transcriptRend = nil
+	s.transcriptExpand = false
 	s.transcriptStuck = true
 	if !s.inspect {
 		s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript, snapshot: s.snapshot}
@@ -1197,7 +1209,7 @@ func conversationFromTranscript(messages []client.ConversationMessage) conversat
 			}
 		case "tool":
 			if message.ToolResult != nil {
-				out.resolveTool(message.ToolResult.CallID, message.ToolResult.Content, message.ToolResult.IsError, message.ToolResult.Blocks...)
+				out.resolveToolResult(client.ToolResultMsg{CallID: message.ToolResult.CallID, Content: message.ToolResult.Content, IsError: message.ToolResult.IsError, Blocks: message.ToolResult.Blocks, StructuredContent: message.ToolResult.StructuredContent})
 			}
 		}
 	}
@@ -1209,7 +1221,7 @@ func stateBadge(state string) string {
 		return "▶"
 	case "completed":
 		return "✓"
-	case teamStopReasonCancelled, "failed":
+	case teamStopReasonCancelled, statusFailed:
 		return "✗"
 	case "awaiting":
 		return "⏸"
@@ -1369,10 +1381,10 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 			h := *st.health
 			bytesText, reclaimable := unavailableText, unavailableText
 			if h.CurrentBytesAvailable {
-				bytesText = humanizeBytes(h.CurrentBytes)
+				bytesText = renderfmt.HumanizeBytes(h.CurrentBytes)
 			}
 			if h.ReclaimableBytesAvailable {
-				reclaimable = humanizeBytes(h.ReclaimableBytes)
+				reclaimable = renderfmt.HumanizeBytes(h.ReclaimableBytes)
 			}
 			last, next := unavailableText, unavailableText
 			if h.LastSweepAvailable {
@@ -1427,7 +1439,7 @@ func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
 		th.Style("errorText").Render("Preview session cleanup — DESTRUCTIVE"), "",
 		fmt.Sprintf("Will delete: %d  Chats: %d  Child runs: %d  Scheduled runs: %d", eligible.Total, cleanupKindCount(eligible, "main"), cleanupKindCount(eligible, "subagent", "parallel_branch", "team_member"), cleanupKindCount(eligible, "scheduled")),
 		fmt.Sprintf("Protected: %d  Unknown: %d  Live: %d  Awaiting approval: %d", protected.Total, cleanupKindCount(protected, "unknown"), protected.ByReason["live"], protected.ByState["awaiting"]),
-		"Estimated space freed: " + humanizeBytes(plan.EstimatedBytes),
+		"Estimated space freed: " + renderfmt.HumanizeBytes(plan.EstimatedBytes),
 		"Unknown, active, live, and awaiting sessions are protected and will not be deleted.", "",
 		"Type CLEAN UP to permanently delete the sessions shown above. This cannot be undone:", st.cleanupConfirm.View(), "",
 		th.Style("muted").Render(hk.choose + ": delete these sessions  " + hk.closeOnly + ": back"),

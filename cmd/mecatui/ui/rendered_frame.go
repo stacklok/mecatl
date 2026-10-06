@@ -198,33 +198,34 @@ func (r *renderer) rebuildFramePrefix(passes []renderPass, prefixN int) ([]strin
 }
 
 func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, index int) {
-	if index > 0 {
-		for n := 0; n < blockBlankLinesAfterPasses(passes, index); n++ {
+	pass := passes[index]
+	if pass.text == "" {
+		return
+	}
+	for previous := index - 1; previous >= 0; previous-- {
+		if passes[previous].text == "" {
+			continue
+		}
+		for n := 0; n < blockBlankLinesAfterPasses(passes, previous, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
+		break
 	}
-	pass := passes[index]
 	for row, line := range strings.Split(pass.text, "\n") {
 		frame.lines = append(frame.lines, line)
 		frame.provenance = append(frame.provenance, pass.rows[row])
 	}
 }
 
-func blockBlankLinesAfterPasses(passes []renderPass, i int) int {
-	previous := passes[i-1].kind
-	current := passes[i].kind
-	switch previous {
-	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
-		return interBlockBlankLinesNone
-	case scrollback.KindTurnStat:
-		return interBlockBlankLinesCompact
-	case scrollback.KindAssistant:
-		if current == scrollback.KindTurnStat {
-			return interBlockBlankLinesNone
+func blockBlankLinesAfterPasses(passes []renderPass, previous, current int) int {
+	if passes[current].kind == scrollback.KindAssistant && len(passes[previous].rows) == 1 {
+		switch passes[previous].kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+			return interBlockBlankLinesCompact
 		}
 	}
-	return interBlockBlankLinesCompact
+	return blockBlankLinesBetween(passes[previous].kind, passes[current].kind)
 }
 
 func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
@@ -240,8 +241,10 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 	case scrollback.KindUser:
 		textStart, region = 1, conversationRegionBody
 	case scrollback.KindAssistant:
-		textStart = 2 // label plus its intentional blank row
-		if assistant.Reasoning != "" {
+		if expand {
+			textStart = 2 // expanded speaker label plus its blank row
+		}
+		if strings.TrimSpace(assistant.Reasoning) != "" {
 			reasoning := r.renderReasoningSnapshot(assistant, expand)
 			reasoningRows := len(strings.Split(reasoning, "\n"))
 			for i := textStart; i < min(textStart+reasoningRows, len(rows)); i++ {

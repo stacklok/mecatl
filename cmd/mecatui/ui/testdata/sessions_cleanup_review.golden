@@ -1,4 +1,4 @@
- mecatui  ·  session connecting…  ·  mode default
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
   Chats    Scheduled runs    Child runs    Other  ▸ Maintenance
 
@@ -36,5 +36,5 @@ enter: delete these sessions  esc: back
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⣾  connecting…                                                              ctx 0 · ↑0 ↓0 cache 0%
+ ⣾  connecting…                                           ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

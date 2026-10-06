@@ -14,7 +14,7 @@
 > mecatl is provider-agnostic, with the native Anthropic Messages API as a peer
 > adapter and a per-session provider/model registry — see the [multi-provider](#multi-provider--registry-per-session-routing--model-inventory) section below.
 > The deeper design brief for this adapter is
-> [`docs/adr/0017-openai-responses-api.md`](../adr/0017-openai-responses-api.md).
+> `docs/adr/0017-openai-responses-api.md`.
 
 `Provider` implements `port.LLMProvider` over `POST /v1/responses` using
 `github.com/openai/openai-go/v3`. It owns its own conversation state
@@ -42,7 +42,7 @@
   (`reasoning.go`) — the same envelope discipline as the anthropic adapter — and
   replays one input item per entry, each under its own id. Fusing the blobs
   under a single id is what the provider rejects as `invalid_encrypted_content`;
-  see [ADR 0101](../adr/0101-openai-reasoning-multiplicity.md).
+  see ADR 0101.
 - A rejected replay (`invalid_encrypted_content`) is REPAIRED once per request,
   pre-commit only: `Stream` retries with `withoutEncryptedReasoning` — the
   reasoning envelopes removed, visible history, tool calls/results, phase markers
@@ -57,7 +57,7 @@ directly from recorded fixtures by `decodeSSE` in tests):
   identities differ. Those provider identities are deliberately discarded at the
   adapter boundary; the engine concatenates the chunks into the one
   `Message.Text` string without synthetic separators or text-part metadata
-  ([ADR 0302](../adr/0302-openai-visible-text-delta-projection.md)).
+  (ADR 0302).
 - `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` →
   `ChunkReasoning` (the DISPLAY summary)
 - `response.output_item.done` (reasoning) → BUFFERED into `streamState.reasoning`
@@ -72,11 +72,17 @@ directly from recorded fixtures by `decodeSSE` in tests):
   reasoning items, flushed here because only now is the full ordered list known),
   then `ChunkUsage` and `ChunkDone(end_turn)` (cached tokens map into
   `Usage.CacheReadTokens`)
-- `response.incomplete` → `ChunkUsage` then `ChunkDone(error)`
-- `response.failed` / `error` → a non-nil stream **error** carrying the
-  provider's in-band message verbatim; HTTP API rejections instead render only
-  their structured `code` (or `type`) and message as `code: message`, never the
-  SDK's raw response body, request URL, or correlation ID.
+- `response.incomplete` → `ChunkUsage` then a non-nil error with a closed
+  incomplete-response reason.
+- `response.failed` / `error` → a non-nil stream **error** with a closed,
+  harness-authored display category. HTTP rejections and transport failures use
+  the same closed-display policy across Responses, Chat Completions, and
+  Anthropic. Raw messages, codes, and types remain private classification inputs
+  or programmatic metadata; SDK and transport causes remain unwrap-visible.
+  HTTP displays may include a standard status label, a sanitized request target,
+  and a validated request ID. Host composition restores bounded Codex manual-token
+  remediation only from the local policy's concrete `StatusError`, never arbitrary
+  upstream or transport error text.
 
 **Cancellation**: `Stream` (`openai.go`) selects on `ctx.Done()` each iteration
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported
@@ -96,8 +102,8 @@ an absent or invalid value without failing inference. Provider clients never hol
 identity globally, so concurrent sessions cannot cross-stamp. The active field remains the
 only client/server affinity hint; the root field is outbound-only. Neither field grants
 authentication, authorization, tracing, idempotency, provider state, safety/user identity,
-or cache identity. See [ADR 0216](../adr/0216-provider-session-correlation-header.md) and
-[ADR 0360](../adr/0360-root-session-provider-correlation.md).
+or cache identity. See ADR 0216 and
+ADR 0360.
 
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,
@@ -243,7 +249,7 @@ entries — all the same Responses wire protocol) carries the guard as well as t
 (`errTruncatedStream`, wrapping `io.ErrUnexpectedEOF`) when it ends with no
 terminal event, so a truncated turn is never promoted to a successful
 `StopEndTurn`. See
-[`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md)
+`docs/adr/0067-openai-chat-completions-adapter.md`
 for the transport rationale; `provider/ssefilter/ssefilter.go` owns frame filtering.
 `buildProvider` returns the registry **and** its default provider so the shared engine
 + every child/fork/team engine keep receiving the single default provider exactly as
@@ -295,7 +301,7 @@ prompt-cache prefix untouched. The routed downstream echoes back as
 `port.ChunkProviderRoute` (parsed from the terminal `response.completed` raw JSON's
 `openrouter_metadata`, fail-empty) → the client-visible `session.EvProviderRoute`
 (`"provider.route"`), absent on a cache hit — never fabricated. See
-[`docs/adr/0210-openrouter-downstream-provider-steering.md`](../adr/0210-openrouter-downstream-provider-steering.md).
+`docs/adr/0210-openrouter-downstream-provider-steering.md`.
 
 **Intent-driven availability (issue #262, ADR 0064; ADR 0334).** Every provider above
 is **key-driven** — available iff a credential resolves. One ToolHive gateway identity
@@ -501,7 +507,7 @@ credential resources close. Physical shutdown requires listers to honor cancella
 and synchronous diagnostics delivery to return: Close joins the worker delivering those
 records even though admission waiters have already been notified. Attempt/admission deadlines
 do not bound a blocked collaborator's cleanup. Attempts, cooldowns, and observations reset at the
-next Build. See the [resource and fidelity inventory](../adr/0027-cloud-native.md) and
+next Build. See the resource and fidelity inventory and
 [context admission boundary](context-and-compaction.md).
 
 **Capability intersection (`internal/app/capability.go`).** `modelCapability` combines
@@ -522,7 +528,7 @@ every child routes through `engineDepsForProvider` so it never contaminates the
 parent's compactor/counter. Composition-only — the registry never reaches the child
 engine (a bare `port.LLMProvider` is handed down).
 
-**Full design: see [`docs/adr/0016-multi-provider.md`](../adr/0016-multi-provider.md)** (registry, catalog-as-data, DTO
+**Full design: see `docs/adr/0016-multi-provider.md`** (registry, catalog-as-data, DTO
 neutrality, selection primitive, per-session engine, capability intersection,
 disclosure posture + per-client key custody, per-sub-agent provider, and the P0→P3
 phasing).
@@ -532,7 +538,7 @@ phasing).
 Model selection layers **on top of** the provider routing above, all in composition
 (the domain/agent only ever sees a concrete model string).
 
-**Aliases are the spine ([ADR 0030](../adr/0030-model-selection-heuristics.md)).** A
+**Aliases are the spine (ADR 0030).** A
 short semantic name (`cheap`/`fast`/`reasoning`, or the Claude-Code-style
 `sonnet`/`opus`/`haiku`) maps to a concrete provider model id through the operator's
 `ModelAliases` map (`--model-alias name=id`, or the `models.aliases` YAML map), then the
@@ -593,7 +599,7 @@ guard) — is **promoted** to a per-session engine (CASE 2). Both go through the
 `buildAndRegisterSessionEngine` helper. `resolved_model` re-emits the new model on the
 next `GetSession`/turn echo after the rebuild (a `SetMode` response still carries the
 pre-rebuild model — the model is fixed per turn). With no plan slot, a mode flip changes
-nothing. See [ADR 0030](../adr/0030-model-selection-heuristics.md) Layer 3.
+nothing. See ADR 0030 Layer 3.
 
 **Project-overridable model config, capped by an operator allowlist (Phase 4).** A
 **trusted** project's `.mecatl/settings.yaml` may re-bind `models.default` / `models.slots`
@@ -634,13 +640,13 @@ canonicalization are always operator-only.
 `AgentDef.Model` literal and the per-session API selector
 (`CreateSessionRequest.model_id`) are not capped here. The operator's OWN bindings are
 never capped (the operator is authoritative). See
-[ADR 0030](../adr/0030-model-selection-heuristics.md).
+ADR 0030.
 
 ## The semantic model router (Phase 5)
 
-The **semantic model router** ([ADR 0031](../adr/0031-subagent-model-router.md), enable
-model [ADR 0042](../adr/0042-taxonomy-gated-model-router.md), extended by
-[ADR 0034](../adr/0034-team-parallel-model-routing.md)) picks which model a delegation runs
+The **semantic model router** (ADR 0031, enable
+model ADR 0042, extended by
+ADR 0034) picks which model a delegation runs
 on, **per task**, from an operator-defined menu. ADR 0031 shipped it for the `Subagent`
 family; ADR 0034 extended it to **agent-team members** and **Parallel branches** — the same
 operator taxonomy and enable model govern all three. It is the Phase-5 realisation of ADR
@@ -708,8 +714,8 @@ same-provider** (the engine layer stays model-string-only; the chosen model is n
 `inherit`) > fork/resume > **router** > `--subagent-model` default > session model. The
 router fills the gap; it never overrides pinned intent.
 
-**Named agent-defs too (issue #286, [ADR 0066](../adr/0066-route-unpinned-and-writable-delegations.md),
-extended for writable specialists by [ADR 0242](../adr/0242-route-unpinned-writable-named-specialists.md)).**
+**Named agent-defs too (issue #286, ADR 0066,
+extended for writable specialists by ADR 0242).**
 A delegation to a named `agent` that declared **no `model:`** (expressed no model intent) is
 ROUTABLE in read-only or `mode:"read-write"`: the router classifies it and rebuilds the def's
 SCOPED engine (its catalog/prompt/hooks) on the picked model. The writable path retains its
@@ -769,7 +775,7 @@ Subagent and Team cards (including completed Subagents) and all three F6 focus p
 its `delegation` view without reconstructing it from display fields.
 
 The structured miss/gate half of this observability surface is described below under the
-per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
+per-delegation routing-reason surface (ADR 0083).
 
 **Team members + Parallel branches (ADR 0034).** The same router governs the other two
 delegation families, reusing the one typed `parentCaps.routeDecision` closure the dispatcher binds per

@@ -575,6 +575,73 @@ func TestFoldRoundTripsThroughSnapshot(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+// TestADR_0370_Scenario3_CanonicalReconstructionOnly pins the live-only boundary:
+// completion-order availability projections, including a success that a later
+// cancellation replaces canonically, do not participate in event-source folding.
+func TestADR_0370_Scenario3_CanonicalReconstructionOnly(t *testing.T) {
+	first := toolCall("first", "Read", `{"path":"first.go"}`)
+	second := toolCall("second", "Read", `{"path":"second.go"}`)
+	availableFirst := session.NewToolResult("first", "completed second")
+	availableSecond := session.NewToolResultWithParts("second", "completed first", []session.Content{
+		session.NewTextBlock("typed completion payload"),
+		session.NewStructuredContentBlock(`{"source":"availability"}`),
+	})
+
+	canonical := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &first},
+		{Type: session.EvToolCall, ToolCall: &second},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("first", "cancelled before canonical drain"))},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("second", "cancelled before canonical drain"))},
+		{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}},
+	}
+	withAvailability := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &first},
+		{Type: session.EvToolCall, ToolCall: &second},
+		// The later call completes first. The successful availability payloads arrive
+		// before the read-batch barrier drains canonical results in model-call order.
+		{Type: session.EvToolResultAvailable, ToolResult: &availableSecond},
+		{Type: session.EvToolResultAvailable, ToolResult: &availableFirst},
+		// Cancellation then replaces both live successes with synthetic canonical errors.
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("first", "cancelled before canonical drain"))},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("second", "cancelled before canonical drain"))},
+		{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}},
+	}
+
+	canonicalOnly, err := eventsource.Fold(meta(), seq(canonical))
+	if err != nil {
+		t.Fatalf("fold canonical events: %v", err)
+	}
+	withLiveAvailability, err := eventsource.Fold(meta(), seq(withAvailability))
+	if err != nil {
+		t.Fatalf("fold events with availability: %v", err)
+	}
+
+	canonicalSnapshot, err := sessnap.Of(canonicalOnly)
+	if err != nil {
+		t.Fatalf("snapshot canonical fold: %v", err)
+	}
+	availabilitySnapshot, err := sessnap.Of(withLiveAvailability)
+	if err != nil {
+		t.Fatalf("snapshot availability fold: %v", err)
+	}
+	if !reflect.DeepEqual(availabilitySnapshot, canonicalSnapshot) {
+		t.Fatalf("availability changed reconstruction\n with availability: %+v\n canonical only: %+v", availabilitySnapshot, canonicalSnapshot)
+	}
+	if !reflect.DeepEqual(withLiveAvailability.Conversation.Messages, canonicalOnly.Conversation.Messages) {
+		t.Fatalf("availability changed conversation\n with availability: %+v\n canonical only: %+v", withLiveAvailability.Conversation.Messages, canonicalOnly.Conversation.Messages)
+	}
+	if got := withLiveAvailability.Counters.ToolCalls; got != 2 {
+		t.Fatalf("tool-call counter = %d, want exactly 2 canonical calls", got)
+	}
+	for _, msg := range withLiveAvailability.Conversation.Messages {
+		if msg.ToolResult != nil && msg.ToolResult.Content == "completed first" {
+			t.Fatalf("availability typed payload entered reconstructed history: %+v", msg.ToolResult)
+		}
+	}
+}
+
 // TestFoldReconstructsTypedToolResult verifies that Fold reconstructs typed
 // tool-result blocks (ToolResult.Parts) for free — the EvToolResult case feeds the
 // *ToolResult (now carrying Parts) straight into session.NewToolMessage, so the

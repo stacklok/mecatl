@@ -250,7 +250,8 @@ type subagentLane struct {
 // the conversation) drops it too.
 type conversation struct {
 	// scrollback is the authoritative logical conversation document.
-	scrollback scrollback.Conversation
+	scrollback       scrollback.Conversation
+	guardrailReviews map[string]*guardrailPresentation
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane
@@ -383,6 +384,18 @@ func (c *conversation) reconcileUnresolvedTool(id, name, args string) bool {
 // resolveTool marks the tool block matching callID as resolved with its result.
 func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
 	return c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
+}
+
+func (c *conversation) resolveAvailableTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
+	return c.scrollback.Tools().ResolveAvailable(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
+}
+
+func (c *conversation) resolveToolResult(msg client.ToolResultMsg) bool {
+	result := scrollback.ToolResult{Body: msg.Content, IsError: msg.IsError, StructuredContent: msg.StructuredContent, Artifacts: artifacts(msg.Blocks)}
+	if msg.Available {
+		return c.scrollback.Tools().ResolveAvailable(msg.CallID, result)
+	}
+	return c.scrollback.Tools().Resolve(msg.CallID, result)
 }
 
 // cloneRoutingDecision takes ownership of optional scalar presence as well as the

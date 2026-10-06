@@ -26,7 +26,7 @@
 // Validation: required-field annotations are authored with
 // `buf.validate.field` for documentation and future runtime enforcement; V1
 // enforces them in the Go client/server wrappers
-// (internal/adapter/grpcdriver), and the harness client additionally
+// (adapters/grpcdriver), and the harness client additionally
 // re-normalizes defensively (blank-name drop, de-dup, sort, caps).
 
 syntax = "proto3";
@@ -140,7 +140,7 @@ message AgentMCPServer {
   // headers are extra HTTP headers for an inline server. SECRET-SHAPED (e.g.
   // Authorization): the harness never logs or projects them into any
   // inventory surface; they cross this wire only because driver dials refuse
-  // ALL non-local cleartext (see internal/adapter/grpcdriver dial posture).
+  // ALL non-local cleartext (see adapters/grpcdriver dial posture).
   // Ignored for a reference entry.
   map<string, string> headers = 3;
 }

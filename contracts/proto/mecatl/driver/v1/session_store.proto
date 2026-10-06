@@ -12,7 +12,7 @@
 //
 // The snapshot payload is OPAQUE to the driver: it is exactly the
 // engine/adapter/sessnap encoding, identified by the envelope's `format` tag
-// ("sessnap-json/1" today; see internal/adapter/grpcdriver.SnapshotFormat).
+// ("sessnap-json/1" today; see adapters/grpcdriver.SnapshotFormat).
 // The driver stores and returns the envelope VERBATIM and never decodes it —
 // snapshot schema evolution lives in sessnap (additive JSON), while format
 // identification lives in this envelope. The harness rejects an unknown
@@ -36,7 +36,7 @@
 //
 // Validation: required-field annotations are authored with `buf.validate.field`
 // for documentation and future runtime enforcement; V1 enforces them in the Go
-// client/server wrappers (internal/adapter/grpcdriver).
+// client/server wrappers (adapters/grpcdriver).
 
 syntax = "proto3";
 
@@ -98,7 +98,7 @@ service SessionStoreService {
 // media legitimately reaches multiple MiB, so mount the gRPC server with a
 // receive limit of at least that, e.g. grpc.MaxRecvMsgSize). The harness
 // client is configured to send AND receive the same 64 MiB (see
-// internal/adapter/grpcdriver.MaxSnapshotBytes).
+// adapters/grpcdriver.MaxSnapshotBytes).
 message SessionSnapshot {
   // format identifies the payload encoding ("sessnap-json/1" today). The
   // harness writes it on Save and rejects an unknown format on Load with an

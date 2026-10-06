@@ -77,6 +77,7 @@ type ToolResultMsg struct {
 	CallID            string
 	Content           string
 	IsError           bool
+	Available         bool // transient availability; false for canonical results
 	Blocks            []ContentBlock
 	StructuredContent string
 }
@@ -665,15 +666,6 @@ type ResultMsg struct {
 	StreamProgressPresent   bool
 }
 
-// FailedStepRetryEligible reports whether this terminal result proves that replaying the
-// failed model step is safe. Legacy/transient presentation signals are deliberately
-// ignored: failed-step retry requires both typed facts from a new server.
-func (r ResultMsg) FailedStepRetryEligible() bool {
-	return r.Stop == resultStopError &&
-		r.RetryDispositionPresent && r.RetryDisposition == RetryDispositionRetryable &&
-		r.StreamProgressPresent && r.StreamProgress == StreamProgressPrecommit
-}
-
 // Usage is the token accounting carried by ResultMsg (and usage-bearing events).
 // Duplicated as a plain struct so ui stays proto-free.
 type Usage struct {
@@ -1175,12 +1167,13 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "tool.call":
 		tc := ev.GetToolCall()
 		return ToolCallMsg{ID: tc.GetId(), Name: tc.GetName(), Args: tc.GetArgs()}
-	case "tool.result":
+	case "tool.result", "tool.result.available":
 		tr := ev.GetToolResult()
 		return ToolResultMsg{
 			CallID:            tr.GetCallId(),
 			Content:           tr.GetContent(),
 			IsError:           tr.GetIsError(),
+			Available:         ev.GetType() == "tool.result.available",
 			Blocks:            contentBlocksFromProto(tr.GetBlocks()),
 			StructuredContent: tr.GetStructuredContent(),
 		}

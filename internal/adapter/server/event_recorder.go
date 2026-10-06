@@ -42,11 +42,15 @@ func NewRunEventRecorder(ctx context.Context, svc *Service, id session.SessionID
 	return &RunEventRecorder{svc: svc, ctx: ctx, id: id}
 }
 
-// Observe adds ev to the durable projection. Delta events are buffered in
-// bounded UTF-8 chunks; every other event first flushes buffered deltas and is
+// Observe adds ev to the durable projection. Availability is live-only and is
+// omitted without disturbing buffered deltas. Delta events are buffered in bounded
+// UTF-8 chunks; every other projected event first flushes buffered deltas and is
 // then appended itself. Every projected event is attempted exactly once because
 // EventLog.Append may return an error after durably writing it.
 func (r *RunEventRecorder) Observe(ev session.Event) {
+	if ev.Type == session.EvToolResultAvailable {
+		return
+	}
 	if ev.Type != session.EvMessageDelta && ev.Type != session.EvReasoningDelta {
 		r.flush()
 		r.append(ev)

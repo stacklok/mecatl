@@ -96,6 +96,57 @@ func TestProjectUpdateToolResult(t *testing.T) {
 	}
 }
 
+// TestADR_0370_Scenario3_ClientConfirmationAndReplacement pins ACP's single
+// call-ID-correlated card/update lifecycle alongside Mecatui's named proof.
+func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
+	projector := newRunProjector()
+	call := session.NewToolCall("call-availability", "Read", json.RawMessage(`{}`))
+	opened, ok := projector.project(session.Event{Type: session.EvToolCall, ToolCall: &call})
+	if !ok || opened.(toolCallUpdate).ToolCallID != "call-availability" || opened.(toolCallUpdate).Status != toolStatusPending {
+		t.Fatalf("pending call = %+v, projected=%v", opened, ok)
+	}
+	available := session.NewToolResult("call-availability", "available")
+
+	got, ok := projector.project(session.Event{Type: session.EvToolResultAvailable, ToolResult: &available})
+	if !ok {
+		t.Fatal("availability did not settle the tool call")
+	}
+	update := got.(toolCallUpdate)
+	if update.ToolCallID != "call-availability" || update.Status != toolStatusCompleted || update.Content[0].Content.Text != "available" {
+		t.Fatalf("availability update = %+v", update)
+	}
+
+	if _, ok := projector.project(session.Event{Type: session.EvToolResult, ToolResult: &available}); ok {
+		t.Fatal("identical canonical result emitted a duplicate tool_call_update")
+	}
+
+	cancelled := session.NewToolError("call-cancelled", "cancelled")
+	prior := session.NewToolResult("call-cancelled", "available")
+	if _, ok := projector.project(session.Event{Type: session.EvToolResultAvailable, ToolResult: &prior}); !ok {
+		t.Fatal("second availability did not settle its call")
+	}
+	got, ok = projector.project(session.Event{Type: session.EvToolResult, ToolResult: &cancelled})
+	if !ok {
+		t.Fatal("differing canonical result did not replace availability")
+	}
+	update = got.(toolCallUpdate)
+	if update.ToolCallID != "call-cancelled" || update.Status != toolStatusFailed || update.Content[0].Content.Text != "cancelled" {
+		t.Fatalf("replacement update = %+v", update)
+	}
+
+	// A transient availability can be missed after reconnect; canonical-only
+	// replay still settles the card.
+	fallback := newRunProjector()
+	got, ok = fallback.project(session.Event{Type: session.EvToolResult, ToolResult: &available})
+	if !ok {
+		t.Fatal("canonical-only result did not settle the tool call")
+	}
+	update = got.(toolCallUpdate)
+	if update.Status != toolStatusCompleted || update.Content[0].Content.Text != "available" {
+		t.Fatalf("canonical fallback update = %+v", update)
+	}
+}
+
 // TestProjectUpdateDropped asserts the events with no session/update projection
 // this phase are dropped. subagent.start/team.start are dropped (the parent
 // tool_call already names the work); subagent.tool/end and team.member/end DO

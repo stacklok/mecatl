@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "description": "Mecatl Studio: the browser UI and its backend for frontend, built on the published @stacklok-oss/mecatl-sdk",
   "engines": {
-    "node": ">=24"
+    "node": ">=26 <27"
   },
   "packageManager": "pnpm@12.4.2",
   "scripts": {
@@ -22,7 +22,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@playwright/test": "1.63.0",
-    "@types/node": "24.19.0",
+    "@types/node": "26.6.4",
     "typescript": "6.0.3"
   }
 }

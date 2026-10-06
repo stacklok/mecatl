@@ -36,7 +36,7 @@ both currently retained winners and eviction cleanups detached before closure, w
 holding the reaper lock during filesystem work; it does not wait for a later `Preserve`.
 A crash remains a residual and does not sweep them at startup. A SINGLE-BRANCH `join=first`/`join=judge` winner is auto-merged back
 into the parent workspace BY DEFAULT (no flag; see
-[ADR 0039](../adr/0039-parallel-auto-merge.md)): the winner's diff is applied via
+ADR 0039): the winner's diff is applied via
 `tool.EnvironmentMerger` (the `forker.Merger` adapter — `git diff --no-textconv HEAD`
 from the fork piped to `git apply` in the parent, plus untracked-file copy; the
 merge refuses `.gitattributes`-touching patches and runs `--no-textconv` to close
@@ -78,7 +78,7 @@ HEAD` gives the read-only child a CLEAN tree — `git status`/`git diff` and the
 tools would see no changes even when the operator has uncommitted work, hiding the
 in-progress changes an explorer is usually dispatched to review. **The read-only
 worktree forkers carry `forker.WithDirtyOverlay()`** (the Subagent child forker and
-the team `roForker`; see [ADR 0033](../adr/0033-dirty-aware-readonly-fork.md)) which,
+the team `roForker`; see ADR 0033) which,
 after the worktree is created and only when the parent is dirty (`git status
 --porcelain` probe), mirrors the parent's uncommitted state into it: applies `git
 diff --no-ext-diff --binary HEAD` (tracked edits + staged + deletions; `--binary`

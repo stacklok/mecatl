@@ -30,12 +30,13 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/environment/microvm/worktree"
 	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 )
+
+const guestObjectStore = "/run/mecatl/git-objects"
 
 const microVME2EPolicy = "microvm-production-e2e-v1"
 
@@ -60,13 +61,13 @@ mkdir -p "$HOME/private" "${XDG_CACHE_HOME:-$HOME/.cache}/mecatl" || fail privat
 printf private > "$HOME/private/proof" || fail home-write
 printf cache > "${XDG_CACHE_HOME:-$HOME/.cache}/mecatl/proof" || fail cache-write
 cat tracked.txt || fail source-read
-printf harness-change > journey.txt || fail workspace-write`, hostCanary, managerConfig, worktree.GuestObjectStore)
+printf harness-change > journey.txt || fail workspace-write`, hostCanary, managerConfig, guestObjectStore)
 }
 
 func TestDailyHarnessProbeSeparatesSharedAndPrivateObjectStores(t *testing.T) {
 	probe := dailyHarnessProbe("/host/canary", "/host/manager-config")
 	for _, required := range []string{
-		`shared_objects="` + worktree.GuestObjectStore + `"`,
+		`shared_objects="` + guestObjectStore + `"`,
 		`touch "$shared_objects/mecatl-write-forbidden"`,
 		`private_objects=$(git rev-parse --git-path objects)`,
 		`touch "$private_objects/mecatl-private-write"`,

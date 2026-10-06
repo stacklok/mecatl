@@ -17,6 +17,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+const guardrailResultRelease = "result_release"
+
 // approvalRender exposes only the shared renderer operations approval needs. Its
 // closures reuse renderer's diff implementation and width-keyed Glamour cache;
 // the surface cannot otherwise reach or mutate the broad renderer.
@@ -70,7 +72,6 @@ type approvalSurface struct {
 	sessionID    string
 	modelID      string
 	debugSession bool
-	expandTools  bool
 
 	// hits is the current render frame's verdict hit map.
 	hits map[HitID]client.Verdict
@@ -111,13 +112,12 @@ func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) 
 }
 
 func (s *approvalSurface) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	if key.Matches(msg, s.deps.keys.ExpandTools) {
-		if s.approvalExpandToggle() {
-			s.intent = nil
+	if key.Matches(msg, s.deps.keys.Toolcalls) {
+		if isPlanAsk(s.ask.Tool) {
 			return nil, true, false
 		}
-		s.expandTools = !s.expandTools
-		s.intent = setExpandToolsIntent{expand: s.expandTools}
+		s.approvalExpandToggle()
+		s.intent = nil
 		return nil, true, false
 	}
 	cmd, intent := s.onApprovalKey(msg)
@@ -135,13 +135,16 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		return nil, true, false
 	}
 	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
-		if detail.Err == nil && s.ask.guardrail != nil && detail.Detail.ReviewID == s.ask.guardrail.ReviewID {
-			s.ask.reviewDetail = detail.Detail
-			s.ask.reviewDetailUnavailable = false
-		} else if detail.Err != nil && s.ask.guardrail != nil {
-			s.ask.reviewDetailUnavailable = true
+		if s.applyReviewDetail(&s.ask, detail) {
+			s.argsVPReady = false
+			return nil, true, false
 		}
-		return nil, true, false
+		for i := range s.queue {
+			if s.applyReviewDetail(&s.queue[i], detail) {
+				return nil, true, false
+			}
+		}
+		return nil, false, false
 	}
 	hit, ok := msg.(surfaceHitMsg)
 	if !ok {
@@ -153,6 +156,28 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	}
 	s.intent = s.resolveAsk(verdict)
 	return nil, true, false
+}
+
+func (s *approvalSurface) applyGuardrailHook(msg client.HookMsg) *guardrailPresentation {
+	asks := []*pendingAsk{&s.ask}
+	for i := range s.queue {
+		asks = append(asks, &s.queue[i])
+	}
+	for _, ask := range asks {
+		if msg.Guardrail.ReviewID != "" && ask.guardrail != nil && ask.guardrail.ReviewID == msg.Guardrail.ReviewID {
+			ask.Reason = guardrailHookText(msg)
+			s.argsVPReady = false
+			return ask.review
+		}
+	}
+	return nil
+}
+
+func (s *approvalSurface) applyReviewDetail(ask *pendingAsk, msg client.GuardrailReviewDetailMsg) bool {
+	if ask.guardrail == nil {
+		return false
+	}
+	return ask.applyDetail(msg, guardrailReviewSessionID(ask.AskID, s.sessionID), ask.guardrail.ReviewID)
 }
 
 func (s *approvalSurface) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
@@ -206,16 +231,13 @@ type approvalResolvedIntent struct {
 func (approvalResolvedIntent) isSurfaceIntent() {}
 
 type approvalRetractedIntent struct {
+	ask     pendingAsk
 	notice  string
 	advance approvalAdvance
 	resume  phase
 }
 
 func (approvalRetractedIntent) isSurfaceIntent() {}
-
-type setExpandToolsIntent struct{ expand bool }
-
-func (setExpandToolsIntent) isSurfaceIntent() {}
 
 func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 	intent := s.intent
@@ -264,7 +286,7 @@ func (s *approvalSurface) isDebugMCPMutationAsk(msg client.PermissionAskMsg) boo
 //
 // opening reports whether this ask became the visible head (false = deduped or
 // enqueued).
-func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open bool, interrupted phase) (opening bool) {
+func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open bool, interrupted phase, detailRequest uint64, review *guardrailPresentation) (opening bool) {
 	if s.known(msg.AskID) {
 		return false
 	}
@@ -274,7 +296,8 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 	}
 	next := pendingAsk{
 		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason, expectedRunID: msg.ExpectedRunID,
-		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail,
+		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail, review: review,
+		guardrailDetailState: guardrailDetailState{requestID: detailRequest},
 	}
 	if open {
 		s.enqueue(next)
@@ -295,18 +318,22 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 // spinner re-arm decision the returned advance implies.
 func (s *approvalSurface) applyPermissionRetract(msg client.PermissionRetractMsg, open bool) surfaceIntent {
 	if open && s.ask.AskID == msg.AskID {
+		ask := s.ask
 		s.markAskResolved(msg.AskID)
 		s.clearPlanReview()
 		s.clearAskArgsView()
 		return approvalRetractedIntent{
+			ask:     ask,
 			notice:  "permission request withdrawn (subagent cancelled)",
 			advance: s.advance(),
 			resume:  s.restoredPhase(),
 		}
 	}
-	if s.removeQueued(msg.AskID) {
+	if i := askQueueIndex(s.queue, msg.AskID); i >= 0 {
+		ask := s.queue[i]
+		s.removeQueued(msg.AskID)
 		s.markAskResolved(msg.AskID)
-		return approvalRetractedIntent{notice: "queued permission request withdrawn (subagent cancelled)", advance: approvalAdvance{outcome: approvalQueueUnchanged}}
+		return approvalRetractedIntent{ask: ask, notice: "queued permission request withdrawn (subagent cancelled)", advance: approvalAdvance{outcome: approvalQueueUnchanged}}
 	}
 	return nil
 }
@@ -328,6 +355,7 @@ func (s *approvalSurface) markAskResolved(id string) {
 // the run's single reader, which delivers the resumed events after the one send.
 func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
 	ask := s.ask
+	ask.requestID = 0
 	askID := ask.AskID
 	s.markAskResolved(askID)
 	s.clearPlanReview()
@@ -336,8 +364,8 @@ func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
 	notice := "permission allowed"
 	if s.ask.guardrail != nil {
 		notice = "guardrail action approved to run once"
-		if s.ask.guardrail.Kind == "result_release" {
-			notice = "guardrail released the already-produced result once (tool not rerun)"
+		if s.ask.guardrail.Kind == guardrailResultRelease {
+			notice = "result release requested (tool not rerun)"
 		}
 	}
 	switch v {
@@ -504,16 +532,16 @@ func (s *approvalSurface) approvalExpandToggle() (approval bool) {
 // a surfaced subagent ask (a child engine's permission policy has a nil learn
 // store, so always-allow would be a silent no-op there).
 type pendingAsk struct {
-	AskID                   string
-	Tool                    string
-	Args                    string
-	Reason                  string
-	focusedVerdict          client.Verdict
-	offerAlways             bool
-	guardrail               *client.GuardrailApprovalScope
-	expectedRunID           string
-	reviewDetail            client.GuardrailReviewDetail
-	reviewDetailUnavailable bool
+	AskID          string
+	Tool           string
+	Args           string
+	Reason         string
+	focusedVerdict client.Verdict
+	offerAlways    bool
+	guardrail      *client.GuardrailApprovalScope
+	review         *guardrailPresentation
+	expectedRunID  string
+	guardrailDetailState
 }
 
 // isPlanAsk reports whether a permission ask is a plan-approval gate (the model
@@ -530,7 +558,7 @@ func isPlanAsk(tool string) bool {
 // classifies as diff-capable (it falls back to JSON args in the card, but the
 // ask's FLAVOUR is the diff surface).
 func isDiffCapableAskTool(tool string) bool {
-	return tool == "Edit" || tool == "Write"
+	return tool == toolEditName || tool == toolWriteName
 }
 
 // known reports whether askID is already visible (the modal head), queued, or
@@ -866,13 +894,13 @@ func capApprovalCardBody(body string, height, actionRows int, marker string) str
 // row budget so centerCard never receives an over-region body. argsOffset is the
 // args mini-viewport's YOffset.
 func guardrailApprovalDescription(scope *client.GuardrailApprovalScope) string {
-	if scope.Kind == "result_release" {
-		return "Result review: Release once or Cancel. This releases the same already-produced result; the tool and its side effects are not run again."
+	if scope.Kind == guardrailResultRelease {
+		return "Sharing sends the already-produced result to the model; the tool and its side effects are not run again."
 	}
 	if scope.RepeatAvailable {
-		return "Action review: Run once, Don't ask again for this exact action in this session, or Cancel."
+		return "Repeat approval applies only to this exact action in this session."
 	}
-	return "Action review: Run once or Cancel. Repeat approval is unavailable because the complete action scope could not be version-bound."
+	return "Approval for repeated actions is unavailable for this request."
 }
 
 func writeGuardrailApprovalDetail(b *strings.Builder, th theme.Theme, ask pendingAsk, width int) {
@@ -881,17 +909,14 @@ func writeGuardrailApprovalDetail(b *strings.Builder, th theme.Theme, ask pendin
 		b.WriteString(th.Style("muted").Render(wrapApprovalReason(text, contentWidth)) + "\n")
 	}
 	write(guardrailApprovalDescription(ask.guardrail))
-	if ask.reviewDetailUnavailable {
-		write("Detailed explanation unavailable or expired; the displayed guardrail purpose still applies.")
+	if ask.unavailable {
+		write("Detailed explanation unavailable or expired. Review the available information before proceeding.")
 	}
-	if ask.reviewDetail.Concern != "" {
-		write("Concern: " + ask.reviewDetail.Concern)
+	if ask.detail.Concern != "" {
+		write("Explanation: " + ask.detail.Concern)
 	}
-	if ask.reviewDetail.SourceDisplay != "" {
-		write("Source: " + ask.reviewDetail.SourceDisplay)
-	}
-	if ask.reviewDetail.NextAction != "" {
-		write("Next: " + ask.reviewDetail.NextAction)
+	if ask.detail.SourceDisplay != "" {
+		write("Source: " + ask.detail.SourceDisplay)
 	}
 }
 
@@ -905,10 +930,10 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	argsOffset := s.askVPOffset
 	titleText := "Permission required"
 	if ask.guardrail != nil {
-		if ask.guardrail.Kind == "result_release" {
-			titleText = "Guardrail result held"
+		if ask.guardrail.Kind == guardrailResultRelease {
+			titleText = "Share this tool result?"
 		} else {
-			titleText = "Guardrail action review"
+			titleText = "Allow this action?"
 		}
 	}
 	if queued > 0 {
@@ -967,7 +992,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 		// the full-screen args view on ctrl+t (a conditional hint hid the affordance
 		// on exactly the short asks that still benefit from the full view).
 		hk := s.deps.marks
-		hint := hk.expandTools + " full args"
+		hint := hk.toolcalls + " full args"
 		if argsRegion.maxOffset > 0 {
 			hint = "… " + hk.scroll + " scroll · " + hint
 		}
@@ -990,7 +1015,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	if ask.offerAlways {
 		actionRows++
 	}
-	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… ctrl+t details"))
+	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… "+s.deps.marks.toolcalls+" details"))
 	b.Reset()
 	b.WriteString(preActions)
 
@@ -1017,7 +1042,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	// offset that a later trailing write would silently move.
 	buttonsRow = lipgloss.Height(b.String())
 	b.WriteString("\n" + buttons)
-	if ask.offerAlways {
+	if ask.offerAlways && ask.guardrail == nil {
 		b.WriteString("\n" + th.Style("muted").Render(approvalAlwaysFootnote(hk.allowAlways)))
 	}
 
@@ -1129,7 +1154,7 @@ func approvalButtons(th theme.Theme, hk helpKeys, ask pendingAsk, plan bool) []a
 		if ask.guardrail != nil {
 			switch verdict {
 			case client.VerdictAllowOnce:
-				if ask.guardrail.Kind == "result_release" {
+				if ask.guardrail.Kind == guardrailResultRelease {
 					return "[" + approvalMnemonic(hk.allow) + "] Release once"
 				}
 				return "[" + approvalMnemonic(hk.allow) + "] Run once"
@@ -1408,6 +1433,11 @@ func (s *approvalSurface) openArgs(width, height int) {
 			body = s.deps.theme.Style("toolArgs").Render(wrapAskArgsContinuations(s.deps.theme, tier, planReviewContentWidth(width))) + "\n"
 		}
 	}
+	if s.ask.guardrail != nil {
+		var detail strings.Builder
+		writeGuardrailApprovalDetail(&detail, s.deps.theme, s.ask, width)
+		body = detail.String() + "\n" + body
+	}
 	if s.ask.Reason != "" {
 		body += "\n" + s.deps.theme.Style("muted").Render(wrapApprovalReason(s.ask.Reason, planReviewContentWidth(width))) + "\n"
 	}
@@ -1429,7 +1459,7 @@ func (s *approvalSurface) argsLayout() argsReviewLayout {
 	}
 	buttons := permissionButtonsLine(s.deps.theme, s.deps.marks, s.ask)
 	bar := buttons
-	if s.ask.offerAlways {
+	if s.ask.offerAlways && s.ask.guardrail == nil {
 		bar += "\n" + s.deps.theme.Style("muted").Render(approvalAlwaysFootnote(s.deps.marks.allowAlways))
 	}
 	bar += "\n" + s.deps.theme.Style("muted").Render(argsScrollHint(s.deps.marks, !isDiffCapableAskTool(s.ask.Tool) && askArgsTiersDiffer(s.deps.theme, s.ask)))

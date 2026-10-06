@@ -47,7 +47,7 @@ func evalEscapeAtAuto(t *testing.T, p port.PermissionPolicy, workspace string, c
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws)
+	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws).Decision
 }
 
 // TestPathEscapePosture_GuardrailRoutedEscape pins AC-W2-G2: auto + the

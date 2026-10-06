@@ -503,7 +503,7 @@ export type ServerCapabilities = Message<"mecatl.v1.ServerCapabilities"> & {
 
   /**
    * user_model is true when the user-model store is wired (GetUserModel reads its
-   * live index). Gates the /usermodel read-only inspection panel.
+   * live index). Gates the /memory read-only inspection panel.
    *
    * @generated from field: bool user_model = 11;
    */
@@ -3933,7 +3933,9 @@ export type Event = Message<"mecatl.v1.Event"> & {
   /**
    * type is the event kind (mirrors session.EventType: session.init,
    * turn.start, turn.end, message.delta, reasoning.delta, tool.call,
-   * tool.result, permission.ask, hook, compaction, result).
+   * tool.result.available, tool.result, permission.ask, hook, compaction, result).
+   * tool.result.available is a transient live display event; tool.result is the
+   * canonical durable result.
    *
    * @generated from field: string type = 1;
    */
@@ -3969,7 +3971,8 @@ export type Event = Message<"mecatl.v1.Event"> & {
   toolCall?: ToolCall | undefined;
 
   /**
-   * tool_result is set on tool.result events.
+   * tool_result is set on transient tool.result.available and canonical
+   * tool.result events.
    *
    * @generated from field: mecatl.v1.ToolResult tool_result = 6;
    */

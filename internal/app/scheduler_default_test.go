@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // scheduler_default_test.go pins the ADR-0073 decision-2 posture: the

@@ -3,14 +3,17 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -22,23 +25,23 @@ type revisionBlockingReviewer struct {
 	requests []ToolReviewRequest
 }
 
-func (r *revisionBlockingReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *revisionBlockingReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.requests = append(r.requests, req)
 	r.mu.Unlock()
 	r.entered <- req
 	<-r.release
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
-type revisionReadTool struct{ executions *int }
+type revisionReadTool struct{ executions *atomic.Int64 }
 
 func (revisionReadTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Inspect", Description: "inspect", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (revisionReadTool) ReadOnly() bool { return true }
 func (t revisionReadTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	*t.executions++
+	t.executions.Add(1)
 	return session.NewToolResult(call.ID, "executed"), nil
 }
 
@@ -49,7 +52,7 @@ type admissionBlockingPolicy struct {
 	release chan struct{}
 }
 
-func (p *admissionBlockingPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+func (p *admissionBlockingPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
 	p.mu.Lock()
 	p.calls++
 	call := p.calls
@@ -59,16 +62,140 @@ func (p *admissionBlockingPolicy) Evaluate(context.Context, session.SessionID, s
 		p.entered <- struct{}{}
 		<-p.release
 	}
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (*admissionBlockingPolicy) Learn(session.SessionID, session.ToolCall) {}
+
+type cancelBatchEvidence struct{ closed *int }
+
+func (p cancelBatchEvidence) PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error) {
+	return PreparedReviewEvidence{Complete: true, Close: func() { *p.closed++ }}, nil
+}
+
+type cancelBatchPolicy struct{}
+
+func (cancelBatchPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
+	effect := governance.Allow
+	switch call.ID {
+	case "denied":
+		effect = governance.Deny
+	case "ask":
+		effect = governance.Ask
+	}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: effect, Reason: "test denial"}}
+}
+func (cancelBatchPolicy) Learn(session.SessionID, session.ToolCall) {}
+
+func TestReadBatchCancellationBeforeApprovalSkipsEvidenceAndPreservesCanonicalOrder(t *testing.T) {
+	closed := 0
+	var executions atomic.Int64
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(revisionReadTool{executions: &executions})
+	calls := []session.ToolCall{
+		session.NewToolCall("prepared", "Inspect", json.RawMessage(`{}`)),
+		session.NewToolCall("denied", "Inspect", json.RawMessage(`{}`)),
+		session.NewToolCall("ask", "Inspect", json.RawMessage(`{}`)),
+	}
+	engine := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ToolCallTurn(calls...)), Catalog: catalog, Policy: cancelBatchPolicy{},
+		ToolReviewer: &revisionGrantReviewer{}, ReviewEvidencePreparer: cancelBatchEvidence{closed: &closed}, Interactive: true,
+	})
+	env := memEnv("/ws")
+	sess := session.New("cancel-prepared", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	run := engine.Run(ctx, sess, env, RunRequest{Text: "inspect"})
+	var canonical []session.ToolCallID
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk {
+			cancel()
+		}
+		if ev.Type == session.EvToolResult {
+			canonical = append(canonical, ev.ToolResult.CallID)
+		}
+	}
+	if executions.Load() != 0 || closed != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, []session.ToolCallID{"prepared", "denied", "ask"}) {
+		t.Fatalf("executions=%d closed=%d state=%s canonical=%v", executions.Load(), closed, sess.State, canonical)
+	}
+	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadBatchSuccessPublishesCanonicalResultsInCallOrder(t *testing.T) {
+	closed := 0
+	var executions atomic.Int64
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(revisionReadTool{executions: &executions})
+	calls := []session.ToolCall{
+		session.NewToolCall("prepared", "Inspect", json.RawMessage(`{}`)),
+		session.NewToolCall("denied", "Inspect", json.RawMessage(`{}`)),
+		session.NewToolCall("ask", "Inspect", json.RawMessage(`{}`)),
+	}
+	engine := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: cancelBatchPolicy{},
+		ToolReviewer: &revisionGrantReviewer{}, ReviewEvidencePreparer: cancelBatchEvidence{closed: &closed}, Interactive: true,
+	})
+	env := memEnv("/ws")
+	sess := session.New("ordered-batch", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	run := engine.Run(t.Context(), sess, env, RunRequest{Text: "inspect"})
+	var canonical []session.ToolCallID
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk {
+			if err := run.ResolveApproval(ApprovalResolution{AskID: ev.Ask.AskID, Verdict: session.VerdictAllowOnce}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if ev.Type == session.EvToolResult {
+			canonical = append(canonical, ev.ToolResult.CallID)
+		}
+	}
+	if executions.Load() != 2 || closed != 2 || !reflect.DeepEqual(canonical, []session.ToolCallID{"prepared", "denied", "ask"}) {
+		t.Fatalf("executions=%d closed=%d canonical=%v", executions.Load(), closed, canonical)
+	}
+	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadBatchFinalReauthorizationObservesCancellation(t *testing.T) {
+	root := newReviewRoot(&revisionGrantReviewer{}, nil, nil)
+	root.establishInstructions(nil)
+	root.refreshTasks([]session.Message{{Role: session.RoleUser, Text: "inspect", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
+	var executions atomic.Int64
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(revisionReadTool{executions: &executions})
+	policy := &admissionBlockingPolicy{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	calls := []session.ToolCall{session.NewToolCall("first", "Inspect", json.RawMessage(`{}`)), session.NewToolCall("second", "Inspect", json.RawMessage(`{}`))}
+	engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...)), Catalog: catalog, Policy: policy, Role: "subagent"})
+	env := memEnv("/ws")
+	sess := session.New("cancel-reauth", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	run := engine.Run(ctx, sess, env, RunRequest{Text: "inspect", reviewRoot: root, reviewIsolated: true})
+	<-policy.entered
+	cancel()
+	close(policy.release)
+	var canonical []session.ToolCallID
+	for ev := range run.Events() {
+		if ev.Type == session.EvToolResult {
+			canonical = append(canonical, ev.ToolResult.CallID)
+		}
+	}
+	if executions.Load() != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, []session.ToolCallID{"first", "second"}) {
+		t.Fatalf("executions=%d state=%s canonical=%v", executions.Load(), sess.State, canonical)
+	}
+	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestReadBatchFinalAdmissionRejectsContextChange(t *testing.T) {
 	reviewer := &revisionGrantReviewer{}
 	root := newReviewRoot(reviewer, nil, nil)
 	root.establishInstructions(nil)
 	root.refreshTasks([]session.Message{{Role: session.RoleUser, Text: "old root task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
-	executions := 0
+	var executions atomic.Int64
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(revisionReadTool{executions: &executions})
 	policy := &admissionBlockingPolicy{entered: make(chan struct{}, 1), release: make(chan struct{})}
@@ -88,12 +215,12 @@ func TestReadBatchFinalAdmissionRejectsContextChange(t *testing.T) {
 	close(policy.release)
 	stale := 0
 	for ev := range run.Events() {
-		if ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, "review context changed") {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, "review context changed") {
 			stale++
 		}
 	}
-	if executions != 0 || stale != 2 {
-		t.Fatalf("executions=%d stale results=%d, want 0/2", executions, stale)
+	if executions.Load() != 0 || stale != 2 {
+		t.Fatalf("executions=%d stale results=%d, want 0/2", executions.Load(), stale)
 	}
 }
 
@@ -113,8 +240,8 @@ type revisionGrantReviewer struct {
 	armed int
 }
 
-func (*revisionGrantReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) {
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+func (*revisionGrantReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 func (*revisionGrantReviewer) GrantDigest(ToolReviewRequest) (string, bool) { return "digest", true }
 func (*revisionGrantReviewer) AllowsGrant(string) bool                      { return false }

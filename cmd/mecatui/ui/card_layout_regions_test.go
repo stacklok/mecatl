@@ -15,9 +15,8 @@ import (
 // card style is applied. Diff continuation rows retain the meaningful source
 // prefix and indentation rather than being reconstructed from a styled card.
 
-// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant verifies AC1.4:
-// expanded main-conversation cards preserve every source region while every rendered
-// row fits the card at the tiny, narrow, normal, and capped geometries.
+// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant retains the
+// historical AC1.4 width guard for the now-unexpandable pending tool card.
 
 // TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap verifies AC1.5: renderTool
 // frames the already-width-bounded regions directly, rather than wrapping a
@@ -88,7 +87,7 @@ func TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth(t *testing.T) {
 		card any
 		want []string
 	}{
-		{"header and expanded arguments", toolCardPresentation{name: "mcp__very_long_server_name__very_long_tool_name", arguments: `{"very_long_argument_name":"` + strings.Repeat("argument-value-", 8) + `"}`}, []string{"very_long_argument_name", "argument-value-"}},
+		{"header and arguments", toolCardPresentation{name: "mcp__very_long_server_name__very_long_tool_name", arguments: `{"very_long_argument_name":"` + strings.Repeat("argument-value-", 8) + `"}`}, []string{"very_long_argument_name", "argument-value-"}},
 		{"subagent metadata", subagentCardPresentation{name: "Subagent", goal: strings.Repeat("investigate the independently styled child metadata ", 3), model: strings.Repeat("model-identifier-", 5), current: strings.Repeat("tool-name-", 8)}, []string{"investigate", "model-identifier-", "subagent"}},
 		{"team metadata", teamCardPresentation{name: "Team", lanes: []teamLane{{name: strings.Repeat("member-name-", 4), current: strings.Repeat("current-tool-", 5), lead: true}}}, []string{"team", "member-name-"}},
 		{"parallel arguments", toolCardPresentation{name: "Parallel", arguments: `{"tasks":["` + strings.Repeat("parallel-task-", 8) + `"]}`}, []string{"tasks", "parallel-task-"}},
@@ -100,11 +99,11 @@ func TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth(t *testing.T) {
 			var out string
 			switch card := tc.card.(type) {
 			case toolCardPresentation:
-				out = r.prepareTypedToolCard(card, true).render()
+				out = r.prepareTypedToolCard(card, toolcallPending).render()
 			case subagentCardPresentation:
-				out = r.prepareSubagentCard(card, true).render()
+				out = r.prepareSubagentCard(card, toolcallPending).render()
 			case teamCardPresentation:
-				out = r.prepareTeamCard(card, true).render()
+				out = r.prepareTeamCard(card, toolcallPending).render()
 			}
 			out = stripANSIstr(out)
 			for i, line := range strings.Split(out, "\n") {
@@ -143,7 +142,11 @@ func TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant(t *testing.T
 			{name: "Edit", arguments: `{"path":"` + strings.Repeat("P", sourceRun) + `","old_string":"` + strings.Repeat("B", sourceRun) + `","new_string":"` + strings.Repeat("C", sourceRun) + `"}`},
 		}
 		for _, card := range cards {
-			out := stripANSIstr(r.prepareTypedToolCard(card, true).render())
+			state := toolcallPending
+			if card.resolved {
+				state = toolcallDone
+			}
+			out := stripANSIstr(r.prepareTypedToolCard(card, state).render())
 			for _, row := range strings.Split(out, "\n") {
 				if maxLineWidth(row) > cardWidth {
 					t.Errorf("row exceeds card width")

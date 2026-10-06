@@ -99,7 +99,7 @@ func TestAskReviewerEngineDisablesNoProgressNudge(t *testing.T) {
 	if reviewer == nil {
 		t.Fatalf("reviewer must be built")
 	}
-	if _, err := reviewer.Review(context.Background(), agent.ChildAskReviewRequest{
+	if _, _, err := reviewer.Review(context.Background(), agent.ChildAskReviewRequest{
 		Ask: session.PendingAsk{Tool: "Shell", Args: json.RawMessage(`{"command":"ls"}`)},
 	}); err == nil {
 		t.Fatalf("an empty reviewer turn must yield a failure (fail-safe deny), not a verdict")
@@ -222,11 +222,11 @@ func TestChildDepsClearAskAdjudicator(t *testing.T) {
 	cfg := Config{Model: "m", SubagentAskReviewerModel: "gpt-5-mini", SubagentAskReviewerMaxDenies: 5}
 	pc := promptConfig(cfg, "")
 
-	forProvider := childEngineDepsForProvider(cfg, "task", provider, "m", func() int { return defaultContextWindowTokens }, tool.NewCatalog(), pc, hookexec.New(nil))
+	forProvider := childEngineDepsForProvider(cfg, "task", provider, testProviderModel("m"), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), pc, hookexec.New(nil))
 	if forProvider.ChildAskReviewer != nil || forProvider.ChildAskReviewMaxDenies != 0 {
 		t.Fatalf("childEngineDepsForProvider must clear the adjudicator (no nesting)")
 	}
-	plain := childEngineDeps(cfg, "task", provider, tool.NewCatalog(), "m", fixedDefaultWindow, pc, hookexec.New(nil))
+	plain := childEngineDeps(cfg, "task", provider, testProviderModel("m"), tool.NewCatalog(), fixedDefaultWindow, pc, hookexec.New(nil))
 	if plain.ChildAskReviewer != nil {
 		t.Fatalf("childEngineDeps must not carry the adjudicator")
 	}
@@ -298,7 +298,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 			mockllm.TextTurn("lead: inspected"),
 			mockllm.TextTurn("CONSOLIDATED: done"),
 		)
-		eng := agent.NewEngine(childEngineDepsForProvider(cfg, "member:lead", memberLLM, "m", func() int { return defaultContextWindowTokens }, cat, promptConfig(cfg, ""), nil))
+		eng := agent.NewEngine(childEngineDepsForProvider(cfg, "member:lead", memberLLM, testProviderModel("m"), func() int { return defaultContextWindowTokens }, cat, promptConfig(cfg, ""), nil))
 		return agent.MemberBuild{Engine: eng, IsolateReadOnly: true}
 	}
 	teamTool := agent.NewTeamTool(memberFactory, agent.WithTeamToolReadOnlyForker(appFakeForker{}), agent.WithTeamToolReadLedgerFactory(testReadLedger))
@@ -308,9 +308,14 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 			json.RawMessage(`{"goal":"inspect","members":[{"name":"lead","role":"inspect the tree"}]}`))),
 		mockllm.TextTurn("parent: done"),
 	)
-	reviewerLLM := mockllm.New(mockllm.TextTurn(`{"allow": true, "reason": "read-only inspection"}`))
+	reviewerUsage := session.Usage{InputTokens: 5, OutputTokens: 2}
+	reviewerLLM := mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
+		{Kind: port.ChunkText, Text: `{"allow": true, "reason": "read-only inspection"}`},
+		{Kind: port.ChunkUsage, Usage: &reviewerUsage},
+		{Kind: port.ChunkDone},
+	}})
 
-	deps := engineDepsForProvider(cfg, parentLLM, "m", func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), hookexec.New(nil), nil, nil)
+	deps := engineDepsForProvider(cfg, parentLLM, testProviderModel("m"), func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), hookexec.New(nil), nil, nil)
 	cat := tool.NewCatalog()
 	cat.MustRegister(teamTool)
 	deps.Catalog = cat
@@ -351,5 +356,9 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 	}
 	if got := bash.ran(); len(got) != 1 || !strings.Contains(got[0], "cat $(zap)") {
 		t.Fatalf("the reviewer-allowed substitution-floored Shell must execute; ran=%v", got)
+	}
+	bucket := sess.TokenUsageSnapshot()[session.UsageKindAskReviewer]
+	if got := bucket.Models["mock/reviewer-model"]; got != reviewerUsage {
+		t.Fatalf("reviewer attribution = %+v, want exact composition identity mock/reviewer-model=%+v", bucket.Models, reviewerUsage)
 	}
 }

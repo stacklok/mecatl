@@ -7,8 +7,7 @@ infrastructure in `website/`. For Docusaurus mechanics, see
 [`website/AGENTS.md`](../website/AGENTS.md).
 
 Before drafting or substantively editing a page, use the repository's
-[`tech-writer` skill](../.claude/skills/tech-writer/SKILL.md). Its
-[style guide](../.claude/skills/tech-writer/references/style-guide.md) is the
+[style guide](_STYLE.md). It is the
 canonical source for prose, voice, terminology, and formatting. This file
 remains canonical for information architecture, content ownership, links, and
 verification.
@@ -145,9 +144,6 @@ Start with the applicable implementation source:
 - `contracts/proto/` for gRPC messages and services
 - command flag registration, configuration schemas, handlers, and adapters for
   deployed behavior
-
-The files under `docs/usage/` are compatibility pointers for historical links,
-not an authoring surface. Update the owning `user-docs/` page instead.
 
 Generated reference pages are exceptions to direct editing:
 

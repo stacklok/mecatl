@@ -797,7 +797,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// tuple to rebuild the SAME scoped engine on the override model.
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
 
-		eng, mcpClose, names, resources, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, reg.Detail(def.Name), childProvider, model, windowFn, base, false /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+		eng, mcpClose, names, resources, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn, base, false /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
 		engines[def.Name] = eng
 		closeFn = composeCloseErr(mcpClose, closeFn)
 
@@ -869,7 +869,8 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // inline server) + the scoped tool NAMES + the preloaded-skill COUNT, so callers can log
 // the "agent def engine built" INFO with the same fields the pre-extraction inline path
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
-func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
+func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, providerModel session.ProviderModelID, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
+	model := providerModel.ModelID
 	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
@@ -934,7 +935,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// its zero value (off), matching the original explicit omission, AND routes the
 	// child's compactor/counter/window through the resolved provider+model
 	// (contamination fix).
-	eng := newChildEngineForProvider(cfg, role, childProvider, model, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
+	eng := newChildEngineForProvider(cfg, role, childProvider, providerModel, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
 	return eng, mcpClose, names, resourceCapabilities, len(bodies)
 }
 

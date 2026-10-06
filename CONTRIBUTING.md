@@ -43,12 +43,9 @@ the issue description.
 
 ### Development workflow
 
-Read [AGENTS.md](AGENTS.md) before editing. It is the canonical technical
-contract: it defines the architecture, layering rules, safety invariants,
-generated files, and workflow details that this guide intentionally does not
+Read [AGENTS.md](AGENTS.md) before editing. It holds the build and test
+commands and the code invariants that this guide intentionally does not
 duplicate. External contributors use a fork-and-pull-request workflow.
-Repository maintainers and automation use the internal workflow defined in
-AGENTS.md; these are audience-specific paths, not conflicting instructions.
 
 Use the Taskfile rather than bare root-level build commands:
 

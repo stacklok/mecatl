@@ -738,6 +738,7 @@ func TestSteer_CardGolden(t *testing.T) {
 	mm, _ := m.Update(client.SteerOutcomeMsg{Outcome: client.SteerAccepted, Text: "also check b.go"})
 	m = mm.(Model)
 	m.refreshView()
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "steer_card.golden", got)
 }

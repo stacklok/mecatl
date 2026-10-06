@@ -12,6 +12,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -27,6 +28,7 @@ type ReflectionReceipt struct {
 	Staged      int
 	Promoted    int
 	Conflicted  int
+	Usage       session.AuxiliaryUsage
 }
 
 // ExplicitReflector submits one caller-owned completed session for reflection.
@@ -89,6 +91,9 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		ctx = memory.WithWorkspace(ctx, workspace)
 	}
 	r, err := s.cfg.ReflectSession(ctx, sess)
+	if len(r.Usage.Buckets) > 0 {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "reflection usage dropped", "bucket_count", len(r.Usage.Buckets))
+	}
 	if err != nil {
 		return nil, explicitReflectionError(err)
 	}

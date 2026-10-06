@@ -11,6 +11,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -20,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 

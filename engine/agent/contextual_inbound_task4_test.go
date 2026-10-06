@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -34,7 +35,7 @@ func (r *inboundReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _
 	return job == agent.ReviewJobInbound, enforce
 }
 
-func (r *inboundReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *inboundReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
@@ -48,7 +49,7 @@ func (r *inboundReviewer) Review(_ context.Context, req agent.ToolReviewRequest,
 	if assessment == "" {
 		assessment = agent.ReviewProhibited
 	}
-	return agent.ToolReviewResult{Assessment: assessment, Concerns: []agent.ReviewConcern{{Ref: "c1", Category: "prompt_injection", Rationale: "attempted redirection", SourceRef: "tool-result"}}, Missing: []agent.ReviewMissingEvidence{{Ref: "actual-source", Kind: "tool_result", Reason: "source was incomplete"}}}, nil
+	return agent.ToolReviewResult{Assessment: assessment, Concerns: []agent.ReviewConcern{{Ref: "c1", Category: "prompt_injection", Rationale: "attempted redirection", SourceRef: "tool-result"}}, Missing: []agent.ReviewMissingEvidence{{Ref: "actual-source", Kind: "tool_result", Reason: "source was incomplete"}}}, session.AuxiliaryUsage{}, nil
 }
 
 type countingPostHook struct {
@@ -85,6 +86,37 @@ func resolveScoped(t *testing.T, run *agent.Run, ask *session.PendingAsk, verdic
 		resolution.ReviewID, resolution.Kind = ask.Guardrail.ReviewID, ask.Guardrail.Kind
 	}
 	return run.ResolveApproval(resolution)
+}
+
+func TestInboundReleaseWaitOutlivesReviewBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &inboundReviewer{}
+		executions := 0
+		read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			executions++
+			return session.NewToolResult(call.ID, "held"), nil
+		}}
+		cat := tool.NewCatalog()
+		cat.MustRegister(read)
+		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("r1", "Read", []byte(`{"path":"a"}`))), mockllm.TextTurn("done")), Catalog: cat, Policy: staticAllowPolicy{}, ToolReviewer: reviewer, Interactive: true})
+		run := engine.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+		asks, released := 0, 0
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asks++
+				<-time.After(91 * time.Second)
+				if err := resolveScoped(t, run, ev.Ask, session.VerdictAllowOnce); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.Content == "held" {
+				released++
+			}
+		}
+		if asks != 1 || released != 1 || reviewer.calls != 1 || executions != 1 {
+			t.Fatalf("asks=%d released=%d reviews=%d executions=%d", asks, released, reviewer.calls, executions)
+		}
+	})
 }
 
 func TestADR_0363_ContextualGuardrails_Scenario2_FailureMatrix(t *testing.T) {

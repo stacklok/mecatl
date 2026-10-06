@@ -1554,7 +1554,7 @@ type ServerCapabilities struct {
 	// GetSoul returns its snapshot). Gates the /soul read-only inspection panel.
 	Soul bool `protobuf:"varint,10,opt,name=soul,proto3" json:"soul,omitempty"`
 	// user_model is true when the user-model store is wired (GetUserModel reads its
-	// live index). Gates the /usermodel read-only inspection panel.
+	// live index). Gates the /memory read-only inspection panel.
 	UserModel bool `protobuf:"varint,11,opt,name=user_model,json=userModel,proto3" json:"user_model,omitempty"`
 	// model_selection is true when >=1 provider is available (ListModels would return
 	// >0). Gates the client's /models picker the same way `agents` gates /agents.
@@ -7798,7 +7798,9 @@ type Event struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// type is the event kind (mirrors session.EventType: session.init,
 	// turn.start, turn.end, message.delta, reasoning.delta, tool.call,
-	// tool.result, permission.ask, hook, compaction, result).
+	// tool.result.available, tool.result, permission.ask, hook, compaction, result).
+	// tool.result.available is a transient live display event; tool.result is the
+	// canonical durable result.
 	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	// seq is the monotonically increasing sequence number within a run.
 	Seq int64 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
@@ -7809,7 +7811,8 @@ type Event struct {
 	Text string `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
 	// tool_call is set on tool.call events.
 	ToolCall *ToolCall `protobuf:"bytes,5,opt,name=tool_call,json=toolCall,proto3" json:"tool_call,omitempty"`
-	// tool_result is set on tool.result events.
+	// tool_result is set on transient tool.result.available and canonical
+	// tool.result events.
 	ToolResult *ToolResult `protobuf:"bytes,6,opt,name=tool_result,json=toolResult,proto3" json:"tool_result,omitempty"`
 	// ask is set on permission.ask events; ask_id is echoed in ResumeApproval.
 	Ask *PermissionAsk `protobuf:"bytes,7,opt,name=ask,proto3" json:"ask,omitempty"`

@@ -3,6 +3,7 @@ package ui
 import (
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	c.appendReasoning("considering options")
 	c.appendAssistant("a visible answer")
 	c.addTool("call-1", "Read", `{"path":"main.go"}`)
-	c.resolveTool("call-1", "package main", false, client.ContentBlock{
+	c.resolveAvailableTool("call-1", "package main", false, client.ContentBlock{
 		Kind: client.ContentBlockResourceLink,
 		Name: "rendered artifact",
 		URL:  "file:///workspace/main.go",
@@ -56,6 +57,96 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	}
 	if frame.appendixID != c.testAppendixID() {
 		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.testAppendixID())
+	}
+}
+
+func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
+	c := &conversation{}
+	c.addTool("one", "Read", `{"path":"one.go"}`)
+	c.resolveTool("one", "first", false)
+	c.startAssistant() // turn finished with tool calls but no assistant prose
+	firstEmpty := uint64(c.testBlocks()[c.scrollback.Len()-1].ID)
+	c.startAssistant() // another visually empty turn must not add a speaker or spacing
+	c.appendAssistant("\n\t")
+	secondEmpty := uint64(c.testBlocks()[c.scrollback.Len()-1].ID)
+	c.addTool("two", "Read", `{"path":"two.go"}`)
+	c.resolveTool("two", "second", false)
+	c.startAssistant() // live empty assistant at the end
+	lastEmpty := uint64(c.testBlocks()[c.scrollback.Len()-1].ID)
+	if c.scrollback.Len() != 5 {
+		t.Fatal("empty turns must remain in logical scrollback")
+	}
+
+	r := newCacheRenderer()
+	for _, width := range []int{28, 100} {
+		r.setWidth(width)
+		frame := r.renderConversationFrame(&c.scrollback, false)
+		if got := strings.Count(stripANSIstr(strings.Join(frame.lines, "\n")), "● mecatl"); got != 0 {
+			t.Fatalf("width %d rendered %d empty assistant labels: %q", width, got, frame.lines)
+		}
+		first := toolBlockID(t, c.scrollback, "one")
+		second := toolBlockID(t, c.scrollback, "two")
+		assertLongRunGap(t, frame, first, second, 0)
+		if len(frame.lines) != len(frame.provenance) {
+			t.Fatalf("width %d frame/provenance mismatch", width)
+		}
+		for _, row := range frame.provenance {
+			if row.blockID == firstEmpty || row.blockID == secondEmpty || row.blockID == lastEmpty {
+				t.Fatalf("width %d empty assistant owns visible row: %+v", width, row)
+			}
+		}
+	}
+	// F9 must not resurrect whitespace-only messages as empty speaker turns.
+	expandedEmpty := r.renderConversationFrame(&c.scrollback, true)
+	if strings.Contains(stripANSIstr(strings.Join(expandedEmpty.lines, "\n")), "● mecatl") || expandedEmpty.hasRegion(secondEmpty, conversationRegionBody) {
+		t.Fatalf("whitespace-only assistant rendered in F9 detail: %q", expandedEmpty.lines)
+	}
+
+	// The same block becomes visible as soon as real content arrives, even if
+	// its empty predecessor and the compact tool run were cached already.
+	c.appendReasoning("a summary")
+	frame := r.renderConversationFrame(&c.scrollback, false)
+	plain := stripANSIstr(strings.Join(frame.lines, "\n"))
+	if got := strings.Count(plain, "● mecatl"); got != 0 {
+		t.Fatalf("collapsed reasoning-only turn rendered %d speaker labels", got)
+	}
+	if !strings.Contains(plain, "reasoning…") || !frame.hasRegion(lastEmpty, conversationRegionReasoning) {
+		t.Fatalf("reasoning-only turn lost its collapsed summary or provenance: %q", plain)
+	}
+	expandedFrame := r.renderConversationFrame(&c.scrollback, true)
+	if expanded := stripANSIstr(strings.Join(expandedFrame.lines, "\n")); !strings.Contains(expanded, "a summary") || !strings.Contains(expanded, "● mecatl") || !expandedFrame.hasRegion(lastEmpty, conversationRegionReasoning) {
+		t.Fatalf("reasoning-only turn lost its expanded detail or provenance: %q", expanded)
+	}
+	c.appendAssistant("an answer")
+	frame = r.renderConversationFrame(&c.scrollback, false)
+	if !strings.Contains(stripANSIstr(strings.Join(frame.lines, "\n")), "an answer") {
+		t.Fatal("assistant text did not replace the previously empty turn")
+	}
+	fresh := newCacheRenderer()
+	if got, want := strings.Join(frame.lines, "\n"), strings.Join(fresh.renderConversationFrame(&c.scrollback, false).lines, "\n"); got != want {
+		t.Fatalf("cached empty-to-visible transition diverged from fresh render\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestEmptyAssistantBecomesVisibleWithoutMovingReader(t *testing.T) {
+	m := scenario2Model(t, 80, 12, false, phaseIdle, nil)
+	for i := range 20 {
+		id := strconv.Itoa(i)
+		m.conv.addTool(id, "Read", `{"path":"file.go"}`)
+		m.conv.resolveTool(id, "result", false)
+	}
+	m.conv.startAssistant()
+	m.refreshView()
+	m.vp.SetYOffset(5)
+	m.conversationView.mode = anchored
+	before := m.conversationView.frame.provenance[m.vp.YOffset()].blockID
+	if before == 0 || m.vp.AtBottom() {
+		t.Fatal("precondition: reader must be anchored to visible tool text")
+	}
+	m.conv.appendAssistant("the final answer")
+	m.refreshView()
+	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != before || m.conversationView.mode != anchored {
+		t.Fatalf("empty-to-visible assistant displaced reader: block=%d want=%d mode=%v", got, before, m.conversationView.mode)
 	}
 }
 
@@ -179,16 +270,16 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 
 	assertFrame("fresh", 1)
 	assertFrame("steady cache hit", 1)
-	if !c.resolveTool("call", "package main", false) {
+	if !c.resolveAvailableTool("call", "package main", false) {
 		t.Fatal("resolveTool failed")
 	}
 	assertFrame("tool mutation", 2)
 	r.setWidth(48)
 	assertFrame("resize", 3)
-	// render at the changed expand axis directly so it covers the block-cache key.
+	// Conversation detail does not invalidate the tool card cache key.
 	frame := r.renderConversationFrame(&c.scrollback, true)
-	if r.toolCardPrepares != 4 {
-		t.Fatalf("expand change: prepareToolCard calls = %d, want 4", r.toolCardPrepares)
+	if r.toolCardPrepares != 3 {
+		t.Fatalf("detail change: prepareToolCard calls = %d, want 3", r.toolCardPrepares)
 	}
 	fresh := newCacheRenderer()
 	fresh.setWidth(r.width)
@@ -204,7 +295,7 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testing.T) {
 	c := &conversation{}
 	c.addTool("call", "Read", `{"path":"TOOLARGMARKER deliberately wraps across the card"}`)
-	c.resolveTool("call", "TOOLRESULTMARKER deliberately wraps across the card   ", false)
+	c.resolveAvailableTool("call", "TOOLRESULTMARKER deliberately wraps across the card   ", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
 	narrow := r.renderConversationFrame(&c.scrollback, true)
@@ -438,7 +529,7 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 	c := &conversation{}
 	c.addTool("unresolved", "Read", `{"path":"`+green+`UNRESOLVED-`+strings.Repeat("argument-", 12)+reset+`"}`)
 	c.addTool("resolved", "Read", `{"path":"`+blue+`RESOLVED-`+strings.Repeat("argument-", 12)+reset+`"}`)
-	c.resolveTool("resolved", blue+`RESOLVED-`+strings.Repeat("result ", 24)+reset, false)
+	c.resolveAvailableTool("resolved", blue+`RESOLVED-`+strings.Repeat("result ", 24)+reset, false)
 	r := newCacheRenderer()
 
 	widths := make([]int, 0, 124)

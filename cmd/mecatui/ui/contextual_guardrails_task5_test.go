@@ -27,7 +27,7 @@ func TestGuardrailPostureStatusStates(t *testing.T) {
 	outage := guardrailHookText(client.HookMsg{Tool: "Read", Guardrail: &client.GuardrailReview{Job: "inbound", Assessment: "unresolved", Inspection: "operational_failure", Disposition: "withhold_result"}})
 	unresolved := guardrailHookText(client.HookMsg{Tool: "Read", Guardrail: &client.GuardrailReview{Job: "inbound", Assessment: "unresolved", Inspection: "complete", Disposition: "pass_advisory"}})
 	finding := guardrailHookText(client.HookMsg{Tool: "Read", Guardrail: &client.GuardrailReview{Job: "inbound", Assessment: "prohibited", Inspection: "complete", Disposition: "withhold_result"}})
-	if !strings.Contains(outage, "outage") || !strings.Contains(unresolved, "completed unresolved") || !strings.Contains(finding, "security finding") {
+	if !strings.Contains(outage, "outage") || !strings.Contains(unresolved, "could not determine whether this is safe") || !strings.Contains(finding, "security finding") {
 		t.Fatalf("review states outage=%q unresolved=%q finding=%q", outage, unresolved, finding)
 	}
 }
@@ -64,9 +64,9 @@ func TestContextualGuardrailApprovalChoicesAndCoverage(t *testing.T) {
 }
 
 func TestGuardrailDetailFailureIsVisibleWithoutInventingFinding(t *testing.T) {
-	s := &approvalSurface{ask: pendingAsk{guardrail: &client.GuardrailApprovalScope{ReviewID: "r", Kind: "result_release"}}}
-	_, handled, _ := s.HandleMsg(client.GuardrailReviewDetailMsg{Err: errors.New("expired private detail")})
-	if !handled || !s.ask.reviewDetailUnavailable || s.ask.reviewDetail.Concern != "" {
+	s := &approvalSurface{sessionID: "session", ask: pendingAsk{guardrailDetailState: guardrailDetailState{requestID: 1}, guardrail: &client.GuardrailApprovalScope{ReviewID: "r", Kind: "result_release"}}}
+	_, handled, _ := s.HandleMsg(client.GuardrailReviewDetailMsg{SessionID: "session", ReviewID: "r", RequestID: 1, Err: errors.New("expired private detail")})
+	if !handled || !s.ask.unavailable || s.ask.detail.Concern != "" {
 		t.Fatalf("detail failure state = %+v handled=%v", s.ask, handled)
 	}
 	var b strings.Builder

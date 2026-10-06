@@ -6,19 +6,24 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
 type scenario1Policy struct{ order *[]string }
 
-func (p scenario1Policy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+func (p scenario1Policy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	*p.order = append(*p.order, "permission")
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (scenario1Policy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -41,12 +46,12 @@ type scenario1Reviewer struct {
 	requests []agent.ToolReviewRequest
 }
 
-func (r *scenario1Reviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *scenario1Reviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	*r.order = append(*r.order, "review")
 	r.requests = append(r.requests, req)
-	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
+	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
 func TestADR_0363_ContextualGuardrails_Scenario1_EffectiveCallOrder(t *testing.T) {
@@ -79,9 +84,14 @@ func (noExternalEvidenceSource) ReadReviewEvidence(context.Context, agent.Review
 	return agent.ReviewEvidence{}, fmt.Errorf("no evidence handles were advertised")
 }
 
-type noExternalEvidencePreparer struct{}
+type noExternalEvidencePreparer struct{ before func(context.Context) error }
 
-func (noExternalEvidencePreparer) PrepareReviewEvidence(context.Context, agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+func (p noExternalEvidencePreparer) PrepareReviewEvidence(ctx context.Context, _ agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+	if p.before != nil {
+		if err := p.before(ctx); err != nil {
+			return agent.PreparedReviewEvidence{}, err
+		}
+	}
 	return agent.PreparedReviewEvidence{Source: noExternalEvidenceSource{}, Complete: true}, nil
 }
 
@@ -91,11 +101,11 @@ type scenario1GrantReviewer struct {
 	armed   map[string]bool
 }
 
-func (r *scenario1GrantReviewer) Review(_ context.Context, _ agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *scenario1GrantReviewer) Review(_ context.Context, _ agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reviews++
-	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, nil
+	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, session.AuxiliaryUsage{}, nil
 }
 func (*scenario1GrantReviewer) GrantDigest(req agent.ToolReviewRequest) (string, bool) {
 	return req.EffectiveCall.Name + ":" + string(req.EffectiveCall.Args) + ":" + req.Environment.Revision, req.EvidenceComplete
@@ -116,10 +126,119 @@ func (r *scenario1GrantReviewer) ArmGrant(digest, _ string) {
 
 type noLearnPolicy struct{ learns int }
 
-func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (p *noLearnPolicy) Learn(session.SessionID, session.ToolCall) { p.learns++ }
+
+func TestActionApprovalWaitOutlivesReviewBudgetAndArmsGrant(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &scenario1GrantReviewer{}
+		parent, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		parentDeadline, _ := parent.Deadline()
+		prepares := 0
+		preparer := noExternalEvidencePreparer{before: func(ctx context.Context) error {
+			prepares++
+			if prepares == 2 { // post-action grant binding, after the human wait and execution
+				if deadline, _ := ctx.Deadline(); deadline != parentDeadline {
+					t.Errorf("post-action preparation deadline=%v, want parent %v", deadline, parentDeadline)
+				}
+				select {
+				case <-time.After(91 * time.Second):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+			}
+			return nil
+		}}
+		executions := 0
+		cat := tool.NewCatalog()
+		cat.MustRegister(&fakeTool{name: "Read", readOnly: true})
+		cat.MustRegister(&fakeTool{name: "Write", exec: func(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			if deadline, _ := ctx.Deadline(); ctx.Err() != nil || deadline != parentDeadline {
+				t.Errorf("execution context err=%v deadline=%v, want live parent %v", ctx.Err(), deadline, parentDeadline)
+			}
+			executions++
+			return session.NewToolResult(call.ID, "ok"), nil
+		}})
+		args := []byte(`{"path":"new.txt","content":"x"}`)
+		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("first", "Write", args)), mockllm.ToolCallTurn(session.NewToolCall("second", "Write", args)), mockllm.TextTurn("done")), Catalog: cat, Policy: &noLearnPolicy{}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer, Interactive: true})
+		base := memfs.NewWorkspace("/ws")
+		if err := base.Write(parent, "new.txt", []byte("original")); err != nil {
+			t.Fatal(err)
+		}
+		workspace := &countingBoundedWorkspace{Workspace: base}
+		workspace.beforeRead = func(ctx context.Context, read int) {
+			if read == 2 || read == 3 { // post-approval revalidation and grant binding
+				if deadline, _ := ctx.Deadline(); ctx.Err() != nil || deadline != parentDeadline {
+					t.Errorf("post-approval dependency read context err=%v deadline=%v, want live parent %v", ctx.Err(), deadline, parentDeadline)
+				}
+			}
+		}
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, workspace, memledger.New(), nil)
+		run := engine.Run(parent, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "write it"})
+		asks := 0
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asks++
+				<-time.After(91 * time.Second)
+				if err := run.Approve(ev.Ask.AskID, session.VerdictAllowAlways); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if asks != 1 || reviewer.reviews != 1 || executions != 2 || prepares != 3 || workspace.bounded < 4 || !reviewer.AllowsGrant("Write:"+string(args)+":"+env.Ref().Revision) {
+			t.Fatalf("asks=%d reviews=%d executions=%d prepares=%d dependency reads=%d grants=%v", asks, reviewer.reviews, executions, prepares, workspace.bounded, reviewer.armed)
+		}
+	})
+}
+
+func TestActionApprovalWaitRevalidatesStaleDependency(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		base := memfs.NewWorkspace("/ws")
+		if err := base.Write(ctx, "new.txt", []byte("original")); err != nil {
+			t.Fatal(err)
+		}
+		workspace := &countingBoundedWorkspace{Workspace: base}
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, workspace, memledger.New(), nil)
+		reviewer := &scenario1GrantReviewer{}
+		executions := 0
+		cat := tool.NewCatalog()
+		cat.MustRegister(&fakeTool{name: "Read", readOnly: true})
+		cat.MustRegister(&fakeTool{name: "Write", exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			executions++
+			return session.NewToolResult(call.ID, "ok"), nil
+		}})
+		call := session.NewToolCall("first", "Write", []byte(`{"path":"new.txt","content":"x"}`))
+		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: cat, Policy: &noLearnPolicy{}, ToolReviewer: reviewer, ReviewEvidencePreparer: noExternalEvidencePreparer{}, Interactive: true})
+		run := engine.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "write it"})
+		asks, stale := 0, false
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asks++
+				<-time.After(91 * time.Second)
+				if err := base.Write(ctx, "new.txt", []byte("changed while waiting")); err != nil {
+					t.Fatal(err)
+				}
+				if err := run.Approve(ev.Ask.AskID, session.VerdictAllowAlways); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if ev.ToolResult != nil && ev.ToolResult.IsError && ev.ToolResult.Content == "contextual guardrail approval became stale before execution" {
+				stale = true
+			}
+		}
+		if asks != 1 || !stale || executions != 0 || reviewer.reviews != 1 || workspace.bounded < 2 || reviewer.AllowsGrant("Write:"+string(call.Args)+":"+env.Ref().Revision) {
+			t.Fatalf("asks=%d stale=%t executions=%d reviews=%d dependency reads=%d", asks, stale, executions, reviewer.reviews, workspace.bounded)
+		}
+	})
+}
 
 func TestADR_0363_ContextualGuardrails_Scenario1_ExactRepeatGrant(t *testing.T) {
 	reviewer := &scenario1GrantReviewer{}
@@ -227,14 +346,15 @@ func TestADR_0363_ContextualGuardrails_Scenario1_ConcurrentActionReviews(t *test
 
 type toolReviewerFunc func(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error)
 
-func (f toolReviewerFunc) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
-	return f(ctx, req, source)
+func (f toolReviewerFunc) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
+	result, err := f(ctx, req, source)
+	return result, session.AuxiliaryUsage{}, err
 }
 
 type staticAllowPolicy struct{}
 
-func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (staticAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 

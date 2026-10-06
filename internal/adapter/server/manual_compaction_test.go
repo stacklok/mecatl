@@ -34,10 +34,12 @@ import (
 type serviceCompactCompactor struct {
 	out     []session.Message
 	summary string
+	usage   session.AuxiliaryUsage
+	err     error
 }
 
-func (c serviceCompactCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, error) {
-	return c.out, c.summary, nil
+func (c serviceCompactCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
+	return c.out, c.summary, c.usage, c.err
 }
 
 type compactOperationKey struct{}
@@ -46,9 +48,9 @@ type pinAwareCompactor struct {
 	seen *bool
 }
 
-func (c pinAwareCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+func (c pinAwareCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	*c.seen, _ = ctx.Value(compactOperationKey{}).(bool)
-	return []session.Message{session.NewUserMessage("short")}, "pinned", nil
+	return []session.Message{session.NewUserMessage("short")}, "pinned", session.AuxiliaryUsage{}, nil
 }
 
 type serviceCompactCounter struct{}
@@ -250,16 +252,41 @@ func TestCompactSessionPreservesTerminalState(t *testing.T) {
 }
 
 func TestCompactSessionNoOpAndSaveFailureDoNotAppend(t *testing.T) {
-	t.Run("no-op", func(t *testing.T) {
+	usageValue := session.Usage{InputTokens: 4, OutputTokens: 1}
+	usage := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindMain: {Models: map[string]session.Usage{"provider/compact": usageValue}},
+	}}
+	t.Run("no-op persists returned usage", func(t *testing.T) {
 		store, sess, owner := compactFixture(t, session.StateIdle)
-		svc := newCompactService(t, store, serviceCompactCompactor{out: session.CloneMessages(sess.Conversation.Messages)}, true, nil, nil)
+		svc := newCompactService(t, store, serviceCompactCompactor{out: session.CloneMessages(sess.Conversation.Messages), usage: usage}, true, nil, nil)
 		result, err := svc.CompactSession(context.Background(), sess.ID, owner)
 		if err != nil || result.Changed {
 			t.Fatalf("result=%#v err=%v", result, err)
 		}
 		saves, _, events := store.snapshot()
-		if saves != 0 || len(events) != 0 {
-			t.Fatalf("no-op saves=%d events=%d", saves, len(events))
+		if saves != 1 || len(events) != 0 {
+			t.Fatalf("usage-only no-op saves=%d events=%d", saves, len(events))
+		}
+		reloaded, loadErr := store.Load(context.Background(), sess.ID)
+		if loadErr != nil || reloaded.UsageFor(session.UsageKindCompaction) != usageValue {
+			t.Fatalf("persisted compaction usage=%+v err=%v", reloaded.UsageFor(session.UsageKindCompaction), loadErr)
+		}
+	})
+
+	t.Run("compactor error persists returned usage", func(t *testing.T) {
+		store, sess, owner := compactFixture(t, session.StateIdle)
+		compactionErr := errors.New("summary failed")
+		svc := newCompactService(t, store, serviceCompactCompactor{usage: usage, err: compactionErr}, true, nil, nil)
+		if _, err := svc.CompactSession(context.Background(), sess.ID, owner); !errors.Is(err, compactionErr) {
+			t.Fatalf("error = %v, want %v", err, compactionErr)
+		}
+		saves, _, events := store.snapshot()
+		if saves != 1 || len(events) != 0 {
+			t.Fatalf("usage-only error saves=%d events=%d", saves, len(events))
+		}
+		reloaded, loadErr := store.Load(context.Background(), sess.ID)
+		if loadErr != nil || reloaded.UsageFor(session.UsageKindCompaction) != usageValue {
+			t.Fatalf("persisted compaction usage=%+v err=%v", reloaded.UsageFor(session.UsageKindCompaction), loadErr)
 		}
 	})
 
@@ -472,12 +499,12 @@ type countingServiceCompactor struct {
 	wait  bool
 }
 
-func (c *countingServiceCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+func (c *countingServiceCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	c.calls++
 	if c.wait {
 		<-ctx.Done()
 	}
-	return []session.Message{session.NewUserMessage("short")}, "summary", nil
+	return []session.Message{session.NewUserMessage("short")}, "summary", session.AuxiliaryUsage{}, nil
 }
 
 func TestCompactSessionReloadsAuthoritativeStateAfterLeaseAcquire(t *testing.T) {

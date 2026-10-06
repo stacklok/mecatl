@@ -12,8 +12,8 @@ Start by identifying whether you are running embedded `mecatui` or
 `mecatui connect ADDRESS`. The first owns a local server; the second only
 displays and controls the server it reaches.
 
-Expand an error card with your configured `ExpandTools` keybinding to see its
-complete sanitized message.
+Press `f9` (or your configured `ExpandConversation` binding) to show a
+permanent error card's complete sanitized message.
 
 ## Embedded startup says no provider is available
 
@@ -195,8 +195,24 @@ or credentials.
 
 Start `mecatui` with `--debug`, or set `MECATUI_DEBUG=1` when the flag is
 omitted. Debug mode enables the mouse-coordinate footer, steer correlation,
-keymap-resolution diagnostics at startup, and debug-only local commands such as
-`/debug-ask`. These surfaces are off by default.
+keymap-resolution diagnostics at startup, compact guardrail success diagnostics,
+and debug-only local commands such as `/debug-ask`. These surfaces are off by
+default.
+
+Normal conversation output hides guardrail checks that completed successfully
+and allowed an action or released a result. Press `f9` (or your configured
+`ExpandConversation` binding) to reveal them, or
+[keep them visible](./customization.md#show-benign-guardrail-notices).
+`--debug` always shows them, with the review's technical metadata.
+Stored-session transcripts use the same visibility rules.
+
+Warnings, unresolved reviews, checker outages, and unknown states remain visible.
+A warning's explanation updates its existing entry when available; a review that
+needs your decision shows the explanation in its approval prompt. An unavailable
+or expired explanation does not imply a security finding. Check the displayed
+outcome to see whether the action stopped, the result was withheld, or work
+continued. See [guardrail approvals](/features/permissions-and-posture.md#guardrails)
+for the available choices.
 
 An explicit `--debug=false` overrides the environment. Debug mode is client-only
 and does not change server configuration or the operational log level.
@@ -220,9 +236,6 @@ currently advertised to the client, and whether a Converse stream is currently
 attached. It excludes credentials, TLS and authentication settings, raw errors,
 and other configuration. A `mecatui connect` client does not write an equivalent
 local server log; inspect the remote server's operator logs instead.
-
-For exhaustive flags and failure behavior, see
-[`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).
 
 ## Related information
 

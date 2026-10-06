@@ -639,6 +639,7 @@ func TestAgentsRosterStoppedGolden(t *testing.T) {
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_stopped.golden", got)
@@ -924,15 +925,15 @@ func TestInlineTeamRollupAdvertisesOverlay(t *testing.T) {
 	for i := 0; i < maxTeamLanes+2; i++ {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
-	out := teamCard(t, false, func(c *conversation) { c.startTeamCard("t1", "", big) })
+	out := teamCard(t, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	if !strings.Contains(out, "more · f6") {
 		t.Errorf("inline roll-up should advertise the f6 overlay, got %q", out)
 	}
 
-	// A small team (no roll-up) must NOT carry the hint — it has nothing to overflow.
-	small := teamCard(t, false, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
-	if strings.Contains(small, "f6") {
-		t.Errorf("a non-overflowing inline card should not advertise f6, got %q", small)
+	small := teamCard(t, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
+	// The hint now points to Agents for detailed activity even for a small team.
+	if !strings.Contains(small, "f6 agents") {
+		t.Errorf("live team should advertise the Agents view, got %q", small)
 	}
 }
 
@@ -972,7 +973,7 @@ func TestTeamRosterRowUsesIdentityWorkAndRuntimeLines(t *testing.T) {
 }
 
 // TestAgentsRosterContextMeter asserts each roster lane shows the per-member
-// context band (the footer's renderContextMeter vocabulary) once a turn.end has
+// context band (the shared renderfmt.RenderContextMeter vocabulary) once a turn.end has
 // carried a known window: a low-pressure member reads "ctx … NN%" with no ⚠, a
 // danger-band member appends the ⚠ marker (which survives ANSI stripping), and a
 // member whose window is still unknown shows its ↑/↓ usage but NO ctx/% meter.
@@ -1013,7 +1014,7 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 	if !strings.Contains(low, "ctx ") || !strings.Contains(low, "20%") {
 		t.Errorf("low-pressure lane should show 'ctx … 20%%', got %q", low)
 	}
-	if strings.Contains(low, ctxDangerMark) {
+	if strings.Contains(low, " ⚠") {
 		t.Errorf("low-pressure lane must NOT show the ⚠ marker, got %q", low)
 	}
 	if !strings.Contains(low, "40K/200K") {
@@ -1021,10 +1022,10 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 	}
 
 	danger := rosterLine("danger")
-	if !strings.Contains(danger, "95%") || !strings.Contains(danger, ctxDangerMark) {
+	if !strings.Contains(danger, "95%") || !strings.Contains(danger, " ⚠") {
 		t.Errorf("danger lane should show '95%% ⚠' (⚠ surviving ANSI strip), got %q", danger)
 	}
-	if !strings.Contains(danger, ctxGlyphDanger) {
+	if !strings.Contains(danger, "█") {
 		t.Errorf("danger lane should use the danger fill glyph, got %q", danger)
 	}
 
@@ -1400,6 +1401,7 @@ func TestAgentsRosterGolden(t *testing.T) {
 	if m.team.view != teamRoster {
 		t.Fatalf("view = %v, want teamRoster", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster.golden", got)
@@ -1430,6 +1432,7 @@ func TestAgentsRosterMidRunIdleGolden(t *testing.T) {
 	if m.team.view != teamRoster {
 		t.Fatalf("view = %v, want teamRoster", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_midrun_idle.golden", got)
@@ -1448,6 +1451,7 @@ func TestAgentsTasksView(t *testing.T) {
 	if m.team.view != teamTasks {
 		t.Fatalf("view = %v, want teamTasks", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_tasks.golden", got)
 }
@@ -1464,6 +1468,7 @@ func TestAgentsFindingsView(t *testing.T) {
 	if m.team.view != teamFindings {
 		t.Fatalf("view = %v, want teamFindings", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_findings.golden", got)
 }
@@ -1484,6 +1489,7 @@ func TestAgentsRosterWindowedGolden(t *testing.T) {
 		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_windowed.golden", got)
@@ -1504,6 +1510,7 @@ func TestAgentsFocusGolden(t *testing.T) {
 	if m.team.view != teamFocus || m.team.member != "scout" {
 		t.Fatalf("focus = %v/%q, want focus/scout", m.team.view, m.team.member)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_focus.golden", got)
 }
@@ -1582,6 +1589,7 @@ func TestAgentsFocusWindowedGolden(t *testing.T) {
 	if m.team.view != teamFocus {
 		t.Fatalf("view = %v, want teamFocus", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_focus_windowed.golden", got)
 }

@@ -114,12 +114,10 @@ func TestSessionReadyDefaultCapsAllFalse(t *testing.T) {
 	}
 }
 
-// TestEffectiveModelInHeaderFromTurnZero asserts the effective model the server
-// resolved (echoed on SessionReadyMsg) lands in m.resolvedSessionModel AND renders in the
-// header from turn zero — and that NO model segment shows while still connecting (no
-// create response yet). It also covers the older-server nil-resolved-model graceful
-// degrade: zero value ⇒ still no segment, no crash.
-func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
+// TestEffectiveModelFromTurnZero asserts the effective model the server resolved
+// (echoed on SessionReadyMsg) lands in m.resolvedSessionModel and in the canonical
+// status snapshot. Before the create response, no model fact is submitted.
+func TestEffectiveModelFromTurnZero(t *testing.T) {
 	resolved := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-effective", ContextWindow: 400000}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, resolvedModel: resolved}
 	m := newTestModelFromDeps(Deps{
@@ -129,11 +127,11 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 		Ctx:     context.Background(),
 	})
 
-	// While connecting (before the create response), the header shows NO model
-	// segment — the server owns the value and the ui must not guess it.
+	// While connecting (before the create response), the source has no model fact
+	// to render — the server owns the value and the UI must not guess it.
 	connecting := applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	if strings.Contains(connecting.renderHeader(), "gpt-5-effective") {
-		t.Fatalf("connecting header shows a model segment, want none:\n%s", connecting.renderHeader())
+	if got := connecting.statusLineSnapshot().Model; got.ID != "" || got.ProviderID != "" {
+		t.Fatalf("connecting status model = %+v, want empty", got)
 	}
 
 	ready := m.createSessionCmd()().(client.SessionReadyMsg)
@@ -144,8 +142,8 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 	if got.resolvedSessionModel != resolved {
 		t.Fatalf("m.resolvedSessionModel = %+v, want %+v", got.resolvedSessionModel, resolved)
 	}
-	if !strings.Contains(got.renderHeader(), "gpt-5-effective") {
-		t.Fatalf("header missing the effective model id from turn zero:\n%s", got.renderHeader())
+	if snapshot := got.statusLineSnapshot(); snapshot.Model.ProviderID != "openai" || snapshot.Model.ID != "gpt-5-effective" || snapshot.Model.ContextWindow.Raw != 400000 {
+		t.Fatalf("status snapshot model = %+v, want resolved model", snapshot.Model)
 	}
 }
 
@@ -154,59 +152,10 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 // m.resolvedSessionModel becomes the footer meter's denominator (no --context-window
 // override), so a 40K occupancy renders the bar + "40K/400K" through the live
 // reducer path.
-func TestEffectiveModelDrivesFooterMeter(t *testing.T) {
-	resolved := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-effective", ContextWindow: 400000}
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, resolvedModel: resolved}
-	m := newTestModelFromDeps(Deps{
-		Session: conv,
-		Conv:    conv,
-		Theme:   theme.New("aztec", theme.AztecPalette()),
-		Ctx:     context.Background(),
-	})
-	ready := m.createSessionCmd()().(client.SessionReadyMsg)
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		ready,
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 800}},
-	)
-	if got := m.contextWindow(); got != 400000 {
-		t.Fatalf("contextWindow() = %d, want 400000 (server-echoed)", got)
-	}
-	got := stripANSIstr(m.fitFooter("connected", 160))
-	if !strings.Contains(got, "40K/400K") {
-		t.Errorf("footer = %q, want it to contain %q (echo→render loop closed)", got, "40K/400K")
-	}
-}
-
 // TestFooterMeterFollowsModelSwitch covers req 4 ("follows model switch for free")
 // directly: a model switch is just a fresh SessionReadyMsg carrying the new model's
 // window, so applying one with a 200K window then a SECOND with a 400K window must
 // move the footer denominator from /200K to /400K with NO --context-window override.
-func TestFooterMeterFollowsModelSwitch(t *testing.T) {
-	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
-	// First model: 200K window, 40K occupied.
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		client.SessionReadyMsg{
-			SessionID:     "sess-switch-0001",
-			ResolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "small", ContextWindow: 200000},
-		},
-		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000}},
-	)
-	if got := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(got, "/200K") {
-		t.Fatalf("after first model the footer should show /200K, got %q", got)
-	}
-	// Switch model (a fresh SessionReadyMsg with a larger window) — the denominator
-	// must follow with no other plumbing.
-	m = applyAll(m, client.SessionReadyMsg{
-		SessionID:     "sess-switch-0002",
-		ResolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "large", ContextWindow: 400000},
-	})
-	if got := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(got, "/400K") {
-		t.Errorf("after model switch the footer should show /400K, got %q", got)
-	}
-}
-
 // TestEffectiveModelOlderServerNoSegment asserts an older server (nil resolved_model
 // ⇒ zero value) leaves m.resolvedSessionModel zero and the header shows no model segment —
 // graceful degrade, no crash.

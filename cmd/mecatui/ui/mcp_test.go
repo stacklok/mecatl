@@ -296,6 +296,7 @@ func TestMCPPanelGolden(t *testing.T) {
 	if !st.groupsDone || len(st.groups) != 0 {
 		t.Fatalf("groups state = %#v, want done+empty", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_panel.golden", got)
 }
@@ -308,6 +309,7 @@ func TestMCPPanelGroupsGolden(t *testing.T) {
 	if st == nil || len(st.groups) != 2 {
 		t.Fatalf("groups = %#v, want 2", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_panel_groups.golden", got)
 }
@@ -445,6 +447,7 @@ func TestMCPResourceListGolden(t *testing.T) {
 	if st == nil || st.view != mcpResources || len(st.resources) != 2 {
 		t.Fatalf("resources not loaded: %#v", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_resources.golden", got)
 }
@@ -463,6 +466,7 @@ func TestMCPResourcePreviewGolden(t *testing.T) {
 	if st == nil || st.view != mcpResourcePrev {
 		t.Fatalf("view = %v, want mcpResourcePrev", m.modal)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_resource_preview.golden", got)
 }
@@ -497,20 +501,12 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 	}
 }
 
-// TestMCPResourcePreviewCollapse is the focused liveness assertion for the
-// resource-preview collapse path (issue #457 QA SHOULD-ADD): when a read
-// resource's body exceeds the line cap (maxToolResultLines), renderResourcePreview
-// (reached via Render → renderResourcePreview) must cap the body at the limit and
-// emit the "+N more lines · <expand> expand" collapse marker carrying the LIVE
-// ExpandTools chord. It is narrow and deterministic — it drives the free-function
-// path directly, so it covers the cap + collapse marker the function-primitive
-// golden does NOT (the golden's fixture body is two lines, under the cap).
+// TestMCPResourcePreviewCollapse checks that the resource-preview cap retains a
+// plain omitted-line count, without advertising tool-card expansion.
 func TestMCPResourcePreviewCollapse(t *testing.T) {
 	th := aztec()
 	hk := defaultHelpKeys()
-	expandMark := hk.expandTools
-	// A body of maxToolResultLines+5 lines trips the cap; the marker names the
-	// 5 dropped lines and the live expand chord.
+	// A body of maxToolResultLines+5 lines trips the cap.
 	var sb strings.Builder
 	for i := 0; i < maxToolResultLines+5; i++ {
 		sb.WriteString("line\n")
@@ -520,8 +516,8 @@ func TestMCPResourcePreviewCollapse(t *testing.T) {
 	if !strings.Contains(got, "line") {
 		t.Fatalf("preview body missing: %q", got)
 	}
-	if !strings.Contains(got, "+5 more lines · "+expandMark+" expand") {
-		t.Errorf("preview should carry the collapse marker +5 more lines · %s expand: %q", expandMark, got)
+	if !strings.Contains(got, "+5 more lines") || strings.Contains(got, hk.toolcalls) {
+		t.Errorf("preview should carry a plain +5 more lines marker: %q", got)
 	}
 	// The kept body must be capped: exactly maxToolResultLines body lines
 	// precede the marker (the title/footer chrome is not body). The toolArgs
@@ -559,6 +555,7 @@ func TestMCPPromptListGolden(t *testing.T) {
 	if st == nil || st.view != mcpPrompts || len(st.prompts) != 2 {
 		t.Fatalf("prompts not loaded: %#v", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_prompts.golden", got)
 }
@@ -573,6 +570,7 @@ func TestMCPPromptArgsGolden(t *testing.T) {
 	if st == nil || st.view != mcpPromptArgs || len(st.argFields) != 1 {
 		t.Fatalf("arg entry not entered: %#v", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_prompt_args.golden", got)
 }
@@ -713,6 +711,7 @@ func TestMCPErrInputGolden(t *testing.T) {
 	if st == nil || st.errCls != client.MCPErrInput {
 		t.Fatalf("errCls = %v, want input", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_err_input.golden", got)
 }
@@ -725,6 +724,7 @@ func TestMCPErrServerGolden(t *testing.T) {
 	if st == nil || st.errCls != client.MCPErrServer {
 		t.Fatalf("errCls = %v, want server", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_err_server.golden", got)
 }
@@ -737,6 +737,7 @@ func TestMCPErrNotConfiguredGolden(t *testing.T) {
 	if st == nil || st.errCls != client.MCPErrNotConfigured {
 		t.Fatalf("errCls = %v, want not-configured", st)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "mcp_err_not_configured.golden", got)
 }

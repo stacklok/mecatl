@@ -36,7 +36,7 @@ func TestHeuristicCompactorPreservesPaths(t *testing.T) {
 		conv.Append(session.NewUserMessage("more chatter"))
 	}
 
-	compacted, summary, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
+	compacted, summary, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestHeuristicCompactorNoOrphanedToolResultAtTailHead(t *testing.T) {
 	// msgs: [sys, goal, A(a),T(a), A(b),T(b), A(c),T(c), A(d),T(d), A(e),T(e)]
 	// len = 12. keep = 3 => cut = 9 => msgs[9] = T(d) (a tool result whose call
 	// A(d) at index 8 is above the cut). Without snapping, tail starts on T(d).
-	compacted, _, err := agent.HeuristicCompactor{KeepLastTurns: 3}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.HeuristicCompactor{KeepLastTurns: 3}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestHeuristicCompactorTailAllToolResults(t *testing.T) {
 	}
 	// msgs len = 7: [sys, goal, A(abcd), T(a),T(b),T(c),T(d)]. keep=4 => cut=3 =>
 	// msgs[3..] are all tool results; snapping advances cut to len (empty tail).
-	compacted, _, err := agent.HeuristicCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.HeuristicCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestHeuristicCompactorMultipleConsecutiveLeadingOrphans(t *testing.T) {
 	conv.Append(session.NewAssistantMessage("done", "", nil))            // 6
 	// len=7, keep=4 => cut=3 => tail would start at T(a) with 3 consecutive
 	// leading orphans T(a),T(b),T(c). Snapping must consume all three.
-	compacted, _, err := agent.HeuristicCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.HeuristicCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestCascadeCompactorNoOrphanedToolResult(t *testing.T) {
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 2000))))
 	}
-	compacted, _, err := agent.CascadeCompactor{KeepLastTurns: 3}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{KeepLastTurns: 3}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestCascadeCompactorTailAllToolResults(t *testing.T) {
 		id := session.ToolCallID(string(rune('a' + i)))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
 	}
-	compacted, _, err := agent.CascadeCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestCascadeCompactorMultipleConsecutiveLeadingOrphans(t *testing.T) {
 	conv.Append(session.NewToolMessage(session.NewToolResult("b", "x")))
 	conv.Append(session.NewToolMessage(session.NewToolResult("c", "x")))
 	conv.Append(session.NewAssistantMessage("done", "", nil))
-	compacted, _, err := agent.CascadeCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -333,7 +333,7 @@ func assertRecentTaskAndPinSurvive(t *testing.T, compacted []session.Message) {
 // makes sawTask false → red.
 func TestHeuristicCompactorPreservesRecentUserTaskOutsideCountTail(t *testing.T) {
 	conv := recentTaskConversation()
-	compacted, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -373,7 +373,7 @@ func cascadeRecentTaskConversation() *session.Conversation {
 // drops it and ONLY the back-snap saves it into the preserved tail.
 func TestCascadeCompactorPreservesRecentUserTaskOutsideCountTail(t *testing.T) {
 	conv := cascadeRecentTaskConversation()
-	compacted, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestHeuristicCompactorGuaranteesFirstAndRecentUserTurns(t *testing.T) {
 	pairBulk(conv, "m", 16) // 32 msgs > maxUserSnapLookback(24): MIDDLE unreachable
 	conv.Append(session.NewUserMessage("RECENT instruction"))
 	pairBulk(conv, "r", 4) // 8 trailing non-user msgs: RECENT is outside the count-tail
-	c, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
+	c, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestCascadeCompactorGuaranteesFirstAndRecentUserTurns(t *testing.T) {
 	// back-snap it does NOT survive. RECENT's distance to the cut is 32-15=17 < 24, so
 	// the back-snap reaches it and snaps the tail to it. MIDDLE(2) is 30 back, beyond
 	// maxUserSnapLookback(24), so it stays dropped (the negative half).
-	c, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
+	c, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestCompactorBackSnapBounded(t *testing.T) {
 	t.Run("heuristic", func(t *testing.T) {
 		conv := build()
 		in := append([]session.Message(nil), conv.Messages...)
-		out, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
+		out, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
@@ -551,7 +551,7 @@ func TestCompactorBackSnapBounded(t *testing.T) {
 	t.Run("cascade", func(t *testing.T) {
 		conv := build()
 		in := append([]session.Message(nil), conv.Messages...)
-		out, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
+		out, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
@@ -602,14 +602,14 @@ func TestCompactorRecentUserAdjacentToToolPair(t *testing.T) {
 	}
 
 	t.Run("heuristic", func(t *testing.T) {
-		out, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), build())
+		out, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), build())
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
 		check(t, out)
 	})
 	t.Run("cascade", func(t *testing.T) {
-		out, _, err := agent.CascadeCompactor{}.Compact(context.Background(), build())
+		out, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), build())
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
@@ -688,7 +688,7 @@ func TestCompactorReCompactionDoesNotAnchorOnPriorSummary(t *testing.T) {
 	}
 
 	t.Run("heuristic", func(t *testing.T) {
-		first, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), firstConv())
+		first, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), firstConv())
 		if err != nil {
 			t.Fatalf("Compact #1: %v", err)
 		}
@@ -697,7 +697,7 @@ func TestCompactorReCompactionDoesNotAnchorOnPriorSummary(t *testing.T) {
 		}
 		secondConv := appendMore(first)
 		secondIn := append([]session.Message(nil), secondConv.Messages...)
-		second, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), secondConv)
+		second, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), secondConv)
 		if err != nil {
 			t.Fatalf("Compact #2: %v", err)
 		}
@@ -705,13 +705,13 @@ func TestCompactorReCompactionDoesNotAnchorOnPriorSummary(t *testing.T) {
 	})
 
 	t.Run("cascade", func(t *testing.T) {
-		first, _, err := agent.CascadeCompactor{}.Compact(context.Background(), firstConv())
+		first, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), firstConv())
 		if err != nil {
 			t.Fatalf("Compact #1: %v", err)
 		}
 		secondConv := appendMore(first)
 		secondIn := append([]session.Message(nil), secondConv.Messages...)
-		second, _, err := agent.CascadeCompactor{}.Compact(context.Background(), secondConv)
+		second, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), secondConv)
 		if err != nil {
 			t.Fatalf("Compact #2: %v", err)
 		}
@@ -727,7 +727,7 @@ func TestCompactorReCompactionDoesNotAnchorOnPriorSummary(t *testing.T) {
 		mk := func() port.LLMProvider {
 			return mockllm.New(mockllm.TextTurn("## Goal\nthe original goal\n\n## Next steps\nNone."))
 		}
-		first, _, err := forceTier4(mk()).Compact(context.Background(), firstConv())
+		first, _, _, err := forceTier4(mk()).Compact(context.Background(), firstConv())
 		if err != nil {
 			t.Fatalf("Compact #1: %v", err)
 		}
@@ -743,7 +743,7 @@ func TestCompactorReCompactionDoesNotAnchorOnPriorSummary(t *testing.T) {
 		}
 		secondConv := appendMore(first)
 		secondIn := append([]session.Message(nil), secondConv.Messages...)
-		second, _, err := forceTier4(mk()).Compact(context.Background(), secondConv)
+		second, _, _, err := forceTier4(mk()).Compact(context.Background(), secondConv)
 		if err != nil {
 			t.Fatalf("Compact #2: %v", err)
 		}
@@ -797,7 +797,7 @@ func TestHeuristicCompactorAbortsToOriginalOnOrphan(t *testing.T) {
 	conv := danglingTailConversation()
 	// KeepLastTurns 1 preserves only the dangling assistant call as the tail; the
 	// summary head carries the matched pairs, so the assembled slice dangles.
-	out, _, err := agent.HeuristicCompactor{KeepLastTurns: 1}.Compact(context.Background(), conv)
+	out, _, _, err := agent.HeuristicCompactor{KeepLastTurns: 1}.Compact(context.Background(), conv)
 	assertAbortedToOriginal(t, conv, out, err)
 }
 
@@ -805,7 +805,7 @@ func TestHeuristicCompactorAbortsToOriginalOnOrphan(t *testing.T) {
 // tail call forces the cascade's finish self-validation to abort to original.
 func TestCascadeCompactorAbortsToOriginalOnOrphan(t *testing.T) {
 	conv := danglingTailConversation()
-	out, _, err := agent.CascadeCompactor{KeepLastTurns: 1}.Compact(context.Background(), conv)
+	out, _, _, err := agent.CascadeCompactor{KeepLastTurns: 1}.Compact(context.Background(), conv)
 	assertAbortedToOriginal(t, conv, out, err)
 }
 
@@ -1145,10 +1145,10 @@ type recordingInputCompactor struct {
 	out   []session.Message
 }
 
-func (c *recordingInputCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c *recordingInputCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	// Snapshot the input slice (the conversation the loop captures for the archive).
 	c.input = append([]session.Message(nil), conv.Messages...)
-	return c.out, "compacted summary", nil
+	return c.out, "compacted summary", session.AuxiliaryUsage{}, nil
 }
 
 // callIDsIn collects the set of assistant tool-call ids across a message slice.
@@ -1178,8 +1178,8 @@ type fakeCompactor struct {
 	err error
 }
 
-func (f fakeCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, error) {
-	return f.out, "fake", f.err
+func (f fakeCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
+	return f.out, "fake", session.AuxiliaryUsage{}, f.err
 }
 
 // TestCompactionThroughLoopAbortsToOriginal drives the loop with a FAKE compactor
@@ -1283,9 +1283,9 @@ func readBodyTool() *fakeTool {
 // recordingCompactor records that it was invoked and returns a minimal history.
 type recordingCompactor struct{ called int }
 
-func (c *recordingCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+func (c *recordingCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	c.called++
-	return []session.Message{session.NewUserMessage("x")}, "compacted summary", nil
+	return []session.Message{session.NewUserMessage("x")}, "compacted summary", session.AuxiliaryUsage{}, nil
 }
 
 type compactionAccountingTool struct{ spec tool.ToolSpec }

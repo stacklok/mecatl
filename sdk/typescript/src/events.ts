@@ -47,6 +47,7 @@ export const MECATL_EVENT_KINDS = [
   "tool.call",
   "tool.progress",
   "tool.result",
+  "tool.result.available",
   "turn.end",
   "turn.start",
   "user_prompt",
@@ -88,7 +89,7 @@ export interface EventContentBlock {
   readonly url: string;
 }
 
-/** The text, structured data, and content blocks from a `tool.result` event. @public */
+/** The text, structured data, and content blocks from a tool-result event. @public */
 export interface ToolResultEventPayload {
   readonly blocks: readonly EventContentBlock[];
   readonly callId: string;
@@ -452,6 +453,7 @@ export interface EventPayloads {
   readonly "tool.call": ToolCallEventPayload;
   readonly "tool.progress": undefined;
   readonly "tool.result": ToolResultEventPayload;
+  readonly "tool.result.available": ToolResultEventPayload;
   readonly "turn.end": TurnEndEventPayload;
   readonly "turn.start": undefined;
   readonly user_prompt: UserPromptEventPayload;
@@ -612,6 +614,7 @@ function payload(
     case "tool.call":
       return required(event.toolCall, kind, transport);
     case "tool.result":
+    case "tool.result.available":
       return required(event.toolResult, kind, transport);
     case "turn.end":
       return required(event.turnEnd, kind, transport);

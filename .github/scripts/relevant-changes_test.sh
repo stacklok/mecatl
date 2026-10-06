@@ -48,7 +48,7 @@ run "go: other command binaries run (in the Linux closure)" go true cmd/mecademo
 run "go: examples run (in the Linux closure)" go true examples/first-agent/main.go
 run "go: perf harness runs (in the Linux closure)" go true perf/scenarios/loop_bench_test.go
 run "go: e2e + deploy run (in the Linux closure)" go true e2e/k8s/suite_test.go deploy/helm/mecak8s/values_test.go
-run "go: docs-lint tool runs (Go code under docs/)" go true docs/lint/citations.go
+run "go: Go code under docs/ runs" go true docs/tool/main.go
 run "go: docs non-Markdown assets run" go true docs/architecture/mecatl.modelith.yaml
 run "go: Taskfile + workflow run (self-validation)" go true Taskfile.yml .github/workflows/ci.yml
 run "go: mixed docs + Go runs" go true user-docs/intro.md internal/adapter/osfs/osfs.go
@@ -105,19 +105,30 @@ run "studio: ci.yml (job definition) runs" studio true .github/workflows/ci.yml
 run "studio: Taskfile (task recipes) runs" studio true Taskfile.yml
 run "studio: .github/scripts change runs" studio true .github/scripts/relevant-changes.sh
 
+# --- module publication: immutable adapter dependency closure -----------------
+run "module publication: adapter manifest runs" module_publication true adapters/go.mod adapters/go.sum
+run "module publication: root and integration pins run" module_publication true go.mod integration/microvm/go.mod
+run "module publication: support and driver manifests run" module_publication true internal/adaptersupport/go.mod contracts/gen/go/mecatl/driver/go.mod
+run "module publication: check recipe and CI wiring run" module_publication true Taskfile.yml .github/workflows/ci.yml .github/scripts/check-module-publication.sh .github/scripts/relevant-changes.sh
+run "module publication: Go source alone skips" module_publication false engine/agent/loop.go adapters/jsonlstore/store.go
+run "module publication: docs and site skip" module_publication false docs/intro.md user-docs/building/extension-points/session-store.md website/src/index.tsx
+run "module publication: unrelated module metadata skips" module_publication false provider/openai/go.mod environment/microvm/go.sum
+run "module publication: mixed manifest and code runs" module_publication true cmd/mecated/main.go adapters/go.mod
+
 # --- microvm category: opt-in runtime jobs -------------------------------------
 # The nested module, its direct root integration closure, and the exact execution
 # control files run MicroVM CI; unrelated established component trees skip.
 run "microvm: nested module runs" microvm true environment/microvm/internal/runtime/runtime.go
+run "microvm: integration module runs" microvm true integration/microvm/multibuild_test.go integration/microvm/go.mod
 run "microvm: engine replacement runs" microvm true engine/session/session.go
 run "microvm: root integration runs" microvm true internal/adapter/microvm/production_e2e_test.go internal/app/build.go cmd/mecated/main.go cmd/mecatui/main.go
-run "microvm: workspace and CI control run" microvm true go.mod go.sum go.work Taskfile.yml .golangci.yml .github/workflows/ci.yml .github/workflows/microvm-e2e.yml .github/scripts/race-test.sh .github/scripts/install-microvm-release.sh
+run "microvm: workspace and CI control run" microvm true go.mod go.sum go.work Taskfile.yml .golangci.yml .github/workflows/ci.yml .github/workflows/microvm-e2e.yml .github/scripts/install-microvm-release.sh
 run "microvm: unrelated components skip" microvm false docs/intro.md user-docs/intro.md website/src/index.tsx sdk/typescript/src/client.ts apps/web/src/main.tsx authn/oidc/main.go provider/openai/client.go contracts/proto/mecatl/v1/agent.proto deploy/helm/mecak8s/values.yaml examples/first-agent/main.go perf/scenarios/loop_bench_test.go cmd/mecademo/main.go cmd/mecak8s/main.go cmd/mecatequi/main.go internal/adapter/osfs/osfs.go internal/apicheck/check.go
 run "microvm: mixed change runs" microvm true docs/intro.md internal/adapter/microvm/production_e2e_test.go
 run "microvm: unknown path fails closed to run" microvm true new-component/entry.go
 
 # --- fail-closed / safety across categories ------------------------------------
-for cat in go sdk site studio microvm; do
+for cat in go sdk site studio module_publication microvm; do
   run_raw "$cat: empty input fails closed to RUN" "$cat" true ''
   run_raw "$cat: unterminated input fails closed to RUN" "$cat" true 'docs/x.md'
   run "$cat: empty NUL record fails closed to RUN" "$cat" true ''

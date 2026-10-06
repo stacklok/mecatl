@@ -187,20 +187,20 @@ type classifyingPolicy struct {
 // Evaluate implements port.PermissionPolicy. See Wrap for the full semantics. It
 // forwards sessionID to the inner policy unchanged so per-session learned rules
 // are honoured by the layer it decorates.
-func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
+func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	base := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
 
 	// Monotonicity invariant, enforced unconditionally: an inner Deny is sacred
 	// and is NEVER consulted nor relaxed, regardless of how ClassifyOn is
 	// configured. The classifier may only tighten an Ask (→ Deny) or relax it
 	// (→ Allow); it can never downgrade a Deny.
-	if base.Effect == governance.Deny {
+	if base.Decision.Effect == governance.Deny {
 		return base
 	}
 
 	// Only the configured effect is ever escalated to the model. Everything else
 	// passes through untouched.
-	if base.Effect != p.cfg.ClassifyOn {
+	if base.Decision.Effect != p.cfg.ClassifyOn {
 		return base
 	}
 	if p.cfg.SkipReadOnly {
@@ -224,12 +224,12 @@ func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.Sess
 
 	switch verdict {
 	case VerdictDangerous:
-		return governance.PermissionDecision{
+		base.Decision = governance.PermissionDecision{
 			Effect: governance.Deny,
-			Reason: fmt.Sprintf("layer-2 classifier judged %q dangerous; %s", c.Name, base.Reason),
+			Reason: fmt.Sprintf("layer-2 classifier judged %q dangerous; %s", c.Name, base.Decision.Reason),
 		}
 	case VerdictSafe:
-		return governance.PermissionDecision{
+		base.Decision = governance.PermissionDecision{
 			Effect: governance.Allow,
 			Reason: fmt.Sprintf("layer-2 classifier judged %q safe", c.Name),
 		}
@@ -239,6 +239,7 @@ func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.Sess
 	default:
 		return base
 	}
+	return base
 }
 
 // Learn forwards an "allow always" verdict to the inner policy, which owns the

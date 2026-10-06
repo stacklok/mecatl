@@ -20,17 +20,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
-    inputs:
-      race_timing:
-        description: Capture and upload per-command go test JSONL timing records
-        required: false
-        type: boolean
-        default: false
-      race_vet_off:
-        description: "Experimental: append -vet=off to race tests (manual dispatch only)"
-        required: false
-        type: boolean
-        default: false
 
 # Least-privilege default for the whole workflow. The CI jobs only read source.
 permissions:
@@ -72,12 +61,14 @@ jobs:
       # build/test matrix; sdk_relevant gates the pure-TypeScript SDK unit job;
       # site_relevant gates the Docusaurus site build; studio_relevant gates the
       # Mecatl Studio (apps/) job; microvm_relevant gates the opt-in runtime's
-      # nested-module checks.
+      # nested-module checks. module_publication_relevant gates the public
+      # proxy proof inside Build to module metadata and its CI controls.
       go_relevant: ${{ steps.classify.outputs.go_relevant }}
       sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}
       site_relevant: ${{ steps.classify.outputs.site_relevant }}
       studio_relevant: ${{ steps.classify.outputs.studio_relevant }}
       microvm_relevant: ${{ steps.classify.outputs.microvm_relevant }}
+      module_publication_relevant: ${{ steps.classify.outputs.module_publication_relevant }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,6 +99,7 @@ jobs:
           site_relevant=true
           studio_relevant=true
           microvm_relevant=true
+          module_publication_relevant=true
           case "$EVENT_NAME" in
             pull_request)
               base="$PR_BASE_SHA"
@@ -152,7 +144,7 @@ jobs:
               # Same trusted-from-base-ref discipline for the Linux job-family flags:
               # a PR cannot edit the classifier to skip a job it should run, because
               # the base version is used until it merges. A missing script (the PR
-              # that introduces it) leaves all four flags at their fail-closed RUN
+              # that introduces it) leaves all flags at their fail-closed RUN
               # value. (A base-ref classifier that predates the `studio` category
               # treats it as an unknown category and prints true — RUN — so the PR
               # that introduces the category also fails closed.)
@@ -163,6 +155,7 @@ jobs:
                 site_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
                 studio_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true
                 microvm_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" microvm)" || microvm_relevant=true
+                module_publication_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" module_publication)" || module_publication_relevant=true
               fi
             fi
           fi
@@ -176,13 +169,12 @@ jobs:
             echo "site_relevant=$site_relevant"
             echo "studio_relevant=$studio_relevant"
             echo "microvm_relevant=$microvm_relevant"
+            echo "module_publication_relevant=$module_publication_relevant"
           } >> "$GITHUB_OUTPUT"
 
       # Validate the path classifiers HERE, in the always-run changes job — never
-      # in a flag-gated Go job. These tests decide which jobs run; if they lived in
-      # test-race-root-a (gated on go_relevant) a `go`/`docs_only`/`site`
-      # misclassification could skip the very tests that would catch it, and the
-      # always() aggregators would then report success on the gap. Pure bash, no Go
+      # in a flag-gated Go job. These tests decide which jobs run; misclassification
+      # could otherwise skip the very tests that would catch it. Pure bash, no Go
       # toolchain, so they are cheap to run on every push/PR.
       - name: Validate path classifiers
         run: |
@@ -288,6 +280,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
@@ -345,6 +340,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -401,6 +399,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -463,6 +464,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -512,6 +516,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -526,6 +533,87 @@ jobs:
 
       - name: Test Slack bot example (offline, spawns mecated --mock)
         run: task slack-bot:test
+
+      - name: Build hardened Slack bot image (no push)
+        run: docker build --load --tag mecatl-slack-bot:ci --file sdk/typescript/examples/slack-bot/docker/bot.Dockerfile sdk/typescript
+
+      - name: Validate Slack bot runtime image
+        run: |
+          # Use the image's real ENTRYPOINT and CMD. A missing app token makes
+          # dist/index.js fail before Socket Mode can contact Slack, while its
+          # module imports still prove the compiled entrypoint and runtime deps load.
+          mkdir -p .scratch
+          if docker run --rm \
+            --env SLACK_BOT_TOKEN=ci-test-token \
+            --env MECATL_GRPC_ADDRESS=127.0.0.1:1 \
+            mecatl-slack-bot:ci > .scratch/runtime-image.log 2>&1; then
+            cat .scratch/runtime-image.log
+            echo "container unexpectedly started without SLACK_APP_TOKEN" >&2
+            exit 1
+          fi
+          grep --fixed-strings "Missing required environment variable: SLACK_APP_TOKEN" .scratch/runtime-image.log
+
+          # Exercise the bridge compiled into the final image against a real,
+          # offline mecated --mock. Socket Mode itself requires Slack's network
+          # service and credentials, so this intentionally stops at the bot's
+          # lowest independently testable integration boundary.
+          mkdir -p .scratch/slack-image-workspace .scratch/slack-image-home
+          env -i PATH="$PATH" HOME="$PWD/.scratch/slack-image-home" \
+            XDG_CONFIG_HOME="$PWD/.scratch/slack-image-home/config" \
+            XDG_STATE_HOME="$PWD/.scratch/slack-image-home/state" \
+            bin/mecated serve --mock \
+            --workspace="$PWD/.scratch/slack-image-workspace" \
+            --user-model-dir="$PWD/.scratch/slack-image-home/user-model" \
+            --permissions-conventional=false \
+            --ready-file="$PWD/.scratch/slack-image-ready.json" \
+            --grpc-addr=127.0.0.1:0 \
+            --http-addr= \
+            --metrics-addr= \
+            --no-soul \
+            --no-user-model \
+            --no-scheduler \
+            --flight-recorder=false \
+            > .scratch/slack-image-mecated.log 2>&1 &
+          daemon_pid=$!
+          trap 'kill "$daemon_pid" 2>/dev/null || true; wait "$daemon_pid" 2>/dev/null || true' EXIT
+          for _ in {1..500}; do
+            test -s .scratch/slack-image-ready.json && break
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              cat .scratch/slack-image-mecated.log
+              exit 1
+            fi
+            sleep 0.02
+          done
+          test -s .scratch/slack-image-ready.json
+          grpc_address=$(jq --exit-status --raw-output '.grpc_address' .scratch/slack-image-ready.json)
+          docker run --rm --network host \
+            --env BRIDGE_BASE_URL="http://$grpc_address" \
+            --entrypoint /usr/bin/node \
+            mecatl-slack-bot:ci --input-type=module --eval '
+              import { MecatlBridge } from "./dist/bridge.js";
+              const bridge = new MecatlBridge({ baseUrl: process.env.BRIDGE_BASE_URL });
+              try {
+                const result = await bridge.handlePrompt("ci:final-image", "hello");
+                const expected = "Mock provider: no real model is configured. Set OPENAI_API_KEY for live use.";
+                if (result.text !== expected || result.stopReason !== "end_turn" || !result.sessionId) {
+                  throw new Error(`unexpected bridge result: ${JSON.stringify(result)}`);
+                }
+              } finally {
+                await bridge.close();
+              }
+            '
+
+          docker run --rm --entrypoint /usr/bin/node mecatl-slack-bot:ci --input-type=module --eval '
+            import { existsSync } from "node:fs";
+            // Slack packages and @types/node are also production dependencies; do not forbid them.
+            const forbidden = [
+              "/bin/sh", "/usr/bin/corepack", "/usr/bin/pnpm",
+              "node_modules/tsx", "node_modules/typescript", "node_modules/vitest", "node_modules/@biomejs", "node_modules/fast-check",
+              "../../node_modules/@biomejs/biome", "../../node_modules/@microsoft/api-extractor", "../../node_modules/@playwright/test",
+              "../../node_modules/typescript", "../../node_modules/typescript-5.7", "../../node_modules/vitest",
+            ];
+            if (process.getuid() === 0 || forbidden.some(existsSync)) process.exit(1);
+          '
 
   studio:
     name: Mecatl Studio (apps/)
@@ -568,6 +656,9 @@ jobs:
       - name: Install Studio dependencies (frozen)
         run: task studio:install
 
+      - name: Audit Studio production dependencies
+        run: task studio:audit
+
       - name: Lint and format-check Studio (Biome)
         run: task studio:lint
 
@@ -594,6 +685,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
 
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
@@ -605,8 +699,9 @@ jobs:
 
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
 
-      # Build-only proof of apps/Dockerfile (the multi-stage image the release job
-      # publishes). amd64 only here — the release job builds both platforms.
+      # The same apps/Dockerfile the release job publishes, loaded locally so the
+      # steps below can run and scan it. amd64 only here — the release job builds
+      # both platforms.
       - name: Build Studio image (no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -614,6 +709,93 @@ jobs:
           file: apps/Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
+          tags: mecatl-studio:ci
+
+      - name: Validate Studio runtime image
+        run: |
+          # The runtime base tracks Chainguard `latest` by digest, so its Node
+          # major can move under a Renovate digest bump. apps/package.json
+          # `engines` is the source of truth; refuse any other major.
+          engines='require("./apps/package.json").engines.node.match(/^>=(\d+) <(\d+)$/)'
+          min=$(node --print "${engines}[1]")
+          max=$(node --print "${engines}[2]")
+          got=$(docker run --rm --entrypoint /usr/bin/node mecatl-studio:ci --print 'process.versions.node.split(".")[0]')
+          if [ "$got" -lt "$min" ] || [ "$got" -ge "$max" ]; then
+            echo "Studio image runs Node $got, outside apps/package.json engines (>=$min <$max)" >&2
+            exit 1
+          fi
+
+          # Non-root, code not writable by the server process, no build tooling.
+          docker run --rm --entrypoint /usr/bin/node mecatl-studio:ci --input-type=module --eval '
+            import { accessSync, constants, existsSync } from "node:fs";
+            let writable = true;
+            try { accessSync(".", constants.W_OK); } catch { writable = false; }
+            const forbidden = ["/usr/bin/corepack", "/usr/bin/pnpm", "node_modules/vitest", "node_modules/typescript", "node_modules/esbuild"];
+            if (process.getuid() === 0 || writable || forbidden.some(existsSync)) process.exit(1);
+          '
+
+          # Boot the image with its real entrypoint against the offline daemon the
+          # integration step built. It needs both listeners: gRPC for the SDK and
+          # HTTP for the RFC 9728 protected-resource document (a 404 there means
+          # no browser login, so the unauthenticated opt-in is required).
+          mkdir -p .scratch/studio-image-workspace .scratch/studio-image-home
+          env -i PATH="$PATH" HOME="$PWD/.scratch/studio-image-home" \
+            XDG_CONFIG_HOME="$PWD/.scratch/studio-image-home/config" \
+            XDG_STATE_HOME="$PWD/.scratch/studio-image-home/state" \
+            bin/mecated serve --mock \
+            --workspace="$PWD/.scratch/studio-image-workspace" \
+            --user-model-dir="$PWD/.scratch/studio-image-home/user-model" \
+            --permissions-conventional=false \
+            --ready-file="$PWD/.scratch/studio-image-ready.json" \
+            --grpc-addr=127.0.0.1:0 \
+            --http-addr=127.0.0.1:0 \
+            --metrics-addr= \
+            --no-soul \
+            --no-user-model \
+            --no-scheduler \
+            --flight-recorder=false \
+            > .scratch/studio-image-mecated.log 2>&1 &
+          daemon_pid=$!
+          trap 'docker rm --force studio-image >/dev/null 2>&1 || true; kill "$daemon_pid" 2>/dev/null || true; wait "$daemon_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 500); do
+            test -s .scratch/studio-image-ready.json && break
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              cat .scratch/studio-image-mecated.log
+              exit 1
+            fi
+            sleep 0.02
+          done
+          grpc_address=$(jq --exit-status --raw-output '.grpc_address' .scratch/studio-image-ready.json)
+          http_address=$(jq --exit-status --raw-output '.http_address' .scratch/studio-image-ready.json)
+          docker run --detach --name studio-image --network host \
+            --env STUDIO_PORT=3100 \
+            --env STUDIO_PUBLIC_URL=http://127.0.0.1:3100 \
+            --env MECATL_BASE_URL="http://$grpc_address" \
+            --env MECATL_RESOURCE_URL="http://$http_address" \
+            --env STUDIO_ALLOW_UNAUTHENTICATED=1 \
+            mecatl-studio:ci
+          status=""
+          for _ in $(seq 100); do
+            status=$(curl --silent --fail http://127.0.0.1:3100/api/v1/status) && break
+            sleep 0.1
+          done
+          if ! printf '%s' "$status" | jq --exit-status '.connection == "reachable"' >/dev/null; then
+            echo "unexpected Studio status: $status" >&2
+            docker logs studio-image >&2
+            exit 1
+          fi
+          curl --silent --fail --output /dev/null http://127.0.0.1:3100/
+
+      # Same gate as the release job (publish-studio), here before any merge.
+      - name: Scan Studio image for fixable critical vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: mecatl-studio:ci
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: critical
+          output-format: table
 
   build:
     name: Build
@@ -628,6 +810,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -637,37 +821,16 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
-
-      # Resolve the declared dependency graphs before compiling. A successful main
-      # run then saves a complete shared module cache for later PR jobs. Retry only
-      # network resolution, never build or test execution.
-      - name: Download Go modules
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if (
-              go mod download all
-              cd engine && go mod download all
-              cd ../authn/oidc && go mod download all
-              cd ../../provider/ssefilter && go mod download all
-              cd ../anthropic && go mod download all
-              cd ../openai && go mod download all
-              cd ../openaichat && go mod download all
-            ); then
-              exit 0
-            fi
-            if [[ "$attempt" -eq 3 ]]; then
-              exit 1
-            fi
-            sleep "$((attempt * 5))"
-          done
 
       - name: go build
         run: go build ./...
@@ -676,6 +839,12 @@ jobs:
       # does NOT cross the module boundary, so build it explicitly too.
       - name: go build (engine module)
         run: cd engine && go build ./...
+
+      - name: go build (public persistence modules)
+        run: |
+          (cd internal/adaptersupport && go build ./...)
+          (cd contracts/gen/go/mecatl/driver && go build ./...)
+          (cd adapters && go build ./...)
 
       - name: go build (OIDC authn module)
         run: cd authn/oidc && go build ./...
@@ -692,6 +861,21 @@ jobs:
           (cd provider/anthropic && go build ./...)
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
+
+      - name: Verify Go module and workspace metadata freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          task tidy
+          git diff --exit-code -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum'
+          untracked=$(git ls-files --others --exclude-standard -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum')
+          if [[ -n "$untracked" ]]; then printf 'Untracked Go metadata:\n%s\n' "$untracked" >&2; exit 1; fi
+
+      - name: Verify nested module publication
+        if: needs.changes.outputs.module_publication_relevant == 'true'
+        run: |
+          git fetch --unshallow --tags origin main
+          task test:module-publication
 
       # Prove the macOS-job cost gate stays sound: the terminal leaf directories
       # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd
@@ -734,6 +918,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
       - name: Build and run the formula's executables
         env:
           # A recognisable stand-in for a release tag. The release build stamps
@@ -784,6 +971,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
       - name: Run managed temporary storage tests
         run: |
           go test ./internal/adapter/managedtemp -count=1
@@ -793,225 +983,35 @@ jobs:
           # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
 
-  test-race-root-a:
-    name: Test (race root-a)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: Validate race workflow contracts
-        run: |
-          bash .github/scripts/root-race-packages_test.sh
-          bash .github/scripts/root-race-packages.sh validate
-          bash .github/scripts/race-test_test.sh
-          bash .github/scripts/race-vet-off-workflow_test.sh
-          bash .github/scripts/race-aggregate-workflow_test.sh
-          bash .github/scripts/deslop-workflow_test.sh
-      - name: go test -race (root-a and modules)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: |
-          set -euo pipefail
-          mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a)
-          bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
-          (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
-          (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
-          (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
-          (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
-          (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
-          (cd provider/openaichat && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openaichat ./...)
-      - name: go test -race (microVM module)
-        if: needs.changes.outputs.microvm_relevant == 'true'
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...
-      - name: Upload root-a race timing records
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: race-timing-root-a
-          path: .scratch/race-timing/*.jsonl
-          if-no-files-found: warn
-          retention-days: 3
-
-  test-race-root-b:
-    name: Test (race root-b)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: go test -race (root-b)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: |
-          set -euo pipefail
-          mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b)
-          bash .github/scripts/race-test.sh root-b -count=1 "${packages[@]}"
-      - name: Upload root-b race timing records
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: race-timing-root-b
-          path: .scratch/race-timing/*.jsonl
-          if-no-files-found: warn
-          retention-days: 3
-
-  test-race-ui:
-    name: Test (race UI)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: go test -race (UI)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: bash .github/scripts/race-test.sh ui -count=1 ./cmd/mecatui/ui
-      - name: Upload UI race timing records
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: race-timing-ui
-          path: .scratch/race-timing/*.jsonl
-          if-no-files-found: warn
-          retention-days: 3
-
-  test-non-race-draft:
-    name: Test (non-race draft coverage)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: Complete test coverage without race detector
-        run: |
-          set -euo pipefail
-          mapfile -t root_a < <(bash .github/scripts/root-race-packages.sh root-a)
-          mapfile -t root_b < <(bash .github/scripts/root-race-packages.sh root-b)
-          go test -count=1 "${root_a[@]}"
-          go test -count=1 "${root_b[@]}"
-          go test -count=1 ./cmd/mecatui/ui
-          (cd engine && go test ./...)
-          (cd authn/oidc && go test ./...)
-          (cd provider/ssefilter && go test ./...)
-          (cd provider/anthropic && go test ./...)
-          (cd provider/openai && go test ./...)
-          (cd provider/openaichat && go test ./...)
-      - name: go test (microVM module)
-        if: needs.changes.outputs.microvm_relevant == 'true'
-        run: cd environment/microvm && go test ./...
-
-  # The stable required context is emitted only by full-race push/non-draft PR
-  # runs. Draft coverage and docs-only runs use distinct contexts.
   test:
-    name: ${{ needs.changes.outputs.docs_only == 'true' && 'Test (docs-only)' || github.event_name == 'pull_request' && github.event.pull_request.draft && 'Test (non-race draft)' || github.event_name == 'workflow_dispatch' && 'Test (race experiment)' || 'Test (race)' }}
-    needs: [changes, test-race-root-a, test-race-root-b, test-race-ui, test-non-race-draft]
+    name: ${{ needs.changes.outputs.docs_only == 'true' && 'Test (docs-only)' || github.event_name == 'pull_request' && github.event.pull_request.draft && 'Test (non-race draft)' || 'Test (race)' }}
+    needs: changes
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
-      - name: Require the applicable test coverage
-        shell: bash
+      - name: Require successful change classification
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
-          GO_RELEVANT: ${{ needs.changes.outputs.go_relevant }}
-          ROOT_A_RESULT: ${{ needs.test-race-root-a.result }}
-          ROOT_B_RESULT: ${{ needs.test-race-root-b.result }}
-          UI_RESULT: ${{ needs.test-race-ui.result }}
-          DRAFT_RESULT: ${{ needs.test-non-race-draft.result }}
+        run: test "$CHANGES_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
+      - name: Test modules
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        env:
           IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
         run: |
-          set -euo pipefail
-          if [[ "$CHANGES_RESULT" != success ]]; then
-            echo "changes job did not succeed: $CHANGES_RESULT" >&2
-            exit 1
-          fi
-          if [[ "$DOCS_ONLY" == true ]]; then
-            exit 0
-          fi
-          # A change that cannot affect a Go binary/test legitimately skips every
-          # race + draft shard, so there is nothing to require.
-          if [[ "$GO_RELEVANT" != true ]]; then
-            exit 0
-          fi
-          if [[ "$IS_DRAFT" == true ]]; then
-            [[ "$DRAFT_RESULT" == success ]] || { echo "draft non-race coverage failed: $DRAFT_RESULT" >&2; exit 1; }
-            exit 0
-          fi
-          if [[ "$ROOT_A_RESULT" != success || "$ROOT_B_RESULT" != success || "$UI_RESULT" != success ]]; then
-            echo "race shard failure: root-a=$ROOT_A_RESULT root-b=$ROOT_B_RESULT ui=$UI_RESULT" >&2
-            exit 1
-          fi
+          if [ "$IS_DRAFT" = true ]; then task --concurrency 3 test; else task --concurrency 3 test:race; fi
 
   analysis:
     name: Analysis
@@ -1031,8 +1031,12 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1066,12 +1070,21 @@ jobs:
       - name: golangci-lint (engine module)
         run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
+      - name: golangci-lint (public persistence modules)
+        run: |
+          (cd internal/adaptersupport && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd contracts/gen/go/mecatl/driver && golangci-lint run --config ../../../../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd adapters && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+
       - name: golangci-lint (OIDC authn module)
         run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       - name: golangci-lint (microVM module)
         if: needs.changes.outputs.microvm_relevant == 'true'
         run: cd environment/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (microVM integration module)
+        run: cd integration/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
@@ -1219,8 +1232,12 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1304,6 +1321,7 @@ jobs:
           cache-dependency-path: |
             engine/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
 
       - name: go build (microVM standalone)
         env:
@@ -1314,6 +1332,11 @@ jobs:
         env:
           GOWORK: off
         run: cd environment/microvm && go test ./...
+
+      - name: go test (microVM integration standalone)
+        env:
+          GOWORK: off
+        run: cd integration/microvm && go test ./...
 
   provider-standalone:
     name: Provider modules (standalone, GOWORK=off)
@@ -1416,8 +1439,12 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1463,8 +1490,12 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1546,45 +1577,29 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
             Taskfile.yml
 
-      # ac-trace resolves TypeScript proof titles through the SDK compiler, so run
-      # it here alongside the existing always-on documentation gate. This avoids a
-      # separate runner while still covering docs-only acceptance-plan changes.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11.25.0
-          run_install: false
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24.x'
-          # ac-trace installs the SDK and Studio dependency closures with pnpm.
-          cache: pnpm
-          cache-dependency-path: |
-            sdk/typescript/pnpm-lock.yaml
-            apps/pnpm-lock.yaml
-
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
-      - name: Acceptance-proof traceability gate
-        run: task ac-trace-strict
+      # AGENTS.md size and symlinks, rule size, agent/skill description size, and
+      # that every `task` an AGENTS.md names exists (needs setup-task above).
+      - name: instruction-file hygiene
+        run: python3 .github/scripts/instruction-files.py
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: '1.72.0'
           github_token: ${{ github.token }}
-
-      # Documentation-only changes still run the repository's Go-backed structural
-      # checks (ADR numbering/shape, citations, lifecycle, and reading-map checks).
-      - name: go test ./docs/lint
-        run: go test ./docs/lint
 
       # This command validates the executable systemd, launchd, and retention
       # examples in the session-storage operations guide under user-docs/.

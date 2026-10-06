@@ -300,13 +300,13 @@ separate `onPlanApproval` hook, which this bot has never configured).
 ## See also
 
 - stacklok/mecatl#881 (umbrella), #883 (implementation), #821 (the SDK itself)
-- [ADR 0253](../../../../docs/adr/0253-sdk-mocking-testkit.md) — the mocking
+- ADR 0253 — the mocking
   testkit; shares the `mecated --mock` sequencing discipline
-- [ADR 0232](../../../../docs/adr/0232-steer-while-running.md) —
+- ADR 0232 —
   steer-while-running, relevant if the approval/steer experiment extends to
   mid-run Slack replies
-- [ADR 0204](../../../../docs/adr/0204-caller-identity-threading.md),
-  [ADR 0206](../../../../docs/adr/0206-oidc-authn-module.md),
-  [ADR 0212](../../../../docs/adr/0212-caller-ownership-enforcement.md) — the
+- ADR 0204,
+  ADR 0206 ([caller identity](../../../../user-docs/features/caller-identity.md)),
+  ADR 0212 — the
   caller-identity infrastructure a future, separate identity-impersonation
   effort would build on (explicitly out of scope here)

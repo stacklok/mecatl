@@ -19,7 +19,7 @@ and `cmd/mecated` wires the knobs:
   its server cert/key paths so Kubernetes projected-Secret `..data` swaps are
   observed. It publishes only a fully parsed, matching pair through
   `tls.Config.GetCertificate`; a bad rotation retains the last valid pair, while
-  the client CA remains restart-required ([ADR 0240](../adr/0240-mecak8s-credential-reload-and-chart-security.md)).
+  the client CA remains restart-required (ADR 0240).
 - **Redis credential reload** — when mecak8s receives any Redis CA, username, or
   password file, it watches the lexical parent directories and transactionally re-reads
   the complete configured set. A bounded single-flight worker constructs and probes a
@@ -27,7 +27,7 @@ and `cmd/mecated` wires the knobs:
   it. Every store/schedule/migration operation leases one client generation, so displaced
   clients close only after in-flight work and migration locks release them. Invalid
   candidates retain the last valid generation; no configured files means no watcher or
-  reload goroutine ([ADR 0240](../adr/0240-mecak8s-credential-reload-and-chart-security.md)).
+  reload goroutine (ADR 0240).
 - **Rate limiting** — per-client + global token-bucket (`--rate-limit` /
   `--rate-burst`), bounded and idle-evicting. With OIDC enabled, a separate
   pre-validation rejected-token bucket protects JWT/JWKS validation. It is keyed
@@ -40,14 +40,14 @@ and `cmd/mecated` wires the knobs:
   defaults to `0.0.0.0:8082` and serves only kubelet's `GET /drain`; the normal
   HTTP/SSE API listener has no drain route. The chart omits this port from the
   Service, protecting normal Service/gateway traffic, but direct Pod-IP access
-  remains an operator-enforced NetworkPolicy or mesh-isolation residual ([ADR 0290](../adr/0290-mecak8s-drain-listener.md)).
+  remains an operator-enforced NetworkPolicy or mesh-isolation residual (ADR 0290).
 - **mecak8s secure real-provider transport** — three postures: in-pod TLS + OIDC,
   edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream=true`, ClusterIP-only h2c),
   and the explicit unsafe bypass. The upstream value is an operator attestation the chart
   cannot verify, and edge mode puts caller bearer tokens on the pod network in cleartext:
   restricting backend reachability to the gateway or mesh is the load-bearing control,
   and the chart ships no NetworkPolicy to do it. Full operator contract in
-  [ADR 0278](../adr/0278-mecak8s-edge-terminated-tls.md).
+  ADR 0278.
 - **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.
 - **Daemon config file (`daemon.yaml`, ADR 0088)** — the serve-time topology
   slice (gRPC/HTTP/metrics listen addresses, TLS cert/key/CA paths,
@@ -106,7 +106,7 @@ requires relisting. Schedules persist an already-resolved exact ref plus owner/s
 delegation derives or server-forks the parent Environment and artifact handles cannot be
 replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future remote
 placement provider uses the same private Bind/Reattach contract. See
-[ADR 0291](../adr/0291-server-owned-session-placement.md).
+ADR 0291.
 
 ### Multi-replica affinity, correlation, and single-writer enforcement
 
@@ -164,7 +164,7 @@ routing, EndpointSlice removal, or production timing. The Helm chart
 creates no Gateway, Route, `BackendTrafficPolicy`, certificate, or affinity policy. A
 separate infrastructure rollout must supply and live-validate those controls, including
 authenticated admission, request/header bounds, and client/IP/principal rate limits
-before affinity is enabled. See [ADR 0294](../adr/0294-session-correlation-and-affinity.md).
+before affinity is enabled. See ADR 0294.
 
 ### Permission & bash governance details (`engine/governance`)
 

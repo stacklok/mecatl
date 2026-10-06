@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 )
 
 // Remote store drivers (Phase B): the composition seam that swaps the local

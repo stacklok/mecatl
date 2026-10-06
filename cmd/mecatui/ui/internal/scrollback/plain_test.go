@@ -2,6 +2,33 @@ package scrollback
 
 import "testing"
 
+func TestNoticeMutationChecksKindAndMaintainsCallIndex(t *testing.T) {
+	var c Conversation
+	tool := c.Tools().Add(ToolCall{ID: "read", Name: "Read"})
+	notice := c.Notices().AddNotice("before")
+	other := c.Tools().Add(ToolCall{ID: "write", Name: "Write"})
+	for _, id := range []BlockID{0, 999, tool, other} {
+		if c.Notices().UpdateNotice(id, "wrong") || c.Notices().RemoveNotice(id) || c.Messages().RemoveUser(id) {
+			t.Fatalf("wrong kind or missing ID %d mutated conversation", id)
+		}
+	}
+	if c.Len() != 3 || !c.Notices().UpdateNotice(notice, "after") || c.SnapshotAt(1).Revision != 1 {
+		t.Fatal("notice update did not preserve position and advance revision")
+	}
+	if !c.Notices().RemoveNotice(notice) || c.Notices().RemoveNotice(notice) || c.Len() != 2 {
+		t.Fatal("notice removal failed or matched again")
+	}
+	for _, call := range []string{"read", "write"} {
+		if !c.Tools().Resolve(call, ToolResult{Body: call}) {
+			t.Fatalf("call index for %s was lost after notice removal", call)
+		}
+		snapshot, ok := c.SnapshotForCall(call)
+		if !ok || snapshot.Payload.(ToolCardSnapshot).Result.Body != call {
+			t.Fatalf("call %s points at wrong card: %+v", call, snapshot)
+		}
+	}
+}
+
 func TestPlainCardsExposeEveryKind(t *testing.T) {
 	var c Conversation
 	plain := c.Notices()

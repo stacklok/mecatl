@@ -308,8 +308,8 @@ func renderDreamParticipant(label string, p client.DreamParticipant, width int) 
 func framedDreamField(label, value string, width int) []string {
 	width = max(12, width)
 	var out []string
-	for _, physical := range strings.Split(terminaltext.Sanitize(value), "\n") {
-		quoted := strconv.QuoteToGraphic(physical)
+	for _, physical := range strings.Split(value, "\n") {
+		quoted := terminaltext.Sanitize(strconv.QuoteToGraphic(physical))
 		wrapped := strings.Split(wrapCardText(quoted, width), "\n")
 		if len(wrapped) == 0 {
 			wrapped = []string{"\"\""}

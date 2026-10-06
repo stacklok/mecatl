@@ -94,6 +94,7 @@ func TestStatusLine_Scenario2_HeaderSystemIndicatorsSurviveOverride(t *testing.T
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.width = 100
 	m.generatedStatusLine.Header = customization.Render(`<header><accent>CUSTOM</accent></header>`, nil).Header
+	m.deps.StatusSource = &statusSourceFake{changed: make(chan struct{})}
 	m.caps.Posture = postureAuto
 	m.conv.recordFileChange("changed.go")
 	header := stripANSIstr(m.renderHeader())
@@ -133,7 +134,7 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 			Input:  customization.UsageAtom{Human: "4K"},
 			Output: customization.UsageAtom{Human: "1K"},
 		},
-		Context:  customization.Context{Used: customization.ContextAtom{Raw: 2_000, Human: "2K"}, Window: customization.ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 20},
+		Context:  customization.Context{Used: customization.ContextAtom{Raw: 2_000, Human: "2K"}, Window: customization.ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 20, Known: true},
 		Terminal: customization.Terminal{HeaderAvailCols: 80, FooterAvailCols: 80},
 	})
 	select {

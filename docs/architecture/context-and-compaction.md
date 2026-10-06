@@ -15,7 +15,7 @@ metadata, the models.dev catalog, then the 128K fallback. Alias and slot routing
 first, so configuration keys are final provider/model IDs; the same resolver feeds
 compaction, engine introspection, session echoes, model listings, per-session engines,
 and provider-bound children. The operator-owned exact-map decision is recorded in
-[ADR 0207](../adr/0207-context-window-overrides.md).
+ADR 0207.
 
 The Service gates an unresolved context window after resolving the actual shared,
 per-session, or mode-routed engine. Its callback runs before prompt recording,
@@ -55,8 +55,8 @@ no new prompt or turn and does not consume pending approval/retry data. Existing
 terminal-state reopening/history repair and session-lifetime lease retention still
 apply. Cancellation ends the caller's wait, not the owner's fetch. Another request
 can recover after cooldown without opening the picker. The before-execution boundary
-is recorded in [ADR 0342](../adr/0342-context-window-admission.md); provider-local
-ownership and policy are described in [ADR 0362](../adr/0362-provider-scoped-model-discovery.md).
+is recorded in ADR 0342; provider-local
+ownership and policy are described in ADR 0362.
 
 The engine resolver always returns a positive scalar, using 128000 defensively.
 The server echo resolver returns 0 when admission is blocked; a wired zero replaces
@@ -157,7 +157,7 @@ The operation is exposed as gRPC `CompactSession` and bodyless HTTP
 `POST /v1/sessions/{id}/compact`. `ServerCapabilities.manual_compaction` lets clients
 hide it when talking to an older server. Mecatui uses that bit for its bare `/compact`
 built-in; the command is local control flow and never becomes model input. These
-additive decisions are recorded in [ADR 0276](../adr/0276-full-request-and-manual-compaction.md).
+additive decisions are recorded in ADR 0276.
 
 ## Prerequisites
 

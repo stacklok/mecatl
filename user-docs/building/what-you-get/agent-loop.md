@@ -26,7 +26,8 @@ Events you will see, roughly in order:
 |`turn.start`|Beginning of each LLM turn|
 |`message.delta`|Streaming text fragments from the model|
 |`tool.call`|A tool call is about to execute|
-|`tool.result`|A tool finished and returned a result|
+|`tool.result.available`|A completed result is safe to present for this call|
+|`tool.result`|The authoritative result for the model and durable history|
 |`permission.ask`|The loop has paused for approval|
 |`result`|The run ended; includes usage and the stop reason|
 
@@ -50,8 +51,9 @@ sequenceDiagram
   D-->>C: tool.call
   D->>T: Execute(call, env)
   T-->>D: ToolResult
+  D->>D: Run post-tool hooks and inbound review
+  D-->>C: tool.result.available
   D-->>C: tool.result
-  D->>D: Run post-tool hooks
   D->>E: Record result
   E->>E: Start next turn
   E-->>C: result
@@ -95,8 +97,19 @@ step without adding a user message. Automate only bounded retries marked
 When one turn requests multiple tools:
 
 - Consecutive read-only calls are authorized in order, then run concurrently.
+- A completed read-only call emits `tool.result.available` when its result is
+  safe to present. These live events can arrive in completion order, so each
+  tool card can settle independently.
 - Mutating calls and calls with unknown safety run alone.
-- Results return to the model in their original order.
+- The dispatcher releases canonical `tool.result` events after the read batch's
+  decisions finish, in the model's original call order. These results feed the
+  model and durable history.
+
+A canonical result confirms an identical available result without changing the
+card. If cancellation changes a previously available result to a synthetic
+error, the canonical result replaces the card's displayed payload. A client
+that misses the transient availability event, including after reconnect, uses
+its canonical result to settle the same call.
 
 The dispatcher enforces these rules; clients do not need to coordinate calls.
 

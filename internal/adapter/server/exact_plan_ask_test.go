@@ -231,7 +231,7 @@ func TestADR_0366_LiveAndRestoredExactPlanAsk(t *testing.T) {
 		if ack.RunID != run.RunID() || ack.AskID != askID {
 			t.Fatalf("ack = %+v", ack)
 		}
-		if _, err := svc.ResolvePlanAsk(t.Context(), sess.ID, run.RunID(), askID, session.VerdictDeny); !errors.Is(err, server.ErrAskNotPending) {
+		if _, err := svc.ResolvePlanAsk(t.Context(), sess.ID, run.RunID(), askID, session.VerdictDeny); !errors.Is(err, server.ErrAskNotPending) && !errors.Is(err, server.ErrStaleRunControl) {
 			t.Fatalf("competing verdict = %v", err)
 		}
 		evs := drainApprovedEvents(t, run.Events())

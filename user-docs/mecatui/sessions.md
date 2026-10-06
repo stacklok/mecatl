@@ -70,12 +70,47 @@ use another supported client or control path. Repeating the unchanged command
 will not add watch support. Plan approvals and guardrail reviews use their existing
 dedicated flows and cannot be recovered this way.
 
-To get the active session ID, run `/session` and press `c` to copy it. On a
-normal exit, `mecatui` also writes a machine-readable handoff to standard error:
+To get the active session ID, run `/session` and press `c` to copy it. When an
+embedded session ends normally, `mecatui` writes an aligned summary to standard
+error:
+
+```text
+Session ID:    01JOPAQUESESSIONID
+Title:         Fix the flaky CI job
+Model calls:   12
+Tokens (main): 29.7K input, 1.8K output, 6.4K cache read
+Tokens (aux):  2.1K input, 85 output
+Resume:        mecatui --resume '01JOPAQUESESSIONID'
+               mecatui --resume-latest (may select a different chat)
+```
+
+The shell-quoted `mecatui --resume` command returns to that exact final chat.
+The `--resume-latest` alternative below it looks for the newest eligible chat
+and can select a different one. A blank line separates the summary from startup
+notices, and `mecatui` does not print the embedded server's private socket
+address.
+
+A connected session instead prints a JSON-quoted ID record:
 
 ```text
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
+
+To resume it, use `mecatui connect <ADDRESS> --resume <SESSION_ID>` with the
+original server address.
+
+**Model calls** counts model calls begun in the chat, and **Tokens (main)**
+shows lifetime input and output tokens for the chat's agent runs. **Tokens
+(aux)** appears when auxiliary model work, such as title generation,
+compaction, routing, reviewers, or guardrails, used tokens in the chat. Counts
+are abbreviated, for example `29.7K` or `1.2M`. Nonzero cache-read and
+cache-write counts appear separately, not added to input or output. The latest
+context-meter reading is not included.
+
+If the session snapshot is unavailable, the title, model-call, and token lines
+are omitted; the session ID and resume commands still appear. An embedded ID
+that cannot be safely displayed as a single terminal line gets the JSON-quoted
+ID record instead of the summary.
 
 ## Inspect the active session during a run
 
@@ -236,5 +271,3 @@ Use `--no-store` only when you want a non-persistent, in-memory session.
 
 - [Operate local session storage](/building/deployment/session-storage-operations.md)
   for daemon retention, backup, and restore procedures.
-- [Continue a chat at startup](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#continue-a-chat-at-startup)
-  for the exhaustive eligibility and overlay behavior.

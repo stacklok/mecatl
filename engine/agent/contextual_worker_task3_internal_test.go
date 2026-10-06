@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -24,15 +25,15 @@ func (workerAuthorityTool) Execute(_ context.Context, call session.ToolCall, _ t
 
 type workerAuthorityReviewer struct{ requests []ToolReviewRequest }
 
-func (r *workerAuthorityReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *workerAuthorityReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.requests = append(r.requests, req)
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
 type workerAuthorityPolicy struct{}
 
-func (workerAuthorityPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (workerAuthorityPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (workerAuthorityPolicy) Learn(session.SessionID, session.ToolCall) {}
 

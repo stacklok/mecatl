@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -20,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // sortedNames projects a catalog into its sorted tool-name list for diffing.
@@ -391,7 +391,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	def := agents.AgentDef{Name: "scoped-explorer", Tools: []string{"Read", "Shell"}}
 	base := baseSubagentTools(cfg)
 	defEng, defClose, defNames, _, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
-		oa, cfg.Model, nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
+		oa, testProviderModel(cfg.Model), nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
 	if defClose != nil {
 		defer func() { _ = defClose() }()
 	}

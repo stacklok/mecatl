@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 )
 
 type statusLineChangedMsg struct {
@@ -58,11 +59,11 @@ func (m Model) statusLineWaitCmd() tea.Cmd {
 }
 
 func usageAtom(raw int64) customization.UsageAtom {
-	return customization.UsageAtom{Raw: raw, Human: humanizeTokens(raw)}
+	return customization.UsageAtom{Raw: raw, Human: renderfmt.HumanizeTokens(raw)}
 }
 
 func contextAtom(raw int64) customization.ContextAtom {
-	return customization.ContextAtom{Raw: raw, Human: humanizeTokens(raw)}
+	return customization.ContextAtom{Raw: raw, Human: renderfmt.HumanizeTokens(raw)}
 }
 
 func contextOccupancyAtom(raw int64, known, estimated bool) customization.ContextAtom {
@@ -137,7 +138,7 @@ type statusLineGeometry struct {
 // It uses renderer-owned header safety/navigation and footer activity lanes, but
 // does not render or submit anything.
 func (m Model) statusLineGeometry() statusLineGeometry {
-	badge, badgeWidth, _ := m.postureBadgeRender()
+	badge, badgeWidth := m.postureBadgeRender()
 	tail := m.scrollIndicator()
 	if tail == "" {
 		tail = m.changedFilesIndicator()
@@ -205,7 +206,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 	case phaseAwaitingApproval:
 		state, approval = "awaiting_approval", "awaiting"
 	case phaseFatal:
-		state = "failed"
+		state = statusFailed
 	}
 	return customization.Input{
 		Version: customization.ProtocolVersion,

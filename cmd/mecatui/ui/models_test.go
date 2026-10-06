@@ -1696,106 +1696,40 @@ func TestModelsCatalogUpdatesWhilePickerClosed(t *testing.T) {
 	}
 }
 
-// TestHeaderToolhiveSegment proves the persistent "via ToolHive gateway"
-// header segment (issue #262 R6.3) appears ONLY when the active session's
-// provider is toolhive, and sheds under width pressure like any other
-// low-priority segment.
-func TestHeaderToolhiveSegment(t *testing.T) {
+// TestToolhiveProviderReachesStatusSnapshot proves the effective provider identity
+// is handed to the selected status source; source templates own its presentation.
+func TestToolhiveProviderReachesStatusSnapshot(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	if strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
-		t.Fatal("non-toolhive session must NOT show the gateway segment")
+	if got := m.statusLineSnapshot().Model.ProviderID; got != "openai" {
+		t.Fatalf("status snapshot provider = %q, want openai", got)
 	}
 
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
-	if !strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
-		t.Fatal("a toolhive session must show the gateway segment at a wide width")
-	}
-
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive-anthropic", ModelID: "claude-sonnet-4-6"}
-	m.modelCatalog.statuses = []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "ok", AvailableNotDefault: true},
-		{ProviderID: "toolhive-anthropic", State: "ok"},
-	}
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "via ToolHive gateway") || strings.Contains(header, "gateway available") {
-		t.Fatalf("native ToolHive header must show one active-family segment, got:\n%s", header)
-	}
-
-	// At a narrow width the segment sheds along with the other low-priority
-	// segments; the header must not panic/overflow.
-	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 30})
-	_ = m.renderHeader()
-}
-
-// TestHeaderGatewayAvailableSegment (N1): a muted "<provider-id> gateway
-// available" segment renders when an AvailableNotDefault status exists and the
-// active provider is NOT the gateway. It is the mutually-exclusive sibling of
-// the "via ToolHive gateway" segment (active case): when the gateway IS the
-// active default, availableNotDefaultStatus returns false so ONLY the "via"
-// segment renders — never both.
-func TestHeaderGatewayAvailableSegment(t *testing.T) {
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
-	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
-
-	// Active provider is openai (key-driven); toolhive is available-but-not-default.
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.modelCatalog.statuses = gatewayStatuses()
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "toolhive gateway available") {
-		t.Errorf("header should show the 'gateway available' segment when an AvailableNotDefault status exists and the active provider is not the gateway, got:\n%s", header)
-	}
-	// The active-case "via ToolHive gateway" segment must NOT also render.
-	if strings.Contains(header, "via ToolHive gateway") {
-		t.Errorf("the 'via ToolHive gateway' segment must NOT render alongside the 'available' segment, got:\n%s", header)
-	}
-
-	// Now make the gateway the ACTIVE default: AvailableNotDefault flips false, so
-	// the 'available' segment disappears and the 'via' segment renders instead.
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
-	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
-	header = stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "gateway available") {
-		t.Errorf("the 'available' segment must NOT render when the gateway IS the active default, got:\n%s", header)
-	}
-	if !strings.Contains(header, "via ToolHive gateway") {
-		t.Errorf("the 'via ToolHive gateway' segment should render when the gateway is active, got:\n%s", header)
-	}
-
-	// No statuses (byte-identical pre-feature path): neither segment renders.
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.modelCatalog.statuses = nil
-	header = stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "gateway available") || strings.Contains(header, "via ToolHive gateway") {
-		t.Errorf("neither gateway segment should render with no statuses, got:\n%s", header)
+	if got := m.statusLineSnapshot().Model.ProviderID; got != "toolhive" {
+		t.Fatalf("status snapshot provider = %q, want toolhive", got)
 	}
 }
 
-// TestHeaderProviderRouteSuffix proves the routed downstream provider appears as a
-// "/ <name>" suffix on the header model segment (issue #480) ONLY once a route has
-// been reported this session, and is absent before any routed turn (no stale or
-// fabricated suffix).
-func TestHeaderProviderRouteSuffix(t *testing.T) {
+// TestProviderRouteReachesStatusSnapshot proves routed downstream provider state is
+// submitted to the selected source and cleared at the next-turn boundary.
+func TestProviderRouteReachesStatusSnapshot(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "moonshotai/kimi-k3"}
 	m.phase = phaseIdle // a bound session, so the model segment renders
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 
-	// Before any provider.route event: the bare model segment, no "/" suffix.
-	header := stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "kimi-k3/") {
-		t.Fatalf("no route yet — header must NOT show a downstream suffix, got:\n%s", header)
+	if route := m.statusLineSnapshot().Model.Route; route != "" {
+		t.Fatalf("status snapshot route = %q, want empty", route)
 	}
 
 	// A provider.route event arrives (the openrouter entry routed to Google).
 	m = applyAll(m, client.ProviderRouteMsg{Text: "Google"})
-	header = stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "kimi-k3/Google") {
-		t.Errorf("header should show the model + routed downstream as 'kimi-k3/Google', got:\n%s", header)
+	if route := m.statusLineSnapshot().Model.Route; route != "Google" {
+		t.Errorf("status snapshot route = %q, want Google", route)
 	}
 	if statusText := stripANSIstr(m.statusMsg); !strings.Contains(statusText, "via Google") {
 		t.Errorf("route arrival should show transient footer status, got %q", statusText)
@@ -1803,17 +1737,15 @@ func TestHeaderProviderRouteSuffix(t *testing.T) {
 
 	// A subsequent route updates the suffix (e.g. a fallback kicked in).
 	m = applyAll(m, client.ProviderRouteMsg{Text: "Amazon Bedrock"})
-	header = stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "kimi-k3/Amazon Bedrock") {
-		t.Errorf("header should track the latest routed downstream, got:\n%s", header)
+	if route := m.statusLineSnapshot().Model.Route; route != "Amazon Bedrock" {
+		t.Errorf("status snapshot route = %q, want Amazon Bedrock", route)
 	}
 
 	// The next turn clears the per-turn route before any metadata arrives. This is
 	// the cache-hit/metadata-miss path: absence must render absence, never stale data.
 	m = applyAll(m, client.TurnStartMsg{Turn: 2})
-	header = stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "kimi-k3/") {
-		t.Errorf("a new turn with no route must clear the stale suffix, got:\n%s", header)
+	if route := m.statusLineSnapshot().Model.Route; route != "" {
+		t.Errorf("new turn left stale route in status snapshot: %q", route)
 	}
 
 	// Session reset is the other stale-state boundary.
@@ -1836,6 +1768,7 @@ func TestModelsPickerGolden(t *testing.T) {
 	if modelsSurface(t, m).view != modelsPanel {
 		t.Fatalf("view = %v, want modelsPanel", modelsSurface(t, m).view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models.golden", got)
 }
@@ -1866,6 +1799,7 @@ func TestModelsPickerDisabledGolden(t *testing.T) {
 	m := newModelsModel(t, &fakeModels{}, &fakeStore{}, client.Capabilities{ModelSelection: false}, client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_disabled.golden", got)
 }
@@ -1883,6 +1817,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	rendered := stripANSI([]byte(m.View().Content))
 	for _, want := range []string{"openai-codex", "manual token rejected", "auth.yaml", "restart"} {
 		if !bytes.Contains(rendered, []byte(want)) {
@@ -1903,6 +1838,7 @@ func TestOpenAICodexHealthyStatusDoesNotImplyOrgGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	rendered := stripANSI([]byte(m.View().Content))
 	if !bytes.Contains(rendered, []byte("openai-codex · GPT-5")) {
 		t.Fatalf("healthy Codex model missing from picker:\n%s", rendered)
@@ -1918,6 +1854,7 @@ func TestModelsPickerEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, &fakeModels{}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_empty.golden", got)
 }
@@ -1930,6 +1867,7 @@ func TestModelsPickerFilteredGolden(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "gpt")
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_filtered.golden", got)
 }
@@ -1945,6 +1883,7 @@ func TestModelsPickerScrolledGolden(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	if !bytes.Contains(got, []byte("↑ 26 items")) {
 		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
@@ -1959,6 +1898,7 @@ func TestModelsPickerNoMatchGolden(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "zzzzz")
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_nomatch.golden", got)
 }
@@ -1974,6 +1914,7 @@ func TestModelsPickerToolhiveUnreachableGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_toolhive_unreachable.golden", got)
 }
@@ -1988,6 +1929,7 @@ func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_gateway_empty.golden", got)
 }
@@ -2005,6 +1947,7 @@ func TestModelsPickerMixedDeploymentEmptyGolden(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_mixed_deployment_empty.golden", got)
 }
@@ -2019,6 +1962,7 @@ func TestModelsPickerGlobalDefaultGolden(t *testing.T) {
 	m.modelCatalog.globalDefault = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models_global_default.golden", got)
 }

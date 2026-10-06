@@ -9,5 +9,5 @@ import (
 
 func callModelRouter(ctx context.Context, router *agent.SubagentModelRouter, task string) (category, model string, usage session.Usage, reason string, ok bool) {
 	result := router.Route(ctx, task)
-	return result.Category, result.Model, result.Usage, result.Reason, result.OK
+	return result.Category, result.Model, result.Usage.Buckets[session.UsageKindRouter].Total, result.Reason, result.OK
 }

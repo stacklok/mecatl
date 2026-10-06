@@ -249,6 +249,11 @@ type Deps struct {
 
 	// Model is the provider model identifier sent on every request.
 	Model string
+	// ProviderModel is the exact immutable provider/model identity selected by
+	// composition for this engine's primary LLM calls. Utility-result collection uses
+	// it to attribute this engine's main usage; nested auxiliary usage retains its
+	// producer's own attribution. The request itself remains provider-neutral.
+	ProviderModel session.ProviderModelID
 	// ContextWindow returns the model's context window in tokens, resolved LIVE at
 	// the point of use (the compaction check / Engine.ContextWindow) rather than
 	// frozen at construction — so a post-construction live-catalog refresh self-
@@ -595,6 +600,8 @@ type Run struct {
 	seq     atomic.Int64
 	outcome atomic.Int32
 
+	results toolResultPublisher
+
 	// closureMu linearizes the final authorization.required publication against
 	// Cancel. That publication is the one nonterminal way an event stream closes.
 	closureMu       sync.Mutex
@@ -664,6 +671,13 @@ type Run struct {
 	// NopDiagnostics returns NopDiagnostics. It is set before the run goroutine
 	// starts and only read after, so it needs no synchronisation.
 	diag port.Diagnostics
+	// auxiliaryUsageMu protects the run-owned private auxiliary queue and fences
+	// late detached reports against the end of this run's ownership capability.
+	// Only the parent dispatcher or terminal drain mutates the Session aggregate.
+	auxiliaryUsageMu         sync.Mutex
+	auxiliaryUsageActive     bool
+	auxiliaryUsagePending    session.AuxiliaryUsage
+	auxiliaryUsageDropWarned bool
 	// saveWarned makes the session-persistence WARN sticky per RUN. A store that
 	// is broken is broken for every save, and save runs at least once per turn, so
 	// logging unconditionally would emit up to MaxTurns near-identical lines per
@@ -926,7 +940,13 @@ func (r *Run) Events() <-chan session.Event { return r.events }
 // Outcome reports why this Run's event stream closed.
 func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
-func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
+func (r *Run) setOutcome(outcome RunOutcome) {
+	// End auxiliary mutation ownership before publishing the terminal outcome and
+	// before the terminal save. A review that wins this lock is included in that
+	// save; a detached result that loses it is dropped.
+	r.closeAuxiliaryUsageOwnership()
+	r.outcome.Store(int32(outcome))
+}
 
 // Approval resolution errors are stable categories for hosts. Callers should use
 // errors.Is rather than parse error text.
@@ -1120,19 +1140,9 @@ func (r *Run) autoDenyChildAsk(askID, reason string) {
 // seam, mirroring childDrainCap/childDrainGrace.
 var hardAbortGrace = time.Second
 
-// Cancel aborts the in-flight run: it first arms the hardAbort grace timer (the
-// explicit unwedge signal — any send still parked on a full events channel
-// hardAbortGrace later gives up instead of blocking forever), THEN cancels the
-// run context. The arm-before-cancel order matters: a ctx-woken goroutine that
-// loops back into an emit must already be covered by the pending abort, or it
-// could park indefinitely. The AfterFunc timer is deliberately never Stop()ed:
-// at worst it fires once, shortly after a run that already ended, and closes a
-// channel nobody reads any more — a harmless once-per-run close (contrast
-// joinChildren's defer timer.Stop, which reclaims a shared 10s timer early on
-// the common all-joined-fast path — a different shape: that timer does real
-// work only on expiry; this one's entire job IS to fire). The loop observes the cancellation (mid-stream, mid-tool,
-// or while awaiting an approval) and terminates with a result carrying
-// StopCancelled.
+// Cancel aborts the in-flight run while preserving ordinary child join-and-drain
+// behavior. It is a no-op for an already durably parked authorization, whose
+// resumable handoff point must remain intact.
 func (r *Run) Cancel() {
 	r.closureMu.Lock()
 	if r.Outcome() == RunOutcomeAuthorizationPending {
@@ -1495,7 +1505,7 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 		var result session.ToolResult
 		if decision.Effect != governance.Allow {
 			result = denyResult(pending.Call, decision.Reason)
-			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(result)})
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(result)})
 		} else {
 			var enqueue time.Time
 			if e.deps.Clock != nil {
@@ -1513,7 +1523,7 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
-			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
 			results = append(results, deferredResult)
 		}
 		if err := sess.RecordToolResults(results); err != nil {
@@ -1549,7 +1559,7 @@ func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Se
 
 func (e *Engine) emitAuthorizationResolution(r *Run, turn int, authorization session.ExternalAuthorization, callID session.ToolCallID, status session.AuthorizationStatus, results []session.ToolResult) {
 	for i := range results {
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
 	}
 	e.emit(r, session.Event{Type: session.EvAuthorizationResolved, Authorization: &session.AuthorizationPayload{
 		AuthorizationID: authorization.ID, DisplayName: authorization.DisplayName, Call: callID, ExpiresAt: authorization.ExpiresAt, Status: status,
@@ -1621,7 +1631,8 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
-		diag: e.bindRunDiag(sess.ID),
+		diag:                 e.bindRunDiag(sess.ID),
+		auxiliaryUsageActive: true,
 	}
 	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
 		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewEvidencePreparer, e.deps.ReviewDetails, e.deps.ReviewTaskWindow)
@@ -1710,10 +1721,12 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 			defer close(r.events)
 			defer r.children.seal()
 			defer cancel()
+			defer r.closeAuxiliaryUsageOwnership()
 			body(ctx, r)
 		}()
 	}
 	abort := func() {
+		r.closeAuxiliaryUsageOwnership()
 		cancel()
 		r.children.seal()
 		close(r.events)
@@ -1992,12 +2005,12 @@ type authorizationParkResult struct {
 func (e *Engine) authorizationParkFailures(r *Run, turnIdx int, park *dispatchPark, message string) []session.ToolResult {
 	results := make([]session.ToolResult, 0, len(park.deferred)+1)
 	pending := session.NewToolError(park.call.ID, message)
-	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pending)})
+	e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pending)})
 	results = append(results, pending)
 	for _, call := range park.deferred {
 		e.openCard(r, turnIdx, call)
 		result := session.NewToolError(call.ID, "external authorization deferred sibling was not executed")
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
 		results = append(results, result)
 	}
 	return results
@@ -2082,6 +2095,11 @@ func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Se
 			return authorizationParkResult{fatal: err}
 		}
 		return authorizationParkResult{cancelled: true}
+	}
+	r.closeAuxiliaryUsageOwnershipAndDrain(sess)
+	if err := e.saveRequired(ctx, sess); err != nil {
+		rollbackErr := e.rollbackAuthorization(ctx, sess, park, "failed")
+		return authorizationParkResult{fatal: errors.Join(fmt.Errorf("persist drained external authorization: %w", err), rollbackErr)}
 	}
 	payload := session.AuthorizationPayload{
 		AuthorizationID: park.authorization.ID,
@@ -2412,12 +2430,13 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	}
 }
 
-// budgetExhausted reports whether lifetime main usage accrued since this Run's
-// immutable baseline has crossed the effective loop-level token ceiling
-// (Deps.MaxRunTokens folded with the run's tighten-only RunRequest override). A
-// non-positive effective ceiling (the default) disables the budget and always
-// returns false. Ordinary runs have a zero baseline; only the package-private
-// team-lead synthesis path captures the current main total.
+// budgetExhausted reports whether lifetime budget usage has crossed the effective
+// loop-level token ceiling (Deps.MaxRunTokens folded with the run's tighten-only
+// RunRequest override). Callers supply main plus the separate router bucket; the
+// immutable baseline offsets main only, so internal continuation allowances never
+// erase router spend. A non-positive effective ceiling (the default) disables the
+// budget and always returns false. Ordinary runs have a zero baseline; only the
+// package-private team-lead synthesis path captures the current main total.
 func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	ceiling := e.effectiveMaxRunTokens(r)
 	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
@@ -2463,7 +2482,8 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
-	if e.budgetExhausted(r, sess.UsageFor(session.UsageKindMain)) {
+	budgetUsage := sess.UsageFor(session.UsageKindMain).Add(sess.UsageFor(session.UsageKindRouter))
+	if e.budgetExhausted(r, budgetUsage) {
 		if _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
 			e.deferFailedStepRetry(ctx, r, sess, session.StopBudget, lastText, total)
 		} else {
@@ -2750,6 +2770,12 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 	stop := session.StopNone
 
 	for chunk, cerr := range seq {
+		// Usage is accounting, even when a buffered stream arrives after cancel.
+		// Fold it before either terminal check; never interpret semantic chunks on
+		// a cancelled context.
+		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+			usage = usage.Add(*chunk.Usage)
+		}
 		if cerr != nil {
 			return session.Message{}, usage, stop, turnTiming{}, fmt.Errorf("agent: stream: %w", cerr)
 		}
@@ -2801,10 +2827,6 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 			noteFirstOutput()
 			if chunk.ToolCall != nil {
 				calls = append(calls, *chunk.ToolCall)
-			}
-		case port.ChunkUsage:
-			if chunk.Usage != nil {
-				usage = usage.Add(*chunk.Usage)
 			}
 		case port.ChunkProviderRoute:
 			// The downstream provider slug that routed this turn (issue #480).
@@ -2989,6 +3011,91 @@ func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt
 	}
 }
 
+func (r *Run) noteLateAuxiliaryUsageDropLocked() bool {
+	if r.auxiliaryUsageDropWarned {
+		return false
+	}
+	r.auxiliaryUsageDropWarned = true
+	return r.diag != nil
+}
+
+func (r *Run) enqueueAuxiliaryUsageWhileActive(_ context.Context, usage session.AuxiliaryUsage) {
+	if r == nil || len(usage.Buckets) == 0 {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	if !r.auxiliaryUsageActive {
+		warn := r.noteLateAuxiliaryUsageDropLocked()
+		r.auxiliaryUsageMu.Unlock()
+		if warn {
+			r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
+		}
+		return
+	}
+	r.auxiliaryUsagePending = r.auxiliaryUsagePending.Merge(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) recordCompleteAuxiliaryUsageWhileActive(sess *session.Session, usage session.AuxiliaryUsage) {
+	if r == nil || len(usage.Buckets) == 0 {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	if !r.auxiliaryUsageActive {
+		warn := r.noteLateAuxiliaryUsageDropLocked()
+		r.auxiliaryUsageMu.Unlock()
+		if warn {
+			r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
+		}
+		return
+	}
+	sess.RecordAuxiliaryUsage(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) recordGuardrailUsageWhileActive(ctx context.Context, sess *session.Session, usage session.AuxiliaryUsage) {
+	r.recordCompleteAuxiliaryUsageWhileActive(sess, RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, usage))
+}
+
+func (r *Run) drainPendingAuxiliaryUsage(sess *session.Session) {
+	if r == nil {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	defer r.auxiliaryUsageMu.Unlock()
+	sess.RecordAuxiliaryUsage(r.auxiliaryUsagePending)
+	r.auxiliaryUsagePending = session.AuxiliaryUsage{}
+}
+
+func (r *Run) closeAuxiliaryUsageOwnershipAndDrain(sess *session.Session) bool {
+	if r == nil {
+		return false
+	}
+	r.auxiliaryUsageMu.Lock()
+	defer r.auxiliaryUsageMu.Unlock()
+	added := len(r.auxiliaryUsagePending.Buckets) > 0
+	sess.RecordAuxiliaryUsage(r.auxiliaryUsagePending)
+	r.auxiliaryUsagePending = session.AuxiliaryUsage{}
+	r.auxiliaryUsageActive = false
+	return added
+}
+
+func (r *Run) revokeAuxiliaryUsageOwnership() {
+	if r == nil {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	r.auxiliaryUsageActive = false
+	r.auxiliaryUsagePending = session.AuxiliaryUsage{}
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) closeAuxiliaryUsageOwnership() {
+	r.auxiliaryUsageMu.Lock()
+	r.auxiliaryUsageActive = false
+	r.auxiliaryUsageMu.Unlock()
+}
+
 func estimateRequestTokens(counter TokenCounter, req port.LLMRequest) int {
 	total := countLayered(counter, req.System) + counter.CountMessages(req.Messages)
 	for _, spec := range req.Tools {
@@ -3034,7 +3141,11 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if budget < 1 {
 		budget = 1
 	}
-	result, compacted, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	result, compacted, usage, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	usage = RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindCompaction, usage)
+	// The active run owns sess through its existing run capability; record all
+	// provider-reported usage before handling a terminal compaction error.
+	sess.RecordAuxiliaryUsage(usage)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
 		// existing history and continue — but no longer SILENTLY: surface the
@@ -3318,6 +3429,7 @@ func joinChildren(joins []backgroundJoin, d time.Duration) []backgroundJoin {
 func (e *Engine) deferFailedStepRetry(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage) {
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
+	r.closeAuxiliaryUsageOwnershipAndDrain(sess)
 	e.fireStop(ctx, r, sess, reason)
 	r.setOutcome(RunOutcomeCompleted)
 	e.emitResult(r, sess, reason, text, usage, "", session.RetryDispositionUnknown, session.StreamProgressUnknown)
@@ -3335,6 +3447,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 	}
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
+	r.closeAuxiliaryUsageOwnershipAndDrain(sess)
 	switch reason {
 	case session.StopCancelled:
 		_ = sess.Cancel()
@@ -3389,6 +3502,7 @@ func (e *Engine) planApprovalTerminal(ctx context.Context, r *Run, sess *session
 func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string) {
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
+	r.drainPendingAuxiliaryUsage(sess)
 	if !sess.State.IsTerminal() {
 		_ = sess.Stop(reason)
 	}
@@ -3413,12 +3527,19 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	// event order; persistence failures stay best-effort diagnostics via save.
 	e.save(ctx, r, sess)
 	e.observeCompletion(ctx, r, sess, reason, usage)
+	if r.closeAuxiliaryUsageOwnershipAndDrain(sess) {
+		e.save(ctx, r, sess)
+	}
 	e.fireStop(ctx, r, sess, reason)
 	r.setOutcome(RunOutcomeCompleted)
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.
 	e.emitResult(r, sess, reason, text, usage, errMsg, session.RetryDispositionUnknown, session.StreamProgressComplete)
+}
+
+type auxiliaryUsageObserver interface {
+	ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error)
 }
 
 // observeCompletion invokes the optional host observer after the aggregate has
@@ -3442,6 +3563,16 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 				break
 			}
 		}
+	}
+	if observer, ok := e.deps.LearningObserver.(auxiliaryUsageObserver); ok {
+		auxUsage, err := observer.ObserveWithUsage(ctx, tr)
+		if len(auxUsage.Buckets) > 0 {
+			r.diag.Log(ctx, port.LevelDebug, "reflection usage dropped", "bucket_count", len(auxUsage.Buckets))
+		}
+		if err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory usage observer failed")
+		}
+		return
 	}
 	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
 		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)

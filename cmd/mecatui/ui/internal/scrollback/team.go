@@ -48,10 +48,11 @@ type Finding struct{ Member, Body string }
 
 // TeamCardSnapshot is the detached payload of a specialized Team tool card.
 type TeamCardSnapshot struct {
-	Call     ToolCall
-	Resolved bool
-	Result   ToolResult
-	Update   TeamUpdate
+	Call      ToolCall
+	Resolved  bool
+	Result    ToolResult
+	available bool // provisional result awaiting canonical confirmation
+	Update    TeamUpdate
 }
 
 // Kind returns KindTeam.

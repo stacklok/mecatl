@@ -148,23 +148,23 @@ type fakeJudge struct {
 	mu        sync.Mutex
 }
 
-func (j *fakeJudge) Judge(_ context.Context, candidates []agent.BranchSummary, criteria string) (int, string, error) {
+func (j *fakeJudge) Judge(_ context.Context, candidates []agent.BranchSummary, criteria string) (int, string, session.AuxiliaryUsage, error) {
 	j.mu.Lock()
 	j.gotCalled = true
 	j.gotCrit = criteria
 	j.mu.Unlock()
 	if j.errOut != nil {
-		return 0, "", j.errOut
+		return 0, "", session.AuxiliaryUsage{}, j.errOut
 	}
 	if j.outOfBand {
-		return len(candidates) + 5, "", nil
+		return len(candidates) + 5, "", session.AuxiliaryUsage{}, nil
 	}
 	for i, c := range candidates {
 		if strings.Contains(c.Label, j.pick) || strings.Contains(c.Summary, j.pick) {
-			return i, j.rationale, nil
+			return i, j.rationale, session.AuxiliaryUsage{}, nil
 		}
 	}
-	return -1, "", nil // out of range -> ParallelTool falls back to first success
+	return -1, "", session.AuxiliaryUsage{}, nil // out of range -> ParallelTool falls back to first success
 }
 
 func (j *fakeJudge) called() bool {

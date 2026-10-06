@@ -542,14 +542,7 @@ func renderLifetime(t *testing.T, objects map[string]map[string]any, extra ...st
 		}
 	}))
 	defer server.Close()
-	// Repo-local scratch: synthetic kubeconfig has no credentials.
-	if err := os.MkdirAll("../../../.scratch", 0o700); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := os.MkdirTemp("../../../.scratch", "chart-lifetime-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := t.TempDir()
 	config := filepath.Join(dir, "kubeconfig")
 	body := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: offline\n  cluster:\n    server: %s\ncontexts:\n- name: offline\n  context:\n    cluster: offline\n    namespace: ns\ncurrent-context: offline\n", server.URL)
 	if err := os.WriteFile(config, []byte(body), 0o600); err != nil {

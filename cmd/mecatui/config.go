@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -198,6 +199,9 @@ type config struct {
 	// in main.go. llmPerAttemptTimeout bounds ESTABLISHMENT (connect + first chunk)
 	// only — it never cuts an actively-streaming turn; llmStreamIdleTimeout bounds
 	// the idle gap between chunks after the first.
+	llmMaxAttempts       int
+	llmMaxAttemptsSet    bool
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	// contextWindowOverride mirrors mecated's embedded-server-only escape hatch.
@@ -409,7 +413,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)
-	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, ExpandTools, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
+	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, Toolcalls, ExpandConversation, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
 
 	fs.StringVar(&cfg.model, "model", "", "use MODEL for sessions on the embedded server (default: provider default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "use PROVIDER when a session does not select one; unavailable providers prevent startup")
@@ -439,11 +443,13 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "queue mid-turn input as a follow-up instead of steering the active run")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "maximum time to connect and receive the first model response chunk; 0 disables the timeout")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens; 0 uses the detected or configured value")
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider prompt caching")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h; other values are ignored with a warning")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h (default: 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway); other values are ignored with a warning")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "enable project instructions, persona, skills, commands, and allow rules; use only with projects you trust")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
 		"use yolo posture: allow tools by default and disable delegated-agent command-injection safeguards; explicit deny and ask rules still apply")
@@ -597,9 +603,17 @@ func resolveRemoteTLSPolicy(cfg *config) error {
 	return nil
 }
 
+// applySavedServerCA restores the saved server trust root unless this connect
+// invocation explicitly supplies its own server CA.
+func applySavedServerCA(cfg config, conn clientauth.Connection, dial *client.DialConfig) {
+	if cfg.tlsCA == "" {
+		dial.TLSCAFile = conn.ServerCAFile
+	}
+}
+
 // applySavedRemoteTLSPolicy gives managed OIDC credentials their stronger
-// transport guarantee. TLSCAFile deliberately remains untouched: an issuer CA
-// is not gRPC server trust.
+// transport guarantee. TLSCAFile deliberately remains untouched after server
+// CA selection: an issuer CA is not gRPC server trust.
 func applySavedRemoteTLSPolicy(cfg config, dial *client.DialConfig) error {
 	if (cfg.tlsExplicit && !cfg.useTLS) || cfg.insecure {
 		return errors.New("saved remote authentication requires verified TLS; remove --tls=false and --insecure")
@@ -694,6 +708,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.reasoningEffortFlagSet = true
 	case "default-provider":
 		cfg.defaultProviderFlagSet = true
+	case "llm-max-attempts":
+		cfg.llmMaxAttemptsSet = true
 	case "terminal-title":
 		cfg.terminalTitleFlagSet = true
 	case "workspace":
@@ -922,6 +938,9 @@ func (c config) validate() error {
 	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
 	// 1); the predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
+		if err := validateEmbeddedRecovery(c); err != nil {
+			return err
+		}
 		if err := validateEmbeddedProvider(c); err != nil {
 			return err
 		}
@@ -933,6 +952,16 @@ func (c config) validate() error {
 		if err := app.PostureRefusalReason(embeddedAuthoritativePosture(c), embeddedPrivileged()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateEmbeddedRecovery(c config) error {
+	if c.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if c.llmMaxAttemptsSet && c.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
 	}
 	return nil
 }

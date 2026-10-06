@@ -15,11 +15,10 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	// The old frame remains authoritative until refreshView captures its visible
 	// anchor, even though rendering the replacement reuses scratch backing.
 	m := newCoalesceModel(t)
-	m.conv.addUser("first")
+	priorID := uint64(m.conv.addUser("first"))
 	m.conv.addUser("second")
 	m.conv.addUser("third")
 	m.refreshView()
-	priorID := uint64(m.conv.testBlocks()[0].ID)
 	priorRow := m.conversationView.frame.firstRegionRow(priorID, conversationRegionBody)
 	if priorRow < 0 {
 		t.Fatal("first block has no body row")
@@ -31,6 +30,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	// Reserving the appendix identity ensures no card reuses the old block ID.
 	m.conv = conversation{}
 	m.conv.recordFileChange("new-document.go")
+	m.conv.addUser("new document preface") // keep the prior user ID absent after reconstruction
 	m.conv.addUser("replacement")
 	m.rend.resetBlockCaches()
 	m.refreshView()
@@ -99,7 +99,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	// one-line result.
 	c := &conversation{}
 	c.addTool("call-1", "Read", `{"argument_one":"one","argument_two":"two","argument_three":"three","argument_four":"four"}`)
-	c.resolveTool("call-1", "RESULT_MARKER", false)
+	c.resolveAvailableTool("call-1", "RESULT_MARKER", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
 	toolFrame := r.renderConversationFrame(&c.scrollback, true)
@@ -164,7 +164,7 @@ func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
 	// section has a different wrapped height.
 	c := &conversation{}
 	c.addTool("call-1", "Read", `{"argument_one":"one","argument_two":"two","argument_three":"three","argument_four":"four"}`)
-	c.resolveTool("call-1", "RESULT_MARKER", false)
+	c.resolveAvailableTool("call-1", "RESULT_MARKER", false)
 	r := newCacheRenderer()
 	r.setWidth(80)
 	frame := r.renderConversationFrame(&c.scrollback, false)

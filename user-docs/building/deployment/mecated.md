@@ -146,7 +146,7 @@ expire when the server restarts. Mecatl stores the exact placement privately and
 reattaches it before each run. See
 [Execution environments](/features/execution-environments.md) for the shared
 placement and reattachment model. For the underlying design, see
-[ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
+[ADR 0291](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers
 
@@ -261,14 +261,19 @@ See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat
 
 |Flag|Default|Notes|
 |-|-|-|
-|`--llm-per-attempt-timeout`|`300s`|Bounds **establishing** the stream only (connect + first chunk). Does not cut an actively-streaming turn|
-|`--llm-stream-idle-timeout`|`180s`|Max idle gap between chunks after the first arrives. A stall exceeding this is terminal and not retried|
-|`--llm-max-attempts`|`3`|Max stream-establish attempts (initial call + retries)|
-|`--llm-breaker-threshold`|`5`|Consecutive LLM failures that open the circuit breaker; `0` disables|
-|`--llm-breaker-cooldown`|`30s`|How long the breaker stays open before half-opening|
+|`--llm-recovery-budget`|`30m`|Maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting|
+|`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call|
+|`--llm-per-attempt-timeout`|`300s`|Bounds connection and the first raw chunk. It does not interrupt an active stream|
+|`--llm-stream-idle-timeout`|`180s`|Maximum gap between raw chunks after activity starts. A precommit stall can recover; a visible stream failure is terminal|
+|`--llm-breaker-threshold`|`5`|Consecutive transient establishment failures that open the circuit breaker; `0` disables it|
+|`--llm-breaker-cooldown`|`30s`|How long the breaker remains open before one half-open probe|
 
-The per-attempt timeout stops after the first chunk. The stream-idle timeout
-then bounds gaps between chunks without limiting an active turn.
+The server applies this policy to each model step. It retries only before
+semantic output becomes visible, so it does not replay completed tool calls or
+visible assistant text. These command-line flags are the only recovery-policy
+configuration; `settings.yaml` has no equivalent key. Review the
+[per-step limits and provider-cost implications](/features/choose-models.md#a-provider-error-ended-a-model-step)
+before raising either default.
 
 ### Provider and model
 
@@ -278,8 +283,8 @@ then bounds gaps between chunks without limiting an active turn.
 |`--default-provider`|`""`|Deployment-wide default provider (`openai`, `openrouter`, `anthropic`, `opencode`); validated fail-fast|
 |`--default-model`|`""`|Deployment-wide default model id for the default provider; validated fail-fast|
 |`--subagent-model`|`""`|Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own|
-|`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)|
-|`--anthropic-cache-ttl`|`""` (API default, `5m`)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
+|`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0100-provider-prompt-caching.md)|
+|`--anthropic-cache-ttl`|`""` (`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`, API default `5m` elsewhere)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
 |`--mock`|`false`|Offline canned provider with one text turn; smoke tests only|
 |`--mock-script`|`""`|Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns|
 

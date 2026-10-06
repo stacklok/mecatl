@@ -62,8 +62,8 @@ func TestResolveTransportDeliversContendedDiagnostics(t *testing.T) {
 			if !strings.HasPrefix(stderr.String(), wantNotice) || strings.Count(stderr.String(), wantNotice) != 1 {
 				t.Errorf("contention notice missing, late, or duplicated: %q", &stderr)
 			}
-			if got := strings.Contains(stderr.String(), "hosting an embedded mecated"); got != (scenario == "success") {
-				t.Errorf("startup outcome on stderr: %q", &stderr)
+			if strings.Contains(stderr.String(), "hosting an embedded mecated") {
+				t.Errorf("private socket address leaked to stderr: %q", &stderr)
 			}
 			if scenario != "fallback-failure" {
 				contents, err := os.ReadFile(fallback)

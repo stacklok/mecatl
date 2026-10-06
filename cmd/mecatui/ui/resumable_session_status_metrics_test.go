@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -18,20 +20,81 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeRestoresStatus(t *
 		},
 	}
 	m := New(Deps{Resume: resume, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true})
-
+	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 	if m.usage != resume.Snapshot.Usage || m.contextTokens != 40_000 || !m.contextEstimated {
 		t.Fatalf("startup resume did not adopt snapshot status: usage=%+v context=%d estimated=%t", m.usage, m.contextTokens, m.contextEstimated)
 	}
-	footer := stripANSIstr(m.fitFooter("connected", 160))
-	for _, want := range []string{"~40K/200K", "20%", "↑120K", "↓4K", "cache 75%"} {
+	input := m.statusLineSnapshot()
+	if input.Context.Window.Raw != 200_000 || input.Context.Used.Raw != 40_000 || !input.Context.Known || !input.Context.Estimated || input.Context.Percent != 20 ||
+		input.Usage.Input.Raw != 120_000 || input.Usage.Output.Raw != 4_000 || input.Usage.CacheRead.Raw != 90_000 || input.Usage.CacheReadPercent != 75 {
+		t.Fatalf("startup status snapshot = %#v, want restored occupancy and cumulative usage", input)
+	}
+	m = stockStatusFrame(t, m)
+	if !m.generatedStatusLine.Footer.Present {
+		t.Fatal("stock source did not publish a footer")
+	}
+	footer := stripANSIstr(m.renderFooter())
+	for _, want := range []string{"~40K/200K", "~20%", "↑120K", "↓4K", "cache 75%"} {
 		if !strings.Contains(footer, want) {
-			t.Fatalf("footer = %q, want %q before a prompt", footer, want)
+			t.Fatalf("stock footer = %q, want %q before a prompt", footer, want)
 		}
 	}
 
 	m = applyAll(m, client.TurnEndMsg{Usage: client.Usage{InputTokens: 50_000}, Estimated: true})
-	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "~50K/200K") {
-		t.Fatalf("live estimated footer = %q, want estimated marker", footer)
+	if context := m.statusLineSnapshot().Context; context.Used.Raw != 50_000 || !context.Estimated || context.Percent != 25 {
+		t.Fatalf("live context = %#v, want estimated 50K/200K", context)
+	}
+	m = stockStatusFrame(t, m)
+	if !m.generatedStatusLine.Footer.Present {
+		t.Fatal("stock source did not publish a footer")
+	}
+	footer = stripANSIstr(m.renderFooter())
+	if !strings.Contains(footer, "~50K/200K") || !strings.Contains(footer, "~25%") {
+		t.Fatalf("live estimated stock footer = %q, want estimated context", footer)
+	}
+}
+
+func TestResumableSessionStatusMetrics_Scenario3_UnknownAndProvisionalStatus(t *testing.T) {
+	resume := &client.ResumeSelection{
+		Row: client.SessionListItem{ID: "legacy-main"},
+		Snapshot: client.SessionSnapshot{
+			ResolvedModel: client.ResolvedModel{ContextWindow: 0},
+			Usage:         client.Usage{InputTokens: 120_000},
+		},
+	}
+	m := New(Deps{Resume: resume, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
+	if !m.contextUnknown {
+		t.Fatal("legacy snapshot without occupancy must remain unknown")
+	}
+	input := m.statusLineSnapshot()
+	if input.Context.Known || input.Context.Estimated || input.Context.Used.Human != "?" || input.Context.Window.Raw != 0 || input.Usage.Input.Raw != 120_000 {
+		t.Fatalf("legacy status snapshot = %#v, want unknown occupancy and retained cumulative usage", input)
+	}
+	m = stockStatusFrame(t, m)
+	if !m.generatedStatusLine.Footer.Present {
+		t.Fatal("stock source did not publish a footer")
+	}
+	footer := stripANSIstr(m.renderFooter())
+	if !strings.Contains(footer, "ctx ?") || strings.Contains(footer, "120K/") {
+		t.Fatalf("provisional stock footer = %q, want unknown context, never cumulative input as numerator", footer)
+	}
+
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: "legacy-main", Resolved: client.ResolvedModel{ContextWindow: 200_000}})
+	if m.resolvedSessionModel.ContextWindow != 200_000 || m.usage.InputTokens != 120_000 || !m.contextUnknown {
+		t.Fatalf("refresh changed metrics: window=%d usage=%+v contextUnknown=%t", m.resolvedSessionModel.ContextWindow, m.usage, m.contextUnknown)
+	}
+	input = m.statusLineSnapshot()
+	if input.Context.Known || input.Context.Estimated || input.Context.Used.Human != "?" || input.Context.Window.Raw != 200_000 || input.Usage.Input.Raw != 120_000 {
+		t.Fatalf("healed status snapshot = %#v, want unknown numerator with healed denominator", input)
+	}
+	m = stockStatusFrame(t, m)
+	if !m.generatedStatusLine.Footer.Present {
+		t.Fatal("stock source did not publish a footer")
+	}
+	footer = stripANSIstr(m.renderFooter())
+	if !strings.Contains(footer, "ctx ?/200K") || strings.Contains(footer, "120K/200K") || strings.Contains(footer, "ctx 0%") {
+		t.Fatalf("healed stock footer = %q, want unknown numerator and healed denominator", footer)
 	}
 }
 
@@ -92,7 +155,7 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupRefreshSubmitsPersistedO
 	m = updated.(Model)
 	input, ok := source.lastInput()
 	if m.contextTokens != 40_000 || !m.contextEstimated || !ok || source.inputCount() != 2 || input.Context.Used.Raw != 40_000 || !input.Context.Known || !input.Context.Estimated || input.Context.Window.Raw != 200_000 {
-		t.Fatalf("refreshed startup status = %#v (count=%d), want persisted occupancy", input, source.inputCount())
+		t.Fatalf("refreshed startup status = %#v (count=%d), want persisted occupancy after the healed denominator was submitted once", input, source.inputCount())
 	}
 }
 
@@ -185,33 +248,5 @@ func TestResumableSessionStatusMetrics_Scenario3_InspectionIsNonDestructive(t *t
 				t.Fatalf("inspection did not retain snapshot occupancy: %+v", state.snapshot.ContextOccupancy)
 			}
 		})
-	}
-}
-
-func TestResumableSessionStatusMetrics_Scenario3_UnknownAndProvisionalStatus(t *testing.T) {
-	resume := &client.ResumeSelection{
-		Row: client.SessionListItem{ID: "legacy-main"},
-		Snapshot: client.SessionSnapshot{
-			ResolvedModel: client.ResolvedModel{ContextWindow: 0},
-			Usage:         client.Usage{InputTokens: 120_000},
-		},
-	}
-	m := New(Deps{Resume: resume, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true})
-	if !m.contextUnknown {
-		t.Fatal("legacy snapshot without occupancy must remain unknown")
-	}
-	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "ctx ?") || strings.Contains(footer, "120K/") {
-		t.Fatalf("legacy footer = %q, want an unknown context numerator, never cumulative input", footer)
-	}
-
-	m = applyAll(m, client.ResolvedModelMsg{SessionID: "legacy-main", Resolved: client.ResolvedModel{ContextWindow: 200_000}})
-	if m.resolvedSessionModel.ContextWindow != 200_000 {
-		t.Fatalf("resolved-model refresh did not heal provisional window: %d", m.resolvedSessionModel.ContextWindow)
-	}
-	if m.usage.InputTokens != 120_000 || !m.contextUnknown {
-		t.Fatalf("resolved-model refresh applied stale metrics: usage=%+v contextUnknown=%t", m.usage, m.contextUnknown)
-	}
-	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "?/200K") || strings.Contains(footer, "120K/200K") {
-		t.Fatalf("healed legacy footer = %q, want unknown numerator with healed denominator", footer)
 	}
 }

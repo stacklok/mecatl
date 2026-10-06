@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -10,9 +11,9 @@ import (
 
 // projector.go is the ACP analogue of internal/adapter/server/mapper.go: it
 // translates a domain session.Event into the ACP session/update payload(s) the
-// editor renders. It is PURE (no I/O, no shared state) so it is exhaustively
-// table-testable, and it is the single place that decides which events map, which
-// fold, and which drop this phase.
+// editor renders. projectUpdate is pure for history replay and table tests; a
+// prompt relay uses runProjector to correlate transient availability with its
+// canonical result.
 //
 // PROJECTION TABLE (Phase 2):
 //
@@ -22,8 +23,9 @@ import (
 //	                    loop never emits as a reasoning.delta anyway)
 //	EvToolCall       -> tool_call{ toolCallId, title, kind, rawInput, status: pending,
 //	                    content: [diff] for Edit/Write (synthesized from the args) }
-//	EvToolResult     -> tool_call_update{ toolCallId, status: completed|failed,
-//	                    content: [text] }
+//	EvToolResultAvailable / EvToolResult -> tool_call_update{ toolCallId,
+//	                    status: completed|failed, content: [text] }; runProjector
+//	                    suppresses identical canonical confirmation.
 //	EvHook           -> for a blocked PreToolUse hook carrying the originating
 //	                    tool-call id, a tool_call_update marking that exact call
 //	                    FAILED with the reason (the card was opened before the gate);
@@ -48,6 +50,49 @@ import (
 //	                                   carries no call id, and the tool's own
 //	                                   tool_call already shows it as pending/running;
 //	                                   a benign drop, never an error).
+
+// runProjector owns the short-lived state for one session/prompt relay. Availability
+// is live-only, so it is deliberately neither shared across runs nor used by replay.
+type runProjector struct {
+	available map[session.ToolCallID]session.ToolResult
+}
+
+func newRunProjector() *runProjector {
+	return &runProjector{available: make(map[session.ToolCallID]session.ToolResult)}
+}
+
+// project maps ordinary events directly and correlates a transient availability
+// result with its authoritative canonical confirmation. A canonical-only stream
+// remains a normal projection, which covers reconnect and older servers.
+func (p *runProjector) project(ev session.Event) (any, bool) {
+	switch ev.Type {
+	case session.EvToolResultAvailable:
+		if ev.ToolResult == nil {
+			return nil, false
+		}
+		update, ok := projectUpdate(ev)
+		if ok {
+			p.available[ev.ToolResult.CallID] = *ev.ToolResult
+		}
+		return update, ok
+
+	case session.EvToolResult:
+		if ev.ToolResult == nil {
+			return nil, false
+		}
+		available, seen := p.available[ev.ToolResult.CallID]
+		if seen {
+			delete(p.available, ev.ToolResult.CallID)
+			if reflect.DeepEqual(available, *ev.ToolResult) {
+				return nil, false
+			}
+		}
+		return projectUpdate(ev)
+
+	default:
+		return projectUpdate(ev)
+	}
+}
 
 // projectUpdate maps a domain Event to the session/update variant value to send,
 // or (nil,false) when the event has no session/update projection this phase
@@ -100,7 +145,7 @@ func projectUpdate(ev session.Event) (any, bool) {
 		text := "MCP authorization" + authorizationDisplayTarget(ev.Authorization) + " status: " + string(ev.Authorization.Status)
 		return chunkUpdate{SessionUpdate: updateAgentThoughtChunk, Content: textBlock(text)}, true
 
-	case session.EvToolResult:
+	case session.EvToolResultAvailable, session.EvToolResult:
 		if ev.ToolResult == nil {
 			return nil, false
 		}

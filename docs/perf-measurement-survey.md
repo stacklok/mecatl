@@ -11,7 +11,7 @@
 > **Status: the §14 recommendations have since SHIPPED** (perf-observability
 > Phases 1+2 — pprof on the loopback admin mux, FlightRecorder, process RSS, the
 > runtime-metrics snapshot, OTel metrics, goleak, the perf MCP server; see the
-> [perf & observability decision doc](adr/0018-perf-observability.md)). The "gap"
+> [observability architecture](architecture/observability.md)). The "gap"
 > claims below (§2, §5, §6 —
 > e.g. "the Go collector is not registered", "mecatl does NOT have OTel metrics",
 > "`EventSink.Emit` carries no ctx") describe the pre-implementation tree and are

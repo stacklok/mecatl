@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 func TestADR_0359_HarnessContext_Scenario4_RestartRebindsCurrentPolicy(t *testing.T) {

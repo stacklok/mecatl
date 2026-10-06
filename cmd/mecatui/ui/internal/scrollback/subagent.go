@@ -52,11 +52,12 @@ type SubagentUpdate struct {
 // SubagentCardSnapshot is the detached payload of a specialized Subagent tool
 // card, including its call lifecycle and child state.
 type SubagentCardSnapshot struct {
-	Call     ToolCall
-	Resolved bool
-	Result   ToolResult
-	Start    SubagentStart
-	Update   SubagentUpdate
+	Call      ToolCall
+	Resolved  bool
+	Result    ToolResult
+	available bool // provisional result awaiting canonical confirmation
+	Start     SubagentStart
+	Update    SubagentUpdate
 }
 
 // Kind returns KindSubagent.

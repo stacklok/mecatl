@@ -23,8 +23,11 @@ unavailable when the selected store does not implement that interface.
 |Adapter|Best fit|
 |-|-|
 |`engine/adapter/memschedulestore`|Tests and offline development|
-|`internal/adapter/store/jsonlstore`|One server with local durable storage|
-|`internal/adapter/redisstore`|Multiple replicas sharing Redis|
+|`adapters/jsonlstore`|One server with local durable storage|
+|`adapters/redisstore`|Multiple replicas sharing Redis|
+
+For external Go construction and lifecycle ownership, see
+[the supplied store adapters](/building/extension-points/session-store.md#use-a-supplied-backend).
 
 `mecated` can also select a remote store with `--schedule-store-url`. With OIDC
 ownership enabled, the store must support atomic create-only publication.

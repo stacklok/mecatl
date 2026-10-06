@@ -10,11 +10,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 type countingEventLog struct {
@@ -69,6 +69,31 @@ func TestRunEventRecorderPersistsNetworkAttemptPayload(t *testing.T) {
 
 	if len(log.recorded) != 1 || log.recorded[0].Type != session.EvNetworkAttempt || log.recorded[0].NetworkAttempt == nil || log.recorded[0].NetworkAttempt.SessionID != "s1" {
 		t.Fatalf("recorded network attempt = %+v", log.recorded)
+	}
+}
+
+func TestRunEventRecorderOmitsToolResultAvailable(t *testing.T) {
+	log := &countingEventLog{}
+	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")
+
+	recorder.Observe(session.Event{Type: session.EvMessageDelta, Turn: 1, Text: "pending"})
+	available := session.NewToolResult("call-1", "safe")
+	canonical := session.NewToolResult("call-1", "safe")
+	recorder.Observe(session.Event{Type: session.EvToolResultAvailable, Turn: 1, ToolResult: &available})
+	if got := len(log.recorded); got != 0 {
+		t.Fatalf("availability flushed or appended %d durable events, want none", got)
+	}
+	recorder.Observe(session.Event{Type: session.EvToolResult, Turn: 1, ToolResult: &canonical})
+	recorder.Close()
+
+	if got, want := len(log.recorded), 2; got != want {
+		t.Fatalf("durable events = %+v, want only pending delta and canonical result", log.recorded)
+	}
+	if got := log.recorded[0]; got.Type != session.EvMessageDelta || got.Text != "pending" {
+		t.Fatalf("durable event[0] = %+v, want pending delta", got)
+	}
+	if got := log.recorded[1]; got.Type != session.EvToolResult {
+		t.Fatalf("durable event[1] = %+v, want canonical tool result", got)
 	}
 }
 

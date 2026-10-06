@@ -36,7 +36,7 @@ func TestDiagnosticsPostureFactoryPaths(t *testing.T) {
 	defer func() { _ = main.Close() }()
 	drivePrompt(t, main.Engine, "main")
 
-	child := newChildEngineForProvider(cfg, "subagent", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	child := newChildEngineForProvider(cfg, "subagent", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	drivePrompt(t, child, "child")
 	checkerDeps, ok := askAdjudicatorDeps(cfg, reg, provider, providerOpenAI, cfg.Model)
 	if !ok {

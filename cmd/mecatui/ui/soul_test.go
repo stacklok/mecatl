@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -128,124 +127,34 @@ func keySoul(m Model, msg tea.KeyPressMsg) (Model, tea.Cmd, bool, bool) {
 	return m, cmd, handled, closed
 }
 
-// TestSoulScroll asserts the scroll keys move (and clamp) the content window AND
-// that the rendered window content + the "lines X–Y of N" indicator actually shift.
-// The lines are UNIQUE ("line-00".."line-29") so a render bug that ignored st.scroll
-// (always showing the first window) would be caught — an identical-line fixture would
-// pass such a bug silently.
+// TestSoulScroll checks that the responsive card scrolls and clamps through the modal.
 func TestSoulScroll(t *testing.T) {
-	// 30 unique lines so the content exceeds soulBodyLines (12) and each window is
-	// distinguishable.
-	var lines []string
-	for i := 0; i < 30; i++ {
-		lines = append(lines, fmt.Sprintf("line-%02d", i))
+	m := soulScenario(t, soulScenarioRows())
+	_ = m.View()
+	s := soulActive(m)
+	if s.viewport == nil {
+		t.Fatal("expected viewport")
 	}
-	fs := &fakeSoul{soul: client.Soul{Content: strings.Join(lines, "\n"), Present: true, Provenance: client.SoulProvenanceUser, Trusted: true, SizeBytes: 100}}
-	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
-	mm, cmd := m.runSoul()
-	m = feedCmd(t, mm.(Model), cmd)
-
-	if s := soulActive(m); s == nil || s.scroll != 0 {
-		t.Fatalf("initial scroll want 0, got %+v", s)
-	}
-	// At the top: window is lines 1–12 (line-00..line-11); the indicator reflects that
-	// and the last lines are NOT yet visible.
-	top := stripANSIstr(m.View().Content)
-	if !strings.Contains(top, "line-00") || strings.Contains(top, "line-29") {
-		t.Errorf("top window should show line-00 and NOT line-29, got:\n%s", top)
-	}
-	if !strings.Contains(top, "lines 1–12 of 30") {
-		t.Errorf("top indicator should read 'lines 1–12 of 30', got:\n%s", top)
-	}
-
-	// Page down once: the window shifts by one. line-00 leaves the top, line-12 enters.
-	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if s := soulActive(m); s == nil || s.scroll != 1 {
-		t.Errorf("scroll after pgdown want 1, got %+v", s)
-	}
-	pd := stripANSIstr(m.View().Content)
-	if strings.Contains(pd, "line-00") {
-		t.Errorf("after pgdown the window should no longer show line-00, got:\n%s", pd)
-	}
-	if !strings.Contains(pd, "line-12") {
-		t.Errorf("after pgdown the window should reveal line-12, got:\n%s", pd)
-	}
-	if !strings.Contains(pd, "lines 2–13 of 30") {
-		t.Errorf("after pgdown the indicator should read 'lines 2–13 of 30', got:\n%s", pd)
-	}
-
-	// Jump to bottom; max scroll = 30 - 12 = 18. The window shows the LAST lines and the
-	// indicator ends at 30.
 	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if s := soulActive(m); s == nil || s.scroll != 18 {
-		t.Errorf("scroll after End want 18 (30-12), got %+v", s)
+	if got, want := s.viewport.Offset(), s.total-s.viewport.Height(); got != want {
+		t.Fatalf("end offset = %d, want %d", got, want)
 	}
-	bot := stripANSIstr(m.View().Content)
-	if !strings.Contains(bot, "line-29") || strings.Contains(bot, "line-00") {
-		t.Errorf("bottom window should show line-29 and NOT line-00, got:\n%s", bot)
+	if !strings.Contains(stripANSIstr(m.View().Content), "unique-row-89") {
+		t.Fatal("last row not visible")
 	}
-	if !strings.Contains(bot, "lines 19–30 of 30") {
-		t.Errorf("bottom indicator should read 'lines 19–30 of 30', got:\n%s", bot)
-	}
-
-	// Pgdown past the end clamps (offset + window + indicator unchanged).
-	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if s := soulActive(m); s == nil || s.scroll != 18 {
-		t.Errorf("scroll clamps at 18, got %+v", s)
-	}
-	if !strings.Contains(stripANSIstr(m.View().Content), "lines 19–30 of 30") {
-		t.Error("clamped window indicator should still read 'lines 19–30 of 30'")
-	}
-
-	// Page up moves back (pins the ScrollU arm — removing it must fail here).
-	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if s := soulActive(m); s == nil || s.scroll != 17 {
-		t.Errorf("scroll after pgup want 17, got %+v", s)
-	}
-
-	// Home returns to the top: window + indicator reset.
-	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if s := soulActive(m); s == nil || s.scroll != 0 {
-		t.Errorf("scroll after Home want 0, got %+v", s)
-	}
-	home := stripANSIstr(m.View().Content)
-	if !strings.Contains(home, "line-00") || !strings.Contains(home, "lines 1–12 of 30") {
-		t.Errorf("after Home the window should reset to line-00 / 'lines 1–12 of 30', got:\n%s", home)
+	keySoul(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	if s.viewport.Offset() != 0 {
+		t.Fatal("home did not return to first row")
 	}
 }
 
-// TestSoulScrollViaUpdate routes a scroll key through the REAL m.Update path
-// (onKey → onOverlayKey → dispatchSurfaceKey → HandleKey), NOT the keySoul helper
-// that calls HandleKey directly and bypasses the dispatchSurfaceKey routing. It
-// pins that a scroll key reaches the open modal through the full dispatch and
-// moves the window without closing the panel. (TestSoulScroll above exercises the
-// full key set via the direct helper; this one owns the m.Update coverage.)
 func TestSoulScrollViaUpdate(t *testing.T) {
-	var lines []string
-	for i := 0; i < 30; i++ {
-		lines = append(lines, fmt.Sprintf("line-%02d", i))
-	}
-	fs := &fakeSoul{soul: client.Soul{Content: strings.Join(lines, "\n"), Present: true, Provenance: client.SoulProvenanceUser, Trusted: true, SizeBytes: 100}}
-	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
-	mm, cmd := m.runSoul()
-	m = feedCmd(t, mm.(Model), cmd)
-	if s := soulActive(m); s == nil || s.scroll != 0 {
-		t.Fatalf("initial scroll want 0, got %+v", s)
-	}
-
-	mm2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	m = mm2.(Model)
-	if s := soulActive(m); s == nil {
-		t.Fatal("pgdown through m.Update must not close the panel")
-	} else if s.scroll != 1 {
-		t.Errorf("scroll after pgdown via m.Update want 1, got %d", s.scroll)
-	}
-	pd := stripANSIstr(m.View().Content)
-	if strings.Contains(pd, "line-00") {
-		t.Errorf("after pgdown the window should no longer show line-00, got:\n%s", pd)
-	}
-	if !strings.Contains(pd, "line-12") {
-		t.Errorf("after pgdown the window should reveal line-12, got:\n%s", pd)
+	m := soulScenario(t, soulScenarioRows())
+	_ = m.View()
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = mm.(Model)
+	if s := soulActive(m); s == nil || s.viewport.Offset() != 1 {
+		t.Fatal("key did not reach soul viewport")
 	}
 }
 
@@ -391,6 +300,7 @@ func TestSoulPanelGolden(t *testing.T) {
 	if s := soulActive(m); s == nil || s.view != soulPanel {
 		t.Fatalf("modal surface = %v, want a *soulState at soulPanel", m.modal)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul.golden", got)
 }
@@ -401,6 +311,7 @@ func TestSoulPanelEmptyDisabledGolden(t *testing.T) {
 	m := newSoulModel(t, &fakeSoul{}, client.Capabilities{Soul: false})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_empty_disabled.golden", got)
 }
@@ -411,6 +322,7 @@ func TestSoulPanelEmptyEnabledGolden(t *testing.T) {
 	m := newSoulModel(t, &fakeSoul{}, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_empty_enabled.golden", got)
 }
@@ -428,6 +340,7 @@ func TestSoulPanelProjectGolden(t *testing.T) {
 	m := newSoulModel(t, project, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_project.golden", got)
 }

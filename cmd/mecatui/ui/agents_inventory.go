@@ -386,10 +386,10 @@ func agentMetaLine(a client.Agent) string {
 // hint when it maps to a supported ANSI colour), the indented word-wrapped
 // description lines, then the dim metadata lines (model · perm · tools). EVERY
 // server-derived string is terminal-sanitized BEFORE styling, so the rows are
-// safe inputs for windowRenderedLines (which must not re-sanitize — that would
-// strip the styling). The multi-line renders are split per line (lipgloss emits
-// complete per-line SGR sequences) so the scroll window can slice anywhere
-// without severing an escape.
+// safe inputs for the bounded viewport (which must not re-sanitize — that
+// would strip the styling). Multi-line renders are split into complete styled
+// lines (lipgloss emits per-line SGR sequences), so the scroll window can slice
+// anywhere without severing an escape.
 func agentsInvRowLines(th theme.Theme, agents []client.Agent, budget int) []string {
 	var lines []string
 	for _, a := range agents {

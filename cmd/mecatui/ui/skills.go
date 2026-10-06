@@ -790,10 +790,10 @@ func skillsEmptyCopy(caps client.Capabilities) string {
 // skillsRowLines builds the rendered (ANSI-carrying) inventory body rows: per
 // skill, a name line plus the indented, word-wrapped description lines. EVERY
 // server-derived string is terminal-sanitized BEFORE styling, so the rows are
-// safe inputs for windowRenderedLines (which must not re-sanitize — that would
-// strip the styling). The multi-line description render is split per line
-// (lipgloss emits complete per-line SGR sequences) so the scroll window can
-// slice anywhere without severing an escape.
+// safe inputs for the bounded viewport (which must not re-sanitize — that
+// would strip the styling). The multi-line description is split into complete
+// styled lines (lipgloss emits per-line SGR sequences), so the scroll window
+// can slice anywhere without severing an escape.
 func skillsRowLines(th theme.Theme, skills []client.Skill, budget int) []string {
 	var lines []string
 	for _, s := range skills {

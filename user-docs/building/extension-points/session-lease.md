@@ -99,7 +99,10 @@ still holds.
 |In-memory|`engine/adapter/memlease`|Tests and explicit single-process lifecycle testing|
 |File lock|`internal/adapter/flocklease`|Several processes on one host|
 |Kubernetes Lease|`internal/adapter/k8slease`|Multi-replica Kubernetes deployments|
-|gRPC driver|`internal/adapter/grpcdriver`|Remote or multi-host lease service|
+|gRPC driver|`adapters/grpcdriver`|Remote or multi-host lease service|
+
+For connection construction and ownership, see
+[remote driver integration](session-store.md#connect-a-remote-driver).
 
 `memlease` does not coordinate separate processes. It accepts an injected
 `port.Clock`, which lets tests advance time without sleeping.

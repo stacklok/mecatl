@@ -68,10 +68,14 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 	if prep.Owner != nil {
 		owner = fmt.Sprintf("%x", session.PrincipalScopeHash(prep.Owner))
 	}
+	expiresAt := time.Now().Add(reviewTotalDeadline)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(expiresAt) {
+		expiresAt = deadline
+	}
 	binding := reviewEvidenceBinding{
 		ReviewID: req.ReviewID, Owner: owner, SessionID: session.SessionID(req.Event.SessionID),
 		Environment: req.Environment, Caller: req.Caller, CheckerProviderID: r.providerID,
-		CheckerModelID: r.modelID, ExpiresAt: time.Now().Add(reviewTotalDeadline),
+		CheckerModelID: r.modelID, ExpiresAt: expiresAt,
 	}
 	candidates := make([]reviewEvidenceCandidate, 0, 4)
 	complete := true
@@ -137,6 +141,9 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 }
 
 func reviewEvidencePaths(call session.ToolCall) []string {
+	if call.Name == listDirToolName {
+		return nil
+	}
 	return tool.LocalFileOperands(call.Name, call.Args)
 }
 

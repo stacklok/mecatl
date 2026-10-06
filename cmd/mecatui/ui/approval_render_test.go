@@ -161,7 +161,7 @@ func assertApprovalCardIsBounded(t *testing.T, ask pendingAsk, hidden string) {
 	m := approvalModel(t, ask)
 	m.closeModal()
 	m.phase = phaseRunning
-	m.expandTools = true // Ambient transcript detail state must not expand an approval card.
+	m.expandConversation = true // Ambient transcript detail state must not expand an approval card.
 	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:write-1", Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
 
 	rendered := stripANSIstr(m.View().Content)

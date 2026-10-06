@@ -29,17 +29,26 @@ import (
 // TestMain dispatches to the subprocess harnesses when their environment variables
 // are set. Otherwise it runs the normal isolated test suite.
 func TestMain(m *testing.M) {
-	os.Exit(testhome.Run("mecatui", func() int {
-		if id, ok := os.LookupEnv("MECATUI_TEST_EXIT_HANDOFF_ID"); ok {
-			runExitHandoffProcessHarness(id)
-			return 0
-		}
-		if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
-			run([]string{})
-			return 0
-		}
-		return m.Run()
-	}))
+	if os.Getenv("MECATUI_TEST_HANDOFF_COMPOSITION") != "" {
+		os.Exit(runMecatuiTest(m))
+	}
+	os.Exit(testhome.Run("mecatui", func() int { return runMecatuiTest(m) }))
+}
+
+func runMecatuiTest(m *testing.M) int {
+	if os.Getenv("MECATUI_TEST_EXIT_HANDOFF_SCENARIO") != "" {
+		runExitHandoffScenarioHarness()
+		return 0
+	}
+	if id, ok := os.LookupEnv("MECATUI_TEST_EXIT_HANDOFF_ID"); ok {
+		runExitHandoffProcessHarness(id)
+		return 0
+	}
+	if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
+		run([]string{})
+		return 0
+	}
+	return m.Run()
 }
 
 type inertMicroVMReadyManager struct{}

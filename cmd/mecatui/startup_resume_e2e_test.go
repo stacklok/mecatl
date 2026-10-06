@@ -685,7 +685,8 @@ func startPendingRecoveryServer(t *testing.T, cfg app.Config) (string, *app.Buil
 		cleanup()
 		t.Fatalf("listen pending recovery server: %v", err)
 	}
-	grpcServer = grpc.NewServer()
+	// Join Converse relays and their final persistence before removing test stores.
+	grpcServer = grpc.NewServer(grpc.WaitForHandlers(true))
 	mecatlv1.RegisterHarnessServiceServer(grpcServer, server.NewHarnessServer(built.Service))
 	go func() { _ = grpcServer.Serve(lis) }()
 	return lis.Addr().String(), built, cleanup

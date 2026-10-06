@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -30,7 +31,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // codexCompositionTransport is the offline subscription backend for the full
@@ -484,6 +484,11 @@ func TestADR_0104_OpenAICodexSecretSentinels(t *testing.T) {
 		t.Fatalf("read rejected Codex relay: %v", readErr)
 	}
 	addArtifact("service relay", relayBody)
+	for _, want := range []string{"manual access token was rejected", "auth.yaml", "restart"} {
+		if !strings.Contains(string(relayBody), want) {
+			t.Errorf("rejected Codex HTTP/SSE relay missing %q", want)
+		}
+	}
 	built.Close()
 
 	store, err := jsonlstore.New(storeDir)

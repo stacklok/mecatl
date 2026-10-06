@@ -97,7 +97,7 @@ func TestSessionContinuityUX_Scenario7_OutputContract(t *testing.T) {
 				t.Fatalf("stdout changed: %q", stdout.String())
 			}
 			if tc.want {
-				if strings.Count(stderr.String(), finalSessionHandoffPrefix) != 1 || !strings.HasSuffix(stderr.String(), "\n") {
+				if !strings.HasPrefix(stderr.String(), "\n"+finalSessionHandoffPrefix) || strings.Count(stderr.String(), finalSessionHandoffPrefix) != 1 || !strings.HasSuffix(stderr.String(), "\n") {
 					t.Fatalf("stderr grammar = %q", stderr.String())
 				}
 			} else if stderr.Len() != 0 {

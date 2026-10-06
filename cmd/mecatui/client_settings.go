@@ -27,6 +27,11 @@ type clientSettings struct {
 	Keymap              map[string]string    `yaml:"keymap"`
 	StatusCustomization *statusCustomization `yaml:"status_customization"`
 	TerminalTitle       terminalTitleSettings
+	HookNotices         hookNoticeSettings
+}
+
+type hookNoticeSettings struct {
+	ShowBenign bool `yaml:"show_benign"`
 }
 
 type terminalTitleSettings struct {
@@ -57,6 +62,7 @@ type clientSettingsYAML struct {
 	Keymap              map[string]string          `yaml:"keymap"`
 	StatusCustomization *statusCustomizationYAML   `yaml:"status_customization"`
 	TerminalTitle       *terminalTitleSettingsYAML `yaml:"terminal_title"`
+	HookNotices         hookNoticeSettings         `yaml:"hook_notices"`
 }
 
 type statusCustomizationYAML struct {
@@ -171,7 +177,7 @@ func readClientSettings() (clientSettings, error) {
 	if err != nil {
 		return clientSettings{}, fmt.Errorf("parsing %s: terminal_title.template: %w", path, err)
 	}
-	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title}, nil
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title, HookNotices: raw.HookNotices}, nil
 }
 
 func decodeTerminalTitle(raw *terminalTitleSettingsYAML) (terminalTitleSettings, error) {
@@ -322,8 +328,8 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 	return out
 }
 
-// applyKeyOverridesToDeps parses and validates CLI/YAML keymap overrides and applies them to deps.
-// Lives in package main to avoid adding imports to main.go; this file imports keymap.
+// applyKeyOverridesToDeps parses, validates, and applies the merged keymap
+// overrides to deps.
 //
 // TWO layers merge PER ACTION (a higher layer rebinds only the actions it
 // names), lowest to highest precedence:

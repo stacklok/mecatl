@@ -53,6 +53,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"createPlacedSuccessor":                 {SessionMutationLeaseOwned, "holds source run-entry and mutation lease while binding placement and publishing a fresh successor family"},
 	"createPlacedSuccessorLocked":           {SessionMutationLeaseProven, "called only while source run-entry is held and acquires the source mutation lease before cancellation save or successor publication"},
 	"CompactSession":                        {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease across snapshot save and archive appends"},
+	"ReflectSession":                        {SessionMutationReadOnly, "loads one authorized source snapshot for reflection without persisting returned usage"},
 	"RenameSession":                         {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease through title snapshot save"},
 	"DeleteSession":                         {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease through family deletion"},
 	"DeleteSessionForRetentionCandidate":    {SessionMutationLeaseOwned, "holds run-entry and the mandatory maintenance lease through conditional family deletion"},

@@ -36,7 +36,7 @@ func decisionRecords(d *recordingDiag) []diagRecord {
 	defer d.mu.Unlock()
 	var records []diagRecord
 	for _, record := range d.records {
-		if argValue(record.args, "decision") != nil {
+		if argValue(record.args, "decision") != nil && argValue(record.args, "retry_disposition") != nil {
 			records = append(records, record)
 		}
 	}
@@ -222,16 +222,15 @@ func TestAttemptDecisionVisibleAndBreakerOpen(t *testing.T) {
 		})
 		_, _ = wrapped.Stream(context.Background(), port.LLMRequest{Model: "m"})
 		before := len(decisionRecords(diag))
-		_, _ = wrapped.Stream(context.Background(), port.LLMRequest{Model: "m"})
-		records := decisionRecords(diag)
-		if len(records) != before+1 {
-			t.Fatalf("decision records grew by %d, want 1", len(records)-before)
+		_, err := wrapped.Stream(context.Background(), port.LLMRequest{Model: "m"})
+		requirePrecommitRetryable(t, err)
+		if records := decisionRecords(diag); len(records) != before {
+			t.Fatalf("admission-only rejection fabricated an attempt decision: %+v", records)
 		}
-		record := records[len(records)-1]
-		requireDecisionFields(t, record, map[string]any{
-			"model": "m", "attempt": 1, "max_attempts": 1, "elapsed": time.Duration(0),
-			"retry_disposition": "unknown", "stream_progress": "precommit",
-			"decision": "terminal", "replay_suppressed_reason": string(replayBreakerOpen),
+		records := diag.find("llm provider recovery")
+		requireDecisionFields(t, records[len(records)-1], map[string]any{
+			"model": "m", "attempt": 0, "max_attempts": 1,
+			"decision": "terminal", "source": "breaker", "wait": time.Duration(0),
 		})
 	})
 }

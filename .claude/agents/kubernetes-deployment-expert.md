@@ -1,40 +1,11 @@
 ---
 name: kubernetes-deployment-expert
 description: >-
-  Reviews and designs Kubernetes deployment artefacts: raw manifests
-  (Deployment / StatefulSet / DaemonSet / Job / CronJob / Service / Ingress /
-  HPA / PDB / ServiceAccount / Role / RoleBinding / NetworkPolicy), Helm charts
-  (Chart.yaml, values.yaml, templates/, _helpers.tpl, hooks, sub-charts),
-  Kustomize bases/overlays, and GitOps configuration (Argo CD Application /
-  ApplicationSet, Flux Kustomization). Catches Pod Security Standards
-  violations, missing probes, missing resource requests/limits, unbounded
-  image tags, RBAC over-grants, missing NetworkPolicy default-deny, secret
-  misuse, ingress TLS gaps, and rollout-strategy traps. Read-only; produces a
-  findings report or a design recommendation.
-
-  Examples:
-
-  <example>
-  Context: User added a Deployment + Service + Ingress for a new service.
-  user: "Here's the manifests for the new billing service. Ready to merge?"
-  assistant: "Let me run the kubernetes-deployment-expert agent over them — there's a lot of gotchas in a fresh Deployment (probes, resource limits, PSS, NetworkPolicy)."
-  </example>
-
-  <example>
-  Context: User is writing a Helm chart from scratch.
-  user: "I'm starting a chart for our gateway. What should I structure?"
-  assistant: "I'll use the kubernetes-deployment-expert agent to walk through the chart layout, values schema, and the production-readiness items."
-  </example>
-
-  <example>
-  Context: User reports an OOMKilled in staging.
-  user: "Pods are OOMKilling but the limits look fine?"
-  assistant: "Let me use the kubernetes-deployment-expert agent — that's almost always a missing request, a JVM/Node heap that doesn't see the cgroup, or a misconfigured probe restarting it before it can stabilise."
-  </example>
-
-  NOT for: writing Kubernetes operators / CRDs / controllers (use
-  kubernetes-operator-expert), cluster-bootstrap / cluster-API / kubeadm
-  setup, in-cluster networking deep-dive (CNI/eBPF/service-mesh internals).
+  Reviews and designs Kubernetes deployment artefacts: manifests, Helm charts,
+  Kustomize, and GitOps config. Catches Pod Security, probe, resource, RBAC,
+  NetworkPolicy, and rollout problems. Use for changes under deploy/ or Helm
+  templates. Read-only. Not for operators or controllers (use kubernetes-
+  operator-expert).
 tools: [Read, Glob, Grep, Bash]
 color: blue
 memory: project

@@ -246,6 +246,14 @@ corrupt both.
 |`--max-run-tokens`|`0` (unlimited)|Input and output token limit for each run. The parent and every child apply this limit to their own run, so their combined usage can exceed it. Crossing the limit produces `stop_reason: budget`.|
 |`--max-team-tokens`|`0` (unlimited)|Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team.|
 |`--max-turns`|`0` (deployment default)|Turn cap for this run. `0` inherits the composition default.|
+|`--llm-recovery-budget`|`30m`|Maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting.|
+|`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call.|
+
+For shared recovery semantics and cost implications, see
+[provider recovery limits and cost](/features/choose-models.md#a-provider-error-ended-a-model-step).
+The daemon's
+[LLM resilience reference](/building/deployment/mecated.md#llm-resilience) lists
+the remaining tuning flags.
 
 ### Provider keys
 
@@ -267,7 +275,7 @@ There is no login or refresh flow. See
 
 `mecatequi` can push metrics and traces to an OTLP collector and flush them
 before exit. Telemetry is off when both endpoint flags are empty. See
-[ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)
+[ADR 0098](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0098-headless-telemetry.md)
 and [Key flags](#key-flags).
 
 |Flag|Default|Notes|

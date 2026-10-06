@@ -14,6 +14,26 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+func TestMecatuiExitHandoff_Scenario1_SnapshotProjection(t *testing.T) {
+	cl := newSessionCapabilitiesClient(t, &sessionCapabilitiesServer{
+		snapshot: &mecatlv1.Session{
+			Turns:         7,
+			TitleMetadata: &mecatlv1.SessionTitle{Title: "Server display title"},
+			TokenUsage: map[string]*mecatlv1.TokenUsage{
+				"main":          {Total: &mecatlv1.Usage{InputTokens: 42, OutputTokens: 13, CacheReadTokens: 9, CacheWriteTokens: 3}},
+				"session_title": {Total: &mecatlv1.Usage{InputTokens: 900}},
+			},
+		},
+	})
+	snap, err := cl.GetSession(t.Context(), "resume-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Turns != 7 || snap.Title != "Server display title" || snap.Usage != (Usage{InputTokens: 42, OutputTokens: 13, CacheReadTokens: 9, CacheWriteTokens: 3}) {
+		t.Fatalf("GetSession projection = %+v", snap)
+	}
+}
+
 func TestSnapshotFromUsesSessionMediaCapabilities(t *testing.T) {
 	textOnly := snapshotFrom(&mecatlv1.Session{
 		SessionCapabilities: &mecatlv1.SessionCapabilities{},
@@ -31,6 +51,7 @@ type sessionCapabilitiesServer struct {
 	mecatlv1.UnimplementedHarnessServiceServer
 	global       *mecatlv1.ServerCapabilities
 	globalErr    error
+	snapshot     *mecatlv1.Session
 	sessionMedia *mecatlv1.SessionCapabilities
 }
 
@@ -42,6 +63,9 @@ func (s *sessionCapabilitiesServer) GetCompatibilityInfo(context.Context, *mecat
 }
 
 func (s *sessionCapabilitiesServer) GetSession(context.Context, *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
+	if s.snapshot != nil {
+		return &mecatlv1.GetSessionResponse{Session: s.snapshot}, nil
+	}
 	return &mecatlv1.GetSessionResponse{Session: &mecatlv1.Session{SessionId: "resume-session", SessionCapabilities: s.sessionMedia}}, nil
 }
 
@@ -133,18 +157,23 @@ func TestSnapshotFromReadsTitle(t *testing.T) {
 func TestSnapshotFromProjectsMainUsageAndOptionalContextOccupancy(t *testing.T) {
 	snap := snapshotFrom(&mecatlv1.Session{
 		TokenUsage: map[string]*mecatlv1.TokenUsage{
-			"main": {Total: &mecatlv1.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}},
+			"main":          {Total: &mecatlv1.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}},
+			"session_title": {Total: &mecatlv1.Usage{InputTokens: 300, OutputTokens: 10}},
+			"guardrail":     {Total: &mecatlv1.Usage{InputTokens: 700, OutputTokens: 5, CacheReadTokens: 200}},
 		},
 		LatestContextOccupancy: &mecatlv1.ContextOccupancy{InputTokens: 40_000, Estimated: true},
 	})
 	if snap.Usage != (Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}) {
 		t.Fatalf("main usage = %+v", snap.Usage)
 	}
+	if snap.AuxiliaryUsage != (Usage{InputTokens: 1_000, OutputTokens: 15, CacheReadTokens: 200}) {
+		t.Fatalf("auxiliary usage = %+v", snap.AuxiliaryUsage)
+	}
 	if snap.ContextOccupancy == nil || *snap.ContextOccupancy != (ContextOccupancy{InputTokens: 40_000, Estimated: true}) {
 		t.Fatalf("context occupancy = %+v", snap.ContextOccupancy)
 	}
 	legacy := snapshotFrom(&mecatlv1.Session{TokenUsage: map[string]*mecatlv1.TokenUsage{"main": {Total: &mecatlv1.Usage{InputTokens: 120_000}}}})
-	if legacy.ContextOccupancy != nil || legacy.Usage.InputTokens != 120_000 {
+	if legacy.ContextOccupancy != nil || legacy.Usage.InputTokens != 120_000 || legacy.AuxiliaryUsage != (Usage{}) {
 		t.Fatalf("legacy snapshot = %+v", legacy)
 	}
 }

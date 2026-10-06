@@ -377,17 +377,26 @@ admit project steering and read-only child Shell access.
 
 ## Layer 2: model-backed guardrails
 
-Guardrails use a separate, tool-less model to inspect matched tool content:
+Guardrails use a separate model to inspect matched tool content:
 
 - `PreToolUse` checks outbound arguments for exfiltration before execution.
 - `PostToolUse` checks inbound results for prompt injection before the agent
   reads them.
 
+Ordinary harness instructions, project rules, and operator-profile preferences are
+not injected as reviewer instructions. Relevant admitted instruction facts remain
+available as review data.
+
 ### Assessments and enforcement
 
 The contextual reviewer returns **acceptable**, **prohibited**, or **unresolved**.
 Inspection health is separate: an operational checker failure is an outage, not proof
-that content is unsafe. Each rule has one of two modes:
+that content is unsafe. Each review has up to 90 seconds for evidence authorization,
+dependency snapshots, evidence preparation, and checker attempts combined. The
+limit uses cooperative context cancellation; a reviewer or I/O operation that ignores
+cancellation can return later, but a late acceptable result does not approve an action
+or release a held result. Human approval waits and subsequent tool execution are
+outside the review limit. Each rule has one of two modes:
 
 - **`block`** enforces. Before execution, an action finding can stop or ask. After
   execution, a result finding is held privately before it reaches history, events,
@@ -454,7 +463,9 @@ checker model detects every prompt injection, secret, or dynamic Shell dependenc
 Use release-validation evidence before making an efficacy claim.
 
 A confidently read-only Shell command skips only **action** review; inbound Shell
-results remain covered. Every contextual review uses the fixed harness-owned
+results remain covered. For `ListDir` inbound review, the checker inspects the
+returned listing without reading the directory as a file or opening listed files.
+Every contextual review uses the fixed harness-owned
 safety, authority, provenance, evidence, and structured-output rubric. A rule's
 optional `prompt` adds operator task-risk context beneath that rubric; it cannot
 replace or weaken the fixed contract.

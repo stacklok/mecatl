@@ -8,12 +8,19 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+// PermissionResult pairs the effective decision with auxiliary model usage
+// incurred while evaluating it, including on deny and ask paths.
+type PermissionResult struct {
+	Decision governance.PermissionDecision
+	Usage    session.AuxiliaryUsage
+}
+
 // PermissionPolicy evaluates a tool call under a permission mode, resolving
 // across merged scopes with deny → ask → allow precedence. It is implemented by
 // the permpolicy adapter (a session-aware wrapper over the session-free
 // governance.Evaluator), not by governance itself, which cannot import session.
 type PermissionPolicy interface {
-	// Evaluate returns the permission decision for tool call c under mode, scoped
+	// Evaluate returns the permission result for tool call c under mode, scoped
 	// to sessionID so per-session LEARNED rules (see Learn) are consulted in
 	// addition to the static rule set. The learned rules only ever ADD allows at
 	// the lowest scope: a static deny/ask still wins, and plan mode still
@@ -27,7 +34,7 @@ type PermissionPolicy interface {
 	// session, so two sessions rooted at different workspaces can resolve the SAME
 	// tool call differently. ws may be nil (e.g. a child/member engine with no
 	// resolver wired) — implementations must treat a nil ws as "no project config".
-	Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
+	Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) PermissionResult
 
 	// Learn records a per-session allow rule derived from tool call c (the model's
 	// "allow always" verdict). It is a no-op when c is not safely learnable (a

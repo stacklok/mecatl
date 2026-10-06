@@ -58,7 +58,7 @@
 //
 // Validation: required-field annotations are authored with `buf.validate.field`
 // for documentation and future runtime enforcement; V1 enforces them in the Go
-// client/server wrappers (internal/adapter/grpcdriver).
+// client/server wrappers (adapters/grpcdriver).
 
 syntax = "proto3";
 

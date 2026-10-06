@@ -138,7 +138,7 @@ the values file if you need a fixed name.
 |Session ownership|Kubernetes Leases|
 |Filesystem|No filesystem access|
 |Network binds|Pod network on `0.0.0.0`|
-|Metrics and OpenTelemetry|Opt-in|
+|[Metrics and OpenTelemetry](../what-you-get/observability.md)|Opt-in|
 
 Project-provided instructions, skills, agents, and read-only child Shell access
 still require explicit project trust. `mecak8s` does not include ACP, local
@@ -1089,6 +1089,24 @@ default empty value preserves the binary's `INFO` default. Supported values are
 that are not modeled by the chart; if it also contains `--log-level`, its later
 argument takes precedence.
 
+### Configure model recovery
+
+Use `extraArgs` to set the server-owned precommit recovery policy. The defaults
+are `--llm-recovery-budget=30m` and `--llm-max-attempts=60`; command-line values
+override the command defaults.
+
+```yaml
+extraArgs:
+  - --llm-recovery-budget=10m
+  - --llm-max-attempts=12
+```
+
+The server retries a model step only before semantic output is visible. A visible
+failure remains terminal, so a model does not rerun completed tool calls or
+visible assistant text. See [provider recovery limits and cost](/features/choose-models.md#a-provider-error-ended-a-model-step)
+for the per-step billing implications, and [LLM resilience](/building/deployment/mecated.md#llm-resilience)
+for the remaining resilience flags.
+
 ### Mount trusted skills, agents, and rules
 
 Set `XDG_CONFIG_HOME` to the mount root, put files below
@@ -1279,7 +1297,7 @@ the operator's log.
 
 Client-certificate (mTLS) authentication is **not supported**: the shared
 `toolhive-core/redisconn` connection layer cannot express it
-([ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-secure-external-redis.md)),
+([ADR 0233](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0233-secure-external-redis.md)),
 and it is tracked upstream at
 [toolhive-core#240](https://github.com/stacklok/toolhive-core/issues/240).
 

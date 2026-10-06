@@ -1,8 +1,0 @@
-parallel only (judge, 3 done):
-connected                                                                                                        ⑂ parallel 0◐ 1✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
-
-parallel + subagent fleet:
-connected                                                                                ⑂ parallel 0◐ 1✓ · f6  ⛭ subagents 1◐ 0✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
-
-parallel + sub, narrow (medium tier):
-connected       ⑂ parallel 0◐ 1✓ · f6  ⛭ subagents 1◐ 0✓ · f6  ctx 0

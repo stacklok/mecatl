@@ -241,18 +241,41 @@ func TestSplitChordsByteCompatCommaFormat(t *testing.T) {
 func TestKeymapPrecedenceCLIBeatsClient(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	writeSettings(t, "mecatl", "keymap:\n  Effort: ctrl+f2\n")
-	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n  ExpandTools: ctrl+f4\n")
-	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5"}}
+	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n  Toolcalls: ctrl+f4\n")
+	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5", "Toolcalls": "ctrl+f6"}}
 	var deps ui.Deps
 	if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := map[string][]string{
-		"Agents":      {"ctrl+f5"},
-		"ExpandTools": {"ctrl+f4"},
+		"Agents":    {"ctrl+f5"},
+		"Toolcalls": {"ctrl+f6"},
 	}
 	if !reflect.DeepEqual(deps.KeyOverrides, want) {
 		t.Errorf("merged overrides = %v, want %v", deps.KeyOverrides, want)
+	}
+}
+
+func TestKeymapRejectsDeprecatedExpandTools(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings string
+		cfg      config
+	}{
+		{"client settings", "keymap:\n  ExpandTools: ctrl+f4\n", config{}},
+		{"CLI", "", config{keymap: &cliconfig.KeyValueList{"ExpandTools": "ctrl+f5"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			if tc.settings != "" {
+				writeSettings(t, "mecatui", tc.settings)
+			}
+			var deps ui.Deps
+			err := applyKeyOverridesToDeps(tc.cfg, mustReadClientSettings(t), &deps)
+			if err == nil || !strings.Contains(err.Error(), `unknown action "ExpandTools"`) {
+				t.Fatalf("apply error = %v, want deprecated alias rejection", err)
+			}
+		})
 	}
 }
 

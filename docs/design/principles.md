@@ -2,14 +2,14 @@
 
 The cross-cutting invariants mecatl is built to keep. Architecture decisions
 that violate one of these get pushed back. They are distilled from the
-[ADRs](../adr/) and the [architecture topics](../READING.md); each names the
+ADRs and the [architecture topics](../READING.md); each names the
 source that pins it. These are *platform* principles (cross-cutting); behavioral
 invariants about permissions, compaction, the loop, and delegation belong to
 their owning architecture topic and executable tests. `AGENTS.md` holds concise
 contributor instructions rather than a second subsystem reference.
 
 Acceptance plans cite these as `Principle N`; the
-[ac-trace](../acceptance/README.md) gate resolves the reference against this
+ac-trace gate resolves the reference against this
 list, and a `TestInvariant_<id>` / `TestADR_NNNN_*` test pins the ones that
 carry a runtime obligation.
 
@@ -23,14 +23,14 @@ carry a runtime obligation.
    `prompt`, `governance`, `tool`), `engine/team`, and `engine/agent` never
    import an adapter, `contracts/gen`, `os`, or a provider SDK. The depguard
    allowlist, the DAG test, and the engine module boundary enforce it three
-   ways. See [ADR-0036](../adr/0036-engine-module.md) and `AGENTS.md` "The
+   ways. See ADR-0036 and `AGENTS.md` "The
    layering rule".
 
 2. **`engine/` is the importable core; tests are offline.** The engine is its
    own Go module, self-contained including tests — nothing under `engine/`
    imports `internal/...`, and no test hits a live model or network (the
    reference adapters `mockllm`/`memfs`/`memstore` + the conformance suites
-   stand in). See [ADR-0036](../adr/0036-engine-module.md).
+   stand in). See ADR-0036.
 
 3. **Ports are provider-neutral and stay narrow.** `port.LLMRequest` carries
    no provider-private knobs; provider specifics are adapter-construction
@@ -40,25 +40,25 @@ carry a runtime obligation.
 4. **Permissions resolve deny-dominant; trust is gated.** A deny in any scope
    is absolute; the posture ladder (`strict < trusted < auto < yolo`) folds
    max-tier; an untrusted workspace degrades honestly rather than silently
-   widening. See [ADR-0022](../adr/0022-allow-all-posture.md),
-   [ADR-0023](../adr/0023-workspace-trust.md), and `AGENTS.md` "Preserve
+   widening. See ADR-0022,
+   ADR-0023, and `AGENTS.md` "Preserve
    these invariants".
 
 5. **The session is an aggregate; history is never unpaired.** Mutate the
    `Session` through its methods; compaction and every run-entry seam
    (Reopen / Interrupt / Recover) guarantee `ValidateToolPairing` — an
    orphaned tool result is a provider 400, so the tree never emits one. See
-   [ADR-0012](../adr/0012-compaction.md) and `AGENTS.md` "Compaction must
+   ADR-0012 and `AGENTS.md` "Compaction must
    NEVER emit unpaired history".
 
 6. **The loop is storage-agnostic; durability lives at the relay.** The loop
    only emits events; the durable `EventLog`, compaction archives, and
    verdict replay are consumed at the composition/relay layer, never from
-   `engine/agent`. See [ADR-0027](../adr/0027-cloud-native.md).
+   `engine/agent`. See ADR-0027.
 
 7. **Diagnostics flow through the injected port, never ambient slog.**
    `port.Diagnostics` is the single chokepoint; the loop emits exactly its
-   documented lines and no more. See [ADR-0020](../adr/0020-diagnostics.md).
+   documented lines and no more. See ADR-0020.
 
 8. **Every agent-facing shell runs secret-scrubbed.** The command runners get
    `envscrub.Scrub(os.Environ())`; the `os.Environ()` passthrough is never
@@ -68,18 +68,18 @@ carry a runtime obligation.
    Any affordance that depends on the model's behaviour ships both the
    prompt-layer instruction and an executable test asserting that instruction
    lands in the built system prompt. See
-   [ADR-0070](../adr/0070-model-visible-affordance-gate.md) and `AGENTS.md`
+   ADR-0070 and `AGENTS.md`
    "A model-facing gate/affordance…".
 
 10. **Docs are gated artifacts.** The configuration reference is generated,
     never hand-edited; the matlatl strict link gate fails a PR on a broken link,
     orphan, or unreachable doc. ADRs are frozen; new decisions are new ADRs. See
-    [ADR-0002](../adr/0002-documentation-lifecycle.md) and
-    [ADR-0003](../adr/0003-consolidate-design-records-as-adrs.md).
+    ADR-0002 and
+    ADR-0003.
 
 ## See also
 
 - [`AGENTS.md`](../../AGENTS.md) — contributor instructions.
 - [Architecture reading map](../READING.md) — the owning subsystem references.
-- [Development process](../development-process.md) — the spine these
+- Development process — the spine these
   principles are cited from.

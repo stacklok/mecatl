@@ -37,7 +37,6 @@ func openApprovalSurface(m *Model) *approvalSurface {
 		modelID:      m.resolvedSessionModel.ModelID,
 		debugSession: m.deps.DebugTarget != "",
 		render:       newApprovalRender(m.rend),
-		expandTools:  m.expandTools,
 	}
 	m.modal = s
 	return s
@@ -110,7 +109,11 @@ func (m *Model) restoreRefusedApproval(err error) bool {
 
 func (m *Model) restoreApprovalIntent(intent *approvalResolvedIntent, err error) bool {
 	m.pendingApproval = nil
-	m.conv.retractLatestNotice(intent.notice)
+	if intent.ask.review != nil {
+		intent.ask.review.handoffToApproval(&m.conv)
+	} else {
+		m.conv.retractLatestNotice(intent.notice)
+	}
 	if m.stream != nil {
 		m.stream.ForgetApprovalResolved(intent.askID)
 	}
@@ -141,22 +144,27 @@ func (m *Model) restoreApprovalIntent(intent *approvalResolvedIntent, err error)
 func (m Model) applyApprovalSurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, handled bool, stopSurfaceDispatch bool) {
 	switch intent := intent.(type) {
 	case approvalResolvedIntent:
-		m.conv.addNotice(intent.notice)
+		intent.notice = m.addApprovalNotice(intent.ask, intent.notice)
 		m.notifyHookPermissionResult(intent.askID)
 		m.pendingApproval = &intent
 		cmd := (&m).approvalSendCmd(intent.askID, intent.verdict, intent.guardrail, intent.expectedRunID)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, cmd)
 		return model, cmd, true, stopSurfaceDispatch
 	case approvalRetractedIntent:
-		m.conv.addNotice(intent.notice)
+		m.addApprovalNotice(intent.ask, intent.notice)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, nil)
 		return model, cmd, true, stopSurfaceDispatch
-	case setExpandToolsIntent:
-		m.expandTools = intent.expand
-		return m, nil, true, false
 	default:
 		return m, nil, false, false
 	}
+}
+
+func (m *Model) addApprovalNotice(ask pendingAsk, text string) string {
+	if ask.guardrail == nil {
+		m.conv.addNotice(text)
+		return text
+	}
+	return ask.review.resolveApproval(&m.conv, ask.guardrailDetailState, text, m.deps.Debug)
 }
 
 func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd tea.Cmd) (tea.Model, tea.Cmd, bool) {
@@ -228,8 +236,33 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 		return m.afterEvent()
 	}
 	s := openApprovalSurface(&m)
+	if s.known(msg.AskID) {
+		return m.afterEvent()
+	}
+	var review *guardrailPresentation
+	if msg.Guardrail != nil {
+		review = m.conv.guardrailReview(msg.Guardrail.ReviewID)
+		review.handoffToApproval(&m.conv)
+		if !m.deps.Debug {
+			msg.Reason = "The safety review needs your decision before this action can run."
+			if msg.Guardrail.Kind == guardrailResultRelease {
+				msg.Reason = "The tool has already run. Its result is withheld from the model pending your decision."
+			}
+			if review.hook.Guardrail != nil {
+				msg.Reason = guardrailHookText(review.hook)
+			}
+		}
+	}
+	var detailCmd tea.Cmd
+	var detailRequest uint64
+	if msg.Guardrail != nil && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
+		m.guardrailDetailRequest++
+		detailRequest = m.guardrailDetailRequest
+		detailSessionID := guardrailReviewSessionID(msg.AskID, m.sessionID)
+		detailCmd = client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, detailSessionID, msg.Guardrail.ReviewID, detailRequest)
+	}
 	open := s.ask.AskID != ""
-	opening := s.applyPermissionAsk(msg, open, m.phase)
+	opening := s.applyPermissionAsk(msg, open, m.phase, detailRequest, review)
 	if opening {
 		m.phase = phaseAwaitingApproval
 		m.activeTool = ""
@@ -239,10 +272,5 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 		m.notifyHookPermissionAsk(msg.AskID, msg.Reason)
 	}
 	model, cmd := m.afterEvent()
-	if msg.Guardrail != nil && m.deps.Guardrails != nil {
-		detailSessionID := guardrailReviewSessionID(msg.AskID, m.sessionID)
-		detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, detailSessionID, msg.Guardrail.ReviewID)
-		return model, tea.Batch(cmd, detailCmd)
-	}
-	return model, cmd
+	return model, tea.Batch(cmd, detailCmd)
 }

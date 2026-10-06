@@ -17,6 +17,9 @@ func TestSanitize(t *testing.T) {
 		{name: "strips C0 ESC and DEL", in: "a\x00\x1b[2J\x7fb", want: "a[2Jb"},
 		{name: "strips C1", in: "a\u009b2J\u009dtitleb", want: "a2Jtitleb"},
 		{name: "strips format characters", in: "a\u200b\u202e\u2066\ufeffb", want: "ab"},
+		{name: "repairs raw C1 bytes", in: "a\x9b2J\x9dtitleb", want: "a�2J�titleb"},
+		{name: "repairs incomplete UTF-8 with layout and controls", in: "a\xc3\n\x1b[2Jb", want: "a�\n[2Jb"},
+		{name: "preserves valid replacement rune", in: "a�b", want: "a�b"},
 	}
 
 	for _, tt := range tests {
@@ -35,6 +38,12 @@ func TestSanitizeSingleLine(t *testing.T) {
 	}
 	if got, want := SanitizeSingleLine(input), "abcde[2Jfg"; got != want {
 		t.Errorf("SanitizeSingleLine(%q) = %q, want %q", input, got, want)
+	}
+	if got, want := SanitizeSingleLine("a\x9b2J"), "a�2J"; got != want {
+		t.Errorf("SanitizeSingleLine(raw C1 byte) = %q, want %q", got, want)
+	}
+	if got, want := SanitizeSingleLine("a\x9b2J\x9dtitle\xc3\nb"), "a�2J�title�b"; got != want {
+		t.Errorf("SanitizeSingleLine(invalid UTF-8) = %q, want %q", got, want)
 	}
 }
 

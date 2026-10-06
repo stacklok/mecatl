@@ -1,7 +1,7 @@
 # Agent identity, part 2: the outbound hop
 
 *Status: strawman / working draft. Speculative scoping, not a design record under
-[ADR 0002](adr/0002-documentation-lifecycle.md). Companion to
+ADR 0002. Companion to
 [`docs/agent-identity-model.md`](agent-identity-model.md), which this takes as its premise
 and does not restate. Same tier as
 [`docs/scoped-resource-grants.md`](scoped-resource-grants.md).*

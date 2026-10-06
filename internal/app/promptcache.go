@@ -65,18 +65,44 @@ func openaichatCacheDialectFor(id, baseURL string, cfg Config) openaichat.CacheD
 // ephemeral cache_control TTL accepts: "5m" (the API's own default) and "1h".
 // "" (the flag's zero value — it is optional) normalises silently to "" (no
 // WARN: an unset flag is not a mistake). Any OTHER value also normalises to
-// "" (anthropic.WithCacheTTL's own omit-on-unrecognised behaviour) but WARNs,
-// since the operator DID supply something and it was not honoured. Call this
-// ONCE per registry build (a build-time, not a per-remint, call site — see
-// newAnthropicEntry) so the WARN fires at most once per process.
+// "" but WARNs, since the operator DID supply something and it was not
+// honoured. "" means "no operator choice": anthropicCacheTTLFor then applies
+// the per-endpoint default. Call this ONCE per registry build (a build-time,
+// not a per-remint, call site — see newAnthropicEntryFor) so the WARN fires at
+// most once per process.
 func normaliseAnthropicCacheTTL(cfg Config) string {
 	switch cfg.AnthropicCacheTTL {
 	case "", "5m", "1h":
 		return cfg.AnthropicCacheTTL
 	default:
 		cfg.diag().Log(context.Background(), port.LevelWarn,
-			"anthropic-cache-ttl: ignoring unrecognised value; caching stays enabled with the API's own default TTL",
+			"anthropic-cache-ttl: ignoring unrecognised value; caching stays enabled with the default TTL",
 			"value", cfg.AnthropicCacheTTL)
 		return ""
 	}
+}
+
+// anthropicCacheTTLFor resolves the TTL an Anthropic Messages entry stamps on
+// its cache_control markers. An operator choice (the normalised
+// --anthropic-cache-ttl) applies to every endpoint unchanged. Without one, the
+// built-in Anthropic Messages providers — anthropic, openrouter-anthropic and
+// toolhive-anthropic — share ONE rule: they default to the longest lifetime,
+// "1h"; operators restore the shorter, cheaper-to-write lifetime with
+// --anthropic-cache-ttl=5m. The rule is keyed on the built-in id alone so the
+// three cannot diverge (a base-URL override does not change it). Custom
+// anthropic-messages definitions are unknown endpoints that may reject ttl, so
+// they keep the API default (""). --no-prompt-cache also keeps "" so it still
+// reproduces the pre-ADR-0100 wire byte-for-byte.
+func anthropicCacheTTLFor(id, operatorTTL string, cfg Config) string {
+	if operatorTTL != "" {
+		return operatorTTL
+	}
+	if cfg.PromptCacheDisabled {
+		return ""
+	}
+	switch id {
+	case providerAnthropic, providerOpenRouterAnthropic, providerToolhiveAnthropic:
+		return "1h"
+	}
+	return ""
 }

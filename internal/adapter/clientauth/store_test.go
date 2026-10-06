@@ -1331,16 +1331,7 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	dir := t.TempDir()
 	bad := Connection{Identity: identity("relative-ca.example:443"), IssuerCAFile: "issuer-ca.pem"}
 	good := Connection{Identity: identity("unrelated-target.example:443"), IssuerCAFile: "/ca.pem"}
-	body, err := json.Marshal(struct {
-		Version     int          `json:"version"`
-		Connections []Connection `json:"connections"`
-	}{Version: 1, Connections: []Connection{bad, good}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeRegistryConnections(t, dir, bad, good)
 	reg, err := OpenRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -1362,6 +1353,56 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	// legacy rows are tolerated on read.
 	if _, err := reg.Upsert(bad); err == nil || !strings.Contains(err.Error(), "absolute and clean") {
 		t.Fatalf("Upsert relative CA error = %v", err)
+	}
+}
+
+func TestRegistryQuarantinesMalformedPersistedServerCAAndRejectsRelativeUpsert(t *testing.T) {
+	dir := t.TempDir()
+	bad := Connection{Identity: identity("relative-server-ca.example:443"), ServerCAFile: "server-ca.pem"}
+	good := Connection{Identity: identity("valid-server-ca.example:443"), ServerCAFile: "/server-ca.pem"}
+	writeRegistryConnections(t, dir, bad, good)
+	reg, err := OpenRegistry(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := reg.List()
+	if err != nil {
+		t.Fatalf("List error = %v, want malformed server CA row quarantined", err)
+	}
+	if len(all) != 1 || all[0].Identity.Target != good.Identity.Target {
+		t.Fatalf("List = %#v, want only valid server CA row", all)
+	}
+	if all[0].ServerCAFile != good.ServerCAFile {
+		t.Fatalf("round-tripped server CA = %q, want %q", all[0].ServerCAFile, good.ServerCAFile)
+	}
+	if _, err := reg.FindTarget(bad.Identity.Target); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("FindTarget(malformed server CA row) = %v, want ErrNotFound", err)
+	}
+	if _, err := reg.Upsert(bad); err == nil || !strings.Contains(err.Error(), "server CA path must be absolute and clean") {
+		t.Fatalf("Upsert relative server CA error = %v", err)
+	}
+}
+
+func TestDeleteTargetCASIncludesServerCAFile(t *testing.T) {
+	reg, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := Connection{Identity: identity("server-ca-cas.example:443"), ServerCAFile: "/current-server-ca.pem"}
+	if _, err := reg.Upsert(current); err != nil {
+		t.Fatal(err)
+	}
+	stale := current
+	stale.ServerCAFile = "/stale-server-ca.pem"
+	if _, err := reg.DeleteTarget(current.Identity.Target, []Connection{stale}); !errors.Is(err, credentialstore.ErrConflict) {
+		t.Fatalf("DeleteTarget with stale server CA error = %v, want ErrConflict", err)
+	}
+	got, err := reg.FindTarget(current.Identity.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ServerCAFile != current.ServerCAFile {
+		t.Fatalf("server CA after rejected delete = %q, want %q", got.ServerCAFile, current.ServerCAFile)
 	}
 }
 
@@ -1404,6 +1445,20 @@ func TestRegistryMutationsPreserveQuarantinedRawRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertQuarantined("replaceTarget")
+}
+
+func writeRegistryConnections(t *testing.T, dir string, connections ...Connection) {
+	t.Helper()
+	body, err := json.Marshal(struct {
+		Version     int          `json:"version"`
+		Connections []Connection `json:"connections"`
+	}{Version: 1, Connections: connections})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func mustStoreJSON(t *testing.T, value any) json.RawMessage {

@@ -551,6 +551,7 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	m = resize(m, 40, 35)
 	_ = m.View()
 	s = modelsSurface(t, m)
+	_, _ = s.Render(40, 12)
 	wheelCursor := s.list.Cursor()
 	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if s.list.Offset() != 1 || s.list.Cursor() != wheelCursor {
