@@ -299543,6 +299543,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791275491454,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6fdf3df09904265d5876d7e09f05ef8220a6240",
+          "message": "chore: delete ADRs, acceptance plans, and process scaffolding (#2105)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T04:28:20-04:00",
+          "tree_id": "cc10eba28e9f86990a746f2bf38de1c9be36d97c",
+          "url": "https://github.com/stacklok/mecatl/commit/b6fdf3df09904265d5876d7e09f05ef8220a6240"
+        },
+        "date": 1791276213669,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -392149,6 +392188,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791276210010,
+  "lastUpdate": 1791276214529,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
