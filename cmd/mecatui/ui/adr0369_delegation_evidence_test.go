@@ -20,7 +20,7 @@ func TestDelegationEvidenceRendering(t *testing.T) {
 	if !ok {
 		t.Fatal("subagent start was not retained in scrollback")
 	}
-	subRendered := stripANSIstr(newTestRenderer().renderSubagentPresentation(subagentCardPresentationFromSnapshot(sub), false, 120))
+	subRendered := stripANSIstr(newTestRenderer().renderSubagentPresentation(subagentCardPresentationFromSnapshot(sub), 120))
 	if !strings.Contains(subRendered, want) {
 		t.Fatalf("subagent rendering = %q, want %q", subRendered, want)
 	}
@@ -74,11 +74,11 @@ func TestDelegationEvidenceRendering(t *testing.T) {
 		t.Fatal("routed subagent card missing")
 	}
 	routedPresentation := subagentCardPresentationFromSnapshot(routed)
-	if got := stripANSIstr(newTestRenderer().renderSubagentPresentation(routedPresentation, false, 120)); !strings.Contains(got, "routed: small → sprout-openai-api/gpt-6-luna") {
+	if got := stripANSIstr(newTestRenderer().renderSubagentPresentation(routedPresentation, 120)); !strings.Contains(got, "routed: small → sprout-openai-api/gpt-6-luna") {
 		t.Fatalf("routed subagent card omitted its actual provider/model: %q", got)
 	}
-	if got := stripANSIstr(newTestRenderer().renderSubagentPresentation(routedPresentation, true, 120)); !strings.Contains(got, "actual model: sprout-openai-api/gpt-6-luna") {
-		t.Fatalf("expanded card omitted its actual provider/model: %q", got)
+	if got := routingDecisionDetail(routedPresentation.routing, qualifiedModelLabel(routedPresentation.provider, routedPresentation.model), routedPresentation.routingReason); !strings.Contains(got, "actual model: sprout-openai-api/gpt-6-luna") {
+		t.Fatalf("delegation focus omitted its actual provider/model: %q", got)
 	}
 	if got := delegationModelLabelWithSelection("", "", "resume", "gpt-6-luna", "sprout-openai-api", "", nil); got != "model: sprout-openai-api/gpt-6-luna · not routed: resume" {
 		t.Fatalf("resumed child label = %q", got)
