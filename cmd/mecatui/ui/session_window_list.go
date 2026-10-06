@@ -113,16 +113,18 @@ func (w window) renderList(m Model) string {
 	if project := w.projectLabel(); project != "" {
 		header += "   " + th.Style("muted").Render("project: "+project)
 	}
-	top := []string{truncateDisplayWidth(header, width), w.renderFilterTabs(m, rows, width), ""}
+	rule := th.Style("muted").Render(strings.Repeat("─", width))
+	top := []string{truncateDisplayWidth(header, width), w.renderFilterTabs(m, rows, width), rule}
 
-	var bottom []string
+	// Each bottom section (notice, delete confirmation, footer) follows a rule.
+	bottom := []string{rule}
 	if w.list.notice != "" {
-		bottom = append(bottom, "", windowText(th.Style("warning"), " "+w.list.notice, width))
+		bottom = append(bottom, windowText(th.Style("warning"), " "+w.list.notice, width), rule)
 	}
 	if c := w.deleteConfirm; c != nil {
-		bottom = append(bottom, "", w.renderDeleteConfirm(m, *c))
+		bottom = append(bottom, w.renderDeleteConfirm(m, *c), rule)
 	}
-	bottom = append(bottom, "", w.renderListFooter(m, width))
+	bottom = append(bottom, w.renderListFooter(m, width))
 	bottomText := strings.Join(bottom, "\n")
 
 	bodyHeight := max(3, height-len(top)-lipgloss.Height(bottomText))
@@ -185,17 +187,18 @@ func (w window) renderListBody(m Model, visible []windowRow, width, height int) 
 		if ok {
 			details = w.renderDetails(m, selected, right, height)
 		}
+		divider := m.deps.Theme.Style("muted").Render(" │ ")
 		lines := make([]string, height)
 		for i := range lines {
 			cell := ""
 			if i < len(table) {
 				cell = table[i]
 			}
-			line := cell + strings.Repeat(" ", max(0, left-lipgloss.Width(cell)))
+			line := cell + strings.Repeat(" ", max(0, left-lipgloss.Width(cell))) + divider
 			if i < len(details) {
-				line += "   " + details[i]
+				line += details[i]
 			}
-			lines[i] = strings.TrimRight(line, " ")
+			lines[i] = line
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -205,8 +208,10 @@ func (w window) renderListBody(m Model, visible []windowRow, width, height int) 
 	}
 	lines := w.renderTable(m, visible, width, tableHeight)
 	if ok && tableHeight < height {
-		lines = append(lines, "")
-		lines = append(lines, w.renderDetails(m, selected, width-1, height-tableHeight-1)...)
+		lines = append(lines, m.deps.Theme.Style("muted").Render(strings.Repeat("─", width)))
+		for _, line := range w.renderDetails(m, selected, width-2, height-tableHeight-1) {
+			lines = append(lines, " "+line)
+		}
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
@@ -290,13 +295,14 @@ func (w window) renderDetails(m Model, row windowRow, width, height int) []strin
 			lines = append(lines, style.Render(line))
 		}
 	}
+	rule := muted.Render(strings.Repeat("─", width))
 	lines = append(lines, muted.Render("Session details"))
 	add(th.Style("askTitle"), row.label, 2)
-	lines = append(lines, windowStatusStyle(m, row.status).Render("● "+row.status), "")
+	lines = append(lines, windowStatusStyle(m, row.status).Render("● "+row.status), rule)
 	if last := s.windowLastText(scrollback.KindAssistant); last != "" {
 		lines = append(lines, muted.Render("Last message"))
 		add(text, last, windowListDetailLines)
-		lines = append(lines, "")
+		lines = append(lines, rule)
 	}
 	lines = append(lines, muted.Render("Project"))
 	project := terminaltext.SanitizeSingleLine(s.activePlacement.Label)
@@ -314,7 +320,7 @@ func (w window) renderDetails(m Model, row windowRow, width, height int) []strin
 		add(text, "Tokens: "+renderfmt.HumanizeTokens(s.usage.InputTokens)+" in · "+renderfmt.HumanizeTokens(s.usage.OutputTokens)+" out", 1)
 	}
 	if prompt := s.windowLastText(scrollback.KindUser); prompt != "" {
-		lines = append(lines, "", muted.Render("Prompt"))
+		lines = append(lines, rule, muted.Render("Prompt"))
 		add(text, prompt, windowListDetailLines)
 	}
 	if len(lines) > height {
