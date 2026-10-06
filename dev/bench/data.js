@@ -300734,6 +300734,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791287474092,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f929aff675b92d69bfa7c02cf9850b109c540f57",
+          "message": "chore: rewrite AGENTS.md and drop ADR citations from runtime strings (#2106)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T08:15:05-04:00",
+          "tree_id": "0dec0a7340a3e7661671093010060bc2018ad8a7",
+          "url": "https://github.com/stacklok/mecatl/commit/f929aff675b92d69bfa7c02cf9850b109c540f57"
+        },
+        "date": 1791289623024,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 72.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -393682,6 +393721,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791289619380,
+  "lastUpdate": 1791289624126,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
