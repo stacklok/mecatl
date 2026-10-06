@@ -28,7 +28,7 @@ file path, raw tool name, or model id) to help Stacklok understand community
 adoption. This is on by default. To opt out: pass
 --product-metrics=false, set MECATL_PRODUCT_METRICS=false, set DO_NOT_TRACK=1,
 or set telemetry.productMetrics.enabled: false in your settings.yaml. Details:
-see docs/adr/0338-product-metrics.md.
+see the Anonymous product metrics section of the Mecatl observability docs.
 `
 
 // ProductMetricsHandles bundles the handles a cmd main threads into its

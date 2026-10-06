@@ -138,5 +138,5 @@ snapshot cannot hide a navigation regression. Existing examples include
 
 For intentional visual changes, update the fixed-size `teatest` goldens with
 `task test:golden`. Run focused tests while iterating and `task docs` for this
-page. Follow the repository's full [verification gates](../AGENTS.md#commands-and-verification)
+page. Follow the repository's full [verification gates](../AGENTS.md#build-and-test)
 before a PR is ready.

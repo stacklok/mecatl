@@ -144,11 +144,11 @@ func (o *reflectionObserver) durableAttemptMaterial(ctx context.Context, input l
 		return "", learning.AttemptCreate{}, errors.New("durable learning attempt repository is not configured")
 	}
 	if o.sourceStore == nil || input.Trajectory.RunID == "" {
-		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires a persisted ADR-0249 run ID")
+		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires a persisted run ID")
 	}
 	persisted, err := o.sourceStore.Load(ctx, input.Trajectory.SessionID)
 	if err != nil || persisted.RunID() != input.Trajectory.RunID {
-		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted ADR-0249 run ID")
+		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted run ID")
 	}
 	digest, err := automaticTrajectoryDigest(input)
 	if err != nil {

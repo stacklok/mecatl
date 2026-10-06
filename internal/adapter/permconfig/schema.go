@@ -172,7 +172,7 @@ type Config struct {
 	// slot keys fail-soft). A nil Models means the key was absent. The composition
 	// layer reads the maps; permconfig only carries them.
 	Models *ModelsSection `yaml:"models"`
-	// ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (ADR 0055: the
+	// ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (the
 	// neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max").
 	// Like Posture it is honoured ONLY from the user-global + CLI tiers; a
 	// project-tier file's reasoning-effort: key is IGNORED with a WARN
@@ -1656,7 +1656,7 @@ type ModelsSection struct {
 	// --model-alias map, CLI winning per key).
 	Aliases map[string]string `yaml:"aliases"`
 	// Default is the session-default model selector (alias or concrete id). It is the
-	// project-overridable session default (ADR 0030 Phase 4) — within the operator
+	// project-overridable session default — within the operator
 	// allowlist; the operator's own Default is uncapped. Empty = absent.
 	Default string `yaml:"default"`
 	// Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
@@ -1682,22 +1682,21 @@ type ModelsSection struct {
 	// Empty = absent (the ladder's preferred default wins). The name pair
 	// (default = model, default_provider = provider) mirrors the wire grammar exactly.
 	DefaultProvider string `yaml:"default_provider"`
-	// Allowlist is the OPERATOR-TIER, non-wideable cap (ADR 0030 Phase 4): the set of
+	// Allowlist is the OPERATOR-TIER, non-wideable cap: the set of
 	// model selectors (alias names and/or concrete ids) a PROJECT-tier models: block
 	// may bind to. An empty/absent allowlist means project models stay WARN-ignored
 	// (the opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
 	// honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored
 	// with a WARN (a project cannot widen its own cap).
 	Allowlist []string `yaml:"allowlist"`
-	// Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031,
-	// Phase 5; enable model superseded by ADR 0042): a classifier slot, the routing
+	// Router is the OPERATOR-TIER semantic Subagent model-router taxonomy: a classifier slot, the routing
 	// categories, the default category, and the YAML kill-switch. It is operator-tier
 	// ONLY — a project-tier router: sub-block is STRIPPED with a WARN (the taxonomy is
 	// an autonomous-spend/capability decision the operator owns, like the allowlist).
-	// nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent). Per ADR
-	// 0042 the TAXONOMY is the enable: a non-empty router: with categories turns the
+	// nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent). The
+	// TAXONOMY is the enable: a non-empty router: with categories turns the
 	// router ON unless `disabled: true` (or the CLI kill-switch) forces it off — the
-	// guardrails-parity enable model, replacing 0031's flag-to-enable.
+	// guardrails-parity enable model, not a flag-to-enable.
 	Router *RouterSection `yaml:"router"`
 	// ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID
 	// → total context token override map. It is intentionally not a selector map:
@@ -1788,8 +1787,8 @@ type RouterSection struct {
 	// DefaultCategory is the category the classifier is told to choose when none clearly
 	// fits (advisory to the classifier; the real safety net is the fail-soft inherit).
 	DefaultCategory string `yaml:"default-category"`
-	// Disabled is the YAML-level kill switch (ADR 0042, mirroring
-	// GuardrailsSection.Disabled): per ADR 0042 a non-empty taxonomy ENABLES the router,
+	// Disabled is the YAML-level kill switch (mirroring
+	// GuardrailsSection.Disabled): a non-empty taxonomy ENABLES the router,
 	// so `disabled: true` is the "taxonomy defined but temporarily off" override. The
 	// CLI kill-switch --subagent-model-router=false also sets it (the two OR together).
 	// Default false ⇒ the router is enabled whenever categories are present.
@@ -1954,7 +1953,7 @@ type GuardrailsSection struct {
 	DefaultMode string `yaml:"defaultMode"`
 	// TaskWindow selects the last K explicitly authenticated root prompts (default 1, clamped 1..3).
 	TaskWindow int `yaml:"taskWindow"`
-	// Escape is the ADR-0080 escape knob: when true AND a checker model is
+	// Escape is the guardrail escape knob: when true AND a checker model is
 	// configured, an out-of-root FS escape at posture auto routes through the
 	// guardrail checker (an unsafe verdict denies; a checker error fails closed
 	// to the write-escape Ask). Default false = the un-routed posture table.

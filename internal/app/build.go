@@ -8784,7 +8784,7 @@ const (
 	learningAutoPostureNote = "AUTOMATIC LEARNED-SKILL POLICY: When the user explicitly asks you to learn a reusable procedure, perform and verify the requested workflow normally; completed-trajectory learning materializes the evidence-backed skill afterward. Do not call SkillDraft as an activation shortcut: direct SkillDraft output remains inactive. Automatic activation never grants new tools or capabilities; it only publishes a validated body into the existing Skill catalog."
 	// learningAutomaticProcessLocalPostureNote retains ADR-0114's limitation whenever
 	// composition did not select a healthy durable admission ledger.
-	learningAutomaticProcessLocalPostureNote = " Automatic admission remains limited to this process under ADR-0114; do not claim global count, token, cooldown, or deduplication bounds."
+	learningAutomaticProcessLocalPostureNote = " Automatic admission remains limited to this process because no durable admission ledger is configured; do not claim global count, token, cooldown, or deduplication bounds."
 	// learningAutomaticGlobalPostureNote is emitted only after composition has selected
 	// a durable ledger, which is the authority for these automatic controls.
 	learningAutomaticGlobalPostureNote = " Automatic admission has durable global count, token, cooldown, and deduplication bounds."

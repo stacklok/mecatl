@@ -47,18 +47,6 @@ axis masks another. Inspired by Matt Pocock's two-axis `/review`
 skill (Standards + Spec), generalised with a Domain axis powered by
 the project's installed specialist reviewer agents.
 
-## Operating modes
-
-**Interactive mode (default):** keep the confirmation behavior below: ask when
-no fixed point/spec is available, the diff is large, or the Domain panel has 5+
-agents.
-
-**Orchestrator mode:** `/plan-orchestrate` supplies the fixed point and spec. Do
-not pause for confirmation because the diff or panel is large; announce the
-scope and proceed. Keep the same bounded briefs and selected panel, record any
-missing source or reviewer failure, and always finish with the stable `PANEL:`
-line. All other interactive behavior is unchanged outside this mode.
-
 ## Prerequisites
 
 - Working directory is a git repository (or files were explicitly
@@ -103,9 +91,8 @@ Print to the user:
 If the diff is **empty**, ask for explicit file paths or a PR
 number.
 
-If the diff is **> 50 files or > 3000 lines**, interactive mode asks whether
-to split into smaller reviews or proceed. Orchestrator mode proceeds without
-confirmation and keeps every reviewer brief bounded.
+If the diff is **> 50 files or > 3000 lines**, ask whether to split into
+smaller reviews or proceed.
 
 ## Step 2 — Read project context
 
@@ -256,9 +243,8 @@ Gaps (dimension detected, no matching agent installed):
   - (none)
 ```
 
-Wait for user pushback only in interactive mode when the panel is large (5+
-agents across the Domain axis) or they asked for a dry-run. Orchestrator mode
-proceeds immediately.
+Wait for user pushback only when the panel is large (5+ agents across the
+Domain axis) or they asked for a dry-run.
 
 ## Step 8 — Fan out (PARALLEL)
 

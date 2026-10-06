@@ -1,28 +1,9 @@
 # AGENTS.md: Mecatl
 
 Coding-agent instructions for this harness, built in Go 1.27. `CLAUDE.md` is a
-symlink; edit this file, never the symlink. Use the [reader map](docs/READING.md) for
-subsystem documentation, not a full-repository reading pass.
+symlink; edit this file, never the symlink.
 
-## Working conventions
-
-- Find unfamiliar symbols with `Grep`, then bounded `Read` calls. Avoid parallel
-  full-file reads and searching scratch worktrees or dependencies.
-- Delegate with known paths and context. Omit `max_run_tokens`, `max_turns`,
-  `max_tool_calls`, and `timeout_ms` unless the user/task requests a bound.
-  Omit `authority` unless deliberately reducing it for a documented reason.
-- Keep retained work notes and smoke-test artifacts under ignored `.scratch/`;
-  orchestration state belongs in `.scratch/orchestrate/<slug>/`. Use `t.TempDir()`
-  for disposable Go test files and `$TMPDIR` for Shell test files, not
-  repo scratch or hard-coded `/tmp`: the managed Shell lease is reclaimed even
-  if the test process is killed before its cleanup runs.
-- Shell is POSIX `/bin/sh`. For `gh`, put multiline Markdown in a scratch file
-  and use `--body-file`. Avoid Bash-only syntax, `eval`, and command substitution
-  to construct Markdown.
-- Stage explicit paths, never `git add -A`. End commits with `Co-Authored-By`.
-  Humans alone merge PRs.
-
-## Commands and verification
+## Build and test
 
 Build through the Taskfile; bare root `go build` leaves stray binaries.
 
@@ -36,61 +17,82 @@ task generate           # regenerate protobuf contracts and configuration refere
 go run ./cmd/mecademo    # offline session smoke test
 ```
 
-`engine/` is its own Go module. Root `go test ./...` does not cross module
-boundaries. For a focused engine test:
+- While iterating, run the smallest focused test that exercises the change and its
+  direct integration boundary. Run `task test` once per integrated change set, not
+  after every edit.
+- Before a PR is ready, `task lint && task test:race` must pass and the offline demo
+  must show tool call, permission ask/approval, and result. CI verifies the branch
+  independently; it does not replace these local gates. Give full gates a 600-second
+  timeout.
+- Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
+  `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
+  `task e2e` uses live providers and costs money; it is not an offline gate.
+- See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and other tasks.
 
-```sh
-cd engine && go test ./agent/ -run TestFullCycle
-```
+## Module layout
 
-During iteration, run the smallest focused test that exercises the changed behavior,
-including its direct integration boundary. Run `task test` once after an integrated
-change set, not after every edit or worker attempt. Before a PR is ready,
-`task lint && task test:race` must pass and the offline demo must show tool call,
-permission ask/approval, and result. CI independently verifies the submitted branch;
-it does not replace focused local verification or these final gates. Start timeout-bound
-full gates with 600 seconds. `task e2e` uses live providers and costs money; it is not
-an offline gate. See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and
-other tasks.
-
-Tests are offline and isolated from operator state. Prefer `mockllm`, `memfs`,
-`memstore`, and existing conformance suites; real-adapter tests need explicit
-fixtures. Apply `.claude/rules/test-isolation.md`, including composition helpers
-and test-owned `UserModelDir` even when user-model features are disabled.
+The root is one Go module; `engine/` is its own. Root `go test ./...` does not cross
+the module boundary; `task test` does. Focused engine test:
+`cd engine && go test ./<pkg>/ -run <Test>`.
 
 ## Implementation boundaries
 
-- Dependencies point inward. Core production code (`engine` domain, `agent`,
-  and `team`) must not import adapters, host `internal`, generated contracts,
-  `os`, SDKs, or gRPC. Core tests may use reference `engine/adapter/*`, never host
-  `internal`. Keep wiring in `internal/app` and `cmd` mains. Preserve depguard,
-  DAG, and standalone-module guards; use their existing narrow exceptions.
+- Dependencies point inward (depguard): core `engine`, `agent`, and `team` code never
+  imports adapters, host `internal`, generated contracts, `os`, SDKs, or gRPC. Core
+  tests may use reference `engine/adapter/*`, never host `internal`. Wiring lives in
+  `internal/app` and `cmd` mains. Keep depguard, DAG, and standalone-module guards and
+  their existing narrow exceptions.
 - `FileSystem`, `Workspace`, and `Environment` belong to `engine/tool`, not
-  `engine/port` (cycle). `governance` stays session-free. Mutate `Session`
-  through aggregate methods and preserve valid tool-call/result pairing.
-- Keep `LLMRequest` provider-neutral and provider replay stateless. Re-derive
-  provider/model-dependent dependencies through factories, not clone-and-swap.
+  `engine/port` (import cycle). `governance` stays session-free. Mutate `Session` only
+  through its aggregate methods, and keep tool-call/result pairing valid.
+- `LLMRequest` stays provider-neutral and provider replay stateless. Re-derive
+  provider- or model-dependent dependencies through factories, not clone-and-swap.
 - File writes preserve read-before-edit, exact matching, uniqueness, and CAS;
-  new-file writes are create-only. Dispatch remains read-parallel/mutate-serial;
-  direct-write children mutate the parent and must run behind the barrier.
-- Permissions remain deny-dominant; configured Ask is never bypassed by posture.
-  Preserve substitution-aware shell checks and root-aware project trust:
-  posture alone does not trust a headless checkout.
-- Preserve default secret scrubbing. Explicit operator grants can reach built-in
-  main runners and direct-write children, but not hardened children/internal
-  Git; harness credentials remain protected. Never inspect or disclose credential
-  values. Scrubbing is not an OS sandbox.
+  new-file writes are create-only. Dispatch stays read-parallel/mutate-serial;
+  direct-write children mutate the parent and run behind the barrier.
+- Permissions are deny-dominant; configured Ask is never bypassed by posture. Keep
+  shell checks substitution-aware and project trust root-aware: posture alone does
+  not trust a headless checkout.
+- Default secret scrubbing stays on. Explicit operator grants reach built-in main
+  runners and direct-write children, not hardened children or internal Git; harness
+  credentials stay protected. Never inspect or disclose credential values. Scrubbing
+  is not an OS sandbox.
 - Placement is server-owned: exact `EnvironmentRef{Kind, ID, Revision}`, fail-closed
-  reattachment, no public paths or cwd-based inference. No-FS children remain
-  file-less. Skills expose logical assets, not extra workspace/execution roots.
-- Use canonical governance fences for untrusted content and preserve child
-  isolation. MCP is streaming-HTTP only; never spawn stdio MCP servers.
-  Post-tool hooks cannot undo execution: enforce incoming-result checks through
-  effective-payload rewriting, preserving recorded/streamed/model equality and
-  UTF-8 repair. Keep secret-shaped headers byte-exact and out of projections.
-- Use injected diagnostics, not default/package-level slog in engine/internal.
-  Diagnostics, audit, and durable events have distinct contracts. Stamp event
-  actors from verified caller context, not ownership; logs can contain user data.
-- A model-dependent affordance needs a model-visible instruction and a test
-  proving it reaches the appropriate system-prompt layer through the real factory.
-  Do not pin arbitrary documentation prose in tests.
+  reattachment, no public paths or cwd-based inference. No-FS children stay
+  file-less. Skills expose logical assets, not extra workspace or execution roots.
+- Fence untrusted content with the canonical governance fences and keep child
+  isolation. MCP is streaming-HTTP only; never spawn stdio MCP servers. Post-tool
+  hooks cannot undo execution: enforce incoming-result checks by rewriting the
+  effective payload, keeping recorded, streamed, and model-visible content equal and
+  repairing UTF-8. Keep secret-shaped headers byte-exact and out of projections.
+- Use injected `port.Diagnostics`, not default or package-level slog, in `engine/`
+  and `internal/`. Diagnostics, audit, and durable events have distinct contracts.
+  Stamp event actors from verified caller context, not ownership; logs can contain
+  user data.
+- A model-dependent affordance needs a model-visible instruction and a test proving
+  it reaches the right system-prompt layer through the real factory. Do not pin
+  arbitrary documentation prose in tests.
+
+## Working conventions
+
+- Find unfamiliar symbols with `Grep`, then bounded `Read` calls; avoid parallel
+  full-file reads and searching scratch worktrees or dependencies.
+- When delegating, pass known paths and context. Omit `max_run_tokens`, `max_turns`,
+  `max_tool_calls`, and `timeout_ms` unless the task needs a bound, and omit
+  `authority` unless deliberately reducing it.
+- Work notes and smoke-test artifacts go under ignored `.scratch/`. Disposable test
+  files use `t.TempDir()` (Go) or `$TMPDIR` (Shell), not `.scratch/` or a hard-coded
+  `/tmp`: the managed Shell lease is reclaimed even if the test process is killed.
+- Shell is POSIX `/bin/sh`. For `gh`, put multiline Markdown in a scratch file and
+  use `--body-file`; don't build Markdown with Bash-only syntax, `eval`, or command
+  substitution.
+- Stage explicit paths, never `git add -A`. End commits with `Co-Authored-By`.
+  Humans alone merge PRs.
+- Generated files change only via `task generate`, never by hand.
+- Engine exported API changes need `task api:update`, the API snapshots, and a
+  classified `engine/CHANGELOG.md` entry.
+- Markdown changes run `task docs`. User-facing changes update the owning
+  `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
+
+Path-scoped invariants live in `.claude/rules/*.md`, including test isolation
+(composition helpers and a test-owned `UserModelDir`).
