@@ -29,6 +29,6 @@ await build({
   outfile: fileURLToPath(new URL("../dist/index.js", import.meta.url)),
   platform: "node",
   sourcemap: true,
-  target: "node24",
+  target: "node26",
 });
 console.log(`bundled server; external: ${external.join(", ")}`);

@@ -656,6 +656,9 @@ jobs:
       - name: Install Studio dependencies (frozen)
         run: task studio:install
 
+      - name: Audit Studio production dependencies
+        run: task studio:audit
+
       - name: Lint and format-check Studio (Biome)
         run: task studio:lint
 
@@ -694,8 +697,9 @@ jobs:
 
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
 
-      # Build-only proof of apps/Dockerfile (the multi-stage image the release job
-      # publishes). amd64 only here — the release job builds both platforms.
+      # The same apps/Dockerfile the release job publishes, loaded locally so the
+      # steps below can run and scan it. amd64 only here — the release job builds
+      # both platforms.
       - name: Build Studio image (no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -703,6 +707,93 @@ jobs:
           file: apps/Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
+          tags: mecatl-studio:ci
+
+      - name: Validate Studio runtime image
+        run: |
+          # The runtime base tracks Chainguard `latest` by digest, so its Node
+          # major can move under a Renovate digest bump. apps/package.json
+          # `engines` is the source of truth; refuse any other major.
+          engines='require("./apps/package.json").engines.node.match(/^>=(\d+) <(\d+)$/)'
+          min=$(node --print "${engines}[1]")
+          max=$(node --print "${engines}[2]")
+          got=$(docker run --rm --entrypoint /usr/bin/node mecatl-studio:ci --print 'process.versions.node.split(".")[0]')
+          if [ "$got" -lt "$min" ] || [ "$got" -ge "$max" ]; then
+            echo "Studio image runs Node $got, outside apps/package.json engines (>=$min <$max)" >&2
+            exit 1
+          fi
+
+          # Non-root, code not writable by the server process, no build tooling.
+          docker run --rm --entrypoint /usr/bin/node mecatl-studio:ci --input-type=module --eval '
+            import { accessSync, constants, existsSync } from "node:fs";
+            let writable = true;
+            try { accessSync(".", constants.W_OK); } catch { writable = false; }
+            const forbidden = ["/usr/bin/corepack", "/usr/bin/pnpm", "node_modules/vitest", "node_modules/typescript", "node_modules/esbuild"];
+            if (process.getuid() === 0 || writable || forbidden.some(existsSync)) process.exit(1);
+          '
+
+          # Boot the image with its real entrypoint against the offline daemon the
+          # integration step built. It needs both listeners: gRPC for the SDK and
+          # HTTP for the RFC 9728 protected-resource document (a 404 there means
+          # no browser login, so the unauthenticated opt-in is required).
+          mkdir -p .scratch/studio-image-workspace .scratch/studio-image-home
+          env -i PATH="$PATH" HOME="$PWD/.scratch/studio-image-home" \
+            XDG_CONFIG_HOME="$PWD/.scratch/studio-image-home/config" \
+            XDG_STATE_HOME="$PWD/.scratch/studio-image-home/state" \
+            bin/mecated serve --mock \
+            --workspace="$PWD/.scratch/studio-image-workspace" \
+            --user-model-dir="$PWD/.scratch/studio-image-home/user-model" \
+            --permissions-conventional=false \
+            --ready-file="$PWD/.scratch/studio-image-ready.json" \
+            --grpc-addr=127.0.0.1:0 \
+            --http-addr=127.0.0.1:0 \
+            --metrics-addr= \
+            --no-soul \
+            --no-user-model \
+            --no-scheduler \
+            --flight-recorder=false \
+            > .scratch/studio-image-mecated.log 2>&1 &
+          daemon_pid=$!
+          trap 'docker rm --force studio-image >/dev/null 2>&1 || true; kill "$daemon_pid" 2>/dev/null || true; wait "$daemon_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 500); do
+            test -s .scratch/studio-image-ready.json && break
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              cat .scratch/studio-image-mecated.log
+              exit 1
+            fi
+            sleep 0.02
+          done
+          grpc_address=$(jq --exit-status --raw-output '.grpc_address' .scratch/studio-image-ready.json)
+          http_address=$(jq --exit-status --raw-output '.http_address' .scratch/studio-image-ready.json)
+          docker run --detach --name studio-image --network host \
+            --env STUDIO_PORT=3100 \
+            --env STUDIO_PUBLIC_URL=http://127.0.0.1:3100 \
+            --env MECATL_BASE_URL="http://$grpc_address" \
+            --env MECATL_RESOURCE_URL="http://$http_address" \
+            --env STUDIO_ALLOW_UNAUTHENTICATED=1 \
+            mecatl-studio:ci
+          status=""
+          for _ in $(seq 100); do
+            status=$(curl --silent --fail http://127.0.0.1:3100/api/v1/status) && break
+            sleep 0.1
+          done
+          if ! printf '%s' "$status" | jq --exit-status '.connection == "reachable"' >/dev/null; then
+            echo "unexpected Studio status: $status" >&2
+            docker logs studio-image >&2
+            exit 1
+          fi
+          curl --silent --fail --output /dev/null http://127.0.0.1:3100/
+
+      # Same gate as the release job (publish-studio), here before any merge.
+      - name: Scan Studio image for fixable critical vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: mecatl-studio:ci
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: critical
+          output-format: table
 
   build:
     name: Build

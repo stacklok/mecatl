@@ -177,6 +177,19 @@
       "groupName": "studio"
     },
     {
+      "description": "Studio runs one Node major everywhere, set by apps/package.json engines (>=26 <27); never propose the next major for the builder image, .node-version, or @types/node — move them together with engines on purpose",
+      "matchFileNames": ["apps/**"],
+      "matchPackageNames": ["node", "@types/node"],
+      "allowedVersions": "<27"
+    },
+    {
+      "description": "Studio runtime base tracks Chainguard latest by digest, which cannot be version-constrained; review it on its own so a Node major move is visible (the CI studio job rejects a major outside engines)",
+      "matchFileNames": ["apps/Dockerfile"],
+      "matchPackageNames": ["cgr.dev/chainguard/node"],
+      "groupName": "studio node runtime",
+      "addLabels": ["studio-runtime"]
+    },
+    {
       "description": "Studio consumes the published SDK; adopt new releases in their own PR without the npm release-age wait",
       "matchFileNames": ["apps/**"],
       "matchPackageNames": ["@stacklok-oss/mecatl-sdk"],

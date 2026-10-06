@@ -1241,8 +1241,8 @@ jobs:
           create-storage-record: false
 
   publish-studio:
-    needs: validate-release-ref
-    name: Build, publish, sign, attest Mecatl Studio image
+    needs: [guard, validate-release-ref]
+    name: Build, scan, sign, attest, publish Mecatl Studio image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -1252,9 +1252,7 @@ jobs:
       attestations: write # SLSA build provenance via actions/attest-build-provenance
     env:
       IMAGE: ghcr.io/${{ github.repository }}/studio
-      # On workflow_dispatch github.ref_name is the default branch, so prefer
-      # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.guard.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1270,26 +1268,16 @@ jobs:
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Two cases publish nothing, loudly, instead of failing the release or
-      # publishing a misattributed image:
-      # - a tag that predates Studio has no apps/Dockerfile to build;
-      # - a dispatch that checked out a tag other than the run's own commit
-      #   would get build provenance naming the run's commit, not the source
-      #   actually built. Re-run the workflow ON the tag to publish it.
+      # A tag that predates Studio has no apps/Dockerfile to build: publish
+      # nothing, loudly, instead of failing the release.
       - name: Decide whether this revision publishes Studio
         id: gate
-        env:
-          BUILT: ${{ steps.revision.outputs.sha }}
-          RUN_SHA: ${{ github.sha }}
         run: |
-          if [ ! -f apps/Dockerfile ]; then
+          if [ -f apps/Dockerfile ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
             echo "::notice title=Studio not published::${VERSION} predates Mecatl Studio (no apps/Dockerfile)."
             echo "publish=false" >> "$GITHUB_OUTPUT"
-          elif [ "$BUILT" != "$RUN_SHA" ]; then
-            echo "::notice title=Studio not published::${VERSION} resolves to ${BUILT}, but this run is ${RUN_SHA}; its provenance would name the wrong source. Run the workflow on ${VERSION} itself."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
@@ -1307,12 +1295,14 @@ jobs:
 
       # Build context is apps/ ONLY: Studio consumes the PUBLISHED
       # @stacklok-oss/mecatl-sdk, never the in-tree SDK (ADR 0351), so the Go
-      # root and sdk/typescript are not part of the image. Tag both the version
-      # and latest, matching the jobs above. Studio is in EARLY ACCESS and may
-      # change without notice between versions — the stability label says so,
-      # so infrastructure can wire the deployment early without mistaking it
-      # for a stable surface.
-      - name: Build and push image
+      # root and sdk/typescript are not part of the image. The image is pushed
+      # BY DIGEST, with no tag: nothing can pull it by name until the scan,
+      # signature, attestations, and their verification below have all passed,
+      # so a failed step never leaves an unsigned :latest behind. Studio is in
+      # EARLY ACCESS and may change without notice between versions — the
+      # stability label says so, so infrastructure can wire the deployment early
+      # without mistaking it for a stable surface.
+      - name: Build and push image by digest
         if: steps.gate.outputs.publish == 'true'
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -1320,18 +1310,31 @@ jobs:
           context: apps
           file: apps/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VERSION }}
-            ${{ env.IMAGE }}:latest
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.title=studio
+            org.opencontainers.image.description=Mecatl Studio web UI and its backend for frontend
+            org.opencontainers.image.documentation=https://mecatl.dev/docs/building/deployment/studio
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.revision=${{ steps.revision.outputs.sha }}
             org.opencontainers.image.vendor=Stacklok
             org.stacklok.mecatl.studio.stability=early-access
           build-args: |
             STUDIO_BUILD_ID=${{ env.VERSION }}
+
+      # Same gate as the CI studio job: refuse to sign or tag an image with a
+      # critical vulnerability that already has a fix.
+      - name: Scan image for fixable critical vulnerabilities
+        if: steps.gate.outputs.publish == 'true'
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: critical
+          output-format: table
 
       # Sign/SBOM/attest the pushed manifest list BY DIGEST, matching the
       # ko-based jobs above — never a mutable tag, so this binds to the exact
@@ -1376,6 +1379,40 @@ jobs:
           # would fail `task lint:actions`. Declare the feature off instead of
           # silently failing at it.
           create-storage-record: false
+
+      # Verify exactly what a deployment is told to verify (user-docs
+      # building/deployment/studio.md), pinned to this workflow at this tag, before
+      # the image becomes pullable by name.
+      - name: Verify signature and attestations
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ needs.validate-release-ref.outputs.signing_ref }}
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          for type in spdxjson slsaprovenance1; do
+            cosign verify-attestation --type "${type}" --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          done
+
+      # Only now give the verified digest its names. imagetools create from a
+      # single index re-points the tags without rewriting the index, so the
+      # digest stays the one signed above; the check below refuses anything else.
+      - name: Tag the verified image
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          docker buildx imagetools create --tag "${IMAGE}:${VERSION}" --tag "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+          for tag in "${VERSION}" latest; do
+            resolved=$(docker buildx imagetools inspect "${IMAGE}:${tag}" --format '{{json .Manifest}}' | jq --raw-output .digest)
+            if [ "${resolved}" != "${DIGEST}" ]; then
+              echo "${IMAGE}:${tag} resolves to ${resolved}, not the verified ${DIGEST}" >&2
+              exit 1
+            fi
+          done
 
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:

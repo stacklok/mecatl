@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@mecatl-studio/contracts": "workspace:*",
-    "@types/node": "24.19.0",
+    "@types/node": "26.6.4",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
