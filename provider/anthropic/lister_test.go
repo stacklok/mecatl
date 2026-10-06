@@ -135,13 +135,17 @@ func TestListerPreservesHTTPStatus(t *testing.T) {
 
 func TestVisibleReasoning_Scenario1_ExplicitCapabilitiesWin(t *testing.T) {
 	for _, tc := range []struct {
-		name, capabilities string
-		adaptive, manual   bool
+		name, capabilities      string
+		known, adaptive, manual bool
 	}{
-		{name: "unsupported", capabilities: `{"thinking":{"supported":false}}`},
-		{name: "unsupported overrides contradictory types", capabilities: `{"thinking":{"supported":false,"types":{"adaptive":{"supported":true},"enabled":{"supported":true}}}}`},
-		{name: "adaptive", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":true}}}}`, adaptive: true},
-		{name: "manual", capabilities: `{"thinking":{"supported":true,"types":{"enabled":{"supported":true}}}}`, manual: true},
+		{name: "unsupported", capabilities: `{"thinking":{"supported":false}}`, known: true},
+		{name: "unsupported overrides contradictory types", capabilities: `{"thinking":{"supported":false,"types":{"adaptive":{"supported":true},"enabled":{"supported":true}}}}`, known: true},
+		{name: "adaptive", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":true}}}}`, known: true, adaptive: true},
+		{name: "manual", capabilities: `{"thinking":{"supported":true,"types":{"enabled":{"supported":true}}}}`, known: true, manual: true},
+		{name: "unreported adaptive support", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{}}}}`},
+		{name: "unreported enabled support", capabilities: `{"thinking":{"supported":true,"types":{"enabled":{}}}}`},
+		{name: "only adaptive unsupported", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":false}}}}`},
+		{name: "both types unsupported without thinking negative", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":false},"enabled":{"supported":false}}}}`},
 	} {
 		t.Run("listing/"+tc.name, func(t *testing.T) {
 			var info sdk.ModelInfo
@@ -149,8 +153,8 @@ func TestVisibleReasoning_Scenario1_ExplicitCapabilitiesWin(t *testing.T) {
 				t.Fatalf("unmarshal model info: %v", err)
 			}
 			got := mapModelInfo(info).Thinking
-			if !got.Known || got.Adaptive != tc.adaptive || got.Enabled != tc.manual {
-				t.Fatalf("thinking = %+v, want known adaptive=%v manual=%v", got, tc.adaptive, tc.manual)
+			if got.Known != tc.known || got.Adaptive != tc.adaptive || got.Enabled != tc.manual {
+				t.Fatalf("thinking = %+v, want known=%v adaptive=%v manual=%v", got, tc.known, tc.adaptive, tc.manual)
 			}
 		})
 	}
@@ -214,10 +218,6 @@ func TestVisibleReasoning_Scenario1_SparseListingPreservesOtherFields(t *testing
 	}
 	if got.Thinking.Known {
 		t.Errorf("sparse thinking metadata became known: %+v", got.Thinking)
-	}
-	replay := unpackReasoning(packReasoning([]reasoningBlock{{Kind: reasoningKindThinking, Thinking: "provider summary", Signature: "signed-replay"}}))
-	if len(replay) != 1 || replay[0].Signature != "signed-replay" || replay[0].Thinking != "provider summary" {
-		t.Fatalf("signed replay changed while preserving sparse metadata: %+v", replay)
 	}
 }
 

@@ -105,6 +105,10 @@ func TestADR_0016_MissingThinkingCapabilityUsesModelFallback(t *testing.T) {
 		`"capabilities":{"thinking":{}}`,
 		`"capabilities":{"thinking":{"supported":true}}`,
 		`"capabilities":{"thinking":{"supported":true,"types":{}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"enabled":{}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":false}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":false},"enabled":{"supported":false}}}}`,
 	} {
 		t.Run(capabilities, func(t *testing.T) {
 			body := `{"data":[{"id":"claude-opus-4-8","type":"model","display_name":"Claude Opus 4.8","created_at":"2026-01-01T00:00:00Z","max_input_tokens":1000000,"max_tokens":128000` + func() string {
@@ -123,7 +127,7 @@ func TestADR_0016_MissingThinkingCapabilityUsesModelFallback(t *testing.T) {
 				CustomProviderAPIKeys: map[string]string{"gateway": "test-key"},
 				liveModelHTTPClient:   client,
 			}
-			reg, err := buildProviderRegistry(cfg, fakeEnv(nil))
+			reg, err := buildProviderRegistry(isolateConfig(t, cfg), fakeEnv(nil))
 			if err != nil {
 				t.Fatalf("buildProviderRegistry: %v", err)
 			}

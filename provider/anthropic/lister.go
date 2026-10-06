@@ -156,15 +156,13 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 
 // mapModelInfo projects the SDK's rich ModelInfo into the neutral Model. The
 // thinking descriptor preserves presence: sparse capability records are unknown
-// so composition can use the prefix floor, while an explicit false or reported
-// type remains authoritative. int64 ceilings are narrowed to int (model limits
-// are well within int range on every supported platform).
+// so composition can use the prefix floor, while an explicit thinking-level
+// negative or a supported type remains authoritative. int64 ceilings are narrowed
+// to int (model limits are well within int range on every supported platform).
 func mapModelInfo(info sdk.ModelInfo) Model {
 	caps := info.Capabilities
-	thinkingKnown := caps.JSON.Thinking.Valid() &&
-		((caps.Thinking.JSON.Supported.Valid() && !caps.Thinking.Supported) ||
-			caps.Thinking.Types.JSON.Adaptive.Valid() || caps.Thinking.Types.JSON.Enabled.Valid())
 	unsupported := caps.JSON.Thinking.Valid() && caps.Thinking.JSON.Supported.Valid() && !caps.Thinking.Supported
+	thinkingKnown := unsupported || caps.Thinking.Types.Adaptive.Supported || caps.Thinking.Types.Enabled.Supported
 	return Model{
 		ID:           info.ID,
 		DisplayName:  info.DisplayName,
