@@ -715,11 +715,12 @@ jobs:
           # The runtime base tracks Chainguard `latest` by digest, so its Node
           # major can move under a Renovate digest bump. apps/package.json
           # `engines` is the source of truth; refuse any other major.
-          want=$(node --print 'require("./apps/package.json").engines.node.match(/^>=(\d+) <(\d+)$/).slice(1).join(" ")')
-          set -- $want
+          engines='require("./apps/package.json").engines.node.match(/^>=(\d+) <(\d+)$/)'
+          min=$(node --print "${engines}[1]")
+          max=$(node --print "${engines}[2]")
           got=$(docker run --rm --entrypoint /usr/bin/node mecatl-studio:ci --print 'process.versions.node.split(".")[0]')
-          if [ "$got" -lt "$1" ] || [ "$got" -ge "$2" ]; then
-            echo "Studio image runs Node $got, outside apps/package.json engines (>=$1 <$2)" >&2
+          if [ "$got" -lt "$min" ] || [ "$got" -ge "$max" ]; then
+            echo "Studio image runs Node $got, outside apps/package.json engines (>=$min <$max)" >&2
             exit 1
           fi
 
