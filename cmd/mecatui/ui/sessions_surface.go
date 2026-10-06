@@ -1207,7 +1207,7 @@ func conversationFromTranscript(messages []client.ConversationMessage) conversat
 			for _, call := range message.ToolCalls {
 				out.addTool(call.ID, call.Name, call.Args)
 			}
-		case "tool":
+		case toolKind:
 			if message.ToolResult != nil {
 				out.resolveToolResult(client.ToolResultMsg{CallID: message.ToolResult.CallID, Content: message.ToolResult.Content, IsError: message.ToolResult.IsError, Blocks: message.ToolResult.Blocks, StructuredContent: message.ToolResult.StructuredContent})
 			}

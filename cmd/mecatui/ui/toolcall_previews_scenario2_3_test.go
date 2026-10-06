@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
@@ -145,7 +146,7 @@ func TestMecatuiToolcallPreviews_Scenario2_ReloadAndSessionIsolation(t *testing.
 }
 
 func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *testing.T) {
-	trace := traceAppendTool(nil, "Read", "args", false)
+	trace := traceAppendTool(nil, "Read", "args")
 	r := (&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)
 	if strings.Contains(stripANSIstr(r), "✓ Read") || !strings.Contains(stripANSIstr(r), "Read") {
 		t.Fatalf("call-only should be neutral: %q", r)
@@ -154,14 +155,14 @@ func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *te
 	if !strings.Contains(stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)), "✓ Read — result") {
 		t.Fatalf("observed result: %#v", trace)
 	}
-	failed := traceMarkToolResult(traceAppendTool(nil, "Grep", "pattern", false), "Grep", "not found", true)
+	failed := traceMarkToolResult(traceAppendTool(nil, "Grep", "pattern"), "Grep", "not found", true)
 	if got := stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(failed)); !strings.Contains(got, "✗ Grep — not found") {
 		t.Fatalf("observed error not rendered: %q", got)
 	}
 	if orphan := traceMarkToolResult(nil, "Read", "orphan", false); !orphan[0].unattributed || orphan[0].resolved {
 		t.Fatalf("result-only fabricated call: %#v", orphan)
 	}
-	trace = traceAppendTool(trace, "Read", "second", false)
+	trace = traceAppendTool(trace, "Read", "second")
 	trace = traceMarkToolResult(trace, "Read", "ambiguous", true)
 	if trace[0].detail != "result" || trace[1].detail != "second" || !strings.Contains(stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)), "unattributed") {
 		t.Fatalf("ambiguous result changed a call: %#v", trace)
@@ -170,16 +171,16 @@ func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *te
 	if !strings.Contains(stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)), "unattributed") {
 		t.Fatalf("nameless result lost: %#v", trace)
 	}
-	mixed := traceAppendTool(nil, "Read", "pending", false)
-	mixed = traceAppendTool(mixed, "Read", "previously resolved", false)
+	mixed := traceAppendTool(nil, "Read", "pending")
+	mixed = traceAppendTool(mixed, "Read", "previously resolved")
 	mixed[1].resolved = true
 	mixed = traceMarkToolResult(mixed, "Read", "ambiguous", false)
 	if mixed[0].resolved || !mixed[len(mixed)-1].unattributed {
 		t.Fatalf("resolved duplicate allowed a guessed match: %#v", mixed)
 	}
-	blocked := traceAppendTool(nil, "Glob", "first", false)
+	blocked := traceAppendTool(nil, "Glob", "first")
 	for i := 0; i < maxTraceEntries; i++ {
-		blocked = traceAppendTool(blocked, "Read", "later", false)
+		blocked = traceAppendTool(blocked, "Read", "later")
 	}
 	blocked = traceMarkToolResult(blocked, "Read", "must-not-attach", false)
 	if blocked[len(blocked)-1].name != "unattributed result (Read)" || blocked[len(blocked)-2].resolved {

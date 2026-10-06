@@ -8,6 +8,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
+const toolKind = "tool"
+
 // maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
 // a fleet lane, a parallel branch, a team member) retains for the expanded/focus
 // view, mirroring the line-cap idiom used elsewhere (e.g. maxToolResultLines).
@@ -110,8 +112,8 @@ func traceAppendMessage(trace []teamTrace, text string) []teamTrace {
 
 // traceAppendTool adds a tool chip (pending; error + result detail resolved later
 // by traceMarkToolResult). detail here is the call's bounded arg preview.
-func traceAppendTool(trace []teamTrace, name, detail string, isError bool) []teamTrace {
-	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: name, detail: detail, isError: isError})
+func traceAppendTool(trace []teamTrace, name, detail string) []teamTrace {
+	return pushTrace(trace, teamTrace{kind: teamTraceTool, name: name, detail: detail})
 }
 
 // traceMarkToolResult updates only a unique retained unresolved call when no
@@ -480,7 +482,7 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, te
 	default: // "tool.call" — or an older server's kind-less subagent.tool/branch_tool
 		if toolName != "" {
 			current = toolName
-			trace = traceAppendTool(trace, toolName, detail, false)
+			trace = traceAppendTool(trace, toolName, detail)
 		}
 	}
 	return trace, current

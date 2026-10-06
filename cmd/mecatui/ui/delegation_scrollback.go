@@ -28,7 +28,7 @@ func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 	for i, t := range in {
 		out[i] = scrollback.TraceEntry{Text: t.text, ToolName: t.name, Detail: t.detail, Error: t.isError, Resolved: t.resolved, Unattributed: t.unattributed, Blocked: t.blocked, Serial: t.serial}
 		if t.kind == teamTraceTool {
-			out[i].Kind = "tool"
+			out[i].Kind = toolKind
 		} else {
 			out[i].Kind = "message"
 		}
@@ -166,7 +166,7 @@ func applyTeamMemberUpdate(update *scrollback.TeamUpdate, msg client.TeamMsg) {
 		lane.Trace = scrollTrace(traceAppendMessage(traceFromScroll(lane.Trace), msg.Text))
 	case "tool.call":
 		lane.Idle, lane.Current, lane.ToolCount = false, msg.ToolName, lane.ToolCount+1
-		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail, false))
+		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail))
 	case "tool.result":
 		lane.Trace = scrollTrace(traceMarkToolResult(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail, msg.IsError))
 	case "turn.end":
