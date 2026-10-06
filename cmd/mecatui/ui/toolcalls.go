@@ -132,6 +132,9 @@ const (
 	toolcallHeading
 	toolcallError
 	toolcallArgument
+	toolcallDiffMeta
+	toolcallDiffRemove
+	toolcallDiffAdd
 	toolcallField
 )
 
@@ -623,6 +626,12 @@ func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []strin
 			value := strings.TrimPrefix(text, terminaltext.Sanitize(row.label))
 			content[i] = s.deps.theme.Style("toolName").Render(label) +
 				s.deps.theme.Style("toolArgs").Render(strings.ReplaceAll(value, "\n", "\n  "))
+		case toolcallDiffMeta:
+			content[i] = s.deps.theme.Style("diffMeta").Render(text)
+		case toolcallDiffRemove:
+			content[i] = s.deps.theme.Style("diffRemove").Render(text)
+		case toolcallDiffAdd:
+			content[i] = s.deps.theme.Style("diffAdd").Render(text)
 		case toolcallField:
 			label := terminaltext.Sanitize(row.label)
 			content[i] = s.deps.theme.Style("toolName").Render(label) +
@@ -681,14 +690,38 @@ func toolcallDetailLines(entry toolcallDetail) []string {
 	return lines
 }
 
+func editRequestDetailRows(arguments string) []toolcallDetailRow {
+	request, ok := parseEditRequest(arguments)
+	if !ok {
+		return nil
+	}
+	header := fmt.Sprintf("%s  -%d +%d", request.path, lineCount(request.oldString), lineCount(request.newString))
+	if request.replaceAll {
+		header += " (replace all)"
+	}
+	rows := []toolcallDetailRow{{text: "Edit request:", kind: toolcallHeading}, {text: terminaltext.Sanitize(header), kind: toolcallDiffMeta}}
+	for _, line := range strings.Split(terminaltext.Sanitize(strings.TrimRight(request.oldString, "\n")), "\n") {
+		if line != "" || request.oldString != "" {
+			rows = append(rows, toolcallDetailRow{text: "- " + line, kind: toolcallDiffRemove})
+		}
+	}
+	for _, line := range strings.Split(terminaltext.Sanitize(strings.TrimRight(request.newString, "\n")), "\n") {
+		if line != "" || request.newString != "" {
+			rows = append(rows, toolcallDetailRow{text: "+ " + line, kind: toolcallDiffAdd})
+		}
+	}
+	return rows
+}
+
 func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 	glyph, status, style := entry.state.status()
 
 	lines := []toolcallDetailRow{
 		{text: glyph + " " + terminaltext.Sanitize(entry.name) + " · " + status, kind: toolcallIdentity, identityName: entry.name, statusGlyph: glyph, statusText: status, statusStyle: style},
 		{text: "Call: " + terminaltext.Sanitize(entry.callID), label: "Call:", kind: toolcallField},
-		{text: "Arguments:", kind: toolcallHeading},
 	}
+	lines = append(lines, editRequestDetailRows(entry.intent)...)
+	lines = append(lines, toolcallDetailRow{text: "Arguments:", kind: toolcallHeading})
 	lines = append(lines, toolcallArgumentRows(entry.name, entry.intent)...)
 	if !entry.resultReceived {
 		return append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Result: pending", kind: toolcallHeading})

@@ -1811,31 +1811,41 @@ type editDiffArgs struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+type editRequest struct {
+	path, oldString, newString string
+	replaceAll                 bool
+}
+
+func parseEditRequest(rawArgs string) (editRequest, bool) {
+	var args editDiffArgs
+	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" || (args.OldString == "" && args.NewString == "") {
+		return editRequest{}, false
+	}
+	return editRequest{path: args.Path, oldString: args.OldString, newString: args.NewString, replaceAll: args.ReplaceAll}, true
+}
+
 // renderEditDiff renders an Edit as a red/green unified-style diff:
 // removed (old_string) lines prefixed "-", added (new_string) lines prefixed
 // "+", under a muted path header (with a "(replace all)" tag when set). Returns
 // false on malformed/empty args so the caller falls back to JSON.
 func (r *renderer) renderEditDiff(rawArgs string, expand bool, bodyWidth int) (string, bool) {
-	var args editDiffArgs
-	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil {
-		return "", false
-	}
-	if args.Path == "" || (args.OldString == "" && args.NewString == "") {
+	args, ok := parseEditRequest(rawArgs)
+	if !ok {
 		return "", false
 	}
 
 	// Size signal: removed/added line counts (empty side = 0 lines).
-	removed := lineCount(args.OldString)
-	added := lineCount(args.NewString)
-	header := fmt.Sprintf("%s  -%d +%d", args.Path, removed, added)
-	if args.ReplaceAll {
+	removed := lineCount(args.oldString)
+	added := lineCount(args.newString)
+	header := fmt.Sprintf("%s  -%d +%d", args.path, removed, added)
+	if args.replaceAll {
 		header += " (replace all)"
 	}
 	var b strings.Builder
 	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	b.WriteString("\n")
-	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand, bodyWidth))
-	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.oldString, "-", "diffRemove", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.newString, "+", "diffAdd", expand, bodyWidth))
 	return strings.TrimRight(b.String(), "\n"), true
 }
 
