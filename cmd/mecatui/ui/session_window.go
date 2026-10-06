@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	teakey "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -347,10 +348,15 @@ type windowSession struct {
 	// not answered yet; a creation error removes it and returns to origin.
 	pending bool
 	origin  int
+	// updatedAt is when the session's status or transcript last changed (the
+	// list's Updated column); activity is the fingerprint compared to detect it.
+	updatedAt time.Time
+	activity  windowActivity
 }
 
 type windowListState struct {
-	cursor int
+	cursor int    // index into the rows the filter shows
+	filter string // "" shows every row; otherwise one windowStatus value
 	notice string
 }
 
@@ -385,6 +391,9 @@ type window struct {
 	lastKeyboard  *tea.KeyboardEnhancementsMsg
 	lastProfile   *tea.ColorProfileMsg
 	sawBackground bool
+
+	// now is the list's clock; nil means time.Now (tests pin it).
+	now func() time.Time
 }
 
 // NewWindow builds the multi-session program root around the launch session.
@@ -400,7 +409,7 @@ func NewWindow(deps Deps) tea.Model {
 		busy:       new(windowBusy),
 	}
 	key, m := w.buildSession(sessionOpen{})
-	w.sessions = []windowSession{{key: key, model: m}}
+	w.sessions = []windowSession{{key: key, model: m, updatedAt: w.clock(), activity: windowActivityOf(m)}}
 	w.activeKey = key
 	w.activeCell.Store(int64(key))
 	return w
@@ -523,11 +532,16 @@ func (w window) updateSession(key int, msg tea.Msg) (window, tea.Cmd) {
 }
 
 // withModel stores a session's updated Model at index i on a copy of the
-// session slice, so earlier window values never observe the change.
+// session slice, so earlier window values never observe the change. A change in
+// the session's status or transcript also moves its Updated time.
 func (w window) withModel(i int, updated tea.Model) window {
 	if m, ok := updated.(Model); ok {
 		w.sessions = slices.Clone(w.sessions)
 		w.sessions[i].model = m
+		if activity := windowActivityOf(m); activity != w.sessions[i].activity {
+			w.sessions[i].activity = activity
+			w.sessions[i].updatedAt = w.clock()
+		}
 	}
 	return w
 }
@@ -595,7 +609,7 @@ func (w window) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return w.onListKey(msg)
 	}
 	if teakey.Matches(msg, w.keys.Sessions) && w.activeModel().windowSessionsKeyLive() {
-		w.list = &windowListState{cursor: max(0, w.index(w.activeKey))}
+		w.list = w.listAt(w.activeKey, "")
 		return w, nil
 	}
 	return w.updateSession(w.activeKey, msg)
@@ -604,16 +618,27 @@ func (w window) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (w window) onListKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	list := *w.list
 	w.list = &list
+	rows := w.visibleRows()
+	selected := func() (windowRow, bool) {
+		if list.cursor >= 0 && list.cursor < len(rows) {
+			return rows[list.cursor], true
+		}
+		return windowRow{}, false
+	}
 	switch {
 	case teakey.Matches(msg, w.keys.Close), teakey.Matches(msg, w.keys.Sessions):
 		w.list = nil
 	case teakey.Matches(msg, w.keys.Up):
 		list.cursor = max(0, list.cursor-1)
 	case teakey.Matches(msg, w.keys.Down):
-		list.cursor = min(len(w.sessions)-1, list.cursor+1)
+		list.cursor = max(0, min(len(rows)-1, list.cursor+1))
+	case teakey.Matches(msg, w.keys.NextTab):
+		w.cycleFilter(1)
+	case msg.String() == "shift+tab", teakey.Matches(msg, w.keys.ModeSwitch):
+		w.cycleFilter(-1)
 	case teakey.Matches(msg, w.keys.Choose):
-		if list.cursor < len(w.sessions) {
-			return w.switchTo(w.sessions[list.cursor].key)
+		if row, ok := selected(); ok {
+			return w.switchTo(row.key)
 		}
 	case msg.Text == "o":
 		return w.openSavedPicker()
@@ -624,14 +649,49 @@ func (w window) onListKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return w.newSession(true)
 		}
 	case msg.Text == "d":
-		if list.cursor < len(w.sessions) {
-			return w.startDelete(w.sessions[list.cursor].key)
+		if row, ok := selected(); ok {
+			return w.startDelete(row.key)
 		}
 	case teakey.Matches(msg, w.keys.Quit), teakey.Matches(msg, w.keys.QuitD), teakey.Matches(msg, w.keys.Suspend):
 		w.list = nil
 		return w.updateSession(w.activeKey, msg)
 	}
 	return w, nil
+}
+
+// cycleFilter moves the list to the next (step 1) or previous (step -1) status
+// filter, keeping the selected session selected when the new filter shows it.
+func (w *window) cycleFilter(step int) {
+	rows := w.visibleRows()
+	selectedKey := -1
+	if w.list.cursor >= 0 && w.list.cursor < len(rows) {
+		selectedKey = rows[w.list.cursor].key
+	}
+	at := max(0, slices.Index(windowFilters, w.list.filter))
+	w.list.filter = windowFilters[(at+step+len(windowFilters))%len(windowFilters)]
+	w.list.cursor = 0
+	for i, row := range w.visibleRows() {
+		if row.key == selectedKey {
+			w.list.cursor = i
+		}
+	}
+}
+
+// listAt opens (or keeps) the list with key selected and notice shown. An open
+// list keeps its filter; the selection falls back to the first row the filter
+// shows.
+func (w window) listAt(key int, notice string) *windowListState {
+	next := windowListState{notice: notice}
+	if w.list != nil {
+		next.filter = w.list.filter
+	}
+	w.list = &next
+	for i, row := range w.visibleRows() {
+		if row.key == key {
+			next.cursor = i
+		}
+	}
+	return &next
 }
 
 // openSavedPicker opens the active session's /sessions picker from the list.
@@ -739,7 +799,7 @@ func (w window) addSession(open sessionOpen) (window, tea.Cmd) {
 	if open.attachID == "" {
 		cmds = append(cmds, m.Init())
 	}
-	w.sessions = append(slices.Clone(w.sessions), windowSession{key: key, model: m})
+	w.sessions = append(slices.Clone(w.sessions), windowSession{key: key, model: m, updatedAt: w.clock(), activity: windowActivityOf(m)})
 	switched, switchCmd := w.switchTo(key)
 	w, _ = switched.(window)
 	return w, tea.Batch(tagCmd(key, tea.Batch(cmds...)), switchCmd)
@@ -810,7 +870,7 @@ func (w window) failCreate(key int, err error) (tea.Model, tea.Cmd) {
 	if err != nil {
 		notice += ": " + terminaltext.SanitizeSingleLine(err.Error())
 	}
-	w.list = &windowListState{cursor: max(0, w.index(w.activeKey)), notice: notice}
+	w.list = w.listAt(w.activeKey, notice)
 	return w, cmd
 }
 
@@ -971,7 +1031,7 @@ func (w window) onDeleted(msg windowDeletedMsg) (tea.Model, tea.Cmd) {
 		return w.stopThenDelete(msg)
 	}
 	if msg.err != nil {
-		w.list = &windowListState{cursor: max(0, w.index(msg.key)), notice: "could not delete " + msg.label + ": " + terminaltext.SanitizeSingleLine(msg.err.Error())}
+		w.list = w.listAt(msg.key, "could not delete "+msg.label+": "+terminaltext.SanitizeSingleLine(msg.err.Error()))
 		return w, nil
 	}
 	notice := "chat deleted"
@@ -988,7 +1048,7 @@ func (w window) onDeleted(msg windowDeletedMsg) (tea.Model, tea.Cmd) {
 		cmd = tea.Batch(cmd, createCmd)
 		notice += "; opened a new session"
 	}
-	w.list = &windowListState{cursor: max(0, w.index(w.activeKey)), notice: notice}
+	w.list = w.listAt(w.activeKey, notice)
 	return w, cmd
 }
 
@@ -1070,57 +1130,20 @@ func (w window) listChord() string {
 func (w window) View() tea.View {
 	m := w.activeModel()
 	m.windowBadge = w.badge()
-	switch {
-	case w.quitConfirm != nil:
+	if w.list != nil && w.quitConfirm == nil {
+		// The session list owns the whole screen, like a full-screen surface.
+		v := m.View()
+		v.Content = w.renderList(m)
+		return v
+	}
+	if w.quitConfirm != nil {
 		m.windowOverlay = centerCard(m.deps.Theme, w.renderQuitConfirm(m), m.widthOr(), m.vp.Height())
-	case w.list != nil:
-		m.windowOverlay = w.renderList(m)
 	}
 	v := m.View()
 	if m.windowOverlay != "" && m.phase == phaseFatal {
 		v.Content = m.windowOverlay
 	}
 	return v
-}
-
-func (w window) renderList(m Model) string {
-	th := m.deps.Theme
-	hk := m.helpKeyMarkings()
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("sessions in this window") + "\n")
-	b.WriteString(th.Style("muted").Render("o or /sessions opens a saved session") + "\n\n")
-	for i, row := range w.listRows() {
-		marker := "  "
-		if i == w.list.cursor {
-			marker = "▶ "
-		}
-		line := marker + fmt.Sprintf("%-15s", row.status) + row.label
-		if row.branch != "" {
-			line += "  (" + row.branch + ")"
-		}
-		if row.key == w.activeKey {
-			line += "  · current"
-		}
-		style := th.Style("toolArgs")
-		if i == w.list.cursor {
-			style = th.Style("accent")
-		}
-		b.WriteString(renderToolCardText(style, line, m.widthOr()) + "\n")
-	}
-	if w.list.notice != "" {
-		b.WriteString("\n" + windowText(th.Style("warning"), w.list.notice, m.widthOr()) + "\n")
-	}
-	if c := w.deleteConfirm; c != nil {
-		b.WriteString("\n" + w.renderDeleteConfirm(m, *c))
-		return b.String()
-	}
-	actions := hk.choose + ": switch  n: new session  "
-	if m.caps.CreateWorktrees {
-		actions += "w: new worktree session  "
-	}
-	actions += "d: delete  o: saved sessions (/sessions)  " + hk.closeOnly + ": close"
-	b.WriteString("\n" + windowText(th.Style("muted"), actions, m.widthOr()))
-	return b.String()
 }
 
 // windowText word-wraps one plain-text line to the window width and styles it.

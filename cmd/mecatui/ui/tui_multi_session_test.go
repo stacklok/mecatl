@@ -922,7 +922,7 @@ func TestTUIMultiSession_Scenario5_NewSession(t *testing.T) {
 	first := d.w.activeKey
 
 	d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
-	if view := windowView(d); !strings.Contains(view, "n: new session") {
+	if view := windowView(d); !strings.Contains(view, "n new session") {
 		t.Fatalf("the window list must offer n:\n%s", view)
 	}
 	d.press(keyText('n'))
@@ -953,7 +953,7 @@ func TestTUIMultiSession_Scenario5_NewWorktreeSession(t *testing.T) {
 	first := d.w.activeKey
 
 	d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
-	if view := windowView(d); !strings.Contains(view, "w: new worktree session") {
+	if view := windowView(d); !strings.Contains(view, "w new worktree session") {
 		t.Fatalf("a create_worktrees server must offer w:\n%s", view)
 	}
 	d.press(keyText('w'))
@@ -989,7 +989,7 @@ func TestTUIMultiSession_Scenario5_NewWorktreeSession(t *testing.T) {
 	plain := newWindowConv()
 	bare := readyWindow(t, plain, nil)
 	bare.press(tea.KeyPressMsg{Code: tea.KeyLeft})
-	if view := windowView(bare); strings.Contains(view, "w: new worktree") {
+	if view := windowView(bare); strings.Contains(view, "w new worktree") {
 		t.Fatalf("w must be hidden without create_worktrees:\n%s", view)
 	}
 	bare.press(keyText('w'))
@@ -1065,7 +1065,7 @@ func TestTUIMultiSession_Scenario6_DeleteStopsAndRemovesRow(t *testing.T) {
 
 	// Deleting the running background session asks first, then stops and deletes it.
 	d.openListAt(first)
-	if view := windowView(d); !strings.Contains(view, "d: delete") {
+	if view := windowView(d); !strings.Contains(view, "d delete") {
 		t.Fatalf("the window list must offer d:\n%s", view)
 	}
 	d.press(keyText('d'))

@@ -451,6 +451,11 @@ func (m Model) renderFooter() string {
 	// server slash-command expansion is disabled.
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands"
+	if m.deps.window != nil && m.windowBadge == "" {
+		// The window session list is one key away; lead with it. A window
+		// badge already names the key, so it replaces this hint.
+		help = hk.sessions + " sessions · " + help
+	}
 	if m.pasteGateOpen() {
 		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " session details"
 	}

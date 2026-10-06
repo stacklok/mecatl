@@ -123,16 +123,22 @@ conversation. Opening the overlay does not cancel, pause, or steer the run.
 ## Work with several sessions in one window
 
 One `mecatui` window can hold several sessions. Press `←` on an empty prompt to
-open the window session list. Switching to another session does not stop the
-one you leave: a background session keeps running and can pause for approval.
+open the window session list; the footer shows the key as `← sessions`.
+Switching to another session does not stop the one you leave: a background
+session keeps running and can pause for approval.
 
-Each row shows a status, a label, and the worktree branch for a session outside
-the default checkout. The status is **running**, **needs approval**, **failed**,
-or **idle**; completed and cancelled turns show as idle. The label is the
-session title. When two sessions in the window share a title, each label adds
-the session's short handle. A background approval marks its row **needs
-approval** and adds a badge to the footer; switching to that session opens the
-request.
+The list fills the screen. Each row shows a status, a label, the worktree branch
+for a session outside the default checkout, and when the session last changed.
+The status is **running**, **needs approval**, **failed**, or **idle**;
+completed and cancelled turns show as idle. The label is the session title.
+When two sessions in the window share a title, each label adds the session's
+short handle. A background approval marks its row **needs approval** and adds a
+badge to the footer; switching to that session opens the request.
+
+Tabs above the table count the sessions with each status. Press `tab` or
+`shift+tab` to show only one status, or all sessions again. Beside the table
+(below it in a narrow terminal), the details for the selected session show its
+last message, its placement, model, and token use, and your latest prompt.
 
 The list holds only sessions opened in this window: the startup session, new
 ones created from the list, and chats opened from `/sessions`. It is not saved
@@ -142,6 +148,7 @@ when `mecatui` exits. To bring in a saved session, press `o` in the list or run
 |Key in the list|Action|
 |-|-|
 |`↑` / `↓`|Move between rows.|
+|`tab` / `shift+tab`|Show the next or previous status tab.|
 |`enter`|Switch to the selected session.|
 |`n`|Start a session in the default checkout and switch to it.|
 |`w`|Start a session in a fresh worktree and switch to it.|
