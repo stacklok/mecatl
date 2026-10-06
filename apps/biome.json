@@ -24,10 +24,10 @@
           "level": "error",
           "options": {
             "paths": {
-              "../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351).",
-              "../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351).",
-              "../../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351).",
-              "../../../../sdk/typescript": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351)."
+              "../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
+              "../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
+              "../../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
+              "../../../../sdk/typescript": "Studio consumes only the published @stacklok-oss/mecatl-sdk."
             }
           }
         }
@@ -44,9 +44,9 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "@stacklok-oss/mecatl-sdk": "Browser code calls the BFF; it never imports the Mecatl SDK (ADR 0351).",
-                  "@stacklok-oss/mecatl-sdk/node": "Browser code calls the BFF; it never imports the Mecatl SDK (ADR 0351).",
-                  "@stacklok-oss/mecatl-sdk/gen": "Browser code calls the BFF; it never imports the daemon protocol (ADR 0351)."
+                  "@stacklok-oss/mecatl-sdk": "Browser code calls the BFF; it never imports the Mecatl SDK.",
+                  "@stacklok-oss/mecatl-sdk/node": "Browser code calls the BFF; it never imports the Mecatl SDK.",
+                  "@stacklok-oss/mecatl-sdk/gen": "Browser code calls the BFF; it never imports the daemon protocol."
                 }
               }
             }
