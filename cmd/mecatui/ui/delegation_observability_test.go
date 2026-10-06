@@ -83,10 +83,10 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 		t.Fatalf("enter should focus the child in the f6 Agents view, view = %v", m.subagents.view)
 	}
 	focus := stripANSIstr(m.View().Content)
-	if !strings.Contains(focus, "… Grep — pattern: auth") {
+	if !strings.Contains(focus, "… Grep · pending — pattern: auth") {
 		t.Errorf("Agents focus should show the child tool args preview, got %q", focus)
 	}
-	if !strings.Contains(focus, "✓ Read — found the auth boundary") {
+	if !strings.Contains(focus, "✓ Read · success — found the auth boundary") {
 		t.Errorf("Agents focus should show the child tool result preview, got %q", focus)
 	}
 	if strings.Contains(focus, rawMessage+longMessage) {
@@ -129,7 +129,7 @@ func TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews(t *t
 		t.Errorf("group focus should show the branch roster line, got %q", out)
 	}
 	// Below it, the interleaved trace: the Team chip with its bounded preview…
-	if !strings.Contains(out, "… Grep — pattern: foo") {
+	if !strings.Contains(out, "… Grep · pending — pattern: foo") {
 		t.Errorf("group focus should show the branch tool chip with its bounded preview, got %q", out)
 	}
 	// …and the capped branch message line.

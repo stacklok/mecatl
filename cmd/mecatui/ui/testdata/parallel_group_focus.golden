@@ -12,7 +12,7 @@
   ┃                                                                                              ┃
   ┃  ▶  ✓ branch-1 · refactor with a map                                                         ┃
   ┃       done · 900ms · 2 tools · ↑12K ↓3K                                                      ┃
-  ┃       │   … Edit                                                                             ┃
+  ┃       │   … Edit · pending                                                                   ┃
   ┃   ★ ✓ branch-2 · refactor with a slice                                                       ┃
   ┃       done · 900ms · 3 tools · ↑15K ↓4.2K                                                    ┃
   ┃                                                                                              ┃

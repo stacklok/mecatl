@@ -37,7 +37,7 @@ func TestMecatuiToolcallPreviews_Scenario2_SubagentRowsAndDetail(t *testing.T) {
 		t.Fatalf("inventory: %#v", s.entries)
 	}
 	list, regions := s.Render(90, 24)
-	if !strings.Contains(stripANSIstr(list), "preview") || !strings.Contains(stripANSIstr(list), "Read") || !strings.Contains(stripANSIstr(list), "parent parent") || !strings.Contains(stripANSIstr(list), "child child-A") {
+	if !strings.Contains(stripANSIstr(list), "preview") || !strings.Contains(stripANSIstr(list), "Read") || !strings.Contains(stripANSIstr(list), "pending") || !strings.Contains(stripANSIstr(list), "parent parent") || !strings.Contains(stripANSIstr(list), "child child-A") {
 		t.Fatalf("preview list: %q", list)
 	}
 	clicked := false
@@ -209,15 +209,15 @@ func TestMecatuiToolcallPreviews_Scenario2_ReloadAndSessionIsolation(t *testing.
 func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *testing.T) {
 	trace := traceAppendTool(nil, "Read", "args")
 	r := (&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)
-	if strings.Contains(stripANSIstr(r), "✓ Read") || !strings.Contains(stripANSIstr(r), "Read") {
-		t.Fatalf("call-only should be neutral: %q", r)
+	if got := stripANSIstr(r); strings.Contains(got, "✓ Read") || !strings.Contains(got, "Read · pending") {
+		t.Fatalf("call-only should be visibly pending: %q", got)
 	}
 	trace = traceMarkToolResult(trace, "Read", "result", false)
-	if !strings.Contains(stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)), "✓ Read — result") {
+	if got := stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(trace)); !strings.Contains(got, "✓ Read · success — result") {
 		t.Fatalf("observed result: %#v", trace)
 	}
 	failed := traceMarkToolResult(traceAppendTool(nil, "Grep", "pattern"), "Grep", "not found", true)
-	if got := stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(failed)); !strings.Contains(got, "✗ Grep — not found") {
+	if got := stripANSIstr((&renderer{th: testTheme(), traceWidth: 50}).renderTrace(failed)); !strings.Contains(got, "✗ Grep · error — not found") {
 		t.Fatalf("observed error not rendered: %q", got)
 	}
 	if orphan := traceMarkToolResult(nil, "Read", "orphan", false); !orphan[0].unattributed || orphan[0].resolved {
@@ -271,8 +271,22 @@ func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *te
 	parallel = parallelModel.(Model)
 	parallelModel, _ = parallel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	parallel = parallelModel.(Model)
-	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "Read") || !strings.Contains(view, "parallel args") {
-		t.Fatalf("Parallel F6 omitted live pending trace: %q", view)
+	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "Read · pending") || !strings.Contains(view, "parallel args") {
+		t.Fatalf("Parallel F6 omitted pending trace status: %q", view)
+	}
+	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.result", "Read", "parallel result", 1))
+	parallel = parallelModel.(Model)
+	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "Read · success") || !strings.Contains(view, "parallel result") {
+		t.Fatalf("Parallel F6 omitted result status: %q", view)
+	}
+	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.call", "Read", "second args", 1))
+	parallel = parallelModel.(Model)
+	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.call", "Read", "third args", 1))
+	parallel = parallelModel.(Model)
+	parallelModel, _ = parallel.Update(branchToolParPreview("parallel-parent", 0, "tool.result", "Read", "ambiguous result", 1))
+	parallel = parallelModel.(Model)
+	if view := stripANSIstr(parallel.View().Content); !strings.Contains(view, "unattributed result") {
+		t.Fatalf("Parallel F6 guessed an ambiguous result: %q", view)
 	}
 	team := newMCPModel(t, aztec(), nil)
 	team.conv.addTool("team-parent", "Team", `{}`)
@@ -287,8 +301,18 @@ func TestMecatuiToolcallPreviews_Scenario3_DelegationFamilyParityAndSafety(t *te
 	team = teamModel.(Model)
 	teamModel, _ = team.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	team = teamModel.(Model)
-	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "Read") || !strings.Contains(view, "team args") {
-		t.Fatalf("Team F6 omitted live pending trace: %q", view)
+	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "Read · pending") || !strings.Contains(view, "team args") {
+		t.Fatalf("Team F6 omitted pending trace status: %q", view)
+	}
+	teamModel, _ = team.Update(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "team-parent", TeamID: "team", Member: "member", InnerKind: "tool.result", ToolName: "Read", Detail: "team result"})
+	team = teamModel.(Model)
+	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "Read · success") || !strings.Contains(view, "team result") {
+		t.Fatalf("Team F6 omitted result status: %q", view)
+	}
+	teamModel, _ = team.Update(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "team-parent", TeamID: "team", Member: "member", InnerKind: "tool.result", Detail: "nameless result"})
+	team = teamModel.(Model)
+	if view := stripANSIstr(team.View().Content); !strings.Contains(view, "unattributed result") {
+		t.Fatalf("Team F6 dropped a nameless result: %q", view)
 	}
 
 	m := previewFixture(t)

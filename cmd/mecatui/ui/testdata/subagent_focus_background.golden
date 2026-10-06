@@ -13,7 +13,7 @@
   ┃      conversation                                                                            ┃
   ┃    background: runs detached; the agent collects its result via SubagentStatus               ┃
   ┃                                                                                              ┃
-  ┃    … Shell                                                                                   ┃
+  ┃    … Shell · pending                                                                         ┃
   ┃                                                                                              ┃
   ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                     ┃
   ┃                                                                                              ┃

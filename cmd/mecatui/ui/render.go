@@ -1557,7 +1557,7 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 		t := &trace[i]
 		switch t.kind {
 		case teamTraceTool:
-			glyph, _ := t.cue()
+			glyph, status := t.cue()
 			style := nameStyle
 			if glyph == "✓" {
 				style = okStyle
@@ -1565,7 +1565,7 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 			if glyph == "✗" {
 				style = errStyle
 			}
-			name := truncate(terminaltext.Sanitize(t.name), maxTraceToolNameLen)
+			name := truncate(terminaltext.Sanitize(t.name), maxTraceToolNameLen) + " · " + status
 			if detail := terminaltext.Sanitize(oneLine(t.detail)); detail != "" {
 				writeToolLine(glyph, name, truncate(detail, maxTraceDetailLen), style)
 			} else {

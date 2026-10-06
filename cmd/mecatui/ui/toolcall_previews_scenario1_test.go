@@ -39,6 +39,19 @@ func TestMecatuiToolcallPreviews_Scenario1_EditArgumentParity(t *testing.T) {
 			t.Errorf("inline and inspector disagree about %q: inline=%q detail=%q", want, stripANSIstr(inline), plain)
 		}
 	}
+
+	// An Edit-shaped payload is only an Edit request when the received tool name
+	// is Edit; other top-level calls retain their complete generic arguments.
+	nonEdit := toolcallDetailLines(toolcallDetail{name: "Write", intent: args, state: toolcallPending})
+	nonEditDetail := strings.Join(nonEdit, "\n")
+	if strings.Contains(nonEditDetail, "Edit request:") {
+		t.Fatalf("non-Edit call was labeled as an Edit request: %q", nonEditDetail)
+	}
+	for _, want := range []string{"Path: pkg/example.go", "Old string: old one", "New string: new one", "Replace all: true", "Extra: retained", "Result: pending"} {
+		if !strings.Contains(nonEditDetail, want) {
+			t.Errorf("non-Edit detail lost generic field %q: %q", want, nonEditDetail)
+		}
+	}
 }
 
 func TestMecatuiToolcallPreviews_Scenario1_EditLifecycleAndSafety(t *testing.T) {

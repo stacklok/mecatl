@@ -552,6 +552,11 @@ func tracePreviewStatus(t scrollback.TraceEntry) (glyph, status string) {
 	return (teamTrace{resolved: t.Resolved, unattributed: t.Unattributed, isError: t.Error}).cue()
 }
 
+func tracePreviewStatusText(t scrollback.TraceEntry) string {
+	_, status := tracePreviewStatus(t)
+	return status
+}
+
 func tracePreviewText(t scrollback.TraceEntry) string {
 	return truncate(terminaltext.SanitizeSingleLine(oneLine(t.Detail)), maxTraceDetailLen)
 }
@@ -605,7 +610,7 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 		id := fmt.Sprintf("%d", entry.blockID)
 		if entry.preview {
 			glyph, _ = tracePreviewStatus(entry.trace)
-			text = "  ↳ tool preview · " + entry.fullName
+			text = "  ↳ tool preview · " + entry.fullName + " · " + tracePreviewStatusText(entry.trace)
 			if detail := tracePreviewText(entry.trace); detail != "" {
 				text += " — " + detail
 			}
@@ -881,7 +886,9 @@ func topLevelToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
 		}
 		lines = append(lines, toolcallDetailRow{text: message})
 	}
-	lines = append(lines, editRequestDetailRows(entry.intent)...)
+	if entry.name == "Edit" {
+		lines = append(lines, editRequestDetailRows(entry.intent)...)
+	}
 	lines = append(lines, toolcallDetailRow{text: "Arguments:", kind: toolcallHeading})
 	lines = append(lines, toolcallArgumentRows(entry.name, entry.intent)...)
 	if !entry.resultReceived {
