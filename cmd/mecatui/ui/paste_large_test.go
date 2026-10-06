@@ -543,6 +543,7 @@ func TestPlaceholderGoldenView(t *testing.T) {
 	mm, _ := m.Update(pasteMsg(largePasteText()))
 	m = mm.(Model)
 
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "paste_placeholder.golden", got)
 }

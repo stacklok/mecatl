@@ -7,7 +7,7 @@
 #                               official release binary into .tools/bin)
 #   - goimports     (only for `task fmt`)
 #                               go install golang.org/x/tools/cmd/goimports@latest
-#   - buf           (only for `task generate`)
+#   - buf           (for `task generate` and `task docs:grpc-ref`)
 #                               https://buf.build/docs/installation
 #   - helm unittest (only for `task deploy:helm-unittest`)
 #                               task deploy:helm-unittest installs the pinned
@@ -28,6 +28,9 @@ includes:
   slack-bot:
     taskfile: sdk/typescript/examples/slack-bot/Taskfile.yml
     dir: sdk/typescript/examples/slack-bot
+  studio:
+    taskfile: apps/Taskfile.yml
+    dir: apps
   mecak8s:
     taskfile: deploy/mecak8s-kind/Taskfile.yml
     dir: .
@@ -69,17 +72,26 @@ tasks:
       # mecatequi: the single-shot, headless CI/batch runner (one prompt -> diff +
       # summary JSON + optional durable event log -> exit code).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatequi ./cmd/mecatequi
-      # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
+      # mecak8s: the storage-free, k8s-native agent binary (a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
+      # Optional native Kubernetes execution provider and its fixed workload helper.
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-execution-provider ./cmd/mecatl-execution-provider
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-executor ./cmd/mecatl-executor
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
-      # authn/oidc is the opt-in caller-identity adapter module (ADR 0206),
+      - cd internal/adaptersupport && go build ./...
+      - cd contracts/gen/go/mecatl/driver && go build ./...
+      - cd adapters && go build ./...
+      # authn/oidc is the opt-in caller-identity adapter module,
       # separate from both the dependency-free engine and provider modules.
       - cd authn/oidc && go build ./...
-      # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each its
+      # environment/microvm is the opt-in local microVM runtime module.
+      # It remains isolated from the root and engine dependency graphs.
+      - cd environment/microvm && go build ./...
+      # provider/ holds the opt-in LLM-provider Go submodules, each its
       # own module under the workspace. Building them here keeps the importable
       # adapters compiling alongside the binaries.
       - cd provider/ssefilter && go build ./...
@@ -103,7 +115,7 @@ tasks:
     desc: |
       The api-compat gate — fail if the engine module's public API surface (the
       seven core packages) drifts from the committed engine/api/*.txt snapshots.
-      See engine/COMPATIBILITY.md + ADR 0037. (Also runs under `task test` via ./...)
+      See engine/COMPATIBILITY.md. (Also runs under `task test` via ./...)
     cmds:
       - go test ./internal/apicheck
 
@@ -177,7 +189,7 @@ tasks:
       - ko resolve -f deploy/
 
   ko:build:k8s:
-    desc: Build the mecak8s image locally with ko (ADR 0048; no push; tagged under ko.local)
+    desc: Build the mecak8s image locally with ko (no push; tagged under ko.local)
     env:
       KO_DOCKER_REPO: ko.local
       VERSION: "{{.BUILD_ID}}"
@@ -185,7 +197,7 @@ tasks:
       - ko build --local --bare ./cmd/mecak8s
 
   ko:publish:k8s:
-    desc: Build and push the mecak8s image with ko (ADR 0048; honours KO_DOCKER_REPO)
+    desc: Build and push the mecak8s image with ko (honours KO_DOCKER_REPO)
     env:
       VERSION: "{{.BUILD_ID}}"
     cmds:
@@ -319,67 +331,231 @@ tasks:
           echo "==> brew style dist/homebrew/Formula/mecatl.rb"
           brew style dist/homebrew/Formula/mecatl.rb
 
-  test:root-race-partition:
-    desc: Test and validate the static root-module race package partition
+  test:_module:
+    internal: true
+    requires:
+      vars: [MODULE]
+    vars:
+      RACE: '{{default "" .RACE}}'
     cmds:
-      - bash .github/scripts/root-race-packages_test.sh
-      - bash .github/scripts/root-race-packages.sh validate
+      - cd {{.MODULE}} && GOWORK=off go test -mod=readonly {{.RACE}} ./...
 
-  test:race-timing-wrapper:
-    desc: Test normal and diagnostic race-test wrapper behavior
-    cmds:
-      - bash .github/scripts/race-test_test.sh
+  test:_suite:
+    internal: true
+    requires:
+      vars: [RACE]
+    deps:
+      - task: test:_module
+        vars: {MODULE: '.', RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: engine, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: internal/adaptersupport, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: contracts/gen/go/mecatl/driver, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: adapters, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: authn/oidc, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: environment/microvm, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: integration/microvm, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/ssefilter, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/anthropic, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/openai, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/openaichat, RACE: '{{.RACE}}'}
+      - task: test:microvm-dev-tag
+        vars: {RACE: '{{.RACE}}'}
 
-  test:race-ui:
-    desc: Run the root-module UI race-test shard
+  microvm:build:
+    desc: Build the opt-in microvmd and Linux guest-agent artifacts without widening standard binaries.
     cmds:
-      - go test -race -count=1 ./cmd/mecatui/ui
+      - mkdir -p bin/microvm
+      - cd environment/microvm && GOWORK=off go build -o ../../bin/microvm/mecatl-microvmd ./cmd/mecatl-microvmd
+      - cd environment/microvm && GOWORK=off CGO_ENABLED=0 GOOS=linux go build -o ../../bin/microvm/mecatl-guest-agent ./cmd/mecatl-guest-agent
 
-  test:race-root-a:
-    desc: Run the maintained root-a race-test shard
+  microvm:package:
+    desc: Package the independently admitted guest-agent artifact.
+    deps: [microvm:build]
     cmds:
-      - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a); go test -race -count=1 "${packages[@]}"'
+      - mkdir -p bin/microvm/guest-agent-artifact
+      - cp bin/microvm/mecatl-guest-agent bin/microvm/guest-agent-artifact/mecatl-guest-agent
+      - tar -C bin/microvm/guest-agent-artifact -cf bin/microvm/mecatl-guest-agent-artifact.tar mecatl-guest-agent
 
-  test:race-root-b:
-    desc: Run the automatic root-b race-test shard (all non-UI, non-root-a packages)
+  microvm:dev:prepare:
+    desc: Prepare an unsupported signed local development release under .scratch for the current supported host (network/tooling required).
     cmds:
-      - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b); go test -race -count=1 "${packages[@]}"'
+      - .github/scripts/prepare-microvm-development-release.sh "{{.BUILD_ID}}"
+      - |
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) platform=linux-amd64 ;;
+            Darwin-arm64) platform=darwin-arm64 ;;
+            *) echo "unsupported microVM development platform: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
+          esac
+          MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/${platform}/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
 
-  test:non-race:
-    desc: Run complete root + module test coverage without the race detector
+  microvm:dev:build:
+    desc: Build microvm_dev-tagged mecated and mecatui binaries under .scratch; ordinary task build is unchanged.
     cmds:
-      - go test ./...
-      - cd engine && go test ./...
-      - cd authn/oidc && go test ./...
-      - cd provider/ssefilter && go test ./...
-      - cd provider/anthropic && go test ./...
-      - cd provider/openai && go test ./...
-      - cd provider/openaichat && go test ./...
+      - mkdir -p .scratch/microvm-dev/bin
+      - go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecated ./cmd/mecated
+      - go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecatui ./cmd/mecatui
+
+  microvm:dev:e2e:
+    desc: Run the local-development descriptor/tag gate, then the current-host Linux KVM or Darwin HVF journey (network and hypervisor required).
+    deps: [microvm:dev:prepare, microvm:dev:build]
+    cmds:
+      - task: test:microvm-dev-tag
+      - task: e2e:microvm
+
+  microvm:e2e:mecatui-build:
+    desc: Build the production mecatui command with one generated E2E release-default projection.
+    requires:
+      vars: [MECATL_MICROVM_E2E_MECATUI_BIN, MECATL_MICROVM_E2E_VERSION, MECATL_MICROVM_E2E_DEFAULTS_B64]
+    cmds:
+      - mkdir -p "$(dirname \"{{.MECATL_MICROVM_E2E_MECATUI_BIN}}\")" .scratch/go-build
+      - GOTMPDIR="$(pwd)/.scratch/go-build" go build -trimpath -o "{{.MECATL_MICROVM_E2E_MECATUI_BIN}}" -ldflags "-X main.version={{.MECATL_MICROVM_E2E_VERSION}} -X main.microVMReleaseDefaultsB64={{.MECATL_MICROVM_E2E_DEFAULTS_B64}}" ./cmd/mecatui
+
+  e2e:microvm:
+    desc: Run the deterministic mock-provider Linux amd64 KVM or Darwin arm64 HVF production-composed journey (artifact network required; no live LLM; never part of task test).
+    cmds:
+      - cmd: |
+          set -eu
+          if [ "${MECATL_MICROVM_E2E_PREPARED:-}" != "1" ]; then
+            ./environment/microvm/e2e/prepare.sh
+          fi
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) PLATFORM=linux-amd64 ;;
+            Darwin-arm64) PLATFORM=darwin-arm64 ;;
+            *) echo "microVM production E2E requires Linux amd64 KVM or Darwin arm64 macOS 15+ HVF; got $(uname -s)/$(uname -m)" >&2; exit 1 ;;
+          esac
+          E2E_ROOT="$(pwd)/.scratch/microvm-e2e/${PLATFORM}"
+          RUN_ROOT_BASE="$(pwd)/.scratch/microvm-e2e/run"
+          rm -rf "${RUN_ROOT_BASE}"
+          mkdir -p "${RUN_ROOT_BASE}"
+          case "$(uname -s)" in
+            Linux) E2E_STATE_ROOT=/dev/shm ;;
+            Darwin) E2E_STATE_ROOT=/private/tmp ;;
+          esac
+          MICROVMD_BIN="${E2E_ROOT}/mecatl-microvmd"
+          INSTALL_ROOT="${E2E_STATE_ROOT}/mecatl-release-install-${PLATFORM}-$$"
+          rm -rf "${INSTALL_ROOT}"
+          trap 'rm -rf "${INSTALL_ROOT}"' EXIT
+          (cd environment/microvm && GOWORK=off go build -o "${MICROVMD_BIN}" ./cmd/mecatl-microvmd)
+          # The focused live test crosses ordinary first-use readiness and the
+          # production UDS through the server-owned microVM default. It drives
+          # filesystem Read/Write/Shell, source and host-path isolation, logical-child
+          # merge/conflict behavior, graceful daemon restart, and exact reattachment.
+          DEFAULT_LIVE_TEST_NAMES='TestMicroVMDefaultPlacementDailyHarnessJourney'
+          run_live_tests() {
+            LIVE_TESTS=$1
+            RUN_ROOT=$2
+            EXPECTED_TEST=${3:-}
+            rm -rf "${RUN_ROOT}"
+            mkdir -p "${RUN_ROOT}/artifact-cache"
+            if ! TEST_OUTPUT=$( \
+              MECATL_MICROVMD_BIN="${MICROVMD_BIN}" \
+              MECATL_MICROVM_E2E_ROOT="${RUN_ROOT}" \
+              MECATL_MICROVM_E2E_SOCKET_ROOT="${E2E_STATE_ROOT}" \
+              MECATL_MICROVM_ARTIFACT_CACHE="${RUN_ROOT}/artifact-cache" \
+              MECATL_MICROVM_RELEASE_MANIFEST="${E2E_ROOT}/package/microvm-release-${PLATFORM}.json" \
+              MECATL_MICROVM_RELEASE_ASSETS="${E2E_ROOT}/package" \
+              MECATL_MICROVM_RELEASE_PUBLIC_KEY="${E2E_ROOT}/release-fixture/publisher.pub" \
+              MECATL_MICROVM_INSTALLER="$(pwd)/.github/scripts/install-microvm-release.sh" \
+              MECATL_MICROVM_INSTALL_ROOT="${INSTALL_ROOT}" \
+              MECATL_MICROVM_RUNTIME_DIR="${E2E_ROOT}/runtime" \
+              MECATL_MICROVM_FIRMWARE_DIR="${E2E_ROOT}/firmware" \
+              MECATL_MICROVM_ROOTFS_DIR="${E2E_ROOT}/rootfs" \
+              MECATL_MICROVM_GUEST_AGENT_DIR="${E2E_ROOT}/guest-agent" \
+              go test -v -count=1 -timeout=40m -tags=microvm_e2e -run "${LIVE_TESTS}" ./internal/adapter/microvm 2>&1
+            ); then
+              printf '%s\n' "${TEST_OUTPUT}"
+              return 1
+            fi
+            printf '%s\n' "${TEST_OUTPUT}"
+            if ! printf '%s\n' "${TEST_OUTPUT}" | grep -Eq '^=== RUN   '; then
+              echo "microVM E2E regex discovered no tests: ${LIVE_TESTS}" >&2
+              return 1
+            fi
+            if [ -n "${EXPECTED_TEST}" ] && ! printf '%s\n' "${TEST_OUTPUT}" | grep -Fq -- "=== RUN   ${EXPECTED_TEST}"; then
+              echo "named microVM E2E test was not executed: ${EXPECTED_TEST}" >&2
+              return 1
+            fi
+          }
+          if [ -n "${MECATL_MICROVM_E2E_TESTS:-}" ]; then
+            # An operator-provided regex remains one ordinary go test invocation,
+            # but a no-match is an error rather than a false-green run.
+            run_live_tests "${MECATL_MICROVM_E2E_TESTS}" "${RUN_ROOT_BASE}"
+          else
+            # Each default journey gets a fresh cache. Successful state is removed
+            # before the next journey; a failure remains available for diagnosis.
+            for LIVE_TEST in ${DEFAULT_LIVE_TEST_NAMES}; do
+              TEST_RUN_ROOT="${RUN_ROOT_BASE}/${LIVE_TEST}"
+              run_live_tests "^${LIVE_TEST}$" "${TEST_RUN_ROOT}" "${LIVE_TEST}"
+              rm -rf "${TEST_RUN_ROOT}"
+            done
+          fi
+          # Keep the deterministic production-composition contract beside the live
+          # journey: exact reattach plus lazy/no-fs allocation, multi-session
+          # isolation, harness restart continuity, fail-closed daemon-state loss,
+          # and direct-write versus isolated-child routing.
+          go test -count=1 -run '^Test(MicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
 
   test:
-    desc: Run unit tests with the race detector (root + engine + authn/oidc + provider modules + standalone hygiene proofs)
+    desc: Run the complete offline test suite without the race detector
     cmds:
-      - go test -race ./...
-      # engine/ is a separate module under the workspace — `./...` from the root
-      # does NOT cross the module boundary, so its tests are a second invocation.
-      - cd engine && go test -race ./...
-      # The opt-in OIDC adapter is a separate non-provider module.
-      - cd authn/oidc && go test -race ./...
-      # provider/ submodules (ADR 0093) — each its own module under the workspace;
-      # the per-module `./...` invocation runs their tests through the workspace.
-      - cd provider/ssefilter && go test -race ./...
-      - cd provider/anthropic && go test -race ./...
-      - cd provider/openai && go test -race ./...
-      - cd provider/openaichat && go test -race ./...
-      - task: test:engine-standalone
-      - task: test:authn-standalone
-      - task: test:provider-standalone
+      - task: test:_suite
+        vars: {RACE: ''}
+
+  test:non-race:
+    desc: Compatibility alias for the complete offline test suite
+    cmds:
+      - task: test
+
+  test:race:
+    desc: Run the complete offline test suite with the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '-race'}
+
+  test:module-publication:
+    desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.
+    vars:
+      VERSION: '{{.VERSION | default ""}}'
+    env:
+      MODULE_PUBLICATION_VERSION: '{{.VERSION}}'
+    cmds:
+      - sh .github/scripts/check-module-publication_test.sh
+      - sh .github/scripts/check-module-publication.sh
 
   test:authn-standalone:
     desc: Prove the opt-in OIDC module builds and tests with GOWORK=off.
     cmds:
       - cd authn/oidc && GOWORK=off go build ./...
       - cd authn/oidc && GOWORK=off go test ./...
+
+  test:microvm-dev-tag:
+    desc: Compile and run the offline developer-only MicroVM activation gates.
+    vars:
+      RACE: '{{default "" .RACE}}'
+    cmds:
+      - go test -mod=readonly {{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui
+
+  test:microvm-standalone:
+    desc: Prove the opt-in microVM module builds and tests with GOWORK=off.
+    cmds:
+      - cd environment/microvm && GOWORK=off go build ./...
+      - cd environment/microvm && GOWORK=off go test ./...
+
+  test:microvm-integration-standalone:
+    desc: Prove the test-only microVM integration module tests with GOWORK=off.
+    cmds:
+      - cd integration/microvm && GOWORK=off go test ./...
 
   test:engine-standalone:
     desc: |
@@ -455,7 +631,7 @@ tasks:
 
   e2e:k8s:
     desc: |
-      Run the kind-based k8s e2e suite (e2e/k8s/, build tag kind_e2e, ADR 0048).
+      Run the kind-based k8s e2e suite (e2e/k8s/, build tag kind_e2e).
       Spins a real kind cluster with a Redis StatefulSet + two storage-free
       mecak8s agent replicas and asserts lease exclusion, graceful failover,
       session persistence, and OIDC caller identity against an in-cluster Dex.
@@ -503,6 +679,50 @@ tasks:
           esac
           GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
 
+  e2e:k8s:execution:
+    desc: |
+      Run the focused mock-only Kind qualification for the optional Kubernetes
+      execution provider. It uses a unique cluster and explicit kubeconfig under
+      .scratch, builds/loads immutable local images, and never reads a provider
+      credential. Docker is the default; set CONTAINER_ENGINE=podman for rootless
+      Podman. The owned cluster is intentionally retained; the command prints the
+      exact human-confirmed cleanup command. NOT part of task test.
+    preconditions:
+      - sh: command -v kind >/dev/null 2>&1
+        msg: "kind is required"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-docker}"
+          case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) exit 1 ;; esac
+        msg: "CONTAINER_ENGINE must be docker or podman and available on PATH"
+    cmds:
+      - deploy/mecatl-execution-kind/run.sh
+
+  e2e:k8s:execution:production:
+    desc: |
+      Run the deterministic production-network and lifecycle execution-provider
+      qualification. CI sets MECATL_EXECUTION_QUAL_CI=1 so its uniquely owned Kind
+      cluster is removed automatically; local runs retain it for inspection and
+      print the human-confirmed cleanup command. No model credential is used.
+    cmds:
+      - MECATL_EXECUTION_QUAL_PROFILE=production task e2e:k8s:execution
+
+  e2e:k8s:execution:live:
+    desc: |
+      EXPLICIT OPT-IN: run mock qualification followed by one bounded real-provider
+      coding smoke on the approved retained Kind cluster. Requires absolute
+      MECATL_EXECUTION_CREDENTIAL_FILE and MECATL_EXECUTION_QUAL_STATE paths. A
+      trusted loader stages a run-scoped Secret without exposing its value, the
+      test independently verifies files and go test through typed gRPC, then the
+      mock profile is restored and only that run-scoped Secret is removed. NOT
+      part of task test.
+    preconditions:
+      - sh: test -n "${MECATL_EXECUTION_CREDENTIAL_FILE:-}"
+        msg: "MECATL_EXECUTION_CREDENTIAL_FILE is required"
+      - sh: test -n "${MECATL_EXECUTION_QUAL_STATE:-}"
+        msg: "MECATL_EXECUTION_QUAL_STATE is required"
+    cmds:
+      - deploy/mecatl-execution-kind/live.sh
+
   e2e:k8s:podman:
     desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)
     cmds:
@@ -540,7 +760,7 @@ tasks:
       Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
       every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
       rendered manifests (default + oidc.enabled=true), and assert the
-      caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
+      caller-identity boundaries. Needs helm + kubeconform; needs NO
       cluster, so it runs in CI and on a laptop.
     vars:
       PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
@@ -765,7 +985,10 @@ tasks:
       - cd authn/oidc && go test -race -coverprofile=../../coverage/authn-oidc.out -covermode=atomic ./...
       - go tool cover -func=coverage/authn-oidc.out
       - go tool cover -html=coverage/authn-oidc.out -o coverage/authn-oidc.html
-      # provider/ submodules (ADR 0093) — sibling profiles per module.
+      - cd environment/microvm && go test -race -coverprofile=../../coverage/environment-microvm.out -covermode=atomic ./...
+      - go tool cover -func=coverage/environment-microvm.out
+      - go tool cover -html=coverage/environment-microvm.out -o coverage/environment-microvm.html
+      # provider/ submodules — sibling profiles per module.
       - cd provider/ssefilter && go test -race -coverprofile=../../coverage/provider-ssefilter.out -covermode=atomic ./...
       - cd provider/anthropic && go test -race -coverprofile=../../coverage/provider-anthropic.out -covermode=atomic ./...
       - cd provider/openai && go test -race -coverprofile=../../coverage/provider-openai.out -covermode=atomic ./...
@@ -790,9 +1013,15 @@ tasks:
       # engine-local .golangci.yml) so the depguard layering allowlists stay the
       # single source of truth across the module boundary.
       - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
-      # authn/oidc is a separate opt-in adapter module, sharing the root config.
+      - 'cd internal/adaptersupport && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd contracts/gen/go/mecatl/driver && "$GOLANGCI_LINT" run --config ../../../../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd adapters && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
+      # authn/oidc and environment/microvm are separate opt-in adapter modules,
+      # sharing the root config.
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      # provider/ submodules (ADR 0093) — each its own module; sharing the ROOT
+      - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd integration/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      # provider/ submodules — each its own module; sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
@@ -826,9 +1055,10 @@ tasks:
       # module boundary, so its scan is a second invocation against engine/go.mod.
       # No allowlist: the engine library's closure is clean and must stay clean.
       - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
-      # Opt-in OIDC module: independently scan its security-sensitive closure.
+      # Opt-in OIDC and microVM modules: independently scan their sensitive closures.
       - cmd: set -o pipefail; cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
-      # provider/ submodules (ADR 0093) — each its own module; scan against its
+      - cmd: set -o pipefail; cd environment/microvm && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
+      # provider/ submodules — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
       - cmd: set -o pipefail; cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
       - cmd: set -o pipefail; cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
@@ -847,6 +1077,7 @@ tasks:
       - '"$GOLANGCI_LINT" run --allow-parallel-runners --fix ./...'
       - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd provider/openai && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
@@ -857,7 +1088,6 @@ tasks:
     cmds:
       - bash .github/scripts/docs-only-changes_test.sh
       - bash .github/scripts/docs-only-workflow_test.sh
-      - bash .github/scripts/race-aggregate-workflow_test.sh
       - bash .github/scripts/relevant-changes_test.sh
       - bash .github/scripts/relevant-changes-workflow_test.sh
 
@@ -878,6 +1108,9 @@ tasks:
       - task: lint:action-templates
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
+      - bash .github/scripts/microvm-ci-release_test.sh
+      - sh .github/scripts/release-tag-guard_test.sh
+      - python3 .github/scripts/instruction-files_test.py
 
   lint:action-templates:
     desc: |
@@ -904,23 +1137,20 @@ tasks:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
 
   tidy:
-    desc: Tidy root, engine, authn/oidc, and standalone-ready provider module manifests, then sync the workspace
+    desc: Tidy root and every nested module, including standalone adapters
     cmds:
-      # INVARIANT — do NOT reorder these steps. The order
-      #   (1) root `go mod tidy` → (2) `go work sync` → (3) each standalone
-      #   module's `GOWORK=off go mod tidy`
-      # is load-bearing. Separate modules must be tidied with the workspace OFF
-      # so each go.sum reflects its OWN closure, not the host repo's heavy cone.
-      # `go work sync` can drop `/go.mod` hash lines, so standalone tidy MUST run
-      # after sync. Running sync last leaves standalone sums incomplete.
       - go mod tidy
       - go work sync
       - cd engine && GOWORK=off go mod tidy
-      # The OIDC adapter's own sum must cover its standalone closure. Its go.mod
-      # deliberately has no replace directive. Until an engine minor containing
-      # PrincipalFromClaims/GrantTypeFromClaims is published, this command is an
-      # intentional release-sequencing gate and may fail against the older tag.
+      - cd internal/adaptersupport && GOWORK=off go mod tidy
+      - cd contracts/gen/go/mecatl/driver && GOWORK=off go mod tidy
+      - cd adapters && GOWORK=off go mod tidy
+      # OIDC resolves its published engine baseline independently of the workspace.
       - cd authn/oidc && GOWORK=off go mod tidy
+      # The microVM runtime is isolated in its own module; its tools-tag anchor
+      # retains the future runtime dependency without linking it by default.
+      - cd environment/microvm && GOWORK=off go mod tidy
+      - cd integration/microvm && GOWORK=off go mod tidy
       # All provider modules now use resolvable standalone dependencies. The
       # OpenAI-family modules pin the ssefilter module to an immutable revision
       # until the provider module release tags are cut.
@@ -962,13 +1192,22 @@ tasks:
       # fails on drift. Never hand-edit either output.
       - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference user-docs/reference/configuration.md
 
-  docs:check:
-    desc: Gate acceptance-plan checker fixtures, Go-backed document structure, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+  docs:grpc-ref:
+    desc: Regenerate the committed gRPC schema reference from the public Harness and Schedule protobuf contracts
     cmds:
-      - bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh
-      - go test ./docs/lint
+      - cmd: |
+          command -v buf >/dev/null 2>&1 || { echo "buf not found; install: https://buf.build/docs/installation"; exit 1; }
+          buf generate --template buf.gen.grpc-docs.yaml \
+            --path contracts/proto/mecatl/v1/harness.proto \
+            --path contracts/proto/mecatl/v1/schedule.proto
+        silent: true
+
+  docs:check:
+    desc: Gate instruction-file hygiene, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+    cmds:
+      - python3 .github/scripts/instruction-files.py
       - go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs$'
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 check . --strict
+      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.11 check . --strict
 
   docs:model:
     desc: Re-render & validate the modelith domain model (edit the .yaml, never the .md)
@@ -984,46 +1223,17 @@ tasks:
     desc: Refresh generated references and gate doc links (matlatl) — run before committing doc changes
     cmds:
       - task: docs:configref
+      - task: docs:grpc-ref
       - task: sdk:docs
       - task: docs:check
 
-  ac-trace:
-    desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
-    # sdk:install is a REAL dependency, not a convenience: .actrace.yml resolves
-    # titled TypeScript proofs through the `vitest:` and `playwright:` resolvers,
-    # which parse the TypeScript AST using the compiler from
-    # sdk/typescript/node_modules. Without it every titled proof is rejected
-    # ("TypeScript is unavailable"), which is merely noisy here but FATAL under
-    # --strict once its plan lands. The install task is fingerprinted on
-    # package.json + pnpm-lock.yaml, so this is a no-op on an already-installed
-    # tree.
-    deps: [sdk:install]
-    cmds:
-      # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL
-      # module, and a tool directive would force EVERY build of the root module
-      # (incl. CI without internal-org access) to resolve it. go run keeps it out
-      # of the module graph. (A private-module fetch needs GOPRIVATE set.)
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4
-
-  ac-trace-strict:
-    desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
-    deps: [sdk:install]
-    cmds:
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --strict
-
-  ac-trace-matrix:
-    desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
-    deps: [sdk:install]
-    cmds:
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --matrix
-
   ci:
-    desc: Full local CI gate (tidy, fmt, lint, test, build)
+    desc: Full local CI gate (tidy, fmt, lint, race test, build)
     cmds:
       - task: tidy
       - task: fmt
       - task: lint
-      - task: test
+      - task: test:race
       - task: build
 
   all:

@@ -1,20 +1,96 @@
 package toolhivellm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stacklok/toolhive/pkg/llm"
+	pkgsecrets "github.com/stacklok/toolhive/pkg/secrets"
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 )
+
+// TestDirectMode_THVSECv1CredentialsListModels exercises ToolHive's encrypted
+// store and OIDC token source with an isolated credential. The access-token
+// cache is written in the same LLM scope as thv llm setup; the model endpoint
+// is local, and no default config path or OS keyring is consulted.
+func TestDirectMode_THVSECv1CredentialsListModels(t *testing.T) {
+	const accessToken = "isolated-toolhive-access-token"
+	const issuer = "https://issuer.example"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" ||
+			r.Header.Get("Authorization") != "Bearer "+accessToken {
+			http.Error(w, "unexpected model request", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"test-model"}]}`)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "secrets_encrypted")
+	password := []byte("isolated-toolhive-test-pass-1234")
+	store, err := pkgsecrets.NewEncryptedManager(secretsPath, password)
+	if err != nil {
+		t.Fatalf("create isolated secrets store: %v", err)
+	}
+	key := llm.DeriveSecretKey(server.URL, issuer)
+	scoped := pkgsecrets.NewScopedProvider(store, pkgsecrets.ScopeLLM)
+	if err := scoped.SetSecret(t.Context(), key+"_AT", accessToken+"|2099-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("write isolated credential: %v", err)
+	}
+	data, err := os.ReadFile(secretsPath)
+	if err != nil {
+		t.Fatalf("read isolated secrets file: %v", err)
+	}
+	if !bytes.HasPrefix(data, []byte("THVSEC\x01")) {
+		t.Fatal("isolated secrets file is not ToolHive THVSEC v1")
+	}
+
+	// Reopen the encrypted file as mecated does in a separate process.
+	store, err = pkgsecrets.NewEncryptedManager(secretsPath, password)
+	if err != nil {
+		t.Fatalf("reopen THVSEC v1 secrets file: %v", err)
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	configBody := "llm:\n  gateway_url: " + server.URL +
+		"\n  oidc:\n    issuer: " + issuer + "\n    client_id: test-client\n"
+	if err := os.WriteFile(configPath, []byte(configBody), 0600); err != nil {
+		t.Fatalf("write isolated ToolHive config: %v", err)
+	}
+	llmCfg, err := loadLLMConfig(configPath)
+	if err != nil {
+		t.Fatalf("load isolated ToolHive config: %v", err)
+	}
+	tokenSource := llm.NewTokenSource(&llmCfg,
+		pkgsecrets.NewScopedProvider(store, pkgsecrets.ScopeLLM), false, false, nil)
+	token, err := tokenSource.Token(t.Context())
+	if err != nil {
+		t.Fatalf("load THVSEC v1 credential: %v", err)
+	}
+	if token != accessToken {
+		t.Fatal("loaded credential differs from isolated ToolHive credential")
+	}
+	models, err := openaicompat.NewLister(server.URL+"/v1", token, server.Client()).ListModels(t.Context())
+	if err != nil {
+		t.Fatalf("list direct-mode models: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "test-model" {
+		t.Fatalf("direct-mode models = %v, want test-model", models)
+	}
+}
 
 func TestInvariant_toolhive_interactive_login_never_prints_access_token(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")

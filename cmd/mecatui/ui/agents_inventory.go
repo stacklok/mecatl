@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -11,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // agentColorPalette maps the Claude Code agent-def `color` hint (one of a fixed
@@ -58,38 +60,44 @@ const (
 	agentsInvPanel                      // read-only inventory (name + description + metadata)
 )
 
-// agentsInvBodyLines is the fixed number of inventory rows the panel shows at
-// once (the scroll window). A fixed budget keeps the panel — and its goldens —
-// deterministic regardless of terminal height (the /soul soulBodyLines
-// convention). A long inventory scrolls; a short one shows in full with no
-// scroll indicator.
-const agentsInvBodyLines = 14
-
-// agentsInvState holds the agent-definition inventory overlay state on the
-// Model. It is value-embedded so the Model stays a plain struct that Update
-// copies. The agents slice is replaced wholesale on each RPC result (never
-// mutated in place) so the value-copy semantics hold. scroll is the 0-based
-// index of the first visible rendered row (clamped in the key handlers, reset
-// on each RPC result).
+// agentsInvState holds the root-owned agent-definition inventory overlay state.
+// The pointer-owned viewport is the sole physical browsing authority. Agent
+// snapshots are still replaced wholesale so Model's value-copy semantics remain
+// unchanged.
 type agentsInvState struct {
-	view    agentsInvView
-	loading bool  // the ListAgents RPC is in flight
-	err     error // the ListAgents error, rendered distinctly (nil on success)
-	agents  []client.Agent
-	scroll  int // first visible rendered body row (clamped in the key handlers)
+	view       agentsInvView
+	generation uint64
+	loading    bool  // the ListAgents RPC is in flight
+	err        error // the ListAgents error, rendered distinctly (nil on success)
+	agents     []client.Agent
+	viewport   *bounded.Viewport
 }
+
+// agentsInvResultMsg binds a ListAgents result to the open that issued it.
+// It remains UI-private because the protocol's result carries no request identity.
+type agentsInvResultMsg struct {
+	generation uint64
+	result     client.AgentsMsg
+}
+
+func newAgentsInvViewport() *bounded.Viewport { return new(bounded.Viewport) }
 
 // openAgentsInv opens the inventory panel and fires the ListAgents RPC. Only
 // callable while idle and when an agents lister is wired; returns the model
-// unchanged otherwise. The result arrives as a client.AgentsMsg handled in
+// unchanged otherwise. The UI-private result wrapper is handled in
 // updateAgentsInvMsg.
 func (m Model) openAgentsInv() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Agents == nil {
 		return m, nil
 	}
 	m.prompt.Blur() // overlay owns the keyboard while open
-	m.agentsInv = agentsInvState{view: agentsInvPanel, loading: true}
-	return m, client.ListAgentsCmd(m.deps.Ctx, m.deps.Agents)
+	m.agentsInvRequestToken++
+	generation := m.agentsInvRequestToken
+	m.agentsInv = agentsInvState{view: agentsInvPanel, generation: generation, loading: true}
+	list := client.ListAgentsCmd(m.deps.Ctx, m.deps.Agents)
+	return m, func() tea.Msg {
+		return agentsInvResultMsg{generation: generation, result: list().(client.AgentsMsg)}
+	}
 }
 
 // closeAgentsInv dismisses the overlay and returns focus to the prompt input.
@@ -109,32 +117,71 @@ func (m Model) onAgentsInvKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.agentsInv.view == agentsInvNone {
 		return m, nil, false
 	}
-	switch {
-	case key.Matches(msg, m.keys.Close):
+	if key.Matches(msg, m.keys.Close) {
 		mm, cmd := m.closeAgentsInv()
 		return mm, cmd, true
-	case key.Matches(msg, m.keys.ScrollD), key.Matches(msg, m.keys.Down):
-		m.agentsInv.scroll = clampScroll(m.agentsInv.scroll+1, m.agentsInvRowTotal(), agentsInvBodyLines)
+	}
+	rows := m.configureAgentsInvViewport()
+	if m.agentsInv.viewport == nil {
 		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.Up):
-		m.agentsInv.scroll = clampScroll(m.agentsInv.scroll-1, m.agentsInvRowTotal(), agentsInvBodyLines)
-		return m, nil, true
+	}
+	switch {
+	case key.Matches(msg, m.keys.Down):
+		m.agentsInv.viewport.Move(bounded.LineDown, len(rows))
+	case key.Matches(msg, m.keys.Up):
+		m.agentsInv.viewport.Move(bounded.LineUp, len(rows))
+	case key.Matches(msg, m.keys.ScrollD):
+		m.agentsInv.viewport.Move(bounded.PageDown, len(rows))
+	case key.Matches(msg, m.keys.ScrollU):
+		m.agentsInv.viewport.Move(bounded.PageUp, len(rows))
 	case key.Matches(msg, m.keys.ScrollBottom):
-		m.agentsInv.scroll = maxScrollOffset(m.agentsInvRowTotal(), agentsInvBodyLines)
-		return m, nil, true
+		m.agentsInv.viewport.Move(bounded.End, len(rows))
 	case key.Matches(msg, m.keys.ScrollTop):
-		m.agentsInv.scroll = 0
-		return m, nil, true
+		m.agentsInv.viewport.Move(bounded.Top, len(rows))
 	}
 	return m, nil, true
 }
 
-// agentsInvRowTotal is the rendered body-row count the key handlers clamp the
-// scroll offset against — computed from the SAME row builder the render path
-// windows (agentsInvRowLines at the model's current wrap budget), so the clamp
-// and the window can never disagree about the line count.
-func (m Model) agentsInvRowTotal() int {
-	return len(agentsInvRowLines(m.deps.Theme, m.agentsInv.agents, cardTextWidth(m.width)))
+// onAgentsInvWheel keeps physical scrolling owned by the visible definition
+// inventory. Compact and non-inventory states have no viewport and still consume
+// the event through the root-owned overlay route.
+func (m Model) onAgentsInvWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.agentsInv.view == agentsInvNone {
+		return m, nil
+	}
+	rows := m.configureAgentsInvViewport()
+	if m.agentsInv.viewport == nil {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		m.agentsInv.viewport.Move(bounded.LineUp, len(rows))
+	case tea.MouseWheelDown:
+		m.agentsInv.viewport.Move(bounded.LineDown, len(rows))
+	}
+	return m, nil
+}
+
+// configureAgentsInvViewport applies the same measured geometry used by the
+// renderer and returns the ANSI-safe physical rows navigation moves over.
+func (m *Model) configureAgentsInvViewport() []string {
+	if len(m.agentsInv.agents) == 0 || m.agentsInv.loading || m.agentsInv.err != nil {
+		m.agentsInv.viewport = nil
+		return nil
+	}
+	layout := newAgentsInvLayout(m.deps.Theme, m.helpKeyMarkings(), m.width, m.vp.Height())
+	rows := agentsInvRowLines(m.deps.Theme, m.agentsInv.agents, layout.bodyWidth)
+	height, ok := layout.viewportHeight(len(rows))
+	if !ok {
+		m.agentsInv.viewport = nil
+		return nil
+	}
+	if m.agentsInv.viewport == nil {
+		m.agentsInv.viewport = newAgentsInvViewport()
+	}
+	m.agentsInv.viewport.SetGeometry(layout.bodyWidth, height, 0, bounded.Clip)
+	m.agentsInv.viewport.Clamp(len(rows))
+	return rows
 }
 
 // updateAgentsInvMsg reduces a client.AgentsMsg into the overlay state. It fires
@@ -142,29 +189,155 @@ func (m Model) agentsInvRowTotal() int {
 // model + handled flag; handled=false for any other message so Update can fall
 // through.
 func (m Model) updateAgentsInvMsg(msg tea.Msg) (tea.Model, bool) {
-	am, ok := msg.(client.AgentsMsg)
+	result, ok := msg.(agentsInvResultMsg)
 	if !ok {
 		return m, false
 	}
+	if m.agentsInv.view != agentsInvPanel || result.generation != m.agentsInv.generation {
+		return m, true
+	}
+	am := result.result
 	m.agentsInv.loading = false
 	if am.Err != nil {
 		m.agentsInv.err = am.Err
+		m.agentsInv.agents = nil
+		m.agentsInv.viewport = nil
 		return m, true
 	}
 	m.agentsInv.err = nil
 	m.agentsInv.agents = am.Agents
-	m.agentsInv.scroll = 0
+	m.agentsInv.viewport = nil
+	m.configureAgentsInvViewport()
 	return m, true
 }
 
-// renderAgentsInvOverlay draws the inventory panel centred over the conversation
-// region via centerCard (the same bordered-card treatment as the skills/MCP
-// overlays). All server-derived strings are terminal-sanitized.
+// renderAgentsInvOverlay draws the root-owned inventory overlay within the
+// offered conversation geometry. Positive geometry either gets one measured
+// askCard layout or a close-only compact fallback; nonpositive geometry renders
+// nothing.
 func renderAgentsInvOverlay(th theme.Theme, st agentsInvState, caps client.Capabilities, hk helpKeys, width, height int) string {
-	if st.view != agentsInvPanel {
+	if st.view != agentsInvPanel || width <= 0 || height <= 0 {
 		return ""
 	}
-	return centerCard(th, renderAgentsInvPanel(th, st, caps, hk, width), width, height)
+	layout := newAgentsInvLayout(th, hk, width, height)
+	body, ok := renderAgentsInvNormalBody(th, st, caps, layout)
+	if !ok {
+		return renderAgentsInvCompact(th, hk, width)
+	}
+	card := th.Style("askCard").Width(layout.outerWidth).Render(body)
+	rows := strings.Split(card, "\n")
+	for i, row := range rows {
+		rows[i] = strings.Repeat(" ", max(0, (width-lipgloss.Width(row))/2)) + row
+	}
+	card = strings.Join(rows, "\n")
+	remaining := max(0, height-lipgloss.Height(card))
+	return strings.Repeat("\n", remaining/2) + card + strings.Repeat("\n", remaining-remaining/2)
+}
+
+const agentsInvMaxOuterWidth = 128
+
+const agentsInvFooter = "agent definitions route Subagent delegations · %s scroll · %s close"
+
+type agentsInvLayout struct {
+	outerWidth, bodyWidth int
+	frameHeight           int
+	title, footer         []string
+	bodyCapacity          int
+	normal                bool
+}
+
+func newAgentsInvLayout(th theme.Theme, hk helpKeys, width, height int) agentsInvLayout {
+	layout := agentsInvLayout{}
+	if width <= 0 || height <= 0 {
+		return layout
+	}
+	card := th.Style("askCard")
+	layout.outerWidth = min(agentsInvMaxOuterWidth, width)
+	layout.bodyWidth = layout.outerWidth - card.GetHorizontalFrameSize()
+	layout.frameHeight = card.GetVerticalFrameSize()
+	if layout.bodyWidth <= 0 {
+		return layout
+	}
+	layout.title = renderAgentsInvTextLines(th.Style("askTitle"), "Agent definitions", layout.bodyWidth)
+	layout.footer = renderAgentsInvTextLines(th.Style("muted"), fmt.Sprintf(agentsInvFooter, hk.scroll, hk.closeOnly), layout.bodyWidth)
+	layout.bodyCapacity = height - layout.frameHeight - len(layout.title) - len(layout.footer) - 2
+	layout.normal = layout.bodyCapacity >= 1
+	return layout
+}
+
+func (l agentsInvLayout) viewportHeight(total int) (int, bool) {
+	if !l.normal {
+		return 0, false
+	}
+	if total <= l.bodyCapacity {
+		return l.bodyCapacity, true
+	}
+	if l.bodyCapacity < 2 {
+		return 0, false
+	}
+	return l.bodyCapacity - 1, true
+}
+
+func renderAgentsInvTextLines(style lipgloss.Style, text string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	plain := strings.Split(ansi.Hardwrap(text, width, true), "\n")
+	lines := make([]string, 0, len(plain))
+	for _, line := range plain {
+		lines = append(lines, style.Render(line))
+	}
+	return lines
+}
+
+func renderAgentsInvCompact(th theme.Theme, hk helpKeys, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line := th.Style("muted").Render(hk.closeOnly + " close")
+	return ansi.Cut(line, 0, width) + "\x1b[0m"
+}
+
+func renderAgentsInvNormalBody(th theme.Theme, st agentsInvState, caps client.Capabilities, layout agentsInvLayout) (string, bool) {
+	if !layout.normal {
+		return "", false
+	}
+	var body []string
+	switch {
+	case st.loading:
+		body = renderAgentsInvTextLines(th.Style("muted"), "loading…", layout.bodyWidth)
+	case st.err != nil:
+		body = renderAgentsInvTextLines(th.Style("errorText"), "list agents: "+terminaltext.Sanitize(st.err.Error()), layout.bodyWidth)
+	case len(st.agents) == 0:
+		body = renderAgentsInvTextLines(th.Style("muted"), agentsInvEmptyCopy(caps), layout.bodyWidth)
+	default:
+		rows := agentsInvRowLines(th, st.agents, layout.bodyWidth)
+		height, ok := layout.viewportHeight(len(rows))
+		if !ok {
+			return "", false
+		}
+		viewport := st.viewport
+		if viewport == nil {
+			viewport = newAgentsInvViewport()
+		}
+		viewport.SetGeometry(layout.bodyWidth, height, 0, bounded.Clip)
+		view := viewport.View(rows)
+		body = append(body, view.Rows...)
+		if view.Above > 0 || view.Below > 0 {
+			indicator := fmt.Sprintf("lines %d–%d of %d", view.Above+1, len(rows)-view.Below, len(rows))
+			line := th.Style("muted").Render(indicator)
+			body = append(body, ansi.Cut(line, 0, layout.bodyWidth)+"\x1b[0m")
+		}
+	}
+	if len(body) > layout.bodyCapacity {
+		body = body[:layout.bodyCapacity]
+	}
+	lines := append([]string(nil), layout.title...)
+	lines = append(lines, "")
+	lines = append(lines, body...)
+	lines = append(lines, "")
+	lines = append(lines, layout.footer...)
+	return strings.Join(lines, "\n"), true
 }
 
 // agentsInvDisabledNote is the empty-inventory copy when agent definitions are
@@ -213,14 +386,15 @@ func agentMetaLine(a client.Agent) string {
 // hint when it maps to a supported ANSI colour), the indented word-wrapped
 // description lines, then the dim metadata lines (model · perm · tools). EVERY
 // server-derived string is terminal-sanitized BEFORE styling, so the rows are
-// safe inputs for windowRenderedLines (which must not re-sanitize — that would
-// strip the styling). The multi-line renders are split per line (lipgloss emits
-// complete per-line SGR sequences) so the scroll window can slice anywhere
-// without severing an escape.
+// safe inputs for the bounded viewport (which must not re-sanitize — that
+// would strip the styling). Multi-line renders are split into complete styled
+// lines (lipgloss emits per-line SGR sequences), so the scroll window can slice
+// anywhere without severing an escape.
 func agentsInvRowLines(th theme.Theme, agents []client.Agent, budget int) []string {
 	var lines []string
 	for _, a := range agents {
-		lines = append(lines, renderToolCardText(agentNameStyle(th, a.Color), terminaltext.Sanitize(a.Name), budget))
+		name := renderToolCardText(agentNameStyle(th, a.Color), terminaltext.Sanitize(a.Name), budget)
+		lines = append(lines, strings.Split(name, "\n")...)
 		if a.Description != "" {
 			desc := th.Style("toolArgs").Render(indentWrap(terminaltext.Sanitize(a.Description), budget))
 			lines = append(lines, strings.Split(desc, "\n")...)
@@ -233,35 +407,14 @@ func agentsInvRowLines(th theme.Theme, agents []client.Agent, budget int) []stri
 	return lines
 }
 
-// renderAgentsInvPanel renders the read-only inventory: one row per definition
-// (name + description + metadata — see agentsInvRowLines for the row anatomy and
-// the sanitize/colour invariants), scroll-windowed to agentsInvBodyLines with a
-// "lines X–Y of N" indicator when the inventory overflows. Colour is a UX hint
-// only and never affects layout — it only tints the already-rendered name
-// foreground, so a stripANSI'd row is colour-invariant.
+// renderAgentsInvPanel is the unframed compatibility seam used by focused row
+// tests. Production rendering goes through renderAgentsInvOverlay so width and
+// height share one measured geometry path.
 func renderAgentsInvPanel(th theme.Theme, st agentsInvState, caps client.Capabilities, hk helpKeys, width int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("Agent definitions") + "\n\n")
-
-	budget := cardTextWidth(width)
-	switch {
-	case st.loading:
-		b.WriteString(th.Style("muted").Render("loading…") + "\n")
-	case st.err != nil:
-		line := "list agents: " + terminaltext.Sanitize(st.err.Error())
-		if budget > 0 {
-			line = ansi.Wrap(line, budget, "")
-		}
-		b.WriteString(th.Style("errorText").Render(line) + "\n")
-	case len(st.agents) == 0:
-		b.WriteString(th.Style("muted").Render(agentsInvEmptyCopy(caps)) + "\n")
-	default:
-		b.WriteString(windowRenderedLines(th, agentsInvRowLines(th, st.agents, budget), st.scroll, agentsInvBodyLines))
+	layout := newAgentsInvLayout(th, hk, width, 1<<20)
+	body, ok := renderAgentsInvNormalBody(th, st, caps, layout)
+	if !ok {
+		return renderAgentsInvCompact(th, hk, width)
 	}
-
-	// The scroll pair (ScrollU/ScrollD) and the close chord (Close) read the LIVE
-	// keyMap markings (issue #457); with defaults the hint is byte-identical to
-	// the historical literal.
-	b.WriteString("\n" + th.Style("muted").Render("agent definitions route Subagent delegations · "+hk.scroll+" scroll · "+hk.closeOnly+" close"))
-	return b.String()
+	return body
 }

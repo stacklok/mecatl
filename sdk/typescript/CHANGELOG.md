@@ -4,6 +4,19 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## [0.4.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.4.0)
+
+- refactor(mecatui): prepare conversation cards functionally (#1744) ([`3aebbb5`](https://github.com/stacklok/mecatl/commit/3aebbb5eeb0450a501a6292f16c6e89c402f2c2f))
+- refactor: remove obsolete alpha compatibility paths (#1725) ([`b0cf03a`](https://github.com/stacklok/mecatl/commit/b0cf03a423df907e07269e085105fda2dc81ea47))
+- feat(router): add Jev delegated-model routing (#1738) ([`117f6d0`](https://github.com/stacklok/mecatl/commit/117f6d0fb65438aeafc9b53497f0f526b30c561b))
+- feat(mcp): reconcile sources and refresh session tools (#1673) ([`cb70893`](https://github.com/stacklok/mecatl/commit/cb70893ae36e284c3bf28e92c3a5a49888f0d7b3))
+- feat: centralize provider-scoped model discovery (#1841) ([`2f2d1de`](https://github.com/stacklok/mecatl/commit/2f2d1de2917fb71d1dcd12f8af03b9c236351c7f))
+- feat: integrate contextual guardrails into execution and approvals (#1510) ([`409ea74`](https://github.com/stacklok/mecatl/commit/409ea74e89044c9d67a138aa8efbf09e17fb1fd8))
+- test(sdk): enforce SDK/TUI high-level parity (#1471) (#1917) ([`e5039f8`](https://github.com/stacklok/mecatl/commit/e5039f8e64d7cfa6984c487cd977414ac9a1e2e6))
+- feat(studio): add exact plan control and authorization review prerequisite (#1909) ([`b09f573`](https://github.com/stacklok/mecatl/commit/b09f573ac9fc64a2df79c0db52f13ba83dc26d56))
+
+[Compare changes](https://github.com/stacklok/mecatl/compare/sdk/typescript/v0.3.0...sdk/typescript/v0.4.0)
+
 ## Unreleased
 
 - **Breaking (alpha):** use canonical title metadata, typed approval verdicts, typed event usage and retry disposition, exact-run controls, and compatibility-info capabilities; remove storage migration and deprecated watch aliases.

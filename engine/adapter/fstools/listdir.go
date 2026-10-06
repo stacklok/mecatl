@@ -17,9 +17,12 @@ When to use:
 - To distinguish immediate files from subdirectories.
 
 Arguments:
-- path: directory path relative to the workspace root; use "." for the root.
+- path: workspace-relative or in-root absolute directory ("." for the root).
+  In a local main session, policy may allow external absolute paths; yolo also
+  allows external ../ paths.
 
 Limits:
+- Local external listing does not support the filesystem root "/"; choose a specific external directory.
 - Returns at most 1000 entries, sorted. Directories have a trailing "/".
 - Some virtual workspaces derive directories from file paths and do not preserve empty directories.`
 
@@ -38,7 +41,7 @@ func (ListDirTool) Spec() tool.ToolSpec {
 		Name: "ListDir", Description: listDirDescription,
 		Schema: schema(`{
   "type": "object",
-  "properties": {"path": {"type": "string", "description": "Directory path relative to the workspace root; use '.' for the root."}},
+  "properties": {"path": {"type": "string", "description": "Directory path; see tool description for external-path rules."}},
   "required": ["path"]
 }`),
 	}

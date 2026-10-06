@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -18,7 +21,7 @@ import (
 
 // escapepolicy.go is the path-escape-posture Scenario 2+3+4 decision half
 // (docs/acceptance/path-escape-posture.md): a root-aware wrapping
-// port.PermissionPolicy that relaxes an out-of-root READ escape at the
+// port.PermissionPolicy that relaxes an out-of-root Read/ListDir escape at the
 // yolo/auto operator postures (Scenario 2), an out-of-root WRITE escape at
 // yolo (Allow) / auto (Ask — Scenario 3), and resolves a strict/trusted
 // out-of-root read OR write escape to ASK (Scenario 4 — instead of today's
@@ -131,19 +134,19 @@ func (p *escapePolicy) classifierFor(ws tool.WorkspaceReader) *escapeClassifier 
 //     category — an in-process Read of /proc/self/environ would return the
 //     SERVER's raw, unscrubbed environment, a channel the envscrub-scrubbed
 //     Shell parity path does not provide);
-//  4. an out-of-root READ escape at auto/yolo → Allow (Shell parity); at
+//  4. an out-of-root Read/ListDir escape at auto/yolo → Allow (Shell parity); at
 //     strict/trusted → Ask (Scenario 4 — the legible FS-tool ask instead of
 //     the ErrPathEscape dead-end);
 //  5. an out-of-root WRITE escape → Allow at yolo, Ask at auto AND at
 //     strict/trusted (Scenarios 3+4 — never a silent un-asked mutation below
 //     yolo);
 //  6. everything else → the inner decision verbatim.
-func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
+func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	decision := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
-	if decision.Effect == governance.Deny {
+	if decision.Decision.Effect == governance.Deny {
 		return decision // deny-dominance: never relax an inner deny
 	}
-	if decision.Effect == governance.Ask && decision.ConfiguredAsk {
+	if decision.Decision.Effect == governance.Ask && decision.Decision.AskProvenance == governance.AskProvenanceConfigured {
 		return decision // configured-Ask floor: the relax never suppresses a configured Ask
 	}
 	clf := p.classifierFor(ws)
@@ -156,51 +159,57 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		// Never-relaxed at every posture: an FS read of a pseudo-fs path would
 		// exfiltrate the SERVER's raw environment, a channel Shell does not
 		// provide (the env-scrub gotcha). Hard-deny even at yolo.
-		return governance.PermissionDecision{
+		decision.Decision = governance.PermissionDecision{
 			Effect: governance.Deny,
 			Reason: "path lies under a pseudo-filesystem (/proc, /sys, /dev): an in-process FS read would expose the server's raw environment — never relaxed at any posture",
 		}
+		return decision
 	case escapeEscape:
 		// ADR 0080 (auto + the operator-tier escape knob only): route the
 		// escape through the guardrail checker BEFORE the posture row. An
 		// unsafe verdict vetoes (Deny); a checker ERROR fails CLOSED to the
 		// write-escape Ask; a safe verdict falls through to the ordinary row.
 		if p.route != nil {
-			v, err := p.route.review(ctx, c)
+			result, err := p.route.review(ctx, c)
+			decision.Usage = decision.Usage.Merge(result.Usage)
 			if err != nil {
-				return p.route.failClosedDecision(err)
+				decision.Decision = p.route.failClosedDecision(err)
+				return decision
 			}
-			if v.Safe != nil && !*v.Safe {
-				return p.route.denyDecision(v)
+			if result.Verdict.Safe != nil && !*result.Verdict.Safe {
+				decision.Decision = p.route.denyDecision(result.Verdict)
+				return decision
 			}
 			// safe: fall through to the posture row below.
 		}
 		path := escapePath(c.Args)
 		switch c.Name {
-		case "Read":
+		case "Read", listDirToolName:
 			if p.posture >= PostureAuto {
 				// Shell parity: at auto/yolo Shell already reads the same bytes, so
 				// the FS read boundary was cosmetic. The relaxed workspace serves
 				// the read; the wrapper only has to not stand in its way.
-				return governance.PermissionDecision{Effect: governance.Allow}
+				decision.Decision = governance.PermissionDecision{Effect: governance.Allow}
+				return decision
 			}
 			// Scenario 4 (docs/acceptance/path-escape-posture.md): at
-			// strict/trusted a READ escape ASKS on the FS tool itself instead
+			// strict/trusted a read-only escape ASKS on the FS tool itself instead
 			// of dead-ending on ErrPathEscape (which only pushed the model to
-			// an opaque Shell `cat /path`). The inner policy already ran first:
+			// an opaque Shell workaround). The inner policy already ran first:
 			// a configured Deny and a configured Ask both returned above
 			// (deny-dominance + the configured-Ask floor), so the escape Ask
-			// only ever replaces an inner ALLOW — Read's built-in floor. The
+			// only ever replaces an inner ALLOW — Read and ListDir's built-in floor. The
 			// escape Ask is never ConfiguredAsk/FlooredConfiguredAllow: it
 			// must surface to a human (A2 and the floored-allow auto-resolve
 			// both key off those bits), and an allow-always verdict learns
 			// NOTHING out-of-root (the Learn guard below — v1 asks are
 			// allow-once only).
-			return governance.PermissionDecision{
+			decision.Decision = governance.PermissionDecision{
 				Effect: governance.Ask,
-				Reason: fmt.Sprintf("out-of-workspace read: %q lies outside the workspace root — approve to read it through the FS tool (a Shell cat of the same path is NOT a substitute)", path),
+				Reason: fmt.Sprintf("out-of-workspace read-only access: %q lies outside the workspace root — approve to run %s through the FS tool (an opaque Shell workaround is NOT a substitute)", path, c.Name),
 			}
-		case "Write", "Edit":
+			return decision
+		case writeToolName, editToolName:
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
 			// never a silent un-asked mutation below yolo. Scenario 4 extends
 			// the SAME ask to strict/trusted (whose Write/Edit floor Ask
@@ -211,18 +220,21 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			// configured-Ask floor), so the relax only ever replaces an inner
 			// ALLOW or an unconfigured floor Ask — never a configured one.
 			if p.posture >= PostureYolo {
-				return governance.PermissionDecision{Effect: governance.Allow}
+				decision.Decision = governance.PermissionDecision{Effect: governance.Allow}
+				return decision
 			}
 			if p.posture >= PostureAuto {
-				return governance.PermissionDecision{
+				decision.Decision = governance.PermissionDecision{
 					Effect: governance.Ask,
 					Reason: "out-of-workspace write: the path escapes the session workspace root (posture auto allows reads but never writes silently)",
 				}
+				return decision
 			}
-			return governance.PermissionDecision{
+			decision.Decision = governance.PermissionDecision{
 				Effect: governance.Ask,
 				Reason: fmt.Sprintf("out-of-workspace write: %q lies outside the workspace root — approve to write it through the FS tool (never a silent un-asked mutation below yolo)", path),
 			}
+			return decision
 		}
 	}
 	return decision
@@ -271,17 +283,18 @@ const escapeGuardrailPrompt = `You are a path-escape guardrail for a coding agen
 // error when the checker could not produce one (the caller fails closed). The
 // verdict is never fabricated here — an unparseable reply is an error from
 // the engineGuardrailsChecker, exactly as on the hook path.
-func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (modelhook.Verdict, error) {
+func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (modelhook.CheckResult, error) {
 	var sb strings.Builder
 	sb.WriteString(escapeGuardrailPrompt)
 	sb.WriteString("\n\n")
 	governance.WriteUntrustedBlock(&sb, string(c.Args))
-	return r.checker.Check(ctx, modelhook.CheckRequest{
+	result, err := r.checker.Check(ctx, modelhook.CheckRequest{
 		Phase:   modelhook.PhasePre,
 		Tool:    c.Name,
 		Content: string(c.Args),
 		Prompt:  sb.String(),
 	})
+	return result, err
 }
 
 // denyDecision is the veto the route returns on an unsafe verdict — a checker
@@ -303,7 +316,7 @@ func (*escapeGuardrailRoute) failClosedDecision(err error) governance.Permission
 	}
 }
 
-// escapePath extracts the FS path from a Read/Write/Edit call's args for the
+// escapePath extracts the FS path from a Read/ListDir/Write/Edit call's args for the
 // escape-ask reason (the ask must NAME the path so the approval is legible).
 // A malformed arg yields "" (the classify step already treated the call as
 // in-root then, so this is only ever reached with a well-formed path).
@@ -361,7 +374,7 @@ func (p *escapePolicy) isEscapeCall(c session.ToolCall) bool {
 // at every posture — serving is posture-independent; the escape DECISION is the
 // policy wrapper's, and at strict/trusted the relaxed serving is what lets an
 // APPROVED escape ask execute) and carries the session's escapeClassifier so
-// Read/Stat/Write consult the SAME pseudo-fs decision before delegating — the
+// Read/ReadDir/Stat/Write consult the SAME pseudo-fs decision before delegating — the
 // workspace and the permission wrapper classify over the SAME root, never two
 // classifiers
 // that could drift (the single-construction guarantee: only
@@ -374,10 +387,13 @@ func (p *escapePolicy) isEscapeCall(c session.ToolCall) bool {
 // mutations (`ReadVersion`/`CreateFile`/`ReplaceFile`) are overridden with the
 // same guard so the inner relaxed osfs operations cannot bypass it (AC-W2-F1).
 // A confined child view uses these same choke points to reject every escape.
+// Only the main yolo view normalizes lexical relative escapes after vetting the
+// original components, then delegates to the existing osfs absolute paths.
 type escapeWorkspace struct {
 	tool.Workspace                   // the relaxed *osfs.Workspace (WithRelaxedReads/Writes)
 	classifier     *escapeClassifier // the SAME classification the policy wrapper uses
 	confined       bool              // child view: deny every escape while retaining the same content backend
+	relativeYolo   bool              // main-session yolo may normalize lexical relative escapes
 }
 
 // newEscapeWorkspace wraps a relaxed ws with the escape classifier. It is
@@ -387,8 +403,8 @@ type escapeWorkspace struct {
 // main session's workspace factory. childWorkspaceView derives the only child
 // form by retaining this wrapper's exact content backend and classifier while
 // enabling its confined mode; it never reconstructs storage from Root.
-func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier) tool.Workspace {
-	return &escapeWorkspace{Workspace: ws, classifier: classifier}
+func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier, relativeYolo bool) tool.Workspace {
+	return &escapeWorkspace{Workspace: ws, classifier: classifier, relativeYolo: relativeYolo}
 }
 
 // childWorkspaceView removes the main session's relaxed path reach without
@@ -406,7 +422,8 @@ func childWorkspaceView(ws tool.Workspace) tool.Workspace {
 // Read consults the escape classifier (pseudo-fs hard-deny) then delegates to
 // the relaxed osfs Read. An ordinary in-root path is untouched.
 func (w *escapeWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, err
 	}
 	return w.Workspace.Read(ctx, path)
@@ -415,22 +432,49 @@ func (w *escapeWorkspace) Read(ctx context.Context, path string) ([]byte, error)
 // ReadVersion consults the escape classifier then delegates to the relaxed osfs
 // version-bearing read.
 func (w *escapeWorkspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, tool.FileVersion{}, err
 	}
 	return w.Workspace.ReadVersion(ctx, path)
 }
 
+func (w *escapeWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	path, err := w.servePath(path)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceReader)
+	if !ok {
+		return nil, tool.FileVersion{}, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionBounded(ctx, path, maxBytes)
+}
+
+func (w *escapeWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	path, err := w.servePath(path)
+	if err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceRangeReader)
+	if !ok {
+		return nil, tool.FileVersion{}, 0, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionRangeBounded(ctx, path, offset, maxBytes, totalLimit)
+}
+
 // Stat consults the escape classifier (pseudo-fs hard-deny) then delegates.
 func (w *escapeWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return tool.FileInfo{}, err
 	}
 	return w.Workspace.Stat(ctx, path)
 }
 
 func (w *escapeWorkspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
-	if err := w.refuseNamespacePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, err
 	}
 	ns, ok := w.Workspace.(tool.WorkspaceNamespace)
@@ -482,7 +526,8 @@ func (w *escapeWorkspace) CopyFile(ctx context.Context, source, destination stri
 // CreateFile consults the escape classifier (pseudo-fs hard-deny) then delegates
 // to the relaxed osfs create-only mutation.
 func (w *escapeWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return tool.FileVersion{}, err
 	}
 	return w.Workspace.CreateFile(ctx, path, data)
@@ -491,7 +536,8 @@ func (w *escapeWorkspace) CreateFile(ctx context.Context, path string, data []by
 // ReplaceFile consults the escape classifier (pseudo-fs hard-deny) then delegates
 // to the relaxed osfs conditional replace.
 func (w *escapeWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return tool.FileVersion{}, err
 	}
 	return w.Workspace.ReplaceFile(ctx, path, old, data)
@@ -507,7 +553,8 @@ type relaxedAuthorityResourceResolver interface {
 // AuthorityResourcePath applies the wrapper's pseudo-filesystem deny before
 // preserving the inner workspace's physical authority identity.
 func (w *escapeWorkspace) AuthorityResourcePath(path string) (target, workspace string, err error) {
-	if err := w.refusePath(path); err != nil {
+	path, err = w.servePath(path)
+	if err != nil {
 		return "", "", err
 	}
 	resolver, ok := w.Workspace.(tool.AuthorityResourceResolver)
@@ -536,17 +583,45 @@ func (w *escapeWorkspace) refuseNamespacePath(path string) error {
 	return nil
 }
 
-// refusePath returns the hard-deny error for pseudo-filesystems in every view.
-// A confined child view additionally rejects every ordinary escape while the
-// main view continues to serve policy-approved escapes.
-func (w *escapeWorkspace) refusePath(path string) error {
+// servePath preserves the verbatim classifier decision, then converts only a
+// main-session yolo lexical escape to the existing absolute osfs serving seam.
+func (w *escapeWorkspace) servePath(path string) (string, error) {
 	args, _ := json.Marshal(map[string]string{"path": path})
 	kind := w.classifier.classify("Read", args)
 	if kind == escapePseudoFS {
-		return errors.New("osfs: path escapes workspace root: pseudo-filesystem (/proc, /sys, /dev) is never served at any posture")
+		return "", fmt.Errorf("%w: pseudo-filesystem (/proc, /sys, /dev) is never served at any posture", osfs.ErrPathEscape)
 	}
 	if w.confined && kind != escapeInRoot {
-		return fmt.Errorf("%w: child environment does not inherit relaxed path access", osfs.ErrPathEscape)
+		return "", fmt.Errorf("%w: child environment does not inherit relaxed path access", osfs.ErrPathEscape)
 	}
-	return nil
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	if _, local := osfs.LocalizeInRoot(path); local {
+		return path, nil
+	}
+	if w.confined || !w.relativeYolo {
+		return "", fmt.Errorf("%w: relative escape requires main-session yolo", osfs.ErrPathEscape)
+	}
+	// Walk the original components before joining: Clean would erase a
+	// symlink/.. pair and launder the path into an unrelated absolute target.
+	current := w.classifier.root
+	for _, component := range strings.Split(filepath.FromSlash(path), string(filepath.Separator)) {
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			current = filepath.Dir(current)
+		default:
+			current = filepath.Join(current, component)
+			info, err := os.Lstat(current)
+			if err == nil && info.Mode()&os.ModeSymlink != 0 || err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return "", fmt.Errorf("%w: unverifiable relative escape %q", osfs.ErrPathEscape, path)
+			}
+		}
+	}
+	if isPseudoFSPath(current) {
+		return "", fmt.Errorf("%w: pseudo-filesystem (/proc, /sys, /dev) is never served at any posture", osfs.ErrPathEscape)
+	}
+	return current, nil
 }

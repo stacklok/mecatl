@@ -247,10 +247,35 @@ tagged release or use a `replace` directive in `go.mod` during development.
 
 :::
 
-## Next steps
+## Contextual guardrail extension contracts
 
-- [Understand the agent loop](/building/what-you-get/agent-loop.md) and its event
-  lifecycle.
-- [Configure permissions and guardrails](/building/what-you-get/permissions.md).
-- [Review API stability](/building/api-stability.md) before depending on the
-  exported engine surface.
+Embedded hosts may supply `agent.Deps.ToolReviewer`, `ReviewEvidencePreparer`, and
+`ReviewDetails`. Optional `ReviewPolicyProvider.GuardrailReviewPolicy(toolName,
+job, operationalFailure)` reports applicability and enforcement; optional
+`ReviewMetadataProvider.GuardrailReviewMetadata(toolName, job)` returns only
+machine-safe rule and checker-route metadata.
+
+A `ReviewGrantStore` must mint a purpose-separated keyed digest over the exact
+session, environment revision, caller authority, effective call, target, and all
+eligible versioned dependencies. A false eligibility result disables repeat
+approval; `ArmGrant(digest, sessionID)` stores only that digest for the session. `ReviewDetail`
+always carries both `RootSessionID` and the reviewed `SessionID`; sinks must bind
+child visibility and cleanup to the explicit root. Approval clients should call
+`Run.ResolveApproval` with the pending ask ID, review ID, guardrail purpose, and
+verdict atomically—result release cannot use the legacy approval shortcut.
+
+---
+
+## What's next
+
+- [The agent loop](/building/what-you-get/agent-loop.md) — event taxonomy,
+  permission pause/resume, compaction, and terminal states.
+- [Permissions & guardrails](/building/what-you-get/permissions.md) — how to
+  configure rules, posture, and the model-backed guardrail layer.
+- [API stability](/building/api-stability.md) — what's guaranteed not to break
+  in the engine module you just imported, and how a breaking change is
+  classified and surfaced.
+- [Run mecated standalone](mecated.md) — if you want the composition done for
+  you (auth, TLS, gRPC, Prometheus).
+- [Cloud-native k8s with mecak8s](mecak8s.md) — stateless Kubernetes deployment
+  backed by Redis and k8s leases.

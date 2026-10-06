@@ -25,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	engineprompt "github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/acp"
@@ -62,7 +63,7 @@ func (p acpPlacementProvider) binding() server.PlacementBinding {
 		panic(err)
 	}
 	env := tool.MustEnvironment(p.ref, ws, memledger.New(), nil)
-	return server.PlacementBinding{Environment: env, Ref: p.ref}
+	return server.PlacementBinding{Environment: env, Ref: p.ref, GovernanceRoot: p.root}
 }
 
 func (p acpPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
@@ -177,9 +178,23 @@ type fakeLister struct {
 	cmds []server.Command
 }
 
-func (f fakeLister) List(_ context.Context, _ string) ([]server.Command, error) {
-	return f.cmds, nil
+func (f fakeLister) List(context.Context) ([]engineprompt.Command, error) {
+	out := make([]engineprompt.Command, 0, len(f.cmds))
+	for _, command := range f.cmds {
+		out = append(out, engineprompt.Command{Name: command.Name, Description: command.Description})
+	}
+	return out, nil
 }
+func (fakeLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (f fakeLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (server.CommandSourceBinding, func(), error) {
+	return f, func() {}, nil
+}
+func (fakeLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (fakeLister) Retire(session.SessionID) {}
 
 // editor is the scripted ACP CLIENT side of the test: it owns the agent's stdin
 // (it writes requests/responses there) and reads the agent's stdout (the agent's
@@ -464,6 +479,43 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 	case <-serveDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve did not return after EOF")
+	}
+}
+
+// TestACPToolAvailabilityRelay drives the real ACP prompt relay against the
+// offline engine and verifies availability plus its canonical confirmation update
+// one existing tool-call card exactly once.
+func TestACPToolAvailabilityRelay(t *testing.T) {
+	read := &scriptTool{name: "Read", readOnly: true, content: "available"}
+	svc := newService(t, mockllm.New(
+		mockllm.ToolCallTurn(call("c-availability", "Read", `{"path":"a"}`)),
+		mockllm.TextTurn("done"),
+	), allowRules(), read)
+	e, cleanup := startAgent(t, svc)
+	defer cleanup()
+
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
+	var created struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &created); err != nil || created.SessionID == "" {
+		t.Fatalf("session/new: %s err=%v", res, err)
+	}
+	_ = e.call("session/prompt", map[string]any{"sessionId": created.SessionID,
+		"prompt": []any{map[string]any{"type": "text", "text": "run"}}})
+
+	updates := drainUpdates(e.notes)
+	settled := 0
+	for _, update := range updates {
+		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == "c-availability" {
+			settled++
+			if update["status"] != "completed" {
+				t.Fatalf("availability settlement status = %v, want completed", update["status"])
+			}
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("tool call settled %d times, want one availability/canonical lifecycle: %v", settled, updates)
 	}
 }
 
@@ -991,11 +1043,11 @@ func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	if _, err := a.Handle(context.Background(), "session/load", badLoad, true); err == nil || !strings.Contains(err.Error(), "cwd does not match") {
 		t.Fatalf("session/load cwd mismatch = %v", err)
 	}
-	if got := binds.Load(); got != 3 { // startup validation + both session/new calls
-		t.Fatalf("Bind calls = %d, want 3", got)
+	if got := binds.Load(); got != 2 { // both session/new calls
+		t.Fatalf("Bind calls = %d, want 2", got)
 	}
-	if got := reattaches.Load(); got != 4 { // create/load discovery plus both load attempts
-		t.Fatalf("Reattach calls = %d, want 4", got)
+	if got := reattaches.Load(); got != 2 { // only the two load attempts; source discovery is execution-independent
+		t.Fatalf("Reattach calls = %d, want 2", got)
 	}
 }
 

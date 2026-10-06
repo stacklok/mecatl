@@ -30,7 +30,7 @@ func TestMemoryIndexAssemblerRendersUserMessage(t *testing.T) {
 		{Key: "project/deploy-gate", Description: "staging needs manual approval"},
 		{Key: "pref/editor", Description: "vim"},
 	}}
-	got, err := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, err := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestMemoryIndexAssemblerOmitsValues(t *testing.T) {
 	src := fakeIndexSource{entries: []tool.MemoryEntry{
 		{Key: "k", Value: "SECRET-VALUE-SHOULD-NOT-RENDER", Description: "a thing"},
 	}}
-	got, _ := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, _ := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background())
 	if len(got) != 1 {
 		t.Fatalf("want 1 message")
 	}
@@ -92,7 +92,7 @@ func TestMemoryIndexAssemblerCapAndFooter(t *testing.T) {
 			UpdatedAt:   base.Add(time.Duration(i) * time.Minute), // higher i == newer
 		})
 	}
-	got, err := prompt.MemoryIndexAssembler{Src: fakeIndexSource{entries: entries}, MaxEntries: 3}.Assemble(context.Background(), nil)
+	got, err := prompt.MemoryIndexAssembler{Src: fakeIndexSource{entries: entries}, MaxEntries: 3}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestMemoryIndexAssemblerCapAndFooter(t *testing.T) {
 }
 
 func TestMemoryIndexAssemblerNilSourceIsNoop(t *testing.T) {
-	got, err := prompt.MemoryIndexAssembler{Src: nil}.Assemble(context.Background(), nil)
+	got, err := prompt.MemoryIndexAssembler{Src: nil}.Assemble(context.Background())
 	if err != nil || got != nil {
 		t.Fatalf("nil source: got=%v err=%v, want nil/nil", got, err)
 	}
@@ -125,7 +125,7 @@ func TestMemoryIndexAssemblerNilSourceIsNoop(t *testing.T) {
 
 func TestMemoryIndexAssemblerFailsSoft(t *testing.T) {
 	src := fakeIndexSource{err: errors.New("disk on fire")}
-	got, err := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, err := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background())
 	if err != nil {
 		t.Errorf("memory faults must fail soft (memory is best-effort context), got err=%v", err)
 	}
@@ -135,7 +135,7 @@ func TestMemoryIndexAssemblerFailsSoft(t *testing.T) {
 }
 
 func TestMemoryIndexAssemblerEmptyIsNoop(t *testing.T) {
-	got, err := prompt.MemoryIndexAssembler{Src: fakeIndexSource{}}.Assemble(context.Background(), nil)
+	got, err := prompt.MemoryIndexAssembler{Src: fakeIndexSource{}}.Assemble(context.Background())
 	if err != nil || got != nil {
 		t.Fatalf("empty index: got=%v err=%v, want nil/nil", got, err)
 	}
@@ -149,10 +149,10 @@ func TestMultiAssemblerConcatenatesInOrder(t *testing.T) {
 	src := fakeIndexSource{entries: []tool.MemoryEntry{{Key: "pref/x", Description: "a pref"}}}
 
 	multi := prompt.NewMultiAssembler(
-		prompt.RootAssembler{},
+		prompt.RootAssembler{Source: ws},
 		prompt.MemoryIndexAssembler{Src: src},
 	)
-	got, err := multi.Assemble(context.Background(), ws)
+	got, err := multi.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestMemoryIndexNotInStablePrefix(t *testing.T) {
 	// Render an index message and confirm none of its content appears in the
 	// StablePrefix — the index lives after the cache breakpoint, as a user message.
 	src := fakeIndexSource{entries: []tool.MemoryEntry{{Key: "pref/secret-key", Description: "do not cache me"}}}
-	idx, _ := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background(), nil)
+	idx, _ := prompt.MemoryIndexAssembler{Src: src}.Assemble(context.Background())
 	if len(idx) != 1 {
 		t.Fatalf("want an index message to test against")
 	}
@@ -208,7 +208,7 @@ func TestStablePrefixIdenticalWithAndWithoutMemoryIndex(t *testing.T) {
 
 	// "Without index": empty source → no index message at all.
 	withoutPrefix := prompt.Build(cfg).StablePrefix
-	emptyIdx, _ := prompt.MemoryIndexAssembler{Src: fakeIndexSource{}}.Assemble(context.Background(), nil)
+	emptyIdx, _ := prompt.MemoryIndexAssembler{Src: fakeIndexSource{}}.Assemble(context.Background())
 	if len(emptyIdx) != 0 {
 		t.Fatalf("empty source should yield no index message, got %d", len(emptyIdx))
 	}
@@ -218,7 +218,7 @@ func TestStablePrefixIdenticalWithAndWithoutMemoryIndex(t *testing.T) {
 	withIdx, _ := prompt.MemoryIndexAssembler{Src: fakeIndexSource{entries: []tool.MemoryEntry{
 		{Key: "pref/a", Description: "first pref"},
 		{Key: "pref/b", Description: "second pref"},
-	}}}.Assemble(context.Background(), nil)
+	}}}.Assemble(context.Background())
 	if len(withIdx) != 1 {
 		t.Fatalf("non-empty source should yield exactly one index message, got %d", len(withIdx))
 	}

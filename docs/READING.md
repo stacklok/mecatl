@@ -4,10 +4,7 @@ This is the canonical reader map for this repo. It is a **self-contained index**
 organized by audience. Pick the row that fits. Every link points to an existing
 living guide (the code as it exists today) or a reference.
 
-**Living docs** describe **current behavior** (architecture pages, the usage guide).
-**`docs/design/IMPLEMENTATION-NOTES.md`** is the dense per-subsystem reference.
-**ADRs** in `docs/adr/` are **frozen rationale on demand** — reach for them to
-understand a decision's *why*, never as the primary introduction to a feature.
+These pages describe **current behavior**. Git history holds past design rationale.
 
 ---
 
@@ -36,16 +33,18 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | [Context & compaction](architecture/context-and-compaction.md) | How does the token budget + compaction cascade keep a long run inside the context window? | [agent loop](architecture/agent-loop.md) |
 | [Memory](architecture/memory.md) | How does cross-session recall (Remember/Recall/SearchMemory) work? What is the user model? | [agent loop](architecture/agent-loop.md) |
 | [Observability](architecture/observability.md) | What telemetry, persistence, and reliability seams exist? How do the event log, session lease, and remote drivers work? | [ports](architecture/ports.md) |
+| [Local microVM environments](architecture/microvm-environments.md) | How does the opt-in local runtime preserve environment affinity, isolate paths and credentials, verify artifacts, govern guest egress, recover lifecycle state, and report readiness? | [ports](architecture/ports.md) |
 | [Parallelism](architecture/parallelism.md) | How does fork-join parallelism (the Parallel tool) work? How are team-member workspaces isolated? What is worktree binding? | [subagents & teams](architecture/subagents-and-teams.md) |
 | [Extensibility](architecture/extensibility.md) | What MCP, skills, progressive disclosure, and engine-as-library seams exist? | [ports](architecture/ports.md) |
 | [Deployment & hardening](architecture/deployment-and-hardening.md) | How is the server hardened (auth, rate limiting, health, graceful shutdown)? How do workspace trust, the posture ladder, and permission/bash governance work? | [API surface](architecture/api-surface.md) |
 
 ### After the architecture pages
 
+- [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — draft protocol proposal for remote agent capabilities over HTTP/JSON; not a shipped mecatl surface.
-- [Implementation notes](design/IMPLEMENTATION-NOTES.md) — the dense per-subsystem companion to the architecture pages (a reference, not a narrative).
-- [ADR index](adr/README.md) — the frozen *why* archive; reach for it on demand to understand a decision's rationale.
-- [Production readiness tracker](design/PRODUCTION-READINESS.md) — the live shipped/deferred status ledger.
+- [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
+- [User-docs authoring contract](../user-docs/_README.md) and [style guide](../user-docs/_STYLE.md) — where public documentation lives and how it is written.
+- Design notes: [design principles](design/principles.md) and [contextual guardrails capacity](design/contextual-guardrails-capacity.md).
 
 ---
 
@@ -54,10 +53,11 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | Step | Page |
 | --- | --- |
 | 1 | [Project README](../README.md) — feature overview and quick start |
-| 2 | [Build your first agent](https://mecatl.dev/docs/building/getting-started/first-agent) |
-| 3 | [See Mecatl in 60 seconds](https://mecatl.dev/docs/building/getting-started/demo) |
-| 4 | [Run `mecated` standalone](https://mecatl.dev/docs/building/deployment/mecated) |
-| Then | Choose a task, feature, deployment, or reference from the [public documentation](https://mecatl.dev/docs/) |
+| 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
+| 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
+| 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
+| Optional | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
+| Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
 
 ---
 
@@ -65,7 +65,9 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 | Step | Page |
 | --- | --- |
-| 1 | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) |
+| 1 | [Building on mecatl](../user-docs/building/index.md) |
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
-| 3 | [Extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) |
+| 3 | [Extension points](../user-docs/building/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |
+| Persistence | [Built-in stores and remote drivers](../user-docs/building/extension-points/session-store.md) — external Go integration |
+| Adapter releases | [`adapters/COMPATIBILITY.md`](../adapters/COMPATIBILITY.md) — public exports, wire compatibility, and independent module releases |

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -70,6 +71,9 @@ var (
 	// holds a member of that name (a duplicate at the supervisor layer, distinct
 	// from team.ErrMemberExists at the aggregate layer). It is a bad-request error.
 	ErrMemberAlreadyAdded = errors.New("agent: member already added")
+	// ErrSupervisorClosed is returned when enrolment is attempted after Close or Run
+	// has claimed the supervisor lifecycle.
+	ErrSupervisorClosed = errors.New("agent: team supervisor is closed")
 	// ErrNoForker is returned by AddMember when a Mutating member is requested but
 	// no EnvironmentForker is configured. This is a server MISCONFIGURATION (the
 	// composition root did not wire a forker), not a bad client request.
@@ -321,7 +325,11 @@ type Supervisor struct {
 	budgetTripped bool
 	idPrefix      string
 	teamID        string
-	hooks         port.HookRunner
+	// parentCallID is populated only for a Team-tool supervisor. It binds every
+	// persisted member relationship to the exact parent Team call whose events
+	// advertise that member; directly-driven teams leave it empty.
+	parentCallID session.ToolCallID
+	hooks        port.HookRunner
 
 	// goal is the team's top-level objective, rendered as the TRUSTED top-level
 	// instruction into every member's round-0 turn and into the lead's synthesis
@@ -342,6 +350,14 @@ type Supervisor struct {
 	// transcript out of band. Nil disables persistence. The supervisor consumes the
 	// port.SessionStore interface — never a concrete adapter (layering holds).
 	store port.SessionStore
+
+	lifecycleMu sync.Mutex
+	runStarted  bool
+	runDone     chan struct{}
+	runCancel   context.CancelFunc
+	closed      bool
+	cleanupOnce sync.Once
+	cleanupDone chan struct{}
 	// leadName caches the first Lead member's name (set in AddMember) so the
 	// synthesis phase and persistence find the lead without re-scanning the roster.
 	leadName string
@@ -466,9 +482,10 @@ type memberRT struct {
 	// a routed hit. They are BARE METADATA the Team tool reads back (MemberRouting) to
 	// project onto the EvTeamStart roster — never member content. Written once in
 	// AddMember (single goroutine, before any round), read after AddMember.
-	routedCategory string
-	routedModel    string
-	routingReason  string
+	routedCategory  string
+	routedModel     string
+	routingReason   string
+	routingDecision *session.RoutingDecision
 }
 
 // SupervisorOption configures a Supervisor.
@@ -668,6 +685,16 @@ func withParentCaps(caps parentCaps) SupervisorOption {
 	return func(s *Supervisor) { s.caps = caps }
 }
 
+// withParentTeamCall binds Team-tool member sessions to the exact parent call.
+// It is intentionally private: direct RunTeam supervisors have no parent call.
+func withParentTeamCall(callID session.ToolCallID) SupervisorOption {
+	return func(s *Supervisor) {
+		if s.caps.parentSessionID != "" && s.caps.parentIncarnation.Valid() {
+			s.parentCallID = callID
+		}
+	}
+}
+
 // WithMemberLiveness injects the maintenance exclusion used for team-member
 // sessions. Run acquires it for every member before scheduling begins and
 // cleanupAll releases each hold after the between-round and synthesis lifecycle
@@ -725,6 +752,8 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
 		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
 		members:            make(map[string]*memberRT),
+		runDone:            make(chan struct{}),
+		cleanupDone:        make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(s)
@@ -744,6 +773,11 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 //
 //nolint:gocyclo // Enrolment ordering keeps authority derivation before runtime acquisition.
 func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.runStarted {
+		return ErrSupervisorClosed
+	}
 	if strings.TrimSpace(spec.Name) == "" {
 		return ErrMemberNameRequired
 	}
@@ -775,7 +809,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel, routingReason := s.maybeRouteMember(ctx, spec)
+	routedCategory, routedModel, routingReason, routingDecision := s.maybeRouteMember(ctx, spec)
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
@@ -789,6 +823,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("%w for %q", ErrNilEngine, spec.Name)
 	}
+	routeAccepted := strings.TrimSpace(routedModel) == "" || eng.Model() == strings.TrimSpace(routedModel)
+	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
 
 	// Workspace selection (three tiers). needFork is true for any member that runs in
 	// its OWN isolated workspace — a Mutating member (force-copy fork, s.forker) or a
@@ -850,6 +887,11 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
 	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
+	if err == nil && s.parentCallID != "" {
+		rel := sess.Relationship
+		rel.CallID = s.parentCallID
+		err = sess.RestoreSessionMetadata(session.SessionKindTeamMember, rel)
+	}
 	if err != nil {
 		if cleanup != nil {
 			_ = cleanup()
@@ -905,7 +947,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, env: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
-		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason}
+		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
+		routingDecision: cloneRoutingDecision(routingDecision)}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -947,22 +990,25 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string) {
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string, decision *session.RoutingDecision) {
 	if strings.TrimSpace(spec.AgentType) != "" {
-		return "", "", session.RoutingReasonAgentDefPinned
+		if s.caps.skipRoute != nil {
+			decision = s.caps.skipRoute(session.RoutingReasonAgentDefPinned)
+		}
+		return "", "", session.RoutingReasonAgentDefPinned, decision
 	}
-	if s.caps.routeTask == nil {
-		return "", "", session.RoutingReasonRouterDisabled
+	if s.caps.routeDecision == nil {
+		return "", "", session.RoutingReasonRouterDisabled, nil
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
 		artifact = spec.Name
 	}
-	cat, m, missReason, ok := s.caps.routeTask(ctx, artifact)
-	if ok {
-		return cat, strings.TrimSpace(m), ""
+	routed := s.caps.routeConfigured(ctx, artifact)
+	if routed.ok {
+		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
 	}
-	return "", "", missReason
+	return "", "", routed.reason, routed.decision
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
@@ -976,6 +1022,21 @@ func (s *Supervisor) MemberRouting(name string) (category, model, reason string)
 		return m.routedCategory, m.routedModel, m.routingReason
 	}
 	return "", "", ""
+}
+
+func (s *Supervisor) memberRoutingDecision(name string) *session.RoutingDecision {
+	if m, ok := s.members[name]; ok {
+		return cloneRoutingDecision(m.routingDecision)
+	}
+	return nil
+}
+
+func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.IncarnationID, bool) {
+	m, ok := s.members[name]
+	if !ok || m.sess == nil {
+		return "", "", false
+	}
+	return m.sess.ID, m.sess.Incarnation(), true
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs
@@ -1190,11 +1251,77 @@ type turnInput struct {
 	prompt string
 }
 
+// Close cancels an active run and waits until every enrolled member has stopped
+// and its resources have been torn down. Event callbacks may still be draining;
+// Run waits for every ordered callback before it returns. Close is safe to call
+// repeatedly, concurrently, and from an event callback.
+//
+// Member factories and cleanup callbacks must not synchronously call Close: they
+// are part of the resource construction/destruction that Close joins, so recursive
+// teardown cannot complete.
+//
+// A supervisor is single-use: AddMember after Close or after Run starts returns
+// ErrSupervisorClosed, and a second Run returns an empty outcome.
+func (s *Supervisor) Close() {
+	s.lifecycleMu.Lock()
+	if !s.closed {
+		s.closed = true
+	}
+	cancel := s.runCancel
+	started := s.runStarted
+	cleanupDone := s.cleanupDone
+	s.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if !started {
+		s.settleCleanup()
+	}
+	<-cleanupDone
+}
+
+func (s *Supervisor) settleCleanup() {
+	s.cleanupOnce.Do(func() {
+		s.cleanupAll()
+		close(s.cleanupDone)
+	})
+}
+
+func (s *Supervisor) beginRun(ctx context.Context) (context.Context, bool) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.runStarted {
+		return ctx, false
+	}
+	s.runStarted = true
+	runCtx, cancel := context.WithCancel(ctx)
+	s.runCancel = cancel
+	return runCtx, true
+}
+
+func (s *Supervisor) finishRun() {
+	s.settleCleanup()
+	s.lifecycleMu.Lock()
+	s.closed = true
+	if s.runCancel != nil {
+		s.runCancel()
+		s.runCancel = nil
+	}
+	close(s.runDone)
+	s.lifecycleMu.Unlock()
+}
+
 // Run drives the team to quiescence (or the round cap), invoking sink for every
 // member event as it is produced, and returns the outcome. sink may be nil. The
 // run is bounded by ctx: cancelling it stops scheduling further rounds and lets the
 // in-flight round finish. Forked member workspaces are cleaned up on return.
 func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome {
+	var ok bool
+	ctx, ok = s.beginRun(ctx)
+	if !ok {
+		return TeamOutcome{}
+	}
+	defer s.finishRun()
 	// Direct Service RunTeam has no parent child registry by design. Register its
 	// members through the independent lifecycle capability before planning can run;
 	// registrations remain held through idle rounds and lead synthesis.
@@ -1218,7 +1345,6 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 			m.releaseLiveness = release
 		}
 	}
-	defer s.cleanupAll()
 	if sink == nil {
 		sink = func(TeamEvent) {}
 	}
@@ -1285,10 +1411,15 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 		rounds++
 	}
 
-	close(evCh)
-	<-done
 	o := s.outcome(rounds)
 	o.Report = report
+	// Member work and teardown settle before callback draining. This lets an event
+	// callback call Close without forming Close -> runDone -> callback deadlock;
+	// Run still waits below until every already-queued callback has returned. Capture
+	// the outcome first because cleanup attributes any never-driven members.
+	s.settleCleanup()
+	close(evCh)
+	<-done
 	return o
 }
 
@@ -1594,11 +1725,12 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
+	req := RunRequest{Text: prompt, reviewRoot: s.caps.reviewRoot, reviewIsolated: m.isolated}
 	var run *Run
 	if synthesis {
-		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, req)
 	} else {
-		run = m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+		run = m.engine.Run(driveCtx, m.sess, m.env, req)
 	}
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role
@@ -1647,6 +1779,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		case <-s.caps.hardAbort:
 		}
 	}
+	posture.emitChildApprovals(run)
 	return text, stop, usage
 }
 

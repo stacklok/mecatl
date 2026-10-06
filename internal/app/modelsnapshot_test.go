@@ -11,8 +11,7 @@ import (
 
 // fakeRegistry builds a providerRegistry whose entries are the given available
 // provider ids, each backed by a canned mock provider (offline). It is the
-// composition-layer test fixture for modelSnapshot (which reads only the registry
-// ids + the embedded catalog, never the provider itself).
+// composition-layer fixture for the discovery owner's initial catalog projection.
 func fakeRegistry(t *testing.T, ids ...string) *providerRegistry {
 	t.Helper()
 	entries := make(map[string]providerEntry, len(ids))
@@ -25,7 +24,10 @@ func fakeRegistry(t *testing.T, ids ...string) *providerRegistry {
 		sort.Strings(sorted)
 		def = sorted[0]
 	}
-	return &providerRegistry{entries: entries, defaultID: def}
+	reg := &providerRegistry{entries: entries, defaultID: def}
+	reg.discovery = newProviderDiscovery(reg, Config{})
+	t.Cleanup(reg.discovery.Close)
+	return reg
 }
 
 // TestModelSnapshotAvailableOnly: only the AVAILABLE providers' models appear; an
@@ -33,7 +35,7 @@ func fakeRegistry(t *testing.T, ids ...string) *providerRegistry {
 // availability is concealed (CWE-200).
 func TestModelSnapshotAvailableOnly(t *testing.T) {
 	reg := fakeRegistry(t, providerOpenAI) // openrouter NOT available
-	models := modelSnapshot(reg)
+	models := reg.discovery.CurrentModelSnapshot().Models
 	if len(models) == 0 {
 		t.Fatal("modelSnapshot returned no models for an available openai provider")
 	}
@@ -49,16 +51,15 @@ func TestModelSnapshotAvailableOnly(t *testing.T) {
 // no selectable models — you cannot pick a model against the canned mock.
 func TestModelSnapshotSkipsMock(t *testing.T) {
 	reg := fakeRegistry(t, providerMock)
-	if got := modelSnapshot(reg); got != nil {
-		t.Fatalf("modelSnapshot(mock) = %d models, want nil (mock advertises none)", len(got))
+	if got := reg.discovery.CurrentModelSnapshot().Models; len(got) != 0 {
+		t.Fatalf("mock snapshot = %d models, want none", len(got))
 	}
 }
 
-// TestModelSnapshotNilRegistry: a nil registry (defensive) yields nil, never a
-// panic.
-func TestModelSnapshotNilRegistry(t *testing.T) {
-	if got := modelSnapshot(nil); got != nil {
-		t.Fatalf("modelSnapshot(nil) = %v, want nil", got)
+func TestModelSnapshotNilOwner(t *testing.T) {
+	var owner *providerDiscovery
+	if got := owner.CurrentModelSnapshot().Models; got != nil {
+		t.Fatalf("nil owner snapshot = %v, want nil", got)
 	}
 }
 
@@ -81,7 +82,7 @@ func TestModelSnapshotNoSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	models := modelSnapshot(reg)
+	models := reg.discovery.CurrentModelSnapshot().Models
 	if len(models) == 0 {
 		t.Fatal("expected models for two available providers")
 	}
@@ -107,7 +108,7 @@ func TestModelSnapshotNoSecrets(t *testing.T) {
 // (provider_id, id).
 func TestModelSnapshotSortedDeterministic(t *testing.T) {
 	reg := fakeRegistry(t, providerOpenAI, providerOpenRouter)
-	models := modelSnapshot(reg)
+	models := reg.discovery.CurrentModelSnapshot().Models
 	if len(models) < 2 {
 		t.Fatalf("expected many models across two providers, got %d", len(models))
 	}
@@ -147,7 +148,9 @@ func TestModelSnapshotImageReflectsIntersection(t *testing.T) {
 		},
 		defaultID: providerOpenAI,
 	}
-	models := modelSnapshot(reg)
+	reg.discovery = newProviderDiscovery(reg, Config{})
+	t.Cleanup(reg.discovery.Close)
+	models := reg.discovery.CurrentModelSnapshot().Models
 	if len(models) == 0 {
 		t.Fatal("expected openai models")
 	}
@@ -162,8 +165,10 @@ func TestModelSnapshotImageReflectsIntersection(t *testing.T) {
 	// advertise image (the intersection is the catalog value), so the false above is
 	// the adapter's doing, not a blanket false.
 	regYes := regWithProvider(providerOpenAI, port.ProviderCapabilities{Image: true})
+	regYes.discovery = newProviderDiscovery(regYes, Config{})
+	t.Cleanup(regYes.discovery.Close)
 	anyImage := false
-	for _, m := range modelSnapshot(regYes) {
+	for _, m := range regYes.discovery.CurrentModelSnapshot().Models {
 		if m.GetImage() {
 			anyImage = true
 			break
@@ -178,7 +183,7 @@ func TestModelSnapshotImageReflectsIntersection(t *testing.T) {
 // image/reasoning/context_limit for a known model (mapping correctness).
 func TestModelSnapshotMapsCatalogFields(t *testing.T) {
 	reg := fakeRegistry(t, providerOpenAI)
-	models := modelSnapshot(reg)
+	models := reg.discovery.CurrentModelSnapshot().Models
 	for _, m := range models {
 		// Every model must carry a non-empty id + display name and a non-negative limit.
 		if m.GetId() == "" {

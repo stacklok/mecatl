@@ -18,9 +18,9 @@
 #     even when labelled; see ci.yml's header for the pwn-request rationale.
 #   - The job `if:` also requires github.repository == 'stacklok/mecatl', so a
 #     fork's own scheduled/dispatched runs never reference the secret.
-#   - A guard step checks OPENROUTER_API_KEY availability and skips the live
-#     run cleanly (notice, green) when it is absent — the workflow never
-#     hard-fails just because the secret isn't configured.
+#   - Ordinary live jobs skip cleanly when OPENROUTER_API_KEY is absent. The
+#     manual-only native qualification instead fails closed on a missing key.
+#     It requires a successful same-run production qualification before staging.
 #
 # All third-party actions are SHA-pinned (with a # vX.Y.Z comment) so a
 # re-pointed tag from a compromised maintainer cannot change what runs here.
@@ -31,6 +31,15 @@ on:
     # Nightly, off-peak UTC. Odd minute to avoid the top-of-hour thundering herd.
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      native_execution:
+        description: Run only native execution production + OpenRouter qualification
+        type: boolean
+        default: false
+      expected_sha:
+        description: Optional exact reviewed commit SHA (native execution only)
+        type: string
+        default: ''
   pull_request:
     types: [opened, synchronize, reopened, labeled]
 
@@ -58,6 +67,7 @@ jobs:
     # Gate 2: PRs run only when a maintainer opted in via the `e2e-live` label.
     if: >-
       github.repository == 'stacklok/mecatl' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.native_execution) &&
       (github.event_name != 'pull_request' ||
        contains(github.event.pull_request.labels.*.name, 'e2e-live'))
     # One live run at a time, globally: overlapping dispatches/labelled pushes
@@ -177,6 +187,7 @@ jobs:
     # and PRs run only when a maintainer opted in via the `e2e-live` label.
     if: >-
       github.repository == 'stacklok/mecatl' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.native_execution) &&
       (github.event_name != 'pull_request' ||
        contains(github.event.pull_request.labels.*.name, 'e2e-live'))
     # Separate group from `e2e-live` so the two live jobs run in parallel; they
@@ -258,3 +269,206 @@ jobs:
           path: k8s-e2e-live-output.log
           retention-days: 7
           if-no-files-found: warn
+
+  native-execution-live:
+    name: Native execution (production + OpenRouter)
+    if: >-
+      github.repository == 'stacklok/mecatl' &&
+      github.event_name == 'workflow_dispatch' && inputs.native_execution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    concurrency:
+      group: e2e-live-native-execution
+      cancel-in-progress: false
+    env:
+      NATIVE_CI_DIR: ${{ github.workspace }}/.scratch/native-live-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      # Step ceilings sum to 98m: setup 9, production 50, credential 1,
+      # live 25, cleanup 10, reporting 3. The job retains 2m overhead.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify reviewed commit and reserve private CI directory
+        timeout-minutes: 1
+        id: prepare
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          test "$actual" = "$EVENT_SHA"
+          if [ -n "$EXPECTED_SHA" ] && [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo '::error::Reviewed SHA does not match dispatch SHA'
+            exit 1
+          fi
+          printf '## Native execution qualification\n\nCommit: %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+          umask 077
+          mkdir -p .scratch
+          mkdir -m 700 "$NATIVE_CI_DIR"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 2
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        timeout-minutes: 1
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        timeout-minutes: 1
+        with:
+          version: v3.18.4
+      - name: Install pinned Kind and ko
+        timeout-minutes: 3
+        run: |
+          go install sigs.k8s.io/kind@v0.33.0
+          go install github.com/google/ko@v0.18.1
+          command -v kubectl jq docker
+      # No provider secret here. run.sh installs pinned Calico and retains the
+      # owned cluster; the success dependency, not ownership.profile, admits live.
+      - name: Qualify production execution
+        timeout-minutes: 50
+        id: production
+        env:
+          CONTAINER_ENGINE: docker
+          MECATL_EXECUTION_QUAL_CI: "0"
+        run: MECATL_EXECUTION_QUAL_OUTPUT="$GITHUB_OUTPUT" timeout --kill-after=15s 49m task e2e:k8s:execution:production
+      - name: Stage private provider credential
+        timeout-minutes: 1
+        id: credential
+        if: success() && steps.production.outcome == 'success'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set +x
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo '::error::OPENROUTER_API_KEY is required for native qualification'
+            exit 1
+          fi
+          umask 077
+          set -C
+          printf '%s' "$OPENROUTER_API_KEY" > "$NATIVE_CI_DIR/provider-key"
+          unset OPENROUTER_API_KEY
+      - name: Qualify native OpenRouter coding
+        timeout-minutes: 25
+        id: live
+        if: success() && steps.production.outcome == 'success' && steps.credential.outcome == 'success'
+        env:
+          MECATL_EXECUTION_QUAL_STATE: ${{ steps.production.outputs.state }}
+          NATIVE_CLUSTER: ${{ steps.production.outputs.cluster }}
+        run: |
+          test -n "$NATIVE_CLUSTER"
+          grep -Fx -- "cluster=$NATIVE_CLUSTER" "$MECATL_EXECUTION_QUAL_STATE/ownership" >/dev/null
+          MECATL_EXECUTION_CREDENTIAL_FILE="$NATIVE_CI_DIR/provider-key" \
+            timeout --kill-after=15s 24m ./deploy/mecatl-execution-kind/live.sh
+      # Credential removal is independent of cluster availability. Fail closed
+      # on ownership drift; runner disposal is a last resort, not cleanup proof.
+      - name: Clean up exact owned resources
+        timeout-minutes: 10
+        id: cleanup
+        if: always() && steps.prepare.outcome == 'success'
+        env:
+          PRODUCTION_OUTCOME: ${{ steps.production.outcome }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+          MECATL_EXECUTION_QUAL_STATE: ${{ steps.production.outputs.state }}
+          NATIVE_CLUSTER: ${{ steps.production.outputs.cluster }}
+        run: |
+          key="$NATIVE_CI_DIR/provider-key"
+          if [ -e "$key" ] || [ -L "$key" ]; then
+            test -f "$key" && test ! -L "$key"
+            rm -- "$key"
+          fi
+          if [ "$PRODUCTION_OUTCOME" = skipped ]; then exit 0; fi
+          trap 'echo "::error::Owned cleanup incomplete; hosted-runner disposal is the fallback, not cleanup proof"' ERR
+          state="$MECATL_EXECUTION_QUAL_STATE"
+          test -n "$state" && test -n "$NATIVE_CLUSTER"
+          test ! -L "$state"
+          state=$(cd -- "$state" && pwd -P)
+          case "$state" in "$GITHUB_WORKSPACE/.scratch/k8s-execution/"*) ;; *) exit 1 ;; esac
+          ownership="$state/ownership"
+          test -f "$ownership" && test ! -L "$ownership"
+          owned_value() {
+            awk -F= -v key="$1" '$1 == key {value=substr($0,length(key)+2); count++} END {if(count != 1 || value == "") exit 1; print value}' "$ownership"
+          }
+          cluster=$(owned_value cluster)
+          test "$cluster" = "$NATIVE_CLUSTER"
+          case "$cluster" in mecatl-execution-qual-*) ;; *) exit 1 ;; esac
+          case "$cluster" in *[!a-z0-9-]*) exit 1 ;; esac
+          test "${#cluster}" -le 63
+          test "$(owned_value owner)" = "$USER"
+          test "$(owned_value runtime)" = docker
+          test "$(owned_value profile)" = production
+          test "$(owned_value namespace)" = execution-qualification
+          context="kind-$cluster"
+          test "$(owned_value context)" = "$context"
+          kubeconfig="$state/kubeconfig"
+          test "$(owned_value kubeconfig)" = "$kubeconfig"
+          test -f "$kubeconfig" && test ! -L "$kubeconfig"
+          test "$(stat -c '%a' "$kubeconfig")" = 600
+          test "$(kubectl --kubeconfig "$kubeconfig" --context "$context" config current-context)" = "$context"
+          test "$(docker inspect "${cluster}-control-plane" --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}')" = "$cluster"
+          if [ "$PRODUCTION_OUTCOME" != success ] || [ "${LIVE_OUTCOME:-}" = failure ] || [ "${LIVE_OUTCOME:-}" = cancelled ]; then
+            # Keep pre-restoration real-process evidence distinct from any fallback
+            # collected after Helm has restored the mock process.
+            diagnostic_status=missing
+            evidence="$state/live-diagnostics.jsonl"
+            if [ -f "$evidence" ] && [ ! -L "$evidence" ] && [ "$(stat -c '%s' "$evidence")" -le 1048576 ] && \
+              cp -- "$evidence" "$NATIVE_CI_DIR/live-diagnostics.jsonl"; then
+              if [ -f "$state/live-diagnostics.status" ] && [ ! -L "$state/live-diagnostics.status" ]; then
+                IFS= read -r diagnostic_status < "$state/live-diagnostics.status" || diagnostic_status=incomplete
+              fi
+            fi
+            case "$diagnostic_status" in complete|incomplete|missing) ;; *) diagnostic_status=incomplete ;; esac
+            printf 'pre_restore=%s\n' "$diagnostic_status" > "$NATIVE_CI_DIR/diagnostics-status.txt" || echo '::warning::Diagnostic status unavailable'
+            if [ "$diagnostic_status" != complete ]; then
+              if timeout --kill-after=5s 45s sh ./deploy/mecatl-execution-kind/collect-failure.sh \
+                "$kubeconfig" "$context" "$NATIVE_CI_DIR/production-diagnostics.jsonl"; then
+                printf 'fallback=complete\n' >> "$NATIVE_CI_DIR/diagnostics-status.txt" || echo '::warning::Diagnostic status unavailable'
+              else
+                printf 'fallback=incomplete\n' >> "$NATIVE_CI_DIR/diagnostics-status.txt" || echo '::warning::Diagnostic status unavailable'
+                echo '::warning::Bounded production diagnostics incomplete'
+              fi
+            fi
+          fi
+          kind delete cluster --name "$cluster"
+          clusters=$(kind get clusters)
+          if printf '%s\n' "$clusters" | grep -Fx -- "$cluster"; then exit 1; fi
+          # This file is emitted by the typed live test, not a transcript. Bound
+          # its upload independently and never collect the surrounding state.
+          summary="$state/live-summary.json"
+          if [ -e "$summary" ]; then
+            test -f "$summary" && test ! -L "$summary"
+            test "$(stat -c '%s' "$summary")" -le 16384
+            cp -- "$summary" "$NATIVE_CI_DIR/live-summary.json"
+          fi
+      - name: Record sanitized qualification status
+        timeout-minutes: 1
+        if: always() && steps.prepare.outcome == 'success'
+        env:
+          PRODUCTION_OUTCOME: ${{ steps.production.outcome }}
+          CREDENTIAL_OUTCOME: ${{ steps.credential.outcome }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        run: |
+          printf 'production=%s\ncredential=%s\nlive=%s\ncleanup=%s\n' \
+            "$PRODUCTION_OUTCOME" "$CREDENTIAL_OUTCOME" "$LIVE_OUTCOME" "$CLEANUP_OUTCOME" \
+            > "$NATIVE_CI_DIR/qualification-status.txt"
+          cat "$NATIVE_CI_DIR/qualification-status.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload only bounded native qualification evidence
+        timeout-minutes: 2
+        if: always() && steps.prepare.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-execution-live-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.NATIVE_CI_DIR }}/live-summary.json
+            ${{ env.NATIVE_CI_DIR }}/qualification-status.txt
+            ${{ env.NATIVE_CI_DIR }}/production-diagnostics.jsonl
+            ${{ env.NATIVE_CI_DIR }}/live-diagnostics.jsonl
+            ${{ env.NATIVE_CI_DIR }}/diagnostics-status.txt
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error

@@ -282,14 +282,20 @@ func TestADR_0303_DoubleEscape_Scenario1_AllEscapeOwnersSuppressGesture(t *testi
 		{"conversation selection", func(m Model) Model { m.sel.active = true; return m }},
 		{"prompt selection", func(m Model) Model { m.prompt.SelectAll(); return m }},
 		{"palette", func(m Model) Model { m.palette.open = true; return m }},
-		{"mention", func(m Model) Model { m.mention.open = true; return m }},
+		{"mention", func(m Model) Model {
+			m.mention.open = true
+			m.mention.matches = []string{"file.txt"}
+			m.mention.syncList()
+			_ = renderMentionSized(m.deps.Theme, m.mention, 40, 1)
+			return m
+		}},
 		{"paused queue", func(m Model) Model { m.queuePaused = "paused"; return m }},
 		{"session details", func(m Model) Model { m.sessionDetailsOpen = true; return m }},
 		{"help", func(m Model) Model { m.showHelp = true; return m }},
 		{"modal", func(m Model) Model { m.modal = shellAskModel(t, `{"command":"true"}`).modal; return m }},
 		{"team", func(m Model) Model { m.team.view = teamRoster; return m }},
 		{"agents inventory", func(m Model) Model { m.agentsInv.view = agentsInvPanel; return m }},
-		{"user model", func(m Model) Model { m.userModel.view = userModelPanel; return m }},
+		{"user model", func(m Model) Model { m.modal = &userModelState{view: userModelPanel}; return m }},
 		{"reflections", func(m Model) Model { m.reflections.view = reflectionsList; return m }},
 		{"dream", func(m Model) Model { m.dream.view = dreamGenerating; return m }},
 		{"connect", func(m Model) Model { m.connect.open = true; return m }},

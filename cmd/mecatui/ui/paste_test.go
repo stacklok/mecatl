@@ -238,7 +238,7 @@ func TestPasteIgnoredWhileMCPOverlayOpen(t *testing.T) {
 func TestPasteIgnoredWhileAgentsOverlayOpen(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
+		c.startTeamCard("t1", "", roster())
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)

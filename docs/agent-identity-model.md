@@ -1,7 +1,7 @@
 # Agent identity: mecatl as its own SPIFFE trust domain
 
 *Status: strawman / working draft. Speculative scoping, not a design record under
-[ADR 0002](adr/0002-documentation-lifecycle.md) (no frozen decision here). Same
+ADR 0002 (no frozen decision here). Same
 tier as [`docs/scoped-resource-grants.md`](scoped-resource-grants.md). If this
 direction is ever committed, it becomes one or more ADRs and this doc gets
 superseded.*
@@ -994,7 +994,7 @@ hand-rolling our own, not a dependency decision.
 
 ## The issuer in a Kubernetes deployment
 
-mecak8s ([ADR 0048](adr/0048-mecak8s.md), the storage-free, Redis-backed,
+mecak8s (ADR 0048, the storage-free, Redis-backed,
 k8s-native agent deployment) already fixed the topology the issuer must fit:
 storage-free agent pods, autoscaled, state in Redis, single-writer via k8s
 leases, any pod rehydrates any session. The industry pattern for issuer HA in
@@ -1247,7 +1247,7 @@ after something has been learned about whether the novel parts work.
   (`default_jwt_svid_ttl=5m`, JWT-SVIDs minted fresh per request, so no
   rotation schedule), `MintJWTSVID` + `CredentialComposer` (implementation
   details, `allow_admin`-gated)
-- Repo: [ADR 0027](adr/0027-cloud-native.md) (disposable-process arc, event
-  log, leasing), [ADR 0048](adr/0048-mecak8s.md) (k8s-native storage-free
+- Repo: ADR 0027 (disposable-process arc, event
+  log, leasing), ADR 0048 (k8s-native storage-free
   topology), [`docs/scoped-resource-grants.md`](scoped-resource-grants.md)
   (the downstream grant-consumer strawman this feeds)

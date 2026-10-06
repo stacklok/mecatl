@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +16,8 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
@@ -56,6 +60,172 @@ func TestContextWindowOverrideFlagWiring(t *testing.T) {
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
 // agent-definition discovery (consistent with EnableTeams/EnableParallel; inert until a
 // <name>.md exists under a conventional dir).
+type embeddedExecutionReadyManager struct {
+	calls int
+	err   error
+}
+
+func (m *embeddedExecutionReadyManager) EnsureReady(ctx context.Context, _ microvmmanager.ReadyRequest) (string, error) {
+	m.calls++
+	microvmmanager.ReportReadinessStage(ctx, microvmmanager.StageDownload)
+	if m.err != nil {
+		return "", m.err
+	}
+	return "unix:///run/test-microvmd.sock", nil
+}
+
+func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("execution: {default_placement: microvm-local}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	progress := make(chan string, 16)
+	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true, microVMProgress: progress}, port.NopDiagnostics{})
+	cfg.PermissionConfigs = []string{settings}
+	cfg.MicroVMReadyRequest = func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+		return microvmmanager.ReadyRequest{}, nil
+	}
+	factoryCalled := false
+	manager := &embeddedExecutionReadyManager{err: errors.New("private readiness failure at /home/operator/secret")}
+	cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+		factoryCalled = true
+		return manager, "unix:///run/test-microvmd.sock", nil
+	}
+	configured, err := app.ConfigureExecution(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := app.Build(t.Context(), configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	if !factoryCalled || manager.calls != 0 {
+		t.Fatalf("bare embedded construction did not select MicroVM lazily: factory=%v readiness=%d", factoryCalled, manager.calls)
+	}
+	if _, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{}); err == nil {
+		t.Fatal("bare embedded session silently fell back after unavailable microvmd")
+	} else {
+		if manager.calls != 1 {
+			t.Fatalf("bare embedded session failed before selected MicroVM readiness: calls=%d err=%v", manager.calls, err)
+		}
+		if !strings.Contains(err.Error(), "category=artifact_download") || strings.Contains(err.Error(), "/home/operator/secret") {
+			t.Fatalf("embedded server did not preserve safe readiness detail: %v", err)
+		}
+	}
+	var updates []string
+	for len(progress) > 0 {
+		updates = append(updates, <-progress)
+	}
+	joined := strings.Join(updates, "\n")
+	for _, want := range []string{"Guest IPv4 egress is permissive", "Downloading microVM components"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("embedded progress %q omitted %q", updates, want)
+		}
+	}
+	for _, want := range []string{"mecated microvm doctor", "mecatui diagnostics log"} {
+		if !strings.Contains(microVMFailureHint(config{}), want) {
+			t.Fatalf("embedded failure hint omitted %q", want)
+		}
+	}
+	if strings.ContainsAny(microVMFailureHint(config{}), `/\\`) {
+		t.Fatalf("embedded failure hint exposed a host path: %q", microVMFailureHint(config{}))
+	}
+}
+
+func TestBareEmbeddedHostLocalOmissionDoesNoMicroVMWork(t *testing.T) {
+	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true}, port.NopDiagnostics{})
+	factoryCalled := false
+	cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+		factoryCalled = true
+		return nil, "", fmt.Errorf("must not initialize microVM manager")
+	}
+	built, err := app.Build(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factoryCalled || sess.EnvironmentRef.Kind != session.EnvKindLocal {
+		t.Fatalf("bare host-local omission touched MicroVM or selected wrong placement: factory=%v ref=%+v", factoryCalled, sess.EnvironmentRef)
+	}
+}
+
+func TestConnectDoesNotResolveOperatorExecutionSettings(t *testing.T) {
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	dataHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	if err := os.MkdirAll(filepath.Join(configHome, "mecatl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configHome, "mecatl", "settings.yaml"), []byte("execution: {default_placement: invalid}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseRunConfig(invocationResolution{
+		mode: modeConnect, address: "127.0.0.1:8080", remaining: []string{"--anonymous"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, cleanup, err := resolveTransport(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	} else {
+		cleanup()
+	}
+	for _, path := range []string{
+		filepath.Join(stateHome, "mecatl", "microvm"),
+		filepath.Join(dataHome, "mecatl", "microvm"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("remote connect touched local MicroVM manager state %q: %v", path, err)
+		}
+	}
+}
+
+func TestEmbeddedConfigCarriesMicroVMReadinessForOperatorSettings(t *testing.T) {
+	cfg := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
+	if cfg.DefaultPlacementSet || cfg.MicroVMGuestEgressSet {
+		t.Fatal("bare mecatui must not synthesize command-line execution overrides")
+	}
+	if cfg.MicroVMReadyRequest == nil {
+		t.Fatal("bare mecatui did not provide embedded MicroVM release readiness")
+	}
+}
+
+func TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults(t *testing.T) {
+	if microVMReleaseStampRequired != "release" {
+		t.Skip("release linker-contract assertion")
+	}
+	if version != "v0.0.0-host-contract" {
+		t.Fatalf("version linker stamp = %q", version)
+	}
+	cfg := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
+	request, err := cfg.MicroVMReadyRequest(microvmmanager.NewGuestEgressSelection())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Release.URL != "https://example.invalid/microvm.tar.gz" || request.Policy.PolicyRevision != "contract" {
+		t.Fatalf("embedded readiness did not consume mecatui linker defaults: %+v", request)
+	}
+}
+
+func TestMecatuiRemovedMicroVMSurface(t *testing.T) {
+	for _, args := range [][]string{{"--default-placement=microvm-local"}, {"--microvm-guest-egress=deny-all"}} {
+		if _, _, err := parseTransportFlags(modeLocal, io.Discard, args); err == nil {
+			t.Fatalf("removed mecatui flag %q was accepted", args[0])
+		}
+	}
+	if got := resolveInvocation([]string{"mecatui", "microvm", "status"}); got.err == nil {
+		t.Fatal("removed mecatui microvm administration command was accepted")
+	}
+}
+
 func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
 	if ac.ServerImplementation != mecatuiServerImplementation {

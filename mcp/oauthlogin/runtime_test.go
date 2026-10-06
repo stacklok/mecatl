@@ -66,7 +66,17 @@ func runWithLauncher(t *testing.T, launcher BrowserLauncher, authorize Authorize
 
 func TestADR_0325_RegistrationBoundCallbackPath(t *testing.T) {
 	path := callbackPrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, callbackBytes))
-	runtime, err := New(Options{Launcher: launcherFunc(func(context.Context, string) error { return nil })})
+	var callbackRedirect, callbackState string
+	runtime, err := New(Options{Launcher: launcherFunc(func(context.Context, string) error {
+		req, err := http.NewRequest(http.MethodGet, callbackURL(callbackRedirect, "code", callbackState, testIssuer), nil)
+		if err != nil {
+			return err
+		}
+		if response := request(t, req); response.status != http.StatusOK {
+			return fmt.Errorf("callback status = %d", response.status)
+		}
+		return nil
+	})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,12 +93,9 @@ func TestADR_0325_RegistrationBoundCallbackPath(t *testing.T) {
 			if parseErr != nil || parsed.Path != path || parsed.Hostname() != "127.0.0.1" {
 				return fmt.Errorf("bound redirect = %q: %v", redirect, parseErr)
 			}
-			go func() {
-				req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "code", fmt.Sprintf("state-%d", i), testIssuer), nil)
-				_ = request(t, req)
-			}()
-			result, presentErr := present(ctx, "https://as.example.test/authorize?state="+fmt.Sprintf("state-%d", i))
-			if presentErr == nil && result.State != fmt.Sprintf("state-%d", i) {
+			callbackRedirect, callbackState = redirect, fmt.Sprintf("state-%d", i)
+			result, presentErr := present(ctx, "https://as.example.test/authorize?state="+callbackState)
+			if presentErr == nil && result.State != callbackState {
 				t.Fatalf("callback result = %#v", result)
 			}
 			return presentErr

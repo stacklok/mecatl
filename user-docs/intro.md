@@ -37,7 +37,8 @@ and where Mecatl is going.
 - **Build with Mecatl:** [Building on Mecatl](/building/index.md) covers the Go
   engine, TypeScript SDK, and extension points.
 - **Deploy Mecatl:** [deployment guides](/building/deployment/index.md) cover
-  `mecated`, `mecak8s`, CI, containers, and remote transport.
+  `mecated`, `mecak8s`, CI, containers, the early-access Studio web UI, and
+  remote transport.
 - **Install or verify Mecatl:** [Install Mecatl](/install.md) covers release
   archives, checksums, signatures, deployment artifacts, and source builds.
 - **Look up exact details:** [reference](/reference/index.md) covers

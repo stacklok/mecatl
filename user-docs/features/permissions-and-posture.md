@@ -40,7 +40,7 @@ before it starts.
 |`strict`|Default for interactive `mecated`; read-only calls are allowed and mutating calls use the permission rules, normally asking before they run. Project trust is not granted by the posture.|
 |`trusted`|Interactive roots admit trusted project instructions and project permission allows, but mutating calls still use the normal approval rules.|
 |`auto`|Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled.|
-|`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments.|
+|`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. The main session also accepts external relative `../` paths for `Read`, `ListDir`, `Write`, and `Edit`. Use only for isolated, disposable, single-tenant deployments.|
 
 `--yolo`, `--trust-project`, and operator-global `posture:` settings can raise
 the posture tier; the highest tier wins. A project file cannot raise it.
@@ -62,6 +62,14 @@ mecated serve --headless --posture auto
 Allow-all postures are refused when running as root unless the deployment
 explicitly declares an isolated sandbox with `MECATL_SANDBOX=1` or
 `IS_SANDBOX=1`.
+
+A main-session external path can be addressed absolutely at any posture, subject
+to its escape permission decision. Only `yolo` also serves external relative
+`../` paths for `Read`, `ListDir`, `Write`, and `Edit`; below `yolo`, those
+relative paths remain workspace-confined even after approval. Configured denies
+and asks still apply. Pseudo-filesystems (`/proc`, `/sys`, `/dev`) are never
+served through these tools. Children, namespace tools, `Glob`, and `Grep` remain
+confined to the workspace; symlink escapes are not a substitute for `../`.
 
 ## Choose a permission mode
 
@@ -202,15 +210,29 @@ checker model to enable them:
 mecated serve --guardrails-model gpt-5.6-luna
 ```
 
-The checker can inspect outbound tool arguments and inbound tool results. A
-configured checker with no custom rule list uses the default enforcing rule set;
-operators can configure advisory behavior instead. Guardrails remain active in
-headless deployments and are not a replacement for permission rules.
+The checker reviews exact effective actions before execution and already-produced
+results before delivery. A configured checker with no custom rule list uses the
+expanded default enforcing set for Shell, local mutation/read/search, web, MCP,
+and delegation tools; the same applicable rules bind workers. Operators can
+configure advisory behavior instead. Guardrails remain active in headless
+deployments and are not a replacement for permission rules.
+
+Mecatui's `/guardrails` command shows the active checker and session-specific
+coverage. `/posture` reports permission posture and checker state separately, including
+off/setup guidance, advisory or enforcing when on, and unknown when an older or
+unavailable server cannot establish status. When a review needs your decision,
+the approval prompt shows its explanation. Action reviews offer **Run once** or
+**Cancel**, plus **Don't ask again** when the server can bind approval to that
+exact action in this session. Result reviews offer **Release once** or **Cancel**;
+release delivers the same held result without rerunning side effects. For
+conversation visibility and success diagnostics, see
+[client debug surfaces](/mecatui/troubleshooting.md#enable-client-debug-surfaces).
 
 Guardrail configuration is operator-tier only. A project repository cannot
-weaken or disable the operator's checker. A checker failure follows the
-configured fail-open/fail-closed behavior, and unsafe or malformed sanitized
-content is not silently accepted.
+weaken or disable the operator's checker. Checker outage is fail-closed by
+default and is displayed as an operational failure, not an unsafe finding;
+operators may explicitly choose continue-with-warning. Sanitization and
+checker-authored replacement actions are not supported.
 
 See the [guardrails reference](/building/what-you-get/permissions.md) for
 matchers, modes, and checker failure handling.

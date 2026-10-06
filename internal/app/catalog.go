@@ -73,21 +73,28 @@ import (
 //     tool, so ForkPreservedCap stays a PROCESS bound (a per-session reaper would
 //     multiply the cap by the number of sessions).
 type catalogAssets struct {
-	globalMgr        *mcp.Manager
-	agentReg         *agents.Registry
-	memStore         tool.MemoryStore
-	userModelStore   tool.MemoryStore
-	memoryDream      *dream.Consolidator
-	userModelDream   *dream.Consolidator
-	skills           []tool.SkillMeta
-	skillSource      tool.SkillSource
-	skillIndex       skillIndex
-	liveSkills       *coreskillfs.AtomicCatalog
-	learnedSkills    learning.SkillRepository
-	skillPublication *learnedSkillPublication
-	skillPartition   learning.SkillPartition
-	skillOwner       string
-	forkReaper       *agent.LRUForkReaper
+	globalMgr *mcp.Manager
+	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
+	// Catalog copies select the operation-pinned manager before assembly; cached
+	// engines retain only the returned revision tag.
+	mcpRuntimes          *mcpRuntimeSet
+	mcpReconciler        *mcpSourceReconciler
+	sharedEngineRevision uint64
+	buildRuntimeRelease  func()
+	agentReg             *agents.Registry
+	memStore             tool.MemoryStore
+	userModelStore       tool.MemoryStore
+	memoryDream          *dream.Consolidator
+	userModelDream       *dream.Consolidator
+	skills               []tool.SkillMeta
+	skillSource          tool.SkillSource
+	skillIndex           skillIndex
+	liveSkills           *coreskillfs.AtomicCatalog
+	learnedSkills        learning.SkillRepository
+	skillPublication     *learnedSkillPublication
+	skillPartition       learning.SkillPartition
+	skillOwner           string
+	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
 	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a
@@ -140,8 +147,10 @@ type catalogAssets struct {
 	attemptRepository        learning.AttemptRepository
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
-	modelInventory           *resolvedModelInventory
+	modelInventory           server.ModelInventory
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
+	guardrailGrants          interface{ ClearSession(string) }
+	sessionContextFactory    server.SessionContextEngineFactory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -168,7 +177,8 @@ type catalogSession struct {
 	// EXACTLY as in the default profile — guarded by TestNoFSCatalogProfile,
 	// which pins the EXACT name-set delta. Always false for the build-time shared
 	// catalog (a process always has a default-profile shared engine).
-	noFS bool
+	noFS   bool
+	remote bool
 	// mode is the session's permission mode (the per-session factory passes the
 	// session's resolved mode; the build-time shared catalog leaves it
 	// ModeDefault). The Schedule registration reads it to register the
@@ -215,7 +225,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	classified := newClassifiedCatalog()
 	cat := classified.catalog
 	classified.captureEach(coreToolClassification, func() {
-		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
+		registerCoreTools(cfg, cat, s.narrate, s.noFS, s.remote, a.searchProvider)
 	})
 	for _, sessionTool := range s.sessionTools {
 		// A direct global manager retains ownership of its existing query wrapper.
@@ -286,27 +296,31 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		refMgr = s.clientMgr
 	}
 	var subagentClose func() error
-	classified.captureEach(delegationToolClassification, func() {
-		subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
-	})
-	// Parallel is ABSENT under the no-FS profile (not merely disarmed): every
-	// branch is a force-copy filesystem fork and the deliverable is a preserved
-	// fork PATH — both meaningless without a filesystem.
-	if !s.noFS {
+	if !s.remote {
+		classified.captureEach(delegationToolClassification, func() {
+			subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
+		})
+	}
+	// Parallel is ABSENT under no-FS and remote execution profiles.
+	if !s.noFS && !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
 			registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
 		})
 	}
-	classified.captureEach(delegationToolClassification, func() {
-		registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
-	})
+	if !s.remote {
+		classified.captureEach(delegationToolClassification, func() {
+			registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
+		})
+	}
 	classified.capture(server.ClassificationEntry{Kind: server.KindCallerOwned,
 		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
 		registerMemoryFamilies(ctx, cfg, cat, *a)
 	})
-	classified.captureEach(scheduleToolClassification, func() {
-		registerScheduleTool(ctx, cfg, cat, a, s)
-	})
+	if !s.remote {
+		classified.captureEach(scheduleToolClassification, func() {
+			registerScheduleTool(ctx, cfg, cat, a, s)
+		})
+	}
 	classified.captureEach(func(t tool.Tool) (server.ClassificationEntry, bool) {
 		return skillToolClassification(t, *a, s)
 	}, func() {
@@ -429,13 +443,13 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// parent base. The builder applies the SAME trust-UNGATED hardening
 	// buildForceCopyRunner does (force-copy forks do no fork-time git, so the
 	// trust gate does not apply — see the comment above).
-	fk := forker.New(newForkWorkspace(), forker.WithForceCopy(),
+	fk := routeChildForker(cfg, forker.New(newForkWorkspace(), forker.WithForceCopy(),
 		forker.WithRunner(func(childRoot string) tool.CommandRunner {
 			if !forceCopyShellAvailable(cfg) {
 				return nil
 			}
 			return newHardenedRunnerForRoot(cfg, childRoot)
-		}))
+		})))
 	// Parallel branches run Shell through the HARDENED, trust-UNGATED runner (issue
 	// #40) — the same construction as Mutating team members (buildForceCopyRunner).
 	// Ungated because a force-copy fork is created by a pure FS copy, with NO git
@@ -647,7 +661,7 @@ func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a c
 			cfg.diag().Log(ctx, port.LevelWarn, "registering skills failed; Skill tool disabled", "err", err)
 		}
 	}
-	if !s.noFS {
+	if !s.noFS && !s.remote {
 		if a.learnedSkills != nil && cfg.SkillsDraftDir != "" {
 			inventory := make([]learning.SkillInventoryItem, 0, len(a.skills))
 			for _, meta := range a.skills {

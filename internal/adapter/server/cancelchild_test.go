@@ -61,8 +61,9 @@ func newInteractiveSubagentService(t *testing.T) (*server.Service, *scriptTool) 
 		Interactive: true, // the child ask SURFACES instead of auto-denying
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: engine,
-		Store:  memstore.New(),
+		Engine:   engine,
+		Store:    memstore.New(),
+		EventLog: memstore.NewEventLog(),
 
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: parentLLM.Capabilities(),

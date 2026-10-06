@@ -5,14 +5,16 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // countNoticeBlocks returns how many scrollback notice blocks the conversation holds.
 func countNoticeBlocks(m Model) int {
 	n := 0
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockNotice {
+	for _, card := range m.conv.testBlocks() {
+		if _, ok := card.Payload.(scrollback.NoticeCardSnapshot); ok {
 			n++
 		}
 	}
@@ -54,13 +56,13 @@ func TestCompactionStillScrollbackNotice(t *testing.T) {
 
 // TestNoProgressTerminalStopStillShown confirms the durable terminal signal survives the
 // scrollback removal: the terminal no-progress stop is rendered by the footer's
-// stopReasonLabel as "stopped · no progress", independent of any scrollback notice.
+// renderfmt.StopReasonLabel as "stopped · no progress", independent of any scrollback notice.
 func TestNoProgressTerminalStopStillShown(t *testing.T) {
-	text, slot := stopReasonLabel("no_progress")
+	text, slot := renderfmt.StopReasonLabel("no_progress")
 	if text != "stopped · no progress" {
 		t.Errorf("terminal no-progress footer label = %q, want %q", text, "stopped · no progress")
 	}
-	if slot != slotCtxWarn {
-		t.Errorf("terminal no-progress slot = %q, want %q", slot, slotCtxWarn)
+	if slot != "ctxWarn" {
+		t.Errorf("terminal no-progress slot = %q, want %q", slot, "ctxWarn")
 	}
 }

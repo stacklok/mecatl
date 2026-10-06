@@ -7,15 +7,16 @@
 # ships at /var/run/ko/agent.yaml in the image.
 #
 # mecatl auto-detects its provider from whichever key is set, so we forward all
-# four supported provider keys (internal/cliconfig knownAuthProviders) and allow
-# egress to all four provider endpoints. The `image:` ref below is overridden by
+# four supported provider keys (internal/cliconfig knownAuthProviders), plus the
+# optional Typesafe router credential, and allow egress to their endpoints. The
+# `image:` ref below is overridden by
 # brood-box on import with the digest-pinned ref it actually pulled; `command:`
 # is the mecatui entrypoint. This manifest is operator-tunable — edit it for a
 # deployment that pins a single provider or a stricter egress profile.
 name: mecatui
 image: ghcr.io/stacklok/mecatl/mecatui:latest
 command: ["mecatui"]
-env_forward: [OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENCODE_API_KEY]
+env_forward: [OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENCODE_API_KEY, TYPESAFE_API_KEY]
 mcp:
   mode: env
 egress_profile: standard
@@ -25,3 +26,4 @@ egress_hosts:
     - { name: openrouter.ai, ports: [443] }
     - { name: api.openai.com, ports: [443] }
     - { name: opencode.ai, ports: [443] }
+    - { name: api.typesafe.ai, ports: [443] }

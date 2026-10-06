@@ -167,8 +167,8 @@ emits session-correlated, diagnostics-only lifecycle records for submission, adm
 claim, generator selection/completion, and conditional commit loss. Completion records
 only outcome, provider/model attribution, token counts, and on failure a stable class
 plus stage; it never records prompt sources, provider error text, credentials, or model
-output. See [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md)
-and [ADR 0307](../adr/0307-canonical-durable-token-accounting.md).
+output. See ADR 0308
+and ADR 0307.
 
 ### Event taxonomy (`engine/session/event.go`)
 
@@ -216,7 +216,7 @@ member. Team-unique structures stay on tier 2: `team.tasks` and `team.findings` 
 snapshots, `team.end` adds terminal per-member dispositions, plus the mutating cue and the
 context meter. A member/branch/child `permission.ask` is still never
 projected. The families are deliberately NOT merged; a 4th family is the trip-wire to
-extract a shared lifecycle value object (see `docs/design/IMPLEMENTATION-NOTES.md`).
+extract a shared lifecycle value object (see `engine/session/event.go`).
 Gauntlet #7 still holds: none of these projections injects branch/child/member transcripts
 into the parent conversation — only the delegation tool's final result does (plus, for
 Parallel, fork-root path handles).

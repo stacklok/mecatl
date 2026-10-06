@@ -50,6 +50,7 @@ var DenyExact = map[string]struct{}{
 	"OPENROUTER_API_KEY": {},
 	"ANTHROPIC_API_KEY":  {},
 	"OPENCODE_API_KEY":   {},
+	"TYPESAFE_API_KEY":   {},
 	// WebSearch backend credentials (cmd/mecated).
 	"WEBSEARCH_API_KEY": {},
 	"BRAVE_API_KEY":     {},
@@ -68,7 +69,7 @@ var DenyExact = map[string]struct{}{
 
 // NonOverridableExact names credentials read by Mecatl that an inheritance grant cannot restore.
 var NonOverridableExact = map[string]struct{}{
-	"OPENAI_API_KEY": {}, "OPENROUTER_API_KEY": {}, "ANTHROPIC_API_KEY": {}, "OPENCODE_API_KEY": {},
+	"OPENAI_API_KEY": {}, "OPENROUTER_API_KEY": {}, "ANTHROPIC_API_KEY": {}, "OPENCODE_API_KEY": {}, "TYPESAFE_API_KEY": {},
 	"WEBSEARCH_API_KEY": {}, "BRAVE_API_KEY": {}, "EXA_API_KEY": {},
 }
 

@@ -98,11 +98,11 @@ func TestBuildConfigFactsLogOnceAcrossChildDerivations(t *testing.T) {
 
 	// Now derive the MAIN engine deps and N child engine deps — the per-session and
 	// per-child paths that USED to re-log each fact. None of these may emit a fact.
-	_ = engineDepsForProvider(cfg, provider, cfg.Model, func() int { return defaultContextWindowTokens },
+	_ = engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens },
 		nil, nil, nil, nil, nil)
 	const nChildren = 5
 	for range nChildren {
-		_ = childEngineDepsForProvider(cfg, "", provider, cfg.Model, func() int { return defaultContextWindowTokens },
+		_ = childEngineDepsForProvider(cfg, "", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens },
 			tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	}
 
@@ -212,5 +212,14 @@ func TestBuildNarratesFamilyFactsExactlyOnceAcrossSessions(t *testing.T) {
 			t.Errorf("family narration %q emitted %d times via the injected Diagnostics, want exactly 1 "+
 				"(0 = the build-time narrate dropped; >1 = the per-session assembly narrates too — the N×-duplication class)", substr, got)
 		}
+	}
+}
+
+func TestLogGuardrailsPostureAutoWithoutCheckerIsUnsupervised(t *testing.T) {
+	diag := newCapturingDiagnostics()
+	logGuardrailsPosture(Config{Posture: PostureAuto, Diagnostics: diag})
+	records := strings.Join(diag.capturedStrings(), "\n")
+	if !strings.Contains(records, "UNSUPERVISED") || !strings.Contains(records, "does not enable") {
+		t.Fatalf("auto/no-checker posture diagnostic = %q", records)
 	}
 }

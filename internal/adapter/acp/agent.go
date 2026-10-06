@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	engineagent "github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -516,6 +517,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 
 	stop := stopEndTurn
 	authorizationIneligible := false
+	projector := newRunProjector()
 	for ev := range run.Events() {
 		switch ev.Type {
 		case session.EvPermissionAsk:
@@ -532,7 +534,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 			}
 		case session.EvAuthorizationRequired:
 			authorizationIneligible = true
-			if update, ok := projectUpdate(ev); ok {
+			if update, ok := projector.project(ev); ok {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		case session.EvResult:
@@ -540,7 +542,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 				stop = stopReasonFor(ev.Result.Stop)
 			}
 		default:
-			if update, ok := projectUpdate(ev); ok {
+			if update, ok := projector.project(ev); ok {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		}
@@ -658,10 +660,19 @@ func (a *Agent) requestPermission(ctx context.Context, sessionID string, run run
 		err := a.conn.Call(ctx, methodRequestPermission, permissionRequestFor(sessionID, ask), &resp)
 		if err != nil {
 			a.diag.Log(ctx, port.LevelDebug, "acp: request_permission failed; denying", "session", sessionID, "ask", ask.AskID, "err", err)
-			run.Approve(ask.AskID, session.VerdictDeny)
+			resolution := engineagent.ApprovalResolution{AskID: ask.AskID, Verdict: session.VerdictDeny}
+			if ask.Guardrail != nil {
+				resolution.ReviewID, resolution.Kind = ask.Guardrail.ReviewID, ask.Guardrail.Kind
+			}
+			_ = run.ResolveApproval(resolution)
 			return
 		}
-		run.Approve(ask.AskID, approvalFor(resp.Outcome))
+		resolution := engineagent.ApprovalResolution{AskID: ask.AskID, Verdict: approvalFor(resp.Outcome)}
+		if ask.Guardrail != nil {
+			resolution.ReviewID = ask.Guardrail.ReviewID
+			resolution.Kind = ask.Guardrail.Kind
+		}
+		_ = run.ResolveApproval(resolution)
 	}()
 }
 
@@ -695,7 +706,7 @@ func (a *Agent) release(sessionID string) {
 // runApprover is the subset of *agent.Run the permission round-trip needs,
 // narrowed so requestPermission is unit-testable with a fake.
 type runApprover interface {
-	Approve(askID string, verdict session.ApprovalVerdict)
+	ResolveApproval(engineagent.ApprovalResolution) error
 }
 
 // validateCwd enforces only ACP's syntactic absolute-path contract. The Service

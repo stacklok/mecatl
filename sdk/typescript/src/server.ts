@@ -18,6 +18,7 @@ import { projectServerCapabilities, type ServerCapabilities } from "./session-pr
 // BEGIN MECATL_SERVER_FEATURES
 /** Known server feature identifiers. Unknown identifiers remain observable. @public */
 export const ServerFeature = {
+  ExactPlanAskControl: "exact_plan_ask_control",
   HttpSteer: "http_steer",
   McpServersOnCreate: "mcp_servers_on_create",
   PromptFreeControls: "prompt_free_controls",

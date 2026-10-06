@@ -110,7 +110,7 @@ func TestADR_0296_SessionsContinuationReceivesEligibleLocalContext(t *testing.T)
 
 	updated, contextCmd, handled := m.adoptAuthoritativeTranscript(client.SessionListItem{
 		ID: "continued", Title: "Stored chat", Placement: client.Placement{Kind: "local", Label: "active-workspace"},
-	}, conversation{})
+	}, conversation{}, client.SessionSnapshot{})
 	if !handled || contextCmd == nil {
 		t.Fatal("sessions continuation did not resolve local status context")
 	}

@@ -530,7 +530,8 @@ type branchEmitter struct {
 	// without deriving the id grammar (D16). It is deterministic (childSessionID), so
 	// even a never-ran branch (fork-failed / cancelled-before-start) carries it. nil
 	// (zero-value emitter in tests) leaves ChildID empty.
-	childID func(i int) string
+	childID   func(i int) string
+	skipRoute func(reason string) *session.RoutingDecision
 }
 
 // branchChildID resolves branch i's child session id via the childID closure
@@ -565,7 +566,7 @@ func (e branchEmitter) start(join string, branchCount int) {
 // the concrete MODEL id this branch ACTUALLY runs on (issue #112, ADR 0035), independent
 // of whether the router fired — inherited default or routed. When routed,
 // model == routedModel.
-func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goal, routedCategory, routedModel, routingReason, model string) {
+func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goal, routedCategory, routedModel, routingReason, model string, decision *session.RoutingDecision) {
 	if !e.active() {
 		return
 	}
@@ -580,6 +581,7 @@ func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goa
 		RoutedCategory:   routedCategory,
 		RoutedModel:      routedModel,
 		RoutingReason:    routingReasonPayload(routingReason),
+		RoutingDecision:  cloneRoutingDecision(decision),
 		Model:            model,
 	}})
 }
@@ -680,7 +682,7 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, env tool.
 			"Parallel: judge selection is unavailable (no judge wired); use join=all and pick a branch yourself"), nil
 	}
 
-	be := branchEmitter{emit: emit, parentCallID: string(call.ID),
+	be := branchEmitter{emit: emit, parentCallID: string(call.ID), skipRoute: caps.skipRoute,
 		childID: func(i int) string { return string(t.childSessionID(caps.parentSessionID, call.ID, i)) }}
 	be.start(join, len(tasks))
 
@@ -796,7 +798,11 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 	case len(succeeded) == 1:
 		rationale = "only one branch succeeded; selected without judging"
 	default:
-		winner, rationale = t.judgeWinner(ctx, results, succeeded, criteria)
+		var usage session.AuxiliaryUsage
+		winner, rationale, usage = t.judgeWinner(ctx, results, succeeded, criteria)
+		if caps.recordAuxiliaryUsage != nil {
+			caps.recordAuxiliaryUsage.reportAuxiliaryUsage(RemapAuxiliaryUsage(ctx, caps.diag, session.UsageKindParallelJudge, usage))
+		}
 	}
 	// The judge's rationale is judge-LLM prose written DIRECTLY beneath the join report's
 	// own markers, exactly like a branch summary — and the judge's input is the branch
@@ -833,7 +839,7 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 // and falls back to the first successful branch on any judge error / out-of-range
 // verdict (the judge sees only summaries — never transcripts — preserving
 // isolation).
-func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, succeeded []int, criteria string) (winner int, rationale string) {
+func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, succeeded []int, criteria string) (winner int, rationale string, usage session.AuxiliaryUsage) {
 	candidates := make([]BranchSummary, 0, len(succeeded))
 	for _, idx := range succeeded {
 		candidates = append(candidates, BranchSummary{
@@ -842,11 +848,11 @@ func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, 
 			Failed:  false,
 		})
 	}
-	pos, why, err := t.judge.Judge(ctx, candidates, criteria)
+	pos, why, usage, err := t.judge.Judge(ctx, candidates, criteria)
 	if err != nil || pos < 0 || pos >= len(succeeded) {
-		return succeeded[0], "judge unavailable or returned an invalid verdict; selected the first successful branch"
+		return succeeded[0], "judge unavailable or returned an invalid verdict; selected the first successful branch", usage
 	}
-	return succeeded[pos], why
+	return succeeded[pos], why, usage
 }
 
 // runBranches forks and runs every branch in parallel under a worker-limited
@@ -922,7 +928,11 @@ func cancelledBeforeStart(i int, be branchEmitter, clientCancelled bool) branchR
 	// A branch cancelled before it ever started was never routed, so the routed metadata
 	// is empty and RoutingReason is "aborted" (issue #397 — it ran on nothing, like the
 	// dispatch hardAbort skip): the wire now distinguishes it from a classifier miss.
-	be.branchStart(i, "", "", "", "", session.RoutingReasonAborted, "")
+	var decision *session.RoutingDecision
+	if be.skipRoute != nil {
+		decision = be.skipRoute(session.RoutingReasonAborted)
+	}
+	be.branchStart(i, "", "", "", "", session.RoutingReasonAborted, "", decision)
 	be.branchEnd(res, session.StopCancelled, session.Usage{}, 0, 0)
 	return res
 }
@@ -1026,7 +1036,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 			return res, session.StopError
 		}
 	}
-	routedCategory, routedModel, routingReason := t.maybeRouteBranchModel(ctx, caps, prompt)
+	routedCategory, routedModel, routingReason, routingDecision := t.maybeRouteBranchModel(ctx, caps, prompt)
 	branchEngine := t.childEngine
 	routedAccepted := false
 	if routedModel != "" && t.engineFactory != nil {
@@ -1035,8 +1045,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 			routedAccepted = true
 		}
 	}
-	routedCategory, routedModel, routingReason = reconcileRoutedModel(
-		routedCategory, routedModel, routingReason, routedAccepted)
+	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routedAccepted, routingDecision)
 
 	// Bracket the branch on the observability stream: branch_start carries the
 	// (truncated, model-authored) goal + the routed metadata (incl. the bare-metadata
@@ -1044,7 +1054,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// metadata. A fork-failed branch still gets its branch_end so EVERY branch is
 	// represented (no missing event).
 	childIncarnation := session.NewIncarnationID()
-	be.branchStart(i, childIncarnation, prompt, routedCategory, routedModel, routingReason, branchEngine.Model())
+	be.branchStart(i, childIncarnation, prompt, routedCategory, routedModel, routingReason, branchEngine.Model(), routingDecision)
 	start := branchEngine.now()
 
 	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty
@@ -1117,7 +1127,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		return res, session.StopError
 	}
 
-	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})
+	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt, reviewRoot: caps.reviewRoot, reviewIsolated: true})
 	// A Parallel branch always runs in its OWN isolated fork, so its Shell asks are eligible
 	// for the A2 worktree-safe auto-approve; the parent caps carry surface/headless
 	// posture (threaded from Execute → runBranches → runBranch). We REUSE
@@ -1203,17 +1213,18 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 // Run.Cancel propagates into the classifier turn (issue #94). routeTask is nil on a child
 // run (no nesting — a Parallel branch child has no Parallel tool) and when no router is
 // wired (the byte-identical default).
-func (t *ParallelTool) maybeRouteBranchModel(ctx context.Context, caps parentCaps, prompt string) (category, model, reason string) {
-	if t.engineFactory == nil || caps.routeTask == nil {
-		// OFF: no router wired, or no factory to mint a routed engine (the pick could
-		// not be consumed) — attribute to router-disabled (as good as absent).
-		return "", "", session.RoutingReasonRouterDisabled
+func (t *ParallelTool) maybeRouteBranchModel(ctx context.Context, caps parentCaps, prompt string) (category, model, reason string, decision *session.RoutingDecision) {
+	if t.engineFactory == nil || caps.routeDecision == nil {
+		if caps.skipRoute != nil {
+			decision = caps.skipRoute(session.RoutingReasonRouterDisabled)
+		}
+		return "", "", session.RoutingReasonRouterDisabled, decision
 	}
-	cat, m, missReason, ok := caps.routeTask(ctx, prompt)
-	if ok {
-		return cat, strings.TrimSpace(m), ""
+	routed := caps.routeConfigured(ctx, prompt)
+	if routed.ok {
+		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
 	}
-	return "", "", missReason
+	return "", "", routed.reason, routed.decision
 }
 
 // fireSubagentStop runs the SubagentStop hook for a finished branch run

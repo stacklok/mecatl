@@ -115,9 +115,9 @@ stored facts, and stored facts cannot change permissions, safety controls, or
 the tool catalog.
 
 Mecatl rejects high-confidence credentials and model-authored role overrides
-before adding them to the operator profile. In `mecatui`, `/usermodel` provides
-a read-only view of current values and available history. Updates still use the
-memory tools and their permission rules.
+before adding them to the operator profile. In `mecatui`, `/memory` provides a
+read-only view of saved facts, including their current values, provenance, and
+available history. Updates still use the memory tools and their permission rules.
 
 Set `--no-user-model` to disable the user model.
 

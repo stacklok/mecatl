@@ -387,7 +387,7 @@ type fakeAssembler struct {
 	msg    string
 }
 
-func (a *fakeAssembler) Assemble(_ context.Context, _ tool.Workspace) ([]session.Message, error) {
+func (a *fakeAssembler) Assemble(_ context.Context) ([]session.Message, error) {
 	a.called++
 	return []session.Message{session.NewUserMessage(a.msg)}, nil
 }
@@ -440,15 +440,15 @@ func TestTurn0InjectsMemoryIndexAfterAgentsMD(t *testing.T) {
 		Key: "pref/test-runner", Value: "gotestsum", Description: "preferred test runner",
 	}}}
 
-	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
-	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
-	asm := prompt.NewMultiAssembler(prompt.RootAssembler{}, prompt.MemoryIndexAssembler{Src: store})
-	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
-
 	ws := memfs.NewWorkspace("/ws")
 	if err := ws.Write(ctx, "AGENTS.md", []byte("project rule")); err != nil {
 		t.Fatalf("seed AGENTS.md: %v", err)
 	}
+	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
+	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
+	asm := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws}, prompt.MemoryIndexAssembler{Src: store})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
+
 	sess := newSession(t, session.Limits{})
 	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the user prompt"}))
 
@@ -502,19 +502,19 @@ func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
 		Key: "pref/test-runner", Value: "gotestsum", Description: "preferred test runner",
 	}}}
 
+	ws := memfs.NewWorkspace("/ws")
+	if err := ws.Write(ctx, "AGENTS.md", []byte("project rule")); err != nil {
+		t.Fatalf("seed AGENTS.md: %v", err)
+	}
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	asm := prompt.NewMultiAssembler(
-		prompt.RootAssembler{},
+		prompt.RootAssembler{Source: ws},
 		prompt.SoulAssembler{Src: fakeSoulSrc{body: "PERSONA-MARKER terse engineer"}},
 		prompt.MemoryIndexAssembler{Src: store},
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
 
-	ws := memfs.NewWorkspace("/ws")
-	if err := ws.Write(ctx, "AGENTS.md", []byte("project rule")); err != nil {
-		t.Fatalf("seed AGENTS.md: %v", err)
-	}
 	sess := newSession(t, session.Limits{})
 	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the user prompt"}))
 
@@ -552,9 +552,8 @@ func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
 	}
 }
 
-// TestDefaultAssemblerWhenNil asserts NewEngine defaults the assembler so a run
-// with no Instructions field set still discovers root instructions and prepends
-// them to the request (ephemerally — they are not persisted; ADR 0043).
+// TestDefaultAssemblerWhenNil asserts that a nil assembler does not infer source
+// authority from the execution workspace.
 func TestDefaultAssemblerWhenNil(t *testing.T) {
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
@@ -576,8 +575,8 @@ func TestDefaultAssemblerWhenNil(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("default RootAssembler did not discover AGENTS.md (it must be prepended to the request)")
+	if found {
+		t.Fatalf("nil instruction source inferred authority from the execution workspace")
 	}
 }
 

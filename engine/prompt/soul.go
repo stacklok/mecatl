@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // SoulSource is a CONSUMER-DEFINED port: the prompt package declares the tiny
@@ -48,7 +47,7 @@ var _ InstructionAssembler = SoulAssembler{}
 // unused: the soul is user-scoped (~/.config/mecatl/soul.md), resolved by the
 // adapter against the process environment, NOT against the session workspace
 // root. It fails soft on a nil source, a source error, or an empty body.
-func (a SoulAssembler) Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error) {
+func (a SoulAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
 	if a.Src == nil {
 		return nil, nil
 	}

@@ -22,10 +22,12 @@ For the rest of the terminal workflow, see [Use mecatui](/mecatui/index.md).
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
-`mecatui`. Filter the server's inventory, select a model, and press **Enter**.
-The picker warns that the choice creates a peer session and carries over the
-visible conversation. Replaying a long history may be costly. The existing
-session's provider and base model do not change.
+`mecatui`. Filter the server's inventory and use the keyboard or a primary click
+on a visible model row to move the selection. The mouse wheel scrolls the
+viewport while the selection remains pinned. Press **Enter** to switch to the
+selected model. The picker warns that the choice creates a peer session and
+carries over the visible conversation. Replaying a long history may be costly. The existing session's
+provider and base model do not change.
 
 A switch across providers keeps the visible conversation but drops provider-
 private replay state, such as reasoning state that the new provider cannot
@@ -72,11 +74,12 @@ operator-managed credential file when interactive entry is unsuitable. See
 [Run mecated standalone](/building/deployment/mecated.md#configure-providers) for
 credential-file and daemon configuration details.
 
-After setup, you may set the embedded default with
-`mecatui providers set-default PROVIDER [MODEL]`; declining leaves the current
-default unchanged. `mecatui providers` and `mecatui providers status [PROVIDER]`
-report local configuration without revealing credentials. Presence does not prove
-model access, billing, or account health.
+After credential setup, the wizard offers to set the provider as the embedded
+deployment default. This includes ToolHive after its externally managed login.
+Declining leaves the current default unchanged. You can change the selection later
+with `mecatui providers set-default PROVIDER [MODEL]`. `mecatui providers` and
+`mecatui providers status [PROVIDER]` report local configuration without revealing
+credentials. Presence does not prove model access, billing, or account health.
 
 `openai-codex` is distinct from the public `openai` API-key provider. Setup can
 reuse a locally usable manual Codex subscription token for default selection but
@@ -165,9 +168,9 @@ and any OpenAI-compatible endpoint you configure yourself.
 
 Select Anthropic models under `openrouter-anthropic` when you want more than
 the floor. That endpoint speaks the Anthropic Messages protocol, which carries
-four cache breakpoints instead of one and lets you set a cache lifetime with
-`--anthropic-cache-ttl` (`5m` or `1h`). The Responses protocol expresses
-neither.
+four cache breakpoints instead of one and a cache lifetime, which defaults to
+`1h` and can be set with `--anthropic-cache-ttl` (`5m` or `1h`). The Responses
+protocol expresses neither.
 
 This matters for cost. Anthropic caches a prompt only when the caller asks, and
 cache reads bill at a tenth of uncached input, so a long session on an unasked
@@ -221,6 +224,10 @@ models:
     router: coder
     title: quick
   router:
+    backend: jev
+    jev:
+      minimum-confidence: 0.5
+      maximum-input-bytes: 16384
     default-category: medium
     categories:
       - name: large
@@ -238,6 +245,107 @@ models:
         model: image
 ```
 
+The `guardrail` slot also accepts a strict provider-aware object when the checker
+must use a different configured provider:
+
+```yaml
+models:
+  slots:
+    guardrail:
+      provider: review-provider
+      model: coder
+```
+
+Both object fields are required. Unknown providers, missing fields, unknown keys,
+and an unresolvable model fail startup; Mecatl never infers a provider from an
+opaque model ID. The scalar form binds its selector to the deployment default
+provider. Project-tier objects are ignored with a warning.
+
+### Use a planning model in plan mode
+
+Set `models.default` to the model that implements your changes and bind `plan`
+to a model for plan-mode turns:
+
+```yaml
+models:
+  aliases:
+    implementation: gpt-5.6-terra
+    planner: gpt-5.6-sol
+  default: implementation
+  slots:
+    plan: planner
+```
+
+When the session enters plan mode, its next turn uses the `plan` model. When
+you approve the plan and Mecatl continues in default or accept-edits mode, it
+uses the session default again. Mecatl rebuilds the session engine at the mode
+change, so the provider stays fixed. Configure both model IDs for the same
+provider.
+
+If `plan` is unset, Mecatl uses the `reasoning` slot when it is configured;
+otherwise plan mode uses the session default model. See
+[Permissions and posture](/features/permissions-and-posture.md#plan-mode) for
+the plan-review workflow.
+
+This example selects the Jev classifier backend. Set `TYPESAFE_API_KEY` in the
+server process environment. When Jev is active, Mecatl sends each eligible
+delegated task description and the configured category names and descriptions
+to Typesafe. Keep the default `backend: llm` if delegated task text must remain
+inside your configured LLM path.
+
+Jev uses model `jev-1.13.0` by default. `minimum-confidence: 0` accepts every
+valid choice; a higher value from `0` through `1` makes a lower-confidence
+choice fall back to the inherited model. The optional `base-url` must use HTTPS,
+except for loopback HTTP development endpoints. Jev routing accepts up to 255
+categories. `maximum-input-bytes` defaults to 16384 and accepts an integer from
+1 through 65536. Mecatl measures the complete rendered request text against this
+limit and never permits more than 64 KiB. It does not truncate an over-limit task,
+instructions, or taxonomy. Router observability uses the same backend-neutral
+outcomes for both classifiers: `classifier-error`, `bad-verdict`, `unknown-category`,
+`low-confidence`, `input-over-limit`, `capacity-timeout`, `cancelled`, and `timeout`.
+In particular, a deadline is reported as `timeout`; `cancelled` means caller cancellation.
+All remain fail-soft and count toward the existing three-miss per-run breaker.
+`default-category: medium` is an advisory instruction for either backend when no
+category clearly fits. It does not force a fallback category. A named model on a
+delegation or agent definition is deterministic and takes precedence over category
+routing; categories are advisory classification for otherwise unpinned work.
+
+### Diagnose a delegated model decision
+
+Start with the model line on the live delegation card. A successful decision keeps
+the compact `routed: <category> → <model>` form. A fallback names the model that
+actually ran and can add the rejected candidate and its confidence comparison:
+
+```text
+model: gpt-6-astra · fallback: low-confidence
+candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50
+```
+
+The candidate is evidence about the classifier result. It is not the model that
+ran. The `model:` value remains the actual model after a fallback.
+
+Press **F6** and focus the child, Parallel branch, or team member for the complete
+decision. The detail identifies the configured backend and classifier, candidate,
+actual model, final reason, threshold, miss count, and breaker state. A zero Jev
+threshold appears as disabled. LLM routing has no native confidence score, so its
+detail shows confidence as unavailable instead of `0.00`. Pin, fork, resume, and
+breaker skips show the actual model and why the classifier was not called.
+
+The live view explains the current run. To inspect retained evidence after the run,
+start a target-bound debugger with `mecatui debug <SESSION_ID>` or
+`mecatui connect <ADDRESS> debug <SESSION_ID>`, then ask it to use
+`InspectSession` with the `delegation` view. The debugger reads the stored
+Subagent, Parallel, and Team start events. If an older or incompletely persisted
+event has no routing decision, the evidence remains absent. Do not infer that a
+classifier ran from the displayed model or classifier configuration.
+
+Effective configuration tells you which backend, classifier, taxonomy, threshold,
+and category mappings the server can use. Runtime evidence tells you what happened
+for one delegation. Jev confidence is a backend-native score, not measured accuracy.
+Calibrate a nonzero threshold against a representative labeled workload from your
+own tasks. Mecatl does not provide a router evaluation command or a universal
+recommended threshold.
+
 These mechanisms are independent:
 
 - **Aliases** map readable names to concrete provider-specific model IDs.
@@ -254,6 +362,12 @@ These mechanisms are independent:
   up to three early genuine prompts; it never delays or changes the chat. Its
   token usage is stored separately as `session_title`, not charged to the chat's
   displayed usage or run budget.
+- **Auxiliary model calls** record provider-reported tokens in separate canonical
+  session-usage buckets. A returned result without a purpose is recorded as
+  `unknown` when its purpose cannot be determined. Model attribution is
+  independent: it is `unknown` only when the provider or model is unavailable.
+  These buckets do not change the chat's displayed usage or run budget, except
+  that the router bucket retains its internal spend limit.
 - **Router categories** select a model for a plain delegated Subagent, an
   unpinned named specialist (including `mode: "read-write"`), a Parallel branch,
   or an undefined team member from the task description. A taxonomy enables the
@@ -414,17 +528,35 @@ including:
 - context limit when known.
 
 They do not expose API keys or provider-private credentials. The inventory is
-server-specific and can differ according to the providers and credentials
-configured at startup. A provider's live model catalog may refresh while the
-server is running.
+server-specific and depends on the providers and credentials configured at startup.
+Each `ListModels` request, including client startup and SDK requests, can refresh
+available providers after a ten-second per-provider cooldown. Concurrent requests
+share a fetch; one provider's cooldown does not prevent another from refreshing.
+The request waits up to ten seconds and returns models and safe provider statuses
+from one snapshot. There is no periodic refresh or metadata cache on disk.
+
+The server retains each provider's last non-empty model metadata for its lifetime,
+even if a later listing fails, is unauthorized, or returns no models. The latest
+status still reports that outcome where provider status is exposed. A later
+non-empty listing replaces the retained list. Retained metadata can become stale;
+it does not guarantee current model access or context limits.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
-inspect this same resolved inventory. Results contain the exact `provider_id`
-plus `model_id` selection handle and the same safe metadata as `ListModels`;
-equal model IDs under different providers remain separate. Exact provider/model
-filters are supported. Output defaults to 20 entries and is capped at 50 entries
-and 32 KiB. The tool does not probe providers, accept endpoints or credentials,
-or change the current session, and remains available in no-filesystem sessions.
+inspect this same resolved inventory. Start without `provider_id` when the
+provider is unknown. The first unfiltered result includes every selectable
+provider ID and its model count, plus the first bounded model page. You can then
+search across all providers or add an exact provider filter. A query is a set of
+case-lowered literal terms; every term must occur in the provider ID, model ID,
+or display name of a result. Punctuation has no special query syntax.
+
+Each result contains the exact `provider_id` plus `model_id` selection handle and
+the same safe metadata as `ListModels`; equal model IDs under different providers
+remain separate. Output defaults to 20 entries and is capped at 50 entries and
+32 KiB. When `next_cursor` is present, call the tool again with only that value as
+`cursor`. A changed inventory invalidates the cursor, so restart without it. The
+tool does not probe or refresh providers, accept endpoints or credentials, select
+or route a model, or change the current session. It remains available in
+no-filesystem sessions.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued
@@ -455,3 +587,72 @@ session as authoritative.
 - [Context windows](./context-windows.md) for context limits and fallback.
 - [Capability and deployment matrix](./capability-matrix.md) for deployment
   availability.
+
+## Troubleshooting
+
+### A provider error ended a model step
+
+The server retries transient provider failures before meaningful assistant text is
+visible. If recovery ends in an error, use `/retry` from an idle `mecatui`
+session to ask the server to retry the failed step without duplicating your
+prompt. A failure after visible output is terminal and is not automatically
+replayed, because the model might otherwise repeat visible text or tool calls.
+
+Each model step defaults to a 30-minute recovery window and at most 60 wrapper
+calls, including the initial request. Extra provider calls can be billed even
+when Mecatl discards their precommit output. These limits apply separately to
+each model step, so they are not a task-wide spending ceiling. Engine token
+budgets are checked at turn boundaries, not between wrapper calls within one
+step. Prompt-cache retention can end while a model step is recovering; a later
+attempt can incur cache-write charges or full input charges. A matching prompt
+does not guarantee a cache hit: reuse also depends on the provider's model and
+routing, and cache lifetimes vary. A longer cache lifetime may carry a higher
+write price. Check the current [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+guides for retention and billing details before choosing a cache setting.
+
+For an embedded terminal session, set `--llm-recovery-budget` and
+`--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
+server owns these values. Daemon, Kubernetes, and CI configuration is described
+in [LLM resilience](/building/deployment/mecated.md#llm-resilience).
+
+### A provider request failed
+
+OpenAI Responses, Chat Completions, and Anthropic errors show a failure category
+or status, such as `503 Service Unavailable`, instead of the provider's raw error
+message. Raw messages can contain reflected credentials or request content. When
+an HTTP error includes a sanitized target and request ID, use them to locate the
+request in your provider's support tools. Context-window and content-filter
+failures retain their specific categories. If a manual Codex token is rejected,
+Mecatl shows its local remediation: replace the token in `auth.yaml` and
+restart Mecatl.
+
+### Model context metadata is unavailable
+
+You can send the first prompt in a new or resumed session without opening
+`/models` first. If the selected model's context window is unknown and its provider
+supports discovery, the server starts or joins discovery for that provider before
+executing the prompt. Native authenticated providers perform this listing on demand
+rather than at startup.
+Known configured, retained live, or catalog windows need no listing.
+
+When discovery fails or returns an empty list and no positive window is known,
+the server rejects execution with `context_window_unavailable`. Your existing
+conversation remains available, and the rejected prompt has not been recorded as
+a server turn. Restore provider discovery, or ask the server operator to configure
+the model's verified [exact context window](./context-windows.md). Retry after the
+ten-second cooldown; another failed attempt requires another explicit request.
+Cancelling your wait leaves the server's bounded discovery attempt running.
+
+In `mecatui`, **Retry** sends the identical prepared text and attachments without
+rereading files or the clipboard. **Back** restores the editable draft, including
+staged pastes and images, and asks before replacing a newer draft. Cancelling that
+confirmation keeps both drafts. **Discard submission** releases the rejected
+payload. Recovery holds one submission in client memory under the existing size
+limits; accepting the prompt, changing sessions, exiting, or an unrelated terminal
+error releases it. There is no automatic replay or recovery after client restart.
+
+API clients receive gRPC `Unavailable` with ErrorInfo domain `mecatl.stacklok.com`
+and reason `context_window_unavailable`, or HTTP 503. Match the structured reason,
+not error-message text, and retry explicitly after addressing discovery. For daemon
+configuration, see [context discovery recovery](/building/deployment/mecated.md#context-discovery-recovery).

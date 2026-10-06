@@ -147,7 +147,7 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 			// credentials cannot place them in caller diagnostics.
 			return nil, &listerStatusError{statusCode: apiErr.StatusCode}
 		}
-		return nil, fmt.Errorf("anthropic: list models: %w", err)
+		return nil, fmt.Errorf("anthropic: list models: %w", anthropicStreamErr(err, err.Error()))
 	}
 	return out, nil
 }

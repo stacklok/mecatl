@@ -19,7 +19,9 @@ With no `status_customization:` entry, `mecatui` uses its shipped responsive
 templates. The header includes the active session title at every width and the
 remote target in its full variant. Keyboard help, the header
 posture/scroll/changed-file indicators, and the footer activity lane remain part
-of the client interface; customization cannot remove them.
+of the client interface; customization cannot remove them. In a debug session,
+the header also keeps a `⚠ DEBUG target` cue ahead of generated content and a
+privacy disclosure below it, even if a custom header is empty.
 
 ## Choose a source
 
@@ -96,6 +98,11 @@ that matches the status template variant:
 - `contextMeterCompact .Context` for `compact`
 - `contextMeterMinimal .Context` for `minimal`
 
+All three functions display `ctx ?` when occupancy is unknown instead of
+presenting a zero-percent pressure reading. When the occupancy is estimated,
+they mark the percentage with `~`. The full variant also shows the known context
+window when occupancy is unknown.
+
 For example, this footer uses the corresponding meter at each width:
 
 ```yaml
@@ -118,7 +125,7 @@ refreshes it.
 
 |JSON path|Type|Meaning|
 |-|-|-|
-|`Version`|integer|Status input protocol version (currently `3`).|
+|`Version`|integer|Status input protocol version (currently `4`).|
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
@@ -130,6 +137,8 @@ refreshes it.
 |`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|
 |`Usage.CacheReadPercent`|integer|`CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero.|
 |`Context.{Used,Window}.{Raw,Human}`|integer, string|Current context use and capacity as exact and display-ready values.|
+|`Context.Known`|boolean|Whether the current context occupancy is known. When false, `Used.Human` remains `?`.|
+|`Context.Estimated`|boolean|Whether the known context occupancy is an estimate. When true, `Used.Human` retains its `~` prefix.|
 |`Context.Percent`|integer|`Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown.|
 |`Workspace.Location`|string|`local`, `remote`, or `unknown`.|
 |`Workspace.Name`|string|Provider-supplied workspace display metadata. It is not a directory basename or a usable path.|
@@ -215,8 +224,9 @@ trusted, bounded `http` or `https` URL without user information; use a fixed URL
 or validate it with a URL parser before producing the StatusML document.
 
 Only bounded `http` and `https` URLs without user information are retained.
-Until terminal hyperlink support is added, a link is rendered as theme-styled
-underlined text rather than an OSC 8 sequence. Unsafe link destinations lose
+Links emit native OSC 8 terminal hyperlinks. Terminals and multiplexers that
+support OSC 8 make them followable; others retain the theme-styled underlined
+text as a visual fallback. Unsafe link destinations lose
 their destination but retain their display text. Control characters, including
 ANSI, OSC, newline, tab, and Unicode line-separator controls, are removed from
 markup text, link metadata, and theme data before rendering. StatusML is always
@@ -332,10 +342,6 @@ at a time. Replacement, timeout, and shutdown cancel it. Each invocation has a
 one-second deadline, and standard output and standard error share a 4 KiB limit.
 Failures never render raw output. A failed refresh keeps the last successful
 surface with a stale marker when it fits, or falls back to the shipped default.
-
-For the lower-level client architecture and the complete source lifecycle, see
-the
-[status-line section in `docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#local-status-lines).
 
 ## Customize the terminal title
 

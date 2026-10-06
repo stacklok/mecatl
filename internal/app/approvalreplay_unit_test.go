@@ -22,8 +22,8 @@ import (
 // here even when that fabricated call happens to be unlearnable.
 type spyPolicy struct{ learned []session.ToolCall }
 
-func (*spyPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (*spyPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (p *spyPolicy) Learn(_ session.SessionID, c session.ToolCall) { p.learned = append(p.learned, c) }
 
@@ -60,6 +60,7 @@ func seedReplayFixture(t *testing.T, callID session.ToolCallID, inHistory bool) 
 		Tool:        "Write",
 		Call:        callID,
 		AllowAlways: true,
+		Origin:      session.ApprovalOriginPermission,
 	}}
 	if err := log.Append(context.Background(), sess.ID, ev); err != nil {
 		t.Fatalf("log append: %v", err)
@@ -122,7 +123,7 @@ func TestReplayApprovalsIdempotent(t *testing.T) {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := log.Append(context.Background(), sess.ID, session.Event{Type: session.EvApproval, Approval: &session.ApprovalPayload{
-		AskID: "s-dup:0:dup1:r1", Verdict: session.VerdictStringAllowAlways, Tool: "Write", Call: "dup1", AllowAlways: true,
+		AskID: "s-dup:0:dup1:r1", Verdict: session.VerdictStringAllowAlways, Tool: "Write", Call: "dup1", AllowAlways: true, Origin: session.ApprovalOriginPermission,
 	}}); err != nil {
 		t.Fatalf("log append: %v", err)
 	}

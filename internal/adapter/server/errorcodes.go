@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 )
 
@@ -79,6 +80,10 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrStaleRunControl, Code: "stale_run_control", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Control targets a run that is no longer current"},
 	{Sentinel: ErrAskNotPending, Code: "ask_not_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Permission ask is not pending"},
 	{Sentinel: ErrPlanResolutionRequired, Code: "plan_resolution_required", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Plan resolution is required"},
+	{Sentinel: agent.ErrApprovalNotPending, Code: "approval_not_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Approval is not pending"},
+	{Sentinel: agent.ErrApprovalIntentMismatch, Code: "approval_intent_mismatch", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Approval intent does not match pending ask"},
+	{Sentinel: agent.ErrApprovalUnsupported, Code: "approval_unsupported", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Approval kind is unsupported"},
+	{Sentinel: agent.ErrApprovalGrantIneligible, Code: "approval_grant_ineligible", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Approval grant is ineligible"},
 	{Sentinel: ErrInvalidPlacementSelection, Code: "placement_selector_invalid", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Placement selector is invalid"},
 	{Sentinel: ErrPlacementNotFound, Code: "placement_selector_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Placement selector was not found"},
 	{Sentinel: ErrPlacementStale, Code: "placement_selector_stale", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Placement selector is stale"},
@@ -110,6 +115,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrDreamRequestFailed, Code: "dream_request_failed", GRPC: codes.Internal, HTTPStatus: http.StatusInternalServerError, Title: "Dream request failed"},
 	{Sentinel: ErrFailedStepRetryIneligible, Code: "failed_step_retry_ineligible", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Failed-step retry is not eligible"},
 	{Sentinel: errMCPAuthorizationPending, Code: "mcp_authorization_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "MCP authorization is pending"},
+	{Sentinel: ErrEnvironmentLogicalRootUnavailable, Code: "environment_logical_root_unavailable", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Repository worktree attachment unavailable"},
 	{Sentinel: ErrFailedPrecondition, Code: "failed_precondition", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Failed precondition"},
 	{Sentinel: ErrNoActiveRun, Code: "no_active_run", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "No active run for session"},
 	{Sentinel: ErrNotAwaitingPlan, Code: "not_awaiting_plan", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Session is not awaiting a plan approval"},

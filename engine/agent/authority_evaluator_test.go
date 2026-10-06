@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -429,6 +430,54 @@ func TestADR_0233_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithout
 		}
 		t.Fatal("missing authority denial result for Copy")
 	})
+}
+
+type failingAuthorityWorkspace struct {
+	tool.Workspace
+	err error
+}
+
+func (w failingAuthorityWorkspace) AuthorityResourcePath(string) (string, string, error) {
+	return "", "", w.err
+}
+
+func TestAuthorityResourceResolutionFailureDeniesBeforeEvaluator(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "remote resolver unavailable", err: context.DeadlineExceeded},
+		{name: "physical symlink escape", err: errors.New("path is outside workspace")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			read := &authorityTool{name: "Read"}
+			evaluator := &recordingAuthorityEvaluator{decision: port.AuthorityDecision{Allowed: true}}
+			eng := newEngine(agent.Deps{
+				LLM:                mockllm.New(mockllm.ToolCallTurn(toolCall("read", "Read", `{"path":"escape"}`))),
+				Catalog:            catalogWith(t, read),
+				AuthorityEvaluator: evaluator,
+			})
+			base := agent.MemEnv("/workspace")
+			env := tool.MustEnvironment(base.Ref(), failingAuthorityWorkspace{Workspace: base.Workspace(), err: tc.err}, base.ReadLedger(), nil)
+			sess := authoritySession(t, "Read")
+			if err := sess.Rehome(env.Ref()); err != nil {
+				t.Fatal(err)
+			}
+			events := drain(eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "read"}))
+			if read.ran.Load() != 0 || evaluator.calls() != 0 {
+				t.Fatalf("tool executions=%d evaluator calls=%d, want 0/0", read.ran.Load(), evaluator.calls())
+			}
+			for _, event := range events {
+				if event.ToolResult != nil && event.ToolResult.CallID == "read" {
+					if !event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, "authority resource") {
+						t.Fatalf("tool result=%+v, want fail-closed authority resolution error", event.ToolResult)
+					}
+					return
+				}
+			}
+			t.Fatal("missing fail-closed tool result")
+		})
+	}
 }
 
 // sequencedAuthorityEvaluator returns one decision per call in order, so a test

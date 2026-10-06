@@ -158,15 +158,26 @@ function richTextCell(text: string, style: Record<string, boolean>): unknown {
   };
 }
 
+/** Slack's rich_text `text` leaf requires at least 1 character - a genuinely empty string (an
+ * empty-string arg key or value) produces `text: ""`, which Slack rejects outright as
+ * `invalid_blocks`, denying the whole ask closed for a reason that has nothing to do with the
+ * ask itself (confirmed live, mecatl#1986). Render it as a literal `""` instead of leaving it
+ * empty. */
+function nonEmptyText(text: string): string {
+  return text.length === 0 ? '""' : text;
+}
+
 function keyCell(key: string): unknown {
-  return richTextCell(key, { bold: true });
+  return richTextCell(nonEmptyText(key), { bold: true });
 }
 
 /** A genuine JSON number gets `raw_number` (Slack sorts/aligns it numerically); everything else
  * (including the "further JSON" nested-object/array case) renders as a code-styled text run. */
 function valueCell(value: unknown): unknown {
   if (typeof value === "number") return { text: String(value), type: "raw_number" };
-  return richTextCell(clamp(formatArgValue(value), MAX_ARGS_CELL_VALUE), { code: true });
+  return richTextCell(nonEmptyText(clamp(formatArgValue(value), MAX_ARGS_CELL_VALUE)), {
+    code: true,
+  });
 }
 
 /** Renders `ask.args` as a Block Kit `table` block, one row per key. Falls back to a single-cell

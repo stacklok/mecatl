@@ -23,8 +23,11 @@ unavailable when the selected store does not implement that interface.
 |Adapter|Best fit|
 |-|-|
 |`engine/adapter/memschedulestore`|Tests and offline development|
-|`internal/adapter/store/jsonlstore`|One server with local durable storage|
-|`internal/adapter/redisstore`|Multiple replicas sharing Redis|
+|`adapters/jsonlstore`|One server with local durable storage|
+|`adapters/redisstore`|Multiple replicas sharing Redis|
+
+For external Go construction and lifecycle ownership, see
+[the supplied store adapters](/building/extension-points/session-store.md#use-a-supplied-backend).
 
 `mecated` can also select a remote store with `--schedule-store-url`. With OIDC
 ownership enabled, the store must support atomic create-only publication.
@@ -98,6 +101,22 @@ error. Use `GetFire` or `ListFires` to retrieve results.
 Each fire has a `fire_timeout`, with a 30-minute default. Exceeding it ends the
 run with stop reason `timeout` and leaves the session recoverable. The next
 leader reconciles a fire orphaned by a process crash into a terminal record.
+
+The conversation is fresh, but the execution placement is stable. Creation resolves one
+exact durable ref and each fire reattaches it without following a changed deployment default.
+Origin-backed schedules borrow their session's placement. Independent schedules provision one
+placement when the provider supports ownership cleanup; MicroVM schedules therefore reuse the
+same logical worktree and repository VM across fires and harness restarts. Ownership is durable,
+immutable host metadata that public request mappings cannot set. Legacy records default to
+borrowed, never owned. Owned deletion atomically refuses a claimed/running fire or persists a
+disabled, restart-safe deletion marker. While marked, create/update/pause/resume/fire and one-shot
+re-arm cannot mutate the record; inspect/list expose `deletion_pending`, and retry resumes against
+the same schedule incarnation. Conditional completion cannot delete a later same-name schedule.
+Before the first claim, deletion cleans the owned attachment while retaining dirty state. The first
+atomic claim hands placement lifetime to the fire-session lineage; after it, schedule deletion removes
+only the record and retains the clean or dirty attachment for historical and resumable fire sessions.
+Borrowed, no-FS, host-local, and legacy-ambiguous records preserve the prior idempotent direct-delete
+behavior. It never deletes the repository-scoped VM/rootfs, sibling worktrees, or an origin session.
 
 ## API and in-chat access
 

@@ -106,8 +106,8 @@ type Member struct {
 	// AgentType is the optional agent-definition name this member adopts (its
 	// scoped tools / model / prompt); empty for a generic member.
 	AgentType string
-	// Session is the id of the running session backing this member (empty until
-	// the supervisor wires it).
+	// Session is the stable id reserved for the runtime session backing this
+	// member. It may be advertised before that runtime is materialized.
 	Session session.SessionID
 	// State is the member's lifecycle state.
 	State MemberState

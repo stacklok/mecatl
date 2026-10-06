@@ -243,23 +243,12 @@ func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope 
 	}
 	if ask, ok := s.PendingAsk(); ok {
 		toolName, toolRepaired := safeLineRepair(ask.Tool)
-		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.Call, Origin: askOrigin(ask.Origin())}
+		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.Call, Origin: string(ask.Origin)}
 		if toolRepaired {
 			out.RepairedFields = append(out.RepairedFields, "pending_ask.tool")
 		}
 	}
 	return out
-}
-
-func askOrigin(origin session.AskOrigin) string {
-	switch origin {
-	case session.AskOriginHook:
-		return "hook"
-	case session.AskOriginPlan:
-		return "plan"
-	default:
-		return "permission"
-	}
 }
 
 type transcriptEvidence struct {

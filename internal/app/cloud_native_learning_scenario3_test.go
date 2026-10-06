@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memattempt"
@@ -30,9 +32,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 func TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart(t *testing.T) {
@@ -152,8 +152,8 @@ func TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart(t
 	if closed != nil {
 		closed.Close()
 	}
-	if closedErr == nil || !strings.Contains(closedErr.Error(), "ADR-0213") {
-		t.Fatalf("OwnershipEnforced remote Build error = %v, want ADR-0213 fail closed", closedErr)
+	if closedErr == nil || !strings.Contains(closedErr.Error(), "unavailable with ownership enforcement") {
+		t.Fatalf("OwnershipEnforced remote Build error = %v, want ownership-enforcement fail closed", closedErr)
 	}
 }
 
@@ -383,7 +383,7 @@ func TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical(t *testing
 
 func drainLearningRun(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) []session.Event {
 	var events []session.Event
 	for event := range run.Events() {

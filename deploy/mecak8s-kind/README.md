@@ -17,8 +17,9 @@ no provider tokens.
 `mecak8s-openrouter` Secret from standard input, applies the real-provider overlay,
 and disables `--mock`. The credential is projected only as the container's
 `OPENROUTER_API_KEY` environment variable; it is never a Helm value or command-line
-argument. Running setup later without the variable returns to mock mode and deletes
-that fixture-owned Secret.
+argument. Real-provider mode pins new sessions to `openai/gpt-6-sol`. Running
+setup later without the variable returns to mock mode and deletes that fixture-owned
+Secret.
 
 A real-provider smoke call is a **separate, explicit billable operator action** after
 setup. It is not part of fixture setup or default tests; inspect the deployment and

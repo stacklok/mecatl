@@ -26,6 +26,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // newCacheRenderer builds a renderer at a fixed width, mirroring the model's
@@ -40,11 +41,30 @@ func newCacheRenderer() *renderer {
 // independent test oracle and allocation benchmark for the production frame path.
 func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	var b strings.Builder
-	for i := range c.blocks {
-		if i > 0 {
-			b.WriteString(blockSepAfter(c.blocks, i-1))
+	snapshots := c.testBlocks()
+	kinds := make([]scrollback.Kind, c.scrollback.Len())
+	for i := range kinds {
+		kinds[i] = c.scrollback.MetadataAt(i).Kind
+	}
+	var previousText string
+	previousVisible := -1
+	for i := range snapshots {
+		text := r.renderSnapshot(i, snapshots[i], expand)
+		if text == "" {
+			continue
 		}
-		b.WriteString(r.renderBlock(i, &c.blocks[i], expand))
+		if previousVisible >= 0 {
+			if kinds[i] == scrollback.KindAssistant &&
+				(kinds[previousVisible] == scrollback.KindTool || kinds[previousVisible] == scrollback.KindSubagent || kinds[previousVisible] == scrollback.KindTeam) &&
+				!strings.Contains(previousText, "\n") {
+				b.WriteString(interBlockSepCompact)
+			} else {
+				b.WriteString(blockSepAfter([]scrollback.Kind{kinds[previousVisible], kinds[i]}, 0))
+			}
+		}
+		previousText = text
+		previousVisible = i
+		b.WriteString(text)
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -76,7 +96,7 @@ func assertCacheMatchesFresh(t *testing.T, step string, cached *renderer, c *con
 // oracleSteps is the scripted sequence exercising EVERY conversation mutator.
 // Each step's name is the conversation method it exercises (the reflection
 // tripwire below checks the method set against these names); a step may call
-// other already-covered methods as setup (e.g. addTool before setSubagentStart).
+// other already-covered methods as setup (e.g. addTool before startSubagentCard).
 var oracleSteps = []struct {
 	name string
 	fn   func(c *conversation)
@@ -99,7 +119,14 @@ var oracleSteps = []struct {
 	{"endReasoningStream", func(c *conversation) { c.endReasoningStream() }},
 	{"addTurnStat", func(c *conversation) { c.addTurnStat("turn 1 · ↑1.2k ↓300 · 2.1s") }},
 	{"addTool", func(c *conversation) { c.addTool("call-1", "Read", `{"path":"main.go"}`) }},
+	{"reconcileUnresolvedTool", func(c *conversation) {
+		c.reconcileUnresolvedTool("call-1", "Read", `{"path":"actual.go"}`)
+	}},
 	{"addNotice", func(c *conversation) { c.addNotice("context compacted") }},
+	{"retractLatestNotice", func(c *conversation) {
+		c.addNotice("provisional approval")
+		c.retractLatestNotice("provisional approval")
+	}},
 	// resolveTool covers BOTH shapes: the NON-TAIL resolve of call-1 (the notice
 	// above sits after it) and a fresh tail resolve.
 	{"resolveTool", func(c *conversation) {
@@ -107,17 +134,40 @@ var oracleSteps = []struct {
 		c.addTool("call-2", "Shell", `{"command":"go vet ./..."}`)
 		c.resolveTool("call-2", "ok", false) // tail
 	}},
-	{"setSubagentStart", func(c *conversation) {
-		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
-		c.setSubagentStart("call-sub", "dig into the code", "", "", "", "")
+	{"resolveAvailableTool", func(c *conversation) {
+		c.addTool("available-1", "Read", `{}`)
+		c.resolveAvailableTool("available-1", "available", false)
+		c.resolveTool("available-1", "cancelled", true)
 	}},
-	{"addSubagentTool", func(c *conversation) {
-		c.addSubagentTool(client.SubagentMsg{
+	{"resolveToolResult", func(c *conversation) {
+		c.addTool("structured-1", "Read", `{}`)
+		c.resolveToolResult(client.ToolResultMsg{CallID: "structured-1", Content: "result", StructuredContent: `{"count":1}`})
+	}},
+	{"applySubagentTyped", func(c *conversation) {
+		c.addTool("typed-sub", "Subagent", `{}`)
+		c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "typed-sub", ChildID: "typed-child", Goal: "typed"})
+		c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "typed-sub", ToolCount: 1, Stop: "end_turn"})
+	}},
+	{"applyTeamTyped", func(c *conversation) {
+		c.addTool("typed-team", "Team", `{}`)
+		c.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: "typed-team", TeamID: "typed-team", Roster: []client.TeamMemberSpec{{Name: "member"}}})
+		c.applyTeamTyped(client.TeamMsg{Kind: client.TeamEnd, ParentCallID: "typed-team", Rounds: 1, Stop: "end_turn"})
+	}},
+	{"startSubagentCard", func(c *conversation) {
+		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
+		c.startSubagentCard("call-sub", "dig into the code", "", "", "", "")
+	}},
+	{"setSubagentCardRouting", func(c *conversation) {
+		confidence := 0.42
+		c.setSubagentCardRouting("call-sub", "child-1", &client.RoutingDecision{Backend: "jev", Confidence: &confidence, Outcome: "fallback"})
+	}},
+	{"updateSubagentCard", func(c *conversation) {
+		c.updateSubagentCard(client.SubagentMsg{
 			Kind: client.SubagentTool, ParentCallID: "call-sub", ToolName: "Grep", ToolCount: 1,
 		})
 	}},
-	{"setSubagentEnd", func(c *conversation) {
-		c.setSubagentEnd("call-sub", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
+	{"finishSubagentCard", func(c *conversation) {
+		c.finishSubagentCard("call-sub", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
 	}},
 	// The fleet accumulators mutate conversation state OFF the blocks (footer /
 	// f6 roster); they must leave the block render untouched.
@@ -130,51 +180,51 @@ var oracleSteps = []struct {
 	{"fleetEnd", func(c *conversation) {
 		c.fleetEnd("child-1", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", "", 4200)
 	}},
-	{"setTeamStart", func(c *conversation) {
+	{"startTeamCard", func(c *conversation) {
 		c.addTool("call-team", "Team", `{"goal":"review"}`)
-		c.setTeamStart("call-team", "team-p1", []client.TeamMemberSpec{
+		c.startTeamCard("call-team", "team-p1", []client.TeamMemberSpec{
 			{Name: "alpha", Role: "researcher", Lead: true},
 			{Name: "beta", Role: "reviewer", Mutating: true},
 		})
 	}},
-	// addTeamMember: all five InnerKinds routed to the lanes.
-	{"addTeamMember", func(c *conversation) {
+	// updateTeamCardMember: all five InnerKinds routed to the lanes.
+	{"updateTeamCardMember", func(c *conversation) {
 		base := client.TeamMsg{ParentCallID: "call-team", TeamID: "team-p1", Member: "alpha"}
 		msg := base
 		msg.InnerKind = "message.delta"
 		msg.Text = "scanning the diff"
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "tool.call"
 		msg.ToolName = "Grep"
 		msg.Detail = "pattern: foo"
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "tool.result"
 		msg.ToolName = "Grep"
 		msg.Detail = "3 matches"
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "turn.end"
 		msg.Usage = client.Usage{InputTokens: 800, OutputTokens: 120}
 		msg.ContextWindow = 200000
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "result"
 		msg.Text = "round done"
 		msg.Usage = client.Usage{InputTokens: 100, OutputTokens: 40}
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 	}},
-	{"setTeamTasks", func(c *conversation) {
-		c.setTeamTasks("call-team", []client.TeamTask{
+	{"updateTeamCardTasks", func(c *conversation) {
+		c.updateTeamCardTasks("call-team", []client.TeamTask{
 			{ID: "t1", Description: "scan", State: "done", Assignee: "alpha", Deps: []string{"t0"}},
 		})
 	}},
-	{"setTeamFindings", func(c *conversation) {
-		c.setTeamFindings("call-team", []client.TeamFinding{{Member: "alpha", Body: "found it"}})
+	{"updateTeamCardFindings", func(c *conversation) {
+		c.updateTeamCardFindings("call-team", []client.TeamFinding{{Member: "alpha", Body: "found it"}})
 	}},
-	{"setTeamEnd", func(c *conversation) {
-		c.setTeamEnd("call-team", "team-p1", 2, "end_turn",
+	{"finishTeamCard", func(c *conversation) {
+		c.finishTeamCard("call-team", "team-p1", 2, "end_turn",
 			client.Usage{InputTokens: 2000, OutputTokens: 600},
 			[]client.TeamMemberDisposition{{Name: "beta", Stopped: true, Reason: "budget"}})
 	}},
@@ -182,6 +232,9 @@ var oracleSteps = []struct {
 	{"parallelStart", func(c *conversation) { c.parallelStart("call-par", "first", 2) }},
 	{"parallelBranchStart", func(c *conversation) {
 		c.parallelBranchStart("call-par", 0, "parallel-call-par-0", "fast", "try the fast path", "", "", "", "")
+	}},
+	{"setParallelRoutingDecision", func(c *conversation) {
+		c.setParallelRoutingDecision("call-par", 0, &client.RoutingDecision{Backend: "jev", Outcome: "skipped"})
 	}},
 	{"parallelBranchTool", func(c *conversation) {
 		c.parallelBranchTool(client.ParallelMsg{
@@ -193,37 +246,52 @@ var oracleSteps = []struct {
 			client.Usage{InputTokens: 500, OutputTokens: 90}, 2, "end_turn", false, 900)
 	}},
 	{"parallelEnd", func(c *conversation) { c.parallelEnd("call-par", "first", 2, 0, "end_turn") }},
+	{"addGuardrailHook", func(c *conversation) {
+		c.addGuardrailHook(guardrailTestHook("oracle-review", "complete", "unresolved", "pass_advisory"), false)
+	}},
+	{"guardrail detail update", func(c *conversation) {
+		r := c.guardrailReview("oracle-review")
+		r.requestID = 1
+		m := Model{conv: *c, sessionID: "session"}
+		m.applyGuardrailDetail(client.GuardrailReviewDetailMsg{SessionID: "session", ReviewID: "oracle-review", RequestID: 1, Detail: client.GuardrailReviewDetail{ReviewID: "oracle-review", Concern: "Check this source."}})
+		*c = m.conv
+	}},
+	{"guardrail approval takeover", func(c *conversation) {
+		c.scrollback.Notices().RemoveNotice(c.guardrailReview("oracle-review").blockID)
+	}},
 	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Shell", "blocked") }},
+	{"addBenignGuardrailHook", func(c *conversation) {
+		c.addGuardrailHook(guardrailTestHook("oracle-benign", "complete", "acceptable", "execute"), false)
+	}},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},
 	{"addRecoverNotice", func(c *conversation) { c.addRecoverNotice("permanent failure recovered; start a new session") }},
 }
 
 // oracleNonMutators are the *conversation methods the oracle does not drive as
-// steps: pure reads, plus the rev-bump gateways and the lazy lane/group
-// accessors, which are exercised INSIDE the mutator steps (currentAssistant via
-// appendAssistant/appendReasoning/endReasoningStream, subagentBlock via the
-// setSubagent* trio, teamBlock via the five setTeam*/addTeamMember mutators,
-// fleetLane via fleet*, parallelGroupFor via parallel*). A NEW conversation
+// steps: pure reads plus lazy lane/group accessors exercised inside mutator
+// steps. A NEW conversation
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
-	"appendBlock":         "block-creation gateway, driven by every block appender",
-	"recordFileChange":    "changes only appendix metadata, which is not yet a rendered block",
-	"isEmpty":             "pure read",
-	"currentAssistant":    "rev-bump gateway, driven via appendAssistant/appendReasoning/endReasoningStream",
-	"subagentBlock":       "rev-bump gateway, driven via the setSubagent* steps",
-	"teamBlock":           "rev-bump gateway, driven via the setTeam*/addTeamMember steps",
-	"fleetLane":           "lazy accessor, driven via the fleet* steps",
-	"parallelGroupFor":    "lazy accessor, driven via the parallel* steps",
-	"subagentFleetCounts": "pure read",
-	"hasSubagents":        "pure read",
-	"parallelGroupCounts": "pure read",
-	"hasParallel":         "pure read",
-	"liveParallel":        "pure read",
-	"latestTeamBlock":     "overlay READ path (never bumps rev)",
-	"liveTeamBlock":       "overlay READ path (never bumps rev)",
-	"addDelivery":         "mutator — blockDelivery cards do not carry a mutable render field beyond raw",
+	"guardrailReview":       "lazy accessor, driven via addGuardrailHook and detail update steps",
+	"subagentCard":          "typed snapshot lookup",
+	"teamCard":              "typed snapshot lookup",
+	"latestPendingToolName": "pure read",
+	"ensureTeamCard":        "typed Team specialization gateway, driven by applyTeamTyped",
+	"recordFileChange":      "changes only appendix metadata, which is not yet a rendered block",
+	"isEmpty":               "pure read",
+	"blockIDForCall":        "removed typed lookup helper compatibility allowance",
+	"fleetLane":             "lazy accessor, driven via the fleet* steps",
+	"parallelGroupFor":      "lazy accessor, driven via the parallel* steps",
+	"subagentFleetCounts":   "pure read",
+	"hasSubagents":          "pure read",
+	"parallelGroupCounts":   "pure read",
+	"hasParallel":           "pure read",
+	"liveParallel":          "pure read",
+	"latestTeamBlock":       "overlay READ path (never bumps rev)",
+	"liveTeamBlock":         "overlay READ path (never bumps rev)",
+	"addDelivery":           "mutator — blockDelivery cards do not carry a mutable render field beyond raw",
 }
 
 // TestBlockCacheOutputMatchesFreshRender is THE ORACLE: after EVERY conversation
@@ -372,10 +440,10 @@ func TestSettledBlocksRenderOnceDuringStreaming(t *testing.T) {
 	}
 
 	// And the cache is output-invisible: the cached render matches a fresh one.
-	got := m.rend.renderConversation(&m.conv, m.expandTools)
+	got := m.rend.renderConversation(&m.conv, m.expandConversation)
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
-	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
+	if want := fresh.renderConversation(&m.conv, m.expandConversation); got != want {
 		t.Errorf("cached render diverged from fresh render after streaming:\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
@@ -408,8 +476,8 @@ func TestBlockCacheInvalidatesOnWidthChange(t *testing.T) {
 
 	r.setWidth(80)
 	got := r.renderConversation(c, false)
-	if n := r.blockRenders - base; n != len(c.blocks) {
-		t.Errorf("width change should re-render every block exactly once: got %d renders, want %d", n, len(c.blocks))
+	if n := r.blockRenders - base; n != len(c.testBlocks()) {
+		t.Errorf("width change should re-render every block exactly once: got %d renders, want %d", n, len(c.testBlocks()))
 	}
 	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(80)
@@ -419,8 +487,8 @@ func TestBlockCacheInvalidatesOnWidthChange(t *testing.T) {
 	}
 }
 
-// TestBlockCacheInvalidatesOnExpandToggle: settled blocks re-render exactly once
-// after the ctrl+t expand flip, and the result matches a fresh render.
+// TestBlockCacheInvalidatesOnExpandToggle: only reasoning and permanent-error
+// blocks re-render on a conversation detail flip; tool cache entries remain stable.
 func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	c := cacheTestConversation()
 	r := newCacheRenderer()
@@ -428,8 +496,8 @@ func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	base := r.blockRenders
 
 	got := r.renderConversation(c, true)
-	if n := r.blockRenders - base; n != len(c.blocks) {
-		t.Errorf("expand flip should re-render every block exactly once: got %d renders, want %d", n, len(c.blocks))
+	if n := r.blockRenders - base; n != 2 {
+		t.Errorf("detail flip should re-render only reasoning/error blocks: got %d renders, want 2", n)
 	}
 	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
@@ -485,13 +553,13 @@ func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 		client.ToolResultMsg{CallID: "call-1", Content: "ok: 12 passed", IsError: false},
 		renderTickMsg{},
 	)
-	got := m.rend.renderConversation(&m.conv, m.expandTools)
-	if !strings.Contains(stripANSIstr(got), "ok: 12 passed") {
-		t.Errorf("non-tail resolve through Update must render the result (stale cached card?), got:\n%s", stripANSIstr(got))
+	got := m.rend.renderConversation(&m.conv, m.expandConversation)
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+		t.Errorf("non-tail resolve through Update must render the settled summary (stale cached card?), got:\n%s", stripANSIstr(got))
 	}
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
-	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
+	if want := fresh.renderConversation(&m.conv, m.expandConversation); got != want {
 		t.Errorf("cached render diverged from fresh after the non-tail resolve:\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
@@ -525,10 +593,10 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 	m.conv.addUser("a completely different prompt")
 	m.conv.addNotice("a different notice")
 	m.refreshView()
-	got := m.rend.renderConversation(&m.conv, m.expandTools)
+	got := m.rend.renderConversation(&m.conv, m.expandConversation)
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
-	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
+	if want := fresh.renderConversation(&m.conv, m.expandConversation); got != want {
 		t.Errorf("post-reset rebuild diverged from fresh render (index aliasing?):\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
@@ -549,7 +617,7 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 // mirroring viewport.GetContent (strings.Join over the lines). The result must be
 // byte-identical to renderConversation's monolithic join.
 func joinLinesString(r *renderer, c *conversation, expand bool) string {
-	return strings.Join(r.renderConversationLines(c, expand), "\n")
+	return strings.Join(r.renderConversationLines(&c.scrollback, expand), "\n")
 }
 
 // freshConvString is the oracle: a brand-new renderer's renderConversation string
@@ -618,8 +686,8 @@ func TestIncrementalJoinTailChangesMidScrollback(t *testing.T) {
 		t.Fatalf("post-non-tail-resolve incremental join diverged from fresh oracle (stale prefix served past the changed index?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("non-tail resolve must render the result through the incremental path (stale prefix?)")
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+		t.Error("non-tail resolve must render the settled summary through the incremental path (stale prefix?)")
 	}
 }
 
@@ -718,8 +786,8 @@ func TestIncrementalJoinResetDropsPrefix(t *testing.T) {
 // TestRefreshViewLinesMatchString proves the refreshView line-slice fast path
 // (SetContentLines) yields the SAME viewport content as the string SetContent path
 // the gate falls back to. It drives the EXACT production gate
-// (!m.sel.active && !m.expandTools) by actually setting m.sel.active and
-// m.expandTools — the prior version of this test never set either, so it only ever
+// (!m.sel.active && !m.expandConversation) by actually setting m.sel.active and
+// m.expandConversation — the prior version of this test never set either, so it only ever
 // drove the fast path and proved nothing about the fallback. This is the gate the
 // path-switch stale-prefix bug exploits, so we must compare across it.
 func TestRefreshViewLinesMatchString(t *testing.T) {
@@ -753,17 +821,17 @@ func TestRefreshViewLinesMatchString(t *testing.T) {
 			stripANSIstr(selContent), stripANSIstr(fastContent))
 	}
 
-	// Fallback path B — expandTools on. This re-renders every block at expand=true
+	// Fallback path B — expandConversation on. This re-renders every block at expand=true
 	// (a DIFFERENT content from the collapsed fast path), so it compares against the
 	// fresh oracle at expand=true. It exercises the OTHER half of the gate. We render
 	// the line path at expand=true directly as well so both sides of the gate are
 	// proven equal at expand=true.
 	mExp := build()
-	mExp.expandTools = true
+	mExp.expandConversation = true
 	mExp.refreshView()
 	expContent := mExp.vp.GetContent()
 	if want := freshConvString(mExp.rend.th, mExp.rend.width, &mExp.conv, true); expContent != want {
-		t.Fatalf("expandTools string path diverged from the fresh oracle at expand=true\n got %q\nwant %q",
+		t.Fatalf("expandConversation string path diverged from the fresh oracle at expand=true\n got %q\nwant %q",
 			stripANSIstr(expContent), stripANSIstr(want))
 	}
 
@@ -810,8 +878,8 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 		// Two stable renders: frame 1 all-miss (cold cache, no prefix), frame 2 caches
 		// the full prefix over the settled blocks. No live block / no glamour churn, so
 		// the per-frame cost below is purely the line assembly.
-		r.renderConversationLines(c, false)
-		r.renderConversationLines(c, false)
+		r.renderConversationLines(&c.scrollback, false)
+		r.renderConversationLines(&c.scrollback, false)
 		return r, c
 	}
 
@@ -827,7 +895,7 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 	// Measured: the incremental line path reuses the cached prefix verbatim — no
 	// full-scrollback copy.
 	r, c := build()
-	incr := allocatedBytesPerIteration(iterations, func() { r.renderConversationLines(c, false) })
+	incr := allocatedBytesPerIteration(iterations, func() { r.renderConversationLines(&c.scrollback, false) })
 
 	// The string path copies the entire scrollback into a Builder each frame; the line
 	// path reuses the cached prefix slice. Require at least a 4x byte reduction — a
@@ -865,8 +933,8 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 
 	// 1) LINES path: warm the prefix over the whole settled (unresolved) scrollback.
 	//    Two frames so the settled blocks hit and the prefix actually caches them.
-	r.renderConversationLines(c, false)
-	r.renderConversationLines(c, false)
+	r.renderConversationLines(&c.scrollback, false)
+	r.renderConversationLines(&c.scrollback, false)
 	if r.blocks.prefixN == 0 {
 		t.Fatal("precondition: the prefix must be cached over the settled scrollback")
 	}
@@ -888,8 +956,8 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 		t.Fatalf("path-switch served a STALE prefix: lines join diverged from fresh oracle after a string-path re-render of a non-tail block\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("the resolved card must render through the line path after the path switch (stale prefix served?)")
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+		t.Error("the resolved summary must render through the line path after the path switch (stale prefix served?)")
 	}
 }
 
@@ -915,9 +983,9 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 	// Warm a PARTIAL prefix: settled blocks + a live tail. Stream a couple of tokens
 	// so the prefix caches the settled head and the tail is the only changing block.
 	c.appendAssistant("warming ")
-	r.renderConversationLines(c, false)
+	r.renderConversationLines(&c.scrollback, false)
 	c.appendAssistant("more ")
-	r.renderConversationLines(c, false)
+	r.renderConversationLines(&c.scrollback, false)
 	if r.blocks.prefixN == 0 {
 		t.Fatal("precondition: a partial prefix over the settled head must be cached")
 	}
@@ -935,8 +1003,8 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 		t.Fatalf("multi-block frame: incremental join diverged from fresh oracle (firstChanged took max not min?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("the mid-block resolve must render (firstChanged must be the MIN changed index)")
+	if !strings.Contains(stripANSIstr(got), "✓ Read · f.go") {
+		t.Error("the mid-block settled summary must render (firstChanged must be the MIN changed index)")
 	}
 }
 
@@ -958,10 +1026,10 @@ func TestIncrementalJoinSteadyFrameAllocCeiling(t *testing.T) {
 	}
 	r := newCacheRenderer()
 	// Two stable renders: frame 1 cold (no prefix), frame 2 caches the full prefix.
-	r.renderConversationLines(c, false)
-	r.renderConversationLines(c, false)
-	if r.blocks.prefixN != len(c.blocks) {
-		t.Fatalf("precondition: the full prefix must be cached (joinPrefixN=%d, want %d)", r.blocks.prefixN, len(c.blocks))
+	r.renderConversationLines(&c.scrollback, false)
+	r.renderConversationLines(&c.scrollback, false)
+	if r.blocks.prefixN != len(c.testBlocks()) {
+		t.Fatalf("precondition: the full prefix must be cached (joinPrefixN=%d, want %d)", r.blocks.prefixN, len(c.testBlocks()))
 	}
 	nLines := len(r.blocks.prefixLines)
 
@@ -969,7 +1037,7 @@ func TestIncrementalJoinSteadyFrameAllocCeiling(t *testing.T) {
 	perOp := allocatedBytesPerIteration(iterations, func() {
 		// UNCHANGED conversation: the steady interaction-cadence frame. The prefix is
 		// fully cached, so only the per-frame slice header + backing array allocates.
-		r.renderConversationLines(c, false)
+		r.renderConversationLines(&c.scrollback, false)
 	})
 
 	// Ceiling: the fresh per-frame slice is one []string of ~nLines capacity (16 B per

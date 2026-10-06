@@ -3,7 +3,7 @@
 The `github.com/stacklok/mecatl/engine` module is the importable core of mecatl
 (ADR 0036). This document is its **public API stability contract**: what is
 covered, how changes are versioned, and how the contract is mechanically
-enforced (issue #114, [ADR 0037](../docs/adr/0037-engine-stability-contract.md)).
+enforced (issue #114, ADR 0037).
 
 ## The public surface
 
@@ -125,7 +125,7 @@ mecatl persists a session as a **snapshot** (`engine/adapter/sessnap`), and
 `port.SessionStore.Load` deserializes it. A host whose system of record is an
 **append-only event log** (e.g. a downstream consumer) may instead implement `Load` by **folding**
 its event stream into a `*session.Session`. The reference implementation is
-[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`); [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md)
+[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`); ADR 0038
 records the decision. This section is the field-by-field contract such a backend must
 honour.
 
@@ -198,7 +198,7 @@ contract limitation, not a bug.
 
 ## See also
 
-- [ADR 0038 — event-sourced rehydration](../docs/adr/0038-event-sourced-rehydration.md)
-- [ADR 0037 — engine stability contract](../docs/adr/0037-engine-stability-contract.md)
-- [ADR 0036 — `engine/` is its own Go module](../docs/adr/0036-engine-module.md)
+- ADR 0038 — event-sourced rehydration
+- ADR 0037 — engine stability contract
+- ADR 0036 — `engine/` is its own Go module
 - [Project README](../README.md)

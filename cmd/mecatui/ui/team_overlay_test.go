@@ -11,12 +11,15 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // seedTeam appends a Team tool block to the model's conversation and applies the
@@ -42,43 +45,12 @@ func bigRoster(n int) []client.TeamMemberSpec {
 	return r
 }
 
-func TestNavigateRosterCursor(t *testing.T) {
-	keys := defaultKeys()
-	for _, tc := range []struct {
-		name    string
-		msg     tea.KeyPressMsg
-		cursor  int
-		total   int
-		page    int
-		want    int
-		handled bool
-	}{
-		{name: "up", msg: tea.KeyPressMsg{Code: tea.KeyUp}, cursor: 3, total: 8, page: 2, want: 2, handled: true},
-		{name: "down", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 3, total: 8, page: 2, want: 4, handled: true},
-		{name: "up clamps at first", msg: tea.KeyPressMsg{Code: tea.KeyUp}, cursor: 0, total: 8, page: 2, want: 0, handled: true},
-		{name: "down clamps at last", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 7, total: 8, page: 2, want: 7, handled: true},
-		{name: "page up", msg: tea.KeyPressMsg{Code: tea.KeyPgUp}, cursor: 6, total: 12, page: 4, want: 2, handled: true},
-		{name: "page down", msg: tea.KeyPressMsg{Code: tea.KeyPgDown}, cursor: 2, total: 12, page: 4, want: 6, handled: true},
-		{name: "home", msg: tea.KeyPressMsg{Code: tea.KeyHome}, cursor: 6, total: 8, page: 2, want: 0, handled: true},
-		{name: "end", msg: tea.KeyPressMsg{Code: tea.KeyEnd}, cursor: 1, total: 8, page: 2, want: 7, handled: true},
-		{name: "empty roster", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 4, total: 0, page: 2, want: 0, handled: true},
-		{name: "unhandled", msg: tea.KeyPressMsg{Code: 'z', Text: "z"}, cursor: 4, total: 8, page: 2, want: 4, handled: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, handled := navigateRosterCursor(tc.msg, keys, tc.cursor, tc.total, tc.page)
-			if got != tc.want || handled != tc.handled {
-				t.Errorf("navigateRosterCursor() = (%d, %t), want (%d, %t)", got, handled, tc.want, tc.handled)
-			}
-		})
-	}
-}
-
 // TestAgentsOpensRoster asserts f6 over a populated team opens the roster.
 func TestAgentsOpensRoster(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -133,8 +105,8 @@ func TestAgentsNoTeamWithTeamsEnabled(t *testing.T) {
 func TestAgentsOpensWhileRunning(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m.phase = phaseRunning
 	mm, _ := m.openTeam()
@@ -147,7 +119,7 @@ func TestAgentsOpensWhileRunning(t *testing.T) {
 // while a permission modal owns the keyboard.
 func TestAgentsGatedWhileAwaitingApproval(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 	m.phase = phaseAwaitingApproval
 	mm, _ := m.openTeam()
 	if mm.(Model).team.view != teamNone {
@@ -165,8 +137,8 @@ func TestAgentsGatedWhileAwaitingApproval(t *testing.T) {
 func TestAgentsMidRunKeysDriveOverlayNotInput(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	send := &fakeSender{}
 	m.stream = client.NewStream(nil, send) // a stream whose Send records frames
@@ -233,11 +205,11 @@ func TestTeamOverlaySanitizesMemberContent(t *testing.T) {
 	const evilName = "\x1b]0;pwned\x07scout"
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", []client.TeamMemberSpec{
+		c.startTeamCard("t1", "", []client.TeamMemberSpec{
 			{Name: "lead", Role: "coordinator", Lead: true, Mutating: true},
 			{Name: evilName, Role: "\x1b[31mresearcher\x1b[0m"},
 		})
-		c.addTeamMember(member(evilName, "tool.call", client.TeamMsg{
+		c.updateTeamCardMember(member(evilName, "tool.call", client.TeamMsg{
 			ToolName: "Grep",
 			Detail:   "\x1b[31mpattern: handleErr\x1b[0m",
 		}))
@@ -314,10 +286,10 @@ func TestAgentsMidRunNoTeamNoCapsIsNoOp(t *testing.T) {
 func TestAgentsSelectionAndFocus(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "searching the codebase"}))
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-		c.addTeamMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches"}))
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "searching the codebase"}))
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
+		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches"}))
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -325,8 +297,8 @@ func TestAgentsSelectionAndFocus(t *testing.T) {
 	// Lead sorts first (cursor 0). Down → cursor 1 (scout).
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mm.(Model)
-	if m.team.cursor != 1 {
-		t.Fatalf("cursor = %d after down, want 1", m.team.cursor)
+	if boundedListCursor(m.team.roster) != 1 {
+		t.Fatalf("cursor = %d after down, want 1", boundedListCursor(m.team.roster))
 	}
 
 	// Enter → focus scout.
@@ -375,7 +347,7 @@ func TestAgentsRosterUncapped(t *testing.T) {
 	// height (terminal minus chrome — header/footer/input + the input top-pad row), so
 	// size up generously rather than depend on the exact chrome height.
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 80})
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
@@ -413,7 +385,7 @@ func TestAgentsRosterLeadFirst(t *testing.T) {
 		{Name: "lead", Lead: true, Mutating: true},
 	}
 	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", leadLast) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", leadLast) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
@@ -433,9 +405,9 @@ func TestAgentsRosterLeadFirst(t *testing.T) {
 func TestAgentsShowsLatestTeam(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m.conv.addTool("ta", "Team", `{}`)
-	m.conv.setTeamStart("ta", "", []client.TeamMemberSpec{{Name: "alpha", Lead: true}})
+	m.conv.startTeamCard("ta", "", []client.TeamMemberSpec{{Name: "alpha", Lead: true}})
 	m.conv.addTool("tb", "Team", `{}`)
-	m.conv.setTeamStart("tb", "", []client.TeamMemberSpec{{Name: "bravo", Lead: true}})
+	m.conv.startTeamCard("tb", "", []client.TeamMemberSpec{{Name: "bravo", Lead: true}})
 	m.refreshView()
 
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
@@ -449,13 +421,120 @@ func TestAgentsShowsLatestTeam(t *testing.T) {
 	}
 }
 
+func TestTeamFocusStaysOnOriginalAggregateWhenNewerTeamArrives(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m.conv.addTool("old-call", "Team", `{}`)
+	m.conv.startTeamCard("old-call", "old-team", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+	old := m.conv.latestTeamBlock()
+	m.conv.updateTeamCardMember(client.TeamMsg{ParentCallID: "old-call", Member: "scout", MemberSessionID: "old-member-session", InnerKind: "message.delta", Text: "old-team-trace"})
+	m = resize(m, 100, 30)
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.team.aggregate != teamBlockIdentity(old) {
+		t.Fatalf("focused aggregate=%q want %q", m.team.aggregate, teamBlockIdentity(old))
+	}
+
+	m.conv.addTool("new-call", "Team", `{}`)
+	m.conv.startTeamCard("new-call", "new-team", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+	m.conv.updateTeamCardMember(client.TeamMsg{ParentCallID: "new-call", Member: "scout", MemberSessionID: "new-member-session", InnerKind: "message.delta", Text: "new-team-trace"})
+	newest := m.conv.latestTeamBlock()
+	m.reconcileAgentsLists()
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "old-team-trace") || strings.Contains(out, "new-team-trace") {
+		t.Fatalf("focused team silently retargeted after newer team arrived:\n%s", out)
+	}
+
+	sender := &fakeSender{}
+	m.stream = client.NewStream(nil, sender)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if cmd != nil {
+		cmd()
+	}
+	frames := sender.frames()
+	if len(frames) != 1 || frames[0].GetCancelChild().GetChildId() != "old-member-session" {
+		t.Fatalf("focused cancel frames=%#v, want old member session", frames)
+	}
+
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = mm.(Model)
+	if m.team.view != teamRoster || m.team.aggregate != "" {
+		t.Fatalf("focus back state=(%v,%q), want latest-team roster", m.team.view, m.team.aggregate)
+	}
+	out = stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "new-team-trace") && !strings.Contains(out, "new-team") {
+		// The roster does not render traces; the team identity still must have switched.
+		if got := teamBlockIdentity(m.teamBlockForOverlay()); got != teamBlockIdentity(newest) {
+			t.Fatalf("roster retained old aggregate %q, want %q", got, teamBlockIdentity(newest))
+		}
+	}
+}
+
+func TestTeamLegacyEmptyIDAndLaterBackfillKeepSelectionAndFocus(t *testing.T) {
+	t.Run("roster selection and anchor", func(t *testing.T) {
+		b := &teamOverlaySnapshot{cardID: 7, callID: "legacy-call", teamLanes: []teamLane{{name: "lead", lead: true}, {name: "worker"}, {name: "reviewer"}}}
+		before := teamSelectableList(aztec(), teamState{}, b, defaultHelpKeys(), 80)
+		control, _, _ := before.configuredControl(aztec(), 20)
+		control.SetCursor(1)
+		control.Scroll(bounded.LineDown)
+		wantID, wantTop := control.CursorID(), control.View().Rows[0]
+
+		b.teamID = "later-team-id"
+		after := teamSelectableList(aztec(), teamState{roster: control}, b, defaultHelpKeys(), 80)
+		control, _, _ = after.configuredControl(aztec(), 20)
+		if got := control.CursorID(); got != wantID {
+			t.Fatalf("teamID backfill changed selection from %q to %q", wantID, got)
+		}
+		if got := control.View().Rows[0]; got.ID != wantTop.ID || got.ItemLine != wantTop.ItemLine {
+			t.Fatalf("teamID backfill changed top anchor from {%q,%d} to {%q,%d}", wantTop.ID, wantTop.ItemLine, got.ID, got.ItemLine)
+		}
+	})
+
+	t.Run("focused aggregate", func(t *testing.T) {
+		m := resize(newMCPModel(t, aztec(), nil), 100, 30)
+		m.conv.addTool("legacy-call", "Team", `{}`)
+		m.conv.startTeamCard("legacy-call", "", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+		m.conv.updateTeamCardMember(client.TeamMsg{ParentCallID: "legacy-call", Member: "scout", InnerKind: "message.delta", Text: "original trace"})
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = mm.(Model)
+		wantAggregate := m.team.aggregate
+
+		m.conv.updateTeamCardMember(client.TeamMsg{ParentCallID: "legacy-call", TeamID: "backfilled-id", Member: "scout"})
+		m.conv.addTool("new-call", "Team", `{}`)
+		m.conv.startTeamCard("new-call", "backfilled-id", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+		m.conv.updateTeamCardMember(client.TeamMsg{ParentCallID: "new-call", Member: "scout", InnerKind: "message.delta", Text: "new trace"})
+		if got := teamBlockIdentity(m.teamBlockForOverlay()); got != wantAggregate {
+			t.Fatalf("teamID backfill transferred or lost focus: got %q want %q", got, wantAggregate)
+		}
+		out := stripANSIstr(m.View().Content)
+		if !strings.Contains(out, "original trace") || strings.Contains(out, "new trace") {
+			t.Fatalf("teamID backfill retargeted focused content:\n%s", out)
+		}
+	})
+}
+
+func TestTeamBlockIdentityFallsBackToParentThenBlock(t *testing.T) {
+	withParent := &teamOverlaySnapshot{cardID: 1, callID: "call:legacy"}
+	otherParent := &teamOverlaySnapshot{cardID: 2, callID: "call"}
+	if got, other := teamBlockIdentity(withParent), teamBlockIdentity(otherParent); got == "" || got == other {
+		t.Fatalf("legacy parent identities are not exact: %q %q", got, other)
+	}
+	withoutParent := &teamOverlaySnapshot{cardID: 99}
+	if got := teamBlockIdentity(withoutParent); got == "" || got == teamBlockIdentity(&teamOverlaySnapshot{cardID: 100}) {
+		t.Fatalf("block fallback identity is not exact: %q", got)
+	}
+}
+
 // TestAgentsResolvedSubhead asserts the roster sub-header shows the round count +
 // stop reason once the team has ended.
 func TestAgentsResolvedSubhead(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
+		c.startTeamCard("t1", "", roster())
+		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -480,17 +559,17 @@ func TestAgentsResolvedSubhead(t *testing.T) {
 // (issue #318). Every earlier hop is pinned end-to-end — supervisor → MemberOutcome →
 // EvTeamEnd.Dispositions through the real Team tool → proto → client.TeamMemberDisposition
 // → teamLaneState — but the assignment that copies the count onto the lane
-// (setTeamEnd: `ln.errorRounds = d.ErrorRounds`) had no oracle at all: team_test.go
+// (finishTeamCard: `ln.errorRounds = d.ErrorRounds`) had no oracle at all: team_test.go
 // constructs a &teamLane{errorRounds: 1} DIRECTLY, and no client.TeamMemberDisposition
 // literal in this package ever set the field. Delete that assignment and the whole suite
 // stayed green while the overlay rendered a bare "✓ done" for a member the supervisor
 // reports as retried — the exact disposition lie the feature exists to prevent.
 //
-// It drives a real client.TeamMsg through m.Update (not setTeamEnd directly), so the
-// msgs → update → setTeamEnd hop is covered too.
+// It drives a real client.TeamMsg through m.Update (not finishTeamCard directly), so the
+// msgs → update → finishTeamCard hop is covered too.
 func TestAgentsRosterRetriedDisposition(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 	mm, _ := m.Update(client.TeamMsg{
 		Kind: client.TeamEnd, ParentCallID: "t1", TeamID: "t1", Rounds: 4, Stop: "end_turn",
 		Dispositions: []client.TeamMemberDisposition{
@@ -520,7 +599,7 @@ func TestAgentsRosterRetriedDisposition(t *testing.T) {
 	// A member benched AT the cap keeps the more specific stopped label even though its
 	// count is non-zero: the stopped arm must win, or a benched member reads as recovered.
 	mb := newMCPModel(t, aztec(), nil)
-	mb = seedTeam(mb, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	mb = seedTeam(mb, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 	mmb, _ := mb.Update(client.TeamMsg{
 		Kind: client.TeamEnd, ParentCallID: "t1", TeamID: "t1", Rounds: 2, Stop: "end_turn",
 		Dispositions: []client.TeamMemberDisposition{
@@ -555,11 +634,12 @@ func TestAgentsRosterStoppedGolden(t *testing.T) {
 	}
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, stopped)
+		c.startTeamCard("t1", "", roster())
+		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, stopped)
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_stopped.golden", got)
@@ -580,8 +660,8 @@ func TestAgentsRosterStoppedGolden(t *testing.T) {
 	allDone := []client.TeamMemberDisposition{{Name: "lead"}, {Name: "scout"}}
 	md := newMCPModel(t, aztec(), nil)
 	md = seedTeam(md, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, allDone)
+		c.startTeamCard("t1", "", roster())
+		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, allDone)
 	})
 	mmd, _ := md.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	md = mmd.(Model)
@@ -631,10 +711,10 @@ func TestTeamCardStoppedCountInline(t *testing.T) {
 	r := newTestRenderer()
 	c := &conversation{}
 	c.addTool("t1", "Team", `{"goal":"ship the feature"}`)
-	c.setTeamStart("t1", "", roster())
-	c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410},
+	c.startTeamCard("t1", "", roster())
+	c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410},
 		[]client.TeamMemberDisposition{{Name: "lead"}, {Name: "scout", Stopped: true, Reason: "budget"}})
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 	if !strings.Contains(out, "1 stopped") {
 		t.Errorf("inline resolved Team line must show \"1 stopped\", got %q", out)
 	}
@@ -660,9 +740,9 @@ func TestTeamStoppedCountMultiple(t *testing.T) {
 	r := newTestRenderer()
 	c := &conversation{}
 	c.addTool("t1", "Team", `{"goal":"ship the feature"}`)
-	c.setTeamStart("t1", "", threeRoster)
-	c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, disps)
-	inline := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	c.startTeamCard("t1", "", threeRoster)
+	c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, disps)
+	inline := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 	if !strings.Contains(inline, "2 stopped") {
 		t.Errorf("inline resolved Team line must show \"2 stopped\", got %q", inline)
 	}
@@ -670,8 +750,8 @@ func TestTeamStoppedCountMultiple(t *testing.T) {
 	// f6 roster sub-header.
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(cv *conversation) {
-		cv.setTeamStart("t1", "", threeRoster)
-		cv.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, disps)
+		cv.startTeamCard("t1", "", threeRoster)
+		cv.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, disps)
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -708,14 +788,19 @@ func TestAgentsRosterWindowed(t *testing.T) {
 	const n = 20
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24) // vp height 16 → ~6 lane rows
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
+	m = resize(m, 100, 30) // vp height 16 → ~6 lane rows
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 
 	th, hk, width, height := m.agentsListGeometry()
-	rows := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
+	view := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).boundedView(th, height)
+	visible := make(map[int]struct{})
+	for _, row := range view.Rows {
+		visible[row.ItemIndex] = struct{}{}
+	}
+	rows := len(visible)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be smaller than roster %d", rows, n)
 	}
@@ -742,16 +827,16 @@ func TestAgentsWindowFollowsCursor(t *testing.T) {
 	const n = 20
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
+	m = resize(m, 100, 30)
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 
 	// end/G jumps to the last member.
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = mm.(Model)
-	if m.team.cursor != n-1 {
-		t.Fatalf("end did not jump to last: cursor=%d want %d", m.team.cursor, n-1)
+	if boundedListCursor(m.team.roster) != n-1 {
+		t.Fatalf("end did not jump to last: cursor=%d want %d", boundedListCursor(m.team.roster), n-1)
 	}
 	out := stripANSIstr(m.View().Content)
 	// The last member is the alphabetically-last numbered one ("member-s" for n=20:
@@ -763,21 +848,28 @@ func TestAgentsWindowFollowsCursor(t *testing.T) {
 	if !strings.Contains(out, "above") {
 		t.Errorf("jump-to-end should show a '+K above' tail, got %q", out)
 	}
-	if strings.Contains(out, "below") {
-		t.Errorf("jump-to-end should NOT show a '+K below' tail, got %q", out)
+	if strings.Contains(out, "rows below") {
+		t.Errorf("jump-to-end should not hide a later logical row, got %q", out)
 	}
-	// The selected (highlighted) row must be the last member — find the › row.
+	// The selected segment must carry the cursor marker.
+	selectedFound := false
 	for _, ln := range strings.Split(out, "\n") {
-		if strings.Contains(ln, "›") && !strings.Contains(ln, last) {
-			t.Errorf("selected row is not the last member: %q", ln)
+		if strings.Contains(ln, "▶") {
+			selectedFound = true
+			if !strings.Contains(ln, last) {
+				t.Errorf("selected row is not the last member: %q", ln)
+			}
 		}
+	}
+	if !selectedFound {
+		t.Error("selected last member has no cursor marker")
 	}
 
 	// home/g jumps back to the first.
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	m = mm.(Model)
-	if m.team.cursor != 0 {
-		t.Fatalf("home did not jump to first: cursor=%d", m.team.cursor)
+	if boundedListCursor(m.team.roster) != 0 {
+		t.Fatalf("home did not jump to first: cursor=%d", boundedListCursor(m.team.roster))
 	}
 }
 
@@ -787,24 +879,22 @@ func TestAgentsPageKeys(t *testing.T) {
 	const n = 20
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
+	m = resize(m, 100, 30)
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 
-	th, hk, width, height := m.agentsListGeometry()
-	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
+	beforeDown := boundedListCursor(m.team.roster)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
-	if m.team.cursor != page {
-		t.Errorf("pgdn moved cursor to %d, want one page (%d)", m.team.cursor, page)
+	if boundedListCursor(m.team.roster) <= beforeDown {
+		t.Errorf("pgdn did not move to a later bounded item: %d", boundedListCursor(m.team.roster))
 	}
-	w := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).window(th, height)
-	wantUp := max(0, m.team.cursor-(w.end-w.start))
+	beforeUp := boundedListCursor(m.team.roster)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if m.team.cursor != wantUp {
-		t.Errorf("pgup moved cursor to %d, want current physical-window move to %d", m.team.cursor, wantUp)
+	if boundedListCursor(m.team.roster) >= beforeUp {
+		t.Errorf("pgup did not move to an earlier bounded item: %d", boundedListCursor(m.team.roster))
 	}
 }
 
@@ -813,7 +903,7 @@ func TestAgentsPageKeys(t *testing.T) {
 func TestAgentsRosterShowsRole(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", []client.TeamMemberSpec{
+		c.startTeamCard("t1", "", []client.TeamMemberSpec{
 			{Name: "lead", Role: "coordinator", Lead: true, Mutating: true},
 			{Name: "scout", Role: "researcher"},
 		})
@@ -835,15 +925,15 @@ func TestInlineTeamRollupAdvertisesOverlay(t *testing.T) {
 	for i := 0; i < maxTeamLanes+2; i++ {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
-	out := teamCard(t, false, func(c *conversation) { c.setTeamStart("t1", "", big) })
+	out := teamCard(t, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	if !strings.Contains(out, "more · f6") {
 		t.Errorf("inline roll-up should advertise the f6 overlay, got %q", out)
 	}
 
-	// A small team (no roll-up) must NOT carry the hint — it has nothing to overflow.
-	small := teamCard(t, false, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
-	if strings.Contains(small, "f6") {
-		t.Errorf("a non-overflowing inline card should not advertise f6, got %q", small)
+	small := teamCard(t, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
+	// The hint now points to Agents for detailed activity even for a small team.
+	if !strings.Contains(small, "f6 agents") {
+		t.Errorf("live team should advertise the Agents view, got %q", small)
 	}
 }
 
@@ -868,40 +958,38 @@ func TestTeamRosterRowUsesIdentityWorkAndRuntimeLines(t *testing.T) {
 		routedModel:    "gpt-5.6-terra",
 		usage:          client.Usage{InputTokens: 100600, OutputTokens: 626},
 	}
-	row := stripANSIstr(renderTeamRosterRow(aztec().Style("spinner"), "▶ ", ln, 0, false, 100))
+	row := stripANSIstr(renderTeamRoster(aztec(), teamState{}, &teamOverlaySnapshot{teamLanes: []teamLane{*ln}}, defaultHelpKeys(), 0, 100))
 	lines := strings.Split(row, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("team row has %d lines, want identity/work/runtime: %q", len(lines), row)
+	start := slices.IndexFunc(lines, func(line string) bool { return strings.HasPrefix(line, "▶ ◆ · overlay-reader") })
+	if start < 0 || start+2 >= len(lines) {
+		t.Fatalf("bounded team roster lost identity/work/runtime rows: %q", row)
 	}
-	if !strings.HasPrefix(lines[0], "▶ ◆ · overlay-reader") {
-		t.Fatalf("identity line lost selection or member identity: %q", lines[0])
+	if !strings.HasPrefix(lines[start+1], "    RecordFinding… · Inspect the Agents") {
+		t.Fatalf("work line should group current action and role: %q", lines[start+1])
 	}
-	if !strings.HasPrefix(lines[1], "    RecordFinding… · Inspect the Agents") {
-		t.Fatalf("work line should group current action and role: %q", lines[1])
-	}
-	if !strings.HasPrefix(lines[2], "    ↑100.6K ↓626 · ctx ") || !strings.Contains(lines[2], "medium → gpt-5.6-terra") {
-		t.Fatalf("runtime line should group tokens, context, and route: %q", lines[2])
+	if !strings.HasPrefix(lines[start+2], "    ↑100.6K ↓626 · ctx ") || !strings.Contains(lines[start+2], "medium → gpt-5.6-terra") {
+		t.Fatalf("runtime line should group tokens, context, and route: %q", lines[start+2])
 	}
 }
 
 // TestAgentsRosterContextMeter asserts each roster lane shows the per-member
-// context band (the footer's renderContextMeter vocabulary) once a turn.end has
+// context band (the shared renderfmt.RenderContextMeter vocabulary) once a turn.end has
 // carried a known window: a low-pressure member reads "ctx … NN%" with no ⚠, a
 // danger-band member appends the ⚠ marker (which survives ANSI stripping), and a
 // member whose window is still unknown shows its ↑/↓ usage but NO ctx/% meter.
 func TestAgentsRosterContextMeter(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", []client.TeamMemberSpec{
+		c.startTeamCard("t1", "", []client.TeamMemberSpec{
 			{Name: "lead", Role: "coordinator", Lead: true, Mutating: true},
 			{Name: "low", Role: "worker"},
 			{Name: "danger", Role: "worker"},
 			{Name: "nowin", Role: "worker"},
 		})
-		c.addTeamMember(ctxTurnEnd("low", 40000, 200000))     // 20% → ok, no ⚠
-		c.addTeamMember(ctxTurnEnd("danger", 190000, 200000)) // 95% → danger ⚠
+		c.updateTeamCardMember(ctxTurnEnd("low", 40000, 200000))     // 20% → ok, no ⚠
+		c.updateTeamCardMember(ctxTurnEnd("danger", 190000, 200000)) // 95% → danger ⚠
 		// "nowin" gets a turn.end with a 0 window: usage lands, but no meter.
-		c.addTeamMember(member("nowin", "turn.end", client.TeamMsg{
+		c.updateTeamCardMember(member("nowin", "turn.end", client.TeamMsg{
 			Usage: client.Usage{InputTokens: 1200}}))
 	})
 	m = resize(m, 100, 80)
@@ -926,7 +1014,7 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 	if !strings.Contains(low, "ctx ") || !strings.Contains(low, "20%") {
 		t.Errorf("low-pressure lane should show 'ctx … 20%%', got %q", low)
 	}
-	if strings.Contains(low, ctxDangerMark) {
+	if strings.Contains(low, " ⚠") {
 		t.Errorf("low-pressure lane must NOT show the ⚠ marker, got %q", low)
 	}
 	if !strings.Contains(low, "40K/200K") {
@@ -934,10 +1022,10 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 	}
 
 	danger := rosterLine("danger")
-	if !strings.Contains(danger, "95%") || !strings.Contains(danger, ctxDangerMark) {
+	if !strings.Contains(danger, "95%") || !strings.Contains(danger, " ⚠") {
 		t.Errorf("danger lane should show '95%% ⚠' (⚠ surviving ANSI strip), got %q", danger)
 	}
-	if !strings.Contains(danger, ctxGlyphDanger) {
+	if !strings.Contains(danger, "█") {
 		t.Errorf("danger lane should use the danger fill glyph, got %q", danger)
 	}
 
@@ -955,8 +1043,8 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 func TestAgentsFocusContextMeter(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", []client.TeamMemberSpec{{Name: "scout", Role: "researcher", Lead: true}})
-		c.addTeamMember(ctxTurnEnd("scout", 176000, 200000)) // 88% → warn band
+		c.startTeamCard("t1", "", []client.TeamMemberSpec{{Name: "scout", Role: "researcher", Lead: true}})
+		c.updateTeamCardMember(ctxTurnEnd("scout", 176000, 200000)) // 88% → warn band
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -980,8 +1068,8 @@ func TestAgentsFocusContextMeter(t *testing.T) {
 // sub-view distinguishes: a completed task, an in-progress task with an assignee,
 // a pending task blocked by the incomplete task, and a pending-unblocked task.
 func tasksTeam(c *conversation) {
-	c.setTeamStart("t1", "", roster())
-	c.setTeamTasks("t1", []client.TeamTask{
+	c.startTeamCard("t1", "", roster())
+	c.updateTeamCardTasks("t1", []client.TeamTask{
 		{ID: "task-1", Description: "investigate", State: "completed", Assignee: "scout"},
 		{ID: "task-2", Description: "implement fix", State: "in_progress", Assignee: "lead"},
 		{ID: "task-3", Description: "review", State: "pending", Deps: []string{"task-2"}},
@@ -989,20 +1077,20 @@ func tasksTeam(c *conversation) {
 	})
 }
 
-// TestSetTeamTasksAttribution asserts setTeamTasks attributes the snapshot to the
+// TestSetTeamTasksAttribution asserts updateTeamCardTasks attributes the snapshot to the
 // matching Team block (returns true) and is a no-op miss (returns false) for an
-// unknown parent call id — the same attribution contract setTeamEnd has.
+// unknown parent call id — the same attribution contract finishTeamCard has.
 func TestSetTeamTasksAttribution(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	if !c.setTeamTasks("t1", []client.TeamTask{{ID: "task-1", State: "pending"}}) {
-		t.Fatal("setTeamTasks should attribute to the Team card and return true")
+	if !c.updateTeamCardTasks("t1", []client.TeamTask{{ID: "task-1", State: "pending"}}) {
+		t.Fatal("updateTeamCardTasks should attribute to the Team card and return true")
 	}
-	if got := c.blocks[0].teamTasks; len(got) != 1 || got[0].id != "task-1" {
+	if got := c.testTeamOverlay(0).teamTasks; len(got) != 1 || got[0].id != "task-1" {
 		t.Errorf("task snapshot not stored on the block: %+v", got)
 	}
-	if c.setTeamTasks("nope", []client.TeamTask{{ID: "x"}}) {
-		t.Error("setTeamTasks should return false for an unknown parent call id")
+	if c.updateTeamCardTasks("nope", []client.TeamTask{{ID: "x"}}) {
+		t.Error("updateTeamCardTasks should return false for an unknown parent call id")
 	}
 }
 
@@ -1093,7 +1181,7 @@ func TestTaskRowTruncatesLongDesc(t *testing.T) {
 // with a zeroed summary and never panics.
 func TestAgentsTasksEmpty(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
@@ -1136,26 +1224,26 @@ func TestAgentsTasksSummary(t *testing.T) {
 // findingsTeam builds a team whose shared findings ledger carries two members'
 // findings, exercising the member-grouped row rendering and the summary roll-up.
 func findingsTeam(c *conversation) {
-	c.setTeamStart("t1", "", roster())
-	c.setTeamFindings("t1", []client.TeamFinding{
+	c.startTeamCard("t1", "", roster())
+	c.updateTeamCardFindings("t1", []client.TeamFinding{
 		{Member: "scout", Body: "the cache key omits the tenant id"},
 		{Member: "lead", Body: "fix applied; tests green"},
 	})
 }
 
-// TestSetTeamFindingsAttribution asserts setTeamFindings stores the snapshot on the
+// TestSetTeamFindingsAttribution asserts updateTeamCardFindings stores the snapshot on the
 // matching Team block and is a no-op for an unknown parent call id (the same
-// attribution contract setTeamTasks has).
+// attribution contract updateTeamCardTasks has).
 func TestSetTeamFindingsAttribution(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamFindings("t1", []client.TeamFinding{{Member: "scout", Body: "found it"}})
-	if got := c.blocks[0].teamFindings; len(got) != 1 || got[0].member != "scout" || got[0].body != "found it" {
+	c.updateTeamCardFindings("t1", []client.TeamFinding{{Member: "scout", Body: "found it"}})
+	if got := c.testTeamOverlay(0).teamFindings; len(got) != 1 || got[0].member != "scout" || got[0].body != "found it" {
 		t.Errorf("findings snapshot not stored on the block: %+v", got)
 	}
 	// A miss must not panic and must not touch the block's ledger.
-	c.setTeamFindings("nope", []client.TeamFinding{{Member: "x", Body: "y"}})
-	if got := c.blocks[0].teamFindings; len(got) != 1 || got[0].member != "scout" {
+	c.updateTeamCardFindings("nope", []client.TeamFinding{{Member: "x", Body: "y"}})
+	if got := c.testTeamOverlay(0).teamFindings; len(got) != 1 || got[0].member != "scout" {
 		t.Errorf("a miss must leave the matched block's ledger unchanged: %+v", got)
 	}
 }
@@ -1203,9 +1291,9 @@ func TestAgentsFindingsToggle(t *testing.T) {
 func TestAgentsFindingsShowsBody(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	// Seed a Team card + roster so the overlay has a block to attribute to.
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 	// Deliver the findings snapshot the way the wire does: a TeamFindings TeamMsg
-	// routed through Update → applyTeam → setTeamFindings.
+	// routed through Update → applyTeam → updateTeamCardFindings.
 	mm, _ := m.Update(client.TeamMsg{
 		Kind:         client.TeamFindings,
 		ParentCallID: "t1",
@@ -1239,8 +1327,8 @@ func TestAgentsFindingsShowsBody(t *testing.T) {
 // status "team done · N rounds" and adds NO durable scrollback notice.
 func TestTeamEndSetsTransientNotice(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "team-x", roster()) })
-	before := len(m.conv.blocks)
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "team-x", roster()) })
+	before := len(m.conv.testBlocks())
 	mm, _ := m.Update(client.TeamMsg{
 		Kind:         client.TeamEnd,
 		ParentCallID: "t1",
@@ -1254,9 +1342,9 @@ func TestTeamEndSetsTransientNotice(t *testing.T) {
 	}
 	// No durable notice block was added by the team.end (the card + ResultMsg carry
 	// the durable signal); only the team card may have updated, never a new notice.
-	for i := before; i < len(m.conv.blocks); i++ {
-		if m.conv.blocks[i].kind == blockNotice {
-			t.Errorf("team.end must NOT add a scrollback notice; got %q", m.conv.blocks[i].raw)
+	for i := before; i < len(m.conv.testBlocks()); i++ {
+		if notice, ok := m.conv.testBlocks()[i].Payload.(scrollback.NoticeCardSnapshot); ok {
+			t.Errorf("team.end must NOT add a scrollback notice; got %q", notice.Text)
 		}
 	}
 }
@@ -1265,7 +1353,7 @@ func TestTeamEndSetsTransientNotice(t *testing.T) {
 // "(no findings)" with a zeroed summary and never panics.
 func TestAgentsFindingsEmpty(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
@@ -1289,19 +1377,19 @@ func TestAgentsFindingsEmpty(t *testing.T) {
 // tester), so the roster exercises lead-first ordering, the ✎/· mutating cue, and
 // the … heartbeat.
 func agentsGoldenTeam(c *conversation) {
-	c.setTeamStart("t1", "", []client.TeamMemberSpec{
+	c.startTeamCard("t1", "", []client.TeamMemberSpec{
 		{Name: "lead", Role: "coordinator", Lead: true, Mutating: true},
 		{Name: "scout", Role: "researcher", Mutating: false},
 		{Name: "builder", Role: "implementer", Mutating: true},
 		{Name: "tester", Role: "verifier", Mutating: true},
 	})
-	c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "searching for the failing path"}))
-	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-	c.addTeamMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
-	c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
-	c.addTeamMember(member("builder", "tool.call", client.TeamMsg{ToolName: "Edit"}))
-	c.addTeamMember(member("builder", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 3400, OutputTokens: 220}}))
-	c.addTeamMember(member("lead", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 900, OutputTokens: 40}}))
+	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "searching for the failing path"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
+	c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
+	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
+	c.updateTeamCardMember(member("builder", "tool.call", client.TeamMsg{ToolName: "Edit"}))
+	c.updateTeamCardMember(member("builder", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 3400, OutputTokens: 220}}))
+	c.updateTeamCardMember(member("lead", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 900, OutputTokens: 40}}))
 }
 
 // TestAgentsRosterGolden locks the roster overlay.
@@ -1313,6 +1401,7 @@ func TestAgentsRosterGolden(t *testing.T) {
 	if m.team.view != teamRoster {
 		t.Fatalf("view = %v, want teamRoster", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster.golden", got)
@@ -1320,15 +1409,15 @@ func TestAgentsRosterGolden(t *testing.T) {
 
 // agentsIdleTeam builds a team caught MID-RUN between rounds: the scout has fired a
 // per-round result (so it is IDLE — finished its round, awaiting the next) while the
-// lead is still working a tool. The team is NOT ended (no setTeamEnd), so the roster
+// lead is still working a tool. The team is NOT ended (no finishTeamCard), so the roster
 // must show the scout as "○ ... idle" (not "done") and the lead as "◆ ... Edit…".
 // This is the human-visible proof the idle state renders distinctly mid-run.
 func agentsIdleTeam(c *conversation) {
-	c.setTeamStart("t1", "", roster()) // lead (mutating) + scout (read-only)
-	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-	c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
-	c.addTeamMember(member("scout", "result", client.TeamMsg{})) // scout finished round 0 → IDLE
-	c.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
+	c.startTeamCard("t1", "", roster()) // lead (mutating) + scout (read-only)
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
+	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{})) // scout finished round 0 → IDLE
+	c.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
 }
 
 // TestAgentsRosterMidRunIdleGolden locks the mid-run roster overlay: a member that
@@ -1343,6 +1432,7 @@ func TestAgentsRosterMidRunIdleGolden(t *testing.T) {
 	if m.team.view != teamRoster {
 		t.Fatalf("view = %v, want teamRoster", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_midrun_idle.golden", got)
@@ -1361,6 +1451,7 @@ func TestAgentsTasksView(t *testing.T) {
 	if m.team.view != teamTasks {
 		t.Fatalf("view = %v, want teamTasks", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_tasks.golden", got)
 }
@@ -1377,6 +1468,7 @@ func TestAgentsFindingsView(t *testing.T) {
 	if m.team.view != teamFindings {
 		t.Fatalf("view = %v, want teamFindings", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_findings.golden", got)
 }
@@ -1387,8 +1479,8 @@ func TestAgentsFindingsView(t *testing.T) {
 func TestAgentsRosterWindowedGolden(t *testing.T) {
 	big := bigRoster(20)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
-	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
+	m = resize(m, 100, 30)
+	m = seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	// Move the cursor down past the first window so both "+K above" and "+K below"
@@ -1397,6 +1489,7 @@ func TestAgentsRosterWindowedGolden(t *testing.T) {
 		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "team_roster_windowed.golden", got)
@@ -1417,6 +1510,7 @@ func TestAgentsFocusGolden(t *testing.T) {
 	if m.team.view != teamFocus || m.team.member != "scout" {
 		t.Fatalf("focus = %v/%q, want focus/scout", m.team.view, m.team.member)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_focus.golden", got)
 }
@@ -1425,13 +1519,13 @@ func TestAgentsFocusGolden(t *testing.T) {
 // (many tool chips, each with a Detail preview so each is its own line) — enough
 // to overflow a short terminal's focus pane and exercise the height bound.
 func verboseFocusTeam(c *conversation) {
-	c.setTeamStart("t1", "", []client.TeamMemberSpec{{Name: "scout", Role: "researcher", Lead: true}})
-	c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "investigating the whole subsystem"}))
+	c.startTeamCard("t1", "", []client.TeamMemberSpec{{Name: "scout", Role: "researcher", Lead: true}})
+	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "investigating the whole subsystem"}))
 	for i := 0; i < maxTeamTrace; i++ {
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{
 			ToolName: "Read", Detail: fmt.Sprintf("file-%02d.go", i),
 		}))
-		c.addTeamMember(member("scout", "tool.result", client.TeamMsg{
+		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{
 			ToolName: "Read", Detail: fmt.Sprintf("%d lines", 100+i),
 		}))
 	}
@@ -1444,7 +1538,7 @@ func verboseFocusTeam(c *conversation) {
 // lipgloss.Place). Mirrors TestAgentsRosterWindowed.
 func TestAgentsFocusWindowed(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24) // vp height 16 → ~6 trace rows
+	m = resize(m, 100, 30) // vp height 16 → ~6 trace rows
 	m = seedTeam(m, verboseFocusTeam)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -1486,7 +1580,7 @@ func TestAgentsFocusWindowed(t *testing.T) {
 // back" footer all visible (no clipping).
 func TestAgentsFocusWindowedGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
+	m = resize(m, 100, 30)
 	m = seedTeam(m, verboseFocusTeam)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -1495,6 +1589,7 @@ func TestAgentsFocusWindowedGolden(t *testing.T) {
 	if m.team.view != teamFocus {
 		t.Fatalf("view = %v, want teamFocus", m.team.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "team_focus_windowed.golden", got)
 }
@@ -1507,7 +1602,7 @@ func TestAgentsFocusWindowedGolden(t *testing.T) {
 func TestTeamRosterRoutedMetadata(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", []client.TeamMemberSpec{
+		c.startTeamCard("t1", "", []client.TeamMemberSpec{
 			{Name: "lead", Role: "coordinator", Lead: true, Model: "openai/gpt-4.5"},
 			{Name: "deep", Role: "investigate", RoutedCategory: "large", RoutedModel: "anthropic/claude-opus-4", Model: "anthropic/claude-opus-4"},
 		})
@@ -1537,18 +1632,18 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 // TestTeamFocusRendersFailureCauseOnStoppedError asserts the focus pane renders the
 // per-round failure cause for a member benched on an error (issue #331, mirroring the
 // subagent focus pane). It drives a real client.TeamMsg "result" carrying a Cause
-// through addTeamMember, then a team.end that stops the member for an error, then the
+// through updateTeamCardMember, then a team.end that stops the member for an error, then the
 // focus render — asserting "failed: <cause>" appears. A done member with a prior cause
 // does NOT render it (it recovered), and a later result's cause overwrites an earlier
 // one (last non-empty wins).
 func TestTeamFocusRendersFailureCauseOnStoppedError(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
+		c.startTeamCard("t1", "", roster())
 		// scout's round failed with a known cause.
-		c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "upstream 503: model overloaded"}))
+		c.updateTeamCardMember(member("scout", "result", client.TeamMsg{Cause: "upstream 503: model overloaded"}))
 		// team.end benches scout on an error.
-		c.setTeamEnd("t1", "", 1, "end_turn", client.Usage{},
+		c.finishTeamCard("t1", "", 1, "end_turn", client.Usage{},
 			[]client.TeamMemberDisposition{{Name: "lead"}, {Name: "scout", Stopped: true, Reason: "error"}})
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
@@ -1602,16 +1697,28 @@ func TestTeamFocusNoFailureCauseForDoneMember(t *testing.T) {
 func TestTeamLaneCauseLastNonEmptyWins(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
-	c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "first failure C1"}))
-	c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "second failure C2"}))
-	ln := c.blocks[0].lane("scout")
-	if ln.cause != "second failure C2" {
-		t.Errorf("last non-empty cause must win, got %q", ln.cause)
+	c.startTeamCard("t1", "", roster())
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{Cause: "first failure C1"}))
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{Cause: "second failure C2"}))
+	cause := func() string {
+		p, ok := c.teamCard("t1")
+		if !ok {
+			t.Fatal("missing typed Team card")
+		}
+		for _, lane := range p.Update.Lanes {
+			if lane.Name == "scout" {
+				return lane.Cause
+			}
+		}
+		t.Fatal("missing typed scout lane")
+		return ""
+	}
+	if got := cause(); got != "second failure C2" {
+		t.Errorf("last non-empty cause must win, got %q", got)
 	}
 	// A later empty cause (clean round) does NOT erase a prior one — last NON-EMPTY wins.
-	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
-	if ln.cause != "second failure C2" {
-		t.Errorf("an empty cause must not erase a prior non-empty one, got %q", ln.cause)
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{}))
+	if got := cause(); got != "second failure C2" {
+		t.Errorf("an empty cause must not erase a prior non-empty one, got %q", got)
 	}
 }

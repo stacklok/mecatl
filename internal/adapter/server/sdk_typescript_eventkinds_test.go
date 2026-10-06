@@ -43,6 +43,30 @@ func TestSDKTypescriptCore_Scenario6_EventKindParity(t *testing.T) {
 	}
 }
 
+func TestADR_0370_Scenario3_SDKCompatibility(t *testing.T) {
+	t.Parallel()
+
+	paths := sdkTypescriptEventParityPaths(t)
+	typed := parseTypescriptStringManifest(
+		t,
+		paths.manifest,
+		"// BEGIN MECATL_EVENT_KINDS",
+		"// END MECATL_EVENT_KINDS",
+		regexp.MustCompile(`^[a-z0-9_.]+$`),
+	)
+	if _, ok := typed["tool.result.available"]; !ok {
+		t.Fatal("TypeScript SDK must recognize tool.result.available")
+	}
+
+	source := readParitySource(t, paths.manifest)
+	payloads := sourceBetween(t, source, "export interface EventPayloads", "\n}\n\n/** All currently known")
+	entry := regexp.MustCompile(`readonly "tool\.result(?:\.available)?": ([A-Za-z0-9_]+);`)
+	matches := entry.FindAllStringSubmatch(payloads, -1)
+	if len(matches) != 2 || matches[0][1] != "ToolResultEventPayload" || matches[1][1] != "ToolResultEventPayload" {
+		t.Fatalf("tool.result.available and tool.result must use the existing ToolResultEventPayload: %v", matches)
+	}
+}
+
 func TestSDKTypescriptCore_Scenario6_LogOnlyKindsAudited(t *testing.T) {
 	t.Parallel()
 

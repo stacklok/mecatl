@@ -11,7 +11,11 @@ import (
 )
 
 func secretServiceHelper(ctx context.Context) int {
-	conn, err := dbus.SessionBusPrivateNoAutoStartup()
+	return secretServiceHelperWithConnect(ctx, dbus.SessionBusPrivateNoAutoStartup)
+}
+
+func secretServiceHelperWithConnect(ctx context.Context, connect func(...dbus.ConnOption) (*dbus.Conn, error)) int {
+	conn, err := connect()
 	if err != nil {
 		// godbus v5.2.2 exposes no sentinel for its no-address result.
 		if err.Error() == "dbus: couldn't determine address of session bus" || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {

@@ -33,7 +33,7 @@ func debugTestService(t *testing.T, store port.SessionStore, ownerEnforced bool,
 		Engine: debugTestEngine("shared"), Store: store,
 
 		Now:               func() time.Time { return time.Unix(1700000000, 0).UTC() },
-		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory, DebugMCP: true,
+		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory, DebugMCP: func() bool { return true },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

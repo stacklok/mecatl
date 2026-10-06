@@ -1,43 +1,11 @@
 ---
 name: library-reuse-reviewer
 description: >-
-  Reviews code for places that hand-roll functionality already provided by the
-  language's standard library or by a small set of consolidated, well-vetted
-  open-source libraries. Catches reinvented retry loops, ad-hoc HTTP middleware,
-  bespoke set/map/slice helpers, hand-written exponential backoff, manual
-  context-cancellation patterns, custom logging frameworks, hand-rolled UUID
-  generators, ad-hoc concurrent maps, and similar reinventions. Language-aware:
-  Go (stdlib emphasis, especially 1.21–1.25 additions),
-  TypeScript / Node / Browser, Python. When recommending a non-stdlib library,
-  applies a strict screen: permissive license (Apache-2.0 / MIT / BSD /
-  MPL-2.0), maintained, foundation-backed (CNCF / Apache / Linux Foundation /
-  Eclipse / OpenJS) preferred over single-vendor, no commercial-lock
-  considerations, broad ecosystem adoption. Read-only.
-
-  Examples:
-
-  <example>
-  Context: User wrote a retry-with-backoff loop by hand.
-  user: "Added a retry helper to the gateway client."
-  assistant: "Let me use the library-reuse-reviewer agent — retry/backoff is one of the most-reinvented utilities, and there are usually better stdlib + small-library options."
-  </example>
-
-  <example>
-  Context: User wrote a hand-rolled `Contains`, `Map`, `Filter` over a slice.
-  user: "Helper for filtering active users from a slice."
-  assistant: "I'll use the library-reuse-reviewer agent — Go 1.21+ has slices.* built in for these."
-  </example>
-
-  <example>
-  Context: User added a third-party logging library.
-  user: "Bringing in github.com/SomeVendor/logger for structured logs."
-  assistant: "Let me run the library-reuse-reviewer agent — stdlib `log/slog` is the default for new Go code, and any third-party logger should justify itself against the license + governance screen."
-  </example>
-
-  NOT for: deciding *whether* to take a dependency in principle
-  (use the project's dependency-review process / ADR), code-duplication
-  review (use code-duplication-reviewer), Go architecture review
-  (use go-architect).
+  Reviews code for hand-rolled functionality the standard library or a small,
+  well-vetted permissive-license library already provides (retry, backoff,
+  slices, sets, logging, UUIDs). Use when a diff adds utility-shaped code or a
+  new dependency. Read-only. Not for duplication within the repo (use code-
+  duplication-reviewer).
 tools: [Read, Glob, Grep, WebFetch, Bash]
 color: green
 memory: project

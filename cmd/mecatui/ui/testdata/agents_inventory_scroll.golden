@@ -1,33 +1,30 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-         ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-         ┃                                                                               ┃
-         ┃  Agent definitions                                                            ┃
-         ┃                                                                               ┃
-         ┃  agent-01                                                                     ┃
-         ┃  agent-02                                                                     ┃
-         ┃  agent-03                                                                     ┃
-         ┃  agent-04                                                                     ┃
-         ┃  agent-05                                                                     ┃
-         ┃  agent-06                                                                     ┃
-         ┃  agent-07                                                                     ┃
-         ┃  agent-08                                                                     ┃
-         ┃  agent-09                                                                     ┃
-         ┃  agent-10                                                                     ┃
-         ┃  agent-11                                                                     ┃
-         ┃  agent-12                                                                     ┃
-         ┃  agent-13                                                                     ┃
-         ┃  agent-14                                                                     ┃
-         ┃  lines 2–15 of 30                                                             ┃
-         ┃                                                                               ┃
-         ┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close  ┃
-         ┃                                                                               ┃
-         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Agent definitions                                                                               ┃
+┃                                                                                                  ┃
+┃  agent-11                                                                                        ┃
+┃  agent-12                                                                                        ┃
+┃  agent-13                                                                                        ┃
+┃  agent-14                                                                                        ┃
+┃  agent-15                                                                                        ┃
+┃  agent-16                                                                                        ┃
+┃  agent-17                                                                                        ┃
+┃  agent-18                                                                                        ┃
+┃  agent-19                                                                                        ┃
+┃  agent-20                                                                                        ┃
+┃  agent-21                                                                                        ┃
+┃  lines 12–22 of 30                                                                               ┃
+┃                                                                                                  ┃
+┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

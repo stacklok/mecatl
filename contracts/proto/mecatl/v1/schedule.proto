@@ -252,6 +252,9 @@ message ScheduleState {
   // terminate the in-flight run with StopTimeout. Absent means "no explicit
   // deadline". Issue #386.
   google.protobuf.Timestamp fire_deadline = 9;
+  // deletion_pending is true while exact owned-placement cleanup is retryable.
+  // The private deletion token and placement binding are never projected.
+  bool deletion_pending = 10;
 }
 
 // Schedule is the aggregate value object: the immutable Spec plus the durable

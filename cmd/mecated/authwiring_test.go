@@ -44,12 +44,18 @@ type offlinePlacementProvider struct{}
 
 func (offlinePlacementProvider) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
-	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)}, nil
+	return server.PlacementBinding{
+		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil),
+		GovernanceRoot: "/ws",
+	}, nil
 }
 
 func (offlinePlacementProvider) Reattach(context.Context, server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
-	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)}, nil
+	return server.PlacementBinding{
+		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil),
+		GovernanceRoot: "/ws",
+	}, nil
 }
 
 // newOfflineService builds a *server.Service over the offline reference adapters

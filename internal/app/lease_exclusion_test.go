@@ -205,7 +205,7 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	memoryDir := t.TempDir()
 
 	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
-	cfg1.SessionLeaseTTL = time.Second
+	cfg1.SessionLeaseTTL = 30 * time.Second
 	cfg1.SessionLeaseRenewInterval = 10 * time.Second
 	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("replica one"))
@@ -215,6 +215,17 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 		t.Fatalf("Build #1: %v", err)
 	}
 	defer built1.Close()
+
+	cfg2 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg2.SessionLeaseTTL = 30 * time.Second
+	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return mockllm.New(mockllm.TextTurn("replica two"))
+	}
+	built2, err := buildIsolated(t, ctx, cfg2)
+	if err != nil {
+		t.Fatalf("Build #2: %v", err)
+	}
+	defer built2.Close()
 
 	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
@@ -228,20 +239,10 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	built1.Service.FinishRun(sess.ID, run1)
 	firstToken := leaseToken(t, leaseDir)
 
-	cfg2 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
-	cfg2.SessionLeaseTTL = time.Second
-	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
-		return mockllm.New(mockllm.TextTurn("replica two"))
-	}
-	built2, err := buildIsolated(t, ctx, cfg2)
-	if err != nil {
-		t.Fatalf("Build #2: %v", err)
-	}
-	defer built2.Close()
-
 	if _, err := built2.Service.StartRun(ctx, sess.ID, "take over before expiry"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("StartRun #2 before expiry = %v, want ErrSessionLeasedElsewhere", err)
 	}
+	expireLeaseRecord(t, leaseDir)
 
 	var run2 *agent.Run
 	deadline := time.After(5 * time.Second)
@@ -270,6 +271,42 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	if successorToken := leaseToken(t, leaseDir); successorToken <= firstToken {
 		t.Fatalf("successor token = %d, want > expired token %d", successorToken, firstToken)
 	}
+}
+
+func expireLeaseRecord(t *testing.T, leaseDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(leaseDir)
+	if err != nil {
+		t.Fatalf("ReadDir lease directory: %v", err)
+	}
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(leaseDir, entry.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile lease record: %v", err)
+		}
+		var record struct {
+			Owner  string    `json:"owner"`
+			Token  uint64    `json:"token"`
+			Expiry time.Time `json:"expiry"`
+		}
+		if err := json.Unmarshal(body, &record); err != nil {
+			t.Fatalf("decode lease record: %v", err)
+		}
+		record.Expiry = time.Unix(0, 0)
+		body, err = json.Marshal(record)
+		if err != nil {
+			t.Fatalf("encode expired lease record: %v", err)
+		}
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatalf("write expired lease record: %v", err)
+		}
+		return
+	}
+	t.Fatal("lease record not found")
 }
 
 func leaseToken(t *testing.T, leaseDir string) uint64 {

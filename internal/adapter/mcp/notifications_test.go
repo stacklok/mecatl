@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,6 +48,46 @@ func eventually(t *testing.T, timeout time.Duration, cond func() bool, msg strin
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("eventually: %s (timed out after %v)", msg, timeout)
+}
+
+func TestReconciliationCandidateListProjectionStaysFrozenAfterNotification(t *testing.T) {
+	url, remote := newMutableTestServer(t)
+	var invalidations atomic.Int64
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	s, err := ConnectComplete(ctx, ServerConfig{
+		Name: "fake", URL: url,
+		CandidateBudget: NewCandidateListBudget(32, 32, 1<<20),
+		ListChanged:     func() { invalidations.Add(1) },
+	}, &recordingDiag{})
+	if err != nil {
+		t.Fatalf("ConnectComplete: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	wantTools, wantResources, wantPrompts := len(s.Tools()), len(s.Resources()), len(s.Prompts())
+
+	mcpsdk.AddTool(remote, &mcpsdk.Tool{Name: "late", Description: "late"},
+		func(context.Context, *mcpsdk.CallToolRequest, noArgs) (*mcpsdk.CallToolResult, any, error) {
+			return &mcpsdk.CallToolResult{}, nil, nil
+		})
+	remote.AddResource(&mcpsdk.Resource{URI: "test://late", Name: "late"},
+		func(_ context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+			return &mcpsdk.ReadResourceResult{Contents: []*mcpsdk.ResourceContents{{URI: req.Params.URI, Text: "late"}}}, nil
+		})
+	remote.AddPrompt(&mcpsdk.Prompt{Name: "late"},
+		func(context.Context, *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
+			return &mcpsdk.GetPromptResult{}, nil
+		})
+	eventually(t, 3*time.Second, func() bool { return invalidations.Load() >= 3 }, "candidate notifications did not invalidate reconciler")
+	if got := len(s.Tools()); got != wantTools {
+		t.Fatalf("candidate Tools mutated from %d to %d", wantTools, got)
+	}
+	if got := len(s.Resources()); got != wantResources {
+		t.Fatalf("candidate Resources mutated from %d to %d", wantResources, got)
+	}
+	if got := len(s.Prompts()); got != wantPrompts {
+		t.Fatalf("candidate Prompts mutated from %d to %d", wantPrompts, got)
+	}
 }
 
 // TestToolListChangedNotificationRefreshesSnapshot is the Phase-1 acceptance

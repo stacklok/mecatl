@@ -28,7 +28,7 @@ and permission rules.
 |Catalog name|Purpose|Read-only?|
 |-|-|-|
 |`Read`|Read a file. Supported images return typed image content when the model accepts images.|Yes|
-|`ListDir`|List one directory's sorted immediate children.|Yes|
+|`ListDir`|List one directory's sorted immediate children. Local workspaces can list a policy-authorized external absolute directory.|Yes|
 |`Write`|Create a file or replace a previously read, unchanged file.|No|
 |`Edit`|Replace exact, unique text in a previously read, unchanged file.|No|
 |`Copy`|Copy a regular file to a new path without overwriting.|No|
@@ -128,6 +128,23 @@ the session; the model cannot change it. See
 [Execution environments](/features/execution-environments.md) for filesystem
 and no-filesystem placement, and [Engine and session model](engine-and-session.md)
 for session creation.
+
+### Execution placement providers
+
+`microvm-local` is a trusted deployment default selected through the strict operator-tier
+`execution.default_placement` setting (or a higher-precedence explicit mecated serve flag).
+Bare mecatui consumes that setting for its embedded server; mecatui connect remains remote-only.
+Ordinary session creation then uses that default;
+clients cannot submit a placement alias, workspace path, or exact environment ref. Public
+session data contains bounded `PlacementMetadata` only. `profile: "no-fs"` remains the one
+client-selected attenuation. The daemon owns image, resource, egress, lifecycle, and
+attestation policy, and unavailable placement fails without host fallback.
+
+Guest IPv4 is permissive by default, with external IPv6 unrouted. The operator can tighten
+it with `execution.microvm.guest_egress.mode: deny-all`, or `allowlist` plus
+`allow: [HOST:PORT/tcp|udp]`. Explicit mecated serve flags override settings for one run.
+HTTP/gRPC requests and project config cannot
+select or weaken placement or egress policy.
 
 ---
 

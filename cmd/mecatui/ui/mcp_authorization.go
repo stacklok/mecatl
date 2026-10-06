@@ -359,6 +359,9 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 	// run events, which must never be bounded by this timeout.
 	m.authorization.stopFirstEventTimer()
 	if streamErr, ok := msg.msg.(client.StreamErrMsg); ok {
+		if m.restoreRefusedApproval(streamErr.Err) {
+			return m, nil, true
+		}
 		errText := oneLine(terminaltext.Sanitize(streamErr.Err.Error()))
 		m.authorizationEvents = nil
 		if m.authorization.controlCancel != nil {

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -29,10 +31,12 @@ func startupSelection(id, state string) *client.ResumeSelection {
 
 func startupResumeUI(t *testing.T, conv *fakeConv, seed string, state string) Model {
 	t.Helper()
-	return newTestModelFromDeps(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch",
 		Resume: startupSelection("existing", state), InitialPrompt: seed,
 	})
+	m.width, m.height = 80, 24
+	return m
 }
 
 func runStartupCommands(cmd tea.Cmd) {
@@ -53,8 +57,31 @@ func TestSessionContinuityUX_Scenario6_NoThrowawaySession(t *testing.T) {
 	if conv.createCount != 0 {
 		t.Fatalf("startup adoption called CreateSession %d times", conv.createCount)
 	}
-	if m.sessionID != "existing" || m.sessionTitle != "Prior chat" || m.activePlacement.Label != "prior" || m.phase != phaseIdle || len(m.conv.blocks) == 0 || !m.prompt.Focused() {
-		t.Fatalf("adopted model incomplete: id=%q title=%q workspace=%q phase=%v blocks=%d focused=%v", m.sessionID, m.sessionTitle, m.activePlacement.Label, m.phase, len(m.conv.blocks), m.prompt.Focused())
+	if m.sessionID != "existing" || m.sessionTitle != "Prior chat" || m.activePlacement.Label != "prior" || m.phase != phaseIdle || len(m.conv.testBlocks()) == 0 || !m.prompt.Focused() {
+		t.Fatalf("adopted model incomplete: id=%q title=%q workspace=%q phase=%v blocks=%d focused=%v", m.sessionID, m.sessionTitle, m.activePlacement.Label, m.phase, len(m.conv.testBlocks()), m.prompt.Focused())
+	}
+}
+
+func TestResumeStartupRetainsAdvertisedCapabilities(t *testing.T) {
+	resume := startupSelection("existing", "completed")
+	resume.Snapshot.Capabilities = client.Capabilities{
+		Steer: true, Teams: true, Image: false, Audio: true, SessionMediaPresent: true,
+	}
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := newTestModelFromDeps(Deps{
+		Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch", Resume: resume,
+	})
+
+	if !m.caps.Steer || !m.caps.Teams || m.caps.Image || !m.caps.Audio || !m.caps.SessionMediaPresent {
+		t.Fatalf("resumed capabilities = %+v", m.caps)
+	}
+	m = startRunning(t, m, "first")
+	m = enqueueSteer(t, m, "follow this instead")
+	if got := steerTexts(conv.send); !reflect.DeepEqual(got, []string{"follow this instead"}) {
+		t.Fatalf("steer frames = %#v, want resumed session to steer", got)
+	}
+	if len(m.queued) != 0 {
+		t.Fatalf("queued prompts = %#v, want no local queue in steer mode", m.queued)
 	}
 }
 
@@ -95,15 +122,15 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 		{Role: "assistant", Text: "new tool", ToolCalls: []client.ConvToolCall{{ID: "call-1", Name: "Bash", Args: `{"command":"printf new"}`}}},
 		{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "call-1", Content: "new result", IsError: true}},
 	}
-	m = m.failStartupRunEntry()
+	m = m.failStartupRunEntry(nil)
 
 	content := stripANSIstr(m.vp.GetContent())
-	if !strings.Contains(content, "new request") || !strings.Contains(content, "new result") || strings.Contains(content, "old result") {
+	if !strings.Contains(content, "new request") || !strings.Contains(content, "✗ Bash · printf new") || strings.Contains(content, "old.go") {
 		t.Fatalf("replacement rendered stale document content:\n%s", content)
 	}
 	fresh := newRenderer(m.deps.Theme, m.rend.marks)
 	fresh.setWidth(m.rend.width)
-	wantFrame := fresh.renderConversationFrame(&m.conv, m.expandTools)
+	wantFrame := fresh.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	if !reflect.DeepEqual(m.conversationView.frame.provenance, wantFrame.provenance) {
 		t.Fatal("replacement retained stale frame provenance")
 	}
@@ -115,6 +142,36 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 	}
 	if m.conversationView.mode != followTail || !m.vp.AtBottom() {
 		t.Fatalf("replacement did not follow tail: mode=%v atBottom=%v", m.conversationView.mode, m.vp.AtBottom())
+	}
+}
+
+func TestStartupRunEntryFailureClassifiesSafeStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		code       codes.Code
+		masked     bool
+	}{
+		{name: "temporary service failure", code: codes.Unavailable, want: "The service is temporarily unavailable. Retry this turn."},
+		{name: "run-entry conflict", code: codes.FailedPrecondition, want: "This chat is not ready for a new turn. Retry after its current operation finishes."},
+		{name: "masked absence", code: codes.NotFound, want: "This conversation could not be loaded. You cannot continue this session.", masked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+			m := startupResumeUI(t, conv, "continue", "completed")
+			m = applyAll(m, startupResumeReadyMsg{})
+			m = applyAll(m, client.StreamErrMsg{Err: status.Error(tc.code, "private server detail / secret-path")})
+
+			view := stripANSIstr(m.View().Content)
+			if !strings.Contains(view, tc.want) {
+				t.Fatalf("startup failure view missing safe classification %q:\n%s", tc.want, view)
+			}
+			if strings.Contains(view, "private server detail") || strings.Contains(view, "secret-path") {
+				t.Fatalf("startup failure exposed server detail:\n%s", view)
+			}
+			if gotMasked := strings.Contains(view, "conversation unavailable"); gotMasked != tc.masked {
+				t.Fatalf("generic unavailable classification = %t, want %t:\n%s", gotMasked, tc.masked, view)
+			}
+		})
 	}
 }
 
@@ -166,8 +223,8 @@ func TestADR_0108_FirstPromptRevalidatesAtomically(t *testing.T) {
 		if m.phase != phaseIdle || m.sessionID != "existing" || !m.prompt.Focused() || m.startupRunEntryFailed || conv.createCount != 0 {
 			t.Fatalf("back state: phase=%v id=%q focused=%v failed=%v creates=%d", m.phase, m.sessionID, m.prompt.Focused(), m.startupRunEntryFailed, conv.createCount)
 		}
-		if m.prompt.Value() != "retry this turn" || len(sender.frames()) != 1 || len(m.conv.blocks) == 0 {
-			t.Fatalf("back lost prompt or transcript: prompt=%q frames=%d blocks=%d", m.prompt.Value(), len(sender.frames()), len(m.conv.blocks))
+		if m.prompt.Value() != "retry this turn" || len(sender.frames()) != 1 || len(m.conv.testBlocks()) == 0 {
+			t.Fatalf("back lost prompt or transcript: prompt=%q frames=%d blocks=%d", m.prompt.Value(), len(sender.frames()), len(m.conv.testBlocks()))
 		}
 	})
 }

@@ -93,6 +93,8 @@ Deployment-specific guides own the images, charts, and operational instructions:
   and Helm chart.
 - [Use mecatequi in CI](/building/deployment/mecatequi.md) for the one-shot CI
   runtime.
+- [Mecatl Studio web UI](/building/deployment/studio.md) for the early-access
+  browser client image.
 
 ## Build from source
 

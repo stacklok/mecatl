@@ -1,21 +1,21 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 
-
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                                           ┃
-┃  Soul (persona)                                                                                                           ┃
-┃                                                                                                                           ┃
-┃  user · 40 bytes · sha:abc123def456                                                                                       ┃
-┃                                                                                                                           ┃
-┃  You are terse and direct.                                                                                                ┃
-┃  You prefer Go.                                                                                                           ┃
-┃                                                                                                                           ┃
-┃  you control this soul · edit its source file to change it; the agent can suggest wording · pgup/pgdn scroll · esc close  ┃
-┃                                                                                                                           ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Soul (persona)                                                                                  ┃
+┃                                                                                                  ┃
+┃  user · 40 bytes · sha:abc123def456                                                              ┃
+┃                                                                                                  ┃
+┃  You are terse and direct.                                                                       ┃
+┃  You prefer Go.                                                                                  ┃
+┃                                                                                                  ┃
+┃  you control this soul · edit its source file to change it; the agent can suggest wording ·      ┃
+┃  pgup/pgdn scroll · esc close                                                                    ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

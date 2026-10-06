@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -131,10 +132,20 @@ func (s *discoverySpy) count() int {
 
 type commandDiscoverySpy struct{ calls int }
 
-func (s *commandDiscoverySpy) List(context.Context, string) ([]Command, error) {
+func (s *commandDiscoverySpy) List(context.Context) ([]prompt.Command, error) {
 	s.calls++
-	return []Command{{Name: "forbidden"}}, nil
+	return []prompt.Command{{Name: "configured"}}, nil
 }
+func (*commandDiscoverySpy) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (s *commandDiscoverySpy) Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error) {
+	return s, func() {}, nil
+}
+func (*commandDiscoverySpy) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (*commandDiscoverySpy) Retire(session.SessionID) {}
 
 type placementLeaseSpy struct {
 	mu       sync.Mutex
@@ -153,7 +164,7 @@ func (*placementLeaseSpy) Renew(context.Context, port.Lease) (port.Lease, error)
 }
 func (*placementLeaseSpy) Release(context.Context, port.Lease) error { return nil }
 
-func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *placementProviderSpy, worktrees WorktreeLister, commands CommandLister, lease port.SessionLease, _ *int, ids ...session.SessionID) *Service {
+func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *placementProviderSpy, worktrees WorktreeLister, commands CommandSourceResolver, lease port.SessionLease, _ *int, ids ...session.SessionID) *Service {
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
 	var key [worktreeSelectorKeySize]byte
@@ -305,13 +316,13 @@ func TestADR_0291_NoFSDiscoveryDoesNotInvokeFilesystemProviders(t *testing.T) {
 	}
 	provider.reset()
 	workspaceCalls = 0
-	if got, err := svc.ListCommandsForSession(context.Background(), created.ID); err != nil || len(got) != 0 {
+	if got, err := svc.ListCommandsForSession(context.Background(), created.ID); err != nil || len(got) != 1 || got[0].Name != "configured" {
 		t.Fatalf("commands = %+v, %v", got, err)
 	}
 	if got, err := svc.ListWorktreesForSession(context.Background(), created.ID); err != nil || len(got) != 0 {
 		t.Fatalf("worktrees = %+v, %v", got, err)
 	}
-	if binds, reattaches := provider.calls(); binds != 0 || reattaches != 0 || commands.calls != 0 || worktrees.count() != 0 || workspaceCalls != 0 {
+	if binds, reattaches := provider.calls(); binds != 0 || reattaches != 0 || commands.calls != 1 || worktrees.count() != 0 || workspaceCalls != 0 {
 		t.Fatalf("no-FS discovery touched provider/filesystem: bind=%d reattach=%d commands=%d worktrees=%d workspaces=%d", binds, reattaches, commands.calls, worktrees.count(), workspaceCalls)
 	}
 }

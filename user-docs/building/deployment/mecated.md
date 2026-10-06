@@ -146,7 +146,7 @@ expire when the server restarts. Mecatl stores the exact placement privately and
 reattaches it before each run. See
 [Execution environments](/features/execution-environments.md) for the shared
 placement and reattachment model. For the underlying design, see
-[ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
+[ADR 0291](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers
 
@@ -261,14 +261,19 @@ See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat
 
 |Flag|Default|Notes|
 |-|-|-|
-|`--llm-per-attempt-timeout`|`300s`|Bounds **establishing** the stream only (connect + first chunk). Does not cut an actively-streaming turn|
-|`--llm-stream-idle-timeout`|`180s`|Max idle gap between chunks after the first arrives. A stall exceeding this is terminal and not retried|
-|`--llm-max-attempts`|`3`|Max stream-establish attempts (initial call + retries)|
-|`--llm-breaker-threshold`|`5`|Consecutive LLM failures that open the circuit breaker; `0` disables|
-|`--llm-breaker-cooldown`|`30s`|How long the breaker stays open before half-opening|
+|`--llm-recovery-budget`|`30m`|Maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting|
+|`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call|
+|`--llm-per-attempt-timeout`|`300s`|Bounds connection and the first raw chunk. It does not interrupt an active stream|
+|`--llm-stream-idle-timeout`|`180s`|Maximum gap between raw chunks after activity starts. A precommit stall can recover; a visible stream failure is terminal|
+|`--llm-breaker-threshold`|`5`|Consecutive transient establishment failures that open the circuit breaker; `0` disables it|
+|`--llm-breaker-cooldown`|`30s`|How long the breaker remains open before one half-open probe|
 
-The per-attempt timeout stops after the first chunk. The stream-idle timeout
-then bounds gaps between chunks without limiting an active turn.
+The server applies this policy to each model step. It retries only before
+semantic output becomes visible, so it does not replay completed tool calls or
+visible assistant text. These command-line flags are the only recovery-policy
+configuration; `settings.yaml` has no equivalent key. Review the
+[per-step limits and provider-cost implications](/features/choose-models.md#a-provider-error-ended-a-model-step)
+before raising either default.
 
 ### Provider and model
 
@@ -278,8 +283,8 @@ then bounds gaps between chunks without limiting an active turn.
 |`--default-provider`|`""`|Deployment-wide default provider (`openai`, `openrouter`, `anthropic`, `opencode`); validated fail-fast|
 |`--default-model`|`""`|Deployment-wide default model id for the default provider; validated fail-fast|
 |`--subagent-model`|`""`|Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own|
-|`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)|
-|`--anthropic-cache-ttl`|`""` (API default, `5m`)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
+|`--no-prompt-cache`|`false`|Disable provider-side prompt caching; see [ADR 0100](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0100-provider-prompt-caching.md)|
+|`--anthropic-cache-ttl`|`""` (`1h` on `anthropic`, `openrouter-anthropic` and `toolhive-anthropic`, API default `5m` elsewhere)|TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h`|
 |`--mock`|`false`|Offline canned provider with one text turn; smoke tests only|
 |`--mock-script`|`""`|Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns|
 
@@ -288,9 +293,43 @@ Provider credentials are read from `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
 use an owner-only `auth.yaml` file. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).
 
+An active `models.router.backend: jev` reads `TYPESAFE_API_KEY` from the process
+environment. This router credential has no `auth.yaml` or command-line form. It
+is inert unless an operator taxonomy selects the Jev backend.
+
 The experimental `openai-codex` provider uses a manually supplied ChatGPT Codex
 token and has no login or refresh flow. See the same credential guide for its
 schema and lifecycle.
+
+#### Context discovery recovery
+
+For a provider that supports discovery, the first session prompt starts or joins
+listing when the model has no known context window. A failed or empty listing returns
+`context_window_unavailable` (HTTP 503 or gRPC `Unavailable`) without recording the
+prompt. Native authenticated providers list on demand; starting the daemon does
+not authenticate to their model-list endpoint. ToolHive and required Codex default
+selection retain their bounded startup probes.
+
+Restore the configured provider's reachability and credentials, then retry after
+the ten-second per-provider cooldown. Each ordinary discovery attempt and admission
+wait is bounded to ten seconds. Client cancellation ends only that client's wait;
+shutdown cancels and joins discovery before closing its credential resources.
+ListModels requests can also refresh providers after cooldown, but opening the
+picker is not a prerequisite for retry.
+
+If the provider cannot supply metadata, configure a verified window under the exact
+provider/model key in operator-global `models.context_windows`, then restart
+`mecated` to load the settings. The deployment-wide `--context-window-override`
+takes precedence over that map. Use the provider's actual limit rather than a guessed
+value to bypass rejection; see [Context windows](/features/context-windows.md) for
+configuration and precedence. Discovery metadata is process-local and reacquired
+after restart; previously successful metadata can remain usable until then even
+after a listing failure. It does not establish current inference authorization.
+
+This gate covers Service session entry, including failed-step retry and restored
+approval resumption. Direct child, utility, and team engine entry can still use the
+128000 defensive fallback for unknown models. For rejected text and attachment
+recovery in `mecatui`, see [model context troubleshooting](/features/choose-models.md#model-context-metadata-is-unavailable).
 
 #### Offline mock providers (no credentials)
 
@@ -334,8 +373,10 @@ not selected. Disable detection with `--toolhive-llm=false` on shared hosts.
   process.
 - `proxy` requires a running local proxy and supports self-signed gateways.
 
-Run `thv llm setup` before using direct mode; `mecated` does not open a browser
-when credentials are missing. Direct mode does not honor `tls_skip_verify`.
+Run `thv llm setup` before using direct mode. `mecated` reads ToolHive's
+encrypted credentials, including THVSEC v1 files written by ToolHive v0.50.0.
+It does not open a browser when credentials are missing. Direct mode does not
+honor `tls_skip_verify`.
 
 |Flag|Default|Purpose|
 |-|-|-|
@@ -378,6 +419,9 @@ full rule engine. Posture is read from the operator-global `settings.yaml`
 The rule list and cost knobs live in the operator-global `settings.yaml`
 (`guardrails:` subtree). A project-tier `guardrails:` block is ignored with a
 WARN because a checked-in file cannot weaken an operator security check.
+Checker outage is fail-closed by default; set `onCheckerDown: warn` only when
+continue-with-warning is the intended deployment policy. The owner-authorized
+coverage and transient detail APIs are gRPC-only; no HTTP paths are implied.
 
 ### MCP
 

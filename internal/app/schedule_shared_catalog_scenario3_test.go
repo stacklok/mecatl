@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // scheduleScenario3Build is the shared fixture for the Scenario-3 pins: a full

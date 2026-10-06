@@ -38,7 +38,9 @@ connection.
 
 Before you begin, run the command on an attended host that can open a browser.
 Supply the exact HTTPS MCP resource URL, including its path. The URL must not
-contain a query string or fragment.
+contain a query string or fragment. Name the profile with letters, digits, and
+single underscores; the command rejects other names, including hyphenated ones,
+before it contacts the server.
 
 ```sh
 mecated mcp add connector https://mcp.example.com/mcp

@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  GPT-5  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
@@ -8,12 +8,10 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ╭────────────────────────────────────────────────╮                                                 ┃
-┃  │  › ●  openai · GPT-5  image input reason 200K  │                                                 ┃
-┃  ╰────────────────────────────────────────────────╯                                                 ┃
-┃       openai · GPT-5 mini  reason 128K                                                              ┃
-┃       openai · text-embed                                                                           ┃
-┃       openrouter · Claude  image input reason 1M                                                    ┃
+┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
+┃      openai · GPT-5 mini  reason 128K                                                               ┃
+┃      openai · text-embed                                                                            ┃
+┃      openrouter · Claude  image input reason 1M                                                     ┃
 ┃                                                                                                     ┃
 ┃  toolhive: credential lists no models — ask your platform admin or re-run `thv llm setup`           ┃
 ┃                                                                                                     ┃
@@ -28,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

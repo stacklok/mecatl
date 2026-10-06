@@ -637,7 +637,10 @@ func TestColdGatewayDiscoveryFailureRejectsWithoutMutationAndRetries(t *testing.
 			fixture.setResponse(tc.status, tc.body)
 			root := t.TempDir()
 			capture := newColdGatewayCapture()
-			built, err := buildIsolated(t, context.Background(), coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture))
+			var discoveryOffset atomic.Int64
+			cfg := coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture)
+			cfg.modelDiscoveryNow = func() time.Time { return time.Now().Add(time.Duration(discoveryOffset.Load())) }
+			built, err := buildIsolated(t, context.Background(), cfg)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -670,6 +673,13 @@ func TestColdGatewayDiscoveryFailureRejectsWithoutMutationAndRetries(t *testing.
 			}
 
 			fixture.setResponse(http.StatusOK, coldGatewayListing)
+			if _, err := built.Service.StartRun(context.Background(), sess.ID, "still cooling down"); !errors.Is(err, serveradapter.ErrContextWindowUnavailable) {
+				t.Fatalf("cooldown admission=%v, want unavailable", err)
+			}
+			if fixture.callCount() != 1 {
+				t.Fatal("cooldown started another listing")
+			}
+			discoveryOffset.Add(int64(discoveryCooldown))
 			events := runColdGatewayPrompt(t, built, sess.ID, "retry after discovery recovery")
 			_, archived, window, model := coldGatewayEventFacts(events)
 			if archived != 0 || window != coldGatewayWindow || model != coldGatewayModel || capture.count() != 1 || fixture.callCount() != 2 {

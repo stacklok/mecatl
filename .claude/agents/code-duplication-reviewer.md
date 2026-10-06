@@ -1,41 +1,11 @@
 ---
 name: code-duplication-reviewer
 description: >-
-  Reviews a code change (current diff, branch, or set of files) for genuine
-  code duplication that hurts maintainability — and, just as important,
-  rejects pseudo-duplication where extraction would couple two things that
-  should stay independent. Applies the Rule of Three (don't extract until
-  the third occurrence), distinguishes "incidental" from "essential"
-  duplication (per Sandi Metz / Dan Abramov's AHA Programming), and weighs
-  the cost of the wrong abstraction (Sandi Metz: "duplication is far
-  cheaper than the wrong abstraction"). Knows when to suggest a function,
-  a type, an interface, a generic, a code generator, or — most often —
-  no change at all. Language-agnostic with emphasis on Go, TypeScript /
-  React / Next.js, and Python. Read-only.
-
-  Examples:
-
-  <example>
-  Context: User refactored three handlers and feels like there's a pattern emerging.
-  user: "I think these three handlers are starting to look similar. Should I extract something?"
-  assistant: "Let me use the code-duplication-reviewer agent — three sites is exactly the inflection point, but only if the similarity is essential rather than incidental."
-  </example>
-
-  <example>
-  Context: User just added a third copy of the same retry loop.
-  user: "Adding retries to the new client."
-  assistant: "Sounds like there's now three retry loops in this codebase. I'll use the code-duplication-reviewer agent to look across them and see whether they're actually the same logic or three coincidentally-similar ones."
-  </example>
-
-  <example>
-  Context: User reviewing a diff before merge.
-  user: "Quick scan of this diff for duplication?"
-  assistant: "I'll use the code-duplication-reviewer agent."
-  </example>
-
-  NOT for: full architecture reviews (use go-architect), library-substitution
-  reviews ("you reinvented a stdlib utility" — use library-reuse-reviewer),
-  test-fixture deduplication strategy (use the project's test-review skill).
+  Reviews a diff for duplication that genuinely hurts maintainability, and
+  rejects extractions that would couple unrelated code (Rule of Three, wrong-
+  abstraction cost). Use when similar code appears in three or more places.
+  Read-only. Not for stdlib or library substitution (use library-reuse-
+  reviewer).
 tools: [Read, Glob, Grep, Bash]
 color: yellow
 memory: project

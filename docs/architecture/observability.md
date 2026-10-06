@@ -24,7 +24,7 @@ against the main baseline but never publishes a new baseline from a PR.
 `task perf:scenarios` remains the separate whole-loop signal. In particular,
 `BenchmarkSingleSessionLong` preserves the approximately 500-turn single-session
 coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. See
-`docs/adr/0019-perf-tracking.md` for the performance-tracking decision.
+[performance regression tracking](../perf-tracking.md) for the performance-tracking decision.
 
 The `gh-pages` trend store keeps commit granularity without retaining duplicate
 sampling rows. The hard microbenchmark gate and its latest-main `bench.txt`
@@ -134,6 +134,17 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   `mecatl_schedule_fire_duration_seconds` (the due→terminal wall-clock, recorded
   only for a fired/failed fire; a skipped fire has no run, duration 0). The
   duration histogram shares the `latencyInstruments` explicit-bucket ladder.
+- **MicroVM runtime operations** (`environment/microvm/operations.go`) - the opt-in
+  daemon runtime has a separate bounded `OperationsObserver`. It counts guest execs,
+  guest-egress denials, artifact-verification outcomes, and logical cleanup outcomes.
+  A generation-keyed `egressSources` map samples cumulative denial sources while their
+  repository generations are active, then removes each source at teardown. Commands,
+  denied destinations, session/environment IDs, paths, credentials, and free text are
+  never retained as labels or diagnostics. The observer and source map are process-local
+  and reset when the daemon exits. Operational failures have no client `session.Event`,
+  so the observer uses the injected `port.Diagnostics`; model-visible facts remain
+  event-owned. `Doctor` runs the hypervisor, artifact, control, network, and profile
+  probes and renders stable actionable PASS/FAIL findings.
   > A broader performance-observability effort lands incrementally on a
   > separate unauthenticated admin listener: `mecated --metrics-addr` remains
   > loopback-only (default `127.0.0.1:9090`), while embedded `mecatui --perf`
@@ -311,12 +322,15 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   error because EventLog errors can follow a durable write; retry would duplicate folded
   text. Memory remains bounded, one warning is emitted per recorder, and later boundary/result
   appends continue. A process crash or failed append can lose a chunk; the completed snapshot
-  remains authoritative. See [ADR 0243](../adr/0243-jsonl-durability.md). `jsonlstore` triples as
+  remains authoritative. See ADR 0243. `jsonlstore` triples as
   `SessionStore`+`ToolCallRecorder`+`EventLog` (a `.events.jsonl` sidecar);
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
   log also records the log-only **`EvUserPrompt`** and out-of-band
-  **`EvSessionTitle`** events. A title event follows a successful snapshot save and
+  **`EvSessionTitle`** events. The append boundary stamps `Event.Actor` from the
+  verified request-context principal, not the session owner. User prompts and
+  compaction archives contain conversation content; delegation-preview redaction
+  is not blanket secret or PII filtering. A title event follows a successful snapshot save and
   carries only title lifecycle metadata; it contains no title-source prompts or
   provider errors. It is also offered best-effort to gRPC live-session subscribers,
   while HTTP clients reconcile it through the authoritative snapshot or durable
@@ -345,7 +359,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   incarnation-bound, revalidated handles, while pruned snapshots remain content-free
   tombstones keyed separately from a later same-ID incarnation. Event-log
   retention and scan limits are reported rather than inferred. See
-  [ADR 0256](../adr/0256-session-debugger-evidence-and-reporting.md).
+  ADR 0256.
 
   > **Two `Load` implementations, one port.** mecatl's own adapters (memstore,
   > jsonlstore, the remote driver) implement `Load` by **snapshot-deserialize**
@@ -375,7 +389,24 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   conformance contract is `leaseconformance`. See `docs/adr/0027-cloud-native.md`
   Phase 4.
 
-### Remote store + source drivers (`internal/adapter/grpcdriver`)
+### Remote store + source drivers (`adapters/grpcdriver`)
+
+External Go applications use `github.com/stacklok/mecatl/adapters/grpcdriver`;
+local stores are in the sibling `jsonlstore` and `redisstore` packages. The
+[store integration guide](../../user-docs/building/extension-points/session-store.md)
+owns construction examples, capability checks, reader limitations, and resource
+ownership. The complete concrete packages are retained, including their write,
+schedule, content-source, and learning APIs.
+
+The generated import path
+`github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1` belongs to the
+independent parent module `github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver`.
+Shared watcher and soul-validation implementation lives in the private
+`internal/adaptersupport/` module; callers retain lifecycle ownership. Engine
+source and its dependency graph are unchanged. See the
+[adapter compatibility policy](../../adapters/COMPATIBILITY.md) for the separate
+Go API and protobuf wire contracts, pending initial releases, and standalone
+candidate proof.
 
 > Design rationale — the port/driver pattern, the per-seam lifecycle and
 > failure-posture decisions, the deferrals, and the workspace-driver sketch —
@@ -420,7 +451,8 @@ loads the body and logical inventory, and `Skill({name, asset})` fetches one bou
 textual payload on demand. No temp cache, materialization, executable-bit application,
 or workspace read root is created. `--soul-source-url` occupies the USER slot
 of the soul selection (mutually exclusive with `--soul-file`; `--no-soul`
-wins); the body is RE-VALIDATED client-side (`soul.ValidateBody` — byte cap,
+wins); the body is RE-VALIDATED client-side (`soulbody.ValidateBody` in
+`internal/adaptersupport/soulbody/` — byte cap,
 injection scan, fence integrity) because a driver is never trusted to
 sanitize, the drift baseline is SKIPPED for driver provenance, and the driver
 is probed at build (fatal if unreachable; runtime faults degrade fail-soft).
@@ -475,20 +507,20 @@ drift from the in-process semantics:
 | Suite | Backend | Run site |
 |---|---|---|
 | `storeconformance` (`Run` + `RunPrunable`) | `memstore` | `engine/adapter/memstore/conformance_test.go` |
-| `storeconformance` (`Run` + `RunPrunable`) | `jsonlstore` | `internal/adapter/store/jsonlstore/conformance_test.go` |
-| `storeconformance` (`Run` + `RunPrunable`) | grpcdriver → bufconn → `NewSessionStoreServer(memstore)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `storeconformance` (`Run` + `RunPrunable`) | `jsonlstore` | `adapters/jsonlstore/conformance_test.go` |
+| `storeconformance` (`Run` + `RunPrunable`) | grpcdriver → bufconn → `NewSessionStoreServer(memstore)` | `adapters/grpcdriver/conformance_test.go` |
 | `memconformance` | flock `memory.Store` | `internal/adapter/memory/conformance_test.go` |
-| `memconformance` | grpcdriver → bufconn → `NewMemoryStoreServer(memory.Store)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `memconformance` | grpcdriver → bufconn → `NewMemoryStoreServer(memory.Store)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunSkillSource` | in-memory `NewFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
 | `sourceconformance.RunSkillSource` | `skills.FSSource` over a written-out fixture tree | `engine/adapter/skillfs/conformance_test.go` |
-| `sourceconformance.RunSkillSource` | grpcdriver → bufconn → `NewSkillSourceServer(NewFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunSkillSource` | grpcdriver → bufconn → `NewSkillSourceServer(NewFixtureSource)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunSoulSource` | `soul.Store` (temp file) | `internal/adapter/soul/conformance_test.go` |
-| `sourceconformance.RunSoulSource` | grpcdriver → bufconn → `NewSoulSourceServer(verbatim fake)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunSoulSource` | grpcdriver → bufconn → `NewSoulSourceServer(verbatim fake)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunAgentSource` | in-memory `NewAgentFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
 | `sourceconformance.RunAgentSource` | `agents.FSSource` over a written-out fixture tree | `engine/adapter/agentfs/conformance_test.go` |
-| `sourceconformance.RunAgentSource` | grpcdriver → bufconn → `NewAgentSourceServer(NewAgentFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunAgentSource` | grpcdriver → bufconn → `NewAgentSourceServer(NewAgentFixtureSource)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunCommandSource` | in-memory `NewCommandFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
-| `sourceconformance.RunCommandSource` | grpcdriver → bufconn → `NewCommandSourceServer(NewCommandFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunCommandSource` | grpcdriver → bufconn → `NewCommandSourceServer(NewCommandFixtureSource)` | `adapters/grpcdriver/conformance_test.go` |
 
 (Deliberately NO filesystem row for commands: `prompt.DirCommandExpander` is
 the workspace-tier surface — live, workspace-relative, read through the
@@ -496,33 +528,13 @@ the workspace-tier surface — live, workspace-relative, read through the
 
 ## Reliability — provider resilience
 
-The `port.LLMProvider` seam is wrapped by a **decorator**,
-`llmresilience.Wrap(inner, Config) port.LLMProvider`, so the loop is unchanged.
-It adds retry with exponential backoff and a circuit breaker, configured in
-`mecated` via `--llm-max-attempts` / `--llm-per-attempt-timeout` /
-`--llm-breaker-threshold` / `--llm-breaker-cooldown`.
+The `port.LLMProvider` seam is wrapped by `llmresilience.Wrap(inner, Config)`, so recovery is server-owned and the agent loop does not replay a model step itself. The decorator retries transient failures before the step reaches its semantic commit boundary, with exponential backoff, provider retry hints, and a circuit breaker. It is configured with `--llm-max-attempts`, `--llm-recovery-budget`, `--llm-per-attempt-timeout`, `--llm-stream-idle-timeout`, `--llm-breaker-threshold`, and `--llm-breaker-cooldown`.
 
-Its load-bearing invariant is **no replay after the first chunk**: retries happen
-only while *establishing* the stream (connect + first chunk). Once the first
-`Chunk` has been yielded, the decorator never re-issues the call, so the model
-never re-sees a half-streamed turn. The breaker opens after N consecutive
-**transient** establishment failures (rate-limits, timeouts, 5xx, network);
-permanent client errors (4xx other than 408/429) and caller cancellations don't
-count. It short-circuits with a `BreakerError` until its
-cooldown half-opens it; exhausted retries surface as an `ExhaustedError`. Both
-flow back to the client as a terminal `result` event — `session.ResultPayload`
-now carries an **`Error`** field, so a provider failure is reported to the caller
-rather than swallowed.
+The semantic commit boundary is the first text delta that makes accumulated text non-whitespace, or a clean `ChunkDone`. Before that boundary, reasoning, provider metadata, whitespace-only text, tool calls, and usage remain tentative. A retryable failure discards those tentative chunks and can retry the same model step; their usage remains accounted for. Once meaningful text is visible, a failure is terminal and the decorator never re-issues the call. A clean completion also commits pure-tool-call and whitespace-only turns, so completed tools are never rerun.
 
-Mid-stream stalls are bounded separately, by `Config.StreamIdleTimeout`
-(`--llm-stream-idle-timeout`, default 180s, 0 disables), NOT by
-`PerAttemptTimeout`: after the first chunk a per-chunk watchdog caps the idle
-gap between consecutive chunks and synthesizes a terminal `*StreamIdleError`
-(`errors.Is(_, context.DeadlineExceeded)`) when it fires — the wrapper must
-synthesize it because the adapters deliberately swallow the ctx error on
-cancel and would otherwise yield nothing. The stall is TERMINAL, never retried
-(no-replay-after-first-chunk holds); pre-first-chunk stalls stay on
-`PerAttemptTimeout` + retry, unchanged.
+`--llm-recovery-budget` starts at the first retryable failure or breaker rejection for each precommit model step, rather than at task start. It bounds retry waits and breaker admission; a distinct step receives a new budget. A value of `0` disables additional waiting and never shortens a provider retry hint. The caller's shorter deadline still wins, and token budgets are checked between turns rather than between retries. The breaker opens after its configured number of consecutive transient establishment failures, admits one half-open probe after its cooldown, and resets only after clean completion.
+
+Establishment ends on the first raw chunk, independently of semantic progress. `--llm-per-attempt-timeout` applies until then. Afterwards, `--llm-stream-idle-timeout` bounds gaps between raw chunks. An idle stall is retryable only while the step is still precommit; after semantic output it is terminal. Diagnostics record recovery activity without prompt text.
 
 The `llmresilience` decorator emits stream-lifecycle diagnostics through an
 **injected `port.Diagnostics`** (`Config.Diagnostics`, defaulted to

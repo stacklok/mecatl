@@ -23,7 +23,7 @@ func TestListDirDefaultExplicitAllow(t *testing.T) {
 	// Production assembly: mainRules(Config{}) is what buildEngine feeds the policy.
 	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
 	got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", "ListDir", json.RawMessage(`{}`)), nil).Effect
+		session.NewToolCall("id", "ListDir", json.RawMessage(`{}`)), nil).Decision.Effect
 	if got != governance.Allow {
 		t.Errorf("ListDir should default to Allow (mainRules production assembly), got %v", got)
 	}
@@ -39,8 +39,8 @@ func TestConfiguredAskOverridesListDirAllow(t *testing.T) {
 	policy := permpolicy.NewPolicy(rules, nil)
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 		session.NewToolCall("id", "ListDir", json.RawMessage(`{}`)), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("a configured (ScopeUser) Ask on ListDir must beat the built-in-floor Allow; got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("a configured (ScopeUser) Ask on ListDir must beat the built-in-floor Allow; got %v", got.Decision.Effect)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestConfiguredDenyOverridesListDirAllow(t *testing.T) {
 	policy := permpolicy.NewPolicy(rules, nil)
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 		session.NewToolCall("id", "ListDir", json.RawMessage(`{}`)), nil)
-	if got.Effect != governance.Deny {
-		t.Fatalf("a configured Deny on ListDir must win over the built-in-floor Allow; got %v", got.Effect)
+	if got.Decision.Effect != governance.Deny {
+		t.Fatalf("a configured Deny on ListDir must win over the built-in-floor Allow; got %v", got.Decision.Effect)
 	}
 }

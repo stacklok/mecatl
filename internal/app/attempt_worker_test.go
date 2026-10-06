@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memattempt"
@@ -233,32 +234,41 @@ func (r *blockingRenewalRepository) RenewClaim(ctx context.Context, partition le
 
 func TestAttemptWorkerDeadlineStopsAndJoinsClaimRenewal(t *testing.T) {
 	t.Parallel()
-	clock := &attemptWorkerClock{now: time.Unix(75, 0)}
-	base, partition, record := newAttemptWorkerRecord(t, clock)
-	repository := &blockingRenewalRepository{AttemptRepository: base, started: make(chan struct{}), returned: make(chan struct{})}
-	worker := attemptWorker{
-		repository: repository, partition: partition, id: record.ID,
-		claimTTL: time.Second, claimRenewInterval: time.Millisecond, callbackTimeout: 20 * time.Millisecond,
-		evidence: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
-			<-repository.started
-			<-ctx.Done()
-			return learning.FailureNone, ctx.Err()
-		},
-	}
 
-	got, err := worker.Run(context.Background())
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run error = %v, want deadline", err)
-	}
-	select {
-	case <-repository.returned:
-	default:
-		t.Fatal("Run returned before the blocked renewal stopped and joined")
-	}
-	wantBackoffExpiry := clock.now.Add(defaultAttemptSetupRetryBase)
-	if got.State != learning.AttemptRunning || got.State.Terminal() || !got.ClaimExpiresAt.Equal(wantBackoffExpiry) {
-		t.Fatalf("deadline did not retain persisted retry/backoff through renewal join: got %+v, want expiry %v", got, wantBackoffExpiry)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		const callbackTimeout = 20 * time.Millisecond
+
+		clock := &attemptWorkerClock{now: time.Unix(75, 0)}
+		base, partition, record := newAttemptWorkerRecord(t, clock)
+		repository := &blockingRenewalRepository{AttemptRepository: base, started: make(chan struct{}), returned: make(chan struct{})}
+		worker := attemptWorker{
+			repository: repository, partition: partition, id: record.ID,
+			claimTTL: time.Second, claimRenewInterval: time.Millisecond, callbackTimeout: callbackTimeout,
+			evidence: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+				<-repository.started
+				<-ctx.Done()
+				return learning.FailureNone, ctx.Err()
+			},
+		}
+
+		started := time.Now()
+		got, err := worker.Run(context.Background())
+		if elapsed := time.Since(started); elapsed != callbackTimeout {
+			t.Fatalf("Run elapsed = %v, want callback timeout %v", elapsed, callbackTimeout)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run error = %v, want deadline", err)
+		}
+		select {
+		case <-repository.returned:
+		default:
+			t.Fatal("Run returned before the blocked renewal stopped and joined")
+		}
+		wantBackoffExpiry := clock.now.Add(defaultAttemptSetupRetryBase)
+		if got.State != learning.AttemptRunning || got.State.Terminal() || !got.ClaimExpiresAt.Equal(wantBackoffExpiry) {
+			t.Fatalf("deadline did not retain persisted retry/backoff through renewal join: got %+v, want expiry %v", got, wantBackoffExpiry)
+		}
+	})
 }
 
 func TestAttemptWorkerReflectionFailureClassification(t *testing.T) {

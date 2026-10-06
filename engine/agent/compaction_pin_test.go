@@ -30,7 +30,7 @@ func renderTurn0Fragments(t *testing.T) []session.Message {
 			Key: "pref/runner", Value: "gotestsum", Description: "preferred test runner",
 		}}}},
 	)
-	msgs, err := asm.Assemble(context.Background(), memfs.NewWorkspace("/ws"))
+	msgs, err := asm.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("assemble turn-0 fragments: %v", err)
 	}
@@ -114,7 +114,7 @@ func assertGenuineGoalPinnedNotFragment(t *testing.T, compacted []session.Messag
 // first RoleUser message (the injected soul fragment) makes sawGoal false → red.
 func TestHeuristicCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 	conv := injectedPrefixTaskConversation(t)
-	compacted, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestHeuristicCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 // goal; reverting preservedHead's isGenuineUserTurn skip drops the goal → red.
 func TestCascadeCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 	conv := injectedPrefixTaskConversation(t)
-	compacted, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -225,7 +225,7 @@ type countingAssembler struct {
 	msg    string
 }
 
-func (a *countingAssembler) Assemble(context.Context, tool.Workspace) ([]session.Message, error) {
+func (a *countingAssembler) Assemble(context.Context) ([]session.Message, error) {
 	a.called++
 	return []session.Message{session.NewUserMessage(a.msg)}, nil
 }
@@ -244,7 +244,7 @@ func countInjected(sess *session.Session) int {
 // buildRequest's once-per-run fragment assembly.
 type erroringAssembler struct{ err error }
 
-func (a erroringAssembler) Assemble(context.Context, tool.Workspace) ([]session.Message, error) {
+func (a erroringAssembler) Assemble(context.Context) ([]session.Message, error) {
 	return nil, a.err
 }
 

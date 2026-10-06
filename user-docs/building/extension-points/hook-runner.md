@@ -174,9 +174,19 @@ Mecatl fails closed on errors from `SessionStart`, `UserPromptSubmit`, and
 broken hook cannot stop team coordination. `PostToolUse` errors leave the tool
 result unchanged, and notification errors have no effect on the run.
 
-The shipped guardrail checker also uses this interface. It blocks unsafe
-outbound calls in `PreToolUse` and replaces unsafe inbound results in
-`PostToolUse`.
+The contextual guardrail reviewer is downstream of trusted hook mutation rather
+than a replacement `HookRunner` outcome. Action review sees the exact effective
+call after deterministic gates are repeated when mutation changed arguments.
+Inbound review runs after the tool and PostToolUse hook, then privately holds an
+enforcing finding before recorder, history, event, client, or model delivery.
+
+A held result can be released exactly once by an interactive owner. Release does
+not rerun the tool, PostToolUse hook, or checker. Checker rationale is not added
+to hook events: machine fields are durable, while bounded concern/source/next-action
+text is fetched from the live owner-authorized detail RPC.
+
+The same applicable review rules bind main and worker calls. Only the dedicated
+checker engine is inert and tool-limited; this is the recursion guard.
 
 ## Next steps
 

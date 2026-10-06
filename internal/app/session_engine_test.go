@@ -33,11 +33,12 @@ func (fakeSink) Emit(context.Context, session.Event) {}
 // commands (so CommandExpander is a real DirCommandExpander, not the NoopExpander).
 func configWithCollaborators() Config {
 	return Config{
-		Model:          "test-model",
-		Compaction:     "cascade",
-		Tokenizer:      "tiktoken",
-		EnableCommands: true,
-		Sink:           fakeSink{},
+		Model:            "test-model",
+		Compaction:       "cascade",
+		Tokenizer:        "tiktoken",
+		EnableCommands:   true,
+		commandWorkspace: memfs.NewWorkspace("/command-source"),
+		Sink:             fakeSink{},
 	}
 }
 
@@ -363,7 +364,7 @@ func TestSelectorEngineWindowSelfCorrectsAtUse(t *testing.T) {
 	)
 	cfg := Config{Model: "default-model"}
 	oa := mockllm.New(mockllm.TextTurn("OPENAI-REPLY"))
-	meta := newLiveMetaStore() // catalog-only: NO entry for the live-only model
+	meta := newMetadataFixture() // catalog-only: NO entry for the live-only model
 	reg := &providerRegistry{
 		entries:   map[string]providerEntry{providerOpenAI: {id: providerOpenAI, provider: oa, available: true}},
 		defaultID: providerOpenAI,
@@ -387,7 +388,7 @@ func TestSelectorEngineWindowSelfCorrectsAtUse(t *testing.T) {
 	}
 
 	// THE LIVE SWAP, AFTER the engine was built. The SAME engine must self-correct.
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: liveModel, ContextLimit: liveWindow}},
 	})
 	if got := eng.ContextWindow(); got != liveWindow {
@@ -407,7 +408,7 @@ func TestSharedAndSelectorEngineResolveSameSource(t *testing.T) {
 	)
 	cfg := Config{Model: model} // the DEFAULT model is the same live-only model
 	oa := mockllm.New(mockllm.TextTurn("REPLY"))
-	meta := newLiveMetaStore()
+	meta := newMetadataFixture()
 	reg := &providerRegistry{
 		entries:      map[string]providerEntry{providerOpenAI: {id: providerOpenAI, provider: oa, available: true}},
 		defaultID:    providerOpenAI,
@@ -432,7 +433,7 @@ func TestSharedAndSelectorEngineResolveSameSource(t *testing.T) {
 		t.Fatalf("pre-swap windows shared=%d selector=%d, want both %d", sw, se, defaultContextWindowTokens)
 	}
 	// One Swap moves BOTH (same source).
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: model, ContextLimit: liveWindow}},
 	})
 	if sw, se := shared.ContextWindow(), selector.ContextWindow(); sw != liveWindow || se != liveWindow {
@@ -458,7 +459,7 @@ func TestConfiguredContextWindowReachesSharedSelectorAndExplorerEngines(t *testi
 		entries:      map[string]providerEntry{providerOpenAI: {id: providerOpenAI, provider: provider, available: true}},
 		defaultID:    providerOpenAI,
 		defaultModel: model,
-		meta:         newLiveMetaStore(),
+		meta:         newMetadataFixture(),
 	}
 	store := memstore.New()
 	policy := permpolicy.NewPolicy(defaultRules(), nil)

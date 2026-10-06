@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                                                              ┃
@@ -16,7 +16,7 @@
 ┃                          also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support  ┃
 ┃                          fixed shortcut; repeats do not count, and other views handle esc first                                              ┃
 ┃                          use the remappable Clear prompt action (ctrl+u) on any terminal                                                     ┃
-┃  lines 1–14 of 68 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                             ┃
+┃  lines 1–14 of 69 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                             ┃
 ┃                                                                                                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

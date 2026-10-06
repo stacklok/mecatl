@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs the whole Studio demo locally: a real `mecated` plus the Studio image,
+# wired on an internal Docker network. Only Studio's port is published, and only
+# on loopback (127.0.0.1:3100) — mecated's gRPC (50051) and HTTP (8080)
+# listeners are reachable solely from the `studio` container. mecated logs a
+# WARN about binding non-loopback with no auth; that is expected here because
+# the compose network is not exposed.
+#
+# Both images are local dev/demo builds: docker/mecated.Dockerfile is NOT the
+# official mecated release artifact (that's `ko`, see ../.ko.yaml), and the
+# Studio image built from ./Dockerfile is the same Dockerfile the release job
+# publishes as ghcr.io/stacklok/mecatl/studio but here it is built from your
+# checkout. See both Dockerfiles' header comments.
+#
+# With no OIDC issuer in front of this mecated, Studio comes up with interactive
+# login DISABLED (runtime mode "none") and a startup WARN; every browser that
+# reaches 127.0.0.1:3100 acts as one principal. STUDIO_ALLOW_UNAUTHENTICATED=1
+# is what lets the image accept that (ADR 0351, decision 6). Do not publish
+# this port beyond loopback.
+#
+# Usage: copy .env.example to .env, set a provider key, then
+# `docker compose up --build`, and open http://127.0.0.1:3100.
+services:
+  mecated:
+    build:
+      context: ..
+      dockerfile: apps/docker/mecated.Dockerfile
+    command:
+      - serve
+      - --grpc-addr=0.0.0.0:50051
+      # Studio needs BOTH listeners: gRPC for the SDK (MECATL_BASE_URL) and HTTP
+      # for the RFC 9728 protected-resource document (MECATL_RESOURCE_URL).
+      - --http-addr=0.0.0.0:8080
+      - --workspace=/workspace
+      - --ready-file=/tmp/mecated-ready.json
+    # List form, no `:-` default: an unset var is genuinely OMITTED from the
+    # container's environment. `KEY: ${VAR:-}` (map form) instead sets an EMPTY
+    # STRING when unset — which mecated still treats as "this provider is
+    # configured" and tries it (failing with a real 401), rather than skipping
+    # it and falling through to whichever provider actually has a real key.
+    environment:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+    volumes:
+      - mecatl-workspace:/workspace
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/mecated-ready.json"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mecated:
+        condition: service_healthy
+    # List form here too, so the optional STUDIO_* passthroughs below are omitted
+    # (not set to "") when they are not in .env.
+    environment:
+      - MECATL_BASE_URL=http://mecated:50051
+      - MECATL_RESOURCE_URL=http://mecated:8080
+      # The browser-facing origin — cookie Secure flags and the OIDC callback
+      # derive from it, never from the request scheme. http here because this is
+      # loopback-only local use.
+      - STUDIO_PUBLIC_URL=http://127.0.0.1:3100
+      # Required inside the image for a no-auth / static-token runtime — see the
+      # header comment.
+      - STUDIO_ALLOW_UNAUTHENTICATED=1
+      # Optional passthroughs from .env.
+      - STUDIO_LOG_LEVEL
+      - STUDIO_SESSION_SECRET
+    ports:
+      - "127.0.0.1:3100:3100"
+
+volumes:
+  mecatl-workspace:

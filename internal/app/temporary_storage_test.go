@@ -62,6 +62,7 @@ func TestADR_0281_ManagedModeUnixAdmission(t *testing.T) {
 	}{
 		{name: "managed linux", mode: temporaryStorageManaged, platform: "linux"},
 		{name: "managed macOS", mode: temporaryStorageManaged, platform: "darwin"},
+		{name: "managed FreeBSD", mode: temporaryStorageManaged, platform: "freebsd", wantErr: true},
 		{name: "managed windows", mode: temporaryStorageManaged, platform: "windows", wantErr: true},
 		{name: "managed other", mode: temporaryStorageManaged, platform: "plan9", wantErr: true},
 		{name: "system macOS", mode: temporaryStorageSystem, platform: "darwin"},

@@ -9,11 +9,11 @@ import (
 func TestCapabilitiesWithSessionMedia(t *testing.T) {
 	global := &mecatlv1.ServerCapabilities{Image: true, Audio: true, Teams: true}
 
-	overlaid := capabilitiesWithSessionMedia(global, &mecatlv1.SessionCapabilities{})
+	overlaid := capabilitiesWithSessionMediaFrom(capabilitiesFrom(global), &mecatlv1.SessionCapabilities{})
 	if overlaid.Image || overlaid.Audio || !overlaid.Teams || !overlaid.SessionMediaPresent {
 		t.Fatalf("explicit text-only session capabilities = %+v", overlaid)
 	}
-	fallback := capabilitiesWithSessionMedia(global, nil)
+	fallback := capabilitiesWithSessionMediaFrom(capabilitiesFrom(global), nil)
 	if !fallback.Image || !fallback.Audio || !fallback.Teams || fallback.SessionMediaPresent {
 		t.Fatalf("older-server fallback capabilities = %+v", fallback)
 	}

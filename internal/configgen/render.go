@@ -219,7 +219,7 @@ func placeholder(f *Field) string {
 	}
 	switch {
 	case f.Type == "bool":
-		return "false"
+		return configFalse
 	case f.Type == "int":
 		return "0"
 	case strings.HasPrefix(f.Type, "[]"):

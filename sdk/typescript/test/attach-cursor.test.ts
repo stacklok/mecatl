@@ -119,6 +119,24 @@ function authoredCursor(value: Record<string, unknown>): SdkCursor {
 }
 
 describe("attachment cursor", () => {
+  it("leaves callId absent for an older permission event", async () => {
+    const state = harness([ask(runId, "token-1", "legacy-ask"), result(runId, "token-2")]);
+    const { client, session } = await sessionFor(state);
+    try {
+      const envelopes = await collect(await session.attach(runId));
+      const permission = envelopes.find(
+        (envelope) => envelope.kind === "event" && envelope.event.kind === "permission.ask",
+      );
+      expect(permission).toMatchObject({ event: { payload: { askId: "legacy-ask" } } });
+      if (permission?.kind !== "event" || permission.event.kind !== "permission.ask") {
+        throw new Error("legacy permission event was not attached");
+      }
+      expect(Object.hasOwn(permission.event.payload, "callId")).toBe(false);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("the checkpoint advances when the consumer requests the next envelope", async () => {
     const state = harness([
       message(runId, "token-1", "one"),

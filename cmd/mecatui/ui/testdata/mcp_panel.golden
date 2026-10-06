@@ -1,22 +1,22 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-  ┃                                                                                              ┃
-  ┃  MCP inventory                                                                               ┃
-  ┃                                                                                              ┃
-  ┃  toolhive  [toolhive]  enabled  group=dev                                                    ┃
-  ┃    • fetch  streamable-http  http://127.0.0.1:9001                                           ┃
-  ┃    • github  streamable-http  http://127.0.0.1:9002                                          ┃
-  ┃    ! skipped sse server 'legacy' (unsupported transport)                                     ┃
-  ┃  static  [static]  disabled                                                                  ┃
-  ┃                                                                                              ┃
-  ┃  ToolHive groups: none                                                                       ┃
-  ┃                                                                                              ┃
-  ┃  snapshot from mecated startup — servers started later won't appear · r refresh · esc close  ┃
-  ┃                                                                                              ┃
-  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                   ┃                                                           ┃
+                   ┃  MCP inventory                                            ┃
+                   ┃                                                           ┃
+                   ┃  toolhive  [toolhive]  enabled  group=dev                 ┃
+                   ┃    • fetch  streamable-http  http://127.0.0.1:9001        ┃
+                   ┃    • github  streamable-http  http://127.0.0.1:9002       ┃
+                   ┃    ! skipped sse server 'legacy' (unsupported transport)  ┃
+                   ┃  static  [static]  disabled                               ┃
+                   ┃                                                           ┃
+                   ┃  ToolHive groups: none                                    ┃
+                   ┃                                                           ┃
+                   ┃  revision 0 · cached · r reload status · esc close        ┃
+                   ┃                                                           ┃
+                   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

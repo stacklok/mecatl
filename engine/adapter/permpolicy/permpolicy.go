@@ -70,10 +70,10 @@ type Policy struct {
 
 // AllowAllFloorRules returns the CANONICAL "default child posture" ruleset: a
 // single allow-all at ScopeBuiltinDefault. The floor scope is load-bearing for
-// the issue-#32 decision bits: a blanket allow-all must NOT register as a
+// the issue-#32 typed provenance: a blanket allow-all must NOT register as a
 // CONFIGURED rule (scope above the floor), or every substitution-floored child
-// ask would qualify for PermissionDecision.FlooredConfiguredAllow and
-// auto-approve instead of surfacing through the child-ask model. It is the
+// ask would receive configured-allow-floor provenance and auto-approve instead
+// of surfacing through the child-ask model. It is the
 // SINGLE source both the composition layer (internal/app childRules) and every
 // fixture that means "default child posture" build from, so the two cannot
 // drift. A fresh slice is returned per call (callers may append configured
@@ -131,7 +131,7 @@ var acceptEditsRules = []governance.Rule{
 // a resolver is configured). Because resolution is deny-dominant across the
 // whole merged set, an extra allow can never override a static (or config)
 // deny/ask.
-func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
+func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	var extra []governance.Rule
 	if mode == session.ModeAccept {
 		extra = append(extra, acceptEditsRules...)
@@ -142,7 +142,7 @@ func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode
 	if p.resolver != nil {
 		extra = append(extra, p.resolver.Resolve(ctx, ws)...)
 	}
-	return p.eval.EvaluateWith(c.Name, c.Args, mode == session.ModePlan, extra)
+	return port.PermissionResult{Decision: p.eval.EvaluateWith(c.Name, c.Args, mode == session.ModePlan, extra)}
 }
 
 // Learn records a per-session allow rule for tool call c (the model's "allow

@@ -1,6 +1,10 @@
 # matlatl configuration. https://github.com/stacklok/matlatl
 version: 1
 
+# Docusaurus resolves /... links inside user-docs from its content root.
+contentRoots:
+  - "user-docs"
+
 # Exclude git-ignored working files from the corpus (ADR 0024, matlatl v0.0.8):
 # union the repo's effective git ignore set (tracked + nested .gitignore rules,
 # .git/info/exclude, global excludes) with .matlatlignore. Local-only files
@@ -32,12 +36,14 @@ inboundThreshold: 1
 # ranked, and gated by `check` — but hides them from generated documentation
 # surfaces. It has zero effect on the check exit code or graph.json.
 #
-# Used here for Claude Code agent scaffolding: these files are dev tooling, not
-# product documentation, so they shouldn't appear in the navigation surface or
-# skew it — but we still want their links verified.
+# Used here for the skills under .claude/skills/: they are dev tooling, not
+# product documentation, so they stay off the navigation surface, but some link
+# into docs/ and those links must stay verified.
 emitExclude:
   # Skill definitions (SKILL.md + their references/). Note: SKILL.md files are
   # auto-detected reachability roots, so matlatl emits an informational config
   # notice that an excluded root won't render on the consumption surfaces —
   # that's expected and does not affect reachability or the gate.
   - ".claude/skills/"
+  # Site authoring guidance is linked from user-docs, but is not product docs.
+  - "website/AGENTS.md"

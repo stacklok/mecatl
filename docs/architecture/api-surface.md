@@ -19,7 +19,7 @@ reach the right run.
   OPTIONAL per-session `provider_id` / `model_id` selector (multi-provider Phase 0; see [multi-provider](providers.md))
   AND an OPTIONAL `profile` (enum-as-string: `""` = default, `"no-fs"`).
 
-  Placement is server-owned ([ADR 0291](../adr/0291-server-owned-session-placement.md)).
+  Placement is server-owned (ADR 0291).
   Create has no workspace/cwd/placement-id/selector field: omitted profile binds the
   trusted deployment default and `"no-fs"` binds explicit attenuation. Every session
   receives a valid exact `EnvironmentRef{Kind,ID,Revision}` before persistence. Public
@@ -52,7 +52,7 @@ reach the right run.
   permission posture through `Service.SetMode`; mid-turn changes are rejected by
   the session aggregate as `InvalidArgument`, so clients that want "next prompt"
   semantics defer and retry once idle. **`resolved_model` is fixed per TURN, not
-  per session**: when an operator has bound a `plan` model slot ([ADR 0030](../adr/0030-model-selection-heuristics.md)
+  per session**: when an operator has bound a `plan` model slot (ADR 0030
   Layer 3, the opusplan pattern), a plan↔execute mode switch re-resolves the
   effective model **between turns** at the run-entry seam (within the same
   provider). The `SetMode` response still echoes the pre-rebuild model (the model
@@ -139,7 +139,7 @@ speaking an editor protocol delivered over its own stdin/stdout; the project's
 no-stdio rule is about MCP servers, which are never `os/exec`-spawned.) The
 design decisions behind this adapter — framing, the per-session client MCP
 mount, fs/\* delegation, and learned permissions — are recorded in
-[ADR 0001 — the ACP adapter](../adr/0001-acp-adapter.md).
+ADR 0001 — the ACP adapter.
 
 > **The wire is one surface; the engine library is another.** The proto/HTTP/ACP
 > surface above is the way a *client process* drives mecatl. An *embedding Go
@@ -149,7 +149,7 @@ mount, fs/\* delegation, and learned permissions — are recorded in
 > governed by [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) and the
 > `api-compat` freshness gate (`internal/apicheck`, `task api:check`), which fails
 > CI on any unflagged change to the committed `engine/api/*.txt` baselines (#114,
-> [ADR 0037](../adr/0037-engine-stability-contract.md)). See
+> ADR 0037). See
 > [extensibility](extensibility.md) for the engine-as-library framing.
 
 ## Prerequisites

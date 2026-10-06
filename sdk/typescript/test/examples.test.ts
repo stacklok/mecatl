@@ -12,11 +12,13 @@ const sourceRoot = join(packageRoot, "src");
 const conciseExamples = [
   "browser-bff.ts",
   "callback-tool.ts",
+  "capability-discovery.ts",
   "durable-attachment.ts",
   "deno-local.ts",
   "deno-remote.ts",
   "local-spawn.ts",
   "mcp-authorization.ts",
+  "mcp-workspace-enrollment.ts",
   "multimodal.ts",
   "one-shot-query.ts",
   "permissions.ts",
@@ -25,6 +27,7 @@ const conciseExamples = [
   "remote-connect.ts",
   "run-events.ts",
   "schedules.ts",
+  "session-lifecycle.ts",
   "teams.ts",
 ] as const;
 const publicImports = new Set([

@@ -50,6 +50,21 @@ func NewRequestPolicy(credential Credential, now func() time.Time, transport htt
 // has no blanket timeout because a streaming response may run for minutes. The
 // lister builds its own bounded client over the same immutable transport.
 func (p RequestPolicy) HTTPClient() *http.Client {
+	return p.httpClient()
+}
+
+// HTTPClientWithFinalTransport returns an inference client whose final network
+// transport is decorated after the policy has rebuilt its trusted headers. The
+// original policy remains unchanged, so listing continues to use its existing
+// transport composition.
+func (p RequestPolicy) HTTPClientWithFinalTransport(decorate func(http.RoundTripper) http.RoundTripper) *http.Client {
+	if decorate != nil {
+		p.base = decorate(p.base)
+	}
+	return p.httpClient()
+}
+
+func (p RequestPolicy) httpClient() *http.Client {
 	return &http.Client{
 		Transport: p,
 		CheckRedirect: func(*http.Request, []*http.Request) error {

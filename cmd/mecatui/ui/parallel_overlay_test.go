@@ -46,6 +46,25 @@ func endPar(parent, join string, count, winner int, _ string, stop string) clien
 	}
 }
 
+func TestParallelBranchWinnerUsesStatusCellSelectedAndUnselected(t *testing.T) {
+	group := &parallelGroup{winner: 1, branches: []parallelBranch{{index: 0, label: "first"}, {index: 1, label: "winner"}}}
+	for _, tc := range []struct {
+		name, want string
+		cursor     int
+	}{
+		{name: "winner unselected", cursor: 0, want: " ★ ◐ winner"},
+		{name: "winner selected", cursor: 1, want: "▶★ ◐ winner"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := parallelState{branches: agentsTestListCursor(tc.cursor)}
+			got := stripANSIstr(parallelBranchSelectableList(aztec(), state, group, defaultHelpKeys(), 80).render(aztec(), 20))
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("winner gutter = %q, want output containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // seedParallel applies a sequence of parallel.* msgs through the real Update path so the
 // model's grouped parallelGroups state is built exactly as it would be at runtime. It
 // seeds a Parallel tool card for the inline-card routing first.
@@ -266,21 +285,15 @@ func TestParallelBranchRowSeparatesSummaryAndActivity(t *testing.T) {
 		toolCount:     2,
 		usage:         client.Usage{InputTokens: 1200, OutputTokens: 340},
 	}
-	selected := stripANSIstr(strings.TrimSuffix(renderParallelBranchRow(aztec(), br, -1, true, 80), "\n"))
-	unselected := stripANSIstr(strings.TrimSuffix(renderParallelBranchRow(aztec(), br, -1, false, 80), "\n"))
-	selectedRows := strings.Split(selected, "\n")
-	unselectedRows := strings.Split(unselected, "\n")
-	if len(selectedRows) != 2 || len(unselectedRows) != 2 {
-		t.Fatalf("branch summaries = %q / %q, want title plus details", selected, unselected)
+	other := parallelBranch{index: 1, label: "other"}
+	group := []parallelGroup{{parentCallID: "group", winner: -1, branches: []parallelBranch{*br, other}}}
+	selected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group"}, group, defaultHelpKeys(), 80, 0))
+	unselected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group", branches: agentsTestListCursor(1)}, group, defaultHelpKeys(), 80, 0))
+	if !strings.Contains(selected, "▶  ✓ branch-1") || !strings.Contains(unselected, "   ✓ branch-1") {
+		t.Fatalf("bounded branch selection markers changed: %q / %q", selected, unselected)
 	}
-	if !strings.HasPrefix(selectedRows[0], "▶ ✓ branch-1") || !strings.HasPrefix(unselectedRows[0], "  ✓ branch-1") {
-		t.Fatalf("selection markers changed branch title semantics: %q / %q", selectedRows[0], unselectedRows[0])
-	}
-	if selectedRows[1] != unselectedRows[1] || !strings.HasPrefix(selectedRows[1], "    ") {
-		t.Fatalf("details should retain one shared four-column indent: %q / %q", selectedRows[1], unselectedRows[1])
-	}
-	if !strings.Contains(selectedRows[0], "…") || !strings.Contains(selectedRows[1], "gpt-5-mini") {
-		t.Fatalf("summary did not clip title or retain routing details: %q", selected)
+	if !strings.Contains(selected, "\n    ") || !strings.Contains(selected, "gpt-5-mini") {
+		t.Fatalf("bounded branch summary lost indented routing details: %q", selected)
 	}
 	if got := indentParallelBranchTrace("  ✓ Edit\n  · changed file", 32); got != "  │   ✓ Edit\n  │   · changed file" {
 		t.Fatalf("activity gutter = %q", got)
@@ -396,7 +409,8 @@ func TestParallelRosterWindowed(t *testing.T) {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
 	}
 	out := stripANSIstr(m.View().Content)
-	rows := m.parallelRosterPageSize(m.conv.parallelGroups)
+	th, hk, width, height := m.agentsListGeometry()
+	rows := len(parallelSelectableList(th, m.parallel, m.conv.parallelGroups, hk, width).boundedView(th, height).Rows)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be < groups %d", rows, n)
 	}
@@ -469,12 +483,13 @@ func TestParallelBranchOrderByIndex(t *testing.T) {
 	i1 := strings.Index(out, "branch-1")
 	i2 := strings.Index(out, "branch-2")
 	i3 := strings.Index(out, "branch-3")
-	if i1 < 0 || i2 < 0 || i3 < 0 {
-		t.Fatalf("group focus missing a branch row:\n%s", out)
+	if i1 < 0 || i2 < 0 || i1 >= i2 || i3 >= 0 && i2 >= i3 {
+		t.Fatalf("visible branches are not ordered by index:\n%s", out)
 	}
-	if i1 >= i2 || i2 >= i3 {
-		t.Fatalf("branches not rendered BY INDEX (want branch-1<branch-2<branch-3 despite out-of-order events): "+
-			"i1=%d i2=%d i3=%d\n%s", i1, i2, i3, out)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = mm.(Model)
+	if end := stripANSIstr(m.View().Content); !strings.Contains(end, "branch-3") || !strings.Contains(end, "▶") {
+		t.Fatalf("last by-index branch is not reachable:\n%s", end)
 	}
 }
 

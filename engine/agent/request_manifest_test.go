@@ -35,7 +35,7 @@ func (t manifestTool) Advertised() tool.ToolSpec {
 
 type customManifestInstructions struct{ secret string }
 
-func (a customManifestInstructions) Assemble(context.Context, tool.Workspace) ([]session.Message, error) {
+func (a customManifestInstructions) Assemble(context.Context) ([]session.Message, error) {
 	return []session.Message{session.NewUserMessage("custom secret " + a.secret)}, nil
 }
 

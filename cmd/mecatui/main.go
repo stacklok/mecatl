@@ -24,12 +24,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -47,6 +49,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
@@ -167,6 +170,12 @@ type restartTransport struct {
 	TLSCAFile string
 }
 
+type pendingApprovalClient struct{ *client.Client }
+
+func (c pendingApprovalClient) WatchPendingApprovalRun(ctx context.Context, approval client.PendingApproval) (ui.PendingApprovalWatch, error) {
+	return c.Client.WatchPendingApprovalRun(ctx, approval)
+}
+
 type runOptions struct {
 	connectOpen            bool
 	connectError           string
@@ -175,6 +184,8 @@ type runOptions struct {
 	connectResumeSessionID string
 	connectTransport       restartTransport
 	recoveryOnly           bool
+	beforeEmbeddedStart    func(app.Config) error
+	runProgram             func(context.Context, ui.Model) (tea.Model, error)
 }
 
 //nolint:gocyclo // composition root sequences transport, safe auth recovery, and Bubble Tea lifecycle.
@@ -199,6 +210,10 @@ func runWithOptions(argv []string, options runOptions) error {
 	cfg, err := parseRunConfig(res)
 	if err != nil {
 		return err
+	}
+	if cfg.transportMode == modeLocal {
+		cfg.microVMProgress = make(chan string, 16)
+		cfg.microVMSelected = &atomic.Bool{}
 	}
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
@@ -250,9 +265,9 @@ func runWithOptions(argv []string, options runOptions) error {
 	// Bubble Tea quits); second signal during cleanup = immediate hard os.Exit(130).
 	ctx, forceExit := setupSignalHandler()
 
-	// Resolve where to connect: an explicit external server, a server already
-	// running on the loopback default, or an embedded server we host in-process.
-	target, dial, transCleanup, err := resolveTransport(ctx, cfg)
+	// Resolve where to connect before any potentially mutating readiness work. Resume
+	// placement is authoritative and must reject a mismatched profile first.
+	target, dial, transCleanup, err := resolveTransportWithHook(ctx, cfg, options.beforeEmbeddedStart)
 	if err != nil {
 		if reason, ok := client.AuthFailure(err, cfg.authToken != ""); ok {
 			recoveryTarget := target
@@ -274,15 +289,15 @@ func runWithOptions(argv []string, options runOptions) error {
 		return err
 	}
 
-	resumeCfg := cfg
+	var resume *client.ResumeSelection
+	uiWorkspace := cfg.workspace
 	if options.connectResumeSessionID != "" {
 		// This candidate originated from an interrupted auth stream, not an
-		// explicit --resume. GetSession/transcript remain the server's ownership
-		// proof; only a terminal turn boundary can be adopted automatically.
-		resumeCfg.resumeID = options.connectResumeSessionID
-		resumeCfg.resumeLatest = false
+		// explicit --resume. It never opens pending-approval recovery.
+		resume, err = loadExactStartupResume(ctx, cl, options.connectResumeSessionID, false)
+	} else {
+		resume, uiWorkspace, err = startupResumeConfig(ctx, cl, cfg)
 	}
-	resume, uiWorkspace, err := startupResumeConfig(ctx, cl, resumeCfg)
 	if options.connectResumeSessionID != "" {
 		// An auth-recovery candidate is opportunistic. Only a verified terminal
 		// boundary is adopted; every other state and every ambiguous verification
@@ -325,6 +340,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Conv:                    cl,
 		MCP:                     cl,
 		Cmds:                    cl,
+		Guardrails:              cl,
 		ServerInfo:              cl,
 		Skills:                  cl,
 		Agents:                  cl,
@@ -342,6 +358,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Transcript:              cl,
 		Replayer:                cl,
 		LiveStream:              cl,
+		PendingApprovals:        pendingApprovalClient{cl},
 		SelectionStore:          store,
 		Learning:                learningSettingsForConfig(cfg),
 		Connect:                 savedConnectController{},
@@ -360,11 +377,18 @@ func runWithOptions(argv []string, options runOptions) error {
 		ThemeAutoDetect:         themeAutoDetect,
 		ProbeKeyboardCapability: keyboardProbe,
 		StatusSource:            statusSource,
-		LocalSessionContext:     cl,
-		Server:                  target,
-		ConnectionMode:          connectionMode,
-		ClientBuild:             buildinfo.BuildID,
-		Embedded:                cfg.transportMode == modeLocal,
+		StartupProgress:         cfg.microVMProgress,
+		StartupFailureHint: func() string {
+			if cfg.microVMSelected != nil && cfg.microVMSelected.Load() {
+				return microVMFailureHint(cfg)
+			}
+			return ""
+		},
+		LocalSessionContext: cl,
+		Server:              target,
+		ConnectionMode:      connectionMode,
+		ClientBuild:         buildinfo.BuildID,
+		Embedded:            cfg.transportMode == modeLocal,
 		// Model is best-effort display only. For an EXTERNAL --server it reflects
 		// the locally-configured --model flag and may NOT match the server's actual
 		// model (the server owns provider config); for an embedded server it is
@@ -404,6 +428,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.MCPAuthorization = cl
 	deps.WorkspaceEnrollment = cl
 	deps.OpenURL = openBrowserURL
+	applyClientPresentationSettings(settings, &deps)
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
@@ -412,29 +437,38 @@ func runWithOptions(argv []string, options runOptions) error {
 		return err
 	}
 
-	prog := newMecatuiProgram(ctx, deps, title)
-	finalModel, runErr := prog.Run()
+	var finalModel tea.Model
+	var runErr error
+	if options.runProgram != nil {
+		deps.TerminalTitle = title.Set
+		finalModel, runErr = options.runProgram(ctx, ui.New(deps))
+	} else {
+		finalModel, runErr = newMecatuiProgram(ctx, deps, title).Run()
+	}
 	interrupted := ctx.Err() != nil
 	if err := closeTerminalTitle(title); runErr == nil && err != nil {
 		runErr = err
 	}
 
-	runCleanup(forceExit, func() {
-		// Settle the lifecycle hook FIRST: this must complete before the restart
-		// below can build a successor notifier, or a slow hook command could
-		// deliver this generation's terminal after the next generation's busy
-		// signal and mark the host idle during a live run.
-		closeAgentLifecycleHook(agentHook)
-		_ = cl.Close()
-		transCleanup()
+	finishFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted, cfg.transportMode == modeLocal, cl, func() {
+		runCleanup(forceExit, func() {
+			// Settle the lifecycle hook FIRST: this must complete before the restart
+			// below can build a successor notifier, or a slow hook command could
+			// deliver this generation's terminal after the next generation's busy
+			// signal and mark the host idle during a live run.
+			closeAgentLifecycleHook(agentHook)
+			_ = cl.Close()
+			transCleanup()
+		})
 	})
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, restartTransport{Target: target, TLSCAFile: cfg.tlsCA})
 	}
-	if shouldWriteFinalSessionHandoff(finalModel, runErr, interrupted) {
-		writeFinalSessionHandoff(os.Stderr, finalModel)
-	}
 	return runErr
+}
+
+func applyClientPresentationSettings(settings clientSettings, deps *ui.Deps) {
+	deps.ShowBenignHookNotices = settings.HookNotices.ShowBenign
 }
 
 func applyDebugConfig(cfg config, deps *ui.Deps) {
@@ -938,89 +972,18 @@ func keyOverridesFromConfig(cfg config) map[string][]string {
 //     probes, never embeds).
 //   - bare `mecatui` (modeLocal): host an embedded server over a UNIX socket
 //     (never probes loopback).
-//
-//nolint:gocyclo // composition root resolves the mutually exclusive remote and embedded transports.
 func resolveTransport(ctx context.Context, cfg config) (target string, dial client.DialConfig, cleanup func(), err error) {
+	return resolveTransportWithHook(ctx, cfg, nil)
+}
+
+func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedStart func(app.Config) error) (target string, dial client.DialConfig, cleanup func(), err error) {
 	noop := func() {}
 
 	// The two modes are PURE (ADR 0087): `mecatui connect ADDRESS` ALWAYS dials
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
-		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
-		if cfg.authToken == "" && !cfg.anonymous {
-			root := filepath.Join(xdg.ConfigHome, "mecatl")
-			registry, regErr := clientauth.OpenExistingRegistry(root)
-			if regErr != nil {
-				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-			}
-			conn, findErr := registry.Find(cfg.connectAddress)
-			if findErr == nil {
-				target = conn.Identity.Target
-				dial.Server = target
-				if err := applySavedRemoteTLSPolicy(cfg, &dial); err != nil {
-					return target, client.DialConfig{}, noop, err
-				}
-				var ca []byte
-				var readErr error
-				if conn.IssuerCAFile != "" {
-					ca, readErr = os.ReadFile(conn.IssuerCAFile)
-				}
-				if readErr != nil {
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-				}
-				store, _, storeErr := clientauth.OpenExistingCredentialStore(ctx, root)
-				if storeErr != nil {
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-				}
-				creds, credsErr := clientauth.NewCredentials(store)
-				if credsErr != nil {
-					_ = store.Close()
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-				}
-				if _, loadErr := creds.Load(ctx, conn.Identity); loadErr != nil {
-					_ = store.Close()
-					if errors.Is(loadErr, credentialstore.ErrNotFound) {
-						// The registry entry above proves this target IS enrolled, so an
-						// absent credential means the stored one is gone -- typically
-						// deleted after a provider rejected its refresh. NotEnrolled
-						// belongs to the FindTarget miss below, not here. clientauth
-						// remaps this within one process lifetime; across a restart that
-						// memory is gone and only the registry can tell them apart.
-						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthSessionExpired}
-					}
-					if errors.Is(loadErr, clientauth.ErrCorrupt) {
-						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
-					}
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-				}
-				source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca, Registry: registry})
-				if sourceErr != nil {
-					_ = store.Close()
-					// NewRefreshSource fails with ErrDiscovery when the issuer is
-					// unreachable, its TLS is untrusted, or JWKS will not load --
-					// an infrastructure/network problem, not evidence the local
-					// keyring/registry/store is broken. Return it unwrapped so it
-					// falls through AuthFailure's deliberate unclassified case
-					// instead of steering the user toward local-storage recovery.
-					if errors.Is(sourceErr, clientauth.ErrDiscovery) {
-						return target, client.DialConfig{}, noop, sourceErr
-					}
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-				}
-				dial.TokenSource = mapAuthTokenSource(source)
-				return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
-			}
-			if errors.Is(findErr, credentialstore.ErrNotFound) {
-				// A clean registry miss is not an authentication decision. The server
-				// remains authoritative: dial without a bearer and recover only if it
-				// actually returns Unauthenticated. Registry/storage errors still fail
-				// closed.
-				return cfg.connectAddress, dial, noop, nil
-			}
-			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
-		}
-		return cfg.connectAddress, dial, noop, nil
+		return resolveRemoteTransport(ctx, cfg, noop)
 	}
 
 	// We are about to HOST an embedded server (the bare/local mode).
@@ -1072,6 +1035,14 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 		composition.Sink = pm.Sink
 	}
 	composition.ToolCallRecorder = pm.ToolCallRecorder
+	if beforeEmbeddedStart != nil {
+		if err := beforeEmbeddedStart(composition); err != nil {
+			cancelHeartbeat()
+			shutdownProductMetrics(pm)
+			_ = diagCloser.Close()
+			return target, client.DialConfig{}, noop, err
+		}
+	}
 	srv, err := embed.Start(ctx, composition, perfConfig(cfg, perfLogger))
 	if err != nil {
 		cancelHeartbeat()
@@ -1087,7 +1058,6 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 		diag.Log(ctx, port.LevelInfo, "mecatui: embedded server diagnostics log opened",
 			"path", diagSink.Path)
 	}
-	fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
 	if addr := srv.AdminAddr(); addr != "" {
 		paths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
 		if cfg.perfMCP {
@@ -1192,6 +1162,117 @@ func shutdownProductMetrics(pm cliconfig.ProductMetricsHandles) {
 	_ = pm.Shutdown(shutdownCtx)
 }
 
+// normalizedLookupTarget adds gRPC's default HTTPS port to bare host and IPv6
+// targets before FindTarget, without allowing resource aliases to select another
+// target's saved trust.
+func normalizedLookupTarget(target string) string {
+	if !strings.ContainsAny(target, ":/?#@") {
+		return net.JoinHostPort(target, "443")
+	}
+	if strings.HasPrefix(target, "[") && strings.HasSuffix(target, "]") {
+		host := target[1 : len(target)-1]
+		ip, _, _ := strings.Cut(host, "%")
+		if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+			return net.JoinHostPort(host, "443")
+		}
+	}
+	return target
+}
+
+// resolveRemoteTransport dials only the configured remote target. It never starts
+// an embedded server or reports embedded startup progress.
+func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (target string, dial client.DialConfig, cleanup func(), err error) {
+	dial = client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
+	if cfg.authToken != "" || cfg.anonymous {
+		registry, regErr := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+		if regErr == nil {
+			if conn, findErr := registry.FindTarget(normalizedLookupTarget(cfg.connectAddress)); findErr == nil {
+				// Explicit bearer and anonymous connects may reuse only the
+				// target's saved server trust. Their transport policy remains
+				// entirely caller-controlled; the managed-OIDC guarantee above
+				// must not be inherited with this metadata.
+				applySavedServerCA(cfg, conn, &dial)
+			}
+		}
+		// Registry open/find failures are intentionally ignored here: explicit
+		// bearer and anonymous modes do not depend on saved enrollment. A lookup
+		// is only a best-effort opportunity to reuse its non-secret server CA.
+		return cfg.connectAddress, dial, noop, nil
+	}
+
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	registry, regErr := clientauth.OpenExistingRegistry(root)
+	if regErr != nil {
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	conn, findErr := registry.Find(cfg.connectAddress)
+	if errors.Is(findErr, credentialstore.ErrNotFound) {
+		// A clean registry miss is not an authentication decision. The server
+		// remains authoritative: dial without a bearer and recover only if it
+		// actually returns Unauthenticated. Registry/storage errors still fail
+		// closed.
+		return cfg.connectAddress, dial, noop, nil
+	}
+	if findErr != nil {
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+
+	target = conn.Identity.Target
+	dial.Server = target
+	applySavedServerCA(cfg, conn, &dial)
+	if err := applySavedRemoteTLSPolicy(cfg, &dial); err != nil {
+		return target, client.DialConfig{}, noop, err
+	}
+	var ca []byte
+	if conn.IssuerCAFile != "" {
+		ca, err = os.ReadFile(conn.IssuerCAFile)
+	}
+	if err != nil {
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	store, _, storeErr := clientauth.OpenExistingCredentialStore(ctx, root)
+	if storeErr != nil {
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	creds, credsErr := clientauth.NewCredentials(store)
+	if credsErr != nil {
+		_ = store.Close()
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	if _, loadErr := creds.Load(ctx, conn.Identity); loadErr != nil {
+		_ = store.Close()
+		if errors.Is(loadErr, credentialstore.ErrNotFound) {
+			// The registry entry above proves this target IS enrolled, so an
+			// absent credential means the stored one is gone -- typically
+			// deleted after a provider rejected its refresh. NotEnrolled
+			// belongs to the FindTarget miss above, not here. clientauth
+			// remaps this within one process lifetime; across a restart that
+			// memory is gone and only the registry can tell them apart.
+			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthSessionExpired}
+		}
+		if errors.Is(loadErr, clientauth.ErrCorrupt) {
+			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+		}
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca, Registry: registry})
+	if sourceErr != nil {
+		_ = store.Close()
+		// NewRefreshSource fails with ErrDiscovery when the issuer is
+		// unreachable, its TLS is untrusted, or JWKS will not load --
+		// an infrastructure/network problem, not evidence the local
+		// keyring/registry/store is broken. Return it unwrapped so it
+		// falls through AuthFailure's deliberate unclassified case
+		// instead of steering the user toward local-storage recovery.
+		if errors.Is(sourceErr, clientauth.ErrDiscovery) {
+			return target, client.DialConfig{}, noop, sourceErr
+		}
+		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	dial.TokenSource = mapAuthTokenSource(source)
+	return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
+}
+
 // applyTrustPrompt runs the pre-TUI first-encounter workspace-trust gate
 // (Workspace-Trust Phase 2c) and returns cfg with trustProject set when the
 // operator (or an already-existing trust grant) trusts the run. It builds the
@@ -1220,14 +1301,47 @@ func applyTrustPrompt(cfg config, diag port.Diagnostics) config {
 // mecatuiServerImplementation is the stable family of the embedded server.
 const mecatuiServerImplementation = "mecatui"
 
+func microVMFailureHint(config) string {
+	return "next: run 'mecated microvm doctor'; inspect the mecatui diagnostics log for detailed cause"
+}
+
 // embeddedConfig constructs the embedded server's declarative app.Config. app.Build
 // loads the injected provider credential; connect mode never calls this function.
 func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	cmdDir, enableCmds := resolveCommands(cfg)
 	skillDirs, skillsConv := resolveSkills(cfg)
 	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
+	failureHint := microVMFailureHint(cfg)
 	out := app.Config{
-		Workspace:            cfg.workspace,
+		Workspace: cfg.workspace,
+		MicroVMReadinessObserver: func(_ microvmmanager.ReadinessStage, message string) {
+			if cfg.microVMProgress == nil {
+				return
+			}
+			select {
+			case cfg.microVMProgress <- message:
+			default:
+			}
+		},
+		MicroVMReadinessFailed: func(microvmmanager.ReadinessStage) {
+			if cfg.microVMSelected != nil {
+				cfg.microVMSelected.Store(true)
+			}
+		},
+		MicroVMReadinessFailureHint: failureHint,
+		MicroVMReadyRequest: func(selection microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+			request, enabled, err := microVMDevelopmentReadyRequest(
+				cfg.microVMDevRelease,
+				cfg.microVMDevAcknowledge,
+				version,
+				microVMReleaseStampRequired != "" || microVMReleaseDefaultsB64 != "",
+				selection,
+			)
+			if enabled {
+				return request, err
+			}
+			return microvmmanager.ReadyRequestFromDefaults(microVMReleaseDefaultsB64, version, selection)
+		},
 		ServerImplementation: mecatuiServerImplementation,
 		Model:                cfg.model,
 		DefaultProvider:      cfg.defaultProvider,
@@ -1251,7 +1365,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		NoShell:               cfg.noShell,
 		Compaction:            "heuristic",
 		Tokenizer:             "heuristic",
-		LLMMaxAttempts:        3,
+		LLMMaxAttempts:        cfg.llmMaxAttempts,
+		LLMRecoveryBudget:     cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:  cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:  cfg.llmStreamIdleTimeout,
 		ContextWindowOverride: cfg.contextWindowOverride,

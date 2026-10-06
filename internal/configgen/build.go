@@ -16,6 +16,7 @@ const (
 	configDurationType = "duration"
 	configAbsent       = "(absent)"
 	configRequired     = "(required)"
+	configFalse        = "false"
 )
 
 // BuildModel constructs the settings.yaml Model by REFLECTING over the permconfig
@@ -34,11 +35,14 @@ func BuildModel(docs Docs) *Model {
 		providersSubtree(docs),
 		credentialStoreSubtree(docs),
 		providerOverridesSubtree(docs),
+		harnessContextSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		systemPromptSubtree(docs),
 		commandRunnerSubtree(docs),
 		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
+		executionSubtree(docs),
 		steerSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
@@ -80,7 +84,7 @@ func zeroDefault(t reflect.Type) string {
 	case reflect.String:
 		return "(empty)"
 	case reflect.Bool:
-		return "false"
+		return configFalse
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return "0"
 	default:
@@ -105,6 +109,47 @@ func renderType(t reflect.Type) string {
 		return strings.ToLower(t.Name())
 	default:
 		return t.Kind().String()
+	}
+}
+
+func harnessContextSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("HarnessContextSection", permconfig.HarnessContextSection{}, docs)
+	kindFields := fieldsOf("HarnessContextKind", permconfig.HarnessContextKind{}, docs)
+	for _, field := range kindFields {
+		switch field.Key {
+		case "mode":
+			field.ExampleValue = "combine"
+		case "exclude":
+			field.Nested = fieldsOf("HarnessContextExclude", permconfig.HarnessContextExclude{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
+		case "overrides":
+			field.Nested = fieldsOf("HarnessContextOverride", permconfig.HarnessContextOverride{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
+		}
+	}
+	for _, field := range fields {
+		if field.Key != "kinds" {
+			continue
+		}
+		for _, key := range []string{"instructions", "commands", "rules", "skills", "agent_defs"} {
+			field.Nested = append(field.Nested, &Field{Key: key, Type: "HarnessContextKind", Default: "(absent)", Nested: kindFields})
+		}
+	}
+	return &Subtree{
+		Key: "harness_context", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Selects trusted deployment-registered instruction and customization source IDs independently from execution placement. Unknown configured IDs fail startup; registration support is deployment-specific.",
+		Fields: fields,
+		Example: []string{
+			"enabled_sources: [local]",
+			"kinds:",
+			"  instructions: {sources: [local], mode: combine}",
+			"  commands: {sources: [local], mode: combine}",
+			"  rules: {sources: [local], mode: combine}",
+			"  skills: {sources: [local], mode: combine}",
+			"  agent_defs: {sources: [local], mode: combine}",
+		},
 	}
 }
 
@@ -140,11 +185,12 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	for _, f := range fields {
 		switch f.Key {
 		case "model":
-			f.EnableNote = "Setting a model here ENABLES guardrails (the guardrails-parity " +
-				"enable model). A configured model with no rules runs the default BLOCK set " +
-				"(WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). " +
+			f.EnableNote = "Setting a model here ENABLES contextual guardrails. " +
+				"A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. " +
 				"Leave empty (and pass no --guardrails-model) to keep guardrails OFF."
 			f.ExampleValue = "claude-haiku-4-6"
+		case "taskWindow":
+			f.Default, f.ExampleValue = "1", "1"
 		case "rules":
 			f.Nested = fieldsOf("GuardrailRuleSpec", permconfig.GuardrailRuleSpec{}, docs)
 		}
@@ -231,6 +277,18 @@ func retentionSubtree(docs Docs) *Subtree {
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
 }
 
+func systemPromptSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("SystemPromptSection", permconfig.SystemPromptSection{}, docs)
+	fields[0].Default, fields[0].ExampleValue = "true", configFalse
+	return &Subtree{
+		Key:          "system_prompt",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "Strict standard prompt policy. Operator-tier only; project values are ignored.",
+		Fields:       fields,
+	}
+}
+
 func commandRunnerSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("CommandRunnerSection", permconfig.CommandRunnerSection{}, docs)
 	environment := fieldsOf("CommandRunnerEnvironment", permconfig.CommandRunnerEnvironment{}, docs)
@@ -272,6 +330,21 @@ func temporaryStorageSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{Key: "temporary_storage", Tier: TierOperator, CommentedOut: true,
 		Doc: "Managed command temporary-storage policy. Read only from user-global settings.yaml; project and explicit CLI config values are ignored. Managed mode is Linux-only; system preserves inherited temporary-directory behavior.", Fields: fields}
+}
+
+func executionSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("ExecutionSection", permconfig.ExecutionSection{}, docs)
+	microVM := fieldsOf("ExecutionMicroVMSection", permconfig.ExecutionMicroVMSection{}, docs)
+	guestEgress := fieldsOf("ExecutionGuestEgressSection", permconfig.ExecutionGuestEgressSection{}, docs)
+	fields[0].Default, fields[0].ExampleValue = "host-local", "host-local"
+	fields[1].Nested = microVM
+	microVM[0].Nested = guestEgress
+	guestEgress[0].Default, guestEgress[0].ExampleValue = "permissive", "permissive"
+	return &Subtree{
+		Key: "execution", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Server-owned execution placement and MicroVM guest-egress policy. Operator-tier only; project values are ignored. Bare mecatui and mecated resolve the same settings.",
+		Fields: fields,
+	}
 }
 
 func storageManagementSubtree(docs Docs) *Subtree {
@@ -344,7 +417,7 @@ func reasoningEffortSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "reasoning-effort",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER reasoning-effort scalar (ADR 0055): \"\" / \"auto\" (unset — " +
+		Doc: "OPERATOR-TIER reasoning-effort scalar: \"\" / \"auto\" (unset — " +
 			"the provider default) / \"low\" / \"medium\" / \"high\" / \"xhigh\" / \"max\". " +
 			"OpenAI clamps xhigh/max down to high; Anthropic maps all five. A per-session " +
 			"CreateSession.reasoning_effort out-ranks this default. A project-tier " +
@@ -415,11 +488,32 @@ func modelsSubtree(docs Docs) *Subtree {
 			f.ExampleValue = "coder"
 		case "router":
 			f.EnableNote = "A non-empty `categories` list ENABLES the router (taxonomy-presence " +
-				"enable, ADR 0042 — NOT a CLI enable-flag); `disabled: true` (or " +
+				"enable — NOT a CLI enable-flag); `disabled: true` (or " +
 				"--subagent-model-router=false) is the kill-switch. Operator-tier only."
 			rf := fieldsOf("RouterSection", permconfig.RouterSection{}, docs)
 			for _, nf := range rf {
-				if nf.Key == "categories" {
+				switch nf.Key {
+				case "backend":
+					nf.Default = "llm"
+					nf.ExampleValue = "jev"
+				case "jev":
+					nf.Nested = fieldsOf("JevRouterSection", permconfig.JevRouterSection{}, docs)
+					for _, jf := range nf.Nested {
+						switch jf.Key {
+						case "model":
+							jf.Default = "jev-1.13.0"
+							jf.ExampleValue = "jev-1.13.0"
+						case "base-url":
+							jf.ExampleValue = "https://api.typesafe.ai"
+						case "minimum-confidence":
+							jf.Default = "0"
+							jf.ExampleValue = "0.5"
+						case "maximum-input-bytes":
+							jf.Default = "16384"
+							jf.ExampleValue = "16384"
+						}
+					}
+				case "categories":
 					nf.Nested = fieldsOf("RouterCategory", permconfig.RouterCategory{}, docs)
 					for _, cf := range nf.Nested {
 						switch cf.Key {
@@ -439,8 +533,8 @@ func modelsSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "models",
 		Tier: TierProject,
-		Doc: "Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and " +
-			"the semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all " +
+		Doc: "Per-slot/alias/default model config + the operator allowlist cap and " +
+			"the semantic Subagent model-router taxonomy. At the operator tier all " +
 			"fields are honoured; a project tier honours slots/aliases/default within the operator " +
 			"allowlist on a trusted workspace (router/allowlist are operator-only).",
 		CommentedOut: true,

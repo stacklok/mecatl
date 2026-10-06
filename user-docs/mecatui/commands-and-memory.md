@@ -15,11 +15,18 @@ embedded session and a remote server can expose different commands.
 
 ## Workspace service enrollment
 
-When the server provides protected workspace services, run `/tools-connect` to
-start or recheck the connection. Run `/tools-cancel` to cancel a pending
-connection. You can continue editing the prompt while browser consent is
-pending. If the server requires the connection before accepting a prompt,
-`mecatui` sends the retained prompt after the connection succeeds.
+When the server provides protected workspace services, run `/mcp-refresh` to
+start or recheck the connection. This broker path keeps the existing destructive
+reconnection disclosure and browser consent flow. `/tools-connect` is a
+deprecated broker-only alias. Run `/tools-cancel` to cancel a pending connection.
+You can continue editing the prompt while browser consent is pending. If the
+server requires the connection before accepting a prompt, `mecatui` sends the
+retained prompt after the connection succeeds.
+
+On a direct MCP server, `/mcp-refresh` performs the direct refresh without a
+browser consent flow. `mecatui` enables exactly one path from server
+capabilities. It refuses the command when both modes, neither mode, or the
+matching client collaborator are unavailable.
 
 ## Completed-session learning
 

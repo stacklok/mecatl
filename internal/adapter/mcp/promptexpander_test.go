@@ -49,7 +49,7 @@ func TestPromptExpanderExpands(t *testing.T) {
 	}}
 	exp := NewPromptExpander(p)
 
-	out, expanded, err := exp.Expand(context.Background(), nil, "/mcp__srv__greet who=Ada")
+	out, expanded, err := exp.Expand(context.Background(), "/mcp__srv__greet who=Ada")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestPromptExpanderExpands(t *testing.T) {
 
 func TestPromptExpanderNonMatchPassesThrough(t *testing.T) {
 	exp := NewPromptExpander(&fakeProvider{})
-	out, expanded, err := exp.Expand(context.Background(), nil, "/review foo.go")
+	out, expanded, err := exp.Expand(context.Background(), "/review foo.go")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestPromptExpanderUnknownPromptDoesNotAbort(t *testing.T) {
 	// GetPrompt error → leave input unchanged, expanded=false, no error (so the
 	// run is not aborted and the next expander / raw text can flow through).
 	exp := NewPromptExpander(&fakeProvider{}) // no results registered → unknown
-	out, expanded, err := exp.Expand(context.Background(), nil, "/mcp__srv__missing")
+	out, expanded, err := exp.Expand(context.Background(), "/mcp__srv__missing")
 	if err != nil {
 		t.Fatalf("Expand returned error, want graceful pass-through: %v", err)
 	}

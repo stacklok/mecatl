@@ -327,7 +327,8 @@ func DecodeFileVersion(encoded string) FileVersion {
 // ReplaceFile on the full Workspace, NOT this plain Read.
 //
 // Workspace embeds it, so any *Workspace is usable where a WorkspaceReader is
-// expected. Paths are session-relative and adapters reject escapes.
+// expected. Paths are normally session-relative; adapter-specific serving
+// exceptions require composition-level authorization.
 type WorkspaceReader interface {
 	// Root returns the absolute session root all paths are scoped to.
 	Root() string
@@ -335,6 +336,79 @@ type WorkspaceReader interface {
 	Read(ctx context.Context, path string) ([]byte, error)
 	// Stat returns metadata for the file at the session-relative path.
 	Stat(ctx context.Context, path string) (FileInfo, error)
+}
+
+// LocalFileOperands returns only operands whose built-in tool semantics identify
+// workspace-local files. It mirrors the built-in decoders' field matching only
+// for required path operands; it intentionally does not validate other arguments.
+// Argument names on MCP, custom, or delegation tools are payload labels and never
+// mint local filesystem authority.
+func LocalFileOperands(name string, args json.RawMessage) []string {
+	call := session.NewToolCall("", name, args)
+	switch name {
+	case "Read", "Edit", "Write", "Remove", "ListDir":
+		var operands struct {
+			Path string `json:"path"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok || operands.Path == "" {
+			return nil
+		}
+		return []string{operands.Path}
+	case "Copy", "Move":
+		var operands struct {
+			Source      string `json:"source"`
+			Destination string `json:"destination"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok || operands.Source == "" || operands.Destination == "" {
+			return nil
+		}
+		return []string{operands.Source, operands.Destination}
+	case ShellToolName:
+		var operands struct {
+			Command string `json:"command"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok {
+			return nil
+		}
+		if path, ok := exactLocalShellScript(operands.Command); ok {
+			return []string{path}
+		}
+	}
+	return nil
+}
+
+func exactLocalShellScript(command string) (string, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || strings.ContainsAny(trimmed, ";&|$`()<>\\\n\r") {
+		return "", false
+	}
+	parts := strings.Fields(trimmed)
+	if strings.Join(parts, " ") != trimmed {
+		return "", false
+	}
+	if len(parts) == 1 && (strings.HasPrefix(parts[0], "./") || strings.HasSuffix(parts[0], ".sh")) {
+		return parts[0], true
+	}
+	if len(parts) == 2 && (parts[0] == "sh" || parts[0] == "bash" || parts[0] == "dash") && (strings.HasPrefix(parts[1], "./") || strings.HasSuffix(parts[1], ".sh")) {
+		return parts[1], true
+	}
+	return "", false
+}
+
+// BoundedWorkspaceReader is the optional evidence-safe versioned read seam.
+// ReadVersionBounded must reject content larger than maxBytes before allocating
+// more than maxBytes+1 bytes and must return content and version from one
+// consistent snapshot. Callers must fail closed when a Workspace lacks it.
+type BoundedWorkspaceReader interface {
+	ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
+}
+
+// BoundedWorkspaceRangeReader is the optional paging extension used for finite
+// evidence larger than one native preview. It must read at most maxBytes from
+// offset, reject files larger than totalLimit without allocating them, and
+// return the authoritative version and total size from the same opened snapshot.
+type BoundedWorkspaceRangeReader interface {
+	ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, FileVersion, int64, error)
 }
 
 // AuthorityResourceResolver derives the physical, workspace-confined identity of a
@@ -350,14 +424,15 @@ type AuthorityResourceResolver interface {
 	AuthorityResourcePath(path string) (target, workspace string, err error)
 }
 
-// Workspace is the session-scoped seam every Tool executes against. It scopes
-// all paths to a single session root (rejecting escapes such as "../"), exposes
+// Workspace is the session-scoped seam every Tool executes against. It normally
+// scopes paths to a single session root; explicit adapter-specific exceptions
+// require composition-level authorization. It exposes
 // the read/search operations the core file tools need, and carries the explicit,
 // unambiguous versioned mutation operations the built-in Edit/Write tools use
 // with the Environment's independently selected ReadLedger (ADR 0208, ADR 0281).
 //
-// All paths are relative to the session root unless documented otherwise;
-// adapters must reject any path that resolves outside the root.
+// Paths are normally relative to the session root. Adapters must reject
+// out-of-root paths unless explicitly paired with an authorizing policy.
 //
 // VERSION PROTOCOL (ADR 0208). The Workspace capability exposes only the
 // explicit create-only / conditional-replace-by-version pair, so a tool mutation
@@ -477,11 +552,10 @@ func (e *VersionMismatchError) Error() string {
 // RPC: physical symlink aliases may conservatively produce distinct entries
 // (a safe false-negative that forces another Read).
 //
-//   - A session-RELATIVE path keys by its cleaned slash form (filepath.Clean,
-//     ToSlash). filepath.IsLocal reports not-relative for absolute/slash-prefixed
-//     operands; a relative path that climbs above the root ("../x") still keys by
-//     its cleaned form (the ledger is a lookup, not a confinement gate —
-//     confinement is the Workspace's business at use time).
+//   - A session-RELATIVE path normally keys by its cleaned slash form. If it
+//     climbs above an absolute root, it keys by the resulting absolute path,
+//     matching an external absolute alias. The ledger is not a confinement gate;
+//     the Workspace verifies paths at use time.
 //   - An ordinary ABSOLUTE <root>/<rel> path is reduced with filepath.Rel so it
 //     converges with the relative <rel> form.
 //   - An absolute path that does NOT lie under root (an out-of-root relaxed-read
@@ -498,7 +572,11 @@ func LedgerKey(root, path string) string {
 		return "."
 	}
 	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
-		return filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+		cleaned := filepath.Clean(filepath.FromSlash(path))
+		if !filepath.IsAbs(root) || cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(cleaned)
+		}
+		path = filepath.Join(root, cleaned)
 	}
 	cleaned := filepath.Clean(path)
 	if root != "" {

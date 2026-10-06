@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -146,4 +147,49 @@ func mintRootAuthority(catalog *tool.Catalog, resources []string, kind session.S
 		Provenance:         rootAuthorityProvenance,
 		DefinitionIdentity: rootAuthorityDefinition,
 	}
+}
+
+func mintRuntimeRootAuthority(catalog *tool.Catalog, runtimes *mcpRuntimeSet, kind session.SessionKind) session.Authority {
+	if runtimes == nil || kind == session.SessionKindDebug {
+		return mintRootAuthority(catalog, nil, kind)
+	}
+	return mintDirectRuntimeRootAuthority(catalog, kind, runtimes.currentToolNames(), runtimes.currentResourceServers())
+}
+
+func mintOperationRootAuthority(ctx context.Context, catalog *tool.Catalog, runtimes *mcpRuntimeSet, kind session.SessionKind) session.Authority {
+	candidate := mcpRuntimeCandidate(ctx)
+	if runtimes == nil || candidate == nil || kind == session.SessionKindDebug {
+		return mintRuntimeRootAuthority(catalog, runtimes, kind)
+	}
+	toolNames := make([]string, 0, len(candidate.tools))
+	for _, meta := range candidate.tools {
+		toolNames = append(toolNames, meta.Name)
+	}
+	seen := make(map[string]struct{})
+	resourceServers := make([]string, 0)
+	for _, resource := range candidate.resources {
+		if _, ok := seen[resource.Server]; ok {
+			continue
+		}
+		seen[resource.Server] = struct{}{}
+		resourceServers = append(resourceServers, resource.Server)
+	}
+	return mintDirectRuntimeRootAuthority(catalog, kind, toolNames, resourceServers)
+}
+
+func mintDirectRuntimeRootAuthority(catalog *tool.Catalog, kind session.SessionKind, toolNames, resourceServers []string) session.Authority {
+	authority := mintRootAuthority(catalog, nil, kind)
+	names := authority.CapabilitySet.Tools[:0]
+	for _, name := range authority.CapabilitySet.Tools {
+		if strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, "mcp_resource__") {
+			continue
+		}
+		names = append(names, name)
+	}
+	names = append(names, toolNames...)
+	for _, server := range resourceServers {
+		names = append(names, governance.MCPResourceCapability(server))
+	}
+	authority.CapabilitySet.Tools = names
+	return authority
 }

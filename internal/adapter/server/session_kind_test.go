@@ -244,6 +244,55 @@ func TestSessionContinuityUX_Scenario2_OwnershipOracleClosed(t *testing.T) {
 	}
 }
 
+func TestResumableSessionStatusMetrics_Scenario2_KindAuthorityUnchanged(t *testing.T) {
+	svc, store := runPurposeService(t, false)
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	branch := 0
+	for name, metadata := range map[string]struct {
+		kind session.SessionKind
+		rel  session.SessionRelationship
+	}{
+		"scheduled": {session.SessionKindScheduled, session.SessionRelationship{ScheduleName: "nightly"}},
+		"subagent":  {session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}},
+		"parallel":  {session.SessionKindParallelBranch, session.SessionRelationship{ParentSessionID: "parent", CallID: "call", BranchIndex: &branch}},
+		"member":    {session.SessionKindTeamMember, session.SessionRelationship{TeamID: "team", MemberName: "member"}},
+		"debug":     {session.SessionKindDebug, session.SessionRelationship{DebugTargetID: "target"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sess := session.New(session.SessionID("non-main-"+name), session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
+			if err := sess.RestoreSessionMetadata(metadata.kind, metadata.rel); err != nil {
+				t.Fatalf("RestoreSessionMetadata: %v", err)
+			}
+			sess.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 512})
+			if err := store.Save(context.Background(), sess); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if _, err := svc.StartRunContent(context.Background(), sess.ID, "continue", nil); err == nil {
+				t.Fatalf("StartRunContent(%s) succeeded, want non-main session to remain non-continuable", metadata.kind)
+			}
+		})
+	}
+}
+
+func TestResumableSessionStatusMetrics_Scenario2_OwnershipUnchanged(t *testing.T) {
+	svc, store := runPurposeService(t, true)
+	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
+	foreign := &session.Principal{Issuer: "issuer", Subject: "foreign", GrantType: session.GrantTypeUser}
+	sess := session.New("owned", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	sess.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 512, Estimated: true})
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	resp, err := server.NewHarnessServer(svc).GetSession(session.WithPrincipal(context.Background(), foreign), &mecatlv1.GetSessionRequest{SessionId: string(sess.ID)})
+	if err == nil || resp != nil {
+		t.Fatalf("foreign GetSession = (%+v, %v), want no snapshot and an error", resp, err)
+	}
+}
+
 func mustRelatedSession(t *testing.T, sess *session.Session, err error) *session.Session {
 	t.Helper()
 	if err != nil {

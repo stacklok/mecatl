@@ -34,7 +34,7 @@ func evalDefault(t *testing.T, tool string) governance.Effect {
 	t.Helper()
 	policy := permpolicy.NewPolicy(defaultRules(), nil)
 	return policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", tool, json.RawMessage(`{}`)), nil).Effect
+		session.NewToolCall("id", tool, json.RawMessage(`{}`)), nil).Decision.Effect
 }
 
 // TestMemoryToolsDefaultExplicitAllow proves all six memory tools resolve to Allow —
@@ -52,7 +52,7 @@ func TestMemoryToolsDefaultExplicitAllow(t *testing.T) {
 	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
 	for _, name := range memoryToolNames {
 		got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
-			session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Effect
+			session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Decision.Effect
 		if got != governance.Allow {
 			t.Errorf("memory tool %q should default to Allow (mainRules production assembly), got %v", name, got)
 		}
@@ -67,7 +67,7 @@ func TestForgetMemoryDefaultsToAskAndIsConfigOverridable(t *testing.T) {
 		for _, effect := range []governance.Effect{governance.Allow, governance.Deny} {
 			policy := permpolicy.NewPolicy(append(defaultRules(), governance.Rule{Scope: governance.ScopeUser, Tool: name, Effect: effect}), nil)
 			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-				session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Effect
+				session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Decision.Effect
 			if got != effect {
 				t.Errorf("configured %v on %q resolved to %v", effect, name, got)
 			}
@@ -85,7 +85,7 @@ func TestWebSearchDefaultIsFloorAllow(t *testing.T) {
 	}
 	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
 	got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", "WebSearch", json.RawMessage(`{}`)), nil).Effect
+		session.NewToolCall("id", "WebSearch", json.RawMessage(`{}`)), nil).Decision.Effect
 	if got != governance.Allow {
 		t.Fatalf("WebSearch should default to Allow (mainRules production assembly), got %v", got)
 	}
@@ -101,7 +101,7 @@ func TestFetchMcpResourceDefaultIsFloorAllow(t *testing.T) {
 	}
 	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
 	got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", "FetchMcpResource", json.RawMessage(`{}`)), nil).Effect
+		session.NewToolCall("id", "FetchMcpResource", json.RawMessage(`{}`)), nil).Decision.Effect
 	if got != governance.Allow {
 		t.Fatalf("FetchMcpResource should default to Allow (mainRules production assembly), got %v", got)
 	}
@@ -117,8 +117,8 @@ func TestConfiguredAskAndDenyOverrideFetchMcpResourceAllow(t *testing.T) {
 		policy := permpolicy.NewPolicy(rules, nil)
 		got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 			session.NewToolCall("id", "FetchMcpResource", json.RawMessage(`{}`)), nil)
-		if got.Effect != eff {
-			t.Fatalf("a configured (ScopeUser) %v on FetchMcpResource must beat the floor Allow; got %v", eff, got.Effect)
+		if got.Decision.Effect != eff {
+			t.Fatalf("a configured (ScopeUser) %v on FetchMcpResource must beat the floor Allow; got %v", eff, got.Decision.Effect)
 		}
 	}
 }
@@ -133,7 +133,7 @@ func TestCallMcpWithQueryDefaultIsFloorAllow(t *testing.T) {
 	}
 	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
 	got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", "CallMcpWithQuery", json.RawMessage(`{}`)), nil).Effect
+		session.NewToolCall("id", "CallMcpWithQuery", json.RawMessage(`{}`)), nil).Decision.Effect
 	if got != governance.Allow {
 		t.Fatalf("CallMcpWithQuery should default to Allow (mainRules production assembly), got %v", got)
 	}
@@ -149,8 +149,8 @@ func TestConfiguredAskAndDenyOverrideCallMcpWithQueryAllow(t *testing.T) {
 		policy := permpolicy.NewPolicy(rules, nil)
 		got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 			session.NewToolCall("id", "CallMcpWithQuery", json.RawMessage(`{}`)), nil)
-		if got.Effect != eff {
-			t.Fatalf("a configured (ScopeUser) %v on CallMcpWithQuery must beat the floor Allow; got %v", eff, got.Effect)
+		if got.Decision.Effect != eff {
+			t.Fatalf("a configured (ScopeUser) %v on CallMcpWithQuery must beat the floor Allow; got %v", eff, got.Decision.Effect)
 		}
 	}
 }
@@ -165,8 +165,8 @@ func TestConfiguredAskAndDenyOverrideWebSearchAllow(t *testing.T) {
 		policy := permpolicy.NewPolicy(rules, nil)
 		got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 			session.NewToolCall("id", "WebSearch", json.RawMessage(`{}`)), nil)
-		if got.Effect != eff {
-			t.Fatalf("a configured (ScopeUser) %v on WebSearch must beat the floor Allow; got %v", eff, got.Effect)
+		if got.Decision.Effect != eff {
+			t.Fatalf("a configured (ScopeUser) %v on WebSearch must beat the floor Allow; got %v", eff, got.Decision.Effect)
 		}
 	}
 }
@@ -189,8 +189,8 @@ func TestConfiguredAskOverridesMemoryAllow(t *testing.T) {
 	policy := permpolicy.NewPolicy(rules, nil)
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 		session.NewToolCall("id", memory.RememberToolName, json.RawMessage(`{}`)), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("a configured (ScopeUser) Ask on Remember must beat the built-in-floor Allow; got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("a configured (ScopeUser) Ask on Remember must beat the built-in-floor Allow; got %v", got.Decision.Effect)
 	}
 }
 
@@ -203,8 +203,8 @@ func TestConfiguredDenyOverridesSoulApply(t *testing.T) {
 	policy := permpolicy.NewPolicy(rules, nil)
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 		session.NewToolCall("id", SoulApplyAction, json.RawMessage(`{}`)), nil)
-	if got.Effect != governance.Deny {
-		t.Fatalf("a configured Deny on soul:apply must win over the built-in-floor Allow; got %v", got.Effect)
+	if got.Decision.Effect != governance.Deny {
+		t.Fatalf("a configured Deny on soul:apply must win over the built-in-floor Allow; got %v", got.Decision.Effect)
 	}
 }
 
@@ -240,8 +240,8 @@ func TestMemoryConfiguredRuleSurvivesYolo(t *testing.T) {
 			policy := permpolicy.NewPolicy(rules, nil)
 			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 				session.NewToolCall("id", memory.RememberToolName, json.RawMessage(`{}`)), nil)
-			if got.Effect != tc.effect {
-				t.Fatalf("a configured %v on Remember must survive --yolo (allow-all loosens only the floor); got %v", tc.effect, got.Effect)
+			if got.Decision.Effect != tc.effect {
+				t.Fatalf("a configured %v on Remember must survive --yolo (allow-all loosens only the floor); got %v", tc.effect, got.Decision.Effect)
 			}
 		})
 	}

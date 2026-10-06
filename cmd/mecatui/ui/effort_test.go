@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -243,19 +244,16 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	// The transcript is UNTOUCHED by the handoff itself.
-	if len(m.conv.blocks) != len(before.blocks) {
-		t.Fatalf("transcript blocks = %d after the handoff, want %d (fork must not wipe it)", len(m.conv.blocks), len(before.blocks))
+	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
+		t.Fatalf("transcript blocks = %d after the handoff, want %d (fork must not wipe it)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
 	m = feedCmd(t, m, cmd)
 	// After the fork + SessionReadyMsg: the transcript is STILL unchanged …
-	if len(m.conv.blocks) != len(before.blocks) {
-		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.blocks), len(before.blocks))
+	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
+		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
-	for i := range before.blocks {
-		if m.conv.blocks[i].raw != before.blocks[i].raw || m.conv.blocks[i].kind != before.blocks[i].kind {
-			t.Errorf("block %d changed across the fork: (%v,%q) → (%v,%q)", i,
-				before.blocks[i].kind, before.blocks[i].raw, m.conv.blocks[i].kind, m.conv.blocks[i].raw)
-		}
+	if !reflect.DeepEqual(m.conv.testBlocks(), before.testBlocks()) {
+		t.Errorf("typed scrollback snapshots changed across the fork")
 	}
 	// … the session id rebinds to the fork id …
 	if m.sessionID != "sess-fork-1" {
@@ -447,6 +445,7 @@ func TestEffortPickerGolden(t *testing.T) {
 	if m.effort.view != effortPanel {
 		t.Fatalf("view = %v, want effortPanel", m.effort.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "effort_picker.golden", got)
 }
@@ -535,25 +534,17 @@ func TestEffortPickerSwallowsOtherKeys(t *testing.T) {
 	}
 }
 
-// TestEffortRendersInHeader asserts the resolved effort appears beside the model in
-// the header when set, and is absent when unset (the footer/header live display).
-func TestEffortRendersInHeader(t *testing.T) {
+// TestEffortReachesStatusSnapshot asserts the resolved effort is submitted beside
+// the effective model when set, and remains absent when unset.
+func TestEffortReachesStatusSnapshot(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	// Unset effort: no suffix beside the model. (The inventory is not loaded here, so
-	// the header shows the raw effective model id "gpt-5", not the display name.)
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "gpt-5") {
-		t.Fatalf("header should show the model:\n%s", header)
+	if effort := m.statusLineSnapshot().Session.ReasoningEffort; effort != "" {
+		t.Fatalf("unset effort in status snapshot = %q, want empty", effort)
 	}
-	if strings.Contains(header, "· high") {
-		t.Fatalf("unset effort must not render a suffix:\n%s", header)
-	}
-	// Set effort: the suffix renders beside the model.
+
 	m.resolvedSessionModel.ReasoningEffort = "high"
-	m.refreshView()
-	header = stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "· high") {
-		t.Fatalf("a set effort should render a ` · high` suffix beside the model:\n%s", header)
+	if effort := m.statusLineSnapshot().Session.ReasoningEffort; effort != "high" {
+		t.Fatalf("status snapshot effort = %q, want high", effort)
 	}
 }
 

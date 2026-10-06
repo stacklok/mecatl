@@ -16,7 +16,7 @@ runs with no network and no disk.
 | `LLMProvider` (`llm.go`) | provider-agnostic model call; streams neutral chunks | `Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)` · `Capabilities() ProviderCapabilities` (multimodal-input flags; decorators must forward the inner provider's) |
 | `SessionStore` (`store.go`) | persist/retrieve session state | `Save(ctx context.Context, s *session.Session) error` · `Load(ctx context.Context, id session.SessionID) (*session.Session, error)` — a store may additionally implement the optional `PrunableStore` (`List`/`Delete`) for retention ([observability & persistence](observability.md)). `Load` carries a documented **event-sourced reconstruction contract** (the `store.go` doc-comment + `engine/COMPATIBILITY.md` "Session reconstruction contract"): a host whose system of record is an append-only event log may implement `Load` by FOLDING its `EventLog` (plus out-of-band creation metadata, `engine/adapter/eventsource.SessionMeta`) into a `*session.Session` via `engine/adapter/eventsource.Fold`, the reference implementation. The one residual gap is REPLAY FIDELITY — the opaque assistant-replay fields (`Message.Reasoning`, `Message.ProviderPhase`, `ToolCall.ItemID`) are not on the event stream, so a pure fold is byte-identical-replay faithful only for non-reasoning (plain-chat) providers (#115, ADR 0038) |
 | `HookRunner` (`hookrunner.go`) | run a lifecycle hook → outcome (`hookexec` maps an external process exit code; `modelhook` maps a quarantined checker model's verdict — block/sanitize/advisory) | `Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)` |
-| `PermissionPolicy` (`permission.go`) | deny→ask→allow across merged scopes; per-session learned allows | `Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision` (ws is the READ-ONLY discovery root for file-based permission config, issue #13; nil = no project config) · `Learn(sessionID session.SessionID, c session.ToolCall)` (the allow-**always** verdict; lowest scope, never overrides a deny or plan mode) |
+| `PermissionPolicy` (`permission.go`) | deny→ask→allow across merged scopes; returns auxiliary model usage from evaluation with the decision | `Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) PermissionResult` (`PermissionResult{Decision governance.PermissionDecision, Usage session.AuxiliaryUsage}`; ws is the READ-ONLY discovery root for file-based permission config, issue #13; nil = no project config) · `Learn(sessionID session.SessionID, c session.ToolCall)` (the allow-**always** verdict; lowest scope, never overrides a deny or plan mode) |
 | `EventSink` (`log.go`) | relay loop events to the API stream (mirrors live) | `Emit(ctx context.Context, ev session.Event)` |
 | `EventLog` (`eventlog.go`) | DURABLE per-session event timeline, distinct from `EventSink` — a later consumer reads it back (cloud-native Phase 3). The loop NEVER calls it; persistence lives at the relay. It also records the log-only `EvUserPrompt` so user-role turns reconstruct under the event-sourced fold | `Append(ctx, id, ev) error` (must be durable before returning nil; at-most-once, no dedup) · `Read(ctx, id) iter.Seq2[session.Event, error]` (append order, streamable) |
 | `ToolCallRecorder` (`log.go`) | structured per-tool AUDIT (distinct from `Diagnostics`) | `ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration)` |
@@ -87,7 +87,7 @@ backend identity ref (`env.Ref()`). File-system tools obtain the Workspace and l
 the Shell tool obtains the runner and surfaces `ErrNoShell` when it is nil.
 `Workspace` scopes all paths to one root, rejects escapes, exposes the read/search
 surface, and carries the versioned content-mutation protocol from
-[ADR 0208](../adr/0208-execution-environment.md). It exposes no ledger operation.
+ADR 0208. It exposes no ledger operation.
 `ReadVersion` returns content plus an opaque `FileVersion`; the narrow persistence
 codec rejects an invalid zero version while preserving valid empty opaque tokens.
 Agent-facing Read records the exact version in `env.ReadLedger()` under the I/O-free
@@ -106,7 +106,7 @@ child-authority Workspace view; storage is never reconstructed from `Root()`. Re
 durable ledger as one validated hash per session, borrowing the Store lifecycle; both
 canonical session-deletion scripts remove it atomically with the other sidecars, and
 `DeleteReadLedger` remains an idempotent ledger-only reset. It is not wired as the
-production default. See [ADR 0298](../adr/0298-persistent-read-before-write-ledgers.md).
+production default. See ADR 0298.
 Restarting the process loses in-memory overrides; a restarted session
 re-derives its Environment through the same rehydration path (no-fs profile,
 ACP adapter reconnect). As of ADR 0214, `EnvironmentRef` is a DURABLE snapshot
@@ -140,19 +140,43 @@ deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
 `CommandRunner` (output-capped, context-bounded, process-group-killed on
 cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
 shell-less deployment simply omits Shell, and an OS sandbox would wrap this seam.
-[ADR 0211](../adr/0211-execution-environment-runtime-seam.md) implements the
+ADR 0211 implements the
 runtime seam: a coding agent runs in an execution environment (`tool.Environment`)
 whose `Workspace`, separately selected `ReadLedger`, and bound `CommandRunner` address one namespace and evidence scope. The
 `tool.Environment` carries identity (`session.EnvironmentRef`) plus those three
 capabilities; the forker/merger are `tool.EnvironmentForker`/
 `tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
 governance remains outside. `EnvironmentRef` is an in-process identity in phase 2
-— snapshot persistence and remote transport are deferred to phase 3. [ADR 0214](../adr/0214-environment-persistence.md)
+— snapshot persistence and remote transport are deferred to phase 3. ADR 0214
 implements the phase-3 persistence/reattachment half: `EnvironmentRef` is a durable
 snapshot field, and `server.Config.EnvironmentResolver` reattaches a live
 `Environment` for a non-in-tree Kind (the `internal/adapter/remoteenv` reference
 fake proves the contract). The
-version-aware file-mutation foundation is [ADR 0208](../adr/0208-execution-environment.md).
+version-aware file-mutation foundation is ADR 0208.
+
+The production microVM adapter places execution in one repository-scoped VM generation
+per authenticated local operator and canonical Git common directory. Sessions and isolated
+children attach as distinct logical `EnvironmentRef`/worktree pairs inside that generation;
+direct-write children reuse the parent attachment. Closing an attachment unregisters and
+closes only its process-local data-plane handles and worktree lifecycle. It does not stop the
+repository VM, remove the private rootfs or declared caches, or affect sibling attachments.
+
+The built-in hosted topology defaults to unrestricted guest IPv4 egress. The guest IPv6
+stack remains enabled, but go-microvm hosted networking does not route external IPv6, so
+external IPv6 is explicitly unsupported rather than presented as dual-stack connectivity.
+Operators may select deny-all or hostname/port/protocol allowlisting as a tightening: that
+mode filters IPv4, disables guest IPv6, and aborts readiness if either enforcement step fails.
+Guest policy contains guest processes only; host-side LLM providers, WebFetch, WebSearch,
+MCP, hooks, OCI discovery, and telemetry remain outside it.
+
+The daemon persists one flock-serialized singleton registry record and private rootfs per
+repository key, plus private durable metadata for each logical attachment. Live VM,
+hosted-network, listener, capability-issuer, guest-registration, Workspace, and runner
+handles remain process-local. Exact reattachment is therefore supported only while all of
+those dependencies remain live in the current daemon. After daemon restart, readiness and
+resolve fail promptly while preserving the singleton record, rootfs, and worktrees; the MVP
+never silently provisions a replacement or destroys an uncertain resource. Durable
+attachment metadata still supports bounded status and exact logical deletion after restart.
 
 `tool.MemoryStore` and `tool.EnvironmentForker` live alongside it for the same
 layering reason (the tools that need them depend on the interface, not a
@@ -184,7 +208,7 @@ same spawn/wait tail as `Run`; a runner without it declines background calls
 honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail
 ring (`engine/agent/tailbuffer.go`), so `ShellStatus` shows the RECENT output a
 head-capped capture would have lost. See
-[ADR 0201](../adr/0201-background-bash.md) and
+ADR 0201 and
 [subagents & teams](subagents-and-teams.md) for the registry family mechanics.
 
 ## Prerequisites

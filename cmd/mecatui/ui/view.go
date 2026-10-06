@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -102,13 +103,11 @@ func (m Model) renderBody() string {
 	case m.showHelp:
 		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
 	case m.team.view != teamNone:
-		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
+		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.teamBlockForOverlay(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
 	case m.agentsInv.view != agentsInvNone:
 		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.modal != nil:
 		return (&m).renderModalSurface()
-	case m.userModel.view != userModelNone:
-		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.reflections.view != reflectionsNone:
 		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.dream.view != dreamClosed:
@@ -128,68 +127,36 @@ func (m Model) renderBody() string {
 	}
 }
 
-// renderHeader is the top bar: session id · model · mode · server.
+// renderHeader composes source-selected identity beside renderer-owned safety chrome.
 func (m Model) renderHeader() string {
-	sid := m.sessionID
-	if sid == "" {
-		sid = "connecting…"
-	} else {
-		sid = client.SessionHandle(sid)
+	line := ""
+	if handle := client.SessionHandle(m.sessionID); m.deps.StatusSource == nil && handle != "" {
+		line = "session " + handle
 	}
-	// next: badge — the pendingNext (apply-on-next-create) selection, shown ONLY when
-	// it is set AND differs from the effective model this session runs on (same model
-	// ⇒ nothing to preview). It is the FIRST segment shed under width pressure: the
-	// line is assembled WITH it, and dropped to the without-it form when the with-it
-	// line would overflow the header width.
-	nextBadge := m.headerNextBadge()
-	withBadge := m.headerIdentityParts(sid, nextBadge)
-	line := strings.Join(withBadge, "  ·  ")
-	if nextBadge != "" && lipgloss.Width(line) > m.widthOr()-headerIdentityPad {
-		line = strings.Join(m.headerIdentityParts(sid, ""), "  ·  ")
+	if m.deps.DebugTarget != "" {
+		if line != "" {
+			line = m.debugHeaderTarget() + "  ·  " + line
+		} else {
+			line = m.debugHeaderTarget()
+		}
 	}
-	if m.deps.DebugTarget != "" && lipgloss.Width(line) > m.widthOr()-headerIdentityPad {
-		line = strings.Join(m.debugEssentialHeaderParts(sid), "  ·  ")
-	}
-	// Right-align ONE muted indicator on the header line when it fits beside the
-	// identity segment; otherwise drop it (so the indicator never forces a wrap — the
-	// identity line itself still wraps when it alone exceeds the width). The header is
-	// the least-crowded bar — the footer is already busy with the context meter
-	// and usage facets. The scroll-position indicator takes precedence over the
-	// changed-files indicator while the user is scrolled up, so it is visible
-	// exactly when it matters; at the bottom it is "" and the changed-files cue
-	// shows (so the steady-state at-bottom frame is byte-identical to before).
 	tail := m.scrollIndicator()
 	if tail == "" {
 		tail = m.changedFilesIndicator()
 	}
-	// Operator-posture badge: right-aligned CHROME (NOT the per-session `mode`
-	// segment, which is PermissionMode). It surfaces the SERVER-WIDE automation
-	// posture for auto/yolo ONLY — strict/trusted render NO badge, so the steady-state
-	// frame (and the goldens) are byte-identical to before this feature. postureBadgeRender
-	// returns the fully-styled badge (auto → inline warning text; yolo → plain emoji bolt +
-	// clean danger pill) plus its visible width, so fitHeader only does layout. When a
-	// scroll/changed-files tail is also present the badge sits to its LEFT so the warning is
-	// never hidden by scrolling.
-	badge, badgeW, hasBadge := m.postureBadgeRender()
-	if hasBadge || tail != "" {
-		if lineSurface := m.generatedStatusLine.Header; m.deps.DebugTarget == "" && lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
-			line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
-			line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
-			line = m.appendDebugPrivacyNotice(line)
-			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
+	badge, badgeW := m.postureBadgeRender()
+	available := m.statusHeaderAvailable(badge, badgeW, tail)
+	if surface := m.generatedStatusLine.Header; m.deps.StatusSource != nil && surface.Present && statusSurfaceFits(surface, available) && statusSpansText(surface.Spans) != "" {
+		generated := renderStatusSurface(m.deps.Theme, surface, available, false)
+		if line != "" {
+			line += "  ·  "
 		}
-		if m.deps.DebugTarget == "" && m.deps.StatusSource != nil {
-			line = m.fitHeader("", badge, badgeW, tail, m.widthOr())
-			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
-		}
-		line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
-	} else if lineSurface := m.generatedStatusLine.Header; m.deps.DebugTarget == "" && lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
-		line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
-	} else if m.deps.DebugTarget == "" && m.deps.StatusSource != nil {
-		line = ""
+		line += generated
 	}
-	header := m.deps.Theme.Style("header").Width(m.widthOr()).Render(m.appendDebugPrivacyNotice(line))
-	return header
+	if badge != "" || tail != "" {
+		line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
+	}
+	return m.deps.Theme.Style("header").Width(m.widthOr()).Render(m.appendDebugPrivacyNotice(line))
 }
 
 // appendDebugPrivacyNotice keeps the debugger's consent disclosure inside the
@@ -208,11 +175,7 @@ func (m Model) appendDebugPrivacyNotice(line string) string {
 }
 
 func (m Model) debugHeaderTarget() string {
-	return m.deps.Theme.Style("warning").Bold(true).Render("DEBUG target " + client.SessionHandle(m.deps.DebugTarget))
-}
-
-func (m Model) debugEssentialHeaderParts(sid string) []string {
-	return []string{"mecatui", m.debugHeaderTarget(), "session " + sid}
+	return m.deps.Theme.Style("warning").Bold(true).Render("⚠ DEBUG target " + client.SessionHandle(m.deps.DebugTarget))
 }
 
 // Operator-posture tier names (the m.caps.Posture vocabulary, server-wide). Named
@@ -246,7 +209,7 @@ const yoloBoltPrefix = "⚡️ "
 // postureBadgeRender builds the right-aligned operator-posture chrome badge — the STYLED
 // string ready to drop into the header AND its visible (plain) cell width for the
 // fit/shed math. It surfaces the SERVER-WIDE automation posture (m.caps.Posture) for the
-// allow-all tiers ONLY — strict/trusted/unknown render NO badge (present=false), so the
+// allow-all tiers ONLY — strict/trusted/unknown render NO badge, so the
 // steady-state frame and the goldens stay byte-identical. It is DISTINCT from the
 // per-session `mode` segment.
 //
@@ -260,26 +223,26 @@ const yoloBoltPrefix = "⚡️ "
 // Padding(0,1) adds 2 cells lipgloss.Width(yoloPillText) does count (the text already
 // carries its spaces), so the pill's visible width is lipgloss.Width(yoloPillText)+2; the
 // optional bolt prefix adds lipgloss.Width(yoloBoltPrefix) (⚡️ width-2 + space).
-func (m Model) postureBadgeRender() (styled string, plainWidth int, present bool) {
+func (m Model) postureBadgeRender() (styled string, plainWidth int) {
 	switch m.caps.Posture {
 	case postureAuto:
-		return m.deps.Theme.Style("warning").Render(autoBadgeText), lipgloss.Width(autoBadgeText), true
+		return m.deps.Theme.Style("warning").Render(autoBadgeText), lipgloss.Width(autoBadgeText)
 	case postureYolo:
 		pill := m.deps.Theme.Style("dangerPill").Render(yoloPillText)
 		// The pill's visible width = its text cells + the 2 padding cells the style adds.
 		w := lipgloss.Width(yoloPillText) + 2
 		if m.emojiOK {
 			// PLAIN bolt prefix (no style) so VTE shows its natural emoji colour.
-			return yoloBoltPrefix + pill, lipgloss.Width(yoloBoltPrefix) + w, true
+			return yoloBoltPrefix + pill, lipgloss.Width(yoloBoltPrefix) + w
 		}
-		return pill, w, true
+		return pill, w
 	case postureStrict, postureTrusted:
 		// The non-allow-all tiers carry no badge — the steady-state frame stays
 		// byte-identical (the goldens are captured at strict).
-		return "", 0, false
+		return "", 0
 	default:
 		// Unknown / older-server posture: no badge.
-		return "", 0, false
+		return "", 0
 	}
 }
 
@@ -315,87 +278,6 @@ func (m Model) headerModelLabel() string {
 	return m.deps.Model
 }
 
-// headerIdentityPad is the slack subtracted from the header width when deciding
-// whether the next: badge fits: the header's 1-cell padding each side (2) plus the
-// fitHeader gap+indicator headroom, so the badge is dropped a touch EARLY rather than
-// fighting the right-aligned indicator for the last cells.
-const headerIdentityPad = 4
-
-// headerIdentityParts builds the header identity segments. withNext is the next:
-// badge ("" to omit it). Order: mecatui · [DEBUG target] · session · model ·
-// [next: …] · mode · ws: <worktree> · socket. The debug target is immutable,
-// always uses its complete fixed handle, and precedes the debugger session identity.
-func (m Model) headerIdentityParts(sid, withNext string) []string {
-	parts := []string{"mecatui"}
-	if m.deps.DebugTarget != "" {
-		parts = append(parts, m.debugHeaderTarget())
-	}
-	parts = append(parts, "session "+sid)
-	// Model segment: the EFFECTIVE model the server resolved THIS session to (set once
-	// on SessionReadyMsg). The header only CHOOSES which known string to display; it
-	// never resolves a default itself. While connecting there is NO model segment.
-	if name := m.headerModelLabel(); name != "" {
-		seg := truncate(terminaltext.Sanitize(name), maxModelLen)
-		// Downstream-provider suffix (issue #480): when the serving provider routed
-		// this session's latest turn to a DOWNSTREAM provider (openrouter today), append
-		// "/ <name>" so the operator sees e.g. "Kimi K3/Google". Shown ONLY when a route
-		// has actually been reported this session (m.providerRoute non-empty) — empty on
-		// a cache hit, before the first turn, and for any non-routed provider, so the
-		// bare model segment shows with no stale/fabricated suffix.
-		if m.providerRoute != "" {
-			seg += "/" + terminaltext.Sanitize(m.providerRoute)
-		}
-		// Reasoning-effort suffix (ADR 0055): the EFFECTIVE effort the server resolved
-		// THIS session to, appended as a subtle ` · <effort>` so it rides WITH the model
-		// segment (and sheds with it under width pressure). Shown ONLY when non-empty
-		// (auto/unset echoes "" and so never renders).
-		if eff := effortHeaderSuffix(m.resolvedSessionModel.ReasoningEffort); eff != "" {
-			seg += " · " + eff
-		}
-		parts = append(parts, seg)
-	}
-	// ToolHive gateway disclosure (issue #262, R6.3): a persistent, muted "via
-	// ToolHive gateway" segment whenever the ACTIVE session's provider is
-	// toolhive — disclosure-only (no acknowledgment required), riding the same
-	// segment slice so the EXISTING width-shedding/fitHeader math applies
-	// unchanged (it sheds like any other low-priority segment under pressure).
-	if isToolhiveProviderID(m.resolvedSessionModel.ProviderID) {
-		parts = append(parts, m.deps.Theme.Style("muted").Render("via ToolHive gateway"))
-	} else if row, ok := availableNotDefaultStatus(m.modelCatalog.statuses); ok {
-		// Sibling (N1): when an intent-driven provider is detected-and-reachable
-		// but NOT the active default, show a muted "<provider-id> gateway
-		// available" segment. Mutually exclusive with the active-case branch
-		// above by construction: availableNotDefaultStatus is false when the
-		// gateway IS the default, so the two never both render. Vendor-neutral —
-		// the provider id comes from the status row, not a hardcoded "toolhive".
-		parts = append(parts, m.deps.Theme.Style("muted").
-			Render(terminaltext.Sanitize(row.ProviderID)+" gateway available"))
-	}
-	if withNext != "" {
-		parts = append(parts, withNext)
-	}
-	mode := m.activeMode
-	if mode == "" {
-		mode = m.deps.Mode
-	}
-	if m.pendingMode != "" {
-		mode = m.pendingMode + " pending"
-	}
-	// Mode segment: the active/pending permission mode is colour-coded as the
-	// persistent visual cue for the same state the input box advertises.
-	if mode != "" {
-		parts = append(parts, m.renderHeaderMode(mode))
-	}
-	// Placement metadata is display-only; never derive or expose a server path.
-	if label := m.activePlacement.Label; label != "" {
-		parts = append(parts, m.deps.Theme.Style("muted").Render("place:"+terminaltext.Sanitize(label)))
-	}
-	if m.deps.Server != "" {
-		parts = append(parts, m.deps.Server)
-	}
-	return parts
-}
-
 func (m Model) inputMode() string {
 	return client.ModeString(client.ModeFromString(m.desiredMode()))
 }
@@ -419,39 +301,6 @@ func (m *Model) applyModeInputStyle() {
 	m.prompt.SetColors(accent.GetForeground(), m.deps.Theme.Color("bgPanel"), m.deps.Theme.Color("text"))
 }
 
-func (m Model) renderHeaderMode(mode string) string {
-	clean := terminaltext.Sanitize(mode)
-	return "mode " + modeAccentStyle(m.deps.Theme, clean).Render(clean)
-}
-
-// headerNextBadge is the muted "next: <model>" header badge previewing the
-// pendingNext (apply-on-next-create) selection. It shows ONLY when there is a KNOWN
-// resolved session model to contrast against (m.resolvedSessionModel set) AND the pendingNext
-// resolves to a DIFFERENT (provider, model). Both guards matter: when no resolved
-// session model is known yet (connecting / older server) the model SEGMENT already shows the
-// pendingNext, so a "next:" badge would just duplicate it; and a same-model next is
-// nothing to preview. The display name is resolved from the ListModels inventory by
-// (provider_id, model_id), falling back to the raw id — the same lookup the
-// resolved-session-model label uses. Returns "" when there is no distinct next model.
-func (m Model) headerNextBadge() string {
-	next := m.createModelSelection
-	eff := m.resolvedSessionModel
-	if next.ModelID == "" || eff.ModelID == "" {
-		return ""
-	}
-	if next.ModelID == eff.ModelID && next.ProviderID == eff.ProviderID {
-		return ""
-	}
-	label := next.ModelID
-	for _, mi := range m.modelCatalog.models {
-		if mi.ProviderID == next.ProviderID && mi.ID == next.ModelID && mi.DisplayName != "" {
-			label = mi.DisplayName
-			break
-		}
-	}
-	return "next: " + truncate(terminaltext.Sanitize(label), maxModelLen)
-}
-
 // scrollIndicator returns the muted "↑ NN%" header cue shown only when the view
 // is anchored rather than following the tail.
 func (m Model) scrollIndicator() string {
@@ -470,10 +319,11 @@ func (m Model) scrollIndicator() string {
 const changedFilesIndicatorLimit = 999
 
 func (m Model) changedFilesIndicator() string {
-	n := len(m.conv.filesChanged)
-	if n == 0 {
+	appendix, ok := m.conv.scrollback.AppendixSnapshot()
+	if !ok || len(appendix.Files) == 0 {
 		return ""
 	}
+	n := len(appendix.Files)
 	if n > changedFilesIndicatorLimit {
 		return "✎ 999+ files"
 	}
@@ -496,6 +346,9 @@ func (m Model) statusHeaderAvailable(badge string, badgeW int, tail string) int 
 	}
 	if lanes > 0 {
 		lanes += headerGapPad
+	}
+	if m.deps.DebugTarget != "" {
+		lanes += lipgloss.Width(m.debugHeaderTarget()) + 5 // separator before generated identity
 	}
 	return max(0, m.widthOr()-2-lanes)
 }
@@ -568,6 +421,9 @@ func (m Model) footerActivity() string {
 		left = m.deps.Theme.Style("askTitle").Render(label)
 	case phaseConnecting:
 		left = m.sp.View() + " connecting…"
+		if m.statusMsg != "" {
+			left = m.sp.View() + " " + m.statusMsg
+		}
 	default:
 		left = m.idleFooterLeft()
 	}
@@ -585,29 +441,19 @@ func (m Model) renderFooter() string {
 	}
 	left := m.footerActivity()
 
-	// The full decompressed chord list now lives in the "?" help overlay, so the
-	// footer leads with its two entry points and carries only the most useful prompt
-	// affordances plus quit. "/ commands" is ALWAYS shown: the TUI ships built-in
-	// client-side commands (/clear, /help, and the caps-gated /mcp,/agents), so "/"
-	// is a live entry point even when the server has slash-command expansion disabled.
-	// While a run streams the line is extended with the type-while-running affordance
-	// (enter steers when supported or queues a follow-up otherwise; ctrl+u clears the
-	// unsent draft; esc cancels the run without changing draft, queue, or steer state).
-	// Prompt selection affordances appear only while the prompt accepts input. Every
-	// chord is sourced from the LIVE keyMap markings (hk) so a rebinding propagates to
-	// the footer affordances (issue #457, the #455 liveness pattern extended to the
-	// footer).
+	// The full chord list lives in the help overlay. Keep the conversation's
+	// inspection shortcuts visible here and the live quit chord last.
+	// While work streams, enter queues/steers and esc cancels the run.
+	// "/ commands" remains available through built-in client commands even when
+	// server slash-command expansion is disabled.
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands"
 	if m.pasteGateOpen() {
-		help += " · " + hk.selectAll + " select all · " + hk.copySelection + " copy"
-		if m.phase != phaseRunning {
-			help += " · " + hk.clearPrompt + " clear"
-		}
+		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " session details"
 	}
 	help += " · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
-		help = hk.submit + " queue · " + hk.clearPrompt + " clear · " + hk.cancel + " cancel · " + help
+		help = hk.submit + " queue · " + hk.cancel + " cancel · " + help
 	}
 	if m.phase == phaseAwaitingApproval && approval.plan {
 		allow, always, deny := approvalMnemonic(hk.allow), approvalMnemonic(hk.allowAlways), approvalMnemonic(hk.deny)
@@ -625,18 +471,11 @@ func (m Model) renderFooter() string {
 	}
 
 	width := m.widthOr()
+	line := left
 	available := m.statusLineGeometry().footerAvailable
-	if surface := m.generatedStatusLine.Footer; surface.Present && statusSurfaceFits(surface, available) {
-		custom := renderStatusSurface(m.deps.Theme, surface, available, true)
-		line := left + strings.Repeat(" ", footerGapPad) + custom
-		footer := m.deps.Theme.Style("footer").Width(width).Render(line)
-		return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+	if surface := m.generatedStatusLine.Footer; m.deps.StatusSource != nil && surface.Present && statusSurfaceFits(surface, available) && statusSpansText(surface.Spans) != "" {
+		line += strings.Repeat(" ", footerGapPad) + renderStatusSurface(m.deps.Theme, surface, available, true)
 	}
-	if m.deps.StatusSource != nil {
-		footer := m.deps.Theme.Style("footer").Width(width).Render(left)
-		return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
-	}
-	line := m.fitFooter(left, width)
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
 }
@@ -700,138 +539,6 @@ func (m Model) selectionStatus() string {
 // right-aligned usage segment so they never touch.
 const footerGapPad = 2
 
-// contextWindow returns the denominator for the footer context meter:
-//
-//  1. m.resolvedSessionModel.ContextWindow > 0 — the window the SERVER resolved for THIS
-//     session's model (echoed on SessionReadyMsg, refreshed on every model switch /
-//     GetSession). It is now LIVE-FIRST server-side, so a live-only model heals to
-//     its real window. Exact operator configuration precedes live metadata; the global
-//     escape hatch is mecatui embedded mode's (or an external mecated's)
-//     --context-window-override, which moves this echoed denominator and the engine
-//     trigger together. The client never recomputes the window.
-//  2. 0 — unknown; the meter renderers degrade to the bare "ctx <N>" current size.
-func (m Model) contextWindow() int64 {
-	if m.resolvedSessionModel.ContextWindow > 0 {
-		return m.resolvedSessionModel.ContextWindow
-	}
-	return 0
-}
-
-// fitFooter right-aligns the richest usage segment that fits beside the left
-// status, shedding facets before the context signal — context % is the single
-// most valuable signal, so it survives longest. When a team is LIVE a team-summary
-// segment is PREPENDED to the right side; it is LOWER priority than the context
-// meter (it's an advertisement, context % is the headline safety signal), so it is
-// the FIRST thing dropped as width tightens. The <agents> chord below is the LIVE
-// Agents binding (issue #457) — "f6" by default, rebound via keymap. Tiers,
-// richest to poorest (defaults shown):
-//
-//	"⟳ team-x · 2/3 working · f6 agents  ctx ▒▒▒▒▒·· 70% · 140K/200K · ↑7.9K ↓345 cache 88%"
-//	"⟳ team-x · 2/3 working · f6 agents  ctx ▒▒▒▒▒·· 70% · 140K/200K"
-//	"⟳ 2/3 working · f6  ctx ▒▒▒▒▒·· 70%"   (team→medium, ctx→compact)
-//	"⟳ 2/3  ctx 70%"                            (team→compact, ctx→minimal)
-//	"ctx 70%"                                    (team DROPPED, ctx wins)
-//	then the existing ctx-only fallbacks, then left status alone.
-//
-// When no team is live the team segment is empty and the candidate list collapses
-// to EXACTLY the historical ctx-only list — keeping the no-team footer
-// byte-identical (existing goldens unaffected).
-//
-// When the window is unknown every meter tier collapses to "ctx 7.9K", so the
-// tiers naturally narrow to just that, then to nothing.
-func (m Model) fitFooter(left string, width int) string {
-	th := m.deps.Theme
-	window := m.contextWindow()
-	meter := renderContextMeter(th, m.contextTokens, window)
-	meterCompact := renderContextMeterCompact(th, m.contextTokens, window)
-	meterMinimal := renderContextMeterMinimal(th, m.contextTokens, window)
-
-	// The agents prefix is the combined team + subagent-fleet advertisement, prepended
-	// to the right side at three tiers (full/medium/compact). Each is built from up to
-	// two sub-segments joined by sep:
-	//   - the team segment, non-empty ONLY for a LIVE team (liveTeamBlock — not teamDone).
-	//     This DELIBERATELY differs from the f6 overlay's gate: the footer is a
-	//     live-activity advertisement and hides once the team is done, whereas the
-	//     overlay opens on the last-seen team done-or-not (so the user can still review a
-	//     finished roster). The two are meant to disagree in the done state — don't unify.
-	//   - the fleet segment, non-empty whenever ≥1 subagent has STARTED this session
-	//     (hasSubagents). Unlike the team segment this stays visible after the children
-	//     finish (the "3◐ 1✓" counts still inform), matching the F2 "3/4 done" cue.
-	const sep = "  " // gap between the agents prefix and the ctx segment, and between sub-segments
-	// agentsMark is the LIVE Agents chord (issue #457) so the footer advertisement
-	// reflects a rebound open-overlay key.
-	agentsMark := m.helpKeyMarkings().agents
-	var teamFull, teamMedium, teamCompact string
-	if b := m.conv.liveTeamBlock(); b != nil {
-		working, total := teamWorkingCounts(b.teamLanes)
-		teamFull = teamFooterFull(th, b.teamID, working, total, agentsMark)
-		teamMedium = th.Style("spinner").Render(teamFooterMedium(b.teamID, working, total, agentsMark))
-		teamCompact = th.Style("spinner").Render(teamFooterCompact(working, total))
-	}
-	var subFull, subMedium, subCompact string
-	if m.conv.hasSubagents() {
-		running, done := m.conv.subagentFleetCounts()
-		subFull = subagentFooterFull(th, running, done, agentsMark)
-		subMedium = th.Style("spinner").Render(subagentFooterMedium(running, done, agentsMark))
-		subCompact = th.Style("spinner").Render(subagentFooterCompact(running, done))
-	}
-	// The Parallel segment, non-empty whenever ≥1 Parallel run has STARTED this session
-	// (hasParallel) — like the fleet segment it stays visible after the run finishes (the
-	// "1◐ 2✓" counts still inform), matching the subagent-fleet footer behaviour.
-	var parFull, parMedium, parCompact string
-	if m.conv.hasParallel() {
-		running, done := m.conv.parallelGroupCounts()
-		parFull = parallelFooterFull(th, running, done, agentsMark)
-		parMedium = th.Style("spinner").Render(parallelFooterMedium(running, done, agentsMark))
-		parCompact = th.Style("spinner").Render(parallelFooterCompact(running, done))
-	}
-	agentsFull := joinSeg(sep, teamFull, parFull, subFull)
-	agentsMedium := joinSeg(sep, teamMedium, parMedium, subMedium)
-	agentsCompact := joinSeg(sep, teamCompact, parCompact, subCompact)
-
-	var candidates []string
-	if agentsFull != "" {
-		// Richest-to-poorest cross-product. The agents prefix sheds before the ctx
-		// meter: the last agents-bearing tier (compact + ctx-minimal) is followed by the
-		// agents-LESS ctx-minimal so context wins when width is tight.
-		candidates = append(candidates,
-			agentsFull+sep+meter+" · "+renderUsageFacets(m.usage),
-			agentsFull+sep+meter,
-			agentsMedium+sep+meterCompact,
-			agentsCompact+sep+meterMinimal,
-		)
-	}
-	candidates = append(candidates,
-		meter+" · "+renderUsageFacets(m.usage),
-		meter,
-		meterCompact,
-		meterMinimal,
-	)
-	leftW := lipgloss.Width(left)
-	for _, seg := range candidates {
-		gap := width - leftW - lipgloss.Width(seg) - footerGapPad
-		if gap >= 0 {
-			return left + strings.Repeat(" ", gap) + seg
-		}
-	}
-	return left
-}
-
-// joinSeg joins the non-empty segments with sep, so a footer prefix built from up to
-// two optional sub-segments (team + subagent fleet) collapses cleanly: with neither
-// it is "", with one it is that segment alone (no leading/trailing sep), with both it
-// is "<a><sep><b>". This keeps the no-agents footer byte-identical to the historical
-// ctx-only footer (agentsFull == "" drops the whole prefix branch).
-func joinSeg(sep string, segs ...string) string {
-	parts := make([]string, 0, len(segs))
-	for _, s := range segs {
-		if s != "" {
-			parts = append(parts, s)
-		}
-	}
-	return strings.Join(parts, sep)
-}
-
 // queuePreviewLimit is the number of staged follow-ups previewed in the queue
 // card; the rest are summarised as a "+K more" line so a deep queue stays compact.
 const queuePreviewLimit = 3
@@ -888,7 +595,7 @@ func (m Model) renderQueue() string {
 	muted := th.Style("muted")
 	var b strings.Builder
 	if m.queuePaused != "" {
-		reason, _ := stopReasonLabel(m.queuePaused)
+		reason, _ := renderfmt.StopReasonLabel(m.queuePaused)
 		b.WriteString(th.Style("ctxWarn").Render(fmt.Sprintf("⏸ %d queued · paused: %s", n, reason)))
 	} else {
 		// The edit hint only applies when EditBack is actionable, which
@@ -1112,10 +819,6 @@ func (m Model) renderFatalAtHeight(height int) string {
 	}
 	return card
 }
-
-// maxModelLen caps the model name shown in the header so a long provider-scoped
-// id (e.g. "anthropic/claude-opus-4-...") can't blow out the header width.
-const maxModelLen = 24
 
 // effortHeaderSuffix returns the reasoning-effort token to show beside the model in
 // the header, or "" when nothing should render (ADR 0055). It hides the unset state

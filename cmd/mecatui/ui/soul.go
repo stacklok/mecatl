@@ -6,11 +6,12 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // runSoul is the Open transition for the soul (persona) surface. It validates
@@ -23,134 +24,174 @@ func (m Model) runSoul() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.prompt.Blur() // modal owns the keyboard while open
-	m.modal = &soulState{view: soulPanel, loading: true, deps: (&m).surfaceDeps()}
-	return m, client.GetSoulCmd(m.deps.Ctx, m.deps.Soul)
+	s := &soulState{view: soulPanel, loading: true, deps: (&m).surfaceDeps()}
+	m.modal = s
+	return m, func() tea.Msg {
+		return soulResultMsg{owner: s, result: client.GetSoulCmd(m.deps.Ctx, m.deps.Soul)().(client.SoulMsg)}
+	}
 }
 
-// soulView is the soul panel's view discriminator. The soul panel is a
-// read-only, scrollable persona inspector: idle-only, esc to dismiss, a
-// line-window over the content with pgup/pgdown (and up/down, home/end) moving
-// the viewport. The soul is agent-read-only; the panel only displays it.
+// soulView discriminates the read-only persona inspector.
 type soulView int
 
 const (
-	// soulNone is the iota zero value; it is load-bearing for Render's
-	// defense-in-depth guard (`if s.view != soulPanel`), so a zero/uninitialized
-	// soulState renders empty rather than as an open panel. The closed state is
-	// m.modal == nil, not view == soulNone.
-	soulNone  soulView = iota
-	soulPanel          // read-only, scrollable persona inspector
+	soulNone soulView = iota
+	soulPanel
 )
 
-// soulBodyLines is the fixed number of soul-content lines the panel shows at once
-// (the scroll window). A fixed budget keeps the panel — and its goldens —
-// deterministic regardless of terminal height, and is plenty for a persona at a
-// glance while keeping the card from swallowing the screen. Content longer than
-// this scrolls; shorter content shows in full with no scroll indicator.
-const soulBodyLines = 12
-
-// soulState is the soul overlay's state: it is constructed at Open (runSoul)
-// and lives ONLY inside the Model's one `modal surface` interface field —
-// never a pre-declared Model field. deps is the shared ambient base
-// (theme/keys/marks/caps), set once at Open. The Soul value is replaced
-// wholesale on each RPC result (never mutated in place). soulState implements
-// `surface` on POINTER receivers.
-type soulState struct {
-	view    soulView
-	loading bool // the GetSoul RPC is in flight
-	err     error
-	soul    client.Soul
-	scroll  int         // view cache: first visible content line (clamped in HandleKey; soul's clamp reads no geometry)
-	deps    surfaceDeps // the shared ambient base, set once at Open
+type soulResultMsg struct {
+	owner  *soulState
+	result client.SoulMsg
 }
 
-// Render returns the soul panel body sized from the offered geometry: width
-// drives the card text budget; the scroll window stays the fixed
-// soulBodyLines-height line window over the wrapped content. All server-derived
-// strings are terminal-sanitized. Regions are nil (read-only, not clickable).
-// The height param goes unused by design: the scroll window is the FIXED
-// soulBodyLines line budget (deterministic goldens, terminal-height-
-// independent), not a function of terminal height.
-func (s *soulState) Render(width, _ int) (string, []ClickableRegion) {
-	if s.view != soulPanel {
+type soulState struct {
+	view      soulView
+	loading   bool
+	err       error
+	soul      client.Soul
+	deps      surfaceDeps
+	viewport  *bounded.Viewport
+	bodyWidth int
+	total     int
+	compact   bool
+}
+
+func (*soulState) modalMaxOuterWidth() int { return 128 }
+func (s *soulState) modalFrame() bool      { return !s.compact }
+
+// Render receives the parent's measured askCard content offer.
+func (s *soulState) Render(width, height int) (string, []ClickableRegion) {
+	s.compact = false
+	s.bodyWidth, s.total = 0, 0
+	if s.view != soulPanel || width <= 0 || height <= 0 {
+		s.viewport = nil
 		return "", nil
 	}
-	return renderSoulPanel(s.deps.theme, *s, s.deps.caps, s.deps.marks, width), nil
+	th := s.deps.theme
+	text := func(style lipgloss.Style, value string) []string {
+		var rows []string
+		for _, line := range strings.Split(value, "\n") {
+			for _, part := range strings.Split(ansi.Wrap(line, width, ""), "\n") {
+				rows = append(rows, style.Render(part))
+			}
+		}
+		return rows
+	}
+	title := text(th.Style("askTitle"), "Soul (persona)")
+	footer := text(th.Style("muted"), soulPanelFooter(s.soul, s.deps.marks))
+	var meta []string
+	var rows []string
+	switch {
+	case s.loading:
+		rows = text(th.Style("muted"), "loading…")
+	case s.err != nil:
+		rows = text(th.Style("errorText"), "get soul: "+terminaltext.Sanitize(s.err.Error()))
+	case !s.soul.Present && s.soul.Provenance == client.SoulProvenanceNone:
+		emptyMessage := "No user or project soul is available."
+		if !s.deps.caps.Soul {
+			emptyMessage = soulDisabledNote
+		}
+		rows = text(th.Style("muted"), emptyMessage)
+	default:
+		meta = text(th.Style("muted"), renderSoulMeta(s.soul))
+		if s.soul.Content == "" {
+			rows = text(th.Style("muted"), "(soul not loaded)")
+		} else {
+			rows = text(th.Style("toolArgs"), terminaltext.Sanitize(s.soul.Content))
+		}
+	}
+	fixed := len(title) + 2 + len(footer) // title/body and body/footer separators
+	if len(meta) > 0 {
+		fixed += len(meta) + 1
+	}
+	capacity := height - fixed
+	bodyHeight := capacity
+	if len(rows) > capacity {
+		bodyHeight-- // reserve an indicator, even when offset is at an endpoint
+	}
+	if bodyHeight < 1 {
+		s.compact = true
+		s.viewport = nil
+		return ansi.Cut(th.Style("muted").Render(s.deps.marks.closeOnly+" close"), 0, width) + "\x1b[0m", nil
+	}
+	if s.viewport == nil {
+		s.viewport = &bounded.Viewport{}
+	}
+	s.bodyWidth, s.total = width, len(rows)
+	s.viewport.SetGeometry(width, bodyHeight, 0, bounded.Clip)
+	projection := s.viewport.View(rows)
+	body := append(append([]string{}, title...), "")
+	if len(meta) > 0 {
+		body = append(body, meta...)
+		body = append(body, "")
+	}
+	body = append(body, projection.Rows...)
+	if len(rows) > bodyHeight {
+		indicator := fmt.Sprintf("lines %d–%d of %d", projection.Above+1, len(rows)-projection.Below, len(rows))
+		body = append(body, ansi.Cut(th.Style("muted").Render(indicator), 0, width)+"\x1b[0m")
+	}
+	body = append(body, "")
+	body = append(body, footer...)
+	return strings.Join(body, "\n"), nil
 }
 
-// HandleKey routes key presses while the soul overlay is open. esc self-closes
-// (closed=true); the scroll keys (pgup/pgdown, up/down, home/end) move the
-// content window. Every other key is swallowed (handled=true) so it never leaks
-// into idle input. Key bindings read from s.deps.
-func (s *soulState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
-	switch {
-	case key.Matches(msg, s.deps.keys.Close):
+func (s *soulState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if key.Matches(msg, s.deps.keys.Close) {
 		return nil, true, true
-	case key.Matches(msg, s.deps.keys.ScrollD), key.Matches(msg, s.deps.keys.Down):
-		s.scroll = clampSoulScroll(s.scroll+1, s.soul.Content)
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.ScrollU), key.Matches(msg, s.deps.keys.Up):
-		s.scroll = clampSoulScroll(s.scroll-1, s.soul.Content)
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		s.scroll = clampSoulScroll(soulMaxScroll(s.soul.Content), s.soul.Content)
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		s.scroll = 0
-		return nil, true, false
+	}
+	if s.viewport != nil {
+		move := bounded.LineDown
+		switch {
+		case key.Matches(msg, s.deps.keys.Down):
+		case key.Matches(msg, s.deps.keys.Up):
+			move = bounded.LineUp
+		case key.Matches(msg, s.deps.keys.ScrollD):
+			move = bounded.PageDown
+		case key.Matches(msg, s.deps.keys.ScrollU):
+			move = bounded.PageUp
+		case key.Matches(msg, s.deps.keys.ScrollBottom):
+			move = bounded.End
+		case key.Matches(msg, s.deps.keys.ScrollTop):
+			move = bounded.Top
+		default:
+			return nil, true, false
+		}
+		s.viewport.Move(move, s.total)
 	}
 	return nil, true, false
 }
 
-// HandleWheel consumes the wheel while the soul modal is open: the modal
-// captures input, so it returns handled=true.
-func (*soulState) HandleWheel(tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
+func (s *soulState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	if s.viewport != nil {
+		switch msg.Mouse().Button {
+		case tea.MouseWheelUp:
+			s.viewport.Move(bounded.LineUp, s.total)
+		case tea.MouseWheelDown:
+			s.viewport.Move(bounded.LineDown, s.total)
+		}
+	}
 	return nil, true
 }
 
-// HandleMsg reduces a client.SoulMsg (the GetSoul RPC result) into the overlay
-// state. It fires no follow-up command (single-shot read), returning handled; a
-// non-SoulMsg returns handled=false so the Model's generic reducer can see it.
-func (s *soulState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
-	sm, ok := msg.(client.SoulMsg)
-	if !ok {
+func (s *soulState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	sm, ok := msg.(soulResultMsg)
+	if !ok || sm.owner != s {
 		return nil, false, false
 	}
 	s.loading = false
-	if sm.Err != nil {
-		s.err = sm.Err
+	if sm.result.Err != nil {
+		s.err = sm.result.Err
 		return nil, true, false
 	}
 	s.err = nil
-	s.soul = sm.Soul
-	s.scroll = 0
+	s.soul = sm.result.Soul
+	if s.viewport != nil {
+		s.viewport.Reset()
+	}
 	return nil, true, false
 }
 
-// Close tears the overlay down; teardown is a no-op for soul (the surface
-// holds no resource). A GetSoul RPC that lands after close falls through
-// HandleMsg's handled=false and is dropped at the Model.
 func (*soulState) Close() {}
-
-// soulMaxScroll is the largest valid scroll offset for content: total lines minus
-// the visible window, never negative.
-func soulMaxScroll(content string) int {
-	return maxScrollOffset(len(soulContentLines(content)), soulBodyLines)
-}
-
-// clampSoulScroll bounds want into [0, soulMaxScroll].
-func clampSoulScroll(want int, content string) int {
-	return clampScroll(want, len(soulContentLines(content)), soulBodyLines)
-}
-
-// soulContentLines splits the (already-sanitized at render time) content into
-// lines. An empty body yields no lines.
-func soulContentLines(content string) []string {
-	if content == "" {
-		return nil
-	}
-	return strings.Split(content, "\n")
-}
 
 // soulDisabledNote is the empty-state copy when soul is NOT enabled on the
 // connected server (caps.Soul == false), with the remedy.
@@ -187,46 +228,8 @@ func soulTrustLabel(s client.Soul) string {
 	}
 }
 
-// renderSoulPanel renders the read-only, scrollable persona inspector: a title, a
-// dim metadata line (provenance/trust · size · sha), then a scroll-windowed view of
-// the content. EVERY server-derived string is terminal-sanitized.
-func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, hk helpKeys, width int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("Soul (persona)") + "\n\n")
-
-	budget := cardTextWidth(width)
-	switch {
-	case st.loading:
-		b.WriteString(th.Style("muted").Render("loading…") + "\n")
-	case st.err != nil:
-		line := "get soul: " + terminaltext.Sanitize(st.err.Error())
-		if budget > 0 {
-			line = ansi.Wrap(line, budget, "")
-		}
-		b.WriteString(th.Style("errorText").Render(line) + "\n")
-	case !st.soul.Present && st.soul.Provenance == client.SoulProvenanceNone:
-		// No soul selected and nothing dropped: distinguish "not enabled" from
-		// "enabled but none present".
-		if !caps.Soul {
-			b.WriteString(th.Style("muted").Render(soulDisabledNote) + "\n")
-		} else {
-			b.WriteString(th.Style("muted").Render("No user or project soul is available.") + "\n")
-		}
-	default:
-		b.WriteString(th.Style("muted").Render(renderSoulMeta(st.soul)) + "\n\n")
-		b.WriteString(renderSoulBody(th, st, budget))
-	}
-
-	// The scroll pair (ScrollU/ScrollD) and the close chord (Close) read the LIVE
-	// keyMap markings (issue #457); with defaults the hint is byte-identical to the
-	// historical literal.
-	b.WriteString("\n" + th.Style("muted").Render(soulPanelFooter(st.soul, hk)))
-	return b.String()
-}
-
-// soulPanelFooter keeps the ownership guidance aligned with the server-projected
-// provenance. The soul is always read-only to the agent, but user and project
-// sources have different remedies.
+// soulPanelFooter keeps ownership guidance aligned with server provenance.
+// The soul is agent-read-only; user and project sources have different remedies.
 func soulPanelFooter(s client.Soul, hk helpKeys) string {
 	var ownership string
 	switch s.Provenance {
@@ -255,28 +258,4 @@ func renderSoulMeta(s client.Soul) string {
 		segs = append(segs, "sha:"+terminaltext.Sanitize(short))
 	}
 	return strings.Join(segs, " · ")
-}
-
-// renderSoulBody renders the scroll-windowed content. When the body is empty (a
-// dropped untrusted project soul has metadata but no content) it shows a note.
-// Otherwise it wraps each line to the card budget, then windows the WRAPPED lines
-// to soulBodyLines starting at st.scroll, and appends a "lines X–Y of N" indicator
-// when the content exceeds the window.
-func renderSoulBody(th theme.Theme, st soulState, budget int) string {
-	if st.soul.Content == "" {
-		return th.Style("muted").Render("(soul not loaded)") + "\n"
-	}
-	// Wrap each raw line to the budget so a long persona line cannot overflow the
-	// card; the scroll window then operates on the wrapped lines for honest paging.
-	raw := soulContentLines(terminaltext.Sanitize(st.soul.Content))
-	var rendered []string
-	for _, ln := range raw {
-		if budget > 0 {
-			ln = ansi.Wrap(ln, budget, "")
-		}
-		for _, w := range strings.Split(ln, "\n") {
-			rendered = append(rendered, th.Style("toolArgs").Render(w))
-		}
-	}
-	return windowRenderedLines(th, rendered, st.scroll, soulBodyLines)
 }

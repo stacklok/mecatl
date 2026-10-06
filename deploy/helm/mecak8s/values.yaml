@@ -6,7 +6,7 @@ image:
   # Release PRs keep this signed tag aligned with Chart.yaml. A digest overrides
   # it; clearing both selectors falls back to v<chart-version>.
   digest: ""
-  tag: "v0.0.39"
+  tag: "v0.0.44"
   pullPolicy: IfNotPresent
 
 # imagePullSecrets projects Secret(s) of type kubernetes.io/dockerconfigjson
@@ -159,6 +159,17 @@ podDisruptionBudget:
 # authority rooted there — clients cannot select another root (ADR 0237). Mount
 # the volume yourself; the chart only passes the flag.
 workspace: ""
+
+# Optional client for the separately installed execution-provider service. The
+# provider chart is not a dependency of this chart.
+execution:
+  enabled: false
+  endpoint: ""
+  profile: ""
+  tlsSecret: ""
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
 
 redis:
   # A production release never creates Redis. Supply the managed endpoint and,

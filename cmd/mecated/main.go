@@ -49,6 +49,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -60,6 +61,12 @@ import (
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
+)
+
+var (
+	microVMReleaseVersion       = "dev"
+	microVMReleaseDefaultsB64   string
+	microVMReleaseStampRequired string
 )
 
 // TRUST MODEL (security): the mecated API exposes command and file execution
@@ -126,16 +133,20 @@ type config struct {
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262: auto-detecting the ToolHive LLM gateway proxy), applied onto
 	// app.Config in appConfig alongside providerFlags.
-	toolhiveLLMFlags     *cliconfig.ToolhiveLLMFlags
-	useMock              bool
-	mockScript           string
-	mockProvider         port.LLMProvider
-	storeDir             string
-	shell                string
-	shellFlagSet         bool
-	noShell              bool
-	authorityEvaluator   string
-	cedarAuthorityPolicy string
+	toolhiveLLMFlags      *cliconfig.ToolhiveLLMFlags
+	useMock               bool
+	mockScript            string
+	mockProvider          port.LLMProvider
+	storeDir              string
+	shell                 string
+	shellFlagSet          bool
+	noShell               bool
+	authorityEvaluator    string
+	cedarAuthorityPolicy  string
+	defaultPlacement      string
+	microVMGuestEgress    microvmmanager.GuestEgressSelection
+	microVMDevRelease     string
+	microVMDevAcknowledge bool
 
 	// Context management: the compaction strategy and the token counter. Both
 	// default to the current behaviour exactly (heuristic compactor + heuristic
@@ -159,6 +170,7 @@ type config struct {
 
 	// LLM resilience knobs (see package internal/adapter/llmresilience).
 	llmMaxAttempts       int
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	llmBreakerThreshold  int
@@ -986,6 +998,10 @@ func run(mode commandMode, remaining []string) error {
 	}
 
 	composition := appConfig(cfg, sink, cliconfig.TeeToolCallRecorder(mainScoped, pm.ToolCallRecorder), roleScoper, obs.metrics, diag)
+	composition, err = app.ConfigureExecution(composition)
+	if err != nil {
+		return err
+	}
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		return err
@@ -1163,10 +1179,29 @@ const mecatedServerImplementation = "mecated"
 
 // appConfig constructs the command root's declarative app.Config. app.Build loads the
 // injected provider credential after resolving operator definitions.
+func microVMReadyRequestWithDevelopment(descriptor string, acknowledge bool, egress ...microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+	request, enabled, err := microVMDevelopmentReadyRequest(descriptor, acknowledge, buildinfo.BuildID, microVMReleaseStampRequired != "" || microVMReleaseDefaultsB64 != "", egress...)
+	if enabled || err != nil {
+		return request, err
+	}
+	return microVMReadyRequest(egress...)
+}
+
+func microVMReadyRequest(egress ...microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+	return microvmmanager.ReadyRequestFromDefaults(microVMReleaseDefaultsB64, microVMReleaseVersion, egress...)
+}
+
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
 	out := app.Config{
-		Workspace:                     cfg.workspace,
+		Workspace:             cfg.workspace,
+		DefaultPlacement:      cfg.defaultPlacement,
+		DefaultPlacementSet:   cfg.cliExplicit["default-placement"],
+		MicroVMGuestEgress:    cfg.microVMGuestEgress,
+		MicroVMGuestEgressSet: cfg.cliExplicit["microvm-guest-egress"] || cfg.cliExplicit["microvm-guest-allow"],
+		MicroVMReadyRequest: func(selection microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+			return microVMReadyRequestWithDevelopment(cfg.microVMDevRelease, cfg.microVMDevAcknowledge, selection)
+		},
 		ClientMCPOnCreate:             clientMCPOnCreateForListeners(cfg),
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
@@ -1185,6 +1220,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Tokenizer:                     cfg.tokenizer,
 		ContextWindowOverride:         cfg.contextWindowOverride,
 		LLMMaxAttempts:                cfg.llmMaxAttempts,
+		LLMRecoveryBudget:             cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:          cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:          cfg.llmStreamIdleTimeout,
 		LLMBreakerThreshold:           cfg.llmBreakerThreshold,
@@ -1613,6 +1649,12 @@ func validateEffectiveConfig(cfg config) error {
 	// or non-finite value is an operator misconfiguration. Reject before the
 	// server is constructed so a malformed file or CLI value never reaches the
 	// rate limiter.
+	if cfg.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if cfg.cliExplicit["llm-max-attempts"] && cfg.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
+	}
 	if cfg.rateLimit < 0 || math.IsNaN(cfg.rateLimit) || math.IsInf(cfg.rateLimit, 0) {
 		return fmt.Errorf("rate_limit %v is invalid: must be >= 0 and finite (0 disables rate limiting)", cfg.rateLimit)
 	}
@@ -1650,6 +1692,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
 	fs.SetOutput(out)
 	var cfg config
+	cfg.microVMGuestEgress = microvmmanager.NewGuestEgressSelection()
 
 	cwd, _ := os.Getwd()
 
@@ -1693,21 +1736,26 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.authorityEvaluator, "authority-evaluator", "local", "authority evaluator: local (default), noop, or cedar; cedar requires --cedar-authority-policy")
 	fs.StringVar(&cfg.cedarAuthorityPolicy, "cedar-authority-policy", "", "path to the static operator Cedar authority policy; read once at startup when --authority-evaluator=cedar")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.StringVar(&cfg.defaultPlacement, "default-placement", "", "override execution.default_placement for this mecated serve: host-local or microvm-local (omitted: operator settings, then host-local)")
+	fs.Var(cfg.microVMGuestEgress.ModeValue(), "microvm-guest-egress", "override execution.microvm.guest_egress.mode: permissive, deny-all, or allowlist; omitted: operator settings, then permissive")
+	fs.Var(cfg.microVMGuestEgress.AllowValue(), "microvm-guest-allow", "allow one microvm-local guest destination as HOST:PORT/tcp|udp (repeatable; requires --microvm-guest-egress=allowlist; hostnames only, no IP literals or wildcards)")
+	registerMicroVMDevelopmentFlags(fs, &cfg.microVMDevRelease, &cfg.microVMDevAcknowledge)
 
 	fs.StringVar(&cfg.compaction, "compaction", "heuristic", "compaction strategy: \"heuristic\" (default, single-summary) or \"cascade\" (tiered snip→strip→collapse→summarize)")
 	fs.StringVar(&cfg.tokenizer, "tokenizer", "heuristic", "token counter for the compaction trigger: \"heuristic\" (default, dependency-free) or \"tiktoken\" (offline tiktoken vocab)")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens for compaction and the client context meter. Default 0 uses the configured, reported, cataloged, or 128k value.")
 
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "max LLM stream-establish attempts (initial call plus retries)")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "timeout for connecting to an LLM stream and receiving its first chunk. It does not interrupt an active stream. Set 0 to disable.")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; the watchdog bounds each gap, so precommit timeouts may recover while visible stalls are terminal (0 disables)")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "consecutive LLM failures that open the circuit breaker (0 disables)")
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "how long the LLM circuit breaker stays open before half-opening")
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "maximum cumulative input and output tokens per run. Child agents inherit the limit. Default 0 allows unlimited tokens.")
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "maximum cumulative input and output tokens across a team run; checked between rounds. A per-call team limit can only lower it. Default 0 allows unlimited tokens.")
 
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching. Caching is enabled by default.")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic ephemeral prompt-cache TTL: \"5m\" or \"1h\". Default empty uses the API default of 5m. Other values are ignored with a warning.")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic ephemeral prompt-cache TTL: \"5m\" or \"1h\". Default empty uses 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway, and the API default of 5m elsewhere; set 5m for cheaper cache writes. Other values are ignored with a warning.")
 
 	fs.StringVar(&cfg.metricsAddr, "metrics-addr", defaultMetricsAddr, "Prometheus /metrics listen address (empty disables the metrics endpoint)")
 
@@ -1905,6 +1953,12 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		return fs, config{}, fmt.Errorf("command runner configuration: %w", err)
 	}
 	cfg.shell = resolvedShell
+	if err := validateMicroVMPlacementFlags(mode, cfg); err != nil {
+		return fs, config{}, err
+	}
+	if err := cfg.microVMGuestEgress.Validate(); err != nil {
+		return fs, config{}, err
+	}
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
 	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
@@ -1965,7 +2019,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	case "off":
 		cfg.guardrailsOff = true
 	default:
-		return nil, config{}, fmt.Errorf("--guardrails %q: only \"off\" is accepted (the kill-switch); to ENABLE guardrails set --guardrails-model OR bind the `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — configuring a checker model is the enable (ADR 0046). Leave --guardrails unset to keep guardrails governed by the model/slot config", cfg.guardrailsMode)
+		return nil, config{}, fmt.Errorf("--guardrails %q: only \"off\" is accepted (the kill-switch); to ENABLE guardrails set --guardrails-model OR bind the `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — configuring a checker model is the enable. Leave --guardrails unset to keep guardrails governed by the model/slot config", cfg.guardrailsMode)
 	}
 	// WebSearch master switch (issue #26): only `--websearch=off` is meaningful (the
 	// kill switch — it forces web search off regardless of the backend ladder). An
@@ -2031,6 +2085,30 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.defaultProviderFlagSet = true
 		}
 	})
+}
+
+func validateMicroVMPlacementFlags(mode commandMode, cfg config) error {
+	if cfg.defaultPlacement != "" && cfg.defaultPlacement != app.PlacementHostLocal && cfg.defaultPlacement != app.PlacementMicroVMLocal {
+		return fmt.Errorf("unsupported --default-placement %q (supported: %s|%s)", cfg.defaultPlacement, app.PlacementHostLocal, app.PlacementMicroVMLocal)
+	}
+	executionSet := cfg.cliExplicit["default-placement"] || cfg.cliExplicit["microvm-guest-egress"] || cfg.cliExplicit["microvm-guest-allow"]
+	if mode == modeACP && executionSet {
+		return errors.New("execution placement flags are supported only by 'mecated serve'")
+	}
+	return validateMicroVMDevelopmentFlags(mode, cfg)
+}
+
+func validateMicroVMDevelopmentFlags(mode commandMode, cfg config) error {
+	if mode != modeServe && (cfg.microVMDevRelease != "" || cfg.microVMDevAcknowledge) {
+		return errors.New("microVM development release flags are supported only by 'mecated serve'")
+	}
+	if (cfg.microVMDevRelease == "") != !cfg.microVMDevAcknowledge {
+		return errors.New("--microvm-dev-release and --microvm-dev-acknowledge-untrusted-local-artifacts are required together")
+	}
+	if cfg.microVMDevRelease != "" && cfg.defaultPlacement != microvmmanager.Alias {
+		return errors.New("microVM development release flags require --default-placement microvm-local")
+	}
+	return nil
 }
 
 // applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days
@@ -2231,11 +2309,11 @@ func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *
 		slog.Info("lifetime pipe closed (the spawning parent exited); stopping servers")
 	case err := <-errCh:
 		slog.Error("server failed; shutting down", "err", err)
-		shutdown(grpcSrv, httpSrv, metricsSrv)
+		shutdown(svc, grpcSrv, httpSrv, metricsSrv)
 		return err
 	}
 
-	shutdown(grpcSrv, httpSrv, metricsSrv)
+	shutdown(svc, grpcSrv, httpSrv, metricsSrv)
 	return nil
 }
 
@@ -2630,13 +2708,17 @@ func storeKind(cfg config) string {
 	return "jsonl (resumable across restart)"
 }
 
-// shutdown gracefully stops the servers, bounding the HTTP drains with a
-// timeout. httpSrv may be nil when --http-addr is empty (the HTTP/SSE surface is
-// disabled, AC8.2); metricsSrv may be nil when the admin endpoint is disabled by
-// an empty --metrics-addr or with the HTTP surface.
-func shutdown(grpcSrv *grpc.Server, httpSrv, metricsSrv *http.Server) {
+// shutdown first stops admission and cancels active runs, then gracefully stops
+// the servers, bounding the complete drain with a timeout. httpSrv may be nil when
+// --http-addr is empty (the HTTP/SSE surface is disabled, AC8.2); metricsSrv may
+// be nil when the admin endpoint is disabled by an empty --metrics-addr or with
+// the HTTP surface.
+func shutdown(svc *server.Service, grpcSrv *grpc.Server, httpSrv, metricsSrv *http.Server) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := svc.GracefulDrain(shutdownCtx); err != nil {
+		slog.Warn("service graceful drain", "err", err)
+	}
 	if httpSrv != nil {
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("http graceful shutdown", "err", err)

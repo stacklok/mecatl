@@ -10,9 +10,10 @@ import (
 // osfs/ACP adapters previously duplicated in their own local ledgerKey tests:
 // relative vs absolute-in-root cross-form matching in BOTH directions,
 // `..`-carrying lexical alias convergence, out-of-root absolute keying by the
-// cleaned absolute form, the empty-path sentinel, and that a relative path
-// climbing above the root keys by its cleaned form (the ledger is a lookup,
-// not a confinement gate — confinement is the Workspace's job at use time).
+// cleaned absolute form, the empty-path sentinel, and relative escapes
+// converging with their absolute aliases (including re-entry into the root).
+// The ledger is a lookup, not a confinement gate; the Workspace checks paths
+// at use time.
 // Physical symlink aliases are deliberately NOT covered here: they may
 // conservatively produce distinct entries (a safe false-negative that forces
 // another Read), so they are a use-time property, not a lexical one.
@@ -35,7 +36,8 @@ func TestLedgerKey(t *testing.T) {
 		want string
 	}{
 		// Empty path is the "." sentinel (mirrors osfs.resolvePath).
-		{"empty-ish path is dot", rootSlash, ".", "."},
+		{"empty path is dot", rootSlash, "", "."},
+		{"dot path is dot", rootSlash, ".", "."},
 
 		// Relative path keys by its cleaned slash form.
 		{"relative clean", rootSlash, "a/b.txt", "a/b.txt"},
@@ -57,10 +59,11 @@ func TestLedgerKey(t *testing.T) {
 		{"out-of-root absolute keys by cleaned abs", rootSlash, outsideSlash + "/x.txt", outsideSlash + "/x.txt"},
 		{"out-of-root abs alias converges with cleaned form", rootSlash, outsideSlash + "/deep/../x.txt", outsideSlash + "/x.txt"},
 
-		// A relative path climbing above the root keys by its cleaned form;
-		// the ledger does NOT confine (it is a lookup). This documents the
-		// contract so a future tightening does not silently change it.
-		{"relative climbing above root keys by cleaned form", rootSlash, "../sibling.txt", "../sibling.txt"},
+		// A relative escape and its absolute alias share the physical lexical key.
+		{"relative climbing above root converges", rootSlash, "../sibling.txt", filepath.ToSlash(filepath.Join(base, "sibling.txt"))},
+		{"relative re-entry converges with in-root", rootSlash, "../ws/file.txt", "file.txt"},
+		{"relative re-entry to root converges", rootSlash, "../ws", "."},
+		{"relative climb from slash root stays in-root", "/", "../a.txt", "a.txt"},
 
 		// A relative root (memfs passes a logical root like "/"): an absolute
 		// path under "/" reduces to its cleaned slash tail.

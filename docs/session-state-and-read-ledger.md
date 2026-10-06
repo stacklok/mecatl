@@ -1,7 +1,7 @@
 # Session-owned extensible state and the read-before-write ledger
 
 *Status: strawman / working draft. This is a concrete architecture proposal, not a
-frozen design record under [ADR 0002](adr/0002-documentation-lifecycle.md). It is
+frozen design record under ADR 0002. It is
 the same documentation tier as [Scoped resource grants](scoped-resource-grants.md).
 If accepted, the relevant decisions should be captured in one or more ADRs.*
 

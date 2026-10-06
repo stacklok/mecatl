@@ -544,7 +544,6 @@ func TestADR_0346_ChatCompletionsUnderCanonicalOpenAIDialectStillCaches(t *testi
 			// openaichatCacheDialectFor gates its implicit-caching dialect on.
 			providerOpenAI: {id: providerOpenAI, available: true, protocol: protocolOpenAIChatCompletions},
 		},
-		outcomes: newLiveOutcomeStore(),
 	}
 	if !promptCachedFor(reg, cfg, providerOpenAI, "gpt-5") {
 		t.Error("canonical OpenAI over Chat Completions caches implicitly; prompt_cached must be true")

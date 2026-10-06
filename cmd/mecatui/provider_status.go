@@ -24,6 +24,7 @@ import (
 const (
 	providerOpenRouterID  = "openrouter"
 	providerClassBuiltin  = "built-in"
+	providerAuthExternal  = "external"
 	openAICodexEndpointID = "openai-codex"
 )
 
@@ -176,7 +177,7 @@ func providerSource(source, method string) string {
 		return "not required"
 	case providerAuthOIDC:
 		return "encrypted local OIDC store"
-	case "external":
+	case providerAuthExternal:
 		return "ToolHive configuration; authentication managed externally"
 	default:
 		return "none"
@@ -184,7 +185,7 @@ func providerSource(source, method string) string {
 }
 
 func toolHiveProviderStatus() providerStatus {
-	return providerStatus{Name: toolHiveEndpointID, Class: "external", AuthMethod: "external", Configured: true, Auth: "managed externally", DefaultModel: "ToolHive managed", Next: "use `thv llm` tooling"}
+	return providerStatus{Name: toolHiveEndpointID, Class: "external", AuthMethod: providerAuthExternal, Configured: true, Auth: "managed externally", DefaultModel: "ToolHive managed", Next: "use `thv llm` tooling"}
 }
 
 func currentToolHiveAvailable() bool {

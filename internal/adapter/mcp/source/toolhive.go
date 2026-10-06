@@ -33,7 +33,14 @@ import (
 
 // effectiveDefaultGroup is the group name used when the operator did not name one
 // (mirroring ToolHive's own notion of a "default" group). Empty group -> "default".
-const effectiveDefaultGroup = "default"
+const (
+	effectiveDefaultGroup = "default"
+	// ToolHive's current listing API materializes the returned slice before the
+	// caller can filter it. Reject it immediately, before group filtering or any
+	// derived server/diagnostic allocation; the dependency-owned slice allocation
+	// is the unavoidable residual until ToolHive exposes a bounded listing API.
+	maxToolHiveWorkloads = 128
+)
 
 // workloadLister is the minimal slice of the ToolHive library mecatl needs: list
 // the running workloads. Defining our own interface (rather than depending on
@@ -47,10 +54,10 @@ type workloadLister interface {
 
 // ToolHiveSource discovers MCP servers from the running ToolHive workloads in a
 // group, reading each workload's already-populated HTTP proxy URL. Construction of
-// the underlying ToolHive manager is LAZY (first Servers call) and ERROR-GUARDED:
-// if no container runtime is reachable the source degrades to zero servers plus a
-// single diagnostic, NOT a fatal error, so a developer without Podman/Docker can
-// still run the harness.
+// the underlying ToolHive manager is lazy (first Servers call). Runtime/listing
+// infrastructure failures are returned as consultation errors so reconciliation
+// can retain the source's last-known-good snapshot; a successful empty list is
+// therefore distinguishable and authoritative.
 type ToolHiveSource struct {
 	// group is the ToolHive group to filter workloads to. Empty means the
 	// effective "default" group.
@@ -95,11 +102,10 @@ func (s ToolHiveSource) Name() string {
 // Servers lists the running ToolHive workloads in the configured group and maps
 // each streamable-http workload to an mcp.ServerConfig.
 //
-// Fail-soft contract:
+// Consultation contract:
 //   - If the ToolHive manager cannot be constructed or the list call fails (no
-//     container runtime), return (nil, [one diagnostic], nil) — a degraded but
-//     non-fatal state. The harness keeps running with whatever static servers it
-//     has.
+//     container runtime), return an error. The ordered reconciler retains LKG;
+//     startup remains fail-soft because composition treats this as stale.
 //   - A workload whose name contains "__" is skipped (it would corrupt the
 //     mcp__<server>__<tool> namespacing).
 //   - A workload whose *effective proxy transport* is not streamable-http is
@@ -110,12 +116,7 @@ func (s ToolHiveSource) Name() string {
 func (s ToolHiveSource) Servers(ctx context.Context) ([]mcp.ServerConfig, []SkipError, error) {
 	lister, err := s.newLister(ctx)
 	if err != nil {
-		// No container runtime (or other construction fault): degrade to zero
-		// servers + a diagnostic. This is the common developer-laptop path.
-		return nil, []SkipError{{
-			Server: "toolhive",
-			Reason: fmt.Sprintf("container runtime unavailable: %v", err),
-		}}, nil
+		return nil, nil, fmt.Errorf("ToolHive container runtime unavailable: %w", err)
 	}
 
 	// listAll=false: running workloads only. The runtime returns an error (not an
@@ -123,10 +124,10 @@ func (s ToolHiveSource) Servers(ctx context.Context) ([]mcp.ServerConfig, []Skip
 	// fault: degrade, don't abort.
 	list, err := lister.ListWorkloads(ctx, false)
 	if err != nil {
-		return nil, []SkipError{{
-			Server: "toolhive",
-			Reason: fmt.Sprintf("listing ToolHive workloads failed: %v", err),
-		}}, nil
+		return nil, nil, fmt.Errorf("listing ToolHive workloads: %w", err)
+	}
+	if len(list) > maxToolHiveWorkloads {
+		return nil, nil, fmt.Errorf("ToolHive workload count exceeds limit %d", maxToolHiveWorkloads)
 	}
 
 	// FilterByGroup is a pure in-memory filter over the already-listed workloads:

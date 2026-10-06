@@ -5,9 +5,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
+
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
 )
+
+func TestHarnessContextGeneratedScaffoldingParsesWhenUncommented(t *testing.T) {
+	var lines []string
+	capturing := false
+	for _, line := range strings.Split(configgen.Skeleton(), "\n") {
+		if line == "# harness_context:" {
+			capturing = true
+		}
+		if capturing && strings.HasPrefix(line, "#| ===") {
+			break
+		}
+		if capturing && strings.HasPrefix(line, "# ") {
+			lines = append(lines, strings.TrimPrefix(line, "# "))
+		}
+	}
+	var cfg permconfig.Config
+	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")+"\n"), &cfg); err != nil {
+		t.Fatalf("uncommented generated harness_context scaffolding is not executable configuration: %v\n%s", err, strings.Join(lines, "\n"))
+	}
+	if cfg.HarnessContext == nil || cfg.HarnessContext.Kinds.Instructions.Mode != "combine" {
+		t.Fatal("uncommented generated scaffolding did not parse into the configured subtree")
+	}
+}
 
 // authoritativeKeys reflects over the permconfig *Section structs to collect EVERY
 // yaml key the strict-decode maps accept — derived independently of the renderers so
@@ -43,6 +68,7 @@ func authoritativeKeys() []string {
 	collect("retention.main", permconfig.RetentionLimitSection{})
 	collect("retention.child", permconfig.RetentionLimitSection{})
 	collect("retention.scheduled", permconfig.RetentionLimitSection{})
+	collect("system_prompt", permconfig.SystemPromptSection{})
 	collect("command_runner", permconfig.CommandRunnerSection{})
 	collect("command_runner.environment", permconfig.CommandRunnerEnvironment{})
 	collect("temporary_storage", permconfig.TemporaryStorageSection{})
@@ -56,8 +82,12 @@ func authoritativeKeys() []string {
 		"providers.team-gateway.auth.oidc.issuer", "providers.team-gateway.auth.oidc.client_id", "providers.team-gateway.auth.oidc.resource_audience", "providers.team-gateway.auth.oidc.scopes",
 		"providers.team-gateway.auth.oidc.issuer_trust", "providers.team-gateway.auth.oidc.gateway_trust",
 	)
+	collect("execution", permconfig.ExecutionSection{})
+	collect("execution.microvm", permconfig.ExecutionMicroVMSection{})
+	collect("execution.microvm.guest_egress", permconfig.ExecutionGuestEgressSection{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
+	collect("models.router.jev", permconfig.JevRouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
 	collect("openrouter", permconfig.OpenRouterSection{})
 	collect("openrouter.models", permconfig.OpenRouterModelRoute{})
@@ -341,11 +371,14 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"providers":              configgen.TierOperator, // operator-only: a project cannot choose LLM endpoints or auth posture
 		"credential_store":       configgen.TierOperator, // operator-only: OIDC credential custody is host authority
 		"provider_overrides":     configgen.TierOperator, // operator-only: a project cannot redirect built-in provider traffic
+		"harness_context":        configgen.TierOperator, // operator-only: project content cannot register or reorder its own sources
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
+		"system_prompt":          configgen.TierOperator, // operator-only: project cannot weaken standard prompt guidance
 		"command_runner":         configgen.TierOperator, // operator-only: project cannot select a shell or restore ambient credentials
 		"temporary_storage":      configgen.TierOperator, // operator-only: project cannot redirect command storage or cleanup
 		"storage_management":     configgen.TierOperator, // operator-only: project cannot grant process-wide management
+		"execution":              configgen.TierOperator, // operator-only: project cannot choose host execution placement or guest egress
 		"steer":                  configgen.TierOperator, // operator-only: a project cannot flip the mid-run steer surface (issue #512)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)

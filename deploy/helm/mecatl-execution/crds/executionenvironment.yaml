@@ -1,0 +1,213 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: executionenvironments.execution.mecatl.dev
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  group: execution.mecatl.dev
+  scope: Namespaced
+  names:
+    plural: executionenvironments
+    singular: executionenvironment
+    kind: ExecutionEnvironment
+    shortNames: [execenv]
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - rule: "!has(oldSelf.allocationID) || self.allocationID == oldSelf.allocationID"
+              message: allocationID is immutable
+            - rule: "!has(oldSelf.revision) || self.revision == oldSelf.revision"
+              message: revision is immutable
+            - rule: "!has(oldSelf.ownerHash) || self.ownerHash == oldSelf.ownerHash"
+              message: ownerHash is immutable
+            - rule: "!has(oldSelf.ownerIssuer) || self.ownerIssuer == oldSelf.ownerIssuer"
+              message: ownerIssuer is immutable
+            - rule: "!has(oldSelf.ownerSubject) || self.ownerSubject == oldSelf.ownerSubject"
+              message: ownerSubject is immutable
+            - rule: "!has(oldSelf.clientHash) || self.clientHash == oldSelf.clientHash"
+              message: clientHash is immutable
+            - rule: "!has(oldSelf.bindingID) || self.bindingID == oldSelf.bindingID"
+              message: bindingID is immutable
+            - rule: "!has(oldSelf.requestFingerprint) || self.requestFingerprint == oldSelf.requestFingerprint"
+              message: requestFingerprint is immutable
+            - rule: "!has(oldSelf.profileDigest) || self.profileDigest == oldSelf.profileDigest"
+              message: profileDigest is immutable
+            - rule: "!has(oldSelf.profile) || self.profile == oldSelf.profile"
+              message: profile is immutable
+            - rule: "!has(oldSelf.image) || self.image == oldSelf.image"
+              message: image is immutable
+            - rule: "!has(oldSelf.storageClass) || self.storageClass == oldSelf.storageClass"
+              message: storageClass is immutable
+            - rule: "!has(oldSelf.storageSize) || self.storageSize == oldSelf.storageSize"
+              message: storageSize is immutable
+            - rule: "!has(oldSelf.resources) || self.resources == oldSelf.resources"
+              message: resources are immutable
+            required: [allocationID, revision, ownerHash, clientHash, bindingID, requestFingerprint, profile, profileDigest, image, storageClass, storageSize, resources, desired]
+            properties:
+              schemaVersion: {type: integer, format: int64, enum: [0, 1, 2]}
+              allocationID: {type: string, minLength: 1, maxLength: 63}
+              revision: {type: string, minLength: 1, maxLength: 64}
+              ownerHash: {type: string, pattern: "^[0-9a-f]{64}$"}
+              ownerIssuer: {type: string, minLength: 1, maxLength: 1024}
+              ownerSubject: {type: string, minLength: 1, maxLength: 1024}
+              clientHash: {type: string, pattern: "^[0-9a-f]{64}$"}
+              bindingID: {type: string, minLength: 1, maxLength: 253}
+              requestFingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+              profile: {type: string, minLength: 1, maxLength: 63}
+              profileDigest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+              image: {type: string, pattern: "@sha256:[0-9a-fA-F]{64}$"}
+              storageClass: {type: string, minLength: 1}
+              storageSize: {type: string, minLength: 1}
+              resources:
+                type: object
+                required: [cpuRequest, memoryRequest, cpuLimit, memoryLimit]
+                properties:
+                  cpuRequest: {type: string, minLength: 1}
+                  memoryRequest: {type: string, minLength: 1}
+                  cpuLimit: {type: string, minLength: 1}
+                  memoryLimit: {type: string, minLength: 1}
+              desired: {type: string, enum: [Active, Retiring]}
+          status:
+            type: object
+            properties:
+              schemaVersion: {type: integer, format: int64, enum: [0, 1, 2]}
+              observedGeneration: {type: integer, format: int64}
+              epoch: {type: integer, format: int64, minimum: 1}
+              fenceState: {type: string, enum: [Healthy, FenceUnknown]}
+              grantGeneration: {type: integer, format: int64, minimum: 1}
+              revocationReceipts:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  required: [operationID, fingerprint, expectedGrantGeneration, grantGeneration]
+                  properties:
+                    operationID: {type: string, minLength: 1, maxLength: 1024}
+                    fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                    expectedGrantGeneration: {type: integer, format: int64, minimum: 1}
+                    grantGeneration: {type: integer, format: int64, minimum: 1}
+              references:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [bindingID]
+                items:
+                  type: object
+                  required: [bindingID, state, operationID, createdAt]
+                  properties:
+                    bindingID: {type: string, minLength: 1, maxLength: 253}
+                    state: {type: string, enum: [PendingCreate, Published, PendingDelete]}
+                    operationID: {type: string, minLength: 1, maxLength: 1024}
+                    sourceBindingID: {type: string, maxLength: 253}
+                    createdAt: {type: string, format: date-time}
+              pvc:
+                type: object
+                properties:
+                  name: {type: string}
+                  uid: {type: string}
+              pod:
+                type: object
+                properties:
+                  name: {type: string}
+                  uid: {type: string}
+              activeRun:
+                type: object
+                required: [bindingID, runID, claimID, operationID, ownerHash, clientHash, epoch, grantGeneration, expiresAt]
+                properties:
+                  bindingID: {type: string, maxLength: 253}
+                  runID: {type: string, maxLength: 1024}
+                  claimID: {type: string, maxLength: 1024}
+                  operationID: {type: string, maxLength: 1024}
+                  ownerHash: {type: string, pattern: "^[0-9a-f]{64}$"}
+                  clientHash: {type: string, pattern: "^[0-9a-f]{64}$"}
+                  epoch: {type: integer, format: int64, minimum: 1}
+                  grantGeneration: {type: integer, format: int64, minimum: 1}
+                  expiresAt: {type: string, format: date-time}
+              renewReceipts:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  required: [operationID, fingerprint, expiresAt]
+                  properties:
+                    operationID: {type: string, minLength: 1, maxLength: 1024}
+                    fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                    expiresAt: {type: string, format: date-time}
+              activeOperation:
+                type: object
+                required: [id, operation, startedAt, claimID, runID, epoch, holderID, renewedAt, expiresAt]
+                properties:
+                  id: {type: string, minLength: 1, maxLength: 1024}
+                  operation: {type: string, minLength: 1, maxLength: 128}
+                  startedAt: {type: string, format: date-time}
+                  claimID: {type: string, maxLength: 1024}
+                  runID: {type: string, maxLength: 1024}
+                  epoch: {type: integer, format: int64, minimum: 1}
+                  holderID: {type: string, minLength: 1, maxLength: 1024}
+                  renewedAt: {type: string, format: date-time}
+                  expiresAt: {type: string, format: date-time}
+              lifecycleOperation:
+                type: object
+                required: [id, type, phase, createdAt]
+                properties:
+                  id: {type: string, minLength: 1, maxLength: 1024}
+                  type: {type: string, enum: [ReplaceExecutor, RetireEnvironment, DeleteRetiredEnvironment]}
+                  phase: {type: string, enum: [Quiescing, WaitingForTermination, RemovingPodFinalizer, WaitingForPodDeletion, CreatingReplacement, DeletingPVC, ReleasingSlot]}
+                  expectedEpoch: {type: integer, format: int64, minimum: 1}
+                  expectedPodUID: {type: string, maxLength: 128}
+                  expectedPVCUID: {type: string, minLength: 1, maxLength: 128}
+                  createdAt: {type: string, format: date-time}
+              terminationProof:
+                type: object
+                required: [operationID, podUID, pvcUID, epoch, podPhase, observedAt]
+                properties:
+                  operationID: {type: string, minLength: 1, maxLength: 1024}
+                  podUID: {type: string, minLength: 1, maxLength: 128}
+                  pvcUID: {type: string, minLength: 1, maxLength: 128}
+                  epoch: {type: integer, format: int64, minimum: 1}
+                  podPhase: {type: string, enum: [Succeeded, Failed]}
+                  observedAt: {type: string, format: date-time}
+              lastReplacement:
+                type: object
+                required: [operationID, previousPodUID, replacementPodUID, pvcUID, previousEpoch, replacementEpoch]
+                properties:
+                  operationID: {type: string, minLength: 1, maxLength: 1024}
+                  previousPodUID: {type: string, minLength: 1, maxLength: 128}
+                  replacementPodUID: {type: string, minLength: 1, maxLength: 128}
+                  pvcUID: {type: string, minLength: 1, maxLength: 128}
+                  previousEpoch: {type: integer, format: int64, minimum: 1}
+                  replacementEpoch: {type: integer, format: int64, minimum: 2}
+              migrationOperation:
+                type: object
+                required: [id, fromSchema, expectedPodUID, expectedPVCUID]
+                properties:
+                  id: {type: string, minLength: 1, maxLength: 1024}
+                  fromSchema: {type: integer, format: int64, enum: [0, 1]}
+                  expectedPodUID: {type: string, minLength: 1, maxLength: 128}
+                  expectedPVCUID: {type: string, minLength: 1, maxLength: 128}
+              lastMigrationOperationID: {type: string, maxLength: 1024}
+              lastMigrationFromSchema: {type: integer, format: int64, enum: [0, 1]}
+              conditions:
+                type: array
+                items:
+                  type: object
+                  required: [type, status, reason, message, observedGeneration, lastTransitionTime]
+                  properties:
+                    type: {type: string}
+                    status: {type: string, enum: ["True", "False", Unknown]}
+                    reason: {type: string}
+                    message: {type: string, maxLength: 1024}
+                    observedGeneration: {type: integer, format: int64}
+                    lastTransitionTime: {type: string, format: date-time}

@@ -47,6 +47,7 @@ const (
 	envOpenRouterKey = "OPENROUTER_API_KEY"
 	envAnthropicKey  = "ANTHROPIC_API_KEY"
 	envOpenCodeKey   = "OPENCODE_API_KEY"
+	envTypesafeKey   = "TYPESAFE_API_KEY"
 )
 
 // ProviderFlagHelp carries the per-main help text for the three provider base-URL
@@ -284,6 +285,7 @@ func (*ProviderFlags) applyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredent
 	cfg.OpenRouterKey = keys.OpenRouter
 	cfg.AnthropicKey = keys.Anthropic
 	cfg.OpenCodeKey = keys.OpenCode
+	cfg.TypesafeAPIKey = keys.Typesafe
 }
 
 // EndpointOverrides returns the non-secret CLI endpoint overrides. Command roots
@@ -318,6 +320,7 @@ func readProviderKeys(getenv func(string) string) ResolvedCredentials {
 		OpenRouter: getenv(envOpenRouterKey),
 		Anthropic:  getenv(envAnthropicKey),
 		OpenCode:   getenv(envOpenCodeKey),
+		Typesafe:   getenv(envTypesafeKey),
 	}
 }
 
@@ -329,6 +332,7 @@ type ResolvedCredentials struct {
 	OpenRouter string
 	Anthropic  string
 	OpenCode   string
+	Typesafe   string
 	// OpenAICodex is a distinct billing identity from OpenAIKey. Its fields are
 	// immutable outside the provider adjunct and it is populated only after
 	// startup validation of a file-backed manual token.

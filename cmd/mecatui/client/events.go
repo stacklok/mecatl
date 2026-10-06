@@ -40,7 +40,7 @@ type EventStream struct {
 // It intentionally exposes only the permission and cancellation vocabulary
 // accepted after the mandatory initial authorization-control frame.
 type AuthorizationControl interface {
-	SendApproval(string, Verdict) error
+	SendApprovalForScope(string, Verdict, *GuardrailApprovalScope, string) error
 	SendCancel() error
 }
 
@@ -70,12 +70,28 @@ func (s *EventStream) ApprovalResolved(askID string) bool {
 	return ok
 }
 
-// SendApproval resolves one permission ask on a writable authorization stream.
-func (s *EventStream) SendApproval(askID string, verdict Verdict) error {
-	if s == nil || s.control == nil {
-		return fmt.Errorf("authorization control stream is not writable")
+// ForgetApprovalResolved reopens transport deduplication after a refused reply.
+func (s *EventStream) ForgetApprovalResolved(askID string) {
+	if s == nil {
+		return
 	}
-	return s.control.SendApproval(askID, verdict)
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	delete(s.resolvedApprovals, askID)
+}
+
+// SendApproval resolves one ordinary permission ask on a writable authorization stream.
+func (s *EventStream) SendApproval(askID string, verdict Verdict) error {
+	return s.SendApprovalForScope(askID, verdict, nil, "")
+}
+
+// SendApprovalForScope sends the complete approval intent. Writable continuation
+// streams must preserve the guardrail scope and expected run identity.
+func (s *EventStream) SendApprovalForScope(askID string, verdict Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
+	if s == nil || s.control == nil {
+		return fmt.Errorf("authorization control stream is not writable for scoped approval")
+	}
+	return s.control.SendApprovalForScope(askID, verdict, scope, expectedRunID)
 }
 
 // SendCancel cancels the run continued by a writable authorization stream.

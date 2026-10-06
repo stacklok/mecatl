@@ -1,12 +1,9 @@
 package app
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/stacklok/mecatl/engine/port"
 )
 
 // TestCustomProviderLiveModalitiesAreAuthoritative proves an OpenAI-compatible
@@ -35,10 +32,12 @@ func TestCustomProviderLiveModalitiesAreAuthoritative(t *testing.T) {
 				t.Fatalf("buildProviderRegistry: %v", err)
 			}
 
-			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
+			models := discoverAllModels(t, reg)
 			projected := make(map[string]bool, len(models))
 			for _, m := range models {
-				projected[m.ID] = projectModelEntry(reg, definition.ID, m).GetImage()
+				if m.ProviderId == definition.ID {
+					projected[m.Id] = m.GetImage()
+				}
 			}
 			if projected["text-only"] {
 				t.Error("text-only model advertised image input despite its explicit live declaration")

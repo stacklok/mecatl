@@ -18,7 +18,7 @@ import (
 // text. Any permission ask is auto-allowed.
 func drainRun(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) string {
 	var final string
 	for ev := range run.Events() {
@@ -133,7 +133,7 @@ func TestUserModelE2E(t *testing.T) {
 	}
 	// soulSrc + project memStore nil — isolate the user-model block (matches the old
 	// NoSoul:true). The cast mirrors composition (the adapter satisfies the port).
-	asm := buildInstructionAssembler(nil, nil, nil, storeB, false)
+	asm := buildInstructionAssembler(nil, nil, nil, nil, storeB, false)
 
 	obs := &observedReq{}
 	prov := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(obs.observer())}, mockllm.TextTurn("done"))

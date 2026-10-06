@@ -120,6 +120,12 @@ type config struct {
 	httpShutdownTimeout    time.Duration
 	closeTimeout           time.Duration
 	workspace              string
+	executionEnabled       bool
+	executionEndpoint      string
+	executionProfile       string
+	executionTLSCA         string
+	executionTLSCert       string
+	executionTLSKey        string
 	model                  string
 	defaultProvider        string
 	defaultModel           string
@@ -185,6 +191,7 @@ type config struct {
 
 	// LLM resilience knobs (see internal/adapter/llmresilience).
 	llmMaxAttempts       int
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	llmBreakerThreshold  int
@@ -352,6 +359,12 @@ func parseFlags(argv []string) (config, error) {
 	positiveDurationFlag(fs, &cfg.httpShutdownTimeout, "http-shutdown-timeout", defaultHTTPShutdownTimeout, "Maximum time for graceful HTTP and metrics shutdown")
 	positiveDurationFlag(fs, &cfg.closeTimeout, "close-timeout", defaultCloseTimeout, "Maximum time for final application cleanup")
 	fs.StringVar(&cfg.workspace, "workspace", "", "Shared agent workspace root, such as a mounted PVC. Empty gives every session a shell-less, file-less workspace; clients cannot choose another root")
+	fs.BoolVar(&cfg.executionEnabled, "execution-enabled", false, "Use an independently deployed Kubernetes execution provider for default sessions")
+	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-enabled")
+	fs.StringVar(&cfg.executionProfile, "execution-profile", "", "Operator-configured execution provider profile")
+	fs.StringVar(&cfg.executionTLSCA, "execution-tls-ca", "", "Mounted CA bundle used only by the execution client")
+	fs.StringVar(&cfg.executionTLSCert, "execution-tls-cert", "", "Mounted execution-provider mTLS client certificate")
+	fs.StringVar(&cfg.executionTLSKey, "execution-tls-key", "", "Mounted execution-provider mTLS client private key")
 	fs.StringVar(&cfg.model, "model", "", "Model identifier sent to the provider. Empty uses the provider default")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "Deployment-wide default provider ID, such as openai, openrouter, or anthropic. Invalid values prevent startup")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "Deployment-wide default model ID for the default provider. Invalid values prevent startup")
@@ -409,16 +422,17 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum schedules started concurrently in one scheduler tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "Maximum attempts to establish an LLM stream, including the initial attempt")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "Timeout for connecting to an LLM stream and receiving its first chunk. Does not stop an active stream; zero disables the timeout")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. A longer gap ends the turn; zero disables the timeout")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. The watchdog bounds each chunk gap; before semantic output a timed-out attempt may recover, while visible stalls are terminal. Zero disables the timeout")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "Consecutive LLM failures that open the circuit breaker. Zero disables it")
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "How long the LLM circuit breaker remains open before retrying")
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per agent run. Runs exceeding it end with stop=budget; zero is unlimited")
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "Maximum cumulative input and output tokens per team run. Zero is unlimited")
 
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "Disable provider-side prompt caching")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic prompt-cache TTL: 5m or 1h. Empty uses the API default; other values are ignored")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic prompt-cache TTL: 5m or 1h. Empty uses 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway, the API default elsewhere; other values are ignored")
 
 	// Headless: DEFAULT true (mecak8s is a headless daemon — no human approver).
 	fs.BoolVar(&cfg.headless, "headless", true, "Run without an interactive permission approver. Child permission requests are denied unless --subagent-ask-reviewer handles them")
@@ -612,6 +626,21 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.workspace != "" && (!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
+	if cfg.executionEnabled {
+		if cfg.executionEndpoint == "" || cfg.executionProfile == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
+			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-profile, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
+		}
+		if !cfg.oidc.Enabled() {
+			return config{}, errors.New("--execution-enabled requires OIDC caller ownership enforcement")
+		}
+		if cfg.workspace != "" || cfg.redisFilesystem {
+			return config{}, errors.New("--execution-enabled conflicts with --workspace and --redis-filesystem")
+		}
+		if cfg.enableParallel || cfg.enableTeams {
+			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
+		}
+		cfg.noScheduler = true
+	}
 	if cfg.redisFilesystem && cfg.workspace != "" {
 		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")
 	}
@@ -620,6 +649,12 @@ func parseFlags(argv []string) (config, error) {
 	}
 	if (cfg.redisFilesystem || cfg.redisReadLedger) && cfg.redisURL == "" {
 		return config{}, errors.New("--redis-filesystem and --redis-read-ledger require --redis-url")
+	}
+	if cfg.llmRecoveryBudget < 0 {
+		return config{}, errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if cfg.llmMaxAttempts <= 0 {
+		return config{}, errors.New("--llm-max-attempts must be positive")
 	}
 	if cfg.redisFollowPoolSize < 1 {
 		return config{}, errors.New("--redis-follow-pool-size must be at least 1")
@@ -659,6 +694,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		mcpAuthorityDefault = mcpauthority.Global
 	}
 	out := app.Config{
+		RemoteExecution:        cfg.executionEnabled,
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
 		DefaultProvider:        cfg.defaultProvider,
@@ -701,6 +737,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		SchedulerMinInterval:          cfg.schedulerMinInterval,
 		SchedulerMaxConcurrentFires:   cfg.schedulerMaxConcurrentFires,
 		LLMMaxAttempts:                cfg.llmMaxAttempts,
+		LLMRecoveryBudget:             cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:          cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:          cfg.llmStreamIdleTimeout,
 		LLMBreakerThreshold:           cfg.llmBreakerThreshold,

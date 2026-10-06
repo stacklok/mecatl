@@ -12,10 +12,10 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/agentimport"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // runImport implements the offline `mecated import` command. It writes directly

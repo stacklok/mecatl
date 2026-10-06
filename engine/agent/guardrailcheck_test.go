@@ -28,7 +28,7 @@ func checkerEngine(llm *mockllm.Provider) *agent.Engine {
 // parses it. A clean verdict object passes straight through.
 func TestRunGuardrailCheckReturnsText(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"safe":false,"reason":"exfil"}`))
-	got, err := agent.RunGuardrailCheck(context.Background(), checkerEngine(llm), "inspect this")
+	got, _, err := agent.RunGuardrailCheck(context.Background(), checkerEngine(llm), "inspect this")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestRunGuardrailCheckReturnsText(t *testing.T) {
 // text carries no verdict, which is the safe outcome the caller needs.
 func TestRunGuardrailCheckEmptyTurnNoVerdict(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(""))
-	got, err := agent.RunGuardrailCheck(context.Background(), checkerEngine(llm), "inspect this")
+	got, _, err := agent.RunGuardrailCheck(context.Background(), checkerEngine(llm), "inspect this")
 	if err != nil {
 		t.Fatalf("an empty turn is a clean terminal, not an error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestRunGuardrailCheckEmptyTurnNoVerdict(t *testing.T) {
 // rejects it. RunGuardrailCheck never fabricates a verdict — it only relays text.
 func TestRunGuardrailCheckGarbageRelayed(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("I cannot decide, sorry."))
-	got, err := agent.RunGuardrailCheck(context.Background(), checkerEngine(llm), "x")
+	got, _, err := agent.RunGuardrailCheck(context.Background(), checkerEngine(llm), "x")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRunGuardrailCheckGarbageRelayed(t *testing.T) {
 // A nil engine is an ERROR (a leaf helper, not a panic), so the caller takes its
 // fail-open/closed path.
 func TestRunGuardrailCheckNilEngineErrors(t *testing.T) {
-	if _, err := agent.RunGuardrailCheck(context.Background(), nil, "x"); err == nil {
+	if _, _, err := agent.RunGuardrailCheck(context.Background(), nil, "x"); err == nil {
 		t.Fatal("a nil checker engine must be an error, never a fabricated reply")
 	}
 }
@@ -79,7 +79,7 @@ func TestRunGuardrailCheckCancelledErrors(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"safe":true}`))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := agent.RunGuardrailCheck(ctx, checkerEngine(llm), "x"); err == nil {
+	if _, _, err := agent.RunGuardrailCheck(ctx, checkerEngine(llm), "x"); err == nil {
 		t.Fatal("a cancelled checker run must be an error")
 	}
 }

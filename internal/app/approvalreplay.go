@@ -59,7 +59,7 @@ func replayApprovals(log port.EventLog, policy port.PermissionPolicy, diag port.
 			// be replayed — only allow-always learns a durable per-session rule; a
 			// one-time grant or a denial that survived a restart as a learned allow
 			// would be a silent re-grant of a permission the user never gave.
-			if ev.Type != session.EvApproval || ev.Approval == nil || !ev.Approval.AllowAlways {
+			if ev.Type != session.EvApproval || ev.Approval == nil || !ev.Approval.AllowAlways || ev.Approval.Origin != session.ApprovalOriginPermission {
 				continue
 			}
 			if ev.Approval.Call == "" {

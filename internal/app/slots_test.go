@@ -102,7 +102,7 @@ func TestCompactionSlotRoutesSummaryOnly(t *testing.T) {
 		ModelAliases: map[string]string{"cheap": "cheap-model-id"},
 	}
 	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
-	deps := engineDepsForProvider(cfg, provider, sessionModel, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	deps := engineDepsForProvider(cfg, provider, testProviderModel(sessionModel), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 	if deps.Model != sessionModel {
 		t.Fatalf("deps.Model = %q, want the session model %q (the slot must NOT move the engine model)", deps.Model, sessionModel)
 	}
@@ -289,8 +289,8 @@ func TestLogSlotConfigFacts(t *testing.T) {
 // BudgetTokens — a future "make BudgetTokens counter-derived" refactor trips this red.
 func TestCompactionBudgetIsCounterIndependent(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("x"))
-	a := buildCompactor(Config{Model: "gpt-4o", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, buildTokenCounter(Config{Model: "gpt-4o", Tokenizer: "tiktoken"}))
-	b := buildCompactor(Config{Model: "gpt-4", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, buildTokenCounter(Config{Model: "gpt-4", Tokenizer: "tiktoken"}))
+	a := buildCompactor(Config{Model: "gpt-4o", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, testProviderModel("gpt-4o"), buildTokenCounter(Config{Model: "gpt-4o", Tokenizer: "tiktoken"}))
+	b := buildCompactor(Config{Model: "gpt-4", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, testProviderModel("gpt-4"), buildTokenCounter(Config{Model: "gpt-4", Tokenizer: "tiktoken"}))
 	ca, ok := a.(agent.CascadeCompactor)
 	if !ok {
 		t.Fatalf("compactor a type = %T, want CascadeCompactor", a)

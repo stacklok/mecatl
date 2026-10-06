@@ -44,7 +44,7 @@ func zeroStateModel(t *testing.T, caps client.Capabilities) Model {
 // offers "?", "/" (built-ins always exist), "f6" (teams on) and "ctrl+t",
 // and notes that memory is on.
 func TestZeroStateEmbeddedGolden(t *testing.T) {
-	m := zeroStateModel(t, embeddedCaps())
+	m := goldenStatusFrame(t, zeroStateModel(t, embeddedCaps()))
 	if !m.conv.isEmpty() {
 		t.Fatal("conversation should be empty for the zero-state")
 	}
@@ -55,7 +55,7 @@ func TestZeroStateEmbeddedGolden(t *testing.T) {
 // TestZeroStateAllOnGolden locks the welcome card under an all-on server: it adds
 // the "/" line (commands on).
 func TestZeroStateAllOnGolden(t *testing.T) {
-	m := zeroStateModel(t, allOnCaps())
+	m := goldenStatusFrame(t, zeroStateModel(t, allOnCaps()))
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "zerostate_all_on.golden", got)
 }

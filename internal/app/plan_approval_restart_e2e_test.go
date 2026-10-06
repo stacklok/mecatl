@@ -78,12 +78,11 @@ func TestPlanApprovalRestartE2E(t *testing.T) {
 	}
 	var askID string
 	for ev := range run1.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan && askID == "" {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan && askID == "" {
 			askID = ev.Ask.AskID
-			// The PlanOriginated marker must be set (cross-process load-bearing).
-			if !ev.Ask.PlanOriginated {
+			if ev.Ask.Origin != session.ApprovalOriginPlan {
 				built1.Close()
-				t.Fatal("the awaiting plan ask must be PlanOriginated")
+				t.Fatal("the awaiting plan ask must carry explicit plan origin")
 			}
 			// Model the relay's Persist-on-ask: a durable StateAwaiting snapshot.
 			built1.Service.Persist(ctx, sess.ID)

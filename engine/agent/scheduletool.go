@@ -559,15 +559,17 @@ func renderScheduleList(scheds []port.Schedule) string {
 // per-fire wall-clock FireTimeout (issue #386), it is appended so a create/list
 // surfaces the bound the in-flight fire runs under.
 func renderScheduleSummary(s port.Schedule) string {
-	enabled := "disabled"
-	if s.State.Enabled {
-		enabled = "enabled"
+	state := "disabled"
+	if s.State.DeletionID != "" {
+		state = "deletion_pending=true (retry delete)"
+	} else if s.State.Enabled {
+		state = "enabled"
 	}
 	next := "none"
 	if !s.State.NextFireAt.IsZero() {
 		next = s.State.NextFireAt.UTC().Format(time.RFC3339)
 	}
-	out := fmt.Sprintf("%s [%s] next=%s %s", s.Spec.Name, renderTrigger(s.Spec.Trigger), next, enabled)
+	out := fmt.Sprintf("%s [%s] next=%s %s", s.Spec.Name, renderTrigger(s.Spec.Trigger), next, state)
 	if s.Spec.FireTimeout > 0 {
 		out += " fire_timeout=" + s.Spec.FireTimeout.String()
 	}

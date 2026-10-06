@@ -125,19 +125,6 @@ func TestCancelTeammateMidRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
-	// Seed the shared task list with one task claimed by the worker, so the cancel
-	// can prove ReleaseTasks fired.
-	tm := teamOf()
-	if tm == nil {
-		t.Fatal("the member factory never bound a team aggregate")
-	}
-	if _, err := tm.CreateTask("investigate the bug"); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if _, ok, cerr := tm.ClaimNext("worker"); !ok || cerr != nil {
-		t.Fatalf("ClaimNext(worker): ok=%v err=%v", ok, cerr)
-	}
-
 	var (
 		out    agent.TeamOutcome
 		runErr error
@@ -152,6 +139,18 @@ func TestCancelTeammateMidRound(t *testing.T) {
 	case <-park.started: // the worker is genuinely mid-round
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the worker to park")
+	}
+	// Member construction occurs at RunTeam, so seed the shared task list only
+	// after startup has published the runtime team.
+	tm := teamOf()
+	if tm == nil {
+		t.Fatal("the member factory never bound a team aggregate at RunTeam")
+	}
+	if _, err := tm.CreateTask("investigate the bug"); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, ok, cerr := tm.ClaimNext("worker"); !ok || cerr != nil {
+		t.Fatalf("ClaimNext(worker): ok=%v err=%v", ok, cerr)
 	}
 
 	// Live team, unknown member name → ErrChildNotFound (the run keeps going).
@@ -324,10 +323,6 @@ func TestCancelTeammateIdleBetweenRounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
-	tm := teamOf()
-	if tm == nil {
-		t.Fatal("the member factory never bound a team aggregate")
-	}
 
 	var (
 		out    agent.TeamOutcome
@@ -343,6 +338,10 @@ func TestCancelTeammateIdleBetweenRounds(t *testing.T) {
 	case <-park.started: // round 0 is live (lead parked); the worker idles unscheduled
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the lead to park")
+	}
+	tm := teamOf()
+	if tm == nil {
+		t.Fatal("the member factory never bound a team aggregate at RunTeam")
 	}
 
 	// Claim a task for the idle worker so the next round WOULD schedule it — the

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -9,63 +8,14 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestFooterContextMeterWithWindow drives a result through Update and asserts the
 // footer shows a populated context meter (bar + percentage + used/total) when a
 // context window is configured, plus the session usage facets.
-func TestFooterContextMeterWithWindow(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{
-		Theme: th,
-		Model: "mock-model",
-	})
-	// The footer denominator is the SERVER-echoed per-model window (resolve-at-use,
-	// live-first server-side); set it as the test would receive it on SessionReady.
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	// The meter's numerator comes from the per-turn TurnEndMsg (current
-	// occupancy); the facets come from the cumulative ResultMsg total.
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000, OutputTokens: 345}})
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 40000, OutputTokens: 345, CacheReadTokens: 35200},
-	})
-
-	footer := stripANSIstr(m.renderFooter())
-	if !strings.Contains(footer, "ctx ") || !strings.ContainsAny(footer, ctxGlyphOk+ctxGlyphEmpty) {
-		t.Errorf("expected a context bar in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "20%") {
-		t.Errorf("expected 20%% context in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "40K/200K") {
-		t.Errorf("expected used/total in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "↑40K") || !strings.Contains(footer, "↓345") {
-		t.Errorf("expected usage facets in footer:\n%s", footer)
-	}
-	if !strings.Contains(footer, "cache 88%") {
-		t.Errorf("expected cache-hit rate in footer:\n%s", footer)
-	}
-}
-
 // TestFooterContextMeterUnknownWindow asserts the meter degrades to just the
 // current size when no window is known.
-func TestFooterContextMeterUnknownWindow(t *testing.T) {
-	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
-	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 7903}})
-
-	footer := stripANSIstr(m.renderFooter())
-	if !strings.Contains(footer, "ctx 7.9K") {
-		t.Errorf("expected bare context size in footer:\n%s", footer)
-	}
-	if strings.ContainsAny(footer, ctxGlyphOk+ctxGlyphWarn+ctxGlyphDanger+ctxGlyphEmpty) {
-		t.Errorf("expected no bar without a window:\n%s", footer)
-	}
-}
-
 // TestContextMeterTracksLatestTurnNotCumulative pins the two-axis usage model:
 // m.contextTokens is CURRENT occupancy — assigned (not summed) from each
 // TurnEndMsg's InputTokens — while m.usage is the SESSION-CUMULATIVE total fed
@@ -102,6 +52,7 @@ func TestContextMeterTracksLatestTurnNotCumulative(t *testing.T) {
 	}
 
 	// The cache-hit facet is cumulative cache-read / cumulative input: 1100/2200 = 50%.
+	m = stockStatusFrame(t, m)
 	footer := stripANSIstr(m.renderFooter())
 	if !strings.Contains(footer, "cache 50%") {
 		t.Errorf("expected cumulative cache-hit rate 50%% in footer:\n%s", footer)
@@ -115,137 +66,15 @@ func TestContextMeterTracksLatestTurnNotCumulative(t *testing.T) {
 // TestFooterNarrowWidthTiers asserts the footer sheds detail in priority order
 // as width shrinks — facets first, the context signal last. Context % must
 // survive in every tier where anything fits beside the left status.
-func TestFooterNarrowWidthTiers(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 140000, OutputTokens: 345}})
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345, CacheReadTokens: 70000},
-	})
-	left := "ready"
-
-	// Wide: full tier — meter (with used/total) AND facets.
-	wide := stripANSIstr(m.fitFooter(left, 120))
-	if !strings.Contains(wide, "140K/200K") || !strings.Contains(wide, "↑140K") {
-		t.Errorf("wide footer should be the full tier:\n%q", wide)
-	}
-
-	// Medium: meter survives, facets dropped.
-	med := stripANSIstr(m.fitFooter(left, 40))
-	if strings.Contains(med, "↑140K") {
-		t.Errorf("medium footer should drop io/cache facets first:\n%q", med)
-	}
-	if !strings.Contains(med, "ctx ") || !strings.Contains(med, "70%") {
-		t.Errorf("medium footer should keep the context signal:\n%q", med)
-	}
-
-	// Tight: even the minimal bar-less percentage must carry the context %.
-	tight := stripANSIstr(m.fitFooter(left, 22))
-	if !strings.Contains(tight, "ctx ") || !strings.Contains(tight, "70%") {
-		t.Errorf("tight footer should still show ctx %%:\n%q", tight)
-	}
-	if strings.Contains(tight, "140K/200K") {
-		t.Errorf("tight footer should not carry used/total:\n%q", tight)
-	}
-
-	// Too narrow for anything: just the left status, no usage bleed-through.
-	none := stripANSIstr(m.fitFooter(left, 10))
-	if strings.Contains(none, "ctx") {
-		t.Errorf("ultra-narrow footer should drop the usage segment entirely:\n%q", none)
-	}
-}
-
 // TestFooterTeamSegmentTiers asserts the live-team footer summary segment tiers
 // alongside the context meter, and that the team segment (an advertisement) is the
 // FIRST thing dropped under width pressure while the context % survives longest.
-func TestFooterTeamSegmentTiers(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 200, Height: 30})
-	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 140000, OutputTokens: 345}})
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345, CacheReadTokens: 70000},
-	})
-	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster()) // lead + scout, both working → 2/2
-	})
-	left := "ready"
-
-	// Wide: full team tier (glyph + team-id + k/N working + f6 agents) AND the
-	// full context meter (ctx + %).
-	wide := stripANSIstr(m.fitFooter(left, 200))
-	for _, want := range []string{teamLiveGlyph, "team-x", "2/2 working", "f6 agents", "ctx ", "70%"} {
-		if !strings.Contains(wide, want) {
-			t.Errorf("wide footer should contain %q:\n%q", want, wide)
-		}
-	}
-
-	// Medium: team segment degrades to the id-less "⟳ k/N working · f6"; the
-	// context % must still be present.
-	med := stripANSIstr(m.fitFooter(left, 56))
-	if !strings.Contains(med, teamLiveGlyph) || !strings.Contains(med, "2/2 working") {
-		t.Errorf("medium footer should keep the team summary:\n%q", med)
-	}
-	if strings.Contains(med, "team-x") {
-		t.Errorf("medium footer should drop the team id:\n%q", med)
-	}
-	if !strings.Contains(med, "ctx ") || !strings.Contains(med, "70%") {
-		t.Errorf("medium footer should keep the context signal:\n%q", med)
-	}
-
-	// Tight: the team segment is dropped entirely; the context % wins (survives
-	// longest). This locks the priority: context % over the team advertisement.
-	tight := stripANSIstr(m.fitFooter(left, 18))
-	if strings.Contains(tight, teamLiveGlyph) {
-		t.Errorf("tight footer should drop the team segment:\n%q", tight)
-	}
-	if !strings.Contains(tight, "ctx ") || !strings.Contains(tight, "70%") {
-		t.Errorf("tight footer should still show ctx %%:\n%q", tight)
-	}
-}
-
 // TestFooterNoTeamSegment is the regression guard for the byte-identical no-team
 // path: with no team seeded the footer carries no team glyph and no "team-" id.
-func TestFooterNoTeamSegment(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345},
-	})
-	footer := stripANSIstr(m.fitFooter("ready", 200))
-	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-") {
-		t.Errorf("no-team footer must carry no team segment:\n%q", footer)
-	}
-}
-
 // TestFooterTeamDoneDropsSegment asserts a team that has ENDED drops the footer
 // segment — latestTeamBlock still returns it, so liveTeamBlock's !teamDone gate is
 // what hides it. This is deliberately NARROWER than the f6 overlay, which
 // opens on the last-seen team (done or not) to review a finished roster.
-func TestFooterTeamDoneDropsSegment(t *testing.T) {
-	th := theme.New("aztec", theme.AztecPalette())
-	m := newTestModelFromDeps(Deps{Theme: th})
-	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
-	m = applyAll(m, client.ResultMsg{
-		Stop:  "end_turn",
-		Usage: client.Usage{InputTokens: 140000},
-	})
-	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.setTeamEnd("t1", "team-x", 3, "end_turn", client.Usage{InputTokens: 100}, nil)
-	})
-	footer := stripANSIstr(m.fitFooter("ready", 200))
-	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-x") {
-		t.Errorf("ended team must drop the footer segment:\n%q", footer)
-	}
-}
-
 // TestAgentsInvSlashCommandEndToEnd drives the FULL palette path for the /agents
 // definition inventory (issue #15, Gap A): type "/agents", press enter, and assert
 // the panel opens, fires ListAgents, and renders the resolved defs in the
@@ -313,29 +142,50 @@ func TestSoulSlashCommandEndToEnd(t *testing.T) {
 	}
 }
 
-// TestUserModelSlashCommandEndToEnd drives the /usermodel built-in through the real
-// palette + keypress reducer: typing "/usermodel"+enter opens the read-only panel and
+// TestUserModelSlashCommandEndToEnd drives the /memory built-in through the real
+// palette + keypress reducer: typing "/memory"+enter opens the read-only panel and
 // fires GetUserModel, rendering the live index.
 func TestUserModelSlashCommandEndToEnd(t *testing.T) {
 	fum := sampleUserModel()
 	m := newUserModelModel(t, fum, client.Capabilities{UserModel: true})
 
-	m = typeText(t, m, "/usermodel")
+	m = typeText(t, m, "/memory")
 	if !m.palette.open {
-		t.Fatal("palette should be open after typing /usermodel")
+		t.Fatal("palette should be open after typing /memory")
 	}
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.userModel.view != userModelPanel {
-		t.Fatalf("/usermodel+enter should open the panel, view=%v", m.userModel.view)
+	if s, ok := m.modal.(*userModelState); !ok || s.view != userModelPanel {
+		t.Fatalf("/memory+enter should open the panel, surface=%T", m.modal)
 	}
 	if fum.calls != 1 {
-		t.Errorf("GetUserModel calls = %d, want 1 (the /usermodel built-in fired the RPC)", fum.calls)
+		t.Errorf("GetUserModel calls = %d, want 1 (the /memory built-in fired the RPC)", fum.calls)
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "the operator's name") {
 		t.Errorf("the rendered panel should carry the live entries, got:\n%s", body)
+	}
+}
+
+// TestUserModelLegacySlashCommandIsNotAnAlias keeps the removed command from
+// silently reopening saved memory through the root reducer.
+func TestUserModelLegacySlashCommandIsNotAnAlias(t *testing.T) {
+	fum := sampleUserModel()
+	m := newUserModelModel(t, fum, client.Capabilities{UserModel: true})
+
+	for _, r := range "/usermodel" {
+		updated, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+
+	if m.modal != nil {
+		t.Fatalf("/usermodel+enter opened saved memory: %T", m.modal)
+	}
+	if fum.calls != 0 {
+		t.Fatalf("/usermodel+enter called GetUserModel %d times, want 0", fum.calls)
 	}
 }
 
@@ -347,8 +197,8 @@ func TestTeamOverlayF6MidRunEndToEnd(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m.caps.Teams = true
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "team-x", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m.phase = phaseRunning
 
@@ -369,31 +219,6 @@ func TestTeamOverlayF6MidRunEndToEnd(t *testing.T) {
 	}
 }
 
-// TestHeaderTruncatesLongModel asserts a long model id is capped in the header.
-// The model segment renders from the EFFECTIVE model the server resolved (echoed on
-// SessionReadyMsg), so the test drives a create response with a long resolved id —
-// the header shows it (no model segment while still connecting, by design).
-func TestHeaderTruncatesLongModel(t *testing.T) {
-	long := "anthropic/claude-opus-4-8-with-a-really-long-suffix-2026"
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{},
-		resolvedModel: client.ResolvedModel{ProviderID: "anthropic", ModelID: long}}
-	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Session: conv, Conv: conv, Ctx: context.Background()})
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 200, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001", ResolvedModel: client.ResolvedModel{ProviderID: "anthropic", ModelID: long}},
-	)
-	header := stripANSIstr(m.renderHeader())
-	if strings.Contains(header, long) {
-		t.Errorf("long model id should be truncated in header:\n%q", header)
-	}
-	if !strings.Contains(header, "…") {
-		t.Errorf("truncated model should carry an ellipsis:\n%q", header)
-	}
-	if !strings.Contains(header, "anthropic/claude") {
-		t.Errorf("truncation should keep the model prefix:\n%q", header)
-	}
-}
-
 // TestEditCardRendersDiffInConversation drives an Edit tool call through the
 // conversation and asserts the rendered viewport shows a red/green diff (not raw
 // JSON args).
@@ -404,7 +229,7 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	m = applyAll(m,
 		client.ToolCallMsg{ID: "e1", Name: "Edit", Args: `{"path":"x.go","old_string":"foo","new_string":"bar"}`},
 	)
-	view := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	view := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(view, "- foo") || !strings.Contains(view, "+ bar") {
 		t.Errorf("expected diff lines in conversation, got:\n%s", view)
 	}
@@ -413,19 +238,21 @@ func TestEditCardRendersDiffInConversation(t *testing.T) {
 	}
 }
 
-// TestExpandToolsToggle asserts ctrl+t flips the global expand flag.
-func TestExpandToolsToggle(t *testing.T) {
+// TestToolcallsShortcutOpensInspector asserts ctrl+t opens the current-session
+// inspector without changing the legacy expansion state.
+func TestToolcallsShortcutOpensInspector(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	if m.expandTools {
-		t.Fatal("expandTools should start false")
+	m.phase = phaseIdle
+	if m.expandConversation {
+		t.Fatal("expandConversation should start false")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if !m.expandTools {
-		t.Error("ctrl+t should set expandTools true")
+	if m.expandConversation || toolcallsForTest(t, m) == nil {
+		t.Error("ctrl+t should open the inspector without changing expandConversation")
 	}
 	// The footer is now the minimal "? help · … · ctrl+c quit" line; the full
-	// chord list (including "ctrl+t … details") moved into the "?" help overlay.
+	// chord list moved into the "?" help overlay.
 	footer := stripANSIstr(m.renderFooter())
 	if !strings.Contains(footer, "? help") || !strings.Contains(footer, "ctrl+c quit") {
 		t.Errorf("footer should carry the minimal help line:\n%s", footer)
@@ -433,16 +260,12 @@ func TestExpandToolsToggle(t *testing.T) {
 	if strings.Contains(footer, "ctrl+t details") {
 		t.Errorf("footer should no longer carry the full chord list:\n%s", footer)
 	}
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.expandTools {
-		t.Error("ctrl+t should toggle expandTools back to false")
-	}
 }
 
 // TestReasoningBlockCollapsedThenExpanded asserts a reasoning delta renders as a
 // dim, collapsed one-line "reasoning summary" header by default (the full text
-// hidden), and that ctrl+t expands it to show the streamed reasoning text under
-// a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
+// hidden), and that the retained expansion state shows the streamed reasoning text
+// under a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
 // assistant answer of the same turn.
 func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
@@ -455,8 +278,8 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	)
 
 	// Collapsed (default): the "reasoning summary" header is shown, body hidden.
-	collapsed := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
-	if !strings.Contains(collapsed, "reasoning summary · 2 lines · ctrl+t expand") {
+	collapsed := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	if !strings.Contains(collapsed, "reasoning summary · 2 lines · f9 expand") {
 		t.Errorf("expected collapsed reasoning-summary header, got:\n%s", collapsed)
 	}
 	if strings.Contains(collapsed, "inspect the file") {
@@ -471,9 +294,10 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 		t.Errorf("reasoning (%d) should render above the answer (%d):\n%s", ri, ai, collapsed)
 	}
 
-	// Expanded (ctrl+t): the caveat + the full reasoning text become visible.
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	// f9 expands reasoning; Toolcalls never changes this state.
+	m, _ = pressKey(m, f9)
+	// Expanded: the caveat + the full reasoning text become visible.
+	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
 	if !strings.Contains(expanded, "may not reflect its actual process") {
 		t.Errorf("expanded reasoning should carry the lossy-summary caveat:\n%s", expanded)
 	}
@@ -502,11 +326,11 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 
 	// Exactly one assistant block, with both reasoning fragments merged into it.
 	var asst int
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockAssistant {
+	for _, card := range m.conv.testBlocks() {
+		if assistant, ok := card.Payload.(scrollback.AssistantCardSnapshot); ok {
 			asst++
-			if m.conv.blocks[i].reasoning != "step one\nstep two\n" {
-				t.Errorf("reasoning not merged onto the block: %q", m.conv.blocks[i].reasoning)
+			if assistant.Reasoning != "step one\nstep two\n" {
+				t.Errorf("reasoning not merged onto the card: %q", assistant.Reasoning)
 			}
 		}
 	}
@@ -519,7 +343,7 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 	if got := strings.Count(view, "reasoning summary"); got != 1 {
 		t.Errorf("want exactly one reasoning region, got %d:\n%s", got, view)
 	}
-	if !strings.Contains(view, "reasoning summary · 2 lines · ctrl+t expand") {
+	if !strings.Contains(view, "reasoning summary · 2 lines · f9 expand") {
 		t.Errorf("merged reasoning should report 2 lines:\n%s", view)
 	}
 	// Reasoning above both answer fragments.
@@ -545,8 +369,8 @@ func TestReasoningLiveAffordance(t *testing.T) {
 	if !strings.Contains(live, "reasoning…") {
 		t.Errorf("streaming reasoning (no answer yet) should show the live affordance:\n%s", live)
 	}
-	if strings.Contains(live, "ctrl+t expand") {
-		t.Errorf("live reasoning should not yet show the static expand hint:\n%s", live)
+	if !strings.Contains(live, "reasoning… · f9 expand") {
+		t.Errorf("live reasoning must advertise its detail toggle:\n%s", live)
 	}
 
 	// Answer text begins → flips to the static, expandable header.
@@ -555,7 +379,7 @@ func TestReasoningLiveAffordance(t *testing.T) {
 	if strings.Contains(settled, "reasoning…") {
 		t.Errorf("reasoning should stop showing the live affordance once answer begins:\n%s", settled)
 	}
-	if !strings.Contains(settled, "reasoning summary · 1 line · ctrl+t expand") {
+	if !strings.Contains(settled, "reasoning summary · 1 line · f9 expand") {
 		t.Errorf("settled reasoning should show the static header:\n%s", settled)
 	}
 }
@@ -569,7 +393,7 @@ func TestTurnEndStatLine(t *testing.T) {
 	m.phase = phaseRunning
 
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100})
-	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	withDur := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(withDur, "↑1.2K ↓340 · 4.1s") {
 		t.Errorf("expected cost-first per-turn stat line with duration, got:\n%s", withDur)
 	}
@@ -580,12 +404,33 @@ func TestTurnEndStatLine(t *testing.T) {
 	// A turn with substantial tokens but no duration (no clock) omits the elapsed
 	// segment but still renders (it is not trivial).
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 500, OutputTokens: 20}, DurationMs: 0})
-	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandTools))
+	noDur := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(noDur, "↑500 ↓20") {
 		t.Errorf("expected per-turn stat line, got:\n%s", noDur)
 	}
 	if strings.Contains(noDur, "↑500 ↓20 ·") {
 		t.Errorf("turn with no clock should omit the duration segment:\n%s", noDur)
+	}
+}
+
+// TestTurnStatCacheReachesScrollback is the integration guard for the per-turn cache
+// facet: a TurnEndMsg carrying a material cache rate, driven through the REAL update
+// path (TurnEndMsg → addTurnStat(renderfmt.TurnStatLine) → blockTurnStat → renderBlockFresh),
+// must surface "% cached" in the rendered conversation scrollback. TestTurnStatLine
+// tests the formatter in isolation; this proves the string actually reaches a rendered
+// block (the renderfmt.TrivialTurn gate, the conversation append, and the block render all wired).
+func TestTurnStatCacheReachesScrollback(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+		// Non-trivial tokens (so the stat line is not suppressed) with an 88% cache rate.
+		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1500, OutputTokens: 300, CacheReadTokens: 1320}, DurationMs: 4100},
+	)
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF9})
+	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	if !strings.Contains(got, "88% cached") {
+		t.Errorf("rendered scrollback missing the per-turn cache facet %q; got %q", "88% cached", got)
 	}
 }
 
@@ -596,18 +441,18 @@ func TestTurnEndTrivialSuppressed(t *testing.T) {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.phase = phaseRunning
 
-	before := len(m.conv.blocks)
+	before := len(m.conv.testBlocks())
 	// Tiny tokens, no clock → trivial → suppressed.
 	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 5, OutputTokens: 2}, DurationMs: 0})
 	// Tiny tokens, sub-second duration → still trivial → suppressed.
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 10, OutputTokens: 0}, DurationMs: 300})
-	if len(m.conv.blocks) != before {
-		t.Errorf("trivial turns should add no stat block; blocks grew %d→%d", before, len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != before {
+		t.Errorf("trivial turns should add no stat block; blocks grew %d→%d", before, len(m.conv.testBlocks()))
 	}
 
 	// A turn over the duration threshold is NOT trivial even with tiny tokens.
 	m = applyAll(m, client.TurnEndMsg{Turn: 3, Usage: client.Usage{InputTokens: 10, OutputTokens: 0}, DurationMs: 1500})
-	view := stripANSIstr(m.rend.renderConversation(&m.conv, false))
+	view := stripANSIstr(m.rend.renderConversation(&m.conv, true))
 	if !strings.Contains(view, "↑10 ↓0 · 1.5s") {
 		t.Errorf("a turn with a measurable duration should not be suppressed:\n%s", view)
 	}

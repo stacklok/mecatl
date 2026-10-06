@@ -42,11 +42,15 @@ func NewRunEventRecorder(ctx context.Context, svc *Service, id session.SessionID
 	return &RunEventRecorder{svc: svc, ctx: ctx, id: id}
 }
 
-// Observe adds ev to the durable projection. Delta events are buffered in
-// bounded UTF-8 chunks; every other event first flushes buffered deltas and is
+// Observe adds ev to the durable projection. Availability is live-only and is
+// omitted without disturbing buffered deltas. Delta events are buffered in bounded
+// UTF-8 chunks; every other projected event first flushes buffered deltas and is
 // then appended itself. Every projected event is attempted exactly once because
 // EventLog.Append may return an error after durably writing it.
 func (r *RunEventRecorder) Observe(ev session.Event) {
+	if ev.Type == session.EvToolResultAvailable {
+		return
+	}
 	if ev.Type != session.EvMessageDelta && ev.Type != session.EvReasoningDelta {
 		r.flush()
 		r.append(ev)
@@ -136,11 +140,36 @@ func (r *RunEventRecorder) appendPending(p *pendingDelta) {
 }
 
 func (r *RunEventRecorder) append(ev session.Event) {
-	if err := r.svc.appendEvent(r.ctx, r.id, ev); err != nil {
+	ctx := r.ctx
+	if verdictCtx := r.svc.takeExactApprovalContext(r.id, ev); verdictCtx != nil {
+		ctx = verdictCtx
+	}
+	if err := r.svc.appendEvent(ctx, r.id, ev); err != nil {
 		if !r.warned {
 			r.warned = true
-			r.svc.cfg.Diagnostics.Log(r.ctx, port.LevelWarn, "event log append failed",
+			r.svc.cfg.Diagnostics.Log(ctx, port.LevelWarn, "event log append failed",
 				"session", string(r.id), "event", string(ev.Type), "err", err.Error())
 		}
 	}
+}
+
+// takeExactApprovalContext selects the accepted verdict caller for only the
+// matching live approval, then drops the saved context. The recorder uses its
+// original run context for other events, including in-stream approvals.
+func (s *Service) takeExactApprovalContext(id session.SessionID, ev session.Event) context.Context {
+	if ev.Type != session.EvApproval || ev.Approval == nil || ev.Approval.AskID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	st := s.runs[id]
+	matchingRun := st != nil && st.run != nil && st.run.RunID() == ev.RunID
+	s.mu.Unlock()
+	if !matchingRun {
+		return nil
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	ctx := st.exactApprovalContexts[ev.Approval.AskID]
+	delete(st.exactApprovalContexts, ev.Approval.AskID)
+	return ctx
 }

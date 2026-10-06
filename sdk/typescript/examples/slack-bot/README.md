@@ -88,7 +88,7 @@ task build
 ```
 
 Set a real provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
-`OPENROUTER_API_KEY`) in that shell first. See [Choose models and providers](https://mecatl.dev/docs/features/choose-models).
+`OPENROUTER_API_KEY`) in that shell first. See [Choose models and providers](../../../../user-docs/features/choose-models.md).
 
 ## 3. Configure and run the bot
 
@@ -292,9 +292,12 @@ Wait for `mecatl Slack bot is running (Socket Mode)` in the log, same as
 step 3, then verify per step 4 above.
 
 Notes:
-- Both Dockerfiles (`docker/mecated.Dockerfile`, `docker/bot.Dockerfile`)
-  are **local dev/demo images only** — not the project's official release
-  artifact (that's `ko`, see `.ko.yaml`).
+- `docker/bot.Dockerfile` is also the source of the official
+  `ghcr.io/stacklok/mecatl/slack-bot` release image. It builds the in-tree SDK
+  and bot in a digest-pinned Chainguard development stage, then runs the
+  compiled bot as non-root on a production-only, shell-less Chainguard stage.
+  `docker/mecated.Dockerfile` remains a local dev/demo image; official mecatl
+  server images are built with `ko` (see `.ko.yaml`).
 - Neither service publishes a port to the host — the bot only needs
   outbound Socket Mode, and `mecated`'s gRPC port only needs to be reached
   by the bot over the internal compose network. mecated logs a WARN about

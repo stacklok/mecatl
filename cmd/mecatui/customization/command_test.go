@@ -251,14 +251,25 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusInputProtocolV3WorkspacePathAndName(t *testing.T) {
-	input := Input{Version: ProtocolVersion, Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"}, Terminal: Terminal{FooterAvailCols: 80}}
+func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T) {
+	input := Input{
+		Version: ProtocolVersion,
+		Context: Context{
+			Used:      ContextAtom{Raw: 75, Human: "75"},
+			Window:    ContextAtom{Raw: 100, Human: "100"},
+			Percent:   75,
+			Known:     true,
+			Estimated: true,
+		},
+		Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"},
+		Terminal:  Terminal{FooterAvailCols: 80},
+	}
 	wire, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("marshal status input: %v", err)
 	}
-	if ProtocolVersion != 3 || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || strings.Contains(string(wire), "Basename") {
-		t.Fatalf("status input v3 workspace projection = %s", wire)
+	if ProtocolVersion != 4 || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || !strings.Contains(string(wire), `"Context":{"Used":{"Raw":75,"Human":"75"},"Window":{"Raw":100,"Human":"100"},"Percent":75,"Known":true,"Estimated":true}`) || strings.Contains(string(wire), "Basename") {
+		t.Fatalf("status input v4 workspace/context projection = %s", wire)
 	}
 	templates := NewTemplateSource(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>[{{.Workspace.Path}}]</text></footer>`}}, 0)
 	t.Cleanup(func() { _ = templates.Close(context.Background()) })

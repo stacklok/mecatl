@@ -19,6 +19,7 @@ import (
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
@@ -131,10 +132,14 @@ type LearningSettings interface {
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
 type Deps struct {
-	Session SessionCreator
-	Conv    Converser
-	MCP     client.MCP       // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
-	Cmds    client.Commander // slash-command discovery for the input palette; nil disables it
+	Session    SessionCreator
+	Conv       Converser
+	MCP        client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
+	Cmds       client.Commander       // slash-command discovery for the input palette; nil disables it
+	Guardrails client.GuardrailClient // contextual coverage and live-only review detail; nil disables /guardrails
+	// ShowBenignHookNotices keeps exact known-benign contextual guardrail review
+	// notices, including their live detail, visible while details are collapsed.
+	ShowBenignHookNotices bool
 	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
@@ -143,7 +148,7 @@ type Deps struct {
 	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
 	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
+	UserModel   client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
 	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
 	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
 	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact
@@ -183,6 +188,9 @@ type Deps struct {
 	// tests. nil disables the live bridge (the ui still renders deliveries via the
 	// replay on a session switch/reload, just not live). *Client satisfies it.
 	LiveStream client.LiveStreamer
+	// PendingApprovals owns exact-run watch and control operations for an exact
+	// startup recovery. It is unused for ordinary continuation.
+	PendingApprovals PendingApprovalController
 	// MCPAuthorization is the distinct browser authorization surface. It never
 	// shares the permission-approval stream or controls.
 	MCPAuthorization client.MCPAuthorizationController
@@ -316,6 +324,12 @@ type Deps struct {
 	// hint + affordances). Set by --no-banner, --quiet, or a non-interactive stdin
 	// (composed in main). Default false (full splash).
 	NoBanner bool
+
+	// StartupProgress carries bounded host-composition progress while the first
+	// session is being created. StartupFailureHint returns matching host-owned
+	// remediation when that preparation fails behind a redacted server error.
+	StartupProgress    <-chan string
+	StartupFailureHint func() string
 
 	// Ctx is the program-level context; per-run stream contexts derive from it.
 	Ctx context.Context //nolint:containedctx // stored to parent per-run stream cancels
@@ -534,9 +548,13 @@ type Model struct {
 	sessionsTranscriptRequestToken uint64
 	sessionsPageRequestToken       uint64
 	sessionsActionRequestToken     uint64
+	// agentsInvRequestToken identifies ListAgents work across inventory lifetimes.
+	// It is retained after close so a delayed result cannot update a later open.
+	agentsInvRequestToken uint64
 	// mcpRequestToken identifies broker inventory work across MCP panel lifetimes.
 	// A panel-local refresh generation alone restarts at one after reopen.
-	mcpRequestToken uint64
+	mcpRequestToken        uint64
+	mcpRefreshRequestToken uint64
 	// freshSessionBinding is true only for a session created by this UI's initial
 	// create flow or /clear successor, never for adopted, resumed, or handoff bindings.
 	freshSessionBinding bool
@@ -627,7 +645,6 @@ type Model struct {
 	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
 	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
 	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
-	failedStepRetryTried         bool               // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
 	failedStepRetryRun           bool               // current Converse stream was opened with RetryStart
 	failedStepRetryAuthoritative bool               // current retry emitted turn.start and therefore called the model
 	team                         teamState          // unified f6 agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
@@ -635,8 +652,7 @@ type Model struct {
 	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	userModel                    userModelState     // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen                 uint64             // monotonic request generation; invalidates delayed detail/index responses
+	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
 	dream                        dreamState
@@ -669,7 +685,10 @@ type Model struct {
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
-	modal surface
+	modal                     surface
+	pendingApproval           *approvalResolvedIntent
+	pendingRecovery           *pendingApprovalRecovery
+	pendingRecoveryGeneration uint64
 	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
 	// A stale result must not replace a session selected by a later lifecycle action.
 	modelSwitchRequestToken uint64
@@ -780,6 +799,10 @@ type Model struct {
 	// (all-false) until connect and for an older server. STORED, UNRENDERED in
 	// Phase A — Phase B consumes it.
 	caps client.Capabilities
+	// guardrailStatusRequest invalidates asynchronous /guardrails and /posture
+	// coverage responses when a newer request or session wins.
+	guardrailStatusRequest uint64
+	guardrailDetailRequest uint64
 
 	// activeMode is the server-confirmed permission mode for THIS session. It is
 	// initialized from the launch mode and updated only from SessionReady/GetSession/
@@ -863,6 +886,9 @@ type Model struct {
 	// transport failures restore a draft and clear the record instead.
 	promptRecovery *promptRecovery
 
+	// admissionSubmission owns one validated prepared send until SessionInit or disposal.
+	admissionSubmission *admissionSubmission
+
 	// Startup-adopted chats remain protected until their first prompt reaches the
 	// server stream. A pre-SessionInit failure restores the authoritative transcript
 	// as a read-only retry/back view; no fallback session is ever created.
@@ -889,11 +915,12 @@ type Model struct {
 	// latest turn's prompt size, which already includes cache-served tokens) —
 	// never the cumulative ResultMsg total. Distinct from usage, which is the
 	// cumulative session total.
-	contextTokens int64
+	contextTokens    int64
+	contextUnknown   bool
+	contextEstimated bool
 
-	// expandTools toggles all tool-result bodies (and Edit/Write diffs) between
-	// the line-capped view and the full view. Flipped by ctrl+t.
-	expandTools bool
+	// expandConversation reveals turn headings/stats, full reasoning, errors, and changed files.
+	expandConversation bool
 
 	// Changed-file membership and the synthetic appendix identity belong to conv.
 	// streamCh is the current run's reader channel; WaitForMsg drains it.
@@ -1047,6 +1074,8 @@ func New(deps Deps) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(th.Style("spinner")))
 
 	vp := viewport.New()
+	rend := newRenderer(th, hk)
+	rend.showBenignGuardrails = deps.showBenignGuardrails()
 	// In-app text-selection highlight is rendered by the APP (styleSelection splices
 	// the "selection" theme style into the content lines inside refreshView), NOT the
 	// viewport's native SetHighlights/HighlightStyle. The native highlighter mis-placed
@@ -1061,7 +1090,7 @@ func New(deps Deps) Model {
 	m := Model{
 		deps:             deps,
 		keys:             keys,
-		rend:             newRenderer(th, hk),
+		rend:             rend,
 		hits:             &hitRegions{},
 		metrics:          &renderedSurfaceMetrics{},
 		phase:            phaseConnecting,
@@ -1129,10 +1158,41 @@ func New(deps Deps) Model {
 		m.activeMode = client.ModeString(client.ModeFromString(resume.Snapshot.Mode))
 		(&m).setResolvedSessionModel(resume.Snapshot.ResolvedModel)
 		m.caps = resume.Snapshot.Capabilities
+		m.usage = resume.Snapshot.Usage
+		if occupancy := resume.Snapshot.ContextOccupancy; occupancy != nil {
+			m.contextTokens = occupancy.InputTokens
+			m.contextEstimated = occupancy.Estimated
+		} else {
+			m.contextUnknown = true
+		}
 		m.conv = conversationFromTranscript(resume.Transcript.Messages)
 		m.startupAdopted = true
 		m.restartedThisRun = true
 		m.statusMsg = "continuing chat " + terminaltext.Sanitize(resume.Row.Title) + " — type to add a turn"
+		if resume.Pending != nil {
+			m.pendingRecoveryGeneration++
+			recoveryCtx, recoveryCancel := context.WithCancel(deps.Ctx)
+			snapshotCalls := make(map[string]struct{})
+			for i := 0; i < m.conv.scrollback.Len(); i++ {
+				toolCard, ok := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.ToolCardSnapshot)
+				if ok && !toolCard.Resolved {
+					snapshotCalls[toolCard.Call.ID] = struct{}{}
+				}
+			}
+			m.pendingRecovery = &pendingApprovalRecovery{
+				approval: *resume.Pending, ctx: recoveryCtx, cancel: recoveryCancel,
+				generation: m.pendingRecoveryGeneration, snapshotCalls: snapshotCalls,
+			}
+			m.phase = phaseConnecting
+			m.pendingInitialPrompt = ""
+			if deps.InitialPrompt != "" {
+				m.prompt.Rewrite(deps.InitialPrompt)
+				m.statusMsg = "initial prompt kept as a draft while approval recovery is pending"
+			} else {
+				m.statusMsg = "verifying pending approval recovery"
+			}
+			m.prompt.Blur()
+		}
 		m.refreshView()
 	}
 	return m
@@ -1167,9 +1227,14 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	m.settlePendingApproval()
+	(&m).retirePendingApprovalRecovery()
+	m.admissionSubmission = nil
 	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}
 	m.contextTokens = 0
+	m.contextUnknown = false
+	m.contextEstimated = false
 	m.activeTool = ""
 	m.toolProgress = ""
 	if m.authorization.controlCancel != nil {
@@ -1213,7 +1278,6 @@ func (m Model) resetSessionDerived() Model {
 	m.queuedMedia = client.MediaResult{}
 	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""
-	m.failedStepRetryTried = false
 	m.failedStepRetryRun = false
 	m.failedStepRetryAuthoritative = false
 	// Drop staged-but-unsent media attachments: /clear wipes the session-derived
@@ -1253,6 +1317,21 @@ func (m Model) resetSessionDerived() Model {
 // startupResumeReadyMsg starts post-adoption work only after Bubble Tea owns the
 // model, preserving transcript-before-seed ordering.
 type startupResumeReadyMsg struct{}
+type startupProgressMsg string
+
+func (m Model) startupProgressCmd() tea.Cmd {
+	if m.deps.StartupProgress == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		select {
+		case message := <-m.deps.StartupProgress:
+			return startupProgressMsg(message)
+		case <-m.deps.Ctx.Done():
+			return nil
+		}
+	}
+}
 
 // Init starts the spinner and kicks off connect.
 //
@@ -1275,6 +1354,9 @@ func (m Model) Init() tea.Cmd {
 	// false unless composition armed it (stdout is a real TTY).
 	if m.deps.ProbeKeyboardCapability {
 		startup = tea.Batch(m.keyboardProbeDeadlineCmd(), startup)
+	}
+	if m.deps.StartupProgress != nil {
+		startup = tea.Batch(startup, m.startupProgressCmd())
 	}
 	// The light/dark auto-detect (ADR 0280) wraps structurally around whatever
 	// startup fires, so every branch gets it without threading a themeDetectCmd
@@ -1311,6 +1393,9 @@ func (m Model) startupCmd() tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	if m.deps.Resume != nil {
+		if m.pendingRecovery != nil {
+			return tea.Batch(m.sp.Tick, m.openPendingApprovalWatchCmd(), m.statusLineWaitCmd())
+		}
 		return tea.Batch(m.sp.Tick, func() tea.Msg { return startupResumeReadyMsg{} }, m.statusLineWaitCmd())
 	}
 	if m.deps.Models != nil {

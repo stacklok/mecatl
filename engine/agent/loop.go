@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -171,6 +172,18 @@ type Deps struct {
 	AuthorityEvaluator port.AuthorityEvaluator
 	// Hooks runs the PreToolUse / PostToolUse lifecycle hooks.
 	Hooks port.HookRunner
+	// ToolReviewer performs contextual action and inbound review when configured.
+	ToolReviewer ToolReviewer
+	// ReviewEvidencePreparer mints authority-bound finite evidence inventories for
+	// each contextual review. A nil preparer yields an explicitly incomplete inventory.
+	ReviewEvidencePreparer ReviewEvidencePreparer
+	// ReviewDetails receives bounded live-only human review detail.
+	ReviewDetails ReviewDetailSink
+	// ReviewTaskWindow selects the last K accepted genuine root prompts supplied as
+	// principal task facts. Values are clamped to 1..3; zero defaults to 1.
+	ReviewTaskWindow int
+	// PlanApprovals owns process-local, single-use plan approval receipts.
+	PlanApprovals PlanApprovalStore
 	// Store persists session state (optional; nil disables persistence).
 	Store port.SessionStore
 	// SessionLiveness is the optional lifecycle-exclusion seam for engine-owned
@@ -236,6 +249,11 @@ type Deps struct {
 
 	// Model is the provider model identifier sent on every request.
 	Model string
+	// ProviderModel is the exact immutable provider/model identity selected by
+	// composition for this engine's primary LLM calls. Utility-result collection uses
+	// it to attribute this engine's main usage; nested auxiliary usage retains its
+	// producer's own attribution. The request itself remains provider-neutral.
+	ProviderModel session.ProviderModelID
 	// ContextWindow returns the model's context window in tokens, resolved LIVE at
 	// the point of use (the compaction check / Engine.ContextWindow) rather than
 	// frozen at construction — so a post-construction live-catalog refresh self-
@@ -334,42 +352,23 @@ type Deps struct {
 	// per-call override may only TIGHTEN it.
 	MaxRunTokens int
 
-	// SubagentModelRouter, when non-nil, is the OPT-IN semantic model router (ADR
-	// 0031, the Phase 5 headline feature): given a Subagent call's (model-authored,
-	// untrusted) task prompt it returns the ALREADY-RESOLVED concrete model id to mint
-	// the child on, plus the category label it classified into, plus the classifier's
-	// session.Usage (which the dispatch-path routeTask closure folds into the parent
-	// sess.Usage so classifier spend counts against --max-run-tokens — the #92 fix).
-	// It is a composition closure — the engine layer is model-string-only (the layering
-	// rule): composition owns the classifier engine, the category taxonomy, and the
-	// category→model mapping (aliases/slots/the allowlist cap), and hands the engine
-	// only func(ctx, string)(string, string, session.Usage, string, bool) (the trailing
-	// string is the miss REASON — issue #287, logged VERBATIM at the dispatch chokepoint
-	// on a miss; empty on a hit). The reason is OPERATOR-DIAGNOSTIC detail: it also rides
-	// the delegation-start event's RoutingReason field, but ONLY after the engine's
-	// event-safe allowlist (routingReasonPayload) confines it to the harness/composition
-	// metadata constants — an external composition returning a provider error body,
-	// classifier output, or a task excerpt sees it substituted with a generic label on the
-	// wire (gauntlet #7), while the verbatim text stays in the diagnostics channel. It is consulted by
-	// the Subagent run() hook ONLY for a plain default delegation (no per-call model,
-	// no agent, no fork, no resume) and is FAIL-SOFT throughout: ok=false (any
-	// classifier failure, an unknown category, the breaker open) → the call falls
-	// through to the inherited default explorer model, byte-identically to a deployment
-	// with no router. DEFAULT nil: no router, the long-standing behaviour. Set on the
-	// MAIN engine only (a child has no Subagent tool, so structurally no router);
-	// childEngineDepsForProvider forces it nil (the no-nesting recursion guard). Like
-	// ChildAskReviewer, the router is built into the per-call parentCaps.routeTask
-	// closure in Engine.parentCaps, never called directly by the loop, so it is NOT a
-	// port.LLMRequest field and never reaches a request.
+	// SubagentModelRouter, when non-nil, is the OPT-IN semantic delegated-model
+	// router. Its configured backend, classifier model, and optional threshold remain
+	// available when pin/fork/resume/family gates skip Route. Route returns a typed
+	// backend-neutral result: Category and Model are validated candidates, OK says
+	// whether the route was accepted, Confidence is optional backend-native evidence,
+	// and Usage is folded into the parent session on every classifier call.
 	//
-	// The ctx is the RUN's ctx (threaded down via parentCaps.routeTask), NOT
-	// context.Background(): a Run.Cancel between the breaker's hardAbort check and the
-	// classifier call must propagate into RunModelRouter so the classifier turn dies
-	// with the run instead of running out its 30s clock (issue #94 — the
-	// cancellation-propagation gap the hardAbort TOCTOU otherwise leaves). Fail-soft
-	// holds regardless: a cancelled ctx yields StopCancelled → ok=false → inherit the
-	// default model, exactly the existing miss path.
-	SubagentModelRouter func(ctx context.Context, taskPrompt string) (category, model string, usage session.Usage, missReason string, ok bool)
+	// Composition owns the classifier, taxonomy, category-to-model mapping, and
+	// same-provider target construction. The engine owns routing eligibility, the
+	// per-run three-miss breaker, bounded delegation-start evidence, and fail-soft
+	// fallback. Candidate fields never assert which model actually ran; the enclosing
+	// delegation payload's Model and accepted-route fields remain authoritative.
+	// DEFAULT nil means no configured router and produces no RoutingDecision. Child
+	// engines force it nil (the no-nesting recursion guard). The callback receives the
+	// run context so cancellation bounds classification; it is never a port.LLMRequest
+	// field.
+	SubagentModelRouter *SubagentModelRouter
 
 	// ProgressiveTools, when true, enables progressive tool disclosure
 	// (pattern 9): the per-turn request advertises lightweight specs for tools
@@ -586,6 +585,8 @@ const (
 	// AskResolutionPlanOriginated means the ask belongs to the dedicated plan
 	// resolution choreography and remains pending.
 	AskResolutionPlanOriginated
+	// AskResolutionNotPlan means the pending ask is ordinary and was not consumed.
+	AskResolutionNotPlan
 )
 
 // Run is the handle to one in-flight prompt. It exposes the Event stream plus the
@@ -598,6 +599,8 @@ type Run struct {
 	cancel  context.CancelFunc
 	seq     atomic.Int64
 	outcome atomic.Int32
+
+	results toolResultPublisher
 
 	// closureMu linearizes the final authorization.required publication against
 	// Cancel. That publication is the one nonterminal way an event stream closes.
@@ -631,11 +634,11 @@ type Run struct {
 	// resolve the new one (CWE-863). Set once before the run goroutine starts and
 	// only read after, so it needs no synchronisation.
 	serial int64
-	// askDiscriminator is the resolved trailing askID component for this run:
-	// req.AskIDDiscriminator when the host supplied a valid (non-empty,
-	// colon-free) value, else the process-global "r<serial>" fallback. Resolved
-	// once in startRun. See newAskID + RunRequest.AskIDDiscriminator + ADR-0044.
+	// askDiscriminator is the resolved trailing host/run namespace component for asks.
 	askDiscriminator string
+	// askSequence uniquely identifies each approval occurrence within this run. It is
+	// atomic because child/worker event paths may mint asks concurrently.
+	askSequence atomic.Uint64
 	// runID is the host-minted identity stamped onto every event this run emits
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
@@ -668,6 +671,13 @@ type Run struct {
 	// NopDiagnostics returns NopDiagnostics. It is set before the run goroutine
 	// starts and only read after, so it needs no synchronisation.
 	diag port.Diagnostics
+	// auxiliaryUsageMu protects the run-owned private auxiliary queue and fences
+	// late detached reports against the end of this run's ownership capability.
+	// Only the parent dispatcher or terminal drain mutates the Session aggregate.
+	auxiliaryUsageMu         sync.Mutex
+	auxiliaryUsageActive     bool
+	auxiliaryUsagePending    session.AuxiliaryUsage
+	auxiliaryUsageDropWarned bool
 	// saveWarned makes the session-persistence WARN sticky per RUN. A store that
 	// is broken is broken for every save, and save runs at least once per turn, so
 	// logging unconditionally would emit up to MaxTurns near-identical lines per
@@ -729,6 +739,9 @@ type Run struct {
 	// resumed run before runLoop sees it). Set before the run goroutine reaches
 	// terminateComplete and only read after, so it needs no synchronisation.
 	planApprovedTarget session.PermissionMode
+	// planApprovalReceipt is staged only by a validated positive plan callback and
+	// recorded by terminateComplete after SetMode succeeds.
+	planApprovalReceipt PlanApprovalReceipt
 	// planIterateRequested is the run-scoped flag set when the operator DENIES a
 	// plan-approval ask (issue #206): the run terminates CLEANLY with StopPlanIterate
 	// instead of continuing in-turn (the old behaviour kept the model iterating with
@@ -760,6 +773,11 @@ type Run struct {
 	operatorProfile       []tool.MemoryEntry
 	operatorProfileLoaded bool
 	operatorProfileWarned bool
+	// reviewRoot is the delegation-root contextual trajectory and reviewer binding.
+	// Child runs inherit the same pointer through private RunRequest fields; no
+	// conversation content crosses that seam.
+	reviewRoot     *reviewRoot
+	ownsReviewRoot bool
 	// currentPrompt is the accepted genuine prompt for this run. Completion locates
 	// it in the final history; if compaction removed it, automatic admission gets an
 	// invalid span and fails closed.
@@ -857,11 +875,12 @@ type RunRequest struct {
 	// DERIVE the ask discriminator from it. It must never be branched on, logged,
 	// sent to a provider, or used to reach storage — see ADR 0249's consequences.
 	RunID string
-	// AskIDDiscriminator, when non-empty, REPLACES the trailing process-global
-	// "r<serial>" component of every askID minted this run (see agent.newAskID),
-	// making the askID reconstructable across processes from persisted state. The
-	// askID format is "<sessionID>:<n>:<callID>:<discriminator>". HOST CONTRACT:
-	// the host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
+	// AskIDDiscriminator, when non-empty, supplies the colon-free HOST namespace
+	// of every askID minted this run. Live issuance appends a per-run `.aN`
+	// occurrence token to the opaque call component, making repeated approvals for
+	// one call distinct while retaining the exact host suffix and four-component
+	// colon grammar. The host value remains reconstructable from persisted state.
+	// The host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
 	// STABLE across processes for the SAME attempt — this preserves the CWE-863
 	// replay guard the process-global serial provides (the Interrupt/re-mint
 	// scenario documented on newAskID): a stale verdict for a retracted ask must
@@ -880,6 +899,10 @@ type RunRequest struct {
 	// r.req.AskIDDiscriminator, which may be empty or colon-bearing and would
 	// bypass the colon/empty fallback.
 	AskIDDiscriminator string
+	// reviewRoot is engine-owned delegation-root state. It is private so callers
+	// cannot inject reviewer authority or share trajectory across unrelated roots.
+	reviewRoot     *reviewRoot
+	reviewIsolated bool
 }
 
 // extraToolOptions records runtime-owned restrictions for an ExtraTools overlay.
@@ -917,23 +940,137 @@ func (r *Run) Events() <-chan session.Event { return r.events }
 // Outcome reports why this Run's event stream closed.
 func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
-func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
+func (r *Run) setOutcome(outcome RunOutcome) {
+	// End auxiliary mutation ownership before publishing the terminal outcome and
+	// before the terminal save. A review that wins this lock is included in that
+	// save; a detached result that loses it is dropped.
+	r.closeAuxiliaryUsageOwnership()
+	r.outcome.Store(int32(outcome))
+}
 
-// Approve resolves the permission.ask identified by askID with the client's
-// verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
-// and VerdictAllowAlways permits it AND asks the policy to learn a per-session
-// allow rule for the matching tool+pattern. It is non-blocking and safe to call
-// from another goroutine; an unknown or already-resolved askID is ignored.
-func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
-	// Router-first: a foreign (child-namespaced) askID belongs to a SURFACED subagent
-	// ask — route the verdict to the owning child Run. Because child askIDs are prefixed
-	// by a distinct child session id, they never collide with this run's own asks, so a
-	// router miss (route==false) safely falls through to our own registry. A nil router
-	// (child run / headless) skips straight to the own-registry path.
-	if r.childAsks != nil && r.childAsks.route(askID, v) {
-		return
+// Approval resolution errors are stable categories for hosts. Callers should use
+// errors.Is rather than parse error text.
+var (
+	// ErrApprovalNotPending means the ask is stale, unknown, or already resolved.
+	ErrApprovalNotPending = errors.New("approval is not pending")
+	// ErrApprovalIntentMismatch means the reply does not match the pending ask's identity or scope.
+	ErrApprovalIntentMismatch = errors.New("approval intent does not match pending ask")
+	// ErrApprovalUnsupported means the registered ask has an unsupported origin or guardrail kind.
+	ErrApprovalUnsupported = errors.New("approval kind or origin is unsupported")
+	// ErrApprovalGrantIneligible means the requested verdict is invalid for this approval kind.
+	ErrApprovalGrantIneligible = errors.New("approval grant is ineligible")
+)
+
+// ApprovalResolution atomically identifies and resolves one registered approval.
+// ReviewID and Kind must exactly acknowledge a guardrail-scoped ask; ordinary
+// permission asks leave both empty. VerdictAllowAlways is ineligible for result
+// release, which supports only release-once or deny.
+type ApprovalResolution struct {
+	AskID    string
+	ReviewID string
+	Kind     session.GuardrailApprovalKind
+	Verdict  session.ApprovalVerdict
+}
+
+// ValidateApprovalResolution checks a resolution against the exact pending ask.
+func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error {
+	return validateApprovalResolution(ask, resolution, true)
+}
+
+func validateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution, requireGuardrailAck bool) error {
+	if !validApprovalVerdict(resolution.Verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, resolution.Verdict)
 	}
-	r.asks.resolve(askID, v)
+	if err := validatePendingApproval(ask); err != nil {
+		return fmt.Errorf("%w: %v", ErrApprovalUnsupported, err)
+	}
+	if ask.AskID != resolution.AskID {
+		return fmt.Errorf("%w: approval ask identity does not match the registered ask", ErrApprovalIntentMismatch)
+	}
+	if ask.Guardrail == nil {
+		if resolution.ReviewID != "" || resolution.Kind != "" {
+			return fmt.Errorf("%w: ordinary permission approval must not claim a guardrail review", ErrApprovalIntentMismatch)
+		}
+		return nil
+	}
+	if ask.Guardrail.Kind == session.GuardrailApprovalResultRelease && resolution.Verdict == session.VerdictAllowAlways {
+		return fmt.Errorf("%w: result release supports only release once or deny", ErrApprovalGrantIneligible)
+	}
+	if requireGuardrailAck || resolution.ReviewID != "" || resolution.Kind != "" {
+		if resolution.ReviewID != ask.Guardrail.ReviewID || resolution.Kind != ask.Guardrail.Kind {
+			return fmt.Errorf("%w: guardrail approval requires the exact review_id and approval kind from the pending ask", ErrApprovalIntentMismatch)
+		}
+	}
+	return nil
+}
+
+func validApprovalVerdict(verdict session.ApprovalVerdict) bool {
+	switch verdict {
+	case session.VerdictDeny, session.VerdictAllowOnce, session.VerdictAllowAlways:
+		return true
+	default:
+		return false
+	}
+}
+
+// ResolveApproval validates purpose, review identity, verdict eligibility, and
+// pending identity while holding the ask registry lock, then submits the verdict
+// exactly once. A failed validation leaves the ask registered and unresolved.
+func (r *Run) ResolveApproval(resolution ApprovalResolution) error {
+	if !validApprovalVerdict(resolution.Verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, resolution.Verdict)
+	}
+	if r == nil || resolution.AskID == "" {
+		return fmt.Errorf("%w: approval requires a non-empty ask id", ErrApprovalNotPending)
+	}
+	if r.childAsks != nil {
+		if owned, err := r.childAsks.routeResolution(resolution); owned {
+			return err
+		}
+	}
+	return r.asks.resolveChecked(resolution.AskID, approval{verdict: resolution.Verdict}, func(ask session.PendingAsk) error {
+		return validateApprovalResolution(ask, resolution, true)
+	})
+}
+
+// ValidateRemoteApprovalIntent is retained for source compatibility. Hosts must
+// use ResolveApproval for an atomic validate-and-submit operation.
+func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error {
+	if !validApprovalVerdict(verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, verdict)
+	}
+	if r == nil {
+		return fmt.Errorf("%w: approval run is unavailable", ErrApprovalNotPending)
+	}
+	r.asks.mu.Lock()
+	ask, ok := r.asks.scopes[askID]
+	r.asks.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", ErrApprovalNotPending)
+	}
+	return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, ReviewID: reviewID, Kind: kind, Verdict: verdict}, true)
+}
+
+// Approve is the compatibility helper for ordinary permission and legacy action
+// approvals. Result release requires ResolveApproval's explicit review acknowledgement.
+func (r *Run) Approve(askID string, v session.ApprovalVerdict) error {
+	if !validApprovalVerdict(v) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, v)
+	}
+	if r == nil || askID == "" {
+		return errors.New("approval requires a non-empty ask id")
+	}
+	if r.childAsks != nil {
+		if owned, err := r.childAsks.routeResolution(ApprovalResolution{AskID: askID, Verdict: v}); owned {
+			return err
+		}
+	}
+	return r.asks.resolveChecked(askID, approval{verdict: v}, func(ask session.PendingAsk) error {
+		if ask.Guardrail != nil && ask.Guardrail.Kind == session.GuardrailApprovalResultRelease {
+			return errors.New("result release requires ResolveApproval with the exact review_id and result_release kind")
+		}
+		return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, Verdict: v}, false)
+	})
 }
 
 // ResolveOrdinaryAsk atomically resolves one pending non-plan permission ask
@@ -952,6 +1089,12 @@ func (r *Run) ResolveOrdinaryAsk(askID string, v session.ApprovalVerdict) AskRes
 	return r.asks.resolveOrdinary(askID, v)
 }
 
+// ResolvePlanAsk atomically consumes only a root plan-originated pending ask.
+// A child ask cannot authorize the root plan, regardless of its tool name.
+func (r *Run) ResolvePlanAsk(askID string, verdict session.ApprovalVerdict) AskResolution {
+	return r.asks.resolvePlan(askID, verdict)
+}
+
 // RetractPermissionAsk withdraws this run's own pending permission ask without
 // resolving it and emits one permission.retract event. It returns false when the
 // ask is unknown or already resolved. The run remains parked until its host
@@ -968,11 +1111,11 @@ func (r *Run) RetractPermissionAsk(askID string) bool {
 // registerChildAsk records a surfaced child ask in this run's router so a later
 // Approve(askID) is routed to the owning child. It is a no-op when this run has no
 // router (a non-interactive or child run never surfaces). The router auto-removes the
-// entry on the routed verdict (childAskRouter.route), so there is no explicit
-// unregister on the resolution path.
-func (r *Run) registerChildAsk(askID string, child *Run) {
+// entry on an accepted verdict, so there is no explicit unregister on the
+// resolution path. A stale child verdict leaves the route for terminal retract.
+func (r *Run) registerChildAsk(ask session.PendingAsk, child *Run, turn int) {
 	if r.childAsks != nil {
-		r.childAsks.registerChild(askID, child)
+		r.childAsks.registerSurfaced(ask, child, turn)
 	}
 }
 
@@ -997,19 +1140,9 @@ func (r *Run) autoDenyChildAsk(askID, reason string) {
 // seam, mirroring childDrainCap/childDrainGrace.
 var hardAbortGrace = time.Second
 
-// Cancel aborts the in-flight run: it first arms the hardAbort grace timer (the
-// explicit unwedge signal — any send still parked on a full events channel
-// hardAbortGrace later gives up instead of blocking forever), THEN cancels the
-// run context. The arm-before-cancel order matters: a ctx-woken goroutine that
-// loops back into an emit must already be covered by the pending abort, or it
-// could park indefinitely. The AfterFunc timer is deliberately never Stop()ed:
-// at worst it fires once, shortly after a run that already ended, and closes a
-// channel nobody reads any more — a harmless once-per-run close (contrast
-// joinChildren's defer timer.Stop, which reclaims a shared 10s timer early on
-// the common all-joined-fast path — a different shape: that timer does real
-// work only on expiry; this one's entire job IS to fire). The loop observes the cancellation (mid-stream, mid-tool,
-// or while awaiting an approval) and terminates with a result carrying
-// StopCancelled.
+// Cancel aborts the in-flight run while preserving ordinary child join-and-drain
+// behavior. It is a no-op for an already durably parked authorization, whose
+// resumable handoff point must remain intact.
 func (r *Run) Cancel() {
 	r.closureMu.Lock()
 	if r.Outcome() == RunOutcomeAuthorizationPending {
@@ -1202,6 +1335,16 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
 	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
+		// Reject malformed internal callers before inspecting the environment or
+		// clearing the pending ask. Wire mappers already fail unknown enum values to
+		// deny, but the public engine seam must not treat a future value as an allow.
+		if !validApprovalVerdict(verdict) {
+			err := fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, verdict)
+			e.emit(r, session.Event{Type: session.EvSessionInit})
+			r.setOutcome(RunOutcomeCompleted)
+			e.emitResult(r, sess, session.StopError, "", session.Usage{}, err.Error(), session.RetryDispositionPermanent, session.StreamProgressUnknown)
+			return
+		}
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1354,11 +1497,33 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			reject("no longer permitted in plan mode", fmt.Sprintf("authorization continuation is no longer permitted: plan mode is active and %q now mutates the workspace; present a plan and exit plan mode first", pending.Call.Name))
 			return
 		}
-		result := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
+		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, sess.Counters.Turns, pending.Call)
+		if cancelled {
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
+			return
+		}
+		var result session.ToolResult
+		if decision.Effect != governance.Allow {
+			result = denyResult(pending.Call, decision.Reason)
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(result)})
+		} else {
+			var enqueue time.Time
+			if e.deps.Clock != nil {
+				enqueue = e.deps.Clock.Now()
+			}
+			var proceed bool
+			result, _, cancelled, proceed = e.reviewActionWithTail(ctx, r, sess, env, sess.Counters.Turns, pending.Call, &auth, true, func() (session.ToolResult, *dispatchPark, bool) {
+				executed, wasCancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+				return executed, nil, wasCancelled
+			})
+			if proceed {
+				result, cancelled = e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+			}
+		}
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
-			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
 			results = append(results, deferredResult)
 		}
 		if err := sess.RecordToolResults(results); err != nil {
@@ -1366,6 +1531,10 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			return
 		}
 		e.save(ctx, r, sess)
+		if cancelled {
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
+			return
+		}
 		e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, nil)
 		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 	}), nil
@@ -1390,7 +1559,7 @@ func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Se
 
 func (e *Engine) emitAuthorizationResolution(r *Run, turn int, authorization session.ExternalAuthorization, callID session.ToolCallID, status session.AuthorizationStatus, results []session.ToolResult) {
 	for i := range results {
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
 	}
 	e.emit(r, session.Event{Type: session.EvAuthorizationResolved, Authorization: &session.AuthorizationPayload{
 		AuthorizationID: authorization.ID, DisplayName: authorization.DisplayName, Call: callID, ExpiresAt: authorization.ExpiresAt, Status: status,
@@ -1412,8 +1581,27 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	return run
 }
 
+// detachedRunContext returns a fresh context that carries only parent's causal
+// root session. Use it instead of context.Background() when nested engine work
+// must outlive parent cancellation but still belongs to parent's run tree; the
+// caller bounds it with its own deadline.
+func detachedRunContext(parent context.Context) context.Context {
+	ctx := context.Background()
+	if rootID, ok := port.RootSessionIDFromContext(parent); ok {
+		ctx = port.WithRootSessionID(ctx, rootID)
+	}
+	return ctx
+}
+
+// prepareRun seeds the causal root from sess only when ctx carries none, so every
+// nested Engine.Run whose ctx derives from its parent run (or from
+// detachedRunContext) inherits the tree's root without extra wiring.
 func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *PreparedRun {
 	ctx, cancel := context.WithCancel(ctx)
+	rootSessionID, hasRootSessionID := port.RootSessionIDFromContext(ctx)
+	if !hasRootSessionID || rootSessionID == "" {
+		ctx = port.WithRootSessionID(ctx, sess.ID)
+	}
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
 	ctx = withSessionOrigin(ctx, sess.ID)
@@ -1435,6 +1623,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		ctx:            ctx,
 		req:            req,
 		budgetBaseline: budgetBaseline,
+		reviewRoot:     req.reviewRoot,
 		hardAbort:      make(chan struct{}),
 		serial:         serial,
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
@@ -1442,7 +1631,13 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
-		diag: e.bindRunDiag(sess.ID),
+		diag:                 e.bindRunDiag(sess.ID),
+		auxiliaryUsageActive: true,
+	}
+	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
+		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewEvidencePreparer, e.deps.ReviewDetails, e.deps.ReviewTaskWindow)
+		r.reviewRoot.rootSessionID = sess.ID
+		r.ownsReviewRoot = true
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
 	// askDiscriminatorFor for the precedence and the colon rule.
@@ -1497,21 +1692,24 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	r.children = newChildRunRegistry()
 	r.children.liveness = e.deps.SessionLiveness
 	r.children.emit = func(ev session.Event) {
-		if r.emitOrAbort(ev, r.children.emitAbort) && e.deps.Sink != nil {
-			e.deps.Sink.Emit(r.ctx, ev)
+		if sequenced, delivered := r.emitOrAbortSequenced(ev, r.children.emitAbort); delivered {
+			e.mirrorEvent(r, sequenced)
 		}
 	}
 	// unregisterAsk is the answered-vs-pending gate for ask retraction at a
 	// child's registry terminal (markDoneResult — the chokepoint every
 	// ctx-driven unwind funnels through) and the drain's abandoned sweep:
-	// route() removes an ANSWERED ask's router entry, so only an unregister that
-	// genuinely removed one (a still-pending surfaced ask) draws a
+	// An accepted resolution removes an ANSWERED ask's router entry, so only
+	// an unregister that removed a still-pending surfaced ask draws a
 	// permission.retract. A headless/child run installs no router, so every
 	// unregister reports false and no retract is ever emitted — correct:
 	// nothing was ever surfaced.
 	r.children.unregisterAsk = r.unregisterChildAsk
 	start := func() {
 		go func() {
+			if r.ownsReviewRoot {
+				defer r.reviewRoot.clearHeld()
+			}
 			// Defers run LIFO: cancel first (releases the run's ctx tree), then the
 			// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
 			// which is what unwinds any guarded send still parked on a full events
@@ -1523,10 +1721,12 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 			defer close(r.events)
 			defer r.children.seal()
 			defer cancel()
+			defer r.closeAuxiliaryUsageOwnership()
 			body(ctx, r)
 		}()
 	}
 	abort := func() {
+		r.closeAuxiliaryUsageOwnership()
 		cancel()
 		r.children.seal()
 		close(r.events)
@@ -1734,6 +1934,12 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
+		if streamStop != session.StopCancelled && streamStop != session.StopError {
+			sess.RecordLatestContextOccupancy(session.ContextOccupancy{
+				InputTokens: emitUsage.InputTokens,
+				Estimated:   estimated,
+			})
+		}
 
 		// Step 5: a tool-call-free turn is either a real answer, a bounded no-progress
 		// nudge, or a clean give-up — finishTurnNoTools owns that classification (and
@@ -1756,6 +1962,13 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
 	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
 	if cancelled {
+		if len(results) > 0 {
+			if err := sess.RecordToolResults(results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+				return true
+			}
+			e.save(context.WithoutCancel(ctx), r, sess)
+		}
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
@@ -1792,12 +2005,12 @@ type authorizationParkResult struct {
 func (e *Engine) authorizationParkFailures(r *Run, turnIdx int, park *dispatchPark, message string) []session.ToolResult {
 	results := make([]session.ToolResult, 0, len(park.deferred)+1)
 	pending := session.NewToolError(park.call.ID, message)
-	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pending)})
+	e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pending)})
 	results = append(results, pending)
 	for _, call := range park.deferred {
 		e.openCard(r, turnIdx, call)
 		result := session.NewToolError(call.ID, "external authorization deferred sibling was not executed")
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
 		results = append(results, result)
 	}
 	return results
@@ -1882,6 +2095,11 @@ func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Se
 			return authorizationParkResult{fatal: err}
 		}
 		return authorizationParkResult{cancelled: true}
+	}
+	r.closeAuxiliaryUsageOwnershipAndDrain(sess)
+	if err := e.saveRequired(ctx, sess); err != nil {
+		rollbackErr := e.rollbackAuthorization(ctx, sess, park, "failed")
+		return authorizationParkResult{fatal: errors.Join(fmt.Errorf("persist drained external authorization: %w", err), rollbackErr)}
 	}
 	payload := session.AuthorizationPayload{
 		AuthorizationID: park.authorization.ID,
@@ -2212,12 +2430,13 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	}
 }
 
-// budgetExhausted reports whether lifetime main usage accrued since this Run's
-// immutable baseline has crossed the effective loop-level token ceiling
-// (Deps.MaxRunTokens folded with the run's tighten-only RunRequest override). A
-// non-positive effective ceiling (the default) disables the budget and always
-// returns false. Ordinary runs have a zero baseline; only the package-private
-// team-lead synthesis path captures the current main total.
+// budgetExhausted reports whether lifetime budget usage has crossed the effective
+// loop-level token ceiling (Deps.MaxRunTokens folded with the run's tighten-only
+// RunRequest override). Callers supply main plus the separate router bucket; the
+// immutable baseline offsets main only, so internal continuation allowances never
+// erase router spend. A non-positive effective ceiling (the default) disables the
+// budget and always returns false. Ordinary runs have a zero baseline; only the
+// package-private team-lead synthesis path captures the current main total.
 func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	ceiling := e.effectiveMaxRunTokens(r)
 	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
@@ -2263,7 +2482,8 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
-	if e.budgetExhausted(r, sess.UsageFor(session.UsageKindMain)) {
+	budgetUsage := sess.UsageFor(session.UsageKindMain).Add(sess.UsageFor(session.UsageKindRouter))
+	if e.budgetExhausted(r, budgetUsage) {
 		if _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
 			e.deferFailedStepRetry(ctx, r, sess, session.StopBudget, lastText, total)
 		} else {
@@ -2298,7 +2518,7 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 // neither expanded nor mutated by a hook and is recorded verbatim on the user
 // message via RecordUserPromptWithParts.
 func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, userText string, parts []session.Content) (ok bool, reason string, err error) {
-	if expanded, exp, eerr := e.deps.CommandExpander.Expand(ctx, env.Workspace(), userText); eerr == nil && exp {
+	if expanded, exp, eerr := e.deps.CommandExpander.Expand(ctx, userText); eerr == nil && exp {
 		userText = expanded
 	}
 	// UserPromptSubmit fires on the expanded text before recording so a mutation
@@ -2314,12 +2534,32 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// the persisted history or recreating the compaction-pin ambiguity. Only the
 	// GENUINE prompt (+ media parts) is recorded here; instr is nil (the param stays a
 	// valid seam for callers that DO want to persist instructions, e.g. tests).
-	if rerr := sess.RecordUserPromptWithParts(finalText, parts, nil); rerr != nil {
+	provenance := session.UserPromptProvenanceUnknown
+	if e.deps.Role == "" {
+		provenance = session.UserPromptProvenancePrincipal
+	}
+	var rerr error
+	if provenance == session.UserPromptProvenancePrincipal {
+		rerr = sess.RecordPrincipalPromptWithParts(finalText, parts, nil)
+	} else {
+		rerr = sess.RecordUserPromptWithParts(finalText, parts, nil)
+	}
+	if rerr != nil {
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
 	if messages := sess.Conversation.Messages; len(messages) > 0 {
 		owned := learning.NewTrajectory(sess.ID, env.Workspace().Root(), session.StopNone, session.Usage{}, messages[len(messages)-1:])
 		r.currentPrompt = &owned.Messages[0]
+		if e.deps.Role == "" {
+			if r.reviewRoot != nil {
+				r.reviewRoot.refreshTasks(messages)
+			}
+			if e.deps.PlanApprovals != nil && sess.Mode != session.ModePlan {
+				if receipt, found := e.deps.PlanApprovals.ConsumePlanApproval(sess.ID); found && validPlanApprovalReceipt(receipt, sess.ID, sess.Mode) && r.reviewRoot != nil {
+					r.reviewRoot.setPlanApproval(receipt)
+				}
+			}
+		}
 	}
 	// Seed the session Title ONCE from this genuine prompt (set-once guard in
 	// SetTitle: only the first non-empty prompt sticks). The loop calls SetTitle
@@ -2333,8 +2573,15 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.
-	e.emitUserPrompt(r, 0, finalText, parts, false)
+	e.emitUserPrompt(r, 0, finalText, parts, provenance)
 	return true, "", nil
+}
+
+func validPlanApprovalReceipt(receipt PlanApprovalReceipt, sessionID session.SessionID, mode session.PermissionMode) bool {
+	if receipt.Ref == "" || receipt.Call == "" || receipt.SessionID != sessionID || receipt.TargetMode != mode {
+		return false
+	}
+	return mode == session.ModeDefault || mode == session.ModeAccept
 }
 
 // emitUserPrompt emits the log-only EvUserPrompt event carrying a just-recorded
@@ -2344,9 +2591,9 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 // nudge, background-completion notice) — so the durable log (and an event-sourced
 // fold) sees a COMPLETE user-turn sequence. The event is log-only: the relay appends
 // it and skips it on the live client wire (the client already holds the prompt).
-func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content, synthetic bool) {
+func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content, provenance session.UserPromptProvenance) {
 	e.emit(r, session.Event{Type: session.EvUserPrompt, Turn: turnIdx,
-		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts, Synthetic: synthetic}})
+		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts, Synthetic: provenance == session.UserPromptProvenanceHarness, Provenance: provenance}})
 }
 
 // recordContinuation records a harness-authored synthetic user-role continuation
@@ -2355,10 +2602,10 @@ func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []sessio
 // user-message site bypasses the durable record. It mirrors recordPrompt's
 // record-then-emit shape for the non-genuine sites.
 func (e *Engine) recordContinuation(r *Run, sess *session.Session, turnIdx int, text string) error {
-	if err := sess.RecordUserPrompt(text, nil); err != nil {
+	if err := sess.RecordHarnessPrompt(text); err != nil {
 		return err
 	}
-	e.emitUserPrompt(r, turnIdx, text, nil, true)
+	e.emitUserPrompt(r, turnIdx, text, nil, session.UserPromptProvenanceHarness)
 	return nil
 }
 
@@ -2523,6 +2770,12 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 	stop := session.StopNone
 
 	for chunk, cerr := range seq {
+		// Usage is accounting, even when a buffered stream arrives after cancel.
+		// Fold it before either terminal check; never interpret semantic chunks on
+		// a cancelled context.
+		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+			usage = usage.Add(*chunk.Usage)
+		}
 		if cerr != nil {
 			return session.Message{}, usage, stop, turnTiming{}, fmt.Errorf("agent: stream: %w", cerr)
 		}
@@ -2574,10 +2827,6 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 			noteFirstOutput()
 			if chunk.ToolCall != nil {
 				calls = append(calls, *chunk.ToolCall)
-			}
-		case port.ChunkUsage:
-			if chunk.Usage != nil {
-				usage = usage.Add(*chunk.Usage)
 			}
 		case port.ChunkProviderRoute:
 			// The downstream provider slug that routed this turn (issue #480).
@@ -2694,9 +2943,9 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 			aerr       error
 		)
 		if e.deps.EnableDurableEvidence {
-			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, env.Workspace(), e.deps.Instructions)
+			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, e.deps.Instructions)
 		} else {
-			discovered, aerr = e.deps.Instructions.Assemble(ctx, env.Workspace())
+			discovered, aerr = e.deps.Instructions.Assemble(ctx)
 		}
 		if aerr != nil {
 			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)
@@ -2762,6 +3011,91 @@ func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt
 	}
 }
 
+func (r *Run) noteLateAuxiliaryUsageDropLocked() bool {
+	if r.auxiliaryUsageDropWarned {
+		return false
+	}
+	r.auxiliaryUsageDropWarned = true
+	return r.diag != nil
+}
+
+func (r *Run) enqueueAuxiliaryUsageWhileActive(_ context.Context, usage session.AuxiliaryUsage) {
+	if r == nil || len(usage.Buckets) == 0 {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	if !r.auxiliaryUsageActive {
+		warn := r.noteLateAuxiliaryUsageDropLocked()
+		r.auxiliaryUsageMu.Unlock()
+		if warn {
+			r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
+		}
+		return
+	}
+	r.auxiliaryUsagePending = r.auxiliaryUsagePending.Merge(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) recordCompleteAuxiliaryUsageWhileActive(sess *session.Session, usage session.AuxiliaryUsage) {
+	if r == nil || len(usage.Buckets) == 0 {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	if !r.auxiliaryUsageActive {
+		warn := r.noteLateAuxiliaryUsageDropLocked()
+		r.auxiliaryUsageMu.Unlock()
+		if warn {
+			r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
+		}
+		return
+	}
+	sess.RecordAuxiliaryUsage(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) recordGuardrailUsageWhileActive(ctx context.Context, sess *session.Session, usage session.AuxiliaryUsage) {
+	r.recordCompleteAuxiliaryUsageWhileActive(sess, RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, usage))
+}
+
+func (r *Run) drainPendingAuxiliaryUsage(sess *session.Session) {
+	if r == nil {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	defer r.auxiliaryUsageMu.Unlock()
+	sess.RecordAuxiliaryUsage(r.auxiliaryUsagePending)
+	r.auxiliaryUsagePending = session.AuxiliaryUsage{}
+}
+
+func (r *Run) closeAuxiliaryUsageOwnershipAndDrain(sess *session.Session) bool {
+	if r == nil {
+		return false
+	}
+	r.auxiliaryUsageMu.Lock()
+	defer r.auxiliaryUsageMu.Unlock()
+	added := len(r.auxiliaryUsagePending.Buckets) > 0
+	sess.RecordAuxiliaryUsage(r.auxiliaryUsagePending)
+	r.auxiliaryUsagePending = session.AuxiliaryUsage{}
+	r.auxiliaryUsageActive = false
+	return added
+}
+
+func (r *Run) revokeAuxiliaryUsageOwnership() {
+	if r == nil {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	r.auxiliaryUsageActive = false
+	r.auxiliaryUsagePending = session.AuxiliaryUsage{}
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) closeAuxiliaryUsageOwnership() {
+	r.auxiliaryUsageMu.Lock()
+	r.auxiliaryUsageActive = false
+	r.auxiliaryUsageMu.Unlock()
+}
+
 func estimateRequestTokens(counter TokenCounter, req port.LLMRequest) int {
 	total := countLayered(counter, req.System) + counter.CountMessages(req.Messages)
 	for _, spec := range req.Tools {
@@ -2807,7 +3141,11 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if budget < 1 {
 		budget = 1
 	}
-	result, compacted, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	result, compacted, usage, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	usage = RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindCompaction, usage)
+	// The active run owns sess through its existing run capability; record all
+	// provider-reported usage before handling a terminal compaction error.
+	sess.RecordAuxiliaryUsage(usage)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
 		// existing history and continue — but no longer SILENTLY: surface the
@@ -2946,22 +3284,31 @@ func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 // emit: delivery is deterministic whenever the buffer has room, so the abort
 // arms only ever claim a send that would genuinely park.
 func (r *Run) emitOrAbort(ev session.Event, abort <-chan struct{}) bool {
+	_, delivered := r.emitOrAbortSequenced(ev, abort)
+	return delivered
+}
+
+// emitOrAbortSequenced returns the exact stamped event handed to the parent
+// channel so a delivered child approval can be mirrored byte-for-byte to the
+// EventSink while the child registry's emit mutex is held. This preserves
+// approval-before-terminal order in both the stream and sink.
+func (r *Run) emitOrAbortSequenced(ev session.Event, abort <-chan struct{}) (session.Event, bool) {
 	ev.Seq = r.seq.Add(1)
 	// Same stamp as emit — see the note there. These two are the ONLY sites a run
 	// hands an event outward, which is what makes the guarantee structural.
 	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
-		return true
+		return ev, true
 	default:
 	}
 	select {
 	case r.events <- ev:
-		return true
+		return ev, true
 	case <-abort:
-		return false
+		return ev, false
 	case <-r.hardAbort:
-		return false
+		return ev, false
 	}
 }
 
@@ -3016,7 +3363,7 @@ var childDrainGrace = 1 * time.Second
 // I3b note: the background-pending nudge must be checked in finishTurnNoTools
 // BEFORE its clean-terminal calls — by the time this hook runs, the children it
 // would ask about are already cancelled and the registry sealed.
-func (*Engine) drainChildren(ctx context.Context, r *Run) {
+func (e *Engine) drainChildren(ctx context.Context, r *Run) {
 	joins := r.children.cancelLiveBackground()
 	if len(joins) > 0 {
 		if pending := joinChildren(joins, childDrainCap); len(pending) > 0 {
@@ -3040,6 +3387,12 @@ func (*Engine) drainChildren(ctx context.Context, r *Run) {
 				}
 			}
 		}
+	}
+	if r.childAsks != nil {
+		for _, ev := range r.children.sealWithFinal(r.childAsks.closeEvents) {
+			e.emit(r, ev)
+		}
+		return
 	}
 	r.children.seal()
 }
@@ -3076,6 +3429,7 @@ func joinChildren(joins []backgroundJoin, d time.Duration) []backgroundJoin {
 func (e *Engine) deferFailedStepRetry(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage) {
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
+	r.closeAuxiliaryUsageOwnershipAndDrain(sess)
 	e.fireStop(ctx, r, sess, reason)
 	r.setOutcome(RunOutcomeCompleted)
 	e.emitResult(r, sess, reason, text, usage, "", session.RetryDispositionUnknown, session.StreamProgressUnknown)
@@ -3093,6 +3447,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 	}
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
+	r.closeAuxiliaryUsageOwnershipAndDrain(sess)
 	switch reason {
 	case session.StopCancelled:
 		_ = sess.Cancel()
@@ -3147,6 +3502,7 @@ func (e *Engine) planApprovalTerminal(ctx context.Context, r *Run, sess *session
 func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string) {
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
+	r.drainPendingAuxiliaryUsage(sess)
 	if !sess.State.IsTerminal() {
 		_ = sess.Stop(reason)
 	}
@@ -3159,20 +3515,31 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	// mode, honestly. Save the flipped mode so a Reopen/restart continues in the
 	// approved posture.
 	if r.planApprovedTarget != "" {
-		_ = sess.SetMode(r.planApprovedTarget)
-		e.save(ctx, r, sess)
+		if err := sess.SetMode(r.planApprovedTarget); err == nil {
+			if e.deps.PlanApprovals != nil && r.planApprovalReceipt.SessionID == sess.ID && r.planApprovalReceipt.TargetMode == r.planApprovedTarget {
+				e.deps.PlanApprovals.RecordPlanApproval(r.planApprovalReceipt)
+			}
+			e.save(ctx, r, sess)
+		}
 	}
 	// Persist the terminal aggregate before a synchronous Observer can block or
 	// perform model work. The result event remains after observation, preserving
 	// event order; persistence failures stay best-effort diagnostics via save.
 	e.save(ctx, r, sess)
 	e.observeCompletion(ctx, r, sess, reason, usage)
+	if r.closeAuxiliaryUsageOwnershipAndDrain(sess) {
+		e.save(ctx, r, sess)
+	}
 	e.fireStop(ctx, r, sess, reason)
 	r.setOutcome(RunOutcomeCompleted)
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.
 	e.emitResult(r, sess, reason, text, usage, errMsg, session.RetryDispositionUnknown, session.StreamProgressComplete)
+}
+
+type auxiliaryUsageObserver interface {
+	ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error)
 }
 
 // observeCompletion invokes the optional host observer after the aggregate has
@@ -3196,6 +3563,16 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 				break
 			}
 		}
+	}
+	if observer, ok := e.deps.LearningObserver.(auxiliaryUsageObserver); ok {
+		auxUsage, err := observer.ObserveWithUsage(ctx, tr)
+		if len(auxUsage.Buckets) > 0 {
+			r.diag.Log(ctx, port.LevelDebug, "reflection usage dropped", "bucket_count", len(auxUsage.Buckets))
+		}
+		if err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory usage observer failed")
+		}
+		return
 	}
 	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
 		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)

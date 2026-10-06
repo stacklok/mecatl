@@ -10,6 +10,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/adapter/mockscript"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
@@ -67,6 +69,11 @@ func run() error {
 	// port.Diagnostics (ban-guarded). Mirrors cmd/mecated.
 	slog.SetDefault(logger)
 	diag := slogdiag.NewFromLogger(logger)
+	// Native debug qualification consumes structured diagnostics only. Keep the
+	// ordinary daemon/third-party logger unchanged; no new operator flag is needed.
+	if cfg.executionEnabled && cfg.logLevel == slog.LevelDebug {
+		diag = slogdiag.New(os.Stderr, true, port.LevelDebug)
+	}
 	cfg.diagnostics = diag
 
 	ctx, stop := signalCtx()
@@ -82,6 +89,26 @@ func run() error {
 	}
 
 	composition := appConfig(cfg, diag, obs)
+	if cfg.executionEnabled {
+		tlsConfig, tlsErr := executionclient.LoadTLSConfig(executionclient.TLSFiles{CA: cfg.executionTLSCA, Cert: cfg.executionTLSCert, Key: cfg.executionTLSKey})
+		if tlsErr != nil {
+			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
+			return tlsErr
+		}
+		client, clientErr := executionclient.New(cfg.executionEndpoint, tlsConfig)
+		if clientErr != nil {
+			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
+			return clientErr
+		}
+		defer client.Close()
+		placement, placementErr := executionclient.NewProvider(client, cfg.executionProfile)
+		if placementErr != nil {
+			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
+			return placementErr
+		}
+		composition.PlacementProvider = placement
+		composition.PlacementScope = "remote-execution"
+	}
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)

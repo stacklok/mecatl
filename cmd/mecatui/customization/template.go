@@ -170,24 +170,25 @@ type templateContextAtom struct {
 	Human templateText
 }
 type templateContext struct {
-	Used, Window templateContextAtom
-	Percent      int
+	Used, Window     templateContextAtom
+	Percent          int
+	Known, Estimated bool
 }
 
 // contextMeter is the shipped template primitive for the context-pressure bar.
 // It emits only trusted StatusML markup; user-derived values remain escaped in
 // templateContext. The UI resolves its semantic token through the active theme.
 func contextMeter(input templateContext) templateText {
+	if !input.Known {
+		if input.Window.Raw > 0 {
+			return templateText("<text>ctx ?/" + string(input.Window.Human) + "</text>")
+		}
+		return templateText("<text>ctx ?</text>")
+	}
 	if input.Window.Raw <= 0 {
 		return templateText("<text>ctx " + string(input.Used.Human) + "</text>")
 	}
-	percent := input.Percent
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
+	percent := clampedContextPercent(input.Percent)
 	var token, fill string
 	switch {
 	case percent >= 85:
@@ -202,7 +203,7 @@ func contextMeter(input templateContext) templateText {
 		filled = 8
 	}
 	bar := strings.Repeat(fill, filled) + strings.Repeat("░", 8-filled)
-	label := "ctx " + bar + " " + strconv.Itoa(percent) + "%"
+	label := "ctx " + bar + " " + contextPercentLabel(input, percent)
 	if percent >= 85 {
 		label += " ⚠"
 	}
@@ -210,6 +211,9 @@ func contextMeter(input templateContext) templateText {
 }
 
 func contextMeterCompact(input templateContext) templateText {
+	if !input.Known {
+		return templateText("<text>ctx ?</text>")
+	}
 	if input.Window.Raw <= 0 {
 		return templateText("<text>ctx " + string(input.Used.Human) + "</text>")
 	}
@@ -217,7 +221,7 @@ func contextMeterCompact(input templateContext) templateText {
 	token, fill := contextPressure(percent)
 	filled := (percent*8 + 50) / 100
 	bar := strings.Repeat(fill, filled) + strings.Repeat("░", 8-filled)
-	label := "ctx " + bar + " " + strconv.Itoa(percent) + "%"
+	label := "ctx " + bar + " " + contextPercentLabel(input, percent)
 	if percent >= 85 {
 		label += " ⚠"
 	}
@@ -225,12 +229,15 @@ func contextMeterCompact(input templateContext) templateText {
 }
 
 func contextMeterMinimal(input templateContext) templateText {
+	if !input.Known {
+		return templateText("<text>ctx ?</text>")
+	}
 	if input.Window.Raw <= 0 {
 		return templateText("<text>ctx " + string(input.Used.Human) + "</text>")
 	}
 	percent := clampedContextPercent(input.Percent)
 	token, _ := contextPressure(percent)
-	label := "ctx " + strconv.Itoa(percent) + "%"
+	label := "ctx " + contextPercentLabel(input, percent)
 	if percent >= 85 {
 		label += " ⚠"
 	}
@@ -245,6 +252,14 @@ func clampedContextPercent(percent int) int {
 		return 100
 	}
 	return percent
+}
+
+func contextPercentLabel(input templateContext, percent int) string {
+	prefix := ""
+	if input.Estimated {
+		prefix = "~"
+	}
+	return prefix + strconv.Itoa(percent) + "%"
 }
 
 func contextPressure(percent int) (token, fill string) {
@@ -274,7 +289,7 @@ func newTemplateInput(input Input) templateInput {
 		Session:    templateSession{escapeTemplateText(input.Session.Title), escapeTemplateText(input.Session.Handle), escapeTemplateText(input.Session.Mode), escapeTemplateText(input.Session.ReasoningEffort)},
 		Model:      templateModel{escapeTemplateText(input.Model.ProviderID), escapeTemplateText(input.Model.ID), escapeTemplateText(input.Model.DisplayName), escapeTemplateText(input.Model.Route), templateContextAtom{input.Model.ContextWindow.Raw, escapeTemplateText(input.Model.ContextWindow.Human)}},
 		Usage:      templateUsage{templateUsageAtom{input.Usage.Input.Raw, escapeTemplateText(input.Usage.Input.Human)}, templateUsageAtom{input.Usage.Output.Raw, escapeTemplateText(input.Usage.Output.Human)}, templateUsageAtom{input.Usage.CacheRead.Raw, escapeTemplateText(input.Usage.CacheRead.Human)}, templateUsageAtom{input.Usage.CacheWrite.Raw, escapeTemplateText(input.Usage.CacheWrite.Human)}, input.Usage.CacheReadPercent},
-		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent},
+		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent, input.Context.Known, input.Context.Estimated},
 		Workspace:  templateWorkspace{escapeTemplateText(input.Workspace.Location), escapeTemplateText(input.Workspace.Name), escapeTemplateText(input.Workspace.Path)},
 		Terminal:   input.Terminal,
 		MainAgent:  templateMainAgent{escapeTemplateText(input.MainAgent.State), escapeTemplateText(input.MainAgent.Activity), escapeTemplateText(input.MainAgent.Approval)},

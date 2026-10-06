@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -20,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -29,7 +31,7 @@ type countObserver struct{ calls atomic.Int64 }
 
 func drainRunToLearningLog(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) string {
 	t.Helper()
 	recorder := server.NewRunEventRecorder(ctx, svc, id)
@@ -74,6 +76,7 @@ func TestLearningAdmissionIsGlobalAcrossConcurrentProviderObservers(t *testing.T
 
 func learningResolverConfig(t *testing.T, operator, workspace string) Config {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg := Config{Workspace: workspace, PermissionsConventional: workspace != ""}
 	if operator != "" {
 		path := filepath.Join(t.TempDir(), "settings.yaml")
@@ -205,84 +208,86 @@ func TestLearningAdmissionIntervalPrecedence(t *testing.T) {
 }
 
 func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *testing.T) {
-	ctx := context.Background()
-	workspace := t.TempDir()
-	providers := map[string]*mockllm.Provider{}
-	built, err := buildIsolated(t, ctx, Config{
-		Model:                     "test-model",
-		ContextWindowOverride:     defaultContextWindowTokens,
-		Workspace:                 workspace,
-		NoSoul:                    true,
-		LearningMode:              learning.Auto,
-		UserModelDir:              t.TempDir(),
-		LearningAdmissionInterval: 2,
-		envDetector: fakeEnv(map[string]string{
-			"OPENAI_API_KEY":     "test-key",
-			"OPENROUTER_API_KEY": "test-key",
-		}),
-		liveModelHTTPClient: offlineHTTPClient(),
-		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
-			var turns []mockllm.Turn
-			switch id {
-			case providerOpenAI:
-				turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn(`{"kind":"abstained"}`)}
-			case providerOpenRouter:
-				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn(`{"kind":"abstained"}`), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
-			default:
-				turns = []mockllm.Turn{mockllm.TextTurn("unused")}
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		workspace := t.TempDir()
+		providers := map[string]*mockllm.Provider{}
+		built, err := buildIsolated(t, ctx, Config{
+			Model:                     "test-model",
+			ContextWindowOverride:     defaultContextWindowTokens,
+			Workspace:                 workspace,
+			NoSoul:                    true,
+			LearningMode:              learning.Auto,
+			UserModelDir:              t.TempDir(),
+			LearningAdmissionInterval: 2,
+			envDetector: fakeEnv(map[string]string{
+				"OPENAI_API_KEY":     "test-key",
+				"OPENROUTER_API_KEY": "test-key",
+			}),
+			liveModelHTTPClient: offlineHTTPClient(),
+			providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+				var turns []mockllm.Turn
+				switch id {
+				case providerOpenAI:
+					turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn(`{"kind":"abstained"}`)}
+				case providerOpenRouter:
+					turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn(`{"kind":"abstained"}`), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
+				default:
+					turns = []mockllm.Turn{mockllm.TextTurn("unused")}
+				}
+				p := mockllm.New(turns...)
+				providers[id] = p
+				return p
+			},
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+
+		defaultSession, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+		if err != nil {
+			t.Fatalf("CreateSession(default): %v", err)
+		}
+		defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "Remember that I prefer concise answers")
+		if err != nil {
+			t.Fatalf("StartRun(default): %v", err)
+		}
+		_ = drainRunToLearningLog(ctx, t, built.Service, defaultSession.ID, defaultRun)
+		waitCalls := func(provider *mockllm.Provider, want int) int {
+			t.Helper()
+			deadline := time.Now().Add(2 * time.Second)
+			for provider.Calls() < want && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
 			}
-			p := mockllm.New(turns...)
-			providers[id] = p
-			return p
-		},
+			return provider.Calls()
+		}
+		if got := waitCalls(providers[providerOpenAI], 2); got != 2 {
+			t.Fatalf("default provider calls after admitted completion = %d, want 2 (run + review)", got)
+		}
+
+		runSelected := func(prompt string) {
+			t.Helper()
+			sess, createErr := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: "test-model"})
+			if createErr != nil {
+				t.Fatalf("CreateSessionWithProvider: %v", createErr)
+			}
+			run, runErr := built.Service.StartRun(ctx, sess.ID, prompt)
+			if runErr != nil {
+				t.Fatalf("StartRun(selected): %v", runErr)
+			}
+			_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
+		}
+
+		runSelected("Remember that I prefer short examples")
+		if got := waitCalls(providers[providerOpenRouter], 2); got != 2 {
+			t.Fatalf("selected provider calls after hard trigger = %d, want 2 (run + review)", got)
+		}
+		runSelected("Remember that I prefer Go examples")
+		if got := waitCalls(providers[providerOpenRouter], 4); got != 4 {
+			t.Fatalf("selected provider calls after second hard trigger = %d, want 4 (two runs + two reviews)", got)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	defer built.Close()
-
-	defaultSession, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
-	if err != nil {
-		t.Fatalf("CreateSession(default): %v", err)
-	}
-	defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "Remember that I prefer concise answers")
-	if err != nil {
-		t.Fatalf("StartRun(default): %v", err)
-	}
-	_ = drainRunToLearningLog(ctx, t, built.Service, defaultSession.ID, defaultRun)
-	waitCalls := func(provider *mockllm.Provider, want int) int {
-		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
-		for provider.Calls() < want && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		return provider.Calls()
-	}
-	if got := waitCalls(providers[providerOpenAI], 2); got != 2 {
-		t.Fatalf("default provider calls after admitted completion = %d, want 2 (run + review)", got)
-	}
-
-	runSelected := func(prompt string) {
-		t.Helper()
-		sess, createErr := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: "test-model"})
-		if createErr != nil {
-			t.Fatalf("CreateSessionWithProvider: %v", createErr)
-		}
-		run, runErr := built.Service.StartRun(ctx, sess.ID, prompt)
-		if runErr != nil {
-			t.Fatalf("StartRun(selected): %v", runErr)
-		}
-		_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
-	}
-
-	runSelected("Remember that I prefer short examples")
-	if got := waitCalls(providers[providerOpenRouter], 2); got != 2 {
-		t.Fatalf("selected provider calls after hard trigger = %d, want 2 (run + review)", got)
-	}
-	runSelected("Remember that I prefer Go examples")
-	if got := waitCalls(providers[providerOpenRouter], 4); got != 4 {
-		t.Fatalf("selected provider calls after second hard trigger = %d, want 4 (two runs + two reviews)", got)
-	}
 }
 
 func TestStartupProjectOffKeepsAlternateRootAutomaticAssets(t *testing.T) {
@@ -530,12 +535,12 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 			workspace := t.TempDir()
 			provider := mockllm.New(mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`))
 			cfg := Config{Model: "model", Workspace: workspace, LearningMode: tc.mode}
-			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
+			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
 				t.Fatal("off mode wired an automatic reflection observer")
 			}
 			repository := memproposal.New()
 			memory := memmemory.New()
-			observer := buildExplicitReflectionObserver(cfg, provider, cfg.Model, memory, nil, repository, nil)
+			observer := buildExplicitReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memory, nil, repository, nil)
 			trajectory := learning.NewTrajectory("explicit-policy", workspace, session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that I prefer concise output")})
 			trajectory.Current = learning.MessageSpan{Start: 0, End: 1}
 			receipt, err := observer.Reflect(context.Background(), trajectory, false)
@@ -653,6 +658,28 @@ func TestUserModelReviewEngineCatalogIsReduced(t *testing.T) {
 	}
 	if len(request.Tools) != 1 || request.Tools[0].Name != memory.RememberUserToolName {
 		t.Fatalf("review request tools = %v, want only %s", request.Tools, memory.RememberUserToolName)
+	}
+}
+
+// TestUserModelReviewEngineCascadeCompactorIdentity covers the common child-engine
+// deps builder used by buildUserModelReviewEngine. Its Engine retains deps privately,
+// so this is the narrow observable seam for the nested compactor attribution.
+func TestUserModelReviewEngineCascadeCompactorIdentity(t *testing.T) {
+	const (
+		providerID = "selected-non-default"
+		model      = "user-review-model"
+	)
+	cfg := Config{Model: model, Compaction: "cascade"}
+	deps := childEngineDepsForProvider(cfg, "usermodel-review", mockllm.New(),
+		session.ProviderModelID{ProviderID: providerID, ModelID: model},
+		func() int { return defaultContextWindowTokens }, nil, prompt.Config{}, nil)
+	compactor, ok := deps.Compactor.(agent.CascadeCompactor)
+	if !ok {
+		t.Fatalf("compactor = %T, want agent.CascadeCompactor", deps.Compactor)
+	}
+	want := session.ProviderModelID{ProviderID: providerID, ModelID: model}
+	if compactor.ProviderModel != want {
+		t.Fatalf("cascade ProviderModel = %+v, want %+v", compactor.ProviderModel, want)
 	}
 }
 

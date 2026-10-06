@@ -52,7 +52,7 @@ describe("run controls", () => {
           await input.next();
           yield {
             event: {
-              ask: { askId: "ask-1", tool: "Shell" },
+              ask: { args: "{}", askId: "ask-1", reason: "test", tool: "Shell" },
               runId: "run-controls",
               type: "permission.ask",
             },

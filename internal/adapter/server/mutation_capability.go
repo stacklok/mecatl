@@ -63,6 +63,16 @@ func (c *SessionMutationCapability) Disable() {
 	clear(c.states)
 }
 
+func (c *SessionMutationCapability) withMutation(id session.SessionID, mutate func() error) (bool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	valid, tracked := c.states[id]
+	if !c.disabled && (!tracked || !valid) {
+		return false, nil
+	}
+	return true, mutate()
+}
+
 func (c *SessionMutationCapability) allows(id session.SessionID) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

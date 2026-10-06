@@ -20,12 +20,20 @@ import (
 // production bug in openLifetimePipe was found (a ten-minute hang in an
 // unrelated http.Get).
 //
-// A raw pipe(2) descriptor has exactly one owner: whoever adopts it.
+// A raw pipe(2) descriptor has exactly one owner: whoever adopts it. Make the
+// read end nonblocking so os.NewFile can register it with the Go poller. That
+// lets Close interrupt the watcher's Read on Linux; closing a blocking fd from
+// another goroutine does not necessarily wake a read already in the kernel.
 func rawPipe(t *testing.T) (readFD int, write *os.File) {
 	t.Helper()
 	var fds [2]int
 	if err := syscall.Pipe(fds[:]); err != nil {
 		t.Fatalf("syscall.Pipe: %v", err)
+	}
+	if err := syscall.SetNonblock(fds[0], true); err != nil {
+		_ = syscall.Close(fds[0])
+		_ = syscall.Close(fds[1])
+		t.Fatalf("make pipe read end pollable: %v", err)
 	}
 	return fds[0], os.NewFile(uintptr(fds[1]), "lifetime-pipe-write-end")
 }

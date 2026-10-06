@@ -251,6 +251,15 @@ func (p Provider) APIBaseURL() string { return p.api }
 // so a caller cannot corrupt the singleton.
 func (p Provider) Models() []Model { return append([]Model(nil), p.models...) }
 
+// Model returns the curated model with id and whether it is in this provider.
+func (p Provider) Model(id string) (Model, bool) {
+	i := sort.Search(len(p.models), func(i int) bool { return p.models[i].id >= id })
+	if i < len(p.models) && p.models[i].id == id {
+		return p.models[i], true
+	}
+	return Model{}, false
+}
+
 // ID returns the model's catalog id (e.g. "gpt-5", or "anthropic/claude-opus-4.5"
 // for an openrouter route).
 func (m Model) ID() string { return m.id }

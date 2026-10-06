@@ -5,6 +5,10 @@ import { Code, ConnectError } from "@connectrpc/connect";
 export const MECATL_ERROR_CODES = [
   "activity_gap",
   "ask_not_pending",
+  "approval_grant_ineligible",
+  "approval_intent_mismatch",
+  "approval_not_pending",
+  "approval_unsupported",
   "attempt_live_claim_conflict",
   "attempt_terminal_conflict",
   "attempt_version_conflict",
@@ -29,6 +33,7 @@ export const MECATL_ERROR_CODES = [
   "dream_request_failed",
   "dream_terminal_conflict",
   "dream_unavailable",
+  "environment_logical_root_unavailable",
   "failed_precondition",
   "failed_step_retry_ineligible",
   "fire_now_overlap",

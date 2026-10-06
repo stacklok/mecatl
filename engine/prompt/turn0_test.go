@@ -34,9 +34,9 @@ func (s scriptedRules) ListRules(context.Context) ([]prompt.Rule, error) { retur
 func TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput(t *testing.T) {
 	ctx := context.Background()
 
-	render := func(a prompt.InstructionAssembler, ws tool.Workspace) string {
+	render := func(a prompt.InstructionAssembler) string {
 		t.Helper()
-		msgs, err := a.Assemble(ctx, ws)
+		msgs, err := a.Assemble(ctx)
 		if err != nil {
 			t.Fatalf("Assemble: %v", err)
 		}
@@ -56,12 +56,12 @@ func TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput(t *testing.T) {
 		name string
 		text string
 	}{
-		{"project-instructions (AGENTS.md)", render(prompt.RootAssembler{}, agentsWS)},
-		{"project-instructions (CLAUDE.md)", render(prompt.RootAssembler{}, claudeWS)},
-		{"rules", render(prompt.RulesAssembler{Src: scriptedRules{rules: []prompt.Rule{{Name: "r1", Body: "body\n", Origin: prompt.RuleOriginProject}}}}, nil)},
-		{"soul", render(prompt.SoulAssembler{Src: scriptedSoul{body: "terse engineer"}}, agentsWS)},
-		{"memory-index", render(prompt.MemoryIndexAssembler{Src: scriptedIndex{entries: entries}}, agentsWS)},
-		{"user-model", render(prompt.UserModelAssembler{Src: scriptedIndex{entries: entries}}, agentsWS)},
+		{"project-instructions (AGENTS.md)", render(prompt.RootAssembler{Source: agentsWS})},
+		{"project-instructions (CLAUDE.md)", render(prompt.RootAssembler{Source: claudeWS})},
+		{"rules", render(prompt.RulesAssembler{Src: scriptedRules{rules: []prompt.Rule{{Name: "r1", Body: "body\n", Origin: prompt.RuleOriginProject}}}})},
+		{"soul", render(prompt.SoulAssembler{Src: scriptedSoul{body: "terse engineer"}})},
+		{"memory-index", render(prompt.MemoryIndexAssembler{Src: scriptedIndex{entries: entries}})},
+		{"user-model", render(prompt.UserModelAssembler{Src: scriptedIndex{entries: entries}})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

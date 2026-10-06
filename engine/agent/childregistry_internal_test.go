@@ -255,13 +255,13 @@ func TestVerdictRacesTerminalRetract(t *testing.T) {
 		reg.recordAsk("c", "ask-1")
 		child := &Run{asks: newAskRegistry()}
 		verdictCh := child.asks.register("ask-1")
-		router.registerChild("ask-1", child)
+		router.registerSurfaced(session.PendingAsk{AskID: "ask-1", Tool: "Shell", Origin: session.ApprovalOriginPermission}, child, 1)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			router.route("ask-1", session.VerdictAllowOnce)
+			_, _ = router.routeResolution(ApprovalResolution{AskID: "ask-1", Verdict: session.VerdictAllowOnce})
 		}()
 		go func() {
 			defer wg.Done()
@@ -277,10 +277,51 @@ func TestVerdictRacesTerminalRetract(t *testing.T) {
 		default:
 		}
 		retracted := retracts.Load() == 1
-		if routed == retracted {
-			t.Fatalf("iteration %d: exactly one of {verdict routed, retract emitted} must happen; routed=%v retracts=%d",
-				i, routed, retracts.Load())
+		accepted := router.takeAccepted(child)
+		if routed == retracted || (len(accepted) == 1) != routed {
+			t.Fatalf("iteration %d: want exactly one approval or retract; routed=%v approvals=%d retracts=%d",
+				i, routed, len(accepted), retracts.Load())
 		}
+		if owned, err := router.routeResolution(ApprovalResolution{AskID: "ask-1", Verdict: session.VerdictDeny}); owned || err != nil {
+			t.Fatalf("iteration %d: duplicate verdict reached child: owned=%t err=%v", i, owned, err)
+		}
+		if got, found := router.resolveOrdinary("ask-1", session.VerdictDeny); found || got != AskResolutionNotPending {
+			t.Fatalf("iteration %d: stale verdict = %v, found = %t", i, got, found)
+		}
+	}
+}
+
+// TestStaleSurfacedChildVerdictLeavesTerminalRetractAvailable covers a child
+// that cancelled its pending await just before a parent ordinary verdict. The
+// verdict is not accepted, so the parent route must remain available for the
+// terminal retract and a repeated verdict must not resolve anything.
+func TestStaleSurfacedChildVerdictLeavesTerminalRetractAvailable(t *testing.T) {
+	reg := newChildRunRegistry()
+	router := newChildAskRouter()
+	reg.unregisterAsk = router.unregister
+	var emitted []session.Event
+	reg.emit = func(ev session.Event) { emitted = append(emitted, ev) }
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reg.register("child", childFamilySubagent, "task", cancel, false)
+	reg.recordAsk("child", "child-ask")
+	child := &Run{asks: newAskRegistry()}
+	ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Origin: session.ApprovalOriginPermission}
+	child.asks.registerAsk(ask)
+	router.registerSurfaced(ask, child, 1)
+	child.asks.discard(ask.AskID)
+	if got, found := router.resolveOrdinary(ask.AskID, session.VerdictAllowOnce); !found || got != AskResolutionNotPending {
+		t.Fatalf("cancelled child resolution = %v, found = %t", got, found)
+	}
+	reg.markDoneResult("child", session.StopCancelled, nil)
+	if len(emitted) != 1 || emitted[0].Type != session.EvPermissionRetract || emitted[0].Ask == nil || emitted[0].Ask.AskID != ask.AskID {
+		t.Fatalf("terminal events = %+v, want one retract", emitted)
+	}
+	if got, found := router.resolveOrdinary(ask.AskID, session.VerdictAllowOnce); found || got != AskResolutionNotPending {
+		t.Fatalf("repeated verdict = %v, found = %t; want stale", got, found)
+	}
+	if accepted := router.takeAccepted(child); len(accepted) != 0 {
+		t.Fatalf("rejected verdict recorded approval: %+v", accepted)
 	}
 }
 
@@ -306,8 +347,8 @@ func TestRouterUnregisterAfterRouteNoRetract(t *testing.T) {
 	verdictCh := child.asks.register("ask-1")
 	router.registerChild("ask-1", child)
 
-	if !router.route("ask-1", session.VerdictAllowOnce) {
-		t.Fatalf("route must deliver the registered ask's verdict")
+	if owned, err := router.routeResolution(ApprovalResolution{AskID: "ask-1", Verdict: session.VerdictAllowOnce}); !owned || err != nil {
+		t.Fatalf("route must deliver the registered ask's verdict: owned=%t err=%v", owned, err)
 	}
 	select {
 	case <-verdictCh:
@@ -334,8 +375,8 @@ func TestRouterRouteAfterUnregisterFalse(t *testing.T) {
 	if router.unregister("ask-1") {
 		t.Fatalf("second unregister must be false (idempotent; never a second retract)")
 	}
-	if router.route("ask-1", session.VerdictAllowOnce) {
-		t.Fatalf("route after unregister must miss — the verdict falls through to the parent's own registry")
+	if owned, err := router.routeResolution(ApprovalResolution{AskID: "ask-1", Verdict: session.VerdictAllowOnce}); owned || err != nil {
+		t.Fatalf("route after unregister must miss — the verdict falls through to the parent's own registry: owned=%t err=%v", owned, err)
 	}
 	if router.unregister("ask-never-registered") {
 		t.Fatalf("unknown ids must report false")

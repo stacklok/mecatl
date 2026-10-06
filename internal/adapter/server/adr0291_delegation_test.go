@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -54,6 +56,12 @@ func TestInvariant_delegation_cannot_escalate_placement(t *testing.T) {
 	}
 	teamID, _, err := svc.CreateTeamForSession(ctx, source.ID, "team", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true}})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(ctx, agent.MemberSessionID(teamID, "lead")); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("team member materialized before RunTeam: %v", err)
+	}
+	if _, err := svc.RunTeam(ctx, teamID, func(agent.TeamEvent) {}); err != nil {
 		t.Fatal(err)
 	}
 	member, err := store.Load(ctx, agent.MemberSessionID(teamID, "lead"))

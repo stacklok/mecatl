@@ -100,8 +100,9 @@ func TestEffortE2EForkPreservesTranscript(t *testing.T) {
 	if conv.forkedEffort == "" {
 		t.Fatalf("ForkSession carried an empty effort, want the picked tier")
 	}
-	// The fork's SessionReadyMsg rebinds the session and returns to idle.
-	prog.wait(t, phaseIdle, 5*time.Second)
+	// Wait for the asynchronous source retirement, rather than the earlier idle
+	// transition that schedules it.
+	waitForClosedSession(t, "source close after /effort handoff", conv, "sess-test-0001", 5*time.Second)
 
 	// Graceful double-ctrl+c quit.
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})

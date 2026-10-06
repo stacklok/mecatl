@@ -216,12 +216,12 @@ guardrails:
 	var report Report
 	rules := rulesFromConfig(cfg, governance.ScopeSharedProject, &report)
 	decision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "legacy", session.ModeDefault, session.NewToolCall("shell", tool.ShellToolName, []byte(`{"command":"go test ./..."}`)), nil)
-	if decision.Effect != governance.Deny {
-		t.Fatalf("legacy Bash rules decision = %q, want deny", decision.Effect)
+	if decision.Decision.Effect != governance.Deny {
+		t.Fatalf("legacy Bash rules decision = %q, want deny", decision.Decision.Effect)
 	}
 	tempDecision := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "legacy", session.ModeDefault, session.NewToolCall("temp", "ShellSystemTemp", nil), nil)
-	if tempDecision.Effect != governance.Deny {
-		t.Fatalf("legacy BashSystemTemp rule decision = %q, want deny", tempDecision.Effect)
+	if tempDecision.Decision.Effect != governance.Deny {
+		t.Fatalf("legacy BashSystemTemp rule decision = %q, want deny", tempDecision.Decision.Effect)
 	}
 	guardrails := cfg.Guardrails
 	if guardrails == nil || len(guardrails.Rules) != 6 {

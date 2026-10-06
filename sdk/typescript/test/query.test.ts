@@ -248,6 +248,7 @@ describe("query one-shot lifecycle", () => {
 
   it("plan asks use only onPlanApproval and continue on a fresh run", async () => {
     const prompts: string[] = [];
+    const continuationOwners: boolean[] = [];
     const planAsks: string[] = [];
     const permissionAsks: string[] = [];
     let approvePlanCalls = 0;
@@ -265,7 +266,10 @@ describe("query one-shot lifecycle", () => {
           runNumber += 1;
           const input = requests[Symbol.asyncIterator]();
           const prompt = await input.next();
-          if (prompt.value?.kind.case === "prompt") prompts.push(prompt.value.kind.value.text);
+          if (prompt.value?.kind.case === "prompt") {
+            prompts.push(prompt.value.kind.value.text);
+            continuationOwners.push(prompt.value.kind.value.serverOwnedPlanContinuation);
+          }
           const runId = `query-plan-${runNumber}`;
           if (runNumber === 1) {
             yield {
@@ -310,6 +314,7 @@ describe("query one-shot lifecycle", () => {
     expect(planAsks).toEqual(["plan-ask"]);
     expect(permissionAsks).toEqual(["ordinary-ask"]);
     expect(prompts).toEqual(["draft a plan", "Plan approved by operator. Proceed with execution."]);
+    expect(continuationOwners).toEqual([false, false]);
     expect(events.filter((value) => value.kind === "result")).toEqual([
       { kind: "result", runId: "query-plan-1" },
       { kind: "result", runId: "query-plan-2" },

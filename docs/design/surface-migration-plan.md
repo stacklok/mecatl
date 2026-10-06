@@ -1,15 +1,15 @@
 # Surface migration — the general template (issue #555 Phase 2)
 
 **Status:** active migration template. **Scope:** the GENERAL migration template
-for moving a `cmd/mecatui/ui` overlay onto the `surface` interface. Soul is the
+for moving a `cmd/mecatui/ui` overlay (see [Developing the mecatui terminal UI](../tui.md)) onto the `surface` interface. Soul is the
 FIRST migrator (the proof-of-pattern that pins the interface); mcp, skills,
 /sessions, and /models are shipped migrations; section 6 is the checklist for the rest.
 
 Issue #555 describes "ADR 0108" as the surface-migration ADR; that is a stale
-reference. [`0108-on-demand-logical-skill-assets`](../adr/0108-on-demand-logical-skill-assets.md)
-is the skill-assets ADR (see the [ADR index](../adr/README.md)). The stale
+reference. `0108-on-demand-logical-skill-assets`
+is the skill-assets ADR (see the ADR index). The stale
 citation needs a docs fix; it is deliberately **not** fixed here. This plan
-follows the [design conventions in this folder](./README.md).
+follows the design conventions in this folder.
 
 ## Maintainer rules for future migrations
 

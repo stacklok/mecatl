@@ -12,6 +12,31 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+func TestRoutingDecisionProjectionPreservesOptionalPresence(t *testing.T) {
+	zero := 0.0
+	pb := &mecatlv1.RoutingDecision{
+		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
+		Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", ConsecutiveMisses: 0, MissLimit: 3,
+	}
+	want := &RoutingDecision{
+		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
+		Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", ConsecutiveMisses: 0, MissLimit: 3,
+	}
+	if got := subagentMsg(SubagentStart, &mecatlv1.Subagent{RoutingDecision: pb}).RoutingDecision; !reflect.DeepEqual(got, want) {
+		t.Fatalf("subagent decision = %#v, want %#v", got, want)
+	}
+	if got := parallelMsg(ParallelBranchStart, &mecatlv1.Parallel{RoutingDecision: pb}).RoutingDecision; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parallel decision = %#v, want %#v", got, want)
+	}
+	gotTeam := teamMsg(TeamStart, &mecatlv1.Team{Roster: []*mecatlv1.TeamMemberSpec{{Name: "lead", RoutingDecision: pb}}})
+	if len(gotTeam.Roster) != 1 || !reflect.DeepEqual(gotTeam.Roster[0].RoutingDecision, want) {
+		t.Fatalf("team decision = %#v, want %#v", gotTeam.Roster, want)
+	}
+	if got := subagentMsg(SubagentStart, &mecatlv1.Subagent{}).RoutingDecision; got != nil {
+		t.Fatalf("historical absence became %#v", got)
+	}
+}
+
 // TestEventToMsg covers the mapper over every documented event type, asserting
 // both the msg variant and a representative carried field. This is the single
 // translation point between proto and the ui model, so it gets exhaustive
@@ -29,8 +54,8 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"turn.end",
 			&mecatlv1.Event{Type: "turn.end", Turn: 2, TurnEnd: &mecatlv1.TurnEnd{
-				DurationMs: 4100, Usage: &mecatlv1.Usage{InputTokens: 1200, OutputTokens: 340}}},
-			TurnEndMsg{Turn: 2, Usage: Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100},
+				DurationMs: 4100, Estimated: true, Usage: &mecatlv1.Usage{InputTokens: 1200, OutputTokens: 340}}},
+			TurnEndMsg{Turn: 2, Usage: Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100, Estimated: true},
 		},
 		{"message.delta", &mecatlv1.Event{Type: "message.delta", Turn: 2, Text: "hi"}, AssistantDeltaMsg{Turn: 2, Text: "hi"}},
 		{"reasoning.delta", &mecatlv1.Event{Type: "reasoning.delta", Turn: 2, Text: "pondering"}, ReasoningDeltaMsg{Turn: 2, Text: "pondering"}},
@@ -77,7 +102,7 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"permission.ask",
 			&mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "a1", Tool: "Write", Args: "{}", Reason: "why"}},
-			PermissionAskMsg{RunID: "run-1", AskID: "a1", Tool: "Write", Args: "{}", Reason: "why"},
+			PermissionAskMsg{RunID: "run-1", AskID: "a1", Tool: "Write", Args: "{}", Reason: "why", ExpectedRunID: "run-1"},
 		},
 		{
 			"permission.retract",
@@ -191,6 +216,7 @@ func TestEventToMsg(t *testing.T) {
 		{"no_progress", &mecatlv1.Event{Type: "no_progress", Text: "nudging to continue"}, NoProgressMsg{Text: "nudging to continue"}},
 		{"provider.route", &mecatlv1.Event{Type: "provider.route", Text: "anthropic"}, ProviderRouteMsg{Text: "anthropic"}},
 		{"recover_notice", &mecatlv1.Event{Type: "recover_notice", Text: "permanent failure advisory"}, RecoverNoticeMsg{Text: "permanent failure advisory"}},
+		{"control.refused", &mecatlv1.Event{Type: "control.refused", RunId: "run-1", Text: "refused", ControlRefused: &mecatlv1.ControlRefused{AskId: "ask-1", Category: "approval_intent_mismatch"}}, ControlRefusedMsg{AskID: "ask-1", Category: "approval_intent_mismatch", RunID: "run-1", Text: "refused"}},
 		{
 			"result",
 			&mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
@@ -580,6 +606,17 @@ func TestAskRoundTrip(t *testing.T) {
 				t.Errorf("verdict = %v, want %v", ra.GetVerdict(), tc.wantVerdict)
 			}
 		})
+	}
+
+	fs := newFakeStream()
+	st := NewStream(fs, fs)
+	scope := &GuardrailApprovalScope{ReviewID: "review-release-1", Kind: "result_release"}
+	if err := st.SendApprovalForScope("ask-release-1", VerdictAllowOnce, scope, "run-1"); err != nil {
+		t.Fatalf("SendApprovalForScope: %v", err)
+	}
+	ra := fs.sentFrames()[0].GetResumeApproval()
+	if ra.GetReviewId() != scope.ReviewID || ra.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE || ra.GetExpectedRunId() != "run-1" {
+		t.Fatalf("guardrail acknowledgement = %+v", ra)
 	}
 }
 

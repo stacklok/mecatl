@@ -14,14 +14,14 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // This file is Scenario 6's cross-backend gate: the acceptance criteria that are

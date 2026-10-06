@@ -1,13 +1,12 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-session sess-test-0001 · read-only transcript
-(no events in this session)
-esc: back
+Inspecting session · read-only
+(empty conversation)esc: Back
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

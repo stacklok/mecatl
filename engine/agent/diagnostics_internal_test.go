@@ -70,8 +70,8 @@ func (c *internalCapturingDiag) snapshot() []internalDiagRecord {
 // loop reaches ReplaceHistory (whose state guard is the branch under test).
 type succeedingCompactor struct{}
 
-func (succeedingCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, error) {
-	return []session.Message{session.NewUserMessage("compacted goal")}, "compacted summary", nil
+func (succeedingCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
+	return []session.Message{session.NewUserMessage("compacted goal")}, "compacted summary", session.AuxiliaryUsage{}, nil
 }
 
 // hugeTokenCounter reports an over-threshold count so maybeCompact always trips.

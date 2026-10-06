@@ -139,9 +139,21 @@ func TestReadProviderKeysIsTheSingleSeam(t *testing.T) {
 	t.Setenv(envOpenAIKey, "a")
 	t.Setenv(envOpenRouterKey, "b")
 	t.Setenv(envAnthropicKey, "c")
+	t.Setenv(envTypesafeKey, "d")
 	keys := ReadProviderKeys()
-	if keys.OpenAI != "a" || keys.OpenRouter != "b" || keys.Anthropic != "c" {
+	if keys.OpenAI != "a" || keys.OpenRouter != "b" || keys.Anthropic != "c" || keys.Typesafe != "d" {
 		t.Errorf("ReadProviderKeys mismatch: %+v", keys)
+	}
+}
+
+func TestTypesafeKeyProjectsToCompositionWithoutAuthYAML(t *testing.T) {
+	t.Setenv(envTypesafeKey, "jev-secret")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keys := (&ProviderFlags{}).Resolve()
+	var cfg app.Config
+	(&ProviderFlags{}).ApplyResolved(&cfg, keys)
+	if cfg.TypesafeAPIKey != "jev-secret" {
+		t.Fatal("TYPESAFE_API_KEY did not reach app.Config")
 	}
 }
 

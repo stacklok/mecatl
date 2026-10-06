@@ -226,6 +226,56 @@ func TestRequestPolicyClonesBeforeCredentialInjection(t *testing.T) {
 	}
 }
 
+func TestRequestPolicyFinalTransportIsInferenceOnly(t *testing.T) {
+	cred, err := NewCredential(validJWT("acct", testNow.Add(time.Hour), true), "", "", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inference, listing http.Header
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/backend-api/codex/responses":
+			inference = req.Header.Clone()
+			return jsonResponse(http.StatusOK), nil
+		case "/backend-api/codex/models":
+			listing = req.Header.Clone()
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"models":[]}`)), Request: req}, nil
+		default:
+			return nil, fmt.Errorf("unexpected path %q", req.URL.Path)
+		}
+	})
+	policy, err := NewRequestPolicy(cred, func() time.Time { return testNow }, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decorate := func(next http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			out := req.Clone(req.Context())
+			out.Header = req.Header.Clone()
+			out.Header.Set("X-Test-Final", "inference")
+			return next.RoundTrip(out)
+		})
+	}
+	client := oai.NewClient(
+		option.WithAPIKey("policy-owned"),
+		option.WithBaseURL(BaseURL),
+		option.WithMaxRetries(0),
+		option.WithHTTPClient(policy.HTTPClientWithFinalTransport(decorate)),
+	)
+	if err := client.Post(context.Background(), "responses", []byte(`{}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewLister(policy).ListModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if inference.Get("X-Test-Final") != "inference" || inference.Get("Authorization") != "Bearer "+cred.accessToken {
+		t.Fatalf("decorated inference headers = %v", inference)
+	}
+	if listing.Get("X-Test-Final") != "" || listing.Get("Authorization") != "Bearer "+cred.accessToken {
+		t.Fatalf("listing headers = %v; final inference decorator leaked into listing", listing)
+	}
+}
+
 func TestRequestPolicyOverridesAmbientOpenAIDefaults(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-api-key")
 	t.Setenv("OPENAI_ORG_ID", "ambient-org")

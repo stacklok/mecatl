@@ -57,10 +57,12 @@ func (f *progressiveSessionPager) callCount() int {
 }
 
 func progressiveSessionsModel(pager client.SessionPager) Model {
-	return newTestModelFromDeps(Deps{
+	m := newTestModelFromDeps(Deps{
 		Sessions: pager, Transcript: &fakeSessionTranscriptLoader{}, BrowseSessions: true,
 		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true,
 	})
+	m.width, m.height = 80, 24
+	return m
 }
 
 func TestSessionStorageContinuity_Scenario3_FirstPageRendersImmediately(t *testing.T) {
@@ -111,8 +113,8 @@ func TestSessionStorageContinuity_Scenario3_IncrementalStateStable(t *testing.T)
 		}
 	}
 	ensureActiveSessions(&m).syncFilter()
-	ensureActiveSessions(&m).cursor = 12
-	selectedID := ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID
+	ensureActiveSessions(&m).syncList("").SetCursor(12)
+	selectedID := ensureActiveSessions(&m).list.CursorID()
 
 	msg := client.SessionInventoryPageMsg{Cursor: "page-2", Page: client.SessionInventoryPage{Sessions: []client.SessionListItem{
 		{ID: selectedID, Title: "duplicate must not win", Kind: client.SessionKindSubagent, ModifiedAt: 88},
@@ -126,8 +128,8 @@ func TestSessionStorageContinuity_Scenario3_IncrementalStateStable(t *testing.T)
 	if len(ensureActiveSessions(&m).sessions) != 15 {
 		t.Fatalf("deduplicated rows = %d, want 15: %+v", len(ensureActiveSessions(&m).sessions), ensureActiveSessions(&m).sessions)
 	}
-	if ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID != selectedID {
-		t.Fatalf("selection drifted to %q", ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID)
+	if ensureActiveSessions(&m).list.CursorID() != selectedID {
+		t.Fatalf("selection drifted to %q", ensureActiveSessions(&m).list.CursorID())
 	}
 	for _, row := range ensureActiveSessions(&m).sessions {
 		if row.ID == selectedID && row.Title != "needle original" {

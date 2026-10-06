@@ -279,10 +279,10 @@ func (e *Engine) closeSteerDrained(ctx context.Context, r *Run, sess *session.Se
 	r.closeSteer()
 }
 
-// commitSteer records one drained steer text as an ordinary principal-authored
-// user continuation and emits the authoritative EvSteer echo + persists. It is
-// the shared commit of the Step 2a drain and the terminal close-drain — the
-// two paths can never drift on record/echo/save ordering.
+// commitSteer records one drained root steer as principal-authored and a child
+// steer as explicitly non-principal, then emits the authoritative EvSteer echo
+// and persists. It is the shared commit of the Step 2a drain and terminal
+// close-drain — the two paths can never drift on record/echo/save ordering.
 //
 // Recorded at a turn boundary, before the upcoming BeginTurn (or at the
 // terminal), so it belongs to the turn about to start (Counters.Turns is the
@@ -292,10 +292,21 @@ func (e *Engine) closeSteerDrained(ctx context.Context, r *Run, sess *session.Se
 // recorded-then-unrecorded steer must not echo) and BEFORE the upcoming
 // turn.start, so the echo precedes the turn it feeds on the wire.
 func (e *Engine) commitSteer(ctx context.Context, r *Run, sess *session.Session, content steerContent) error {
-	if err := sess.RecordUserPromptWithParts(content.text, content.parts, nil); err != nil {
+	provenance := session.UserPromptProvenanceUnknown
+	var err error
+	if e.deps.Role == "" {
+		provenance = session.UserPromptProvenancePrincipal
+		err = sess.RecordPrincipalPromptWithParts(content.text, content.parts, nil)
+	} else {
+		err = sess.RecordUserPromptWithParts(content.text, content.parts, nil)
+	}
+	if err != nil {
 		return fmt.Errorf("agent: record steer: %w", err)
 	}
-	e.emitUserPrompt(r, sess.Counters.Turns, content.text, content.parts, false)
+	e.emitUserPrompt(r, sess.Counters.Turns, content.text, content.parts, provenance)
+	if r.reviewRoot != nil && e.deps.Role == "" {
+		r.reviewRoot.refreshTasks(sess.Conversation.Messages)
+	}
 	e.emit(r, session.Event{Type: session.EvSteer, Turn: sess.Counters.Turns,
 		Steer: &session.SteerPayload{Text: content.text, Parts: content.parts, MessageID: content.messageID}})
 	e.save(ctx, r, sess)

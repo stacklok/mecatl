@@ -74,6 +74,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		{"rename", http.MethodPost, "/v1/sessions/route-id/rename", `{"title":"title"}`},
 		{"delete", http.MethodPost, "/v1/sessions/route-id/delete", ""},
 		{"compact", http.MethodPost, "/v1/sessions/route-id/compact", ""},
+		{"mcp refresh", http.MethodPost, "/v1/sessions/route-id/mcp-refresh", ""},
 		{"workspace connect", http.MethodPost, "/v1/sessions/route-id/workspace-enrollment/connect", ""},
 		{"workspace retry", http.MethodPost, "/v1/sessions/route-id/workspace-enrollment/enrollment-1/retry", ""},
 		{"workspace cancel", http.MethodPost, "/v1/sessions/route-id/workspace-enrollment/enrollment-1/cancel", ""},

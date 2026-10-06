@@ -19,6 +19,10 @@ func (f *fakePlacementClient) ClearSession(_ context.Context, req *mecatlv1.Clea
 	return &mecatlv1.ClearSessionResponse{SessionId: "successor"}, nil
 }
 
+func (*fakePlacementClient) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest, ...grpc.CallOption) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1}, nil
+}
+
 func (*fakePlacementClient) GetSession(context.Context, *mecatlv1.GetSessionRequest, ...grpc.CallOption) (*mecatlv1.GetSessionResponse, error) {
 	return &mecatlv1.GetSessionResponse{Session: &mecatlv1.Session{
 		State: "idle", Placement: &mecatlv1.PlacementMetadata{Kind: "git", Label: "feature", Branch: "topic", Revision: "abc"},

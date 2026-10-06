@@ -71,7 +71,7 @@ type ChildAskReview struct {
 // default implementation runs an injected one-turn Engine, and a consumer may
 // substitute its own policy engine.
 type ChildAskReviewer interface {
-	Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
+	Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, session.AuxiliaryUsage, error)
 }
 
 // defaultAskReviewPolicy is the rubric the default reviewer applies when the
@@ -99,9 +99,8 @@ const askReviewTimeout = 30 * time.Second
 //
 // Exported so the cmd/ flag declarations (mecated/mecatui/mecatequi) reference a
 // single named const for their --subagent-ask-reviewer-max-denies default instead
-// of an inline literal that could drift from this value. See the run-bounds index
-// in docs/design/IMPLEMENTATION-NOTES.md and the drift guard in
-// engine/agent/runbounds_drift_test.go.
+// of an inline literal that could drift from this value. The drift guard lives
+// in engine/agent/runbounds_drift_test.go.
 const DefaultAskReviewMaxDenies = 3
 
 // askReviewLimits are the default reviewer run's stop conditions: ONE turn,
@@ -179,6 +178,7 @@ type engineAskReviewer struct {
 	engine   *Engine
 	policy   string
 	idPrefix string
+	identity session.ProviderModelID
 }
 
 // EngineAskReviewerOption configures an engineAskReviewer.
@@ -206,6 +206,7 @@ func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) Child
 		engine:   engine,
 		policy:   defaultAskReviewPolicy,
 		idPrefix: "ask-reviewer",
+		identity: engine.deps.ProviderModel,
 	}
 	for _, o := range opts {
 		o(a)
@@ -218,7 +219,7 @@ func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) Child
 // JSON verdict object, is an ERROR — never a fabricated verdict — so the
 // caller's fail-safe (auto-deny) engages. The default reviewer never abstains
 // (it can judge any tool), so it does not return ErrNotReviewable.
-func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error) {
+func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, session.AuxiliaryUsage, error) {
 	// A tool-less in-memory session: the reviewer scores text and calls no tools,
 	// so judgeWorkspace{} (empty, read-only) keeps it isolated and deterministic.
 	sess := session.New(
@@ -232,14 +233,15 @@ func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewReques
 	// Zero-capability posture: the reviewer is non-interactive and its own asks
 	// (it is tool-less, so none should exist) auto-deny — no nesting, no surfacing.
 	final, stop := drainChild(run, childPosture{role: "ask-reviewer"})
+	usage := UtilityEngineUsage(session.UsageKindAskReviewer, a.identity, sess)
 	if stop == session.StopError || stop == session.StopCancelled {
-		return ChildAskReview{}, fmt.Errorf("ask reviewer run did not complete (stop %q)", stop)
+		return ChildAskReview{}, usage, fmt.Errorf("ask reviewer run did not complete (stop %q)", stop)
 	}
 	v, ok := parseAskVerdict(final)
 	if !ok {
-		return ChildAskReview{}, fmt.Errorf("ask reviewer verdict unparseable or ambiguous")
+		return ChildAskReview{}, usage, fmt.Errorf("ask reviewer verdict unparseable or ambiguous")
 	}
-	return ChildAskReview{Allowed: *v.Allow, Reason: strings.TrimSpace(v.Reason)}, nil
+	return ChildAskReview{Allowed: *v.Allow, Reason: strings.TrimSpace(v.Reason)}, usage, nil
 }
 
 // askVerdict is the structured output the reviewer is asked to emit. Allow is a

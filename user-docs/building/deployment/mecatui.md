@@ -34,10 +34,12 @@ The included manifest configures:
 
 - `command: ["mecatui"]` as the image entry point.
 - `env_forward` of `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  and `OPENCODE_API_KEY`. Mecatl detects the provider from the available key.
+  `OPENCODE_API_KEY`, and `TYPESAFE_API_KEY`. Provider keys enable their matching
+  LLM provider. The Typesafe key remains inert unless operator settings select
+  `models.router.backend: jev`.
 - `mcp.mode: env` and `egress_profile: standard` with egress allowed to
-  `api.anthropic.com`, `openrouter.ai`, `api.openai.com`, and `opencode.ai` on
-  port 443.
+  `api.anthropic.com`, `openrouter.ai`, `api.openai.com`, `opencode.ai`, and
+  `api.typesafe.ai` on port 443.
 
 Customize the manifest when you need to pin one provider or apply a narrower
 egress policy.

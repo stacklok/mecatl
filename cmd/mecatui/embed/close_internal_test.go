@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -71,42 +72,44 @@ func TestCloseGracefulStopBlocks(t *testing.T) {
 		compositionCloseTimeout = oldComposition
 	})
 
-	dir := t.TempDir()
-	mockGRPC := newMockGRPC(true) // GracefulStop will block
-	appstopCalled := make(chan struct{})
-	srv := &Server{
-		dir:  dir,
-		grpc: mockGRPC,
-		appstop: func() {
-			close(appstopCalled)
-		},
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		done <- srv.Close()
-	}()
-
-	// Stop should be called within the gracefulStopTimeout + margin.
-	select {
-	case <-mockGRPC.stopCh:
-		// Stop was called — the timeout path engaged.
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Stop was not called within expected time; Close blocked forever")
-	}
-
-	// Close should now return (Stop unblocked GracefulStop) and remove the dir.
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Close() returned error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		mockGRPC := newMockGRPC(true)
+		defer func() {
+			mockGRPC.Stop()
+			synctest.Wait()
+		}()
+		appstopCalled := false
+		srv := &Server{
+			dir:  dir,
+			grpc: mockGRPC,
+			appstop: func() {
+				appstopCalled = true
+			},
 		}
-		if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
+		done := make(chan error, 1)
+		go func() { done <- srv.Close() }()
+
+		time.Sleep(gracefulStopTimeout)
+		synctest.Wait()
+		if !mockGRPC.stopWasCalled() {
+			t.Fatal("Stop was not called when GracefulStop exceeded its timeout")
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Close() returned error: %v", err)
+			}
+		default:
+			t.Fatal("Close() exceeded its shutdown deadline")
+		}
+		if !appstopCalled {
+			t.Error("appstop was never called")
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("dir %s still exists after Close", dir)
 		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Close() blocked forever after Stop")
-	}
+	})
 }
 
 func TestCloseAppstopBlocks(t *testing.T) {
@@ -119,38 +122,44 @@ func TestCloseAppstopBlocks(t *testing.T) {
 		compositionCloseTimeout = oldComposition
 	})
 
-	dir := t.TempDir()
-	mockGRPC := newMockGRPC(false) // GracefulStop returns immediately
-	appstopBlock := make(chan struct{})
-	t.Cleanup(func() { close(appstopBlock) })
-	srv := &Server{
-		dir:  dir,
-		grpc: mockGRPC,
-		appstop: func() {
-			<-appstopBlock // block until test cleanup
-		},
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		done <- srv.Close()
-	}()
-
-	// Should return within the composition timeout (plus a margin).
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Close() returned error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		mockGRPC := newMockGRPC(false)
+		appstopBlock := make(chan struct{})
+		defer func() {
+			close(appstopBlock)
+			synctest.Wait()
+		}()
+		appstopStarted := make(chan struct{})
+		srv := &Server{
+			dir:  dir,
+			grpc: mockGRPC,
+			appstop: func() {
+				close(appstopStarted)
+				<-appstopBlock
+			},
 		}
-		if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
-			t.Errorf("dir %s still exists after Close", dir)
+		done := make(chan error, 1)
+		go func() { done <- srv.Close() }()
+
+		<-appstopStarted
+		time.Sleep(compositionCloseTimeout)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Close() returned error: %v", err)
+			}
+		default:
+			t.Fatal("Close() exceeded its shutdown deadline")
 		}
 		if !mockGRPC.gracefulStopWasCalled() {
 			t.Error("GracefulStop was never called")
 		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Close() blocked forever on a blocking appstop")
-	}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("dir %s still exists after Close", dir)
+		}
+	})
 }
 
 func TestCloseBothBlock(t *testing.T) {
@@ -163,38 +172,47 @@ func TestCloseBothBlock(t *testing.T) {
 		compositionCloseTimeout = oldComposition
 	})
 
-	dir := t.TempDir()
-	mockGRPC := newMockGRPC(true) // GracefulStop blocks until Stop
-	appstopBlock := make(chan struct{})
-	t.Cleanup(func() { close(appstopBlock) })
-	srv := &Server{
-		dir:  dir,
-		grpc: mockGRPC,
-		appstop: func() {
-			<-appstopBlock // block until test cleanup
-		},
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		done <- srv.Close()
-	}()
-
-	// Should return within ~sum bound (200ms + margin).
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Close() returned error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		mockGRPC := newMockGRPC(true)
+		appstopBlock := make(chan struct{})
+		defer func() {
+			close(appstopBlock)
+			mockGRPC.Stop()
+			synctest.Wait()
+		}()
+		appstopStarted := make(chan struct{})
+		srv := &Server{
+			dir:  dir,
+			grpc: mockGRPC,
+			appstop: func() {
+				close(appstopStarted)
+				<-appstopBlock
+			},
 		}
-		if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
+		done := make(chan error, 1)
+		go func() { done <- srv.Close() }()
+
+		time.Sleep(gracefulStopTimeout)
+		synctest.Wait()
+		if !mockGRPC.stopWasCalled() {
+			t.Fatal("Stop was not called when GracefulStop exceeded its timeout")
+		}
+		<-appstopStarted
+		time.Sleep(compositionCloseTimeout)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Close() returned error: %v", err)
+			}
+		default:
+			t.Fatal("Close() exceeded its shutdown deadline")
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("dir %s still exists after Close", dir)
 		}
-		if !mockGRPC.stopWasCalled() {
-			t.Error("Stop was never called (graceful-stop timeout should have fired)")
-		}
-	case <-time.After(600 * time.Millisecond):
-		t.Fatal("Close() blocked forever when both halves block")
-	}
+	})
 }
 
 func TestCloseUncontested(t *testing.T) {

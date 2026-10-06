@@ -101,9 +101,11 @@ func TestStatusLine_InputCarriesUsageContextAndSurfaceColumns(t *testing.T) {
 			CacheReadPercent: 50,
 		},
 		Context: Context{
-			Used:    ContextAtom{Raw: 75, Human: "75"},
-			Window:  ContextAtom{Raw: 100, Human: "100"},
-			Percent: 75,
+			Used:      ContextAtom{Raw: 75, Human: "75"},
+			Window:    ContextAtom{Raw: 100, Human: "100"},
+			Percent:   75,
+			Known:     true,
+			Estimated: true,
 		},
 		Terminal:  Terminal{Rows: 40, Cols: 120, HeaderAvailCols: 92, FooterAvailCols: 101},
 		MainAgent: MainAgent{State: "running", Activity: "thinking", Approval: "awaiting"},
@@ -119,6 +121,12 @@ func TestStatusLine_InputCarriesUsageContextAndSurfaceColumns(t *testing.T) {
 	}
 	if got, want := input.Context.Window.Human, "100"; got != want {
 		t.Fatalf("context window human = %q, want %q", got, want)
+	}
+	if got, want := input.Context.Known, true; got != want {
+		t.Fatalf("context known = %t, want %t", got, want)
+	}
+	if got, want := input.Context.Estimated, true; got != want {
+		t.Fatalf("context estimated = %t, want %t", got, want)
 	}
 	if got, want := input.Terminal.HeaderAvailCols, 92; got != want {
 		t.Fatalf("header available columns = %d, want %d", got, want)
@@ -150,6 +158,18 @@ func TestStatusLine_InputCarriesUsageContextAndSurfaceColumns(t *testing.T) {
 	input.Delegation.Total.Failed++
 	if input.Delegation.Valid() {
 		t.Fatal("delegation with mismatched totals is valid")
+	}
+}
+
+func TestStatusLine_TemplateProjectsContextState(t *testing.T) {
+	status := parseStatusTemplate("footer", `<footer><text>{{.Context.Known}}/{{.Context.Estimated}}/{{.Context.Used.Human}}</text></footer>`, defaultTemplateSet().Footer.Full)
+	doc := status.render(context.Background(), newTemplateInput(Input{Context: Context{
+		Used:      ContextAtom{Raw: 75, Human: "~75"},
+		Known:     true,
+		Estimated: true,
+	}}))
+	if got, want := statusSurfaceText(doc.Footer), "true/true/~75"; got != want {
+		t.Fatalf("context template projection = %q, want %q", got, want)
 	}
 }
 

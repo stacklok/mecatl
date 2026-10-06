@@ -2,15 +2,24 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
+	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+)
+
+const (
+	routerBackendLLM = "llm"
+	routerBackendJev = "jev"
 )
 
 // slots.go is the COMPOSITION-LAYER per-slot model resolver (ADR 0030, Phase 1+2):
@@ -272,12 +281,26 @@ func foldOperatorModelSlots(cfg Config) Config {
 				continue
 			}
 			if _, cliSet := cfg.ModelSlots[k]; cliSet {
-				continue // CLI --model-slot wins.
+				continue // CLI --model-slot wins, including over an object.
 			}
-			cfg.ModelSlots[k] = strings.TrimSpace(v)
+			if v.ExplicitProvider {
+				cfg.GuardrailSlot = &ModelTargetSelector{ProviderID: strings.TrimSpace(v.Provider), Model: strings.TrimSpace(v.Model)}
+				continue
+			}
+			cfg.ModelSlots[k] = strings.TrimSpace(v.Model)
 		}
 	}
 	return cfg
+}
+
+func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
+	out := make(map[string]string, len(slots))
+	for name, value := range slots {
+		if !value.ExplicitProvider {
+			out[name] = value.Model
+		}
+	}
+	return out
 }
 
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
@@ -514,7 +537,7 @@ func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 	cfg.ModelAliases = capMergeProjectBindings(cfg, "aliases", proj.Aliases, cfg.ModelAliases, cliKeys.aliases, allowed, false)
 	// slots: re-bind each slot key within the cap (CLI --model-slot key wins; the slot
 	// NAME is validated against knownSlotNames, the slot VALUE is capped resolve-then-check).
-	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", proj.Slots, cfg.ModelSlots, cliKeys.slots, allowed, true)
+	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", scalarModelSlots(proj.Slots), cfg.ModelSlots, cliKeys.slots, allowed, true)
 	return cfg
 }
 
@@ -637,6 +660,18 @@ func foldOperatorModelRouter(cfg Config) Config {
 		return cfg
 	}
 	router := policy.Router
+	cfg.RouterBackend = strings.TrimSpace(router.Backend)
+	if cfg.RouterBackend == "" {
+		cfg.RouterBackend = routerBackendLLM
+	}
+	cfg.routerClassifierSlotAuthored = router.ClassifierSlotAuthored()
+	cfg.routerJevBlockAuthored = router.Jev != nil
+	if router.Jev != nil {
+		cfg.RouterJevModel = strings.TrimSpace(router.Jev.Model)
+		cfg.RouterJevBaseURL = strings.TrimSpace(router.Jev.BaseURL)
+		cfg.RouterJevMinimumConfidence = router.Jev.MinimumConfidence
+		cfg.RouterJevMaximumInputBytes = router.Jev.MaximumInputBytes
+	}
 	// Disabled: OR the YAML kill-switch with the CLI one (either disables) — ADR 0042,
 	// mirroring foldOperatorGuardrails.
 	if router.Disabled {
@@ -660,6 +695,49 @@ func foldOperatorModelRouter(cfg Config) Config {
 		})
 	}
 	return cfg
+}
+
+// prepareJevRouter validates active-backend conflicts and constructs the one Build-owned client.
+func prepareJevRouter(cfg *Config) error {
+	if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
+		return nil
+	}
+	backend := strings.TrimSpace(cfg.RouterBackend)
+	if backend == "" {
+		backend = routerBackendLLM
+		cfg.RouterBackend = backend
+	}
+	switch backend {
+	case routerBackendLLM:
+		if cfg.routerJevBlockAuthored {
+			return fmt.Errorf("models.router.jev is valid only with backend: jev")
+		}
+		return nil
+	case routerBackendJev:
+		if cfg.routerClassifierSlotAuthored {
+			return fmt.Errorf("models.router backend jev conflicts with explicitly configured classifier-slot")
+		}
+		if strings.TrimSpace(cfg.TypesafeAPIKey) == "" {
+			return fmt.Errorf("models.router backend jev requires TYPESAFE_API_KEY")
+		}
+		if cfg.jevRouter != nil {
+			return nil
+		}
+		router, err := jevrouter.New(jevrouter.Options{
+			APIKey: cfg.TypesafeAPIKey, Model: cfg.RouterJevModel,
+			BaseURL: cfg.RouterJevBaseURL, DefaultCategory: cfg.RouterDefaultCategory,
+			MinimumConfidence: cfg.RouterJevMinimumConfidence,
+			MaximumInputBytes: cfg.RouterJevMaximumInputBytes,
+			HTTPClient:        withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}),
+		})
+		if err != nil {
+			return fmt.Errorf("configure Jev model router: %w", err)
+		}
+		cfg.jevRouter = router
+		return nil
+	default:
+		return fmt.Errorf("models.router.backend must be llm or jev")
+	}
 }
 
 // resolveRouterClassifierModel resolves the model the model-router CLASSIFIER runs on
@@ -756,16 +834,56 @@ func logModelRouterFacts(cfg Config) {
 			"models.router taxonomy is configured but the subagent model router is DISABLED (kill-switch: --subagent-model-router=false or models.router.disabled: true); no per-delegation routing happens")
 		return
 	}
-	// Resolve the classifier model the SAME way buildModelRouterTask does (shared
-	// resolveRouterClassifierModel), keyed on cfg.Model — at Build time cfg.Model IS the
-	// shared-engine/parent model the build-once fact narrates, so the logged classifier
-	// matches what a default session classifies on (a per-session engine on a non-default
-	// model re-derives the closure on ITS parentModel; the build-once fact is the
-	// shared-engine narration, like logSlotConfigFacts).
+	backend := cfg.RouterBackend
+	if backend == "" {
+		backend = routerBackendLLM
+	}
 	classifier := resolveRouterClassifierModel(cfg, cfg.Model)
-	cfg.diag().Log(context.Background(), port.LevelInfo,
-		"subagent model router ACTIVE: a tiny classifier picks the child model per routable delegation from the operator taxonomy — plain, writable-explorer, and unpinned agent-def calls (issues #285/#286), adding one extra classifier LLM call each (bounded by --max-run-tokens; set models.router.disabled or --subagent-model-router=false to turn it off)",
-		"categories", len(cfg.RouterCategories), "classifier", classifier, "default_category", cfg.RouterDefaultCategory)
+	message := "subagent model router ACTIVE: a tiny classifier picks the child model per routable delegation from the operator taxonomy, adding one extra classifier LLM call"
+	if backend == routerBackendJev {
+		classifier = cfg.RouterJevModel
+		if classifier == "" {
+			classifier = "jev-1.13.0"
+		}
+		message = "subagent model router ACTIVE: Jev picks the child model per routable delegation from the operator taxonomy"
+	}
+	args := []any{"categories", len(cfg.RouterCategories), "backend", backend, "classifier", classifier,
+		"category_mappings", routerCategoryMappings(cfg.RouterCategories)}
+	if backend == routerBackendJev {
+		args = append(args, "minimum_confidence", cfg.RouterJevMinimumConfidence,
+			"maximum_input_bytes", configuredJevMaximumInputBytes(cfg.RouterJevMaximumInputBytes))
+	}
+	cfg.diag().Log(context.Background(), port.LevelInfo, message, args...)
+}
+
+func configuredJevMaximumInputBytes(value int) int {
+	if value == 0 {
+		return jevrouter.DefaultMaximumInputBytes
+	}
+	return value
+}
+
+func routerCategoryMappings(categories []permconfig.RouterCategory) []string {
+	const maxSummaryRunes = 2000
+	out := make([]string, 0, len(categories))
+	used := 0
+	for _, category := range categories {
+		mapping := boundedRouterFact(category.Name) + "=" + boundedRouterFact(category.Model)
+		if used+len([]rune(mapping)) > maxSummaryRunes {
+			break
+		}
+		out = append(out, mapping)
+		used += len([]rune(mapping))
+	}
+	return out
+}
+
+func boundedRouterFact(value string) string {
+	runes := []rune(strings.Join(strings.Fields(session.ToValidUTF8(value)), " "))
+	if len(runes) > 100 {
+		runes = runes[:100]
+	}
+	return string(runes)
 }
 
 // modeNeedsEngine returns the composition predicate wired into

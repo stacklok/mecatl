@@ -5,7 +5,7 @@ This directory ships two small, real skills under `skills/` — copy either into
 to make it active, or read them as reference shapes for writing your own.
 
 A skill is a directory laid out as `<name>/SKILL.md`; see
-[Skills, commands, and soul](https://mecatl.dev/docs/features/skills-commands-and-soul) for the discovery
+[Skills, commands, and soul](../../user-docs/features/skills-commands-and-soul.md) for the discovery
 rules, the trust boundary, and the `SkillDraft` → promote loop.
 
 | Skill | Purpose | SKILL.md |

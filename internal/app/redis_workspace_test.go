@@ -8,9 +8,9 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 

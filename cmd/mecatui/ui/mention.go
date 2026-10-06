@@ -1,22 +1,27 @@
 package ui
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
-// maxMentionRows caps how many file-completion rows the @-mention menu shows at
-// once, mirroring maxPaletteRows so the menu never pushes the input off-screen.
+// maxMentionRows caps the menu body at eight physical rows, including up to two
+// overflow indicators.
 const maxMentionRows = 8
+
+// maxMentionCandidates bounds the sorted matching paths retained by a scan.
+const maxMentionCandidates = 64
 
 // maxMentionWalk bounds how many directory entries syncMention's bounded walk
 // visits before it stops descending, so opening the menu in a huge workspace tree
@@ -44,8 +49,31 @@ type mentionState struct {
 	// matches is the filtered list of workspace-relative file paths matching the
 	// current @-token (recomputed on each input change, capped).
 	matches []string
-	// cursor is the selected row within matches (clamped to its bounds).
-	cursor int
+	// list is pointer-owned so Bubble Tea Model copies retain one stable selection
+	// and viewport anchor. Raw displayed paths are IDs and completion values.
+	list *bounded.List
+}
+
+func (st *mentionState) syncList() {
+	if st.list == nil {
+		st.list = new(bounded.List)
+	}
+	items := make([]bounded.ListItem, 0, len(st.matches))
+	for _, path := range st.matches {
+		items = append(items, bounded.ListItem{ID: path, Text: "@" + terminaltext.SanitizeSingleLine(path)})
+	}
+	st.list.SetItems(items)
+}
+
+func (st mentionState) selected() string {
+	if st.list == nil {
+		return ""
+	}
+	index := st.list.Cursor()
+	if index < 0 || index >= len(st.matches) {
+		return ""
+	}
+	return st.matches[index]
 }
 
 // mentionToken reports whether s (the single-line input) has an @-mention token
@@ -88,7 +116,7 @@ func (m Model) syncMention() Model {
 		m.mention.open = false
 		m.mention.dismissed = false
 		m.mention.matches = nil
-		m.mention.cursor = 0
+		m.mention.syncList()
 		return m
 	}
 	if m.mention.dismissed {
@@ -96,10 +124,8 @@ func (m Model) syncMention() Model {
 		return m
 	}
 	m.mention.matches = matchMentionFilesWithHome(m.deps.Workspace, token, mentionHomeDir(m.deps))
+	m.mention.syncList()
 	m.mention.open = len(m.mention.matches) > 0
-	if m.mention.cursor >= len(m.mention.matches) {
-		m.mention.cursor = 0
-	}
 	return m
 }
 
@@ -136,7 +162,7 @@ func matchMentionFilesWithHome(workspace, token string, homeDir func() (string, 
 			prefix += "./"
 			continue
 		}
-		return matchFiles(root, matchToken, prefix, maxMentionRows)
+		return matchFiles(root, matchToken, prefix, maxMentionCandidates)
 	}
 }
 
@@ -168,6 +194,10 @@ func matchFiles(root, token, prefix string, limit int) []string {
 			return fs.SkipAll
 		}
 		if d.IsDir() {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil || !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)
@@ -261,33 +291,31 @@ func attachableMentions(workspace, text string, homeDir func() (string, error)) 
 	return out
 }
 
-// mentionMoveUp moves the selection up one row (no wrap), clamped to the top.
+// mentionMoveUp moves the selection up one logical path (no wrap).
 func (m *Model) mentionMoveUp() {
-	if m.mention.cursor > 0 {
-		m.mention.cursor--
+	if m.mention.list != nil {
+		m.mention.list.Move(bounded.LineUp)
 	}
 }
 
-// mentionMoveDown moves the selection down one row (no wrap), clamped to the last.
+// mentionMoveDown moves the selection down one logical path (no wrap).
 func (m *Model) mentionMoveDown() {
-	if m.mention.cursor < len(m.mention.matches)-1 {
-		m.mention.cursor++
+	if m.mention.list != nil {
+		m.mention.list.Move(bounded.LineDown)
 	}
 }
 
-// mentionComplete replaces the trailing @-token span in the input with the
-// selected file path and a trailing space (ready to keep typing or add another
-// "@"), closes the menu, and leaves the cursor after the space. It is a no-op when
-// the menu has no selectable rows. The replacement is span-precise: only the
-// trailing "@token" word is rewritten, so any text before it ("describe ") is
-// preserved.
+func (m Model) mentionVisible() bool {
+	return m.mention.open && m.mention.list != nil && m.mention.list.Valid()
+}
+
+// mentionComplete replaces only the trailing @-token with the raw selected path.
 func (m Model) mentionComplete() Model {
-	if !m.mention.open || m.mention.cursor >= len(m.mention.matches) {
+	path := m.mention.selected()
+	if !m.mention.open || path == "" {
 		return m
 	}
-	path := m.mention.matches[m.mention.cursor]
 	val := m.prompt.Value()
-	// Find the start of the trailing word (the "@…" run) and rewrite from there.
 	start := 0
 	if i := strings.LastIndexAny(val, " \t"); i >= 0 {
 		start = i + 1
@@ -295,45 +323,70 @@ func (m Model) mentionComplete() Model {
 	m.prompt.Rewrite(val[:start] + "@" + path + " ")
 	m.mention.open = false
 	m.mention.matches = nil
-	m.mention.cursor = 0
+	m.mention.syncList()
 	return m
 }
 
-// mentionDismiss latches an esc dismissal: the menu closes but the input is left
-// untouched, and it stays closed until the @-token changes or leaves.
+// mentionDismiss closes the menu until the input leaves mention mode.
 func (m Model) mentionDismiss() Model {
 	m.mention.open = false
 	m.mention.dismissed = true
 	return m
 }
 
-// renderMention draws the file-completion dropdown as a bordered card, mirroring
-// renderPalette: the selected row is highlighted, the list windows to
-// maxMentionRows around the selection, and every workspace-derived path is
-// terminal-sanitized. It returns "" when the menu is not open (no "no match" note
-// — an @-token with no matching file simply shows nothing, since "@" is also a
-// legitimate literal character in prose).
 func renderMention(th theme.Theme, st mentionState, width int) string {
-	if !st.open || len(st.matches) == 0 {
+	return renderMentionSized(th, st, width, maxMentionRows)
+}
+
+// renderMentionSized renders a clipped physical-row-bounded mention card.
+func renderMentionSized(th theme.Theme, st mentionState, width, bodyRows int) string {
+	cardWidth := min(128, width)
+	cardStyle := th.Style("askCard")
+	contentWidth := cardWidth - cardStyle.GetHorizontalFrameSize()
+	if st.list == nil {
+		st.syncList()
+	}
+	if bodyRows <= 0 || contentWidth < 3 || !st.open || len(st.matches) == 0 {
+		st.list.SetGeometry(contentWidth, 0, 1, bounded.Clip)
 		return ""
 	}
-	start, end := scrollWindow(st.cursor, len(st.matches), maxMentionRows)
-
-	var b strings.Builder
-	b.WriteString(th.Style("muted").Render("files") + "\n")
-	for i := start; i < end; i++ {
-		row := terminaltext.Sanitize("@" + st.matches[i])
-		if i == st.cursor {
-			b.WriteString(th.Style("askButtonActive").Render("› "+row) + "\n")
-		} else {
-			b.WriteString(th.Style("toolArgs").Render("  "+row) + "\n")
+	st.list.SetGeometry(contentWidth, bodyRows, 1, bounded.Clip)
+	st.syncList()
+	if !st.list.Valid() {
+		return ""
+	}
+	// Mention has no independent physical-scroll action: every supported navigation
+	// changes selection, so every rendered frame must keep that selection visible.
+	view := st.list.ViewWithIndicators(bodyRows, true)
+	header := "files"
+	if bodyRows == 1 {
+		// One-row cards present the shared logical overflow metadata in their header
+		// rather than displacing their only selectable row with chrome.
+		var overflow []string
+		if view.Above > 0 {
+			overflow = append(overflow, fmt.Sprintf("↑%d above", view.Above))
+		}
+		if view.Below > 0 {
+			overflow = append(overflow, fmt.Sprintf("↓%d below", view.Below))
+		}
+		if len(overflow) > 0 {
+			header = strings.Join(overflow, "·")
 		}
 	}
-	b.WriteString(th.Style("muted").Render("↑/↓ select · tab/enter complete · esc dismiss"))
-
-	card := th.Style("askCard").Render(b.String())
-	if width > 0 {
-		return lipgloss.NewStyle().MaxWidth(width).Render(card)
+	if len(view.Rows) == 0 {
+		return ""
 	}
-	return card
+	lines := []string{th.Style("muted").Render(ansi.Cut(header, 0, contentWidth))}
+	if bodyRows > 1 && view.Above > 0 {
+		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↑ +%d above", view.Above), 0, contentWidth)))
+	}
+	for _, row := range view.Rows {
+		presentation := presentListRow(row, th.Style("spinner"), th.Style("toolArgs"))
+		lines = append(lines, presentation.Style.Render(presentation.Text))
+	}
+	if bodyRows > 1 && view.Below > 0 {
+		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↓ +%d below", view.Below), 0, contentWidth)))
+	}
+	lines = append(lines, th.Style("muted").Render(ansi.Cut("↑/↓ select · pgup/pgdn page · tab/enter complete · esc dismiss", 0, contentWidth)))
+	return cardStyle.Width(cardWidth).Render(strings.Join(lines, "\n"))
 }

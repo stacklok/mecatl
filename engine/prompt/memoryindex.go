@@ -61,7 +61,7 @@ var _ InstructionAssembler = MemoryIndexAssembler{}
 // Assemble renders the capped tier-0 index into one user-role message. The
 // workspace is unused (memory is project-scoped at the adapter, not workspace
 // files). It fails soft on a nil source or a source error.
-func (a MemoryIndexAssembler) Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error) {
+func (a MemoryIndexAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
 	if a.Src == nil {
 		return nil, nil
 	}

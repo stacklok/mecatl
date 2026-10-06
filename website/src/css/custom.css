@@ -216,6 +216,70 @@ td, th {
   padding: 0.6rem 0.85rem;
 }
 
+.grpc-service-table table {
+  display: table;
+  overflow: visible;
+  table-layout: fixed;
+}
+
+.grpc-service-table th:first-child {
+  width: 34%;
+}
+
+.grpc-service-table th:nth-child(2),
+.grpc-service-table th:nth-child(3) {
+  width: 12%;
+}
+
+.grpc-service-table th:last-child {
+  width: 42%;
+}
+
+.grpc-service-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.grpc-mobile-label {
+  display: none;
+}
+
+.grpc-description {
+  display: block;
+  position: relative;
+}
+
+.grpc-description-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.grpc-description-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.grpc-description-toggle {
+  display: block;
+  margin-top: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ifm-link-color);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 tr:nth-child(even) {
   background: rgba(255, 255, 255, 0.02);
 }
@@ -299,6 +363,72 @@ tr:nth-child(even) {
 }
 
 @media (max-width: 640px) {
+  .grpc-service-table table,
+  .grpc-service-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .grpc-service-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .grpc-service-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 1rem;
+    border: 1px solid var(--mec-border);
+    border-radius: 0.5rem;
+    background: var(--mec-surface);
+    overflow: hidden;
+  }
+
+  .grpc-service-table td {
+    display: block;
+    min-width: 0;
+    padding: 0.65rem 0.85rem;
+    border: 0;
+  }
+
+  .grpc-service-table td:first-child,
+  .grpc-service-table td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .grpc-service-table td:first-child {
+    border-bottom: 1px solid var(--mec-border);
+  }
+
+  .grpc-service-table td:nth-child(2) {
+    border-right: 1px solid var(--mec-border);
+  }
+
+  .grpc-service-table td:last-child:not(:empty) {
+    border-top: 1px solid var(--mec-border);
+  }
+
+  .grpc-service-table td:last-child:empty {
+    display: none;
+  }
+
+  .grpc-mobile-label {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--mec-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
   .footer__links {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 2rem 1.5rem;

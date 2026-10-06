@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -34,7 +35,11 @@ type repairPlacementProvider struct {
 
 func (p *repairPlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
 	p.binds++
-	return p.binding, p.err
+	binding := p.binding
+	if binding.GovernanceRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.GovernanceRoot = binding.Environment.Workspace().Root()
+	}
+	return binding, p.err
 }
 func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
 	p.reattaches++
@@ -43,12 +48,87 @@ func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReatt
 	}
 	binding := p.binding
 	binding.Ref = req.Ref
+	if binding.GovernanceRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.GovernanceRoot = binding.Environment.Workspace().Root()
+	}
 	binding.Environment = tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil)
 	return binding, nil
 }
 
 func repairEngine() *agent.Engine {
 	return agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
+}
+
+type sourcePlacementProvider struct {
+	binding PlacementBinding
+}
+
+func (p *sourcePlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
+	return p.binding, nil
+}
+
+func (p *sourcePlacementProvider) Reattach(context.Context, PlacementReattachRequest) (PlacementBinding, error) {
+	return p.binding, nil
+}
+
+func TestExecutionWorkspaceAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "source", Revision: "v1"}
+	workspace := memfs.NewWorkspace("/source")
+	version, err := workspace.CreateFile(t.Context(), "original.txt", []byte("original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := memledger.New()
+	provider := &sourcePlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, workspace, ledger, nil)}}
+	svc, err := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, release, err := svc.executionWorkspaceAcquirer(nil, ref)(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	read, err := source.Read(t.Context(), "original.txt")
+	if err != nil || string(read) != "original" {
+		t.Fatalf("acquired source Read = %q, %v", read, err)
+	}
+	if _, _, err := source.ReadVersion(t.Context(), "original.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.CreateFile(t.Context(), "created.txt", []byte("no")); !errors.Is(err, tool.ErrFileOperationUnsupported) {
+		t.Fatalf("CreateFile = %v", err)
+	}
+	if _, err := source.ReplaceFile(t.Context(), "original.txt", version, []byte("changed")); !errors.Is(err, tool.ErrFileOperationUnsupported) {
+		t.Fatalf("ReplaceFile = %v", err)
+	}
+	if _, ok := source.(tool.WorkspaceNamespace); ok {
+		t.Fatal("read-only source exposed namespace mutation capability")
+	}
+	contents, err := workspace.Read(t.Context(), "original.txt")
+	if err != nil || string(contents) != "original" {
+		t.Fatalf("original = %q, %v", contents, err)
+	}
+	if _, err := workspace.Stat(t.Context(), "created.txt"); err == nil {
+		t.Fatal("read-only source created a file")
+	}
+	if _, ok, err := ledger.RecordedVersion(t.Context(), tool.LedgerKey(workspace.Root(), "original.txt")); err != nil || ok {
+		t.Fatalf("execution ledger changed: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestExecutionWorkspaceAcquisitionNoFSIsActionable(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}
+	defaultRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "default", Revision: "v1"}
+	provider := &sourcePlacementProvider{binding: PlacementBinding{Ref: defaultRef, Environment: tool.MustEnvironment(defaultRef, memfs.NewWorkspace("/source"), memledger.New(), nil)}}
+	svc, buildErr := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/source"})
+	if buildErr != nil {
+		t.Fatal(buildErr)
+	}
+	_, _, err := svc.executionWorkspaceAcquirer(nil, ref)(t.Context())
+	if !errors.Is(err, ErrPlacementUnavailable) || !strings.Contains(err.Error(), "requires execution files") || strings.Contains(err.Error(), "/") {
+		t.Fatalf("no-FS source error = %v", err)
+	}
 }
 
 func TestInvariant_placement_binder_required_for_service_construction(t *testing.T) {
@@ -58,7 +138,7 @@ func TestInvariant_placement_binder_required_for_service_construction(t *testing
 	}
 }
 
-func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *testing.T) {
+func TestInvariant_nonowning_placement_binding_is_not_cached(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil)}}
 	svc, err := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/bound", NewID: func() session.SessionID { return "created" }, Now: func() time.Time { return time.Unix(1, 0) }})
@@ -72,7 +152,29 @@ func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *
 	got := len(svc.sessionEnvironments)
 	svc.mu.Unlock()
 	if got != 0 {
-		t.Fatalf("ordinary environment overrides = %d, want 0", got)
+		t.Fatalf("non-owning environment bindings = %d, want 0", got)
+	}
+}
+
+func TestCreateSessionLogsSanitizedPlacementFailureCause(t *testing.T) {
+	private := "/srv/private/tenant/repository"
+	diag := &repairDiagnostics{}
+	provider := &repairPlacementProvider{err: errors.New("microVM development release descriptor identity does not match this source build at " + private)}
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider,
+		PlacementScope: "test", SharedEngineRoot: "/bound", Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	_, err = svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if !errors.Is(err, ErrPlacementUnavailable) || strings.Contains(err.Error(), private) {
+		t.Fatalf("public create error = %q, want content-free placement unavailable", err)
+	}
+	if !strings.Contains(diag.text, "descriptor identity does not match this source build") || !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+		t.Fatalf("placement diagnostic was not actionable and sanitized: %q", diag.text)
 	}
 }
 
@@ -134,7 +236,7 @@ func (immediateLeaseLoss) Release(context.Context, port.Lease) error { return ni
 func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	closed := &atomic.Int32{}
-	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil)}, closed: closed}
+	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil), GovernanceRoot: "/provisional"}, closed: closed}
 	store := memstore.New()
 	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(context.Background(), source); err != nil {
@@ -147,8 +249,8 @@ func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err = svc.ClearSessionSuccessor(ctx, source.ID, SuccessorPlacement{})
-	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 1 {
-		t.Fatalf("lease-loss successor = %v, provisional closes = %d", err, closed.Load())
+	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 0 {
+		t.Fatalf("lease-loss successor = %v, source attachment closes = %d", err, closed.Load())
 	}
 	if _, loadErr := store.Load(context.Background(), "successor"); !errors.Is(loadErr, port.ErrSessionNotFound) {
 		t.Fatalf("lease-loss successor persisted: %v", loadErr)
@@ -164,7 +266,50 @@ func (d *repairDiagnostics) With(...any) port.Diagnostics { return d }
 
 type errorCommandLister struct{ err error }
 
-func (l errorCommandLister) List(context.Context, string) ([]Command, error) { return nil, l.err }
+func (l errorCommandLister) List(context.Context) ([]prompt.Command, error) {
+	return nil, l.err
+}
+func (errorCommandLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (l errorCommandLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error) {
+	return l, func() {}, nil
+}
+func (errorCommandLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (errorCommandLister) Retire(session.SessionID) {}
+
+func TestCommandDiscoveryDoesNotReattachExecution(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
+	closed := &atomic.Int32{}
+	provider := &repairPlacementProvider{binding: PlacementBinding{
+		Ref:         ref,
+		Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil),
+		Close:       func() error { closed.Add(1); return nil },
+	}}
+	store := memstore.New()
+	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	if err := store.Save(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: store, PlacementProvider: provider,
+		PlacementScope: "test", SharedEngineRoot: "/bound", Commands: errorCommandLister{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Service construction validates and releases the default binding. Count only
+	// the request-scoped exact reattachment below.
+	closed.Store(0)
+	if _, err := svc.ListCommandsForSession(t.Context(), source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := closed.Load(); got != 0 {
+		t.Fatalf("command discovery reattached execution and closed %d bindings", got)
+	}
+}
 
 func TestInvariant_command_discovery_errors_are_content_free(t *testing.T) {
 	private := "/srv/private/tenant/commands.yaml"
@@ -184,8 +329,20 @@ func TestInvariant_command_discovery_errors_are_content_free(t *testing.T) {
 	if !errors.Is(err, ErrInternal) || strings.Contains(err.Error(), private) {
 		t.Fatalf("public command discovery error = %q", err)
 	}
-	if !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+	if !strings.Contains(diag.text, "operationlist commands") ||
+		!strings.Contains(diag.text, "causeread [redacted] denied") ||
+		strings.Contains(diag.text, private) {
 		t.Fatalf("diagnostic was not detailed and sanitized: %q", diag.text)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/commands?session_id="+string(source.ID), nil)
+	rec := httptest.NewRecorder()
+	NewHTTPHandler(svc).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("HTTP command discovery fault status = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, private) || strings.Contains(body, "denied") {
+		t.Fatalf("HTTP command discovery fault disclosed backend cause: %q", body)
 	}
 }
 

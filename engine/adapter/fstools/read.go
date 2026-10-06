@@ -31,9 +31,9 @@ Output format:
   The line numbers are display aids; do not copy them into Edit's old_string.
 
 Arguments:
-- path     (required): workspace-relative path to the file. Absolute paths that
-  resolve inside the workspace root are accepted (the same file a relative path
-  reaches). Any other absolute path is rejected.
+- path     (required): workspace-relative or in-root absolute file path. In a
+  local main session, policy may allow external absolute paths; yolo also
+  allows external ../ paths.
 - offset   (optional): 1-based line number to start reading from.
 - limit    (optional): maximum number of lines to return.
 
@@ -68,7 +68,7 @@ func (ReadTool) Spec() tool.ToolSpec {
 		Schema: schema(`{
   "type": "object",
   "properties": {
-    "path": {"type": "string", "description": "Workspace-relative path to the file to read. Absolute paths that resolve inside the workspace root are accepted; any other absolute path is rejected."},
+    "path": {"type": "string", "description": "File path; see tool description for external-path rules."},
     "offset": {"type": "integer", "description": "1-based line number to start reading from."},
     "limit": {"type": "integer", "description": "Maximum number of lines to return."}
   },

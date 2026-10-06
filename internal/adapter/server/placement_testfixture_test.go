@@ -72,12 +72,7 @@ func (p testPlacementProvider) Bind(_ context.Context, req server.PlacementBindR
 		root = "/ws"
 	}
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root, Revision: "in-tree-v1"}
-	var ws tool.Workspace
-	if p.firstBind != nil && !p.firstBind.Swap(true) {
-		ws = memfs.NewWorkspace(root)
-	} else {
-		ws = p.workspace(root)
-	}
+	ws := p.workspace(root)
 	if ws == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}

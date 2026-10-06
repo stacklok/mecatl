@@ -1,53 +1,44 @@
-# syntax=docker/dockerfile:1
-# Image for the Slack bot example. Originally a local-dev/`docker compose up`
-# convenience only; also the source of the CI-published
-# ghcr.io/stacklok/mecatl/slack-bot image (.github/workflows/release.yml) now
-# that a real deployment (stacklok/infra's staging2) runs it. The bot's code
-# still lives under sdk/typescript/examples/ and isn't a published npm
-# package (see ../README.md) — only the container image is released.
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# Release and local-development image for the Slack bot example.
+# Build context is sdk/typescript: build the in-tree SDK before installing the
+# bot's file:../.. dependency. Only production artifacts reach the runtime.
 #
-# Build context is sdk/typescript (see docker-compose.yml and release.yml)
-# because the bot depends on the in-tree SDK via file:../...
-#
-# NOT a hardened base image (deliberately, for now). node:24-slim is Debian
-# + a shell + apt + a full toolchain, which is exactly what this single-stage
-# build needs: corepack/pnpm/build run INSIDE the final image below, and a
-# hardened runtime image (Chainguard's default tag, Docker Hardened Images'
-# default tag) is minimal/distroless-style and almost certainly has none of
-# that. Adopting one is a multi-stage rewrite, not a one-line FROM swap:
-# a builder stage on a "-dev"/full variant (has the shell + toolchain) would
-# produce dist/ + a pruned node_modules, then a second, minimal runtime
-# stage would COPY just those artifacts in and run `node dist/index.js`
-# directly, no corepack/pnpm/shell needed at runtime at all.
-#
-# Two hardened options were evaluated, favoring Chainguard when this gets
-# picked up:
-#   - cgr.dev/chainguard/node: free, no registry login to pull. mecatl
-#     already depends on this vendor for every OTHER released image -
-#     mecated/mecak8s/mecatui build on cgr.dev/chainguard/static (.ko.yaml)
-#     - so adopting it here is zero new vendor relationship and zero new CI
-#     credentials. The one real constraint: only the `latest`/`latest-dev`
-#     tags are pullable for free; a specific pinned version tag (`node:24`,
-#     etc.) requires contacting Chainguard's sales. Workaround, matching
-#     .ko.yaml's own existing pattern: pin the DIGEST of `latest` at build
-#     time, not the moving tag - reproducible, no sales conversation needed.
-#   - Docker Hardened Images (docker.com/products/hardened-images): also
-#     genuinely free (Apache 2.0, no paywalled catalog) and has a Node.js
-#     image, but pulling from dhi.io requires `docker login dhi.io` with a
-#     Docker account even on the free tier - a new credential that would
-#     need to be provisioned and stored as a GitHub secret in this repo's
-#     CI. Marketed as "change one line in your Dockerfile"; the registry
-#     login requirement is the part that pitch leaves out.
-#
-# Tracked as a deliberate follow-up, not blocking: stacklok/mecatl#1054's
-# PR description has the same writeup for anyone picking this up.
-FROM node:24-slim
-RUN corepack enable
+# Chainguard's free Node images expose moving latest tags. Renovate's native
+# Dockerfile manager uses these tags to refresh each multi-architecture digest;
+# the digest still pins the build. Keep latest-dev for the builder and latest for
+# the runtime so updates cannot silently swap the development/runtime variants.
+# https://docs.renovatebot.com/docker/#digest-updating
+FROM cgr.dev/chainguard/node:latest-dev@sha256:dcb7cf99cf3eaf95bad12812e4233a2b534e464a277611287c3392d2171d662c AS builder
 
-WORKDIR /sdk
-COPY . .
-RUN pnpm install --frozen-lockfile && pnpm run build
-WORKDIR /sdk/examples/slack-bot
-RUN pnpm install --frozen-lockfile
+WORKDIR /home/node/src
+COPY --chown=65532:65532 . .
 
-CMD ["pnpm", "run", "start"]
+RUN corepack pnpm@11.25.0 install --frozen-lockfile \
+    && corepack pnpm@11.25.0 run build
+RUN cd examples/slack-bot \
+    && corepack pnpm@11.25.0 install --frozen-lockfile \
+    && corepack pnpm@11.25.0 run build
+
+FROM builder AS production-dependencies
+RUN cd examples/slack-bot && corepack pnpm@11.25.0 prune --prod
+RUN corepack pnpm@11.25.0 prune --prod
+
+FROM cgr.dev/chainguard/node:latest@sha256:753a66014b1310b8f93c76d4cac41d039958b9a86dd44a245289d6cb85455582
+
+# The current runtime image includes BusyBox. Remove its single executable (all
+# applet links, including /bin/sh, then become inert) before dropping privileges.
+USER 0
+RUN ["/bin/busybox", "rm", "/bin/busybox"]
+USER 65532
+
+WORKDIR /app/sdk/typescript
+COPY --from=production-dependencies /home/node/src/package.json ./package.json
+COPY --from=production-dependencies /home/node/src/dist ./dist
+COPY --from=production-dependencies /home/node/src/node_modules ./node_modules
+COPY --from=production-dependencies /home/node/src/examples/slack-bot/package.json ./examples/slack-bot/package.json
+COPY --from=production-dependencies /home/node/src/examples/slack-bot/dist ./examples/slack-bot/dist
+COPY --from=production-dependencies /home/node/src/examples/slack-bot/node_modules ./examples/slack-bot/node_modules
+
+WORKDIR /app/sdk/typescript/examples/slack-bot
+ENTRYPOINT ["/usr/bin/node"]
+CMD ["dist/index.js"]

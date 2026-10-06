@@ -13,6 +13,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
@@ -21,12 +24,21 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
+
+func TestCanonicalConfiguredDir_AllowsMissingDefaultParents(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".local", "share", "mecatui", "memory", "workspace")
+	got, err := canonicalConfiguredDir(path)
+	if err != nil {
+		t.Fatalf("canonicalConfiguredDir(first-run path): %v", err)
+	}
+	if got != path {
+		t.Fatalf("canonical path = %q, want %q", got, path)
+	}
+}
 
 // TestValidateDriverConfigExclusivity pins the mutual-exclusion rule: a local
 // dir and a remote driver URL for the SAME store is a fatal config error;

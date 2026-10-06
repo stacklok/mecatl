@@ -21,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
-	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
@@ -89,8 +88,8 @@ func (*lifecycleParkingTool) AbortAuthorization(context.Context, session.Externa
 
 type lifecycleAllowPolicy struct{}
 
-func (lifecycleAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (lifecycleAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (lifecycleAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -178,14 +177,51 @@ func (*lifecycleBroker) DeleteSession(context.Context, session.SessionID) (broke
 	return brokercontract.DeleteDeleted, nil
 }
 
+type lifecycleProviderContextCapture struct {
+	mu    sync.Mutex
+	pairs [][2]session.SessionID
+}
+
+func (c *lifecycleProviderContextCapture) wrap(provider port.LLMProvider) port.LLMProvider {
+	return lifecycleContextCapturingProvider{provider: provider, capture: c}
+}
+
+func (c *lifecycleProviderContextCapture) assertLast(t *testing.T, want session.SessionID) {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pairs) == 0 || c.pairs[len(c.pairs)-1] != [2]session.SessionID{want, want} {
+		t.Fatalf("provider correlation = %v, want final authoritative pair [%s %s]", c.pairs, want, want)
+	}
+}
+
+type lifecycleContextCapturingProvider struct {
+	provider port.LLMProvider
+	capture  *lifecycleProviderContextCapture
+}
+
+func (p lifecycleContextCapturingProvider) Capabilities() port.ProviderCapabilities {
+	return p.provider.Capabilities()
+}
+
+func (p lifecycleContextCapturingProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	active, _ := port.SessionIDFromContext(ctx)
+	root, _ := port.RootSessionIDFromContext(ctx)
+	p.capture.mu.Lock()
+	p.capture.pairs = append(p.capture.pairs, [2]session.SessionID{active, root})
+	p.capture.mu.Unlock()
+	return p.provider.Stream(ctx, req)
+}
+
 type lifecycleFixture struct {
-	svc        *Service
-	store      *memstore.Store
-	broker     *lifecycleBroker
-	attach     *lifecycleAttachment
-	pending    session.PendingAuthorization
-	builtTools *[][]string
-	builtSpecs *[][]mcp.ServerConfig
+	svc             *Service
+	store           *memstore.Store
+	broker          *lifecycleBroker
+	attach          *lifecycleAttachment
+	pending         session.PendingAuthorization
+	builtTools      *[][]string
+	builtSpecs      *[][]mcp.ServerConfig
+	providerContext *lifecycleProviderContextCapture
 }
 
 // lifecyclePlacementProvider reattaches only the local ref the fixture binds
@@ -270,25 +306,31 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 }
 
 func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
-	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, false, turns...)
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, false, lifecycleAllowPolicy{}, turns...)
 }
 
 func newInteractiveLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
-	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, true, turns...)
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, true, lifecycleAllowPolicy{}, turns...)
 }
 
-func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, interactive bool, turns ...mockllm.Turn) lifecycleFixture {
+func newLifecycleFixtureWithPolicyTurns(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, policy port.PermissionPolicy, turns ...mockllm.Turn) lifecycleFixture {
+	t.Helper()
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, session.ModeDefault, false, policy, turns...)
+}
+
+func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, interactive bool, policy port.PermissionPolicy, turns ...mockllm.Turn) lifecycleFixture {
 	t.Helper()
 	store := memstore.New()
 	mutation := &lifecycleTool{}
 	attachment := &lifecycleAttachment{binding: "broker-binding", tool: mutation, status: status, url: "https://auth.example/authorize?state=live"}
 	broker := &lifecycleBroker{attachment: attachment, attachErr: attachErr}
+	providerContext := &lifecycleProviderContextCapture{}
 	buildEngine := func(tools []tool.Tool) *agent.Engine {
 		catalog := tool.NewCatalog()
 		for _, one := range tools {
 			catalog.MustRegister(one)
 		}
-		return agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Store: store, Model: "mock", Interactive: interactive})
+		return agent.NewEngine(agent.Deps{LLM: providerContext.wrap(mockllm.New(turns...)), Catalog: catalog, Policy: policy, Store: store, Model: "mock", Interactive: interactive})
 	}
 	shared := buildEngine(nil)
 	var builtTools [][]string
@@ -332,7 +374,10 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	if err := store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending, builtTools: &builtTools, builtSpecs: &builtSpecs}
+	return lifecycleFixture{
+		svc: svc, store: store, broker: broker, attach: attachment, pending: pending,
+		builtTools: &builtTools, builtSpecs: &builtSpecs, providerContext: providerContext,
+	}
 }
 
 func drainLifecycleRun(t *testing.T, svc *Service, result MCPAuthorizationResult) []session.Event {
@@ -386,11 +431,13 @@ func TestMCPAuthorizationTerminalStatusesPairWithoutExecuting(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			f := newLifecycleFixture(t, status, nil, time.Now, nil)
 			control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
-			result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+			forged := port.WithSessionID(port.WithRootSessionID(t.Context(), "forged-root"), "forged-active")
+			result, err := f.svc.RecheckMCPAuthorization(forged, control.SessionID, control)
 			if err != nil || result.Status != status {
 				t.Fatalf("result = %+v, %v", result, err)
 			}
 			events := drainLifecycleRun(t, f.svc, result)
+			f.providerContext.assertLast(t, control.SessionID)
 			assertAuthorizationResultBeforeResolved(t, events, f.pending.Call.ID)
 			if f.attach.tool.calls.Load() != 0 {
 				t.Fatal("protected mutation executed")
@@ -908,11 +955,13 @@ func TestMCPAuthorizationGrantedResolutionBackfillsMissingRequired(t *testing.T)
 		}
 	}
 	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
-	result, err := f.svc.RecheckMCPAuthorization(t.Context(), "authorization-session", control)
+	forged := port.WithSessionID(port.WithRootSessionID(t.Context(), "forged-root"), "forged-active")
+	result, err := f.svc.RecheckMCPAuthorization(forged, "authorization-session", control)
 	if err != nil || result.Run == nil || result.Status != session.AuthorizationGranted {
 		t.Fatalf("granted result = %+v, %v", result, err)
 	}
 	drainLifecycleRun(t, f.svc, result)
+	f.providerContext.assertLast(t, control.SessionID)
 	var found bool
 	for ev, readErr := range log.Read(t.Context(), "authorization-session") {
 		if readErr != nil {
@@ -1508,6 +1557,85 @@ func TestScheduleAuthorizationExpiryWarnsWhenNoInMemoryPending(t *testing.T) {
 	}
 }
 
+func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var current atomic.Uint64
+	current.Store(7)
+	type revisionKey struct{}
+	f.svc.cfg.SharedEngineRevision = 7
+	f.svc.cfg.OperationRevision = func(ctx context.Context) (uint64, bool) {
+		if pinned, ok := ctx.Value(revisionKey{}).(uint64); ok {
+			return pinned, true
+		}
+		return current.Load(), false
+	}
+	var builds atomic.Int32
+	build := func(ctx context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
+		builds.Add(1)
+		revision, _ := f.svc.cfg.OperationRevision(ctx)
+		return SessionEngineResult{Engine: f.svc.cfg.Engine, BuiltForMode: mode, RuntimeRevision: revision, Close: func() error { return nil }}, nil
+	}
+	f.svc.cfg.SessionEngine = build
+	f.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+		return build(ctx, sel, specs, profile, workspace, mode)
+	}
+
+	for range 2 {
+		if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("repeated unpinned authorization resolution built %d engines, want 1", got)
+	}
+
+	current.Store(8)
+	for range 2 {
+		if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := builds.Load(); got != 2 {
+		t.Fatalf("one publication produced %d total builds, want 2", got)
+	}
+
+	pinned := context.WithValue(t.Context(), revisionKey{}, uint64(7))
+	if _, _, _, err := f.svc.engineAndEnvironmentFor(pinned, loaded); err != nil {
+		t.Fatal(err)
+	}
+	if got := builds.Load(); got != 3 {
+		t.Fatalf("older pinned revision did not win: builds=%d, want 3", got)
+	}
+
+	withoutRuntime := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	withoutLoaded, err := withoutRuntime.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var withoutBuilds atomic.Int32
+	withoutBuild := func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
+		withoutBuilds.Add(1)
+		return SessionEngineResult{Engine: withoutRuntime.svc.cfg.Engine, BuiltForMode: mode, Close: func() error { return nil }}, nil
+	}
+	withoutRuntime.svc.cfg.SessionEngine = withoutBuild
+	withoutRuntime.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+		return withoutBuild(ctx, sel, specs, profile, workspace, mode)
+	}
+	for range 2 {
+		if _, _, _, err := withoutRuntime.svc.engineAndEnvironmentFor(t.Context(), withoutLoaded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := withoutBuilds.Load(); got != 1 {
+		t.Fatalf("no-runtime path built %d engines, want 1", got)
+	}
+}
+
 func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -1516,7 +1644,7 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, env, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
+	engine, env, governanceRoot, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1531,7 +1659,7 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), loaded, env, claimed, resolution)
+	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, governanceRoot), loaded, env, claimed, resolution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1645,7 +1773,7 @@ func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+	if _, _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	blockerSession := session.New("blocker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
@@ -1697,7 +1825,7 @@ func TestMCPAuthorizationGrantedCompensationSaveFailureSettlesInsteadOfStranding
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+	if _, _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	blockerSession := session.New("blocker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, time.Now())

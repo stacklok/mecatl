@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -30,7 +31,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // codexCompositionTransport is the offline subscription backend for the full
@@ -215,10 +215,9 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 			},
 		},
 		defaultID: providerOpenAI,
-		meta:      newLiveMetaStore(),
-		outcomes:  newLiveOutcomeStore(),
+		meta:      newMetadataFixture(),
 	}
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAICodex: {{
 			ID: "codex-image", InputModalities: []string{"text", "image"}, Reasoning: true, ToolCall: true,
 		}},
@@ -272,8 +271,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 				id: providerOpenAICodex, provider: noFSProvider, available: true,
 			}},
 			defaultID: providerOpenAICodex,
-			meta:      newLiveMetaStore(),
-			outcomes:  newLiveOutcomeStore(),
+			meta:      newMetadataFixture(),
 		}
 		factory2 := sessionEngineFactory(Config{Model: "codex-image", NoSoul: true}, reg2, noFSProvider,
 			memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
@@ -486,6 +484,11 @@ func TestADR_0104_OpenAICodexSecretSentinels(t *testing.T) {
 		t.Fatalf("read rejected Codex relay: %v", readErr)
 	}
 	addArtifact("service relay", relayBody)
+	for _, want := range []string{"manual access token was rejected", "auth.yaml", "restart"} {
+		if !strings.Contains(string(relayBody), want) {
+			t.Errorf("rejected Codex HTTP/SSE relay missing %q", want)
+		}
+	}
 	built.Close()
 
 	store, err := jsonlstore.New(storeDir)

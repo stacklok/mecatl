@@ -56,8 +56,8 @@ func TestModeSwitchUpdatesServerAndHeader(t *testing.T) {
 	if m.activeMode != "plan" || m.pendingMode != "" {
 		t.Fatalf("active/pending mode = %q/%q, want plan/empty", m.activeMode, m.pendingMode)
 	}
-	if header := stripANSIstr(m.renderHeader()); !strings.Contains(header, "mode plan") {
-		t.Fatalf("header missing mode plan: %q", header)
+	if mode := m.statusLineSnapshot().Session.Mode; mode != "plan" {
+		t.Fatalf("status snapshot mode = %q, want plan", mode)
 	}
 }
 
@@ -108,8 +108,8 @@ func TestModeSwitchFailureDefersToNextPrompt(t *testing.T) {
 	if !strings.Contains(stripANSIstr(m.statusMsg), "will apply on the next prompt") {
 		t.Fatalf("status = %q, want deferred notice", stripANSIstr(m.statusMsg))
 	}
-	if header := stripANSIstr(m.renderHeader()); !strings.Contains(header, "mode plan pending") {
-		t.Fatalf("header missing pending mode: %q", header)
+	if mode := m.statusLineSnapshot().Session.Mode; mode != "plan pending" {
+		t.Fatalf("status snapshot mode = %q, want plan pending", mode)
 	}
 
 	conv.setModeErr = nil
