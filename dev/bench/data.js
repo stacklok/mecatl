@@ -299940,6 +299940,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791276213669,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c8366f5ee5f15a08a21f256c5adcc2752cba717",
+          "message": "fix(sdk): clear new dependency advisories in the SDK audit (#2132)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T04:37:03-04:00",
+          "tree_id": "ece551c67070c3d84fe9d42156c929a929533bb9",
+          "url": "https://github.com/stacklok/mecatl/commit/3c8366f5ee5f15a08a21f256c5adcc2752cba717"
+        },
+        "date": 1791276952556,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3249,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 51.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -392660,6 +392699,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791276948511,
+  "lastUpdate": 1791276953483,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
