@@ -301131,6 +301131,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791289623024,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "08d9865c44d89ea20a3d5551ff12876f377c7730",
+          "message": "chore: instruction-file hygiene and keep removed process directories removed (#2134)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T08:55:33-04:00",
+          "tree_id": "f86918b6084dc3707d3fc4ff9e924d51e19e9ba0",
+          "url": "https://github.com/stacklok/mecatl/commit/08d9865c44d89ea20a3d5551ff12876f377c7730"
+        },
+        "date": 1791292048621,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3263,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 64,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -394193,6 +394232,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791292045395,
+  "lastUpdate": 1791292049958,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
