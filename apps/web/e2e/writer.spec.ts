@@ -291,6 +291,58 @@ test("Writer keeps the native gutter aligned with a bounded document through edi
   expect(Math.abs(lastGutterBox.y - lastLineBox.y)).toBeLessThan(2);
 });
 
+test("Writer accepts repeated Enter presses as Markdown lines and preserves them through undo and redo", async ({
+  offlineBff,
+  page,
+}) => {
+  offlineBff.json("GET", "/api/v1/auth/session", {
+    account: "offline-writer",
+    mode: "oidc",
+    status: "authenticated",
+  });
+  offlineBff.json("GET", "/api/v1/status", { connection: "reachable", signInRequired: false });
+  offlineBff.json("GET", "/api/v1/runtime", { experimentalWriter: true });
+  offlineBff.json("GET", "/api/v1/settings/runtime", { modelsSupported: false, models: [] });
+  offlineBff.json("GET", "/api/v1/storage/health", { status: "healthy" });
+  offlineBff.json("GET", "/api/v1/sessions", { complete: true, items: [] });
+  offlineBff.json("POST", "/api/v1/writer/observe", { status: "silent" });
+
+  await page.goto("/workspace/writer");
+  const automaticFeedback = page.getByRole("switch", { name: "Automatic feedback" });
+  await automaticFeedback.click();
+  await expect(automaticFeedback).not.toBeChecked();
+  const editor = page.getByRole("textbox", { name: "Writer document" });
+  await editor.focus();
+  await editor.press("Enter");
+  await editor.press("Enter");
+  await editor.press("Enter");
+  await expect(editor.locator(".cm-line")).toHaveCount(4);
+  await editor.pressSequentially("Opening");
+  // Let CodeMirror close its 500 ms history group before the next paragraph.
+  await page.waitForTimeout(600);
+  await editor.press("End");
+  await editor.press("Enter");
+  await editor.press("Enter");
+  await editor.pressSequentially("Next paragraph");
+  const expected = "\n\n\nOpening\n\nNext paragraph";
+  await page.waitForTimeout(600);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(editor.locator(".cm-line")).toHaveCount(5);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(editor.locator(".cm-line")).toHaveCount(4);
+  await page.getByRole("button", { name: "Redo" }).click();
+  await expect(editor.locator(".cm-line")).toHaveCount(5);
+  await page.getByRole("button", { name: "Redo" }).click();
+  await expect(editor.locator(".cm-line")).toHaveCount(6);
+  await page.getByRole("button", { name: "Read this now" }).click();
+  await expect.poll(() => offlineBff.requestsFor("POST", "/api/v1/writer/observe").length).toBe(1);
+  expect(offlineBff.requestsFor("POST", "/api/v1/writer/observe")[0]?.postDataJSON()).toMatchObject(
+    {
+      document: { content: expected },
+    },
+  );
+});
+
 test("Writer draws one empty-editor caret on the placeholder line in light and dark themes", async ({
   offlineBff,
   page,

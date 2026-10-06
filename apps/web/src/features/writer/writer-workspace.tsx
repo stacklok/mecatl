@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { history, historyKeymap, isolateHistory, redo, undo } from "@codemirror/commands";
+import {
+  history,
+  historyKeymap,
+  insertNewline,
+  isolateHistory,
+  redo,
+  undo,
+} from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import {
@@ -236,6 +243,7 @@ function WriterEditor({ available }: { available: boolean }) {
           drawSelection(),
           lineNumbers(),
           keymap.of([
+            { key: "Enter", run: insertNewline },
             { key: "Mod-b", run: (view) => formatMarkdown(view, "bold") },
             { key: "Mod-i", run: (view) => formatMarkdown(view, "italic") },
             { key: "Mod-Alt-1", run: (view) => formatMarkdown(view, "heading") },

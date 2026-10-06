@@ -42,6 +42,6 @@ Deferred: semantic history, graphs, embeddings, multi-agent work, collaboration,
 
 Open UX questions, not implemented scope or commitments:
 
-- Does the drawn caret remain clear in other browsers, with zoom, wrapped text, IME input, and light/dark themes? The current browser tests target Chromium at desktop and mobile widths; they are not cross-browser certification.
+- Does the drawn caret remain clear in other browsers, with zoom, wrapped text, IME input, and light/dark themes? Current browser coverage is Chromium at desktop and mobile widths plus focused Firefox desktop coverage for repeated Enter, undo, and redo; it is not cross-browser certification.
 
 For configuration and reader-facing guidance, see the [Mecatl Studio web UI](../../user-docs/building/deployment/studio.md). Local prerequisites and commands are in the [Studio development guide](../../apps/README.md#try-writer-locally).

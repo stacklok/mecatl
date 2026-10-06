@@ -40,6 +40,12 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
       },
     },
+    {
+      name: "firefox-writer",
+      grep: /repeated Enter/,
+      testMatch: "writer.spec.ts",
+      use: { browserName: "firefox", viewport: { width: 1280, height: 800 } },
+    },
   ],
   reporter: "list",
   retries: 0,
