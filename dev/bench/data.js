@@ -298749,6 +298749,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791272741961,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12c5fbe1997a9c537a2b37783810024686dfe48f",
+          "message": "[Implementation] Server-owned provider recovery (#1920)\n\nCo-authored-by: OpenAI <noreply@openai.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-06T10:47:23+03:00",
+          "tree_id": "f16e866878a002519f9d6f4fa45df0bbb0535b7a",
+          "url": "https://github.com/stacklok/mecatl/commit/12c5fbe1997a9c537a2b37783810024686dfe48f"
+        },
+        "date": 1791273648252,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -391127,6 +391166,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791273608882,
+  "lastUpdate": 1791273685602,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
