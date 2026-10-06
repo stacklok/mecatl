@@ -374,6 +374,17 @@ session as authoritative.
 
 <span id="related-topics" />
 
+## Related information
+
+<span id="configure-aliases-slots-and-task-routing" />
+<span id="use-a-planning-model-in-plan-mode" />
+<span id="diagnose-a-delegated-model-decision" />
+<span id="route-openrouter-models-through-preferred-downstreams" />
+
+[Model routing](/features/sessions/model-routing.md)
+
+## Troubleshooting
+
 ### A provider error ended a model step
 
 The server retries transient provider failures before meaningful assistant text is
@@ -411,46 +422,6 @@ failures retain their specific categories. If a manual Codex token is rejected,
 Mecatl shows its local remediation: replace the token in `auth.yaml` and
 restart Mecatl.
 
-### Model context metadata is unavailable
-
-You can send the first prompt in a new or resumed session without opening
-`/models` first. If the selected model's context window is unknown and its provider
-supports discovery, the server starts or joins discovery for that provider before
-executing the prompt. Native authenticated providers perform this listing on demand
-rather than at startup.
-Known configured, retained live, or catalog windows need no listing.
-
-When discovery fails or returns an empty list and no positive window is known,
-the server rejects execution with `context_window_unavailable`. Your existing
-conversation remains available, and the rejected prompt has not been recorded as
-a server turn. Restore provider discovery, or ask the server operator to configure
-the model's verified [exact context window](./context-windows.md). Retry after the
-ten-second cooldown; another failed attempt requires another explicit request.
-Cancelling your wait leaves the server's bounded discovery attempt running.
-
-In `mecatui`, **Retry** sends the identical prepared text and attachments without
-rereading files or the clipboard. **Back** restores the editable draft, including
-staged pastes and images, and asks before replacing a newer draft. Cancelling that
-confirmation keeps both drafts. **Discard submission** releases the rejected
-payload. Recovery holds one submission in client memory under the existing size
-limits; accepting the prompt, changing sessions, exiting, or an unrelated terminal
-error releases it. There is no automatic replay or recovery after client restart.
-
-API clients receive gRPC `Unavailable` with ErrorInfo domain `mecatl.stacklok.com`
-and reason `context_window_unavailable`, or HTTP 503. Match the structured reason,
-not error-message text, and retry explicitly after addressing discovery. For daemon
-configuration, see [context discovery recovery](/operating/mecated/configure-providers-and-storage.md#context-discovery-recovery).
-
-## Related information
-
-<span id="configure-aliases-slots-and-task-routing" />
-<span id="use-a-planning-model-in-plan-mode" />
-<span id="diagnose-a-delegated-model-decision" />
-<span id="route-openrouter-models-through-preferred-downstreams" />
-
-[Model routing](/features/sessions/model-routing.md)
-
-## Troubleshooting
 
 ### Model context metadata is unavailable
 

@@ -107,8 +107,12 @@ same path. See [Host a local daemon](/building/local-daemon.md).
 The loopback admin listener exposes `/metrics`, `/debug/pprof`, `/debug/vars`,
 and `/debug/flightrecorder`. Keep it on loopback: diagnostics can contain
 prompts, file paths, and goroutine stacks. Configure collectors using
-[observability](/operating/observability.md). Look up scheduler and LLM timeout
-tuning in the [server CLI reference](/reference/server-cli.md).
+[observability](/operating/observability.md). Look up scheduler controls in the [server CLI reference](/reference/server-cli.md).
+Configure model recovery with `--llm-recovery-budget` and `--llm-max-attempts`;
+these command-line flags have no settings-file equivalents. Review
+[model-call resilience](/features/runtime/observability-and-resilience.md#model-call-resilience)
+and [provider costs](/features/sessions/choose-models.md#a-provider-error-ended-a-model-step)
+before changing their per-step limits.
 
 ## Connect tools and trusted instructions
 

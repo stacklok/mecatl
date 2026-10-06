@@ -171,7 +171,7 @@ keymap:
 Or override an action for one launch:
 
 ```sh
-mecatui --keymap Agents=f10 --keymap Effort=f11 --keymap Prompts=f12
+mecatui --keymap Toolcalls=ctrl+f10 --keymap ExpandConversation=ctrl+f9
 ```
 
 Bindings resolve per action in this order, from lowest to highest precedence:
@@ -183,7 +183,8 @@ Restart `mecatui` after changing the settings file.
 
 Action names are exact, including `Toolcalls` and `ExpandConversation`. Global
 actions require a modified or special chord so normal typing remains
-available; approval and overlay actions can use bare letters. `mecatui` fails startup with a `keymap:` error for invalid names, empty
+available; approval and overlay actions can use bare letters. `mecatui` fails
+startup with a `keymap:` error for invalid names, empty
 chords, conflicts, a shared submit and newline key, or an unsafe approval
 collision.
 
