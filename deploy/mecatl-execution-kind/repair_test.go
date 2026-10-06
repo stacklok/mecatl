@@ -26,7 +26,7 @@ func scriptRange(t *testing.T, file, start, end string) string {
 	return body[i:j]
 }
 
-func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
+func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 	create := scriptRange(t, "run.sh", "kind_config=\n", "\nphase_done cluster")
 	for _, profile := range []string{"production", "development"} {
 		t.Run(profile, func(t *testing.T) {
@@ -55,8 +55,8 @@ func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
 			if err := yaml.Unmarshal(data, &cluster); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != 1 {
-				t.Fatalf("production Kind kubelet patch missing: %+v", cluster.Nodes)
+			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != 2 {
+				t.Fatalf("production Kind sync patches missing: %+v", cluster.Nodes)
 			}
 			var patch struct {
 				APIVersion    string `yaml:"apiVersion"`
@@ -68,6 +68,19 @@ func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
 			}
 			if patch.APIVersion != "kubelet.config.k8s.io/v1beta1" || patch.Kind != "KubeletConfiguration" || patch.SyncFrequency != "5s" {
 				t.Fatalf("production Kind kubelet patch = %+v", patch)
+			}
+			var controller struct {
+				APIVersion        string `yaml:"apiVersion"`
+				Kind              string `yaml:"kind"`
+				ControllerManager struct {
+					ExtraArgs map[string]string `yaml:"extraArgs"`
+				} `yaml:"controllerManager"`
+			}
+			if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[1]), &controller); err != nil {
+				t.Fatal(err)
+			}
+			if controller.APIVersion != "kubeadm.k8s.io/v1beta3" || controller.Kind != "ClusterConfiguration" || len(controller.ControllerManager.ExtraArgs) != 1 || controller.ControllerManager.ExtraArgs["resource-quota-sync-period"] != "10s" {
+				t.Fatalf("production Kind controller-manager patch = %+v", controller)
 			}
 		})
 	}

@@ -101,6 +101,13 @@ nodes:
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
     syncFrequency: 5s
+  - |
+    # Kind's kubeadm patch matcher uses v1beta3 for the pinned node image.
+    apiVersion: kubeadm.k8s.io/v1beta3
+    kind: ClusterConfiguration
+    controllerManager:
+      extraArgs:
+        resource-quota-sync-period: "10s"
 EOF
 fi
 if [ -n "$kind_config" ]; then
