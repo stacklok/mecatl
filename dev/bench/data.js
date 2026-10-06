@@ -270326,6 +270326,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791275487286,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6fdf3df09904265d5876d7e09f05ef8220a6240",
+          "message": "chore: delete ADRs, acceptance plans, and process scaffolding (#2105)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T04:28:20-04:00",
+          "tree_id": "cc10eba28e9f86990a746f2bf38de1c9be36d97c",
+          "url": "https://github.com/stacklok/mecatl/commit/b6fdf3df09904265d5876d7e09f05ef8220a6240"
+        },
+        "date": 1791276209293,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -392115,6 +392149,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791276205904,
+  "lastUpdate": 1791276210010,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
