@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -32,7 +34,9 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	seed, err := executioncontroller.SeedLegacyMigrationFixture(context.Background(), d, kube, os.Args[1], os.Args[2])
+	seed, err := executioncontroller.SeedLegacyMigrationFixture(context.Background(), d, kube, os.Args[1], os.Args[2], func(name string, elapsed time.Duration, missing []string) {
+		fmt.Fprintf(os.Stderr, "qualification legacyfixture_quota=%s elapsed=%s last_missing=%s\n", name, elapsed.Round(time.Millisecond), strings.Join(missing, ","))
+	})
 	if err != nil {
 		fail(err)
 	}

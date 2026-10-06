@@ -50,9 +50,17 @@ if [ -n "${MECATL_EXECUTION_QUAL_OUTPUT:-}" ]; then
 fi
 printf '%s\n' "$state" >"$root/.scratch/k8s-execution/current"
 
+test_build_pid=
+cleanup_test_build() {
+  if [ -n "$test_build_pid" ]; then
+    kill "$test_build_pid" 2>/dev/null || :
+    wait "$test_build_pid" || :
+  fi
+}
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
   cleanup_cluster() {
     status=$?
+    cleanup_test_build
     artifact="$state/production-failure-artifact.txt"
     if [ "$status" -ne 0 ]; then
       timeout --kill-after=5s 60s sh "$root/deploy/mecatl-execution-kind/collect-failure.sh" \
@@ -62,6 +70,8 @@ if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
     return "$status"
   }
   trap cleanup_cluster EXIT
+else
+  trap cleanup_test_build EXIT
 fi
 export KUBECONFIG="$kubeconfig"
 printf '{}\n' >"$state/registry-auth.json"
@@ -202,6 +212,27 @@ workload_image=$(pin_loaded "$workload_tag")
 printf 'provider=%s\nagent=%s\noidc=%s\nnetprobe=%s\nworkload=%s\ngo_base=%s\n' "$provider_image" "$agent_image" "$oidc_image" "$netprobe_image" "$workload_image" "$go_image" >"$state/images/proof"
 image_step_done pin_loaded
 phase_done images
+
+# Compile the test binary while the already-built images are deployed. It is
+# run only after the owned cluster is ready; no test starts in the background.
+test_build_start=$(date +%s)
+(
+  compile_child=
+  trap 'kill "$compile_child" 2>/dev/null || :; wait "$compile_child" 2>/dev/null || :; exit 143' TERM
+  set -- env -i HOME="$HOME" PATH="$PATH" timeout --kill-after=5s 5m \
+    go test -c -tags kind_execution_e2e -o "$state/qualification.test" ./e2e/k8s_execution
+  if [ -n "$MECATL_EXECUTION_DEV_TOOLBOX" ]; then
+    (cd "$root" && exec toolbox run -c "$MECATL_EXECUTION_DEV_TOOLBOX" "$@") &
+  else
+    (cd "$root" && exec "$@") &
+  fi
+  compile_child=$!
+  wait "$compile_child"
+  compile_child=
+  trap - TERM
+  printf 'qualification test_build=compiled elapsed=%ss\n' "$(( $(date +%s) - test_build_start))"
+) &
+test_build_pid=$!
 
 kube create namespace execution-qualification --dry-run=client -o yaml | kube apply -f -
 kube label namespace execution-qualification pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/warn=restricted --overwrite
@@ -355,8 +386,16 @@ if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
   # Seed the prototype under the old CRD only while every provider is quiesced.
   kube -n execution-qualification scale deployment/mecatl-execution --replicas=0
   kube -n execution-qualification wait --for=delete pod -l app.kubernetes.io/name=mecatl-execution --timeout=2m
-  dev env KUBECONFIG="$kubeconfig" go run -tags kind_execution_e2e ./e2e/k8s_execution/fixture/legacyfixture execution-qualification "$legacy_profiles" "$state/legacy-migration.json"
+  legacy_start=$(date +%s)
+  dev go build -tags kind_execution_e2e -o "$state/legacyfixture" ./e2e/k8s_execution/fixture/legacyfixture
+  legacy_built=$(date +%s)
+  printf 'qualification deployment_step=legacyfixture_build elapsed=%ss\n' "$((legacy_built - legacy_start))"
+  dev env KUBECONFIG="$kubeconfig" "$state/legacyfixture" execution-qualification "$legacy_profiles" "$state/legacy-migration.json"
+  legacy_seeded=$(date +%s)
+  printf 'qualification deployment_step=legacyfixture_seed elapsed=%ss\n' "$((legacy_seeded - legacy_built))"
   kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration pod/executor-legacy-migration-malformed pod/executor-legacy-migration-insecure --timeout=3m
+  legacy_ready=$(date +%s)
+  printf 'qualification deployment_step=legacyfixture_pods_ready elapsed=%ss\n' "$((legacy_ready - legacy_seeded))"
   kube -n execution-qualification exec pod/executor-legacy-migration -- /bin/sh -c 'printf "prototype-data\n" > /workspace/migration-sentinel'
   # Helm does not upgrade existing CRDs. Preserve the stored legacy references
   # until the explicit CRD upgrade; the first production test then migrates them.
@@ -375,9 +414,13 @@ kube -n execution-qualification rollout restart deployment/mecak8s
 kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s
 phase_done deployment
 printf 'qualification phase=tests starting\n'
+test_build_wait_start=$(date +%s)
+wait "$test_build_pid"
+test_build_pid=
+printf 'qualification test_build=wait elapsed=%ss\n' "$(( $(date +%s) - test_build_wait_start))"
 
 dev env -i HOME="$HOME" PATH="$PATH" KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-development}" \
-  go test -v -tags kind_execution_e2e -count=1 -timeout=45m ./e2e/k8s_execution
+  sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.timeout=45m
 phase_done tests
 
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then

@@ -203,7 +203,11 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	logQualificationStage(t, &stageStarted, "initial_provision", "invalid_and_recovery")
 	stepStarted := time.Now()
+	restored := false
 	t.Cleanup(func() {
+		if restored {
+			return
+		}
 		cleanupStarted := time.Now()
 		t.Log("stage=rotation_cleanup starting")
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -359,6 +363,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	// Restore fixture client compatibility through a higher generation; this is
 	// another forward rotation, never a high-water-mark rollback.
 	restoreFixtureSecurity(t, ctx, kubeconfig, rotationDir, "fixture_restore")
+	restored = true
 	logQualificationStage(t, &stageStarted, "fixture_restore", "scoped_administrator")
 	qualifyDistinctAdministrator(t, ctx, state, kubeconfig, "rotated")
 	logQualificationStage(t, &stageStarted, "scoped_administrator", "cleanup")

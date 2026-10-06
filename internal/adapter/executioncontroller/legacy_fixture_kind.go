@@ -39,7 +39,7 @@ type LegacyMigrationSeed struct {
 // SeedLegacyMigrationFixture creates the narrow security-compatible prototype
 // accepted by MigrateEnvironment plus malformed and insecure negative controls.
 // It is excluded from regular builds.
-func SeedLegacyMigrationFixture(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace, profilesPath string) (LegacyMigrationSeed, error) {
+func SeedLegacyMigrationFixture(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace, profilesPath string, quotaReady func(string, time.Duration, []string)) (LegacyMigrationSeed, error) {
 	profiles, err := LoadProfiles(profilesPath)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
@@ -50,15 +50,15 @@ func SeedLegacyMigrationFixture(ctx context.Context, d dynamic.Interface, kube k
 	}
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "production-migration"}
 	client := "spiffe://mecatl.test/client/mecak8s"
-	recognized, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration", "legacy-migration-binding", []any{"legacy-migration-binding"}, false)
+	recognized, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration", "legacy-migration-binding", []any{"legacy-migration-binding"}, false, quotaReady)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
-	malformed, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration-malformed", "legacy-malformed-binding", []any{""}, false)
+	malformed, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration-malformed", "legacy-malformed-binding", []any{""}, false, quotaReady)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
-	insecure, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration-insecure", "legacy-insecure-binding", []any{"legacy-insecure-binding"}, true)
+	insecure, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration-insecure", "legacy-insecure-binding", []any{"legacy-insecure-binding"}, true, quotaReady)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
@@ -74,11 +74,11 @@ type seededLegacyEnvironment struct {
 	podUID, pvcUID string
 }
 
-func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace string, profile resolvedProfile, owner executionenv.Owner, client, name, binding string, references []any, insecure bool) (seededLegacyEnvironment, error) {
+func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace string, profile resolvedProfile, owner executionenv.Owner, client, name, binding string, references []any, insecure bool, quotaReady func(string, time.Duration, []string)) (seededLegacyEnvironment, error) {
 	// Deployment readiness does not imply that quota admission has initialized
 	// accounting, especially for the freshly installed custom resource.
 	started := time.Now()
-	var missing []string
+	var missing, lastMissing []string
 	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, legacyQuotaWait, true, func(ctx context.Context) (bool, error) {
 		quota, err := kube.CoreV1().ResourceQuotas(namespace).Get(ctx, "mecatl-execution", metav1.GetOptions{})
 		if err != nil {
@@ -97,6 +97,9 @@ func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kub
 				}
 			}
 		}
+		if !ready {
+			lastMissing = missing
+		}
 		return ready, nil
 	}); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -111,6 +114,10 @@ func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kub
 		// The fixture CLI prints this diagnostic; never wrap raw API response data.
 		slices.Sort(missing)
 		return seededLegacyEnvironment{}, fmt.Errorf("wait for legacy fixture quota accounting: missing_or_mismatched_keys=%v elapsed=%s: %w", missing, time.Since(started).Round(time.Millisecond), err)
+	}
+	if quotaReady != nil {
+		slices.Sort(lastMissing)
+		quotaReady(name, time.Since(started), lastMissing)
 	}
 	revision, err := randomID()
 	if err != nil {
