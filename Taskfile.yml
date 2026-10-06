@@ -1110,6 +1110,7 @@ tasks:
       - bash .github/scripts/deslop-workflow_test.sh
       - bash .github/scripts/microvm-ci-release_test.sh
       - sh .github/scripts/release-tag-guard_test.sh
+      - python3 .github/scripts/instruction-files_test.py
 
   lint:action-templates:
     desc: |
@@ -1202,8 +1203,9 @@ tasks:
         silent: true
 
   docs:check:
-    desc: Gate executable operations examples and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+    desc: Gate instruction-file hygiene, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
+      - python3 .github/scripts/instruction-files.py
       - go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs$'
       - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.11 check . --strict
 

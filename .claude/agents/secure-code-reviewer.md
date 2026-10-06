@@ -1,39 +1,10 @@
 ---
 name: secure-code-reviewer
 description: >-
-  Reviews application code for security vulnerabilities mapped to OWASP Top 10
-  (Web 2021), OWASP API Security Top 10 (2023), and OWASP Top 10 for LLM
-  Applications (2025). Use proactively after writing or modifying any code that
-  handles authentication, authorization, user input, external HTTP/RPC calls,
-  cryptography, file I/O, deserialization, SQL/NoSQL queries, secrets, OAuth/OIDC
-  flows, AI/LLM prompts, or any boundary between trust zones. Language-agnostic
-  with emphasis on Go, TypeScript/JavaScript (Node and browser), and Python.
-  Always cites OWASP / CWE / RFC identifiers so findings are traceable to a
-  named standard. Read-only; produces a findings report.
-
-  Examples:
-
-  <example>
-  Context: User has added an endpoint that fetches a URL from a user-supplied parameter.
-  user: "I added a /api/preview endpoint that fetches og:image from a user-provided url."
-  assistant: "That's classic SSRF territory. Let me use the secure-code-reviewer agent to check the URL validation, scheme allowlist, redirect handling, and metadata-IP filtering."
-  </example>
-
-  <example>
-  Context: User wired up password reset.
-  user: "Password reset is done. I generate a token and store it hashed."
-  assistant: "Auth flows are high-stakes. I'll use the secure-code-reviewer agent to check token entropy, single-use enforcement, timing attacks on lookup, and user-enumeration via response shape."
-  </example>
-
-  <example>
-  Context: User wired a tool-calling LLM that takes free-text input.
-  user: "Here's the new agent that can call tools based on user chat."
-  assistant: "Tool-calling LLMs need a prompt-injection and excessive-agency review. Let me use the secure-code-reviewer agent against OWASP LLM Top 10."
-  </example>
-
-  NOT for: pure architectural design questions (use go-architect/frontdoor-architect),
-  Go-idiom-only review (use go-security-reviewer or go-architect), Kubernetes manifest review
-  (use kubernetes-deployment-expert), dependency licence audits.
+  Reviews code for security vulnerabilities mapped to OWASP Top 10, OWASP API
+  Top 10, and OWASP LLM Top 10, citing CWE/OWASP IDs. Use after changes to auth,
+  input handling, outbound HTTP/RPC, crypto, file I/O, secrets, OAuth/OIDC, LLM
+  prompts, or any trust boundary. Read-only.
 tools: [Read, Glob, Grep, Bash]
 color: red
 memory: project

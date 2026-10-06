@@ -16,14 +16,27 @@ not restate it.
 | **Library consumer** | [Building on mecatl](../user-docs/building/index.md) → [`engine/session`](../engine/session) → [extension points](../user-docs/building/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
 | **API client developer** | [Drive via gRPC / HTTP](../user-docs/building/deployment/grpc-http.md) → [`contracts/proto/mecatl/v1/`](../contracts/proto/mecatl/v1) → [gRPC reference](../user-docs/reference/grpc-api.md) or [HTTP/SSE reference](../user-docs/reference/http-sse-api.md) |
 
+## What goes where
+
+Each kind of guidance has one home. Put a fact at the narrowest level that covers it.
+
+| Home | Holds | Loaded |
+| --- | --- | --- |
+| Root [`AGENTS.md`](../AGENTS.md) | Commands, layout, and invariants for the whole repo | Every agent session |
+| Module `AGENTS.md` | Where to change what in that module, its commands and invariants | When an agent works in that directory |
+| `.claude/rules/*.md` | Invariants for a file pattern that spans directories, such as `*_test.go` | When an agent reads a matching file |
+| `.claude/skills/` | Multi-step workflows, such as cutting a release | When invoked |
+| `docs/` | How the system works inside, for contributors | When read |
+| [`user-docs/`](../user-docs/intro.md) | How to use Mecatl, published at mecatl.dev | When read |
+
+Every `AGENTS.md` stays under 200 lines and has a `CLAUDE.md` symlink beside it; rules
+stay at or under 25 lines. `task docs` checks these limits.
+
 ## Nearby
 
 - [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, and operator/library routes).
 - [`architecture.md`](architecture.md) — the living architecture reference.
 - [Public documentation](../user-docs/intro.md) — canonical user-facing guidance and reference.
-- `adr/README.md` — the frozen ADR index (the *why* archive).
-- ADR 0215 — the landed,
-  experimental `openai-codex` capability and its private-backend boundary.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent
   protocol for remote access to files, folders, and callable actions over
   HTTP; not yet implemented in mecatl.

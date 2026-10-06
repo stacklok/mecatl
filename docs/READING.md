@@ -45,7 +45,6 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 - [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
 - [User-docs authoring contract](../user-docs/_README.md) and [style guide](../user-docs/_STYLE.md) — where public documentation lives and how it is written.
 - Design notes: [design principles](design/principles.md) and [contextual guardrails capacity](design/contextual-guardrails-capacity.md).
-- Legacy redirect stubs that point into `user-docs/`: [usage index](usage.md), [configuration](usage/configuration.md), [gRPC API](usage/grpc-api.md), [HTTP/SSE API](usage/http-sse-api.md), [mecak8s](usage/mecak8s.md), [model routing](usage/model-routing.md), [skills, soul, and user model](usage/skills-soul-usermodel.md).
 
 ---
 
