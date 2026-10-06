@@ -111,16 +111,12 @@ func TestAppBuildComposesBoatPlacement(t *testing.T) {
 }
 
 // TestAppBuildRoutesShellToBoatSandbox proves the engine's Shell runs through
-// the bound Boat CommandRunner. On main the Shell catalog entry still requires
-// a local workspace and shell even when the placement supplies the runner;
-// #1614's RemoteExecution posture removes that requirement. The local
-// workspace here exists only to switch Shell on, and the test proves nothing
-// runs in it.
+// the bound Boat CommandRunner under the RemoteExecution posture, with no local
+// workspace or shell configured.
 func TestAppBuildRoutesShellToBoatSandbox(t *testing.T) {
 	requireLocalHelper(t)
 	fake := newFakeBoatAPI(t)
-	host := t.TempDir()
-	ref, results := composedRun(t, fakeProvider(t, fake), app.Config{Workspace: host, Shell: "/bin/sh"},
+	ref, results := composedRun(t, fakeProvider(t, fake), app.Config{RemoteExecution: true},
 		call("write", "Write", `{"path":"composed.txt","content":"composed-through-app-build\n"}`),
 		call("shell", "Shell", `{"command":"cat composed.txt && printf from-shell > shell.txt"}`),
 		call("read", "Read", `{"path":"shell.txt"}`),
@@ -133,10 +129,5 @@ func TestAppBuildRoutesShellToBoatSandbox(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(fake.root(ref.ID), "shell.txt")); err != nil || string(data) != "from-shell" {
 		t.Fatalf("sandbox shell.txt = %q, %v", data, err)
-	}
-	for _, name := range []string{"composed.txt", "shell.txt"} {
-		if _, err := os.Stat(filepath.Join(host, name)); !os.IsNotExist(err) {
-			t.Fatalf("%s reached the host workspace: %v", name, err)
-		}
 	}
 }

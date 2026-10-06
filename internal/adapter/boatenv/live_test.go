@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,8 +170,7 @@ func TestLiveBoatComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := t.TempDir()
-	_, results := composedRun(t, provider, app.Config{Workspace: host, Shell: "/bin/sh"},
+	_, results := composedRun(t, provider, app.Config{RemoteExecution: true},
 		call("write", "Write", `{"path":"notes/composed.txt","content":"alpha\nneedle\n"}`),
 		call("edit", "Edit", `{"path":"notes/composed.txt","old_string":"alpha","new_string":"omega"}`),
 		call("grep", "Grep", `{"pattern":"needle"}`),
@@ -182,11 +180,6 @@ func TestLiveBoatComposition(t *testing.T) {
 	assertToolResults(t, results, map[session.ToolCallID]string{
 		"write": "", "edit": "", "grep": "notes/composed.txt", "shell": "omega\nneedle\nLinux", "read": "from-shell",
 	})
-	for _, name := range []string{"notes/composed.txt", "shell.txt"} {
-		if _, err := os.Stat(filepath.Join(host, name)); !os.IsNotExist(err) {
-			t.Fatalf("%s reached the host workspace: %v", name, err)
-		}
-	}
 }
 
 // checkReviewFixesLive proves the review fixes against the real service: a
