@@ -271042,6 +271042,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791276947562,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "649b00faf065177db53977add5b64d842e43f0e7",
+          "message": "fix(studio): harden the image supply chain and pin one Node major (#2133)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-06T07:38:27-04:00",
+          "tree_id": "bbdb09ce015361ab0d56e43eaba258acda766b22",
+          "url": "https://github.com/stacklok/mecatl/commit/649b00faf065177db53977add5b64d842e43f0e7"
+        },
+        "date": 1791287469765,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -393137,6 +393171,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791287466418,
+  "lastUpdate": 1791287470880,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
