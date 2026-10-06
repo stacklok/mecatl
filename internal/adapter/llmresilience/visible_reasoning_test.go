@@ -138,7 +138,7 @@ func (t *rejectedSummaryTool) Execute(_ context.Context, call session.ToolCall, 
 }
 
 func TestUnsupportedSummaryHTTP400CannotExecuteTool(t *testing.T) {
-	for _, tc := range []struct{ name, errorBody, want string }{
+	for _, tc := range []struct{ name, errorBody, private string }{
 		{"unsupported", `{"error":{"message":"Unsupported parameter: reasoning.summary","type":"invalid_request_error"}}`, "reasoning.summary"},
 		{"unrelated", `{"error":{"message":"model unavailable","type":"invalid_request_error"}}`, "model unavailable"},
 	} {
@@ -178,8 +178,8 @@ func TestUnsupportedSummaryHTTP400CannotExecuteTool(t *testing.T) {
 					t.Errorf("fabricated output/tool event: %s", ev.Type)
 				}
 			}
-			if result == nil || result.Stop != session.StopError || !strings.Contains(result.Error, tc.want) {
-				t.Errorf("result = %+v, want %q", result, tc.want)
+			if result == nil || result.Stop != session.StopError || !strings.Contains(result.Error, "provider request failed (400 Bad Request)") || strings.Contains(result.Error, tc.private) {
+				t.Errorf("result = %+v, want safe 400 without provider body %q", result, tc.private)
 			}
 			if requests != 1 || counter.calls != 0 {
 				t.Errorf("requests = %d, tool executions = %d, want 1 and 0", requests, counter.calls)

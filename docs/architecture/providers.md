@@ -144,9 +144,9 @@ and model-aware, and the `(thinking,signature[],redacted)` reasoning-replay list
 into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction, not in
 the DTO. Anthropic model listings preserve the difference between missing thinking
 metadata and explicit unsupported metadata. Explicitly reported adaptive or manual
-support selects the corresponding mode; an explicit unsupported result disables
-thinking. When thinking metadata is missing, the Messages adapter uses model-ID
-fallback: Claude 5 Opus, Sonnet, Fable, and Mythos use adaptive thinking with
+support selects the corresponding mode; an explicit unsupported result omits
+Mecatl's thinking field. When metadata is missing, the Messages adapter uses
+model-ID fallback: Claude 5 Opus, Sonnet, Fable, and Mythos use adaptive thinking with
 summarized display, including exact `anthropic/claude-...` OpenRouter IDs. Older
 thinking-capable models retain their manual-budget mode, and incapable models
 omit thinking. A configured reasoning effort remains on the request when the

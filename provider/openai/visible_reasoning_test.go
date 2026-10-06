@@ -62,7 +62,7 @@ func TestVisibleReasoning_Scenario3_SummaryRequestAndReplayFields(t *testing.T) 
 }
 
 func TestVisibleReasoning_Scenario3_UnsupportedSummaryCompatibility(t *testing.T) {
-	for _, tc := range []struct{ name, body, want string }{
+	for _, tc := range []struct{ name, body, private string }{
 		{"unsupported", `{"error":{"message":"Unsupported parameter: reasoning.summary","type":"invalid_request_error"}}`, "reasoning.summary"},
 		{"unrelated", `{"error":{"message":"model is unavailable","type":"invalid_request_error"}}`, "model is unavailable"},
 	} {
@@ -101,8 +101,8 @@ func TestVisibleReasoning_Scenario3_UnsupportedSummaryCompatibility(t *testing.T
 				chunks++
 				t.Errorf("fabricated chunk: %+v", chunk)
 			}
-			if gotErr == nil || !strings.Contains(gotErr.Error(), tc.want) {
-				t.Errorf("error = %v, want %q", gotErr, tc.want)
+			if gotErr == nil || !strings.Contains(gotErr.Error(), "provider request failed (400 Bad Request)") || strings.Contains(gotErr.Error(), tc.private) {
+				t.Errorf("error = %v, want safe 400 without provider body %q", gotErr, tc.private)
 			}
 			if chunks != 0 || count != 1 {
 				t.Errorf("chunks = %d, requests = %d, want 0 and 1", chunks, count)
