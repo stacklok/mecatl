@@ -129,6 +129,12 @@ function accountAccess(store: Pick<Storage, "getItem"> | null | undefined): Acco
   return store === shared ? "verified" : markerAccess(store);
 }
 
+/** Persistent recovery requires this tab's reconciled identity, never a shared marker alone. */
+export function verifiedPersistentAccount(store: Pick<Storage, "getItem">): string | undefined {
+  if (!volatileAccount || quarantined || peerQuarantined) return undefined;
+  return accountAccess(store) === "verified" ? volatileAccount : undefined;
+}
+
 export function clearUserScopedStorage(
   store: Store | undefined = browserStorage(),
   sessionStore: Store | undefined = browserSessionStorage(),

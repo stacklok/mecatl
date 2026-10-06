@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -24,19 +26,25 @@ const baseBanner: StatusBannerInput = {
 };
 
 function renderShell(banner: StatusBannerInput = baseBanner) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  client.setQueryData<unknown>(getRuntimeOptions().queryKey, { experimentalWriter: false });
   return renderToStaticMarkup(
-    <AuthRecoveryContext.Provider
-      value={{
-        banner,
-        loginUrl: "/api/v1/auth/login?return_to=%2Fworkspace%2Fchat",
-        phase: "sign-in",
-        popupIssue: null,
-        retrySession: () => {},
-        startPopupLogin: () => {},
-      }}
-    >
-      <WorkspaceShell />
-    </AuthRecoveryContext.Provider>,
+    <QueryClientProvider client={client}>
+      <AuthRecoveryContext.Provider
+        value={{
+          banner,
+          loginUrl: "/api/v1/auth/login?return_to=%2Fworkspace%2Fchat",
+          phase: "sign-in",
+          popupIssue: null,
+          retrySession: () => {},
+          startPopupLogin: () => {},
+        }}
+      >
+        <WorkspaceShell />
+      </AuthRecoveryContext.Provider>
+    </QueryClientProvider>,
   );
 }
 

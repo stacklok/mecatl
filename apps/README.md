@@ -26,6 +26,7 @@ The design and its rationale are in
 [ADR 0351](../docs/adr/0351-mecatl-studio-in-repo-web-ui.md); the acceptance contract is
 [docs/acceptance/studio-bootstrap.md](../docs/acceptance/studio-bootstrap.md); the
 architecture guide has a [Mecatl Studio](../docs/architecture.md#mecatl-studio) section.
+The [Writer experiment](../docs/experimental/writer.md) describes the opt-in writing mode.
 Two rules from the ADR shape everything here:
 
 - **Published SDK only.** `apps/` depends on `@stacklok-oss/mecatl-sdk` by a semver range
@@ -65,6 +66,23 @@ pnpm dev
 Set a provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`) in
 that shell first; the spawned daemon inherits it. `MECATL_DEV_MOCK=1` spawns
 `mecated --mock` instead, for UI work without a model.
+
+### Try Writer locally
+
+Writer is a default-off, non-production Spike authorized by the operator, not one of the
+acceptance-plan feature implementations described above. Use Node 24 and the pinned
+pnpm version, with `bin/mecated` built as in spawn mode and a configured provider:
+
+```sh
+# from the repository root; build bin/mecated first if it is missing
+STUDIO_EXPERIMENTAL_WRITER=1 task studio:dev
+```
+
+Open <http://127.0.0.1:18473/workspace/writer>. Mock mode can exercise UI plumbing but
+does not evaluate the quality of Writer's questions. Use non-sensitive, self-authored
+text and download it before leaving. The [Studio user guide](../user-docs/building/deployment/studio.md#try-the-writer-experiment)
+owns the workflow and privacy guidance; the [experiment design](../docs/experimental/writer.md)
+owns the hypothesis, boundaries, and stop conditions.
 
 ### The gates
 

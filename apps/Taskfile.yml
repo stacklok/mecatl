@@ -47,13 +47,13 @@ tasks:
       - pnpm run test
 
   browser:install:
-    desc: Install the pinned Chromium revision for offline Studio browser journeys
+    desc: Install the pinned Chromium and Firefox revisions for offline Studio browser journeys
     deps: [install]
     cmds:
-      - pnpm exec playwright install chromium
+      - pnpm exec playwright install chromium firefox
 
   browser:
-    desc: Run offline Vite browser journeys at desktop and mobile widths
+    desc: Run offline Chromium desktop/mobile and focused Firefox desktop Writer browser journeys
     deps: [install]
     cmds:
       - pnpm run test:browser

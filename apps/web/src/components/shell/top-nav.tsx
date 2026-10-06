@@ -11,8 +11,9 @@ import { navItems } from "./nav-items";
  * live in Settings or a conditional banner instead), matching Studio's
  * "the top nav carries no status chips" rule.
  */
-export function TopNav() {
+export function TopNav({ experimentalWriter = false }: { experimentalWriter?: boolean }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const visibleItems = navItems.filter((item) => item.key !== "writer" || experimentalWriter);
 
   return (
     <header className="flex min-h-16 shrink-0 items-center justify-between gap-1 px-2.5 min-[500px]:gap-3 min-[500px]:px-5">
@@ -30,7 +31,7 @@ export function TopNav() {
 
       <div className="flex min-w-0 items-center gap-1 min-[500px]:gap-3 min-[900px]:gap-5">
         <nav aria-label="Main navigation" className="flex min-w-0 items-center gap-0.5">
-          {navItems.map((item) => {
+          {visibleItems.map((item) => {
             const active = pathname === item.to || pathname.startsWith(`${item.to}/`);
             const Icon = item.icon;
 

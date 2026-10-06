@@ -123,21 +123,24 @@ export function ModelEffortMenu({
 }
 
 /**
- * The Model submenu's body: a filter input (matching the model's own label
- * or its provider) above the grouped, checkable list — for a catalogue too
- * long to scan by scrolling alone.
+ * The Model submenu's body: a filter input (matching a model's label, ID,
+ * or provider) above the grouped, checkable list — for a catalogue too long
+ * to scan by scrolling alone.
  */
-function ModelFilterList({
+export function ModelFilterList({
+  defaultLabel = "Default",
   groupedModels,
   model,
   onModelChange,
 }: {
+  defaultLabel?: string;
   groupedModels: Map<string, ComposerModelOption[]>;
   model?: { id: string; providerId: string };
   onModelChange: (model: { id: string; providerId: string } | undefined) => void;
 }) {
   const [filter, setFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   // The submenu grabs initial focus for its own items; steal it back for the filter input.
   useEffect(() => {
     inputRef.current?.focus();
@@ -153,25 +156,37 @@ function ModelFilterList({
             ? models.filter(
                 (candidate) =>
                   candidate.label.toLocaleLowerCase().includes(normalized) ||
+                  candidate.id.toLocaleLowerCase().includes(normalized) ||
+                  providerId.toLocaleLowerCase().includes(normalized) ||
                   humanize(providerId).toLocaleLowerCase().includes(normalized),
               )
             : models,
         ] as const,
     )
     .filter(([, models]) => models.length > 0);
-  const showDefault = !normalized || "default".includes(normalized);
+  const showDefault =
+    !normalized ||
+    defaultLabel.toLocaleLowerCase().includes(normalized) ||
+    "default".includes(normalized);
 
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2.5 py-2">
         <Search aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         <input
+          aria-label="Filter models"
           className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
           onChange={(event) => setFilter(event.target.value)}
           onKeyDown={(event) => {
-            // Let Escape (close the whole menu) and Enter (Radix's own commit
-            // key) through; everything else is this input's own business,
-            // not the menu's roving-focus / type-ahead navigation.
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              event.stopPropagation();
+              const items = listRef.current?.querySelectorAll<HTMLElement>("[role=menuitem]");
+              items?.[event.key === "ArrowDown" ? 0 : items.length - 1]?.focus();
+              return;
+            }
+            // Escape closes the menu; other input remains local so its text
+            // does not drive menu type-ahead.
             if (event.key !== "Escape" && event.key !== "Enter") event.stopPropagation();
           }}
           placeholder="Filter models…"
@@ -179,14 +194,14 @@ function ModelFilterList({
           value={filter}
         />
       </div>
-      <div className="max-h-64 overflow-y-auto p-1">
+      <div className="max-h-64 overflow-y-auto p-1" ref={listRef}>
         {showDefault && (
           <DropdownMenuItem onSelect={() => onModelChange(undefined)}>
             <Check
               aria-hidden="true"
               className={cn("size-3.5", model !== undefined && "invisible")}
             />
-            Default
+            {defaultLabel}
           </DropdownMenuItem>
         )}
         {filteredGroups.map(([providerId, models]) => (

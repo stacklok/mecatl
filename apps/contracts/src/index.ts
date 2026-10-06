@@ -10,3 +10,4 @@ export * from "./schemas/schedules.ts";
 export * from "./schemas/settings.ts";
 export * from "./schemas/status.ts";
 export * from "./schemas/storage.ts";
+export * from "./schemas/writer.ts";
