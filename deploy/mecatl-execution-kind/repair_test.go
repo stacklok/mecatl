@@ -1,10 +1,13 @@
 package executionkind_test
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-yaml"
 )
@@ -23,7 +26,7 @@ func scriptRange(t *testing.T, file, start, end string) string {
 	return body[i:j]
 }
 
-func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
+func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 	create := scriptRange(t, "run.sh", "kind_config=\n", "\nphase_done cluster")
 	for _, profile := range []string{"production", "development"} {
 		t.Run(profile, func(t *testing.T) {
@@ -52,8 +55,8 @@ func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
 			if err := yaml.Unmarshal(data, &cluster); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != 1 {
-				t.Fatalf("production Kind kubelet patch missing: %+v", cluster.Nodes)
+			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != 2 {
+				t.Fatalf("production Kind sync patches missing: %+v", cluster.Nodes)
 			}
 			var patch struct {
 				APIVersion    string `yaml:"apiVersion"`
@@ -66,7 +69,114 @@ func TestProductionKindUsesShorterKubeletSyncOnlyInFixture(t *testing.T) {
 			if patch.APIVersion != "kubelet.config.k8s.io/v1beta1" || patch.Kind != "KubeletConfiguration" || patch.SyncFrequency != "5s" {
 				t.Fatalf("production Kind kubelet patch = %+v", patch)
 			}
+			var controller struct {
+				APIVersion        string `yaml:"apiVersion"`
+				Kind              string `yaml:"kind"`
+				ControllerManager struct {
+					ExtraArgs map[string]string `yaml:"extraArgs"`
+				} `yaml:"controllerManager"`
+			}
+			if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[1]), &controller); err != nil {
+				t.Fatal(err)
+			}
+			if controller.APIVersion != "kubeadm.k8s.io/v1beta3" || controller.Kind != "ClusterConfiguration" || len(controller.ControllerManager.ExtraArgs) != 1 || controller.ControllerManager.ExtraArgs["resource-quota-sync-period"] != "10s" {
+				t.Fatalf("production Kind controller-manager patch = %+v", controller)
+			}
 		})
+	}
+}
+
+func TestLegacyFixtureDeploymentStepsMeasureBuildSeedAndPodReadiness(t *testing.T) {
+	production := scriptRange(t, "run.sh", "if [ \"${MECATL_EXECUTION_QUAL_PROFILE:-development}\" = production ]; then\n  # Establish", "\nkube -n execution-qualification create configmap execution-mock")
+	root := t.TempDir()
+	clock := filepath.Join(root, "clock")
+	writeFixture(t, clock, "10\n", 0o600)
+	out, err := runStep(t, root, `
+kube() { printf 'kube %s\n' "$*"; }
+dev() { case "$1" in go) printf 'build\n' ;; env) printf 'seed\n' ;; *) return 1 ;; esac; }
+date() { read -r n < "$CLOCK"; n=$((n+1)); printf '%s\n' "$n" > "$CLOCK"; printf '%s\n' "$n"; }
+`+production, "CLOCK="+clock, "MECATL_EXECUTION_QUAL_PROFILE=production")
+	if err != nil {
+		t.Fatalf("legacy fixture steps: %v: %s", err, out)
+	}
+	log := string(out)
+	built := strings.Index(log, "build\n")
+	buildTime := strings.Index(log, "qualification deployment_step=legacyfixture_build elapsed=1s\n")
+	seed := strings.Index(log, "seed\n")
+	seedTime := strings.Index(log, "qualification deployment_step=legacyfixture_seed elapsed=1s\n")
+	pods := strings.Index(log, "kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration")
+	ready := strings.Index(log, "qualification deployment_step=legacyfixture_pods_ready elapsed=1s\n")
+	if built < 0 || buildTime <= built || seed <= buildTime || seedTime <= seed || pods <= seedTime || ready <= pods {
+		t.Fatalf("build, seed and Pod readiness timings must bracket their respective steps: %s", out)
+	}
+}
+
+func TestQualificationTestBinaryWaitAndWorkingDirectory(t *testing.T) {
+	build := scriptRange(t, "run.sh", "test_build_start=$(date +%s)", "\nkube create namespace execution-qualification")
+	run := scriptRange(t, "run.sh", "test_build_wait_start=$(date +%s)", "\nphase_done tests")
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "compiled", true: "build-failed"}[failed], func(t *testing.T) {
+			root := t.TempDir()
+			state := filepath.Join(root, "state")
+			for _, dir := range []string{"bin", "state", "e2e/k8s_execution"} {
+				if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			binary := filepath.Join(state, "qualification.test")
+			writeFixture(t, binary, "#!/bin/sh\nprintf 'stale executed\\n'\n", 0o700)
+			writeFixture(t, filepath.Join(root, "fresh.test"), "#!/bin/sh\nprintf 'cwd=%s args=%s profile=%s\\n' \"$PWD\" \"$*\" \"$MECATL_EXECUTION_QUAL_PROFILE\"\n", 0o700)
+			builder := `#!/bin/sh
+set -eu
+test "$*" = "test -c -tags kind_execution_e2e -o $HOME/state/qualification.test ./e2e/k8s_execution"
+`
+			if failed {
+				builder += "exit 17\n"
+			} else {
+				builder += "cp \"$HOME/fresh.test\" \"$HOME/state/qualification.test\"\n"
+			}
+			writeFixture(t, filepath.Join(root, "bin/go"), builder, 0o700)
+			out, err := runStep(t, root, `
+set -eu
+dev() { (cd "$root" && "$@"); }
+`+build+"\n"+run, "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"), "root="+root, "state="+state, "kubeconfig="+filepath.Join(state, "kubeconfig"), "context=owned", "MECATL_EXECUTION_DEV_TOOLBOX=", "MECATL_EXECUTION_QUAL_PROFILE=production")
+			if failed {
+				if err == nil || strings.Contains(string(out), "stale executed") || strings.Contains(string(out), "cwd=") {
+					t.Fatalf("failed test build executed binary: %v: %s", err, out)
+				}
+				return
+			}
+			want := "cwd=" + filepath.Join(root, "e2e/k8s_execution") + " args=-test.v -test.count=1 -test.timeout=45m profile=production"
+			if err != nil || !strings.Contains(string(out), want) || strings.Contains(string(out), "stale executed") {
+				t.Fatalf("test binary ran from wrong directory or lost test flags: %v: %s", err, out)
+			}
+		})
+	}
+}
+
+func TestQualificationEarlyFailureStopsBuildBeforeDiagnostics(t *testing.T) {
+	cleanup := scriptRange(t, "run.sh", "test_build_pid=\ncleanup_test_build()", "\nexport KUBECONFIG")
+	build := scriptRange(t, "run.sh", "test_build_start=$(date +%s)", "\nkube create namespace execution-qualification")
+	root := t.TempDir()
+	for _, dir := range []string{"bin", "state", "deploy/mecatl-execution-kind"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture(t, filepath.Join(root, "bin/go"), "#!/bin/sh\nprintf 'build-start\\n' >> \"$HOME/events\"\nexec sleep 5\n", 0o700)
+	writeFixture(t, filepath.Join(root, "deploy/mecatl-execution-kind/collect-failure.sh"), "#!/bin/sh\nprintf 'collect\\n' >> \"$HOME/events\"\n", 0o700)
+	started := time.Now()
+	out, err := runStep(t, root, "set -eu\nkind() { printf 'delete\\n' >> \"$HOME/events\"; }\n"+cleanup+"\n"+build+`
+while [ ! -f "$HOME/events" ]; do sleep 0.01; done
+exit 17
+`, "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"), "root="+root, "state="+filepath.Join(root, "state"), "cluster=owned", "kubeconfig="+filepath.Join(root, "state/kubeconfig"), "context=kind-owned", "MECATL_EXECUTION_DEV_TOOLBOX=", "MECATL_EXECUTION_QUAL_CI=1")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 17 || time.Since(started) >= 4*time.Second {
+		t.Fatalf("early failure delayed or masked: %v: %s", err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "events"))
+	if err != nil || string(data) != "build-start\ncollect\ndelete\n" {
+		t.Fatalf("build must stop before evidence and cleanup: %q: %v: %s", data, err, out)
 	}
 }
 
