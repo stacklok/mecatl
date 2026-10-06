@@ -78,6 +78,7 @@ type invalidThenBlockingReviewProvider struct {
 	calls      int
 	firstDelay time.Duration
 	remaining  []time.Duration
+	deadlines  []time.Time
 }
 
 func (*invalidThenBlockingReviewProvider) Capabilities() port.ProviderCapabilities {
@@ -87,6 +88,7 @@ func (p *invalidThenBlockingReviewProvider) Stream(ctx context.Context, _ port.L
 	p.calls++
 	deadline, _ := ctx.Deadline()
 	p.remaining = append(p.remaining, time.Until(deadline))
+	p.deadlines = append(p.deadlines, deadline)
 	if p.calls == 1 {
 		if p.firstDelay > 0 {
 			<-time.After(p.firstDelay)
@@ -256,7 +258,7 @@ func TestADR_0363_ContextualGuardrails_Scenario2_TotalBudget(t *testing.T) {
 	started := time.Now()
 	reviewerWithDeadline := &contextualToolReviewer{engine: agent.NewEngine(deps), checkerProviderID: "mock", checkerModelID: "review-model", deadline: 20 * time.Millisecond, diagnostics: port.NopDiagnostics{}}
 	result, _, err = reviewerWithDeadline.Review(context.Background(), reviewRequestWithoutEvidence(), nil)
-	if err == nil || result.Assessment != agent.ReviewUnresolved || sharedDeadlineProvider.calls != 2 || time.Since(started) > time.Second || reviewFailureCodeForTest(err) != agent.ReviewFailureTimeout {
+	if err == nil || result.Assessment != agent.ReviewUnresolved || sharedDeadlineProvider.calls != 2 || len(sharedDeadlineProvider.deadlines) != 2 || !sharedDeadlineProvider.deadlines[0].Equal(sharedDeadlineProvider.deadlines[1]) || time.Since(started) > time.Second || reviewFailureCodeForTest(err) != agent.ReviewFailureTimeout {
 		t.Fatalf("shared deadline result=%+v err=%v calls=%d elapsed=%s", result, err, sharedDeadlineProvider.calls, time.Since(started))
 	}
 

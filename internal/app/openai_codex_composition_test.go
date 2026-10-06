@@ -484,6 +484,11 @@ func TestADR_0104_OpenAICodexSecretSentinels(t *testing.T) {
 		t.Fatalf("read rejected Codex relay: %v", readErr)
 	}
 	addArtifact("service relay", relayBody)
+	for _, want := range []string{"manual access token was rejected", "auth.yaml", "restart"} {
+		if !strings.Contains(string(relayBody), want) {
+			t.Errorf("rejected Codex HTTP/SSE relay missing %q", want)
+		}
+	}
 	built.Close()
 
 	store, err := jsonlstore.New(storeDir)

@@ -2770,6 +2770,12 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 	stop := session.StopNone
 
 	for chunk, cerr := range seq {
+		// Usage is accounting, even when a buffered stream arrives after cancel.
+		// Fold it before either terminal check; never interpret semantic chunks on
+		// a cancelled context.
+		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+			usage = usage.Add(*chunk.Usage)
+		}
 		if cerr != nil {
 			return session.Message{}, usage, stop, turnTiming{}, fmt.Errorf("agent: stream: %w", cerr)
 		}
@@ -2821,10 +2827,6 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 			noteFirstOutput()
 			if chunk.ToolCall != nil {
 				calls = append(calls, *chunk.ToolCall)
-			}
-		case port.ChunkUsage:
-			if chunk.Usage != nil {
-				usage = usage.Add(*chunk.Usage)
 			}
 		case port.ChunkProviderRoute:
 			// The downstream provider slug that routed this turn (issue #480).

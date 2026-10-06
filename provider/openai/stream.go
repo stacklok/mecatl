@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -73,10 +77,9 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 // with no real client.
 //
 // A terminal failure event (the top-level "error" event, or a "response.failed"
-// status) is reported as a non-nil error carrying the provider's human-readable
-// message rather than as a bare StopError chunk: the loop surfaces a stream
-// error verbatim, so the real reason ("rate_limit_exceeded: ...", "<model> is
-// not a valid model ID", ...) reaches the result instead of an opaque "error".
+// status) returns a non-nil error with a closed, harness-authored display category.
+// Raw provider fields remain private classification inputs and metadata; they
+// must not reach the loop's verbatim error projection.
 //
 // Unknown / unhandled event types (the long tail of audio, image, web/file
 // search, MCP, reasoning-part, content-part, *.added / in_progress, etc.) are
@@ -93,7 +96,7 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 //   - response.output_item.done (function_call) -> ChunkToolCall
 //   - response.completed                    -> ChunkReasoningItem (packed)? then ChunkUsage, ChunkDone(end_turn)
 //   - response.incomplete                   -> ChunkUsage then ChunkDone(error)
-//   - response.failed / error               -> non-nil error (provider message)
+//   - response.failed / error               -> non-nil error (safe category/status display)
 //
 // The reasoning summary deltas (ChunkReasoning) and the reasoning replay blob
 // (ChunkReasoningItem) are deliberately distinct: the summary is human-readable
@@ -220,7 +223,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		return nil, &responseStreamError{
-			msg:      "response failed: " + responseErrorString(event.Response.Error),
+			msg:      event.Response.Error.Message,
 			status:   providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
 			metadata: responseErrorMetadata(event.Response.Error, event.Response.ID),
 		}
@@ -233,9 +236,10 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		return nil, &responseStreamError{
-			msg:      "stream error: " + streamErrorString(event),
-			status:   providerErrorStatus(event.Code, event.Message),
-			metadata: streamErrorMetadata(event.Code, event.Message, st.responseID),
+			msg:           event.Message,
+			paramOverflow: isContextOverflowMessage(event.Param),
+			status:        providerErrorStatus(event.Code, event.Message),
+			metadata:      streamErrorMetadata(event.Code, event.Message, st.responseID),
 		}
 
 	default:
@@ -278,21 +282,6 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 	), nil
 }
 
-// responseErrorString renders a Responses ResponseError (on a failed response)
-// as "code: message", tolerating either part being absent.
-func responseErrorString(e responses.ResponseError) string {
-	switch {
-	case e.Message != "" && e.Code != "":
-		return fmt.Sprintf("%s: %s", e.Code, e.Message)
-	case e.Message != "":
-		return e.Message
-	case e.Code != "":
-		return string(e.Code)
-	default:
-		return "unknown error"
-	}
-}
-
 func observedResponseID(event responses.ResponseStreamEventUnion) string {
 	switch event.Type {
 	case "response.created", "response.in_progress", "response.completed", "response.incomplete", "response.failed", "response.queued":
@@ -318,47 +307,45 @@ func streamErrorMetadata(code, message, responseID string) providerErrorMetadata
 	return metadata
 }
 
-// streamErrorString renders a top-level "error" event union as "code: message",
-// optionally appending the offending param, tolerating absent parts.
-func streamErrorString(event responses.ResponseStreamEventUnion) string {
-	msg := event.Message
-	switch {
-	case msg != "" && event.Code != "":
-		msg = fmt.Sprintf("%s: %s", event.Code, msg)
-	case msg == "" && event.Code != "":
-		msg = event.Code
-	case msg == "":
-		msg = "unknown error"
-	}
-	if event.Param != "" {
-		msg = fmt.Sprintf("%s (param: %s)", msg, event.Param)
-	}
-	return msg
-}
-
-// responseStreamError is a typed error returned by the stream translator for
-// response.failed and top-level error events. It preserves the original
-// human-readable message AND carries an HTTP-status equivalent so the
-// llmresilience DefaultClassifier (which checks for interface{ StatusCode() int })
-// can classify transient codes (e.g. 429 rate-limit) as retryable.
-//
-// The human-readable Error() string retains the in-band event text. Structured
-// HTTP rejections add only the safe target/ID projection in httpMetadataError.
+// Provider error metadata is programmatic only; arbitrary provider strings must
+// not be copied into display, logs, or events without their own sanitization.
 type providerErrorMetadata struct {
 	httpStatus      int
 	inBandStatus    int
 	providerCode    string
 	correlationKind string
 	correlationID   string
+	retryNotBefore  time.Time
+	hasRetryAfter   bool
 }
 
 type responseStreamError struct {
-	msg      string // human-readable, e.g. "response failed: rate_limit_exceeded: Too Many Requests"
-	status   int    // HTTP-status equivalent; 0 means unknown/non-retryable
-	metadata providerErrorMetadata
+	msg           string // private raw classification input; never rendered
+	status        int    // HTTP-status equivalent; 0 means unknown/non-retryable
+	metadata      providerErrorMetadata
+	paramOverflow bool // preserve classification without retaining or formatting raw param
 }
 
-func (e *responseStreamError) Error() string             { return e.msg }
+func (e *responseStreamError) Error() string {
+	if isContextOverflowMessage(e.metadata.providerCode) {
+		return "provider request failed: context window exceeded"
+	}
+	switch e.metadata.providerCode {
+	case "content_filter", "content_policy_violation":
+		return "provider request failed: content filter blocked the response"
+	case "context_length_exceeded":
+		return "provider request failed: context window exceeded"
+	case "invalid_request_error", "invalid_prompt":
+		return "provider request failed: invalid request"
+	case "invalid_encrypted_content":
+		return "provider request failed: invalid encrypted content"
+	default:
+		if e.paramOverflow {
+			return "provider request failed: context window exceeded"
+		}
+		return providerErrorText(e.status, e.msg)
+	}
+}
 func (e *responseStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
 func (e *responseStreamError) ProviderInBandStatus() int { return e.metadata.inBandStatus }
 func (e *responseStreamError) ProviderErrorCode() string { return e.metadata.providerCode }
@@ -382,33 +369,33 @@ func (e *httpMetadataError) ProviderInBandStatus() int            { return e.met
 func (e *httpMetadataError) ProviderErrorCode() string            { return e.metadata.providerCode }
 func (e *httpMetadataError) ProviderErrorCorrelationKind() string { return e.metadata.correlationKind }
 func (e *httpMetadataError) ProviderErrorCorrelationID() string   { return e.metadata.correlationID }
+func (e *httpMetadataError) RetryNotBefore() (time.Time, bool) {
+	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
+}
 
-func structuredHTTPErrorText(code, kind, message string) string {
-	label := strings.TrimSpace(code)
-	if label == "" {
-		label = strings.TrimSpace(kind)
+// providerErrorText renders only harness/standard-library text. Raw messages
+// remain private classification inputs, never display fragments.
+func providerErrorText(status int, message string) string {
+	if isContextOverflowMessage(message) {
+		return "provider request failed: context window exceeded"
 	}
-	message = strings.TrimSpace(message)
-	switch {
-	case label != "" && message != "":
-		return label + ": " + message
-	case label != "":
-		return label
-	case message != "":
-		return message
-	default:
-		return "provider request failed"
+	if text := http.StatusText(status); text != "" {
+		return fmt.Sprintf("provider request failed (%d %s)", status, text)
 	}
+	return "provider request failed"
 }
 
 func withHTTPErrorMetadata(err error) error {
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) {
-		return err
+		return &httpMetadataError{err: err, message: "provider request failed"}
 	}
 	metadata := providerErrorMetadata{
 		httpStatus:   apiErr.StatusCode,
 		providerCode: apiErr.Code,
+	}
+	if apiErr.Response != nil {
+		metadata.retryNotBefore, metadata.hasRetryAfter = parseRetryAfter(apiErr.Response.Header, time.Now())
 	}
 	requestID := ""
 	if apiErr.Response != nil {
@@ -420,7 +407,7 @@ func withHTTPErrorMetadata(err error) error {
 	}
 	return &httpMetadataError{
 		err:      err,
-		message:  port.AppendHTTPErrorDisplay(structuredHTTPErrorText(apiErr.Code, apiErr.Type, apiErr.Message), apiErr.Request, requestID),
+		message:  port.AppendHTTPErrorDisplay(providerErrorText(apiErr.StatusCode, apiErr.Message), apiErr.Request, requestID),
 		metadata: metadata,
 	}
 }
@@ -432,13 +419,46 @@ func (e *responseStreamError) StatusCode() int { return e.status }
 
 // RetryDisposition implements session.RetryDispositionError.
 func (e *responseStreamError) RetryDisposition() session.RetryDisposition {
-	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+	if e.paramOverflow || isContextOverflowMessage(e.msg) || isContextOverflowMessage(e.metadata.providerCode) || e.status != 0 && !retryableStatus(e.status) {
 		return session.RetryDispositionPermanent
 	}
 	if retryableStatus(e.status) {
 		return session.RetryDispositionRetryable
 	}
 	return session.RetryDispositionUnknown
+}
+
+var retryAfterHorizon = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+func parseRetryAfter(header http.Header, received time.Time) (time.Time, bool) {
+	values := header.Values("Retry-After")
+	if len(values) != 1 {
+		return time.Time{}, false
+	}
+	value := values[0]
+	if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		// The digit check above leaves only overflow as a parse failure.
+		if err != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
+			return retryAfterHorizon, true
+		}
+		at := received.Add(time.Duration(seconds) * time.Second)
+		if !at.Before(retryAfterHorizon) {
+			return retryAfterHorizon, true
+		}
+		return at, true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if at.Before(received) {
+		return received, true
+	}
+	if !at.Before(retryAfterHorizon) {
+		return retryAfterHorizon, true
+	}
+	return at, true
 }
 
 // retryableStatus reports whether an HTTP status code is transient (worthy of
@@ -542,15 +562,8 @@ func incompleteReason(r responses.Response) string {
 	return string(r.Status)
 }
 
-// incompleteMessage renders a human-readable terminal message for a
-// response.incomplete event, keyed on the incomplete_details.reason. The loop
-// prefixes this with "agent: stream: ", so it reads naturally lowercased after
-// that prefix. The raw reason token is kept visible in every branch for
-// diagnosability, and an unknown/future reason falls back to the plain
-// "response incomplete: <reason>" form (forward-compatible — the reason enum is
-// never hard-coded exhaustively). This is a presentation choice only: it does
-// NOT affect retry classification (the caller returns the bare, non-retryable
-// error verbatim alongside the usage chunk).
+// incompleteMessage renders known reasons using harness-authored text. Unknown
+// reasons are untrusted and must not be reflected into terminal errors.
 func incompleteMessage(r responses.Response) string {
 	reason := incompleteReason(r)
 	switch reason {
@@ -564,7 +577,7 @@ func incompleteMessage(r responses.Response) string {
 		return "the response was cut off at the provider's max output token limit " +
 			"(reason: max_output_tokens)."
 	default:
-		return fmt.Sprintf("response incomplete: %s", reason)
+		return "response incomplete: unknown reason"
 	}
 }
 

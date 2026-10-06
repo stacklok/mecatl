@@ -1,6 +1,9 @@
 package keymap
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseUnknownAction(t *testing.T) {
 	_, err := Parse(map[string][]string{"Bogus": {"ctrl+a"}})
@@ -63,8 +66,8 @@ func TestValidateOverlayCollision(t *testing.T) {
 
 func TestValidateGlobalCollision(t *testing.T) {
 	res, err := Parse(map[string][]string{
-		"Agents":      {"ctrl+a"},
-		"ExpandTools": {"ctrl+a"},
+		"Agents":    {"ctrl+a"},
+		"Toolcalls": {"ctrl+a"},
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -223,5 +226,105 @@ func TestValidateRawArgsRefreshRebindDisjoint(t *testing.T) {
 				t.Fatal("validate should reject the RawArgs/Refresh overlap")
 			}
 		})
+	}
+}
+
+func TestToolcallsValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   map[string][]string
+		ok   bool
+	}{
+		{"defaults", map[string][]string{}, true},
+		{"toolcalls overlaps rebound allow", map[string][]string{"Toolcalls": {"ctrl+t"}, "Allow": {"ctrl+t"}}, false},
+		{"toolcalls overlaps default allow", map[string][]string{"Toolcalls": {"enter"}}, false},
+		{"toolcalls overlaps default deny", map[string][]string{"Toolcalls": {"esc"}}, false},
+		{"toolcalls overlaps default always allow", map[string][]string{"Toolcalls": {"w"}}, false},
+		{"toolcalls has safe chord", map[string][]string{"Toolcalls": {"ctrl+f4"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(res); (err == nil) != tc.ok {
+				t.Fatalf("validate = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestToolcallsValidationRejectsApprovalDetailAndNavigationCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		in    map[string][]string
+		other string
+	}{
+		{"RawArgs default", map[string][]string{"Toolcalls": {"r"}}, "RawArgs"},
+		{"RawArgs rebind", map[string][]string{"Toolcalls": {"ctrl+f4"}, "RawArgs": {"ctrl+f4"}}, "RawArgs"},
+		{"tab", map[string][]string{"Toolcalls": {"tab"}}, "Tab"},
+		{"left", map[string][]string{"Toolcalls": {"left"}}, "Left"},
+		{"right", map[string][]string{"Toolcalls": {"right"}}, "Right"},
+		{"down", map[string][]string{"Toolcalls": {"down"}}, "Down"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = Validate(res)
+			if err == nil || !strings.Contains(err.Error(), `"Toolcalls" and "`+tc.other+`"`) {
+				t.Fatalf("Validate(%v) = %v, want Toolcalls/%s collision", tc.in, err, tc.other)
+			}
+		})
+	}
+}
+
+func TestValidateConversationActionsAgainstDefaultGlobals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   map[string][]string
+	}{
+		{"toolcalls overlaps default agents", map[string][]string{"Toolcalls": {"f6"}}},
+		{"expand conversation overlaps default toolcalls", map[string][]string{"ExpandConversation": {"ctrl+t"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(res); err == nil {
+				t.Fatal("validate must reject a conversation action that shadows a default global chord")
+			}
+		})
+	}
+}
+
+func TestExpandConversationGlobalValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   map[string][]string
+		ok   bool
+	}{
+		{"bare rune", map[string][]string{"ExpandConversation": {"x"}}, false},
+		{"global collision", map[string][]string{"ExpandConversation": {"ctrl+f9"}, "Agents": {"ctrl+f9"}}, false},
+		{"safe function key", map[string][]string{"ExpandConversation": {"f9"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(res); (err == nil) != tc.ok {
+				t.Fatalf("validate = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestParseRejectsDeprecatedExpandTools(t *testing.T) {
+	_, err := Parse(map[string][]string{"ExpandTools": {"ctrl+t"}})
+	if err == nil || !strings.Contains(err.Error(), `unknown action "ExpandTools"`) {
+		t.Fatalf("Parse deprecated alias error = %v, want unknown action", err)
 	}
 }

@@ -79,7 +79,7 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	if !errors.As(streamErr, &preserved) {
 		t.Fatal("errors.As did not preserve the original SDK error")
 	}
-	if got, want := streamErr.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/chat/completions; request ID: req_409)"; got != want {
+	if got, want := streamErr.Error(), "provider request failed (400 Bad Request) (target: "+srv.URL+"/v1/chat/completions; request ID: req_409)"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 	if strings.Contains(streamErr.Error(), "must-not-leak") {
@@ -121,7 +121,7 @@ func TestProviderHTTPErrorOmitsInvalidRequestIDFromDisplay(t *testing.T) {
 	if streamErr == nil {
 		t.Fatal("expected SDK HTTP error")
 	}
-	if got, want := streamErr.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/chat/completions)"; got != want {
+	if got, want := streamErr.Error(), "provider request failed (400 Bad Request) (target: "+srv.URL+"/v1/chat/completions)"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }

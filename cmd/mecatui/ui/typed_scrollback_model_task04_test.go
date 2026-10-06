@@ -134,7 +134,7 @@ func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolSnapshotAdapterPreser
 				t.Run(tc.name, func(t *testing.T) {
 					var c conversation
 					c.addTool("call", tc.tool, tc.args)
-					if tc.result != "" && !c.resolveTool("call", tc.result, tc.isError, tc.artifacts...) {
+					if tc.result != "" && !c.resolveAvailableTool("call", tc.result, tc.isError, tc.artifacts...) {
 						t.Fatal("resolve typed tool")
 					}
 					snapshot := c.scrollback.SnapshotAt(0)
@@ -143,7 +143,8 @@ func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolSnapshotAdapterPreser
 					typed.setWidth(width)
 					legacy := newTestRenderer()
 					legacy.setWidth(width)
-					want := legacy.prepareTypedToolCard(toolCardPresentationFromSnapshot(payload), expand).render()
+					metadata, _ := scrollback.ToolCallMetadataOf(snapshot)
+					want := legacy.prepareTypedToolCard(toolCardPresentationFromSnapshot(payload), projectToolCall(metadata).state).render()
 					if legacy.width > legacy.indent {
 						want = legacy.indentLines(want)
 					}
@@ -288,13 +289,15 @@ func TestMecatuiTypedScrollbackModel_Scenario3_DelegationSnapshotPresentationPar
 		for i := 0; i < c.scrollback.Len(); i++ {
 			snapshot := c.scrollback.SnapshotAt(i)
 			var prepare func(*renderer) string
+			metadata, _ := scrollback.ToolCallMetadataOf(snapshot)
+			state := projectToolCall(metadata).state
 			switch payload := snapshot.Payload.(type) {
 			case scrollback.SubagentCardSnapshot:
 				presentation := subagentCardPresentationFromSnapshot(payload)
-				prepare = func(r *renderer) string { return r.prepareSubagentCard(presentation, expand).render() }
+				prepare = func(r *renderer) string { return r.prepareSubagentCard(presentation, state).render() }
 			case scrollback.TeamCardSnapshot:
 				presentation := teamCardPresentationFromSnapshot(payload)
-				prepare = func(r *renderer) string { return r.prepareTeamCard(presentation, expand).render() }
+				prepare = func(r *renderer) string { return r.prepareTeamCard(presentation, state).render() }
 			default:
 				continue
 			}

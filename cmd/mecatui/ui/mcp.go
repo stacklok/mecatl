@@ -880,9 +880,7 @@ func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, h
 // renderResourcePreview renders a read resource's text in a preview pane. width
 // is the parent card body's effective width; the truncated source is wrapped
 // before the style can pad it.
-// hk carries the LIVE keyMap markings (issue #457): the ExpandTools chord for the
-// collapse marker when the preview exceeds the line cap, and the Choose/Close
-// chords for the insert/back footer.
+// hk carries the LIVE keyMap markings for the insert/back footer.
 func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys, widths ...int) string {
 	width := 0
 	if len(widths) > 0 {
@@ -890,7 +888,7 @@ func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys, widths ...i
 	}
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("resource preview") + "\n\n")
-	preview := truncateLinesTailMark(st.preview, maxToolResultLines, "", hk.expandTools)
+	preview := truncateLinesTailMark(st.preview, maxToolResultLines, "", "")
 	b.WriteString(renderToolCardText(th.Style("toolArgs"), preview, width) + "\n")
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+" insert into prompt · "+focusBackHint(hk)))
 	return b.String()

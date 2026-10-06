@@ -86,36 +86,17 @@ context or use its cancellation state to drop events.
 
 ## Model-call resilience
 
-Mecatl wraps every model provider with retry, circuit-breaker, establishment
-timeout, and stream-idle controls.
+Mecatl can retry a transient provider failure while a model step remains
+precommit. It buffers reasoning, whitespace, tool assembly, usage, and other
+provider metadata until meaningful assistant text becomes visible or the step
+completes cleanly. A failure after that semantic boundary is terminal and is
+never replayed. Raw stream activity still resets the idle watchdog, so a
+precommit idle timeout can recover while a visible-stream idle timeout ends the
+step.
 
-### Retry and circuit breaker
-
-Mecatl retries transient failures only before the first response content is
-committed. Retryable failures include rate limits, server errors, network
-errors, establishment timeouts, and malformed initial SSE frames. It does not
-retry other client errors, caller cancellations, or failures after streaming
-begins.
-
-|Flag|Default|Purpose|
-|-|-|-|
-|`--llm-max-attempts`|`3`|Limit the initial call plus retries.|
-|`--llm-breaker-threshold`|`5`|Open the breaker after consecutive transient failures. `0` disables it.|
-|`--llm-breaker-cooldown`|`30s`|Wait before a half-open trial.|
-
-A successful call resets the breaker. Permanent client errors other than 408 or
-429 and caller cancellations do not count toward the threshold. Exhausted
-retries produce an `ExhaustedError`; an open breaker produces a `BreakerError`.
-
-### Timeouts
-
-|Flag|Default|Purpose|
-|-|-|-|
-|`--llm-per-attempt-timeout`|`300s`|Limit connection and time to first committed content. `0` disables it.|
-|`--llm-stream-idle-timeout`|`180s`|Limit the gap between later stream chunks. `0` disables it.|
-
-An establishment timeout is retryable. A stream-idle timeout is terminal because
-replaying a partially visible response could duplicate work.
+The server-owned recovery window and attempt cap apply to each model step. See
+[Choose models and providers](/features/choose-models.md#a-provider-error-ended-a-model-step)
+for defaults, cost implications, manual retry, and deployment links.
 
 ### Prompt caching
 

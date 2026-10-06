@@ -37,7 +37,6 @@ func openApprovalSurface(m *Model) *approvalSurface {
 		modelID:      m.resolvedSessionModel.ModelID,
 		debugSession: m.deps.DebugTarget != "",
 		render:       newApprovalRender(m.rend),
-		expandTools:  m.expandTools,
 	}
 	m.modal = s
 	return s
@@ -155,9 +154,6 @@ func (m Model) applyApprovalSurfaceIntent(intent surfaceIntent) (model tea.Model
 		m.addApprovalNotice(intent.ask, intent.notice)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, nil)
 		return model, cmd, true, stopSurfaceDispatch
-	case setExpandToolsIntent:
-		m.expandTools = intent.expand
-		return m, nil, true, false
 	default:
 		return m, nil, false, false
 	}

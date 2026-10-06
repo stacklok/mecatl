@@ -9,20 +9,20 @@ description:
 
 # Work in the TUI
 
-Use the conversation view to follow the response, inspect tool calls, and steer
-the agent without waiting for the current run to finish. Assistant text streams
-as it arrives. Tool calls appear as compact cards; Edit and Write cards include
-their diff.
+During a run, you can inspect tool calls with `ctrl+t` in `/toolcalls`. The
+inspector also works when revisiting a session transcript. Running Edit and
+Write cards show their diffs inline; settled calls keep their full arguments and
+results in the inspector. When `mecatui` receives a result before its final update,
+it keeps the card open and shows `result received · finalizing`.
 
-Use `/toolcalls` to inspect calls in the current session, even during a run or
-when revisiting its transcript. `ctrl+t` expands tool details across the
-conversation; `/toolcalls` focuses on one call at a time.
+Press `f9` to reveal conversation details, including reasoning summaries,
+per-turn usage, permanent error details, and changed files. Tool results stay in
+`/toolcalls`. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
 
-`ctrl+t` also reveals routine guardrail checks: completed, acceptable reviews
-that allowed the action or released its result. They are hidden by default;
-guardrail findings, outages, unresolved reviews, and approval-related outcomes
-remain visible. Press `ctrl+t` again to hide them. To keep routine checks
-visible, configure
+`f9` also temporarily reveals retained benign guardrail notices in live and
+replayed conversations. These are completed, acceptable checks that allowed an
+action or released a result; findings, failures, unresolved reviews, and
+approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
 
 ## Attach a local file
@@ -91,10 +91,11 @@ validation behavior.
 
 ## When a model stream fails
 
-When the server reports a `retryable + precommit` failure, `mecatui` retries the
-model step once without adding a prompt or removing queued messages. If the
-automatic retry fails, use `/retry`. The same command retries a
-`retryable + visible` failure, including one reopened from storage.
+The server recovers transient failures before model output becomes visible,
+within its configured [recovery limits](/features/choose-models.md#a-provider-error-ended-a-model-step).
+If recovery ends in a terminal failure, use `/retry`; `mecatui` does not start
+another run automatically. The same command retries a `retryable + visible`
+failure, including one reopened from storage.
 
 `/retry` preserves the prompt textarea and queued prompts. For visible failures,
 scrollback marks the failed partial output as superseded. If no eligible failure
@@ -102,11 +103,10 @@ is pending, the command reports that fact and makes no changes.
 
 ## Review approvals
 
-When a tool needs permission, a modal shows what it wants to do. Read the
-request, then allow it once, allow the exact action for this session when
-offered, or deny it. Long arguments can be scrolled. For requests other than
-plan approval, `ctrl+t` opens a full-screen detail view. Mouse buttons activate
-the same choices as their displayed keys.
+During a permission request, the active `Toolcalls` binding (`ctrl+t` by
+default) opens that request's details instead of `/toolcalls`. See
+[Approve or deny a request](./keybindings.md#approve-or-deny-a-request) for
+approval keys and the scope of "allow always".
 
 ## Get editor notifications
 
@@ -189,15 +189,6 @@ for the available modes and their behavior.
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait
 for it to settle, then retry `/clear`.
-
-## A short key reference
-
-Use `?` on an empty prompt for the live help overlay. The everyday defaults are
-`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
-to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
-not support steering, `enter` queues a follow-up while a run is active. See
-[Keybindings](./keybindings.md) for approval controls, remapping, and the
-complete reference.
 
 ## Next steps
 

@@ -501,20 +501,12 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 	}
 }
 
-// TestMCPResourcePreviewCollapse is the focused liveness assertion for the
-// resource-preview collapse path (issue #457 QA SHOULD-ADD): when a read
-// resource's body exceeds the line cap (maxToolResultLines), renderResourcePreview
-// (reached via Render → renderResourcePreview) must cap the body at the limit and
-// emit the "+N more lines · <expand> expand" collapse marker carrying the LIVE
-// ExpandTools chord. It is narrow and deterministic — it drives the free-function
-// path directly, so it covers the cap + collapse marker the function-primitive
-// golden does NOT (the golden's fixture body is two lines, under the cap).
+// TestMCPResourcePreviewCollapse checks that the resource-preview cap retains a
+// plain omitted-line count, without advertising tool-card expansion.
 func TestMCPResourcePreviewCollapse(t *testing.T) {
 	th := aztec()
 	hk := defaultHelpKeys()
-	expandMark := hk.expandTools
-	// A body of maxToolResultLines+5 lines trips the cap; the marker names the
-	// 5 dropped lines and the live expand chord.
+	// A body of maxToolResultLines+5 lines trips the cap.
 	var sb strings.Builder
 	for i := 0; i < maxToolResultLines+5; i++ {
 		sb.WriteString("line\n")
@@ -524,8 +516,8 @@ func TestMCPResourcePreviewCollapse(t *testing.T) {
 	if !strings.Contains(got, "line") {
 		t.Fatalf("preview body missing: %q", got)
 	}
-	if !strings.Contains(got, "+5 more lines · "+expandMark+" expand") {
-		t.Errorf("preview should carry the collapse marker +5 more lines · %s expand: %q", expandMark, got)
+	if !strings.Contains(got, "+5 more lines") || strings.Contains(got, hk.toolcalls) {
+		t.Errorf("preview should carry a plain +5 more lines marker: %q", got)
 	}
 	// The kept body must be capped: exactly maxToolResultLines body lines
 	// precede the marker (the title/footer chrome is not body). The toolArgs

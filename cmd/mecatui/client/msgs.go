@@ -666,15 +666,6 @@ type ResultMsg struct {
 	StreamProgressPresent   bool
 }
 
-// FailedStepRetryEligible reports whether this terminal result proves that replaying the
-// failed model step is safe. Legacy/transient presentation signals are deliberately
-// ignored: failed-step retry requires both typed facts from a new server.
-func (r ResultMsg) FailedStepRetryEligible() bool {
-	return r.Stop == resultStopError &&
-		r.RetryDispositionPresent && r.RetryDisposition == RetryDispositionRetryable &&
-		r.StreamProgressPresent && r.StreamProgress == StreamProgressPrecommit
-}
-
 // Usage is the token accounting carried by ResultMsg (and usage-bearing events).
 // Duplicated as a plain struct so ui stays proto-free.
 type Usage struct {

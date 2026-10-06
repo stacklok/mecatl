@@ -20,9 +20,9 @@ func mustJSON(t *testing.T, v any) string {
 
 // renderToolBlock builds a minimal tool block and renders it through renderTool —
 // the real card path, so the head/args/result wiring is exercised end to end.
-func (r *renderer) renderToolBlock(name, args string, expand bool) string {
+func (r *renderer) renderToolBlock(name, args string) string {
 	p := toolCardPresentation{name: name, arguments: args}
-	return r.prepareTypedToolCard(p, expand).render()
+	return r.prepareTypedToolCard(p, toolcallPending).render()
 }
 
 // longBody is a ~4 KB, 72-line string used to exercise the collapsed long-string
@@ -90,7 +90,7 @@ func TestSummarizeArgsAffordanceOnHiddenValue(t *testing.T) {
 	plain := stripANSIstr(out)
 	rows := strings.Split(plain, "\n")
 	last := rows[len(rows)-1]
-	if !strings.Contains(last, "ctrl+t expand") {
+	if !strings.Contains(last, "ctrl+t inspect") {
 		t.Errorf("a collapsed long-string arg must advertise ctrl+t even with no key overflow, got footer %q\nfull:\n%s", last, plain)
 	}
 	// It is the per-value form (no key overflow), so it does NOT name a key count.
@@ -104,7 +104,7 @@ func TestSummarizeArgsAffordanceOnHiddenValue(t *testing.T) {
 		twelve[i] = i
 	}
 	out2, _ := r.summarizeArgs(mustJSON(t, map[string]any{"many": twelve}))
-	if !strings.Contains(stripANSIstr(out2), "ctrl+t expand") {
+	if !strings.Contains(stripANSIstr(out2), "ctrl+t inspect") {
 		t.Errorf("a collapsed array must advertise ctrl+t, got %q", stripANSIstr(out2))
 	}
 }
@@ -161,8 +161,8 @@ func TestSummarizeArgsBoundedRows(t *testing.T) {
 	if len(rows) != maxSummaryRows+1 {
 		t.Fatalf("expected %d capped rows + 1 roll-up, got %d:\n%s", maxSummaryRows, len(rows), plain)
 	}
-	if !strings.Contains(rows[len(rows)-1], "more key") || !strings.Contains(rows[len(rows)-1], "ctrl+t expand") {
-		t.Errorf("expected a '+K more keys · ctrl+t expand' roll-up, got %q", rows[len(rows)-1])
+	if !strings.Contains(rows[len(rows)-1], "more key") || !strings.Contains(rows[len(rows)-1], "ctrl+t inspect") {
+		t.Errorf("expected a '+K more keys · ctrl+t inspect' roll-up, got %q", rows[len(rows)-1])
 	}
 	// Deterministic order: priority keys first (owner before repo before title),
 	// each on its own row, ahead of any non-priority key.
@@ -205,7 +205,7 @@ func TestSummarizeArgsScalarInline(t *testing.T) {
 		t.Errorf("bool should be inline verbatim, got %q", plain)
 	}
 	// Nothing hidden → NO affordance/roll-up line.
-	if strings.Contains(plain, "ctrl+t expand") || strings.Contains(plain, "more key") {
+	if strings.Contains(plain, "ctrl+t inspect") || strings.Contains(plain, "more key") {
 		t.Errorf("an all-short-scalar card should show no affordance line, got %q", plain)
 	}
 }
@@ -288,28 +288,20 @@ func TestSummarizeArgsSanitizes(t *testing.T) {
 	r := newTestRenderer()
 	// A value carrying raw escapes (ESC [ 2 J = clear screen; ESC [ 31 m = colour)
 	// must be stripped by terminaltext.Sanitize BEFORE styling, so the injected sequences
-	// never reach the terminal — neither in the COLLAPSED summary nor the EXPANDED
-	// full JSON. lipgloss emits its OWN SGR escapes, so we assert the *injected*
-	// sequences are absent rather than "no ESC at all".
+	// never reach the terminal in the pending card. lipgloss emits its OWN SGR
+	// escapes, so assert the injected sequences rather than all ESC bytes.
 	evil := "before\x1b[2Jafter and some more text to push past the inline length budget"
 	args := mustJSON(t, map[string]any{"body": evil, "method": "x\x1b[31mred"})
 
-	for _, tc := range []struct {
-		name   string
-		expand bool
-	}{{"collapsed", false}, {"expanded", true}} {
-		out := r.renderToolBlock("mcp__github__issue_write", args, tc.expand)
-		if strings.Contains(out, "\x1b[2J") {
-			t.Errorf("%s render leaked the clear-screen escape", tc.name)
-		}
-		if strings.Contains(out, "\x1b[31mred") {
-			t.Errorf("%s render leaked the injected colour escape", tc.name)
-		}
-		// Belt-and-braces: NO bare ESC byte from the injected payload survives. After
-		// stripping lipgloss's own SGR escapes the output must carry no 0x1b at all.
-		if strings.ContainsRune(stripANSIstr(out), 0x1b) {
-			t.Errorf("%s render leaked a bare ESC byte after SGR-stripping", tc.name)
-		}
+	out := r.renderToolBlock("mcp__github__issue_write", args)
+	if strings.Contains(out, "\x1b[2J") {
+		t.Error("card leaked the clear-screen escape")
+	}
+	if strings.Contains(out, "\x1b[31mred") {
+		t.Error("card leaked the injected colour escape")
+	}
+	if strings.ContainsRune(stripANSIstr(out), 0x1b) {
+		t.Error("card leaked a bare ESC byte after SGR-stripping")
 	}
 
 	// DIRECT-CALL assertions (the de-vacuuming, #3). The assertions above route
@@ -337,22 +329,6 @@ func TestSummarizeArgsSanitizes(t *testing.T) {
 	// An ESC embedded MID-token in the server name (not just at the boundary):
 	if got, _ := mcpTitle("mcp__ev\x1bil__browser_click"); strings.Contains(got, esc) {
 		t.Errorf("mcpTitle leaked a mid-token ESC byte from the server name: %q", got)
-	}
-}
-
-func TestRenderToolMCPExpandedShowsRawNameAndJSON(t *testing.T) {
-	r := newTestRenderer()
-	args := mustJSON(t, map[string]any{"owner": "stacklok", "repo": "mecatl", "method": "create"})
-	out := stripANSIstr(r.renderToolBlock("mcp__github__issue_write", args, true))
-	if !strings.Contains(out, "GitHub · Issue write") {
-		t.Errorf("expanded head should keep the friendly title, got:\n%s", out)
-	}
-	if !strings.Contains(out, "mcp__github__issue_write") {
-		t.Errorf("expanded head should show the raw MCP name, got:\n%s", out)
-	}
-	// Full pretty JSON present (indented object), not the compact summary.
-	if !strings.Contains(out, `"owner": "stacklok"`) {
-		t.Errorf("expanded card should show full pretty JSON, got:\n%s", out)
 	}
 }
 
@@ -424,34 +400,22 @@ func mcpCardArgs(t *testing.T) string {
 // inline array, collapsed long body, no raw name).
 func TestMCPCardCollapsedGolden(t *testing.T) {
 	r := newTestRenderer()
-	got := stripANSIstr(r.renderToolBlock("mcp__github__issue_write", mcpCardArgs(t), false))
+	got := stripANSIstr(r.renderToolBlock("mcp__github__issue_write", mcpCardArgs(t)))
 	compareGolden(t, "tool_mcp_card_collapsed.golden", []byte(got))
-}
-
-// TestMCPCardExpandedGolden pins the expanded MCP card. Paired with the direct
-// assertions in TestRenderToolMCPExpandedShowsRawNameAndJSON (friendly title +
-// raw mcp__ name + full pretty JSON).
-func TestMCPCardExpandedGolden(t *testing.T) {
-	r := newTestRenderer()
-	got := stripANSIstr(r.renderToolBlock("mcp__github__issue_write", mcpCardArgs(t), true))
-	compareGolden(t, "tool_mcp_card_expanded.golden", []byte(got))
 }
 
 // renderResolvedToolBlock builds a RESOLVED tool block (with a result body and typed
 // content blocks) and renders it through renderTool — the real card path, so the
 // result + blocks wiring is exercised end to end. A peer of renderToolBlock (which
 // builds an unresolved call-only block for the args goldens).
-func (r *renderer) renderResolvedToolBlock(name, args, body string, blocks []client.ContentBlock, expand bool) string {
+func (r *renderer) renderResolvedToolBlock(name, args, body string, blocks []client.ContentBlock) string {
 	p := toolCardPresentation{name: name, arguments: args, resolved: true, result: body, artifacts: blocks}
-	return r.prepareTypedToolCard(p, expand).render()
+	return r.prepareTypedToolCard(p, toolcallDone).render()
 }
 
 // TestMCPCardBlocksGolden pins a resolved MCP card whose result carries typed
 // content blocks (a resource link + image) alongside the model-facing text body.
-// The blocks surface as distinct muted artifact lines (↗ resource-link, [image])
-// IN ADDITION to the text body — not buried in/below it. The two existing tool-card
-// goldens (collapsed/expanded, no blocks) are untouched: nil resultBlocks leaves the
-// text path byte-unchanged.
+// The remaining collapsed golden (no blocks) uses the same result rendering path.
 func TestMCPCardBlocksGolden(t *testing.T) {
 	r := newTestRenderer()
 	args := mustJSON(t, map[string]any{"owner": "stacklok", "repo": "mecatl"})
@@ -461,7 +425,7 @@ func TestMCPCardBlocksGolden(t *testing.T) {
 		{Kind: client.ContentBlockText, Text: "already in the body — must NOT double-render"},
 	}
 	got := stripANSIstr(r.renderResolvedToolBlock(
-		"mcp__github__issue_write", args, "Created issue #24", blocks, false))
+		"mcp__github__issue_write", args, "Created issue #24", blocks))
 	compareGolden(t, "tool_mcp_card_blocks.golden", []byte(got))
 	// Direct assertions: the resource-link + image lines surface distinctly; the
 	// text block does NOT double-render.
@@ -493,30 +457,6 @@ func TestGenericLongJSONCardGolden(t *testing.T) {
 		"alpha":       1, "bravo": 2, "charlie": 3, "delta": 4,
 		"echo": 5, "foxtrot": 6, "golf": 7, "hotel": 8,
 	})
-	got := stripANSIstr(r.renderToolBlock("CustomSearch", args, false))
+	got := stripANSIstr(r.renderToolBlock("CustomSearch", args))
 	compareGolden(t, "tool_generic_longjson_collapsed.golden", []byte(got))
-}
-
-func TestResultBodyExpandedUnchanged(t *testing.T) {
-	r := newTestRenderer()
-	result := mustJSON(t, map[string]any{
-		"html_url": "https://example.com/x",
-		"body":     longBody(),
-	})
-	// summarizeResolvedResult gates on collapsed-only: expanded → ok=false, so the
-	// full sanitized body renders through resultBody.
-	lines, _ := r.renderTypedToolResultLines(result, false, true)
-	if got := strings.Join(func() []string {
-		out := make([]string, len(lines))
-		for i := range lines {
-			out[i] = lines[i].text
-		}
-		return out
-	}(), "\n"); got != result {
-		t.Error("expanded result must not be summarized")
-	}
-	full := r.resultBody(result, true)
-	if !strings.Contains(full, "padding to grow") {
-		t.Error("expanded result body must be the full sanitized body")
-	}
 }

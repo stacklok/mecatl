@@ -76,11 +76,11 @@ func TestMecatuiTypedScrollbackModel_Scenario3_FrameAnchorAndSelectionContinuity
 	if len(after.lines) != len(after.provenance) {
 		t.Fatalf("frame/provenance drift: %d lines, %d rows", len(after.lines), len(after.provenance))
 	}
-	if _, ok := after.rowForAnchor(anchor); !ok {
-		t.Fatalf("specialized-card anchor %+#v was not restored after reflow/result", anchor)
+	if _, ok := after.rowForAnchor(anchor); ok {
+		t.Fatal("settled delegation retained obsolete card anchor")
 	}
-	if _, _, ok := resolveSelectionPoint(after, point); !ok {
-		t.Fatal("selection did not survive reflow and a late result that preserved its source")
+	if _, _, ok := resolveSelectionPoint(after, point); ok {
+		t.Fatal("settled delegation retained obsolete card selection")
 	}
 	if !c.scrollback.Subagents().UpdateStart("sub", scrollback.SubagentStart{ChildID: "child", Goal: "replacement source"}) {
 		t.Fatal("replace selected source")

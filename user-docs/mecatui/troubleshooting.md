@@ -12,8 +12,8 @@ Start by identifying whether you are running embedded `mecatui` or
 `mecatui connect ADDRESS`. The first owns a local server; the second only
 displays and controls the server it reaches.
 
-Expand an error card with your configured `ExpandTools` keybinding to see its
-complete sanitized message.
+Press `f9` (or your configured `ExpandConversation` binding) to show a
+permanent error card's complete sanitized message.
 
 ## Embedded startup says no provider is available
 
@@ -200,7 +200,8 @@ and debug-only local commands such as `/debug-ask`. These surfaces are off by
 default.
 
 Normal conversation output hides guardrail checks that completed successfully
-and allowed an action or released a result. Press `ctrl+t` to reveal them, or
+and allowed an action or released a result. Press `f9` (or your configured
+`ExpandConversation` binding) to reveal them, or
 [keep them visible](./customization.md#show-benign-guardrail-notices).
 `--debug` always shows them, with the review's technical metadata.
 Stored-session transcripts use the same visibility rules.

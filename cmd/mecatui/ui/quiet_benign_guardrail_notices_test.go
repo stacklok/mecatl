@@ -110,7 +110,7 @@ func quietTestModel(t *testing.T, guardrails client.GuardrailClient, show bool) 
 }
 
 func frameText(m *Model) string {
-	return stripANSIstr(strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, m.expandTools), "\n"))
+	return stripANSIstr(strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, m.expandConversation), "\n"))
 }
 
 func benignGuardrailAt(c *conversation, index int) bool {
@@ -224,12 +224,17 @@ func TestQuietBenignGuardrailNotices_Scenario2_ExpandLiveAndReplay(t *testing.T)
 	}
 	beforeBlocks := m.conv.scrollback.Len()
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if m.expandConversation || toolcallsForTest(t, m) == nil || strings.Contains(frameText(&m), benignSummary) {
+		t.Fatal("Toolcalls shortcut must open the inspector without revealing benign notices")
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF9})
 	for _, want := range []string{benignSummary, "live correlated detail"} {
 		if !strings.Contains(frameText(&m), want) {
 			t.Fatalf("expanded live evidence omitted %q", want)
 		}
 	}
-	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF9})
 	if strings.Contains(frameText(&m), benignSummary) || m.conv.scrollback.Len() != beforeBlocks || guardrails.calls != 1 {
 		t.Fatal("live recollapse fetched, mutated, or duplicated retained evidence")
 	}
@@ -241,12 +246,17 @@ func TestQuietBenignGuardrailNotices_Scenario2_ExpandLiveAndReplay(t *testing.T)
 	if strings.Contains(stripANSIstr(s.transcriptVP.View()), benignSummary) {
 		t.Fatal("collapsed replay benign hook is visible")
 	}
-	_, handled, _ := s.HandleKey(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	_, _, _ = s.HandleKey(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	s.Render(80, 20)
+	if s.transcriptExpand || strings.Contains(stripANSIstr(s.transcriptVP.View()), benignSummary) {
+		t.Fatal("Toolcalls shortcut must not reveal replayed benign notices")
+	}
+	_, handled, _ := s.HandleKey(tea.KeyPressMsg{Code: tea.KeyF9})
 	s.Render(80, 20)
 	if !handled || !strings.Contains(stripANSIstr(s.transcriptVP.View()), benignSummary) || s.transcript.scrollback.Len() != 1 {
 		t.Fatal("expand did not reveal exactly one retained replay hook")
 	}
-	_, _, _ = s.HandleKey(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	_, _, _ = s.HandleKey(tea.KeyPressMsg{Code: tea.KeyF9})
 	s.Render(80, 20)
 	if strings.Contains(stripANSIstr(s.transcriptVP.View()), benignSummary) || s.transcript.scrollback.Len() != 1 || guardrails.calls != 1 {
 		t.Fatal("replay recollapse fetched, mutated, or duplicated evidence")

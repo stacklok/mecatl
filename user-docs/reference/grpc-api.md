@@ -344,9 +344,10 @@ be treated as safely retryable. `RetryStart` is prompt-free: the server persists
 aggregate-owned retry intent, blocks ordinary prompts while it is pending, and
 skips prompt hooks and the first retry turn's boundary injections. This avoids
 duplicate prompts and tool effects. Clients may explicitly retry typed
-`retryable` failures at `precommit` or `visible`; automatic retry should be
-narrower and bounded. Mecatui performs one automatic retry only for typed
-`retryable + precommit`.
+`retryable` failures at `precommit` or `visible`. The server owns automatic
+precommit provider recovery inside the active run; clients such as `mecatui`
+do not start another run automatically after a terminal error. An explicit
+`/retry` in `mecatui` uses `RetryStart` as a new action.
 
 ### Event envelope
 

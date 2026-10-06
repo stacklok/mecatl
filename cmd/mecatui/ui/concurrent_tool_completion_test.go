@@ -44,9 +44,9 @@ func TestConcurrentDelegations_RenderTerminalGlyphBeforeSiblingFinishes(t *testi
 	for _, family := range families {
 		for _, failed := range []bool{false, true} {
 			name := family.name + "/success"
-			stop, glyph := "end_turn", "✓ "
+			stop, before, after := "end_turn", "… awaiting result · "+family.tool, "✓ "+family.tool
 			if failed {
-				name, stop, glyph = family.name+"/error", "error", "✗ "
+				name, stop, before, after = family.name+"/error", "error", "✗ "+family.tool, "✗ "+family.tool
 			}
 			t.Run(name, func(t *testing.T) {
 				m := newMCPModel(t, aztec(), nil)
@@ -55,10 +55,10 @@ func TestConcurrentDelegations_RenderTerminalGlyphBeforeSiblingFinishes(t *testi
 					client.ToolCallMsg{ID: "slow", Name: "Read", Args: `{}`},
 				)
 				m = family.finish(m, stop)
-				assertConcurrentCards(t, m, glyph+family.tool, "Read")
+				assertConcurrentCards(t, m, before, "Read")
 
 				m = applyAll(m, client.ToolResultMsg{CallID: "fast", Content: "done", IsError: failed})
-				assertConcurrentCards(t, m, glyph+family.tool, "Read")
+				assertConcurrentCards(t, m, after, "Read")
 			})
 		}
 	}
@@ -120,16 +120,16 @@ func TestConcurrentTools_ResultSettlesOnlyMatchingCardAndKeepsSiblingActive(t *t
 	}
 }
 
-func assertConcurrentCards(t *testing.T, m Model, fastGlyph, slowName string) {
+func assertConcurrentCards(t *testing.T, m Model, fastStatus, slowName string) {
 	t.Helper()
 	blocks := m.conv.testBlocks()
 	r := newTestRenderer()
 	fast := stripANSIstr(r.renderSnapshot(0, blocks[0], false))
 	slow := stripANSIstr(r.renderSnapshot(1, blocks[1], false))
-	if !strings.Contains(fast, fastGlyph) || strings.Contains(fast, "… ") {
-		t.Fatalf("completed card did not settle independently: %q", fast)
+	if !strings.Contains(fast, fastStatus) {
+		t.Fatalf("completed card did not report %q independently: %q", fastStatus, fast)
 	}
-	if !strings.Contains(slow, "… "+slowName) {
+	if !strings.Contains(slow, "… running · "+slowName) {
 		t.Fatalf("pending sibling did not remain running: %q", slow)
 	}
 	if m.activeTool != slowName {

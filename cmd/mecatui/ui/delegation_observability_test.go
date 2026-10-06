@@ -18,7 +18,7 @@ import (
 // TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool pins AC3.1: a
 // collapsed, RUNNING Subagent card extends its existing counts line with the
 // child's live current-tool name — `subagent · <tool> · ↑<in> ↓<out> · N tools ·
-// ctrl+t trace` — no heartbeat ticker (this is a render, never a ticking
+// f6 agents` — no heartbeat ticker (this is a render, never a ticking
 // animation). The tool name is the LATEST tool's name, not a stale one.
 func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *testing.T) {
 	r := newTestRenderer()
@@ -35,7 +35,7 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	if strings.Contains(out, "subagent · Grep ·") {
 		t.Errorf("collapsed card must track the LATEST tool, not an earlier one, got %q", out)
 	}
-	if !strings.Contains(out, "↑0 ↓0") || !strings.Contains(out, "2 tools") || !strings.Contains(out, "ctrl+t trace") {
+	if !strings.Contains(out, "↑0 ↓0") || !strings.Contains(out, "2 tools") || !strings.Contains(out, "f6 agents") {
 		t.Errorf("collapsed card must keep the token/tool counts and the trace affordance, got %q", out)
 	}
 	if strings.Contains(out, "Read…") {
@@ -52,55 +52,48 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	}
 }
 
-// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews pins AC3.2:
-// ctrl+t on a Subagent card shows bounded args/result previews per child tool call
-// (Team chip format: `✓ Grep — pattern: foo`) plus capped child message lines, and
-// the TUI applies its secondary caps on top of the engine's clamp.
+// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews retains the
+// historical AC3.2 name after the newer mecatui-quieter-conversation-tool-calls plan
+// retired ctrl+t card expansion. Bounded preview content remains observable in the
+// actual f6 Agents focus, which is the newer plan's replacement route.
 func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *testing.T) {
-	r := newTestRenderer()
-	c := &conversation{}
-	c.addTool("p1", "Subagent", `{"prompt":"investigate"}`)
-	applySubagentTo(c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "p1", ChildID: "c1", Goal: "investigate"})
-	applySubagentTo(c, client.SubagentMsg{
-		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
-		InnerKind: "tool.call", ToolName: "Grep", Detail: `pattern: foo`, ToolCount: 1,
-	})
-	applySubagentTo(c, client.SubagentMsg{
-		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
-		InnerKind: "tool.result", ToolName: "Grep", Detail: "3 matches found", ToolCount: 1,
-	})
-	applySubagentTo(c, client.SubagentMsg{
-		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
-		InnerKind: "message.delta", Text: "looking into the loop", ToolCount: 1,
-	})
-	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
+	const rawMessage = "child message must stay out of the parent conversation"
+	longMessage := strings.Repeat("m", maxTraceMessageLen+40)
+	m := newMCPModel(t, aztec(), nil)
+	m = seedSubagents(m, "p1",
+		startSub("p1", "c1", "audit auth"),
+		toolSubPreview("p1", "c1", "tool.call", "Grep", "pattern: auth", 1),
+		toolSubPreview("p1", "c1", "tool.call", "Read", "file: auth.go", 2),
+		toolSubPreview("p1", "c1", "tool.result", "Read", "found the auth boundary", 2),
+		toolSubPreview("p1", "c1", "message.delta", "", rawMessage+longMessage, 2),
+	)
 
-	if !strings.Contains(out, "✓ Grep") {
-		t.Errorf("expanded card should show the Team-format tool chip, got %q", out)
-	}
-	// The result preview replaces the call's arg preview on the chip.
-	if !strings.Contains(out, "— 3 matches found") {
-		t.Errorf("expanded card should show the bounded result preview next to the chip, got %q", out)
-	}
-	if strings.Contains(out, "— pattern: foo") {
-		t.Errorf("a result preview supersedes the call's arg preview (the Team discipline), got %q", out)
-	}
-	if !strings.Contains(out, "looking into the loop") {
-		t.Errorf("expanded card should show the capped child message line, got %q", out)
+	// Before f6 opens the Agents overlay, child content must not spill into the parent
+	// conversation. This absence assertion is mutation-proven below.
+	conversation := stripANSIstr(m.View().Content)
+	if strings.Contains(conversation, rawMessage) {
+		t.Errorf("child content spilled into the parent conversation: %q", conversation)
 	}
 
-	// The TUI's secondary cap bounds a long detail even when the engine cap let it through.
-	longDetail := strings.Repeat("x", maxTraceDetailLen+40)
-	applySubagentTo(c, client.SubagentMsg{
-		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
-		InnerKind: "tool.call", ToolName: "Read", Detail: longDetail, ToolCount: 2,
-	})
-	out = stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
-	if strings.Contains(out, strings.Repeat("x", maxTraceDetailLen+40)) {
-		t.Errorf("expanded card must bound the detail preview to maxTraceDetailLen, got %q", out)
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.subagents.view != subagentFocus {
+		t.Fatalf("enter should focus the child in the f6 Agents view, view = %v", m.subagents.view)
 	}
-	if !strings.Contains(out, strings.Repeat("x", maxTraceDetailLen-1)) {
-		t.Errorf("expanded card should show the truncated detail preview, got %q", out)
+	focus := stripANSIstr(m.View().Content)
+	if !strings.Contains(focus, "✓ Grep — pattern: auth") {
+		t.Errorf("Agents focus should show the child tool args preview, got %q", focus)
+	}
+	if !strings.Contains(focus, "✓ Read — found the auth boundary") {
+		t.Errorf("Agents focus should show the child tool result preview, got %q", focus)
+	}
+	if strings.Contains(focus, rawMessage+longMessage) {
+		t.Errorf("Agents focus must cap child message lines, got %q", focus)
+	}
+	if !strings.Contains(focus, rawMessage+strings.Repeat("m", 16)) {
+		t.Errorf("Agents focus should retain the capped child message prefix, got %q", focus)
 	}
 }
 
@@ -153,16 +146,6 @@ func TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews(t *t
 func TestDelegationObservability_Scenario3_HonestyNoteIsBoundedPreviews(t *testing.T) {
 	assertNoBannedRenderString(t, "args/results hidden")
 	assertNoBannedRenderString(t, "hidden (context-isolated)")
-
-	// Expanded Subagent card.
-	r := newTestRenderer()
-	c := &conversation{}
-	c.addTool("p1", "Subagent", `{"prompt":"investigate"}`)
-	applySubagentTo(c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "p1", ChildID: "c1", Goal: "investigate"})
-	card := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
-	if !strings.Contains(card, "bounded previews") {
-		t.Errorf("expanded Subagent card should carry the bounded-previews note, got %q", card)
-	}
 
 	// Subagent focus pane.
 	m := newMCPModel(t, aztec(), nil)

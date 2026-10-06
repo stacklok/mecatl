@@ -125,12 +125,12 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 	m = m.failStartupRunEntry(nil)
 
 	content := stripANSIstr(m.vp.GetContent())
-	if !strings.Contains(content, "new request") || !strings.Contains(content, "new result") || strings.Contains(content, "old result") {
+	if !strings.Contains(content, "new request") || !strings.Contains(content, "✗ Bash · printf new") || strings.Contains(content, "old.go") {
 		t.Fatalf("replacement rendered stale document content:\n%s", content)
 	}
 	fresh := newRenderer(m.deps.Theme, m.rend.marks)
 	fresh.setWidth(m.rend.width)
-	wantFrame := fresh.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	wantFrame := fresh.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	if !reflect.DeepEqual(m.conversationView.frame.provenance, wantFrame.provenance) {
 		t.Fatal("replacement retained stale frame provenance")
 	}
