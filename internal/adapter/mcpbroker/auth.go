@@ -248,14 +248,17 @@ type oauthGrant struct {
 	executed     map[session.ToolCallID][32]byte
 }
 
-func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) bool {
+func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) error {
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()
+	if len(r.states) >= r.limits.MaxPendingStates {
+		return contract.ErrCapacity
+	}
 	if _, exists := r.states[state]; exists {
-		return false
+		return errors.New("create unique callback state")
 	}
 	r.states[state] = callbackState{logical: logical, transaction: transaction}
-	return true
+	return nil
 }
 
 func (r *Runtime) claimCallbackState(state string) (callbackState, bool) {
@@ -411,12 +414,12 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		transaction.bundleBackends = append([]string(nil), t.attachment.runtime.process.construction.protectedBackends...)
 	}
 	logical.authorizations[transaction.identity] = transaction
-	if !t.attachment.runtime.registerCallbackState(state, logical, transaction) {
+	if err := t.attachment.runtime.registerCallbackState(state, logical, transaction); err != nil {
 		delete(logical.authorizations, transaction.identity)
 		transaction.clientSecret = ""
 		transaction.verifier = ""
 		transaction.state = ""
-		return session.ExternalAuthorization{}, false, errors.New("create unique callback state")
+		return session.ExternalAuthorization{}, false, err
 	}
 	t.attachment.runtime.logAuthorization(ctx, t.attachment.logical.ref.SessionID(), diagnosticEventAuthorization, diagnosticReasonRequestStarted, port.LevelDebug, "request")
 	return transaction.external(), true, nil
@@ -1003,6 +1006,11 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 	hash := callHash(call)
 	logical.mu.Lock()
 	grant := logical.brokerCredential
+	var source oauth2.TokenSource = &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx}
+	if grant == nil && logical.recoveredSource != nil && logical.recoveredCalls != nil && !logical.provisional {
+		// A published recovered session executes with its B2 bearer source.
+		grant, source = logical.recoveredCalls, logical.recoveredSource
+	}
 	if grant == nil {
 		logical.mu.Unlock()
 		return session.ToolResult{}, contract.ErrAuthorizationNotFound
@@ -1012,7 +1020,7 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.invoke(ctx, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx})
+	result, err := t.invoke(ctx, call, source)
 	result.CallID = call.ID
 	return result, err
 }
@@ -1031,9 +1039,30 @@ func claimGrantCallLocked(grant *oauthGrant, call session.ToolCall, hash [32]byt
 	return nil
 }
 
+func (l *logicalSession) expireAuthorizationsLocked(runtime *Runtime, now time.Time) {
+	for identity, transaction := range l.authorizations {
+		if transaction.status != session.AuthorizationPending || now.Before(transaction.expiresAt) {
+			continue
+		}
+		runtime.removeCallbackState(transaction.state, transaction)
+		if transaction.cancel != nil {
+			transaction.cancel()
+		}
+		transaction.status = session.AuthorizationExpired
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+		delete(l.authorizations, identity)
+	}
+}
+
 func (l *logicalSession) markDeletedLocked(status session.AuthorizationStatus) {
 	l.deleted = true
 	l.provisional = false
+	if l.recoveredSource != nil {
+		l.recoveredSource.close()
+		l.recoveredSource = nil
+	}
 	l.cleanupStatus = status
 	l.cancelOps()
 }
@@ -1109,7 +1138,41 @@ func (r *Runtime) Close() error {
 	return nil
 }
 
-// closeAndDrain is Close, plus a bounded wait (closeDrainTimeout) for every
+func (r *Runtime) sweep() {
+	defer close(r.sweepDone)
+	ticker := time.NewTicker(r.limits.SweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.sweepStop:
+			return
+		case now := <-ticker.C:
+			r.sweepAt(now)
+		}
+	}
+}
+
+// sweepAt performs one retention pass. Keeping the pass separate from the
+// ticker makes the time boundary explicit and lets tests prove it directly.
+func (r *Runtime) sweepAt(now time.Time) {
+	var expired []*logicalSession
+	r.mu.Lock()
+	for id, logical := range r.sessions {
+		logical.mu.Lock()
+		logical.expireAuthorizationsLocked(r, now)
+		if logical.attachments == 0 && logical.activeOps == 0 && !logical.expiresAt.IsZero() && !now.Before(logical.expiresAt) {
+			delete(r.sessions, id)
+			logical.markDeletedLocked(session.AuthorizationExpired)
+			expired = append(expired, logical)
+		}
+		logical.mu.Unlock()
+	}
+	r.mu.Unlock()
+	for _, logical := range expired {
+		logical.maybeCleanupLocked(r)
+	}
+}
+
 // operation cancelled by Close to actually return, before the caller tears
 // down any dependency those operations might still be using. Used only by
 // Process.Close/rollback, which owns exactly such dependencies (vMCP server,
@@ -1136,6 +1199,9 @@ func (r *Runtime) closeAndSnapshot() []*logicalSession {
 	first := !r.closed
 	if first {
 		r.closed = true
+		if r.sweeperEnabled {
+			close(r.sweepStop)
+		}
 		r.drainSessions = make([]*logicalSession, 0, len(r.sessions))
 		for _, logical := range r.sessions {
 			r.drainSessions = append(r.drainSessions, logical)
@@ -1150,6 +1216,9 @@ func (r *Runtime) closeAndSnapshot() []*logicalSession {
 	}
 	sessions := append([]*logicalSession(nil), r.drainSessions...)
 	r.mu.Unlock()
+	if first && r.sweeperEnabled {
+		<-r.sweepDone
+	}
 
 	if first && r.oauth.httpClient != nil {
 		r.oauth.httpClient.CloseIdleConnections()

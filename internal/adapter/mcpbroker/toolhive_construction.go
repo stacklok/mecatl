@@ -32,9 +32,14 @@ const (
 // construction. Composition reduces the operator schema to this value before
 // invoking the adapter.
 type ToolHiveConfig struct {
+	// CallbackURL is the public URL whose path receives OAuth callbacks for this process.
 	CallbackURL string
-	Profiles    []ToolHiveProfile
-	Occupied    []string
+	// Profiles declares the ordered upstream MCP backends and their authentication mode.
+	Profiles []ToolHiveProfile
+	// ReservedToolNames contains model-visible names supplied by the surrounding
+	// core/global catalogue. Broker discovery rejects collisions before it creates
+	// an attachment.
+	ReservedToolNames []string
 	// AuthStorage backs the embedded auth server's pending-authorization,
 	// token, grant, and DCR storage directly. Tests use this to inject a
 	// fake/spy storage.Storage; composition (which cannot import the
@@ -54,6 +59,8 @@ type ToolHiveConfig struct {
 	// lifecycle — EmbeddedAuthServer.Close calls storage.Close, which closes
 	// the client it was given, so no separate cleanup is needed beyond that.
 	AuthRedisClient redis.UniversalClient
+	// ProtectedStorage is the production encrypted storage seam for OAuth profiles.
+	ProtectedStorage *ProtectedStorageConfig
 	// Diagnostics receives per-backend authenticated-discovery outcomes during
 	// workspace-enrollment catalogue freeze (success + tool count, or failure +
 	// backend name) — see stageAuthenticatedRoutes. A nil value defaults to
@@ -63,23 +70,34 @@ type ToolHiveConfig struct {
 
 // ToolHiveProfile is one configured Streamable HTTP upstream.
 type ToolHiveProfile struct {
-	Name   string
-	URL    string
-	Auth   string
-	OAuth  *ToolHiveOAuth
+	// Name is the stable broker-side backend name used to route discovered tools.
+	Name string
+	// URL is the upstream Streamable HTTP endpoint contacted by ToolHive.
+	URL string
+	// Auth selects the upstream authentication mode, currently "none" or "oauth".
+	Auth string
+	// OAuth supplies the upstream OAuth and client-registration details when Auth is "oauth".
+	OAuth *ToolHiveOAuth
+	// Static declares trusted protected tools available before authenticated discovery.
 	Static []StaticTool
 }
 
 // ToolHiveOAuth contains only values needed to construct ToolHive's upstream.
 type ToolHiveOAuth struct {
-	Issuer                string
+	// Issuer identifies the upstream authorization-server issuer when metadata is used.
+	Issuer string
+	// AuthorizationEndpoint is the upstream endpoint where the user grants access.
 	AuthorizationEndpoint string
-	TokenEndpoint         string
-	ClientID              string
+	// TokenEndpoint is the upstream endpoint used to exchange codes and refresh tokens.
+	TokenEndpoint string
+	// ClientID identifies the preregistered OAuth client.
+	ClientID string
 	// ClientSecretFile names the local file read when confidential-client authentication is needed.
 	ClientSecretFile string
-	Scopes                []string
-	RequestRefreshToken   bool
+	// Scopes are requested for the upstream grant.
+	Scopes []string
+	// RequestRefreshToken asks the upstream for refresh-token-capable authorization.
+	RequestRefreshToken bool
 	// DCRDiscoveryURL enables RFC 7591 registration through RFC 8414 metadata.
 	DCRDiscoveryURL string
 }
@@ -87,9 +105,12 @@ type ToolHiveOAuth struct {
 // StaticTool is one trusted protected tool declaration. Its schema is copied
 // into the frozen model-facing catalogue; backend routing remains private.
 type StaticTool struct {
+	// Name and Description are the model-visible identity and help text.
 	Name, Description string
-	Schema            json.RawMessage
-	ReadOnly          bool
+	// Schema is the JSON input schema copied into the frozen tool specification.
+	Schema json.RawMessage
+	// ReadOnly marks the tool for dispatch policy; it does not grant upstream authorization.
+	ReadOnly bool
 }
 
 type toolHiveConstruction struct {

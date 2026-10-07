@@ -92,7 +92,7 @@ func (d *recordingBrokerDiagnostics) String() string {
 }
 
 func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
 	spy := newRegisterClientSpy()
@@ -108,8 +108,42 @@ func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
 	}
 }
 
+func TestToolHiveProductionHandlerAndAttachmentPath(t *testing.T) {
+	t.Setenv("testdata/client-secret", "construction-only-secret")
+	profile := protectedToolHiveProfile("proof")
+	profile.Static = []StaticTool{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	mux := http.NewServeMux()
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatalf("mount production ToolHive callback bundle: %v", err)
+	}
+	// The fixture reaches the mounted fixed bundle, not an attachment or a
+	// hand-written callback. The protected resource endpoint is supplied by the
+	// embedded ToolHive process and must remain live with its authorization routes.
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, toolHiveBasePath+"/.well-known/oauth-protected-resource", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("embedded protected-resource handler = %d, want 200", response.Code)
+	}
+	attachment, _, err := process.Runtime.AttachSession(t.Context(), "production-proof")
+	if err != nil || attachment.Binding() == "" || len(attachment.Tools()) != 1 {
+		t.Fatalf("production runtime attachment = %#v, %v", attachment, err)
+	}
+}
+
 func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	assertToolHiveProtectedClientIsConfidential(t)
+}
+
+func assertToolHiveProtectedClientIsConfidential(t *testing.T) {
+	t.Helper()
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
 	spy := newRegisterClientSpy()
@@ -148,10 +182,40 @@ func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
 	if err := registration.SHA256Hasher.Compare(t.Context(), client.GetHashedSecret(), []byte("wrong-secret")); err == nil {
 		t.Fatal("registered secret hash accepted a different secret")
 	}
+	transaction := &authorizationTransaction{route: process.protectedTarget}
+	oauthConfig := transaction.oauthConfig(secret)
+	if oauthConfig.Endpoint.AuthStyle != oauth2.AuthStyleInHeader || oauthConfig.ClientSecret != secret {
+		t.Fatalf("broker exchange config = %#v, want private secret with HTTP Basic", oauthConfig)
+	}
+	var wireCalls int
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		wireCalls++
+		if err := request.ParseForm(); err != nil {
+			t.Error(err)
+			return
+		}
+		user, password, ok := request.BasicAuth()
+		if !ok || user != oauthConfig.ClientID || password != secret {
+			t.Errorf("generated broker credential BasicAuth = (%q, %q, %v)", user, password, ok)
+		}
+		if value := request.Form.Get("client_secret"); value != "" {
+			t.Errorf("generated broker credential escaped into form body: %q", value)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenEndpoint.Close()
+	oauthConfig.Endpoint.TokenURL = tokenEndpoint.URL
+	if _, err := oauthConfig.Exchange(t.Context(), "one-time-code"); err != nil {
+		t.Fatalf("generated broker credential exchange: %v", err)
+	}
+	if wireCalls != 1 {
+		t.Fatalf("generated broker credential token requests = %d, want 1", wireCalls)
+	}
 }
 
 func TestADR_0299_BrokerClientSecretNeverCrossesPublicBoundary(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
@@ -183,7 +247,7 @@ func TestADR_0299_BrokerClientSecretNeverCrossesPublicBoundary(t *testing.T) {
 }
 
 func TestNewToolHiveProcessFallsBackToMemoryStorageWhenUnconfigured(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
@@ -193,6 +257,20 @@ func TestNewToolHiveProcessFallsBackToMemoryStorageWhenUnconfigured(t *testing.T
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
+}
+
+func TestIdleToolHiveProcessIsReadyWithoutProfilesOrCallbackAuthority(t *testing.T) {
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	if err := process.Ready(t.Context()); err != nil {
+		t.Fatalf("idle ToolHive process readiness: %v", err)
+	}
+	if !process.Handlers.Empty() || process.CallbackPath != "" {
+		t.Fatalf("idle ToolHive HTTP authority = handlers:%+v callback:%q, want none", process.Handlers, process.CallbackPath)
+	}
 }
 
 func TestAnonymousOnlyProcessPublishesNoVMCPRoute(t *testing.T) {
@@ -214,7 +292,7 @@ func TestAnonymousOnlyProcessPublishesNoVMCPRoute(t *testing.T) {
 }
 
 func TestProtectedBrokerVMCPEndpointRejectsAnonymousOverNetwork(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	var requests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "get_status", &requests)
 	protected := protectedToolHiveProfile("private")
@@ -340,7 +418,7 @@ func TestToolHiveConstructionRejectsInvalidProfiles(t *testing.T) {
 }
 
 func TestADR_0298_ToolHiveConstructionMapsEveryProtectedProfileInOrder(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	first := protectedToolHiveProfile("GitHub_Cloud")
 	first.Static = []StaticTool{{Name: "reviewed", Schema: json.RawMessage(`{"type":"object"}`)}}
 	profiles := []ToolHiveProfile{
@@ -402,13 +480,13 @@ func TestADR_0298_ToolHiveConstructionRejectsCollidingProviderKeys(t *testing.T)
 func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.T) {
 	valid := StaticTool{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}
 	for _, test := range []struct {
-		name     string
-		tools    []StaticTool
-		occupied []string
+		name              string
+		tools             []StaticTool
+		reservedToolNames []string
 	}{
 		{name: "invalid schema", tools: []StaticTool{{Name: "read", Schema: json.RawMessage(`[]`)}}},
 		{name: "duplicate declaration", tools: []StaticTool{valid, valid}},
-		{name: "occupied name", tools: []StaticTool{valid}, occupied: []string{"mcp__private__read"}},
+		{name: "reservedToolNames name", tools: []StaticTool{valid}, reservedToolNames: []string{"mcp__private__read"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			profile := protectedToolHiveProfile("private")
@@ -417,7 +495,7 @@ func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.
 			if err != nil {
 				t.Fatalf("compileToolHiveConstruction: %v", err)
 			}
-			if _, err := compileStaticProtectedRoutes(construction, &oauthRoute{}, nil, test.occupied); !errors.Is(err, ErrInvalidCatalogue) {
+			if _, err := compileStaticProtectedRoutes(construction, &oauthRoute{}, nil, test.reservedToolNames); !errors.Is(err, ErrInvalidCatalogue) {
 				t.Fatalf("compileStaticProtectedRoutes error = %v, want ErrInvalidCatalogue", err)
 			}
 		})
@@ -428,7 +506,7 @@ func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.
 // route for Runtime-only tests. NewToolHiveProcess itself publishes broker routes.
 func admitStaticForGenericAuthorizationTest(t *testing.T, process *Process) {
 	t.Helper()
-	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.occupied)
+	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.reservedToolNames)
 	if err != nil {
 		t.Fatalf("compile generic static routes: %v", err)
 	}
@@ -439,7 +517,7 @@ func admitStaticForGenericAuthorizationTest(t *testing.T, process *Process) {
 }
 
 func TestToolHiveProcessAllowsUnambiguousUnderscoreRoutingKeys(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	var anonymousRequests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "enterprise_create_issue", &anonymousRequests)
 	protected := protectedToolHiveProfile("github_enterprise")
@@ -473,7 +551,7 @@ func TestToolHiveProcessAllowsUnambiguousUnderscoreRoutingKeys(t *testing.T) {
 }
 
 func TestGenericStaticProtectedOIDCAndCIMDUseToolHiveTarget(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	issuer := toolHiveOIDCIssuer(t)
 	for _, test := range []struct {
 		name     string
@@ -533,7 +611,7 @@ func TestGenericStaticProtectedOIDCAndCIMDUseToolHiveTarget(t *testing.T) {
 }
 
 func TestToolHiveStaticToolAuthorizationStartsBundle(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	first := protectedToolHiveProfile("github")
 	first.Static = []StaticTool{{Name: "get_me", Schema: json.RawMessage(`{"type":"object"}`)}}
 	second := protectedToolHiveProfile("calendar")
@@ -650,7 +728,7 @@ func TestADR_0298_ToolHiveEnrollmentUsesRealIdentityMiddleware(t *testing.T) {
 		{name: "CIMD document", mode: "cimd"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("MECATL_TEST_CLIENT_SECRET", "client-secret")
+			t.Setenv("testdata/client-secret", "client-secret")
 			mux := http.NewServeMux()
 			gateway := httptest.NewUnstartedServer(mux)
 			gateway.StartTLS()
@@ -966,7 +1044,7 @@ func TestGenericStaticOAuth2AuthorizationCallbackAndExactExecution(t *testing.T)
 }
 
 func TestNewToolHiveProcessWiresDefaultProtectedTransport(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "private.echo", Description: "echoes input"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
 		Text string `json:"text"`
@@ -1122,7 +1200,7 @@ func TestToolHiveProtectedCallerRejectsCrossBackendCapabilityDrift(t *testing.T)
 	if err != nil || wanted != "github_enterprise.create_issue" {
 		t.Fatalf("protected advertised name = %q, %v", wanted, err)
 	}
-	caller := toolHiveProtectedCaller(httpServer.URL, nil, port.NopDiagnostics{})
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, port.NopDiagnostics{}, nil)
 	_, err = caller(t.Context(), SessionRef{}, "github_enterprise",
 		session.NewToolCall("call-1", "mcp__github_enterprise__create_issue", json.RawMessage(`{}`)),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
@@ -1152,7 +1230,7 @@ func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 
 	diag := &recordingBrokerDiagnostics{}
-	caller := toolHiveProtectedCaller(httpServer.URL, nil, diag)
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, diag, nil)
 	result, err := caller(t.Context(), SessionRef{id: "session-1"}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
 	if err != nil {
 		t.Fatalf("protected caller: %v", err)
@@ -1362,6 +1440,74 @@ func TestMcpBrokerDCRClient_Scenario2_ReusesCachedRegistration(t *testing.T) {
 	}
 }
 
+func TestDCRUpstreamRecoveryFailsClosedOnRotatedClientRegistration(t *testing.T) {
+	fixture := newToolHiveDCRFixture(t, false)
+	mini := miniredis.RunT(t)
+	config := fixture.config()
+	config.AuthStorage = nil
+	config.ProtectedStorage = func() *ProtectedStorageConfig {
+		protected := protectedStorageTestConfig(t, func(ProtectedRedisClientConfig) (redis.UniversalClient, error) {
+			return redis.NewClient(&redis.Options{Addr: mini.Addr()}), nil
+		})
+		return &protected
+	}()
+
+	first, err := newToolHiveProcess(t.Context(), config, fixture.options())
+	if err != nil {
+		t.Fatalf("first process: %v", err)
+	}
+	fixture.handlers.Store(first.Handlers)
+	tsID := fixture.enrollAndCall(t, first, "dcr-recovery")
+	if tsID == "" {
+		t.Fatal("enrollment did not capture ToolHive verified TSID")
+	}
+	provider := first.providers[0]
+	now := time.Now().UTC()
+	row, err := first.authStorage.GetUpstreamTokens(t.Context(), tsID, provider)
+	if err != nil || row == nil || row.RefreshToken == "" {
+		t.Fatalf("enrolled upstream row = %#v, %v; want refresh-capable DCR grant", row, err)
+	}
+	guard := contract.ContinuityGuard{SessionID: "dcr-recovery", SessionIncarnation: session.NewIncarnationID(), Providers: append([]string(nil), first.providers...), ProfileDigest: first.profileDigest}
+	guard.OwnerPartition[0], guard.WorkloadPartition[0] = 1, 2
+	deadline := now.Add(time.Minute)
+	staged, err := first.custody.Stage(t.Context(), custodyRequest{Guard: custodyGuardFromContract(guard), AttemptDeadline: deadline}, tsID)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	assertion := contract.CustodyAssertion{Guard: guard, RecoveryReference: string(staged.Recovery), AttemptDeadline: deadline}
+	if err := first.CommitCredentialCustody(t.Context(), assertion); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	row.ExpiresAt = now.Add(-time.Minute)
+	row.SessionExpiresAt = now.Add(time.Hour)
+	if err := first.authStorage.StoreUpstreamTokens(t.Context(), tsID, provider, row); err != nil {
+		t.Fatalf("expire staged access token: %v", err)
+	}
+	beforeUpstream := fixture.protectedRequests.Load()
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first process: %v", err)
+	}
+
+	second, err := newToolHiveProcess(t.Context(), config, fixture.options())
+	if err != nil {
+		t.Fatalf("replacement process: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	fixture.handlers.Store(second.Handlers)
+	fixture.rotatedCredentials.Store(true)
+
+	recovered, err := second.RecoverCredentialAttachment(t.Context(), assertion, "dcr-rotated")
+	if !errors.Is(err, contract.ErrContinuityUnavailable) {
+		t.Fatalf("rotated DCR recovery = (%#v, %v), want continuity unavailable", recovered, err)
+	}
+	if recovered.Attachment != nil {
+		t.Fatal("rotated DCR recovery returned an attachment")
+	}
+	if got := fixture.protectedRequests.Load(); got != beforeUpstream {
+		t.Fatalf("rotated DCR recovery reached authenticated upstream %d times, want no additional calls", got-beforeUpstream)
+	}
+}
 func TestADR_0314_RegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
 	fixture := newToolHiveDCRFixture(t, true)
 	process, err := newToolHiveProcess(t.Context(), fixture.config(), fixture.options())
@@ -1392,6 +1538,8 @@ type toolHiveDCRFixture struct {
 	metadataRequests     atomic.Int32
 	registrationRequests atomic.Int32
 	protectedCalls       atomic.Int32
+	protectedRequests    atomic.Int32
+	rotatedCredentials   atomic.Bool
 	handlers             atomic.Value
 	registration         struct {
 		sync.Mutex
@@ -1448,11 +1596,15 @@ func newToolHiveDCRFixture(t *testing.T, rejectRegistration bool) *toolHiveDCRFi
 		case "/token":
 			w.Header().Set("Content-Type", "application/json")
 			clientID, secret, ok := request.BasicAuth()
-			if !ok || clientID != "dcr-client" || secret != "dcr-secret" {
+			expectedID, expectedSecret := "dcr-client", "dcr-secret"
+			if fixture.rotatedCredentials.Load() {
+				expectedID, expectedSecret = "dcr-client-rotated", "dcr-secret-rotated"
+			}
+			if !ok || clientID != expectedID || secret != expectedSecret {
 				http.Error(w, "invalid DCR client authentication", http.StatusUnauthorized)
 				return
 			}
-			_, _ = w.Write([]byte(`{"access_token":"dcr-upstream-token","token_type":"Bearer","expires_in":3600}`))
+			_, _ = w.Write([]byte(`{"access_token":"dcr-upstream-token","refresh_token":"dcr-refresh-token","token_type":"Bearer","expires_in":3600}`))
 		default:
 			http.NotFound(w, request)
 		}
@@ -1468,6 +1620,7 @@ func newToolHiveDCRFixture(t *testing.T, rejectRegistration bool) *toolHiveDCRFi
 	})
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	fixture.protected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		fixture.protectedRequests.Add(1)
 		if request.Header.Get("Authorization") != "Bearer dcr-upstream-token" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -1534,7 +1687,7 @@ func (f *toolHiveDCRFixture) assertRegistration(t *testing.T) {
 	}
 }
 
-func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id session.SessionID) {
+func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id session.SessionID) string {
 	t.Helper()
 	attached, _, err := process.Runtime.AttachSession(t.Context(), id)
 	if err != nil {
@@ -1568,6 +1721,10 @@ func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id se
 	if err != nil || result.IsError || !strings.HasPrefix(result.Content, "created:one") {
 		t.Fatalf("protected result = (%+v, %v)", result, err)
 	}
+	handle := attached.(*Attachment)
+	handle.mu.RLock()
+	defer handle.mu.RUnlock()
+	return handle.verifiedTSID
 }
 
 type nonClosingMemoryStorage struct{ *storage.MemoryStorage }

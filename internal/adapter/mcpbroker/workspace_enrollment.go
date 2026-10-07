@@ -135,11 +135,19 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	defer done()
-	backends, target, _ := a.bundleBackends()
+	backends, target, process := a.bundleBackends()
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
 	}
-	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonRequestStarted, "backend_count", len(backends))
+	if process != nil && process.protectedStorage != nil {
+		healthCtx, cancel := context.WithTimeout(opCtx, process.protectedStorage.healthTimeout)
+		err := process.protectedStorage.Health(healthCtx)
+		cancel()
+		if err != nil {
+			return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: protected storage unavailable")
+		}
+	}
+	a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelDebug, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonRequestStarted, "backend_count", len(backends))
 
 	logical := a.logical
 	a.enrollmentMu.Lock()
@@ -153,14 +161,18 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		} else if err == nil {
 			reason = diagnosticEnrollmentReasonRequestObserved
 		}
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationBegin, reason, "backend_count", len(backends))
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationBegin, reason, "backend_count", len(backends))
 		return result, err
 	}
 	logical.mu.Unlock()
 
+	a.mu.Lock()
+	a.verifiedTSID = ""
+	a.mu.Unlock()
+
 	// Secret resolution is potentially slow and must NOT run while holding
 	// logical.mu: see the identical rationale on RequestAuthorization. Delegates
-	// to the shared resolveClientSecret (rather than re-deriving it here) so the
+	// to the shared resolveClientSecret (rather than re-reading it here) so the
 	// already-populated raw target.clientSecret (the confidential embedded
 	// broker's own client secret, set once at construction) is never bypassed
 	// in favor of a secret-file read that a target like this one never has.
@@ -203,12 +215,12 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		status:         session.AuthorizationPending,
 	}
 	logical.authorizations[transaction.identity] = transaction
-	if !a.runtime.registerCallbackState(state, logical, transaction) {
+	if err := a.runtime.registerCallbackState(state, logical, transaction); err != nil {
 		delete(logical.authorizations, transaction.identity)
-		return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: create unique callback state")
+		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	url := presentWorkspaceTransaction(transaction)
-	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonStarted, "backend_count", len(backends))
+	a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonStarted, "backend_count", len(backends))
 	return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, nil
 }
 
@@ -229,7 +241,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
-	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonRequestObserved)
+	a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelDebug, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonRequestObserved)
 
 	logical := a.logical
 	a.enrollmentMu.Lock()
@@ -245,7 +257,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		if err != nil {
 			return contract.WorkspaceEnrollmentResult{}, err
 		}
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)
 		return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
 	}
 	transaction := lookupWorkspaceTransactionLocked(logical, ref.ID)
@@ -262,27 +274,27 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	switch status {
 	case session.AuthorizationPending:
 		logical.mu.Unlock()
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonRequestObserved, "status", contract.WorkspaceEnrollmentPending)
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonRequestObserved, "status", contract.WorkspaceEnrollmentPending)
 		return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentPending}, nil
 	case session.AuthorizationCancelled:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
 		logical.mu.Unlock()
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationExpired:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentExpired)
 		logical.mu.Unlock()
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationDenied:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentDenied)
 		logical.mu.Unlock()
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationFailed, session.AuthorizationClosed:
 		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 		logical.mu.Unlock()
-		a.runtime.logWorkspaceEnrollment(ctx, port.LevelWarn, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
+		a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelWarn, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 		return result, nil
 	case session.AuthorizationGranted:
 		// fall through to discovery below, unlocked.
@@ -302,8 +314,8 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	if process == nil {
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
-	occupied := append([]string(nil), process.occupied...)
-	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied, false)
+	reservedToolNames := append([]string(nil), process.reservedToolNames...)
+	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, reservedToolNames, false)
 	if err != nil {
 		if callerErr := ctx.Err(); callerErr != nil {
 			// Discovery was interrupted by this observer, not rejected by the
@@ -343,7 +355,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	a.mu.Unlock()
 	a.runtime.removeCallbackState(state, transaction)
 
-	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)
+	a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)
 	return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
 }
 
@@ -361,7 +373,10 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
-	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonRequestCancelled)
+	a.mu.Lock()
+	a.verifiedTSID = ""
+	a.mu.Unlock()
+	a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelDebug, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonRequestCancelled)
 	logical := a.logical
 	a.enrollmentMu.Lock()
 	defer a.enrollmentMu.Unlock()
@@ -372,7 +387,7 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrAuthorizationNotFound
 	}
 	result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
-	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonCompleted, "status", result.Status)
+	a.runtime.logWorkspaceEnrollment(ctx, a.logical.ref.id, port.LevelInfo, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonCompleted, "status", result.Status)
 	return result, nil
 }
 
