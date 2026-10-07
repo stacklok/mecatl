@@ -89,9 +89,7 @@
     method func (*Supervisor).CancelMember(name string) bool
     method func (*Supervisor).Close()
     method func (*Supervisor).MemberModel(name string) string
-    method func (*Supervisor).MemberProvider(name string) string
     method func (*Supervisor).MemberRouting(name string) (category string, model string, reason string)
-    method func (*Supervisor).MemberSelectionEvidence(name string) (provider string, explicitRouterCategory string)
     method func (*Supervisor).Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome
     method func (*TeamTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (*TeamTool).ExecuteObserved(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event)) (session.ToolResult, error)
@@ -200,11 +198,9 @@ func TightenTeamTokenBudget(serverBudget int, request int) int
 func UtilityEngineUsage(kind session.UsageKind, identity session.ProviderModelID, sess *session.Session) session.AuxiliaryUsage
 func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error
 func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
-func WithAgentModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
-func WithAgentTargetEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption
+func WithAgentModelEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption
 func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) SubagentOption
-func WithAgentWritableModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
-func WithAgentWritableTargetEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption
+func WithAgentWritableModelEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption
 func WithAskReviewPolicy(p string) EngineAskReviewerOption
 func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption
 func WithChildForker(f tool.EnvironmentForker) SubagentOption
@@ -226,19 +222,18 @@ func WithParallelChildLimits(l session.Limits) ParallelOption
 func WithParallelChildMode(m session.PermissionMode) ParallelOption
 func WithParallelChildSessionPrefix(p string) ParallelOption
 func WithParallelConcurrency(n int) ParallelOption
-func WithParallelEngineFactory(f func(model string) (*Engine, bool)) ParallelOption
+func WithParallelEngineFactory(f func(ModelTarget) (*Engine, bool)) ParallelOption
 func WithParallelJudge(j BranchJudge) ParallelOption
 func WithParallelProvider(provider string) ParallelOption
 func WithParallelSelectorResolver(r SubagentSelectorResolver) ParallelOption
 func WithParallelStore(store port.SessionStore) ParallelOption
 func WithParallelSubagentStopHook(h port.HookRunner) ParallelOption
-func WithParallelTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) ParallelOption
 func WithPinnedAgents(names []string) SubagentOption
 func WithReadOnlyForker(f tool.EnvironmentForker) SupervisorOption
 func WithRootAuthority(authority session.Authority) SupervisorOption
 func WithRoutableAgents(names []string) SubagentOption
 func WithSharedChildWorkspace(view func(tool.Workspace) tool.Workspace) SubagentOption
-func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
+func WithSubagentEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption
 func WithSubagentNoFSNote() SubagentOption
 func WithSubagentOwnershipEnforced(ownershipEnforced bool) SubagentOption
 func WithSubagentProvider(provider string) SubagentOption
@@ -247,12 +242,10 @@ func WithSubagentSelectorResolver(r SubagentSelectorResolver) SubagentOption
 func WithSubagentShellDisabledNote(reason string) SubagentOption
 func WithSubagentStopHook(h port.HookRunner) SubagentOption
 func WithSubagentStore(store port.SessionStore) SubagentOption
-func WithSubagentTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption
 func WithTeamConcurrency(n int) SupervisorOption
 func WithTeamGoal(goal string) SupervisorOption
 func WithTeamHooks(h port.HookRunner) SupervisorOption
 func WithTeamLimits(l session.Limits) SupervisorOption
-func WithTeamMemberSelectorFactory(f func(MemberSpec, ResolvedModelSelector) MemberBuild) SupervisorOption
 func WithTeamMode(m session.PermissionMode) SupervisorOption
 func WithTeamOwner(owner *session.Principal) SupervisorOption
 func WithTeamReadLedgerFactory(factory func() tool.ReadLedger) SupervisorOption
@@ -263,15 +256,13 @@ func WithTeamToolForker(f tool.EnvironmentForker) TeamOption
 func WithTeamToolHooks(h port.HookRunner) TeamOption
 func WithTeamToolReadLedgerFactory(factory func() tool.ReadLedger) TeamOption
 func WithTeamToolReadOnlyForker(f tool.EnvironmentForker) TeamOption
-func WithTeamToolSelectorFactory(f func(*team.Team, MemberSpec, ResolvedModelSelector) MemberBuild) TeamOption
 func WithTeamToolSharedBaseWorkspace(view func(tool.Workspace) tool.Workspace) TeamOption
 func WithTeamToolStore(s port.SessionStore) TeamOption
 func WithTeamToolTokenBudget(n int) TeamOption
 func WithUntrustedGoal(untrusted bool) SupervisorOption
 func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
-func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
-func WithWritableTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption
+func WithWritableEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption
 type AgentMeta struct{Name string; Description string; Provider string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
 type ApprovalResolution struct{AskID string; ReviewID string; Kind session.GuardrailApprovalKind; Verdict session.ApprovalVerdict}
 type ArtifactHandle string

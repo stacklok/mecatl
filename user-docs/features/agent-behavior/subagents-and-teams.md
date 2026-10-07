@@ -98,7 +98,7 @@ transcript persists and can be resumed later. To cancel it sooner, use the gRPC
 ## Parallel
 
 `Parallel` runs up to 16 self-contained branches, with eight active by default.
-Each branch has a writable isolated workspace and cannot communicate with other branches. One optional `provider`/`model` selector applies to every branch; it is validated before fan-out, while the judge always stays on the parent model.
+Each branch has a writable isolated workspace and cannot communicate with other branches. One optional provider/model selector applies to all branches; the judge stays on the parent model.
 
 Use Parallel for competing approaches or isolated implementation branches. For
 independent read-only research, use concurrent Subagent calls. For workers that
@@ -123,8 +123,7 @@ Each branch result includes a branch ID for `InspectSubagent`.
 more than an independent Subagent or Parallel call, so use it only when ongoing
 coordination matters.
 
-Each member has a `name`, `role`, optional `mutating` flag, and optional `provider`/`model` selector. Mecatl validates the whole roster before adding members, then resolves each member once and keeps its engine across rounds. The first member is the lead. Its role should explain how to divide the goal and what the final
-report must answer. Other members should record each conclusion with `RecordFinding` and notify the lead when finished. A named specialist accepts a model-only call override but rejects a provider-bearing selector, preserving its scoped prompt and tools.
+Each member has a `name`, `role`, optional `mutating` flag, and optional provider/model selector. The first member is the lead: describe the final report it must produce. Other members should record findings and notify the lead. A named specialist accepts a model-only override, not a provider-bearing selector.
 
 Members are read-only by default. A mutating member gets a private writable copy
 of the workspace. Team workspaces are never merged or preserved, so the durable
@@ -137,35 +136,9 @@ rounds but lets the current round and lead synthesis finish.
 
 ## Automatic model routing
 
-An operator can route delegation tasks to model aliases by defining categories
-in user-global settings:
+An operator can map task categories to model aliases in user-global settings. For setup and examples, see [Model routing](/features/sessions/model-routing.md#configure-aliases-slots-and-task-routing).
 
-```yaml
-models:
-  router:
-    categories:
-      - name: small
-        description: mechanical edits and quick lookups
-        model: cheap
-      - name: large
-        description: architecture and subtle concurrency analysis
-        model: big
-```
-
-A non-empty category list enables routing. The router fills only an unset target and may resolve a provider-aware alias. It does not override an explicit provider/model selector, a specialist's pinned model, `fork`, or `resume`. To request an exact category without classification, set `provider: "model-router"` and `model` to its discovered category name. The Parallel judge stays on the parent model.
-
-In an agent definition, `model: inherit` is an explicit pin to the session
-model. Omit the `model` key to allow routing.
-
-Classification or model-build failures fall back to the model the child would
-otherwise use. After three consecutive misses in one run, the router stops
-classifying for that run. Delegation events report why routing was skipped or
-why a target was unavailable.
-
-See
-[Configure model routing](/features/sessions/model-routing.md#configure-aliases-slots-and-task-routing)
-for the routing schema. `--subagent-model-router=false` disables a configured
-router.
+Routing fills only an unset target. It does not override an explicit selector, a pinned specialist, `fork`, or `resume`. To select a category without classification, use `provider: "model-router"` and its discovered category as `model`; an unavailable explicit category fails instead of inheriting. Automatic classification or model-build failures fall back to the child's ordinary model. `--subagent-model-router=false` disables a configured router.
 
 ## Operator defaults
 

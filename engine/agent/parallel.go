@@ -127,18 +127,11 @@ type ParallelTool struct {
 	// parent Engine.
 	childEngine *Engine
 
-	// engineFactory, when non-nil, mints a per-branch child engine for an OPT-IN
-	// model-router-classified model, exactly the WithSubagentEngineFactory
-	// shape: a composition closure that RE-DERIVES the override branch engine's
-	// Compactor/TokenCounter/Env.Model/ContextWindow for the routed model (never a
-	// clone-and-swap). It is consulted ONLY when the parent run wired routeTask AND the
-	// classifier hit (maybeRouteBranchModel); a nil factory, an unwired routeTask, or a
-	// classifier miss falls through to the shared childEngine — byte-identical to a
-	// deployment with no router. nil by default (WithParallelEngineFactory injects it).
-	engineFactory       func(string) (*Engine, bool)
-	targetEngineFactory func(ModelTarget) (*Engine, bool)
-	selectorResolver    SubagentSelectorResolver
-	providerID          string
+	// engineFactory mints a fresh branch on a provider/model target. A declined
+	// automatic pick falls back to childEngine; nil disables branch routing.
+	engineFactory    func(ModelTarget) (*Engine, bool)
+	selectorResolver SubagentSelectorResolver
+	providerID       string
 
 	// forker isolates each branch's workspace from the shared base.
 	forker tool.EnvironmentForker
@@ -307,21 +300,10 @@ func WithParallelStore(store port.SessionStore) ParallelOption {
 	return func(t *ParallelTool) { t.store = store }
 }
 
-// WithParallelEngineFactory injects the composition-supplied factory that mints a per-branch
-// child engine on an OPT-IN model-router-classified model. It is the EXACT shape
-// WithSubagentEngineFactory takes (func(model string)(*Engine,bool)); the factory re-derives
-// the override branch engine's Compactor/TokenCounter/Env.Model/ContextWindow for the routed
-// model through the contamination-safe per-provider path (never a clone-and-swap). nil (the
-// default) disables per-branch routing — every branch runs on the shared childEngine,
-// byte-identical to today. engine/agent stays model-string-only: the factory takes an opaque
-// model id and composition owns the category→model→engine mapping.
-func WithParallelEngineFactory(f func(model string) (*Engine, bool)) ParallelOption {
+// WithParallelEngineFactory mints per-branch engines on provider/model targets.
+// Automatic routing declines fall back to the shared branch engine.
+func WithParallelEngineFactory(f func(ModelTarget) (*Engine, bool)) ParallelOption {
 	return func(t *ParallelTool) { t.engineFactory = f }
-}
-
-// WithParallelTargetEngineFactory injects the provider-aware explicit-selector factory.
-func WithParallelTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) ParallelOption {
-	return func(t *ParallelTool) { t.targetEngineFactory = f }
 }
 
 // WithParallelSelectorResolver injects composition-owned provider/model resolution.
@@ -718,7 +700,7 @@ func (t *ParallelTool) resolveSelector(callID session.ToolCallID, args parallelA
 	if model == "" {
 		return parallelRunSelection{}, nil
 	}
-	if t.selectorResolver == nil || t.targetEngineFactory == nil {
+	if t.selectorResolver == nil || t.engineFactory == nil {
 		res := session.NewToolError(callID, "Parallel: provider/model selection is not supported in this deployment")
 		return parallelRunSelection{}, &res
 	}
@@ -731,7 +713,7 @@ func (t *ParallelTool) resolveSelector(callID session.ToolCallID, args parallelA
 		res := session.NewToolError(callID, "Parallel: invalid provider/model selector: "+detail)
 		return parallelRunSelection{}, &res
 	}
-	eng, ok := t.targetEngineFactory(resolved.Target)
+	eng, ok := t.engineFactory(resolved.Target)
 	if !ok || eng == nil {
 		res := session.NewToolError(callID, "Parallel: resolved provider/model target is unavailable")
 		return parallelRunSelection{}, &res
@@ -1145,10 +1127,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		if routedTarget.Model != "" {
 			var eng *Engine
 			var found bool
-			if routedTarget.Provider != "" && t.targetEngineFactory != nil {
-				eng, found = t.targetEngineFactory(routedTarget)
-			} else if t.engineFactory != nil {
-				eng, found = t.engineFactory(routedTarget.Model)
+			if t.engineFactory != nil {
+				eng, found = t.engineFactory(routedTarget)
 			}
 			if found && eng != nil {
 				branchEngine = eng
@@ -1221,6 +1201,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		return res, session.StopError
 	}
 	res.childIncarnation = childSess.Incarnation()
+	childSess.ProviderID = branchProvider
+	childSess.ModelID = branchEngine.Model()
 	// The branch is attributed to the PARENT session's owner,
 	// or carries delegated authority when the parent run is authority-bound.
 	if caps.authorityBound {

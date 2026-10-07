@@ -29,7 +29,7 @@ func TestADR_0369_Scenario3_SubagentDirectSelectors(t *testing.T) {
 	tool := NewSubagentTool(markerEngine("DEFAULT"),
 		WithSubagentProvider("parent"),
 		WithSubagentSelectorResolver(resolver),
-		WithSubagentTargetEngineFactory(factory)).(*SubagentTool)
+		WithSubagentEngineFactory(factory)).(*SubagentTool)
 
 	for _, tc := range []struct {
 		name string
@@ -82,7 +82,7 @@ func TestADR_0369_Scenario3_SubagentRouterSelector(t *testing.T) {
 					}
 					return ResolvedModelSelector{Target: target, ProviderBearing: true, ExplicitRouterCategory: "deep", ActualProvider: map[bool]string{true: target.Provider, false: "parent"}[target.Provider != ""]}, nil
 				}),
-				WithSubagentTargetEngineFactory(func(got ModelTarget) (*Engine, bool) {
+				WithSubagentEngineFactory(func(got ModelTarget) (*Engine, bool) {
 					if got != target {
 						t.Fatalf("factory target = %+v, want %+v", got, target)
 					}
@@ -119,7 +119,7 @@ func TestADR_0369_Scenario3_ResumeProviderSafety(t *testing.T) {
 			WithSubagentSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
 				return ResolvedModelSelector{Target: ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: true}, nil
 			}),
-			WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			WithSubagentEngineFactory(func(target ModelTarget) (*Engine, bool) {
 				if target != (ModelTarget{Provider: "second", Model: "pair-model"}) {
 					return nil, false
 				}
@@ -161,7 +161,7 @@ func TestADR_0369_Scenario3_ResumeProviderSafety(t *testing.T) {
 			WithSubagentSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
 				return ResolvedModelSelector{Target: ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: true}, nil
 			}),
-			WithWritableTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			WithWritableEngineFactory(func(target ModelTarget) (*Engine, bool) {
 				if target != (ModelTarget{Provider: "second", Model: "pair-model"}) {
 					return nil, false
 				}
@@ -192,7 +192,7 @@ func TestADR_0369_Scenario3_ResumeProviderSafety(t *testing.T) {
 			WithSubagentSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
 				return ResolvedModelSelector{Target: ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: true}, nil
 			}),
-			WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			WithSubagentEngineFactory(func(target ModelTarget) (*Engine, bool) {
 				if target.Provider == "second" {
 					return NewEngine(Deps{LLM: pair, Catalog: catalog, Policy: allowAllInt(), Model: target.Model}), true
 				}
@@ -221,7 +221,7 @@ func TestADR_0369_Scenario3_ResumeProviderSafety(t *testing.T) {
 		fallback := mockllm.New(mockllm.TextTurn("FIRST"), mockllm.TextTurn("SECOND"))
 		tool := NewSubagentTool(NewEngine(Deps{LLM: fallback, Catalog: markerEngine("x").deps.Catalog, Policy: allowAllInt(), Model: "default-model"}),
 			WithSubagentStore(store), WithSubagentProvider("default"),
-			WithSubagentTargetEngineFactory(func(ModelTarget) (*Engine, bool) { t.Fatal("legacy resume called target factory"); return nil, false })).(*SubagentTool)
+			WithSubagentEngineFactory(func(ModelTarget) (*Engine, bool) { t.Fatal("legacy resume called target factory"); return nil, false })).(*SubagentTool)
 		fresh, _ := tool.ExecuteWithParent(t.Context(), session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"first"}`)), memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
 		if fresh.IsError {
 			t.Fatalf("fresh legacy seed = %+v", fresh)
@@ -259,15 +259,15 @@ func TestADR_0369_Scenario3_InvalidSelectors(t *testing.T) {
 	factoryBuilds, specialistBuilds := 0, 0
 	tool := NewSubagentTool(NewEngine(Deps{LLM: defaultLLM, Catalog: reviewer.deps.Catalog, Policy: allowAllInt(), Model: "DEFAULT"}),
 		WithSubagentSelectorResolver(resolver),
-		WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+		WithSubagentEngineFactory(func(target ModelTarget) (*Engine, bool) {
 			factoryBuilds++
 			return markerEngine(target.Model), true
 		}),
 		WithAgentEngines(map[string]*Engine{"reviewer": reviewer}, []AgentMeta{{Name: "reviewer"}}),
-		WithAgentModelEngineFactory(func(name, model string) (*Engine, bool) {
+		WithAgentModelEngineFactory(func(name string, target ModelTarget) (*Engine, bool) {
 			specialistBuilds++
-			if name == "reviewer" && model == "literal" {
-				return markerEngine("SPECIALIST:" + model), true
+			if name == "reviewer" && target == (ModelTarget{Model: "literal"}) {
+				return markerEngine("SPECIALIST:" + target.Model), true
 			}
 			return nil, false
 		})).(*SubagentTool)
@@ -304,7 +304,7 @@ func TestADR_0369_Scenario1_NamedAutomaticRouterPreservesProviderTarget(t *testi
 	tool := NewSubagentTool(markerEngine("default"),
 		WithAgentEngines(map[string]*Engine{"reviewer": markerEngine("specialist")}, []AgentMeta{{Name: "reviewer", Provider: "parent"}}),
 		WithRoutableAgents([]string{"reviewer"}),
-		WithAgentTargetEngineFactory(func(name string, target ModelTarget) (*Engine, bool) {
+		WithAgentModelEngineFactory(func(name string, target ModelTarget) (*Engine, bool) {
 			if name != "reviewer" {
 				t.Fatalf("target factory agent = %q, want reviewer", name)
 			}
@@ -334,7 +334,7 @@ func TestADR_0369_Scenario1_NamedAutomaticRouterUnavailableTargetFallsSoft(t *te
 	tool := NewSubagentTool(markerEngine("default"),
 		WithAgentEngines(map[string]*Engine{"reviewer": markerEngine("specialist")}, []AgentMeta{{Name: "reviewer", Provider: "parent"}}),
 		WithRoutableAgents([]string{"reviewer"}),
-		WithAgentTargetEngineFactory(func(string, ModelTarget) (*Engine, bool) { return nil, false }),
+		WithAgentModelEngineFactory(func(string, ModelTarget) (*Engine, bool) { return nil, false }),
 	).(*SubagentTool)
 	var start *session.SubagentPayload
 	res, err := tool.ExecuteWithParent(t.Context(), session.NewToolCall("unavailable-route", "Subagent", json.RawMessage(`{"prompt":"review","agent":"reviewer"}`)), memEnv("/ws"), func(ev session.Event) {

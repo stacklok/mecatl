@@ -43,7 +43,7 @@ func TestSubagentForkAndAgentRejected(t *testing.T) {
 // parent's provider-private reasoning/phase blobs).
 func TestSubagentForkAndModelRejected(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t)),
-		agent.WithSubagentEngineFactory(func(string) (*agent.Engine, bool) {
+		agent.WithSubagentEngineFactory(func(agent.ModelTarget) (*agent.Engine, bool) {
 			return childEngineWith(mockllm.New(mockllm.TextTurn("m")), catalogWith(t)), true
 		}))
 	res := runOneSubagent(t, task, "p1", `{"prompt":"go","fork":true,"model":"some-model"}`)

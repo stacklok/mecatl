@@ -20,7 +20,7 @@ func TestDelegationSelectorValuesRejectUnsafeTextBeforeResolution(t *testing.T) 
 				t.Fatalf("Subagent accepted unsafe selector: ok=%v result=%+v", ok, result)
 			}
 
-			parallel := &ParallelTool{selectorResolver: resolver, targetEngineFactory: func(ModelTarget) (*Engine, bool) {
+			parallel := &ParallelTool{selectorResolver: resolver, engineFactory: func(ModelTarget) (*Engine, bool) {
 				t.Fatal("Parallel target factory called for unsafe selector")
 				return nil, false
 			}}

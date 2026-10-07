@@ -1697,13 +1697,9 @@ func (a *ModelAliases) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// ModelsSection is the `models:` YAML subtree: a per-slot model-binding
-// map, an alias map, and a session-default binding. The TOP mapping is parsed
-// STRICTLY (unknown keys error); the inner Slots/Aliases maps are free-form
-// name→selector (composition validates the slot names fail-soft via knownSlotNames).
-//
-// The block is operator-tier policy. Project-tier models nodes are removed as
-// opaque content before this decoder runs.
+// ModelsSection holds operator-owned model aliases, slots, defaults, and router
+// settings. Project-tier models blocks are ignored. Unknown top-level keys fail
+// parsing; slots and aliases accept user-defined names.
 type ModelsSection struct {
 	// Slots binds a slot name to a model selector. Call slots include
 	// "compaction", "ask-reviewer", and "guardrail"; tier slots include
@@ -1724,43 +1720,19 @@ type ModelsSection struct {
 	// separately configured default_provider applies only to scalar selectors.
 	// Empty = absent.
 	Default string `yaml:"default"`
-	// Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
-	// concrete id): the settings.yaml twin of the --subagent-model flag (issue #288).
-	// It sets the global default model for every Subagent / Parallel-branch / team-member
-	// child that does not pin its own model (via an agent definition or a per-call
-	// override). Operator-tier ONLY: a project-tier subagent: is IGNORED with a WARN (the
-	// child-default model is an operator decision — the same operator-only captureModels
-	// discipline as default_provider/allowlist/router). The CLI --subagent-model WINS when
-	// both are set. Validated FAIL-FAST at Build (normalizeSubagentModel): a value that
-	// does not resolve to a usable model id is a startup error (unlike fail-soft
-	// models.default). Empty = absent (the flag/inherit-parent behaviour is unchanged).
+	// Subagent sets the default model for unpinned Subagent, Parallel, and Team
+	// members. --subagent-model takes precedence. Invalid targets fail startup.
 	Subagent string `yaml:"subagent"`
-	// DefaultProvider is the OPERATOR-TIER deployment-wide default provider id (e.g.
-	// openai, openrouter, anthropic, toolhive). It mirrors the --default-provider flag
-	// (app.Config.DefaultProvider) so an operator can declare "toolhive is my default
-	// despite my API key" persistently in settings.yaml without unsetting the key. It
-	// feeds the preferredDefaultProvider ladder as an explicit fallback for a default
-	// model with no provider of its own. It also binds provider-less operator aliases,
-	// slots, subagent defaults, and router targets independently of the main session.
-	// A provider-aware default alias chooses the complete session target instead. Operator-tier only: a
-	// project-tier default_provider: is IGNORED with a WARN (the same operator-only
-	// captureModels discipline as posture/guardrails/allowlist). The effective
-	// provider is validated FAIL-FAST at Build (validateDefaultModel): an unknown or
-	// unavailable selected provider is a startup error. A configured default provider
-	// must also be available when a paired default selects another main provider,
-	// because provider-less operator bindings can still use it. Empty = absent
-	// (the ladder's preferred default wins).
+	// DefaultProvider sets the provider for scalar defaults, aliases, slots, and
+	// delegation routes. A provider-aware default alias selects its own provider
+	// for the main session; the configured default provider must still be available
+	// for scalar bindings. Unknown or unavailable providers fail startup.
 	DefaultProvider string `yaml:"default_provider"`
 	// Allowlist is retained for compatibility, has no effect, and emits a warning when configured.
 	Allowlist []string `yaml:"allowlist"`
-	// Router is the OPERATOR-TIER semantic Subagent model-router taxonomy: a classifier slot, the routing
-	// categories, the default category, and the YAML kill-switch. It is operator-tier
-	// ONLY — a project-tier router: sub-block is STRIPPED with a WARN (the taxonomy is
-	// an autonomous-spend/capability decision the operator owns, like the allowlist).
-	// nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent). The
-	// TAXONOMY is the enable: a non-empty router: with categories turns the
-	// router ON unless `disabled: true` (or the CLI kill-switch) forces it off — the
-	// guardrails-parity enable model, not a flag-to-enable.
+	// Router selects models for unpinned delegated work by category. A non-empty
+	// category list enables routing unless disabled here or by CLI. Project-tier
+	// models blocks are ignored, including router settings.
 	Router *RouterSection `yaml:"router"`
 	// ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID
 	// → total context token override map. It is intentionally not a selector map:

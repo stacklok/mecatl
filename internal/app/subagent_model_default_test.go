@@ -236,8 +236,8 @@ func TestPerCallModelOverridesSubagentModel(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "claude-default")
 	cfg := Config{Model: "claude-default", SubagentModel: "cheap-model-1.0"}
 
-	factory := buildSubagentEngineFactory(cfg, reg, prov, providerAnthropic, "claude-default", nil)
-	eng, ok := factory(catAnthropicModel)
+	factory := buildSubagentTargetEngineFactory(cfg, reg, prov, providerAnthropic, nil)
+	eng, ok := factory(agent.ModelTarget{Model: catAnthropicModel})
 	if !ok || eng == nil {
 		t.Fatalf("factory(%q) = (%v, %v), want a non-nil engine", catAnthropicModel, eng, ok)
 	}

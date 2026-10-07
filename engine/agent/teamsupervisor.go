@@ -267,12 +267,10 @@ type MemberBuild struct {
 // runs in its OWN worktree/fork, never the shared parent base — which is why an
 // isolated member MAY be given Shell while a base-sharing read-only member must not.
 //
-// routedModel is the OPT-IN semantic model router's classification for an UNDEFINED
-// member, the ALREADY-RESOLVED concrete model id the member's engine should
-// be minted on; it is "" when the router was off, missed, or the member is DEFINED (a
-// def pins its own model — the factory IGNORES routedModel then). The supervisor owns
-// the route decision (it holds the parent caps) and passes the result here; composition
-// substitutes routedModel for the default child model only on the undefined branch.
+// routedModel is the OPT-IN router's concrete model for an undefined member.
+// For provider-aware selections (explicit or automatic), spec.Selector carries
+// the complete target and evidence to the same factory. A defined member without
+// an explicit selector keeps its own model.
 type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild
 
 // Supervisor orchestrates one agent team. Build it with NewSupervisor, enrol
@@ -291,9 +289,8 @@ type Supervisor struct {
 	ledgerFactory func() tool.ReadLedger
 	// sharedBaseWS narrows the Workspace authority exposed to a base-sharing
 	// member without replacing its content backend. Nil keeps the base Workspace.
-	sharedBaseWS    func(tool.Workspace) tool.Workspace
-	factory         MemberEngine
-	selectorFactory func(MemberSpec, ResolvedModelSelector) MemberBuild
+	sharedBaseWS func(tool.Workspace) tool.Workspace
+	factory      MemberEngine
 	// rootAuthority is stamped only for a server-created team with no parent run.
 	// Parent-driven teams are child-derivation work and deliberately do not use it.
 	rootAuthority session.Authority
@@ -497,11 +494,6 @@ type memberRT struct {
 
 // SupervisorOption configures a Supervisor.
 type SupervisorOption func(*Supervisor)
-
-// WithTeamMemberSelectorFactory injects the provider-aware member construction seam.
-func WithTeamMemberSelectorFactory(f func(MemberSpec, ResolvedModelSelector) MemberBuild) SupervisorOption {
-	return func(s *Supervisor) { s.selectorFactory = f }
-}
 
 // WithForker injects the workspace-isolation seam used to fork a Mutating member's
 // workspace (force-copy: own `.git`). It is required only if any member is Mutating.
@@ -842,13 +834,21 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
 	// (worktree) fork — so workspace selection depends on the build, not the reverse.
-	var build MemberBuild
-	if s.selectorFactory != nil && strings.TrimSpace(selected.Target.Model) != "" {
-		build = s.selectorFactory(spec, selected)
-	} else {
-		build = s.factory(spec, selected.Target.Model)
+	// Pass the selection in the existing member spec, so one factory handles both
+	// explicit provider choices and automatic routed targets.
+	buildSpec := spec
+	if strings.TrimSpace(selected.Target.Model) != "" {
+		buildSpec.Selector = &selected
 	}
+	build := s.factory(buildSpec, selected.Target.Model)
 	eng := build.Engine
+	if eng == nil && spec.Selector == nil && routedModel != "" {
+		if build.Close != nil {
+			_ = build.Close()
+		}
+		build = s.factory(spec, "")
+		eng = build.Engine
+	}
 	if eng == nil {
 		if build.Close != nil {
 			_ = build.Close()
@@ -857,7 +857,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		return fmt.Errorf("%w for %q", ErrNilEngine, spec.Name)
 	}
 	if spec.Selector == nil {
-		routeAccepted := strings.TrimSpace(routedModel) == "" || eng.Model() == strings.TrimSpace(routedModel)
+		routeAccepted := strings.TrimSpace(routedModel) == "" ||
+			(eng.Model() == strings.TrimSpace(routedModel) &&
+				(selected.Target.Provider == "" || build.Provider == selected.Target.Provider))
 		routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
 			routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
 	}
@@ -921,6 +923,10 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
+	provider := strings.TrimSpace(build.Provider)
+	if provider == "" && spec.Selector != nil {
+		provider = strings.TrimSpace(selected.ActualProvider)
+	}
 	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
 	if err == nil && s.parentCallID != "" {
 		rel := sess.Relationship
@@ -950,6 +956,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	if err := s.stampDirectTeamRoot(sess, cleanup, spec.Name); err != nil {
 		return err
 	}
+	sess.ProviderID = provider
+	sess.ModelID = eng.Model()
 	if err := s.publishMemberSession(ctx, spec.Name, sess, cleanup); err != nil {
 		return err
 	}
@@ -980,10 +988,6 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// done means de-scheduled (see childFamilyTeamMember's caution).
 	s.caps.startChildRun(sess.ID)
 
-	provider := strings.TrimSpace(build.Provider)
-	if provider == "" {
-		provider = strings.TrimSpace(selected.ActualProvider)
-	}
 	explicitCategory := ""
 	if spec.Selector != nil {
 		explicitCategory = spec.Selector.ExplicitRouterCategory
@@ -1083,20 +1087,12 @@ func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.Inc
 	return m.sess.ID, m.sess.Incarnation(), true
 }
 
-// MemberSelectionEvidence returns concrete provider and explicit router category.
-func (s *Supervisor) MemberSelectionEvidence(name string) (provider, explicitRouterCategory string) {
+// memberSelectionEvidence returns concrete provider and explicit router category.
+func (s *Supervisor) memberSelectionEvidence(name string) (provider, explicitRouterCategory string) {
 	if m, ok := s.members[name]; ok {
 		return m.provider, m.explicitRouterCategory
 	}
 	return "", ""
-}
-
-// MemberProvider returns the concrete provider backing the retained member engine.
-func (s *Supervisor) MemberProvider(name string) string {
-	if m, ok := s.members[name]; ok {
-		return m.provider
-	}
-	return ""
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs

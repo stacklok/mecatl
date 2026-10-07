@@ -47,11 +47,10 @@ const maxTeamPreview = 200
 // session — it is the exact shape server.MemberEngineFactory has, so one factory
 // serves both paths.
 //
-// routedModel is the OPT-IN model router's classification — the
-// ALREADY-RESOLVED concrete model id for an UNDEFINED member, "" otherwise. The factory
-// substitutes it for the default child model on the undefined branch only; a DEFINED
-// member's factory ignores it (its def pins the model). The supervisor owns the route
-// decision (it holds the parent caps) and threads the result through.
+// routedModel is the OPT-IN model router's concrete model id for an UNDEFINED
+// member, "" otherwise. When a selector is resolved (explicitly or by routing),
+// spec.Selector carries the full provider/model target and its evidence to the
+// same factory. A defined member without an explicit selector uses its own def.
 type TeamMemberEngineFactory func(t *team.Team, spec MemberSpec, routedModel string) MemberBuild
 
 // TeamMemberArg is one roster entry the model supplies in a Team call. It maps
@@ -160,8 +159,6 @@ type TeamTool struct {
 	factory TeamMemberEngineFactory
 	// selectorResolver preflights the complete roster before team construction.
 	selectorResolver SubagentSelectorResolver
-	// selectorFactory rebuilds a member on a resolved provider/model target.
-	selectorFactory func(*team.Team, MemberSpec, ResolvedModelSelector) MemberBuild
 	// forker isolates a Mutating member's workspace (force-copy: own `.git`). Required
 	// only if any member is Mutating; a Mutating member without it yields a tool error
 	// (the model can retry with a read-only roster).
@@ -247,11 +244,6 @@ func WithTeamToolTokenBudget(n int) TeamOption {
 // WithTeamSelectorResolver injects composition-owned provider/model resolution.
 func WithTeamSelectorResolver(r SubagentSelectorResolver) TeamOption {
 	return func(t *TeamTool) { t.selectorResolver = r }
-}
-
-// WithTeamToolSelectorFactory injects provider-aware member construction.
-func WithTeamToolSelectorFactory(f func(*team.Team, MemberSpec, ResolvedModelSelector) MemberBuild) TeamOption {
-	return func(t *TeamTool) { t.selectorFactory = f }
 }
 
 // NewTeamTool constructs the Team tool over a per-member engine factory. factory
@@ -411,11 +403,6 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	// ask can surface and each member's durable relationship is correlated before it
 	// is registered, persisted, or projected.
 	opts = append(opts, withParentCaps(caps), withParentTeamCall(call.ID))
-	if t.selectorFactory != nil {
-		opts = append(opts, WithTeamMemberSelectorFactory(func(spec MemberSpec, selected ResolvedModelSelector) MemberBuild {
-			return t.selectorFactory(tm, spec, selected)
-		}))
-	}
 	sup := NewSupervisor(tm, env, factory, opts...)
 
 	roster := teamRoster(args.Members)
@@ -444,7 +431,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 			roster[i].RoutingReason = routingReasonPayload(reason)
 			roster[i].RoutingDecision = sup.memberRoutingDecision(roster[i].Name)
 			roster[i].Model = sup.MemberModel(roster[i].Name)
-			roster[i].Provider, roster[i].ExplicitRouterCategory = sup.MemberSelectionEvidence(roster[i].Name)
+			roster[i].Provider, roster[i].ExplicitRouterCategory = sup.memberSelectionEvidence(roster[i].Name)
 			if memberID, incarnation, ok := sup.memberIdentity(roster[i].Name); ok {
 				roster[i].MemberSessionID = memberID
 				roster[i].MemberIncarnation = incarnation

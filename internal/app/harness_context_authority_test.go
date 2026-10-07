@@ -158,9 +158,9 @@ func testHarnessChildFactoryLifetime(t *testing.T) {
 			case "isolated":
 				eng = buildChildEngine(cfg, reg, llm, providerMock, "m", nil)
 			case "direct-write":
-				eng, _ = buildWritableSubagentEngineFactory(cfg, reg, llm, providerMock, "m")("m")
+				eng, _ = buildWritableSubagentTargetEngineFactory(cfg, reg, llm, providerMock)(agent.ModelTarget{Model: "m"})
 			case "parallel":
-				eng, _ = buildParallelEngineFactory(cfg, reg, llm, providerMock, "m", nil)("m")
+				eng, _ = buildParallelTargetEngineFactory(cfg, reg, llm, providerMock, nil)(agent.ModelTarget{Model: "m"})
 			case "team":
 				member := buildMemberEngine(cfg, reg, llm, providerMock, "m", nil, nil, nil, nil, nil, false, nil, catalogAssets{}, false)(team.New("held"), agent.MemberSpec{Name: "reader"}, "")
 				eng, memberClose = member.Engine, member.Close

@@ -150,14 +150,14 @@ func TestParallelEngineFactoryRoutesContaminationSafe(t *testing.T) {
 	)
 	prov := observedProvider(&models, &mu, mockllm.TextTurn("done"))
 	cfg := Config{Model: "parent-model", SubagentModel: "gpt-5-mini"}
-	factory := buildParallelEngineFactory(cfg, regForTest(prov, providerAnthropic, cfg.Model), prov, providerAnthropic, cfg.Model, nil)
+	factory := buildParallelTargetEngineFactory(cfg, regForTest(prov, providerAnthropic, cfg.Model), prov, providerAnthropic, nil)
 
 	// Blank model: unroutable.
-	if eng, ok := factory(""); ok || eng != nil {
+	if eng, ok := factory(agent.ModelTarget{}); ok || eng != nil {
 		t.Fatalf("a blank model must be unroutable; got (%v, %v)", eng, ok)
 	}
 
-	eng, ok := factory(catAnthropicModel)
+	eng, ok := factory(agent.ModelTarget{Model: catAnthropicModel})
 	if !ok || eng == nil {
 		t.Fatal("a non-blank model must mint a branch engine")
 	}
@@ -177,7 +177,7 @@ func TestParallelEngineFactoryRoutesContaminationSafe(t *testing.T) {
 func TestParallelEngineFactorySatisfiesOptionShape(_ *testing.T) {
 	cfg := Config{Model: "m"}
 	prov := mockllm.New()
-	f := buildParallelEngineFactory(cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil)
+	f := buildParallelTargetEngineFactory(cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, nil)
 	// WithParallelEngineFactory accepts exactly this shape (compile-time assertion).
 	_ = agent.WithParallelEngineFactory(f)
 }
@@ -271,15 +271,14 @@ func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 		defs := agents.NewRegistry([]agents.AgentDef{{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY"}})
 		cfg := Config{Model: "parent-model"}
 		defaultFactory := buildMemberEngine(cfg, reg, worker, "parent", "parent-model", hookexec.New(nil), defs, nil, nil, nil, false, nil, catalogAssets{}, false)
-		selectedFactory := buildMemberSelectorEngine(cfg, reg, worker, "parent", "parent-model", hookexec.New(nil), defs, nil, nil, nil, false, nil, catalogAssets{}, false)
 		tm := team.New("team")
 		builds := 0
 		sup := agent.NewSupervisor(tm, memEnvironment("/ws"), func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+			if spec.Selector != nil {
+				builds++
+			}
 			return defaultFactory(tm, spec, routedModel)
-		}, agent.WithTeamMemberSelectorFactory(func(spec agent.MemberSpec, selected agent.ResolvedModelSelector) agent.MemberBuild {
-			builds++
-			return selectedFactory(tm, spec, selected)
-		}), agent.WithReadOnlyForker(memfsForker{}), agent.WithTeamReadLedgerFactory(testReadLedger), agent.WithMaxRounds(10))
+		}, agent.WithReadOnlyForker(memfsForker{}), agent.WithTeamReadLedgerFactory(testReadLedger), agent.WithMaxRounds(10))
 		selected := agent.ResolvedModelSelector{Target: agent.ModelTarget{Model: "override"}, ActualProvider: "second"}
 		if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "lead", Lead: true, AgentType: "reviewer", InitialPrompt: "delegate", Selector: &selected}); err != nil {
 			t.Fatalf("AddMember(lead): %v", err)
@@ -663,5 +662,101 @@ func TestParallelRouterOffByteIdenticalE2E(t *testing.T) {
 		if m != "gpt-5" {
 			t.Fatalf("a request carried %q with the Parallel router OFF; want only gpt-5 (models=%v)", m, prov.recordedModels())
 		}
+	}
+}
+
+// TestExplicitCrossProviderSelectorsReachSelectedChildProviderE2E exercises the full
+// composition path: Build registers distinct offline providers, Service runs the parent
+// catalog, and the catalog tool dispatches its child to the explicitly selected provider.
+func TestExplicitCrossProviderSelectorsReachSelectedChildProviderE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		call      session.ToolCall
+		enable    func(*Config)
+		wantCalls bool
+	}{
+		{
+			name:      "Parallel",
+			call:      session.NewToolCall("parallel", "Parallel", json.RawMessage(`{"tasks":["inspect this"],"provider":"anthropic","model":"claude-sonnet-4-6"}`)),
+			enable:    func(c *Config) { c.EnableParallel = true },
+			wantCalls: true,
+		},
+		{
+			name:      "Team",
+			call:      session.NewToolCall("team", "Team", json.RawMessage(`{"goal":"inspect this","members":[{"name":"lead","role":"inspect this","provider":"anthropic","model":"claude-sonnet-4-6"}]}`)),
+			enable:    func(c *Config) { c.EnableTeams = true },
+			wantCalls: true,
+		},
+		{
+			name:      "Parallel invalid selector constructs no branch",
+			call:      session.NewToolCall("parallel-invalid", "Parallel", json.RawMessage(`{"tasks":["inspect this"],"provider":"missing","model":"missing-model"}`)),
+			enable:    func(c *Config) { c.EnableParallel = true },
+			wantCalls: false,
+		},
+		{
+			name:      "Team invalid selector constructs no member",
+			call:      session.NewToolCall("team-invalid", "Team", json.RawMessage(`{"goal":"inspect this","members":[{"name":"lead","role":"inspect this","provider":"missing","model":"missing-model"}]}`)),
+			enable:    func(c *Config) { c.EnableTeams = true },
+			wantCalls: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mu     sync.Mutex
+				models []string
+			)
+			parent := mockllm.New(mockllm.ToolCallTurn(tc.call), mockllm.TextTurn("done"))
+			selected := observedProvider(&models, &mu,
+				mockllm.TextTurn("child done"), mockllm.TextTurn("child done"),
+				mockllm.TextTurn("child done"), mockllm.TextTurn("child done"))
+			cfg := Config{
+				Workspace: t.TempDir(),
+				NoSoul:    true,
+				Model:     "gpt-5",
+				envDetector: fakeEnv(map[string]string{
+					"OPENAI_API_KEY":    "sk-x",
+					"ANTHROPIC_API_KEY": "sk-x",
+				}),
+				liveModelHTTPClient: offlineHTTPClient(),
+				providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+					if id == providerAnthropic {
+						return selected
+					}
+					return parent
+				},
+			}
+			tc.enable(&cfg)
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+
+			sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			run, err := built.Service.StartRun(t.Context(), sess.ID, "go")
+			if err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+			drainRun(run)
+
+			mu.Lock()
+			got := append([]string(nil), models...)
+			mu.Unlock()
+			if !tc.wantCalls {
+				if len(got) != 0 {
+					t.Fatalf("invalid selector reached the child provider: models=%v", got)
+				}
+				if calls := parent.Calls(); calls != 2 {
+					t.Fatalf("invalid selector started a fallback child: parent calls=%d, want only the tool call and final turn", calls)
+				}
+				return
+			}
+			if len(got) == 0 || got[0] != "claude-sonnet-4-6" {
+				t.Fatalf("selected provider child models = %v, want a request on claude-sonnet-4-6", got)
+			}
+		})
 	}
 }

@@ -7287,9 +7287,7 @@ func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, pro
 
 // writableExplorerDeps builds the agent.Deps for a WRITABLE explorer child engine on a
 // given model + role. It is the SHARED body of buildWritableSubagentChildEngine (the
-// default-model writable explorer, role "task:read-write") and
-// buildWritableSubagentEngineFactory (the per-call/routed-model writable explorer, role
-// "task:read-write:model=<model>") — extracted so the two never drift (issue #285). The
+// default-model writable explorer and the per-call target factory.
 // catalog is the read-only explorer surface (Read/Grep/Glob + Shell) LAYERED with
 // Edit/Write — a writable child MAY mutate the parent tree DIRECTLY; Subagent/Parallel/
 // ToolSearch stay excluded (readOnlyExplorerCatalog never adds them), so a writable child
@@ -7306,22 +7304,9 @@ func writableExplorerDeps(cfg Config, provider port.LLMProvider, providerModel s
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
-// buildWritableSubagentEngineFactory returns the per-call model-override factory the
-// Subagent tool invokes for a mode:"read-write" call with a per-call `model` (or the OPT-IN
-// router pick) and NO `agent` (issue #285). It mirrors buildParallelEngineFactory's SHAPE:
-// given an opaque model id it mints a fresh WRITABLE explorer engine pinned to that model on
-// the parent's provider, re-deriving the provider-closing Deps (Compactor/TokenCounter/
-// Env.Model/ContextWindow) via the contamination-safe per-provider path, NEVER a
-// clone-and-swap. It shares writableExplorerDeps with buildWritableSubagentChildEngine so the
-// catalog/runner/prompt recipe cannot drift. The routed/override id is used VERBATIM — NOT
-// through resolveDefaultChildModel (which would re-run the def-less `SubagentModel > parent`
-// chain and discard the pick when a cheap child default is configured) — the same discipline
-// buildParallelEngineFactory/buildSubagentEngineFactory use. The MAIN session's command
-// runner is captured ONCE outside the closure (the buildAgentWritableEngineFactory pattern),
-// so every minted writable engine shares the one runner. A blank model → (nil, false); any
-// non-blank model routes on the parent provider with its window re-derived through
-// childWindowFor. Cross-provider routing by a bare model id is out of scope (the registry is
-// keyed by provider) — same posture as the read-only Subagent + Parallel factories.
+// buildWritableSubagentTargetEngineFactory returns the provider-aware per-call override
+// factory for a mode:"read-write" Subagent without an `agent`. It mints a fresh writable
+// explorer and re-derives provider/model-specific dependencies for the resolved target.
 func buildWritableSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string) func(agent.ModelTarget) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
 	return func(target agent.ModelTarget) (*agent.Engine, bool) {
@@ -7344,46 +7329,6 @@ func buildWritableSubagentTargetEngineFactory(cfg Config, provReg *providerRegis
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
 		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
 		return agent.NewEngine(deps), true
-	}
-}
-
-func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) func(model string) (*agent.Engine, bool) {
-	mainRunner := directWriteCommandRunner(cfg)
-	return func(model string) (*agent.Engine, bool) {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			return nil, false
-		}
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
-		return agent.NewEngine(deps), true
-	}
-}
-
-// buildParallelEngineFactory returns the per-branch model-override factory the Parallel
-// tool invokes when the OPT-IN model router classifies a branch onto a model.
-// It mirrors the SHAPE of buildSubagentEngineFactory — given an opaque model id it mints a
-// fresh child engine pinned to that model on the parent's provider, re-deriving the
-// provider-closing Deps (Compactor/TokenCounter/Env.Model/ContextWindow) via the
-// contamination-safe per-provider path, NEVER a clone-and-swap of an existing engine's LLM.
-// It is deliberately NOT identical to buildSubagentEngineFactory (do not try to DRY them on
-// the strength of this comment): a Parallel BRANCH layers Edit+Write onto the read-only
-// explorer surface, uses promptConfig (not explorerPromptConfig), the role "parallel:model="
-// (not "task:model="), and goes through childEngineDepsForProvider (not
-// newChildEngineForProvider) — the same divergences buildParallelChildEngine/parallelChildDeps
-// carry from buildChildEngine. The branch catalog is the
-// SAME Read/Grep/Glob/Edit/Write (+ Shell when a runner is wired) parallelChildDeps builds,
-// so a routed branch has the identical mutating-in-its-own-fork surface as the shared
-// branch child. A blank model is unroutable (ok=false → the branch falls back to the
-// shared childEngine, fail-soft); any non-blank model routes on the parent provider with
-// its window re-derived through childWindowFor. Cross-provider routing by a bare model id
-// is out of scope (the registry is keyed by provider) — same posture as the Subagent and
-// member factories. composition owns the category→model→engine mapping; engine/agent only
-// ever sees func(string)(*Engine,bool).
-func buildParallelEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, runner tool.CommandRunner) func(model string) (*agent.Engine, bool) {
-	targetFactory := buildParallelTargetEngineFactory(cfg, provReg, provider, parentProviderID, runner)
-	return func(model string) (*agent.Engine, bool) {
-		return targetFactory(agent.ModelTarget{Model: model})
 	}
 }
 
@@ -7786,24 +7731,19 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// Per-call model override factory: mint an explorer child engine for a requested
 	// model through the SAME contamination-safe per-provider path (newChildEngineFor
 	// Provider re-derives Compactor/TokenCounter/Env.Model/ContextWindow for the
-	// override model) — never a clone-and-swap of the LLM on an existing engine. The
-	// closure hands engine/agent only func(string)(*Engine,bool); the registry never
-	// crosses (same shape/spirit as WithAgentEngines).
+	// override model) — never a clone-and-swap of the LLM on an existing engine.
+	// Only the resolved ModelTarget crosses into engine/agent, not the registry.
 	opts = append(opts,
 		agent.WithSubagentProvider(defaultChildProviderID),
 		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
-		agent.WithSubagentTargetEngineFactory(buildSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID, sandboxedRunner)),
-		agent.WithSubagentEngineFactory(buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
+		agent.WithSubagentEngineFactory(buildSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID, sandboxedRunner)))
 	// agent+model override factory: rebuild a named specialist's SCOPED engine on the
-	// per-call override model (the override runs on the def's resolved provider). The
-	// closure hands engine/agent only func(string,string)(*Engine,bool); the registry never
-	// crosses (same shape/spirit as WithAgentEngines). A def with inline MCP servers is a
-	// v1 scope limit (the factory declines; selectChildEngine surfaces the error).
+	// per-call override model (the override runs on the def's resolved provider).
+	// The closure carries a ModelTarget, not the provider registry. Inline MCP servers
+	// remain a v1 scope limit (the factory declines; selectChildEngine reports it).
 	opts = append(opts,
 		agent.WithAgentModelEngineFactory(
-			buildAgentModelEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
-		agent.WithAgentTargetEngineFactory(
-			buildAgentTargetEngineFactory(ctx, cfg, provReg, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
+			buildAgentTargetEngineFactory(ctx, cfg, provReg, parentProviderID, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
 	)
 	// ROUTABLE agent defs (issue #286): the SET of def names that expressed NO model intent
 	// (absent `model:`), don't switch provider, and have no inline MCP — so the OPT-IN router
@@ -7819,14 +7759,12 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// WRITABLE named specialist (mode:"read-write"+`agent`): factories that
 	// REBUILD the named specialist's scoped engine with allowMutating=true, using the MAIN
 	// session's command runner (direct-write parity — no fork/merge-back). The
-	// routed sibling keeps the def scope but replaces an unpinned same-provider def's model
-	// with the router-selected bare model. Both are skipped under no-FS.
-	writableAgentFactory, writableAgentModelFactory := buildAgentWritableEngineFactories(
+	// routed target keeps the def scope and replaces an unpinned def's model and provider.
+	writableAgentFactory := buildAgentWritableEngineFactory(
 		ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)
 	opts = append(opts,
 		agent.WithAgentWritableEngineFactory(writableAgentFactory),
-		agent.WithAgentWritableModelEngineFactory(writableAgentModelFactory),
-		agent.WithAgentWritableTargetEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, reg, skillIdx, hooks, mainMgr)),
+		agent.WithAgentWritableModelEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, parentProviderID, reg, skillIdx, hooks, mainMgr)),
 	)
 	// WRITABLE subagent (mode:"read-write"): a child engine whose catalog
 	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
@@ -7851,13 +7789,10 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// WRITABLE EXPLORER per-call/routed model (mode:"read-write"+`model`, no `agent`;
 	// issue #285): a factory that rebuilds the WRITABLE explorer on the requested model via
 	// the SAME writableExplorerDeps recipe (MAIN runner, direct-write parity). It also backs
-	// the OPT-IN router's writable pick. The closure hands engine/agent only
-	// func(string)(*Engine,bool). Skipped under no-FS (buildNoFSSubagentTool wires no
-	// writable path).
+	// the OPT-IN router's writable provider/model pick. Skipped under no-FS
+	// (buildNoFSSubagentTool wires no writable path).
 	opts = append(opts,
-		agent.WithWritableTargetEngineFactory(buildWritableSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID)),
-		agent.WithWritableEngineFactory(
-			buildWritableSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel)))
+		agent.WithWritableEngineFactory(buildWritableSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID)))
 	return agent.NewSubagentTool(
 		buildChildEngine(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner),
 		opts...,
@@ -7900,7 +7835,7 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
 		agent.WithSubagentProvider(childProviderID),
 		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
-		agent.WithSubagentTargetEngineFactory(func(target agent.ModelTarget) (*agent.Engine, bool) {
+		agent.WithSubagentEngineFactory(func(target agent.ModelTarget) (*agent.Engine, bool) {
 			providerID := strings.TrimSpace(target.Provider)
 			if providerID == "" {
 				providerID = parentProviderID
@@ -7918,14 +7853,6 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 				childProvider = entry.provider
 			}
 			return newNoFSChild("task:model="+model, childProvider, providerID, model, childWindowFor(cfg, provReg, providerID, model)), true
-		}),
-		agent.WithSubagentEngineFactory(func(overrideModel string) (*agent.Engine, bool) {
-			overrideModel = strings.TrimSpace(overrideModel)
-			if overrideModel == "" {
-				return nil, false
-			}
-			w := childWindowFor(cfg, provReg, parentProviderID, overrideModel)
-			return newNoFSChild("task:model="+overrideModel, provider, parentProviderID, overrideModel, w), true
 		}),
 	}
 	return agent.NewSubagentTool(newNoFSChild("task", childProvider, childProviderID, model, windowFn), opts...)
@@ -8050,116 +7977,18 @@ func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, par
 	}
 }
 
-func buildSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, runner tool.CommandRunner) func(model string) (*agent.Engine, bool) {
-	return func(model string) (*agent.Engine, bool) {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			return nil, false
-		}
-		// Same read-only explorer surface + References convention as the default explorer
-		// (buildChildEngine) — a model-override child is still the explorer, just on a
-		// different model.
-		childCat := readOnlyExplorerCatalog(runner)
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
-			childCat, explorerPromptConfig(modelCfgFor(cfg, model)), nil)
-		return eng, true
-	}
-}
-
-// buildAgentModelEngineFactory returns the per-call `agent`+`model` override factory the
-// Subagent tool invokes when a call sets BOTH `agent` and `model`. Given a (agentName,
-// model) pair it rebuilds the named specialist's SCOPED engine on the override model —
-// the SAME catalog/prompt/hooks/memory the startup path builds (buildAgentDefEngine), so
-// the override child keeps the specialist's tools/playbook (NOT the generic explorer set),
-// while re-deriving the provider-closing Deps (Compactor/TokenCounter/Env.Model/
-// ContextWindow) for the override model via newChildEngineForProvider. The pre-built
-// agentEngines map is NEVER mutated (a fresh engine is minted per call).
-//
-// PROVIDER/MODEL RESOLUTION (parity with the model-only path, per the architect's
-// decision): the override runs on the DEF's resolved provider. resolveProviderModel is
-// called with the REAL def to select the provider (pid) — then the override model is set
-// VERBATIM (resolvedModel = wantModel, no alias resolution — an opaque string the provider
-// validates at request time, matching buildSubagentEngineFactory's "opaque string" posture).
-// A synthetic-def approach is NOT used (it would double-alias-resolve). childProvider is the
-// def's resolved provider entry (or the parent's when the def pins none/unknown);
-// windowFn = childWindowFor(cfg, provReg, pid, wantModel). Cross-provider override OF the
-// provider by a bare model id is out of scope (matches buildSubagentEngineFactory's existing
-// out-of-scope comment) — a def's `provider:` remains the only cross-provider seam.
-//
-// INLINE MCP v1 LIMIT (Risk-1, Option B): a def with INLINE MCP servers (any entry where
-// !IsReference()) is unsupported on the agent+model path. The inline managers' live
-// sessions (mcp.remoteTool.Execute proxies over a *mcpsdk.ClientSession) must outlive a
-// per-call engine, but the per-call factory has no process-lifetime owner for a freshly-
-// built manager (reusing cached managers would require a per-def manager cache with
-// careful Close ownership the per-call engine can't hold). The factory returns (nil, false)
-// and selectChildEngine surfaces the model-addressable error naming both agent and model.
-// Safe and leak-free; a documented v1 scope limit. REFERENCE-only MCP servers ARE
-// supported (they borrow the process-lifetime mainMgr, no new connection).
-//
-// The returned inline-MCP close func (from buildAgentDefEngine) is invoked immediately
-// (safe close) when the def has NO inline servers — there are none to keep alive, and a
-// reference-only def's tools borrow mainMgr, so closing the (nil) inline close is a no-op.
-// (A def that reached here with inline servers was already rejected above, so the close
-// func is always nil by the time it could matter.)
-func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(agentName, model string) (*agent.Engine, bool) {
-	return func(agentName, model string) (*agent.Engine, bool) {
-		agentName = strings.TrimSpace(agentName)
-		model = strings.TrimSpace(model)
-		if reg == nil || agentName == "" || model == "" {
-			return nil, false
-		}
-		def, ok := reg.Get(agentName)
-		if !ok {
-			return nil, false
-		}
-		// Risk-1 (Option B): inline MCP servers are a v1 scope limit on the agent+model
-		// path. The factory declines; selectChildEngine surfaces the model-addressable error.
-		if inline, found := defInlineMCPServer(def); found {
-			cfg.diag().Log(ctx, port.LevelInfo, "agent+model override declined: def has inline MCP servers (v1 scope limit)",
-				"agent", def.Name, "model", model, "server", inline.Name)
-			return nil, false
-		}
-		// Provider selection via the REAL def (def.Provider pinned-and-known → that provider;
-		// else parent). The override model is set VERBATIM (no alias resolution — parity with
-		// the model-only path's opaque-string posture; a synthetic def would double-resolve).
-		pid, _ := resolveProviderModel(cfg, provReg, def, parentProviderID, parentModel)
-		childProvider := provider
-		if pid != parentProviderID {
-			if entry, found := provReg.Lookup(pid); found {
-				childProvider = entry.provider
-			}
-		}
-		windowFn := childWindowFor(cfg, provReg, pid, model)
-
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":model="+model, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
-			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
-		// The def has no inline servers (rejected above), so mcpClose is nil; call it
-		// defensively in case a future reference-only path ever returns one (a reference
-		// borrows mainMgr, so closing is a no-op). Never closes mainMgr.
-		if mcpClose != nil {
-			if err := mcpClose(); err != nil {
-				cfg.diag().Log(ctx, port.LevelWarn, "agent+model override engine inline MCP close",
-					"agent", def.Name, "model", model, "err", err)
-			}
-		}
-
-		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt on override model",
-			"agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model,
-			"preloaded_skills", skillCount, "source", reg.Detail(def.Name))
-		return eng, true
-	}
-}
-
-func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
 		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
-		if reg == nil || agentName == "" || target.Provider == "" || target.Model == "" {
+		if reg == nil || agentName == "" || target.Model == "" {
 			return nil, false
 		}
 		def, ok := reg.Get(agentName)
-		if !ok || strings.TrimSpace(def.Model) != "" {
+		if !ok || (target.Provider != "" && strings.TrimSpace(def.Model) != "") {
 			return nil, false
+		}
+		if target.Provider == "" {
+			target.Provider, _ = resolveProviderModel(cfg, provReg, def, parentProviderID, "")
 		}
 		if inline, found := defInlineMCPServer(def); found {
 			cfg.diag().Log(ctx, port.LevelInfo, "automatic routed specialist declined: def has inline MCP servers (v1 scope limit)", "agent", def.Name, "server", inline.Name)
@@ -8182,16 +8011,19 @@ func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *pro
 	}
 }
 
-func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
 	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
 		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
-		if reg == nil || agentName == "" || target.Provider == "" || target.Model == "" {
+		if reg == nil || agentName == "" || target.Model == "" {
 			return nil, false
 		}
 		def, ok := reg.Get(agentName)
 		if !ok || strings.TrimSpace(def.Model) != "" {
 			return nil, false
+		}
+		if target.Provider == "" {
+			target.Provider, _ = resolveProviderModel(cfg, provReg, def, parentProviderID, "")
 		}
 		if inline, found := defInlineMCPServer(def); found {
 			cfg.diag().Log(ctx, port.LevelInfo, "automatic routed writable specialist declined: def has inline MCP servers (v1 scope limit)", "agent", def.Name, "server", inline.Name)
@@ -8213,16 +8045,11 @@ func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, prov
 	}
 }
 
-// buildAgentWritableEngineFactories returns the ordinary and routed-model factories for
-// writable named specialists. Both share one MAIN-bound runner and one construction path,
-// so routing can change only the model tuple: the def prompt, scoped mutating catalog,
-// preloaded skills, hooks, memory head, reference MCP tools, and direct-write semantics
-// remain identical. Inline MCP defs decline before buildAgentDefEngine can open resources.
-func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) (func(string) (*agent.Engine, bool), func(string, string) (*agent.Engine, bool)) {
+// buildAgentWritableEngineFactory builds the ordinary writable named specialist.
+func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(agentName string) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
-	build := func(agentName, routedModel string) (*agent.Engine, bool) {
+	return func(agentName string) (*agent.Engine, bool) {
 		agentName = strings.TrimSpace(agentName)
-		routedModel = strings.TrimSpace(routedModel)
 		if reg == nil || agentName == "" {
 			return nil, false
 		}
@@ -8235,54 +8062,17 @@ func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg 
 				"agent", def.Name, "server", inline.Name)
 			return nil, false
 		}
-
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
-		role := "task:" + def.Name + ":writable"
-		if routedModel != "" {
-			// A routed model is a bare id in the parent/session provider's namespace. The
-			// public router gate already excludes pinned and provider-switched defs; repeat
-			// those checks here so a future direct caller cannot cross providers or override
-			// expressed model intent. Unknown providers preserve resolveProviderModel's
-			// established loud fallback to the parent and are therefore still routable.
-			if strings.TrimSpace(def.Model) != "" || pid != parentProviderID {
-				return nil, false
-			}
-			childProvider = provider
-			pid = parentProviderID
-			model = routedModel
-			windowFn = childWindowFor(cfg, provReg, parentProviderID, model)
-			role += ":model=" + model
-		}
-
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, role, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable", reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil /*allowShell*/, skillIdx, defaultHooks, mainRunner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
-				cfg.diag().Log(ctx, port.LevelWarn, "writable-specialist engine inline MCP close",
-					"agent", def.Name, "model", model, "err", err)
+				cfg.diag().Log(ctx, port.LevelWarn, "writable-specialist engine inline MCP close", "agent", def.Name, "model", model, "err", err)
 			}
 		}
-		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable",
-			"agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model,
-			"preloaded_skills", skillCount, "source", reg.Detail(def.Name))
+		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable", "agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model, "preloaded_skills", skillCount, "source", reg.Detail(def.Name))
 		return eng, true
 	}
-	return func(agentName string) (*agent.Engine, bool) {
-			return build(agentName, "")
-		}, func(agentName, model string) (*agent.Engine, bool) {
-			if strings.TrimSpace(model) == "" {
-				return nil, false
-			}
-			return build(agentName, model)
-		}
-}
-
-// buildAgentWritableEngineFactory is the ordinary writable-specialist half retained for
-// direct composition tests and callers. buildSubagentTool obtains both halves together so
-// they share the same MAIN-bound runner.
-func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(agentName string) (*agent.Engine, bool) {
-	ordinary, _ := buildAgentWritableEngineFactories(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, defaultHooks, mainMgr)
-	return ordinary
 }
 
 func routeChildForker(cfg Config, local tool.EnvironmentForker) tool.EnvironmentForker {
@@ -8336,7 +8126,7 @@ func routeChildForker(cfg Config, local tool.EnvironmentForker) tool.Environment
 // both are filesystem acts), NO shell runners, and every member gets the no-FS
 // child surface (see buildMemberEngine's noFS branch). `a` carries the catalog
 // assets the no-FS member surface registers over; it is read only when noFS.
-func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, func(*team.Team, agent.MemberSpec, agent.ResolvedModelSelector) agent.MemberBuild, tool.EnvironmentForker, tool.EnvironmentForker, func(tool.Workspace) tool.Workspace, port.HookRunner) {
+func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, tool.EnvironmentForker, tool.EnvironmentForker, func(tool.Workspace) tool.Workspace, port.HookRunner) {
 	// A single hooks runner shared by the supervisor and the member coordination
 	// tools. hookexec.New(nil) matches buildEngine's default: the configured-hook map
 	// is not yet wired from cfg anywhere, so this is an inert (no-op) runner today,
@@ -8348,8 +8138,7 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 		// loudly), no shell runners, and the no-FS member catalog for everyone. A
 		// no-FS base can never be relaxed, so no shared-base re-view either.
 		factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, nil, nil, false, mainMgr, a, true)
-		selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, nil, nil, false, mainMgr, a, true)
-		return factory, selectorFactory, nil, nil, nil, teamHooks
+		return factory, nil, nil, nil, teamHooks
 	}
 	// agentReg is the SHARED registry (Build's single resolveAgentSeam): a
 	// member whose spec.AgentType names a def adopts that def's scoped
@@ -8395,8 +8184,7 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	mutatingRunner := buildForceCopyRunner(cfg)
 	roIsolationAvailable := memberRunner != nil
 	factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, memberRunner, mutatingRunner, roIsolationAvailable, mainMgr, a, false)
-	selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, memberRunner, mutatingRunner, roIsolationAvailable, mainMgr, a, false)
-	return factory, selectorFactory, fk, roFk, childWorkspaceView, teamHooks
+	return factory, fk, roFk, childWorkspaceView, teamHooks
 }
 
 // applyTeamConfig wires the opt-in agent-teams capability into the server.Config.
@@ -8418,7 +8206,7 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 	// agentReg is the ONE registry Build resolved (resolveAgentSeam).
 	// The gRPC CreateTeam path is always the DEFAULT (filesystem) profile — a
 	// no-FS team exists only inside a no-fs session's in-catalog Team tool.
-	factory, _, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
+	factory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
 	svcCfg.MemberEngine = factory
 	if a.mcpRuntimes != nil {
 		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory {
@@ -8427,7 +8215,7 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 			if candidate == nil {
 				return nil
 			}
-			operationFactory, _, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
+			operationFactory, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
 			return operationFactory
 		}
 	}
@@ -8517,7 +8305,9 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 	selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, reg, skillIdx, runner, mutatingRunner, roIsolationAvailable, mainMgr, a, noFS)
 	return func(t *team.Team, spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 		selected := agent.ResolvedModelSelector{}
-		if strings.TrimSpace(spec.AgentType) == "" {
+		if spec.Selector != nil {
+			selected = *spec.Selector
+		} else if strings.TrimSpace(spec.AgentType) == "" {
 			selected.Target.Model = routedModel
 		}
 		return selectorFactory(t, spec, selected)

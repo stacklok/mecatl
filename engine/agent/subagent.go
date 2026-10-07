@@ -720,45 +720,15 @@ type SubagentTool struct {
 	// WithMaxConcurrentChildren.
 	childGate chan struct{}
 
-	// engineFactory, when non-nil, mints a child engine for a per-call `model`
-	// override. It is a composition-supplied closure (WithSubagentEngineFactory) closing
-	// over the provider registry: given an opaque model string it returns a child
-	// engine built through the SAME contamination-safe per-provider path the named-agent
-	// engines use (engineDepsForProvider re-derives Compactor/TokenCounter/Env.Model/
-	// ContextWindow for the override model) — NEVER a clone-and-swap of the LLM on an
-	// existing engine. It returns ok=false for an unknown/unroutable model, which Subagent
-	// renders as a model-addressable error. nil (the default) means no per-call model
-	// override is wired (a `model` arg then errors with a clear "not supported" message).
-	// It is layering-clean: the closure takes a string and returns *Engine — both
-	// agent-layer types — and no adapter/proto/server type crosses (same shape as
-	// WithAgentEngines).
-	engineFactory func(model string) (*Engine, bool)
-	// targetEngineFactory is the provider-aware sibling used for resolved explicit
-	// selectors. selectorResolver owns aliases, registry checks, and router categories.
-	targetEngineFactory func(ModelTarget) (*Engine, bool)
-	selectorResolver    SubagentSelectorResolver
-	providerID          string
+	// Each factory mints a fresh engine on a resolved provider/model target;
+	// a bare per-call model leaves Provider empty for composition to inherit.
+	engineFactory    func(ModelTarget) (*Engine, bool)
+	selectorResolver SubagentSelectorResolver
+	providerID       string
 
-	// agentModelFactory, when non-nil, mints a child engine for a per-call
-	// `agent`+`model` combination: the model runs on the named specialist's
-	// resolved provider, but the def's SCOPED engine (catalog/prompt/hooks/memory) is
-	// REBUILT on the override model. It is a composition-supplied closure
-	// (WithAgentModelEngineFactory) closing over the agent-def registry + the provider
-	// registry, so the override child keeps the specialist's tools/playbook (NOT the
-	// generic explorer set) while re-deriving the provider-closing Deps
-	// (Compactor/TokenCounter/Env.Model/ContextWindow) for the override model — NEVER a
-	// clone-and-swap of an existing engine, and the pre-built agentEngines map is NEVER
-	// mutated (a fresh engine is minted per call). It returns ok=false for an
-	// unknown/unroutable model, which Subagent renders as a model-addressable error. nil
-	// (the default, and ALWAYS on the no-FS path) means agent+model together is not
-	// supported in this deployment (a call setting both then errors with a clear "not
-	// supported" message). It is layering-clean: the closure takes two strings and
-	// returns *Engine — both agent-layer types — and no adapter/proto/server type crosses.
-	agentModelFactory func(agentName, model string) (*Engine, bool)
-	// agentTargetFactory rebuilds a routable named specialist on the full automatic
-	// router target. It preserves a provider-aware alias rather than rebasing its
-	// opaque model ID onto the definition's provider.
-	agentTargetFactory func(agentName string, target ModelTarget) (*Engine, bool)
+	// agentModelFactory rebuilds a named specialist's scoped engine on a
+	// provider/model target. A bare model inherits the definition's provider.
+	agentModelFactory func(agentName string, target ModelTarget) (*Engine, bool)
 
 	// routableAgents is the composition-computed SET of agent-def names that expressed NO
 	// model intent (absent `model:` — issue #286) and are therefore eligible for the OPT-IN
@@ -768,12 +738,9 @@ type SubagentTool struct {
 	// to the pre-built read-only def engine or freshly-built ordinary writable specialist.
 	// A def that expressed model intent (ANY def.Model — `inherit`, a built-in alias, an
 	// unknown alias, a concrete id) is PINNED and NEVER in this set. Composition ALSO
-	// excludes a def whose `provider:` switches away from the parent (routed ids are
-	// parent-provider ids) and a def with INLINE MCP servers (the agent+model factory would
-	// decline — excluding avoids wasted classifier spend). nil/empty (the default) means NO
-	// def routes — byte-identical to pre-#286. It is consulted ONLY by the router gate
-	// (maybeRouteModel); the engine layer stays model-string-only (names only — no adapter/
-	// registry/provider type crosses).
+	// excludes a def whose `provider:` switches away from the parent or has INLINE MCP
+	// servers (the factory would decline). nil/empty means no named def routes.
+	// Only def names cross into the engine; composition owns the provider registry.
 	routableAgents map[string]struct{}
 
 	// pinnedAgents is the composition-computed SET of agent-def names that expressed
@@ -782,12 +749,9 @@ type SubagentTool struct {
 	// they did not pin a model and must not be attributed as if they had.
 	pinnedAgents map[string]struct{}
 
-	// agentWritableModelFactory is agentWritableFactory's routed-model sibling. For an
-	// unpinned writable named specialist, it rebuilds the same writable scoped engine on
-	// the router-selected model. A decline falls back to agentWritableFactory; the router
-	// remains fail-soft and reconcileRoutedModel reports the unavailable target truthfully.
-	agentWritableModelFactory  func(agentName, model string) (*Engine, bool)
-	agentWritableTargetFactory func(agentName string, target ModelTarget) (*Engine, bool)
+	// An eligible unpinned named specialist can be rebuilt on an automatic target;
+	// a declined target retains the ordinary specialist engine.
+	agentWritableModelFactory func(agentName string, target ModelTarget) (*Engine, bool)
 
 	// agentWritableFactory, when non-nil, mints a WRITABLE child engine for a
 	// mode:"read-write"+`agent` call: the named specialist's scoped engine
@@ -824,25 +788,10 @@ type SubagentTool struct {
 	// "not supported in this deployment" error.
 	writableChildEngine *Engine
 
-	// writableEngineFactory, when non-nil, mints a WRITABLE EXPLORER child engine on a
-	// per-call OVERRIDE model for a mode:"read-write" call with NO `agent` (issue #285):
-	// the generic writable explorer catalog (read-only explorer + Edit + Write) rebuilt on
-	// the requested model, using the MAIN session's command runner (direct-write parity,
-	// no fork, no copy, no merge-back); its Edit/Write/Shell mutate the real
-	// parent tree in place, exactly as the main agent does, and git is the rollback layer.
-	// It is a composition-supplied closure mirroring writableChildEngine's build recipe
-	// (it closes over the provider registry + the MAIN runner), re-deriving the
-	// provider-closing Deps (Compactor/TokenCounter/Env.Model/ContextWindow) for the
-	// override model — NEVER a clone-and-swap. It returns ok=false for an unknown/unroutable
-	// model, which selectChildEngine renders as a model-addressable error. It is ALSO the
-	// fail-soft target for the OPT-IN router on a plain writable delegation (a routed pick is
-	// minted here; a miss falls back to writableChildEngine). nil (the default, and ALWAYS
-	// on the no-FS path) means mode:"read-write"+`model` (no `agent`) is not supported in
-	// this deployment (a call setting both then errors from validateMode). It is
-	// layering-clean: the closure takes a string and returns *Engine — both agent-layer
-	// types — and no adapter/proto/server type crosses.
-	writableEngineFactory func(model string) (*Engine, bool)
-	writableTargetFactory func(ModelTarget) (*Engine, bool)
+	// writableEngineFactory rebuilds a direct-write explorer on a provider/model
+	// target; a bare model inherits the parent provider. A routed miss falls back
+	// to writableChildEngine.
+	writableEngineFactory func(ModelTarget) (*Engine, bool)
 
 	// shellDisabledNote, when non-empty, replaces Spec()'s isolated-worktree-shell
 	// clause with an honest read-only-only description carrying this reason (set by
@@ -1165,24 +1114,11 @@ func WithSubagentNoFSNote() SubagentOption {
 	return func(t *SubagentTool) { t.noFSSpec = true }
 }
 
-// WithSubagentEngineFactory injects the composition-supplied factory that mints a child
-// engine for a per-call `model` override. The closure closes over the provider
-// registry and builds the override child through the contamination-safe per-provider
-// path (engineDepsForProvider) — Compactor/TokenCounter/Env.Model/ContextWindow are
-// re-derived for the override model, NEVER a clone-and-swap of the LLM on an existing
-// engine. It returns (engine, true) for a routable model and (nil, false) otherwise
-// (an unknown/unroutable model, which Subagent surfaces as a model-addressable error).
-// nil (the default) leaves Subagent without a per-call model override (a `model` arg then
-// errors). It is the layering-clean seam: only func(string)(*Engine,bool) crosses into
-// engine/agent (same shape as WithAgentEngines).
-func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption {
+// WithSubagentEngineFactory mints a fresh child on a resolved provider/model target.
+// A bare per-call model has an empty Provider; composition uses the parent's provider.
+// A declined explicit selection errors, while automatic routing falls back.
+func WithSubagentEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption {
 	return func(t *SubagentTool) { t.engineFactory = f }
-}
-
-// WithSubagentTargetEngineFactory injects the provider-aware fresh-child factory
-// used after composition resolves an explicit selector.
-func WithSubagentTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption {
-	return func(t *SubagentTool) { t.targetEngineFactory = f }
 }
 
 // WithSubagentSelectorResolver injects composition-owned alias, provider, and
@@ -1197,37 +1133,11 @@ func WithSubagentProvider(provider string) SubagentOption {
 	return func(t *SubagentTool) { t.providerID = strings.TrimSpace(provider) }
 }
 
-// WithAgentModelEngineFactory injects the composition-supplied factory that mints a child
-// engine for a per-call `agent`+`model` combination. The override model runs on the named
-// specialist's resolved provider, and the def's SCOPED engine (catalog/prompt/hooks/
-// memory) is REBUILT on the override model through the contamination-safe per-provider
-// path (engineDepsForProvider re-derives Compactor/TokenCounter/Env.Model/ContextWindow)
-// — NEVER a clone-and-swap of an existing engine, and the pre-built agentEngines map is
-// never mutated. It returns (engine, true) for a routable (agent, model) and (nil, false)
-// otherwise (an unknown/unroutable model, which Subagent surfaces as a model-addressable
-// error naming both the agent and the model). nil (the default, and the no-FS path)
-// leaves Subagent without agent+model support (a call setting both then errors).
-//
-// The override model is passed VERBATIM (no alias resolution — an opaque string the
-// provider validates at request time), matching the model-only path's parity. The def's
-// resolved PROVIDER (def.Provider pinned-and-known → that provider; else the parent's)
-// is the only provider dimension; cross-provider override OF the provider by a bare model
-// id is out of scope (matches buildSubagentEngineFactory's existing out-of-scope comment).
-// A def with INLINE MCP servers is a v1 scope limit (the inline managers' live sessions
-// must outlive a per-call engine); the factory returns (nil, false) and selectChildEngine
-// surfaces the accurate error. read-write+agent+model is rejected by validateMode
-// before this factory is consulted (a v1 scope limit — a writable specialist runs on
-// its own resolved model); read-write+agent ALONE routes through the separate
-// agentWritableFactory (WithAgentWritableEngineFactory), not this one.
-func WithAgentModelEngineFactory(f func(agentName, model string) (*Engine, bool)) SubagentOption {
+// WithAgentModelEngineFactory rebuilds a named specialist on a provider/model
+// target while preserving its scoped tools, prompt, and limits. Bare model overrides
+// use the specialist's provider; automatic routing may select another provider.
+func WithAgentModelEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption {
 	return func(t *SubagentTool) { t.agentModelFactory = f }
-}
-
-// WithAgentTargetEngineFactory injects the provider-aware automatic-routing
-// factory for named read-only specialists. Call-level named selectors still use
-// WithAgentModelEngineFactory and retain their provider-bearing rejection.
-func WithAgentTargetEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption {
-	return func(t *SubagentTool) { t.agentTargetFactory = f }
 }
 
 // WithAgentWritableEngineFactory injects the composition-supplied factory that mints a
@@ -1259,19 +1169,10 @@ func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) Su
 	return func(t *SubagentTool) { t.agentWritableFactory = f }
 }
 
-// WithAgentWritableModelEngineFactory injects the composition-supplied factory that
-// rebuilds a WRITABLE named specialist on a router-selected model. It is distinct from
-// WithAgentModelEngineFactory because the resulting engine retains mutating tools and
-// runs directly in the parent environment. A declined routed target falls back to the
-// ordinary writable specialist minted by WithAgentWritableEngineFactory.
-func WithAgentWritableModelEngineFactory(f func(agentName, model string) (*Engine, bool)) SubagentOption {
+// WithAgentWritableModelEngineFactory rebuilds a writable named specialist on a
+// routed provider/model target. A decline falls back to the default writable specialist.
+func WithAgentWritableModelEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption {
 	return func(t *SubagentTool) { t.agentWritableModelFactory = f }
-}
-
-// WithAgentWritableTargetEngineFactory rebuilds a writable named specialist on
-// the full provider-aware target selected by automatic routing.
-func WithAgentWritableTargetEngineFactory(f func(agentName string, target ModelTarget) (*Engine, bool)) SubagentOption {
-	return func(t *SubagentTool) { t.agentWritableTargetFactory = f }
 }
 
 // WithWritableChildEngine injects the child *Engine a mode:"read-write" Subagent
@@ -1287,35 +1188,11 @@ func WithWritableChildEngine(e *Engine) SubagentOption {
 	return func(t *SubagentTool) { t.writableChildEngine = e }
 }
 
-// WithWritableEngineFactory injects the composition-supplied factory that mints a WRITABLE
-// EXPLORER child engine on a per-call OVERRIDE model for a mode:"read-write" call with no
-// `agent` (issue #285 — a writable explorer honours the per-call `model` and the router
-// pick, closing the gap where read-write silently ran on its default model). Given a model
-// id it REBUILDS the generic writable explorer engine (read-only explorer catalog + Edit +
-// Write) on that model through the SAME contamination-safe per-provider path
-// writableChildEngine uses, using the MAIN session's command runner (direct-write parity,
-// no fork, no copy, no merge-back); its Edit/Write/Shell mutate the REAL parent
-// workspace in place, and git is the rollback layer. It re-derives the provider-closing
-// Deps (Compactor/TokenCounter/Env.Model/ContextWindow) for the override model — NEVER a
-// clone-and-swap. It returns (engine, true) for a routable model and (nil, false) for an
-// unknown/unroutable model (or a blank model), which selectChildEngine surfaces as a
-// model-addressable error. It is ALSO the fail-soft mint target for the OPT-IN router on a
-// plain writable delegation (a routed pick mints here; a miss falls back to
-// writableChildEngine).
-//
-// nil (the default, and ALWAYS on the no-FS path) leaves Subagent without writable-explorer
-// per-model support: a mode:"read-write"+`model` (no `agent`) call then errors with a clear
-// "not supported in this deployment" message from validateMode (never a silent inherit). It
-// is layering-clean: the closure takes a string and returns *Engine — both agent-layer
-// types — and no adapter/proto/server type crosses (same shape as WithSubagentEngineFactory).
-func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption {
+// WithWritableEngineFactory rebuilds a direct-write explorer on a provider/model
+// target. Bare model overrides inherit the parent provider; routed targets retain
+// their provider. A routed miss falls back to the default writable explorer.
+func WithWritableEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption {
 	return func(t *SubagentTool) { t.writableEngineFactory = f }
-}
-
-// WithWritableTargetEngineFactory is the provider-aware direct-write sibling of
-// WithWritableEngineFactory.
-func WithWritableTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption {
-	return func(t *SubagentTool) { t.writableTargetFactory = f }
 }
 
 // WithAgentEngines injects the per-definition child engines (keyed by agent name)
@@ -1779,7 +1656,7 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 		if _, found := t.agentEngines[wantAgent]; !found {
 			return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false, false
 		}
-		eng, found := t.agentModelFactory(wantAgent, wantModel)
+		eng, found := t.agentModelFactory(wantAgent, ModelTarget{Model: wantModel})
 		if !found || eng == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
 				fmt.Sprintf("Subagent: unknown or unroutable model %q for agent %q; omit `model` to run the specialist on its own model", wantModel, wantAgent)), false, false
@@ -1813,9 +1690,9 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 	engine = t.childEngine
 	limits = t.limits
 	if explicit != nil {
-		factory := t.targetEngineFactory
+		factory := t.engineFactory
 		if writable {
-			factory = t.writableTargetFactory
+			factory = t.writableEngineFactory
 		}
 		if factory == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
@@ -1829,9 +1706,9 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 		return eng, limits, session.ToolResult{}, false, true
 	}
 	if writable {
-		return t.selectWritableExplorerEngine(callID, wantModel, routedModel, limits)
+		return t.selectWritableExplorerEngine(callID, wantModel, routedTarget, limits)
 	}
-	return t.selectReadOnlyModelEngine(callID, wantModel, routedModel, engine, limits)
+	return t.selectReadOnlyModelEngine(callID, wantModel, routedTarget, engine, limits)
 }
 
 // selectReadOnlyAgentEngine resolves a read-only `agent` delegation to its pre-built SCOPED
@@ -1853,12 +1730,8 @@ func (t *SubagentTool) selectReadOnlyAgentEngineTarget(callID session.ToolCallID
 	if l, ok := t.agentLimits[wantAgent]; ok {
 		limits = l
 	}
-	if routedTarget.Model != "" && routedTarget.Provider != "" && t.agentTargetFactory != nil {
-		if eng2, ok := t.agentTargetFactory(wantAgent, routedTarget); ok && eng2 != nil {
-			return eng2, limits, session.ToolResult{}, true, true
-		}
-	} else if routedModel != "" && t.agentModelFactory != nil {
-		if eng2, ok := t.agentModelFactory(wantAgent, routedModel); ok && eng2 != nil {
+	if routedModel != "" && t.agentModelFactory != nil {
+		if eng2, ok := t.agentModelFactory(wantAgent, routedTarget); ok && eng2 != nil {
 			return eng2, limits, session.ToolResult{}, true, true
 		}
 	}
@@ -1866,7 +1739,7 @@ func (t *SubagentTool) selectReadOnlyAgentEngineTarget(callID session.ToolCallID
 }
 
 func (t *SubagentTool) selectReadOnlyAgentEngine(callID session.ToolCallID, wantAgent, routedModel string) (*Engine, session.Limits, session.ToolResult, bool, bool) {
-	return t.selectReadOnlyAgentEngineTarget(callID, wantAgent, routedModel, ModelTarget{})
+	return t.selectReadOnlyAgentEngineTarget(callID, wantAgent, routedModel, ModelTarget{Model: routedModel})
 }
 
 // selectReadOnlyModelEngine resolves the READ-ONLY explorer engine for a per-call `model`
@@ -1885,21 +1758,21 @@ func (t *SubagentTool) selectReadOnlyAgentEngine(callID session.ToolCallID, want
 // model" vs "run the writable subagent on its default model"). Merging them onto a shared
 // helper would couple the read-only and writable posture and force one of those seams to
 // leak into the other — the wrong abstraction. Keep them parallel.
-func (t *SubagentTool) selectReadOnlyModelEngine(callID session.ToolCallID, wantModel, routedModel string, fallback *Engine, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool, bool) {
+func (t *SubagentTool) selectReadOnlyModelEngine(callID session.ToolCallID, wantModel string, routedTarget ModelTarget, fallback *Engine, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool, bool) {
 	if wantModel != "" {
 		if t.engineFactory == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
 				"Subagent: per-call `model` override is not supported in this deployment"), false, false
 		}
-		eng, found := t.engineFactory(wantModel)
+		eng, found := t.engineFactory(ModelTarget{Model: wantModel})
 		if !found || eng == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
 				fmt.Sprintf("Subagent: unknown or unroutable model %q; omit `model` to inherit the parent's model", wantModel)), false, false
 		}
 		return eng, limits, session.ToolResult{}, false, true
 	}
-	if routedModel != "" && t.engineFactory != nil {
-		if eng, found := t.engineFactory(routedModel); found && eng != nil {
+	if routedTarget.Model != "" && t.engineFactory != nil {
+		if eng, found := t.engineFactory(routedTarget); found && eng != nil {
 			return eng, limits, session.ToolResult{}, true, true
 		}
 	}
@@ -1925,21 +1798,21 @@ func (t *SubagentTool) selectReadOnlyModelEngine(callID session.ToolCallID, want
 // (writableEngineFactory vs engineFactory), the fallback (writableChildEngine vs a passed-in
 // `fallback`), and the error wording — merging would couple the writable and read-only
 // posture, the wrong abstraction. See selectReadOnlyModelEngine's note.
-func (t *SubagentTool) selectWritableExplorerEngine(callID session.ToolCallID, wantModel, routedModel string, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool, bool) {
+func (t *SubagentTool) selectWritableExplorerEngine(callID session.ToolCallID, wantModel string, routedTarget ModelTarget, limits session.Limits) (*Engine, session.Limits, session.ToolResult, bool, bool) {
 	if wantModel != "" {
 		if t.writableEngineFactory == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
 				"Subagent: mode:\"read-write\" with a per-call `model` is not supported in this deployment; omit `model` to run the writable subagent on its default model"), false, false
 		}
-		eng, found := t.writableEngineFactory(wantModel)
+		eng, found := t.writableEngineFactory(ModelTarget{Model: wantModel})
 		if !found || eng == nil {
 			return nil, session.Limits{}, session.NewToolError(callID,
 				fmt.Sprintf("Subagent: unknown or unroutable model %q; omit `model` to run the writable subagent on its default model", wantModel)), false, false
 		}
 		return eng, limits, session.ToolResult{}, false, true
 	}
-	if routedModel != "" && t.writableEngineFactory != nil {
-		if eng, found := t.writableEngineFactory(routedModel); found && eng != nil {
+	if routedTarget.Model != "" && t.writableEngineFactory != nil {
+		if eng, found := t.writableEngineFactory(routedTarget); found && eng != nil {
 			return eng, limits, session.ToolResult{}, true, true
 		}
 	}
@@ -1965,12 +1838,8 @@ func (t *SubagentTool) selectWritableSpecialistEngineTarget(callID session.ToolC
 	if l, found := t.agentLimits[wantAgent]; found {
 		limits = l
 	}
-	if routedTarget.Model != "" && routedTarget.Provider != "" && t.agentWritableTargetFactory != nil {
-		if eng, found := t.agentWritableTargetFactory(wantAgent, routedTarget); found && eng != nil {
-			return eng, limits, session.ToolResult{}, true, true
-		}
-	} else if routedModel != "" && t.agentWritableModelFactory != nil {
-		if eng, found := t.agentWritableModelFactory(wantAgent, routedModel); found && eng != nil {
+	if routedModel != "" && t.agentWritableModelFactory != nil {
+		if eng, found := t.agentWritableModelFactory(wantAgent, routedTarget); found && eng != nil {
 			return eng, limits, session.ToolResult{}, true, true
 		}
 	}
@@ -1983,7 +1852,7 @@ func (t *SubagentTool) selectWritableSpecialistEngineTarget(callID session.ToolC
 }
 
 func (t *SubagentTool) selectWritableSpecialistEngine(callID session.ToolCallID, wantAgent, routedModel string) (*Engine, session.Limits, session.ToolResult, bool, bool) {
-	return t.selectWritableSpecialistEngineTarget(callID, wantAgent, routedModel, ModelTarget{})
+	return t.selectWritableSpecialistEngineTarget(callID, wantAgent, routedModel, ModelTarget{Model: routedModel})
 }
 
 // resolveMaxRunTokens resolves the per-call cumulative token budget from `max_run_tokens`.
@@ -2192,9 +2061,9 @@ func (t *SubagentTool) validateMode(callID session.ToolCallID, args subagentArgs
 	case strings.TrimSpace(args.Agent) != "" && t.agentWritableFactory == nil:
 		return false, session.NewToolError(callID,
 			"Subagent: mode:\"read-write\" with `agent` is not supported in this deployment"), false
-	case strings.TrimSpace(args.Agent) == "" && strings.TrimSpace(args.Model) != "" && t.writableEngineFactory == nil && t.writableTargetFactory == nil:
-		// A writable explorer on a per-call model needs either the contextual-model
-		// factory or the provider-aware target factory. Unwired means a loud error.
+	case strings.TrimSpace(args.Agent) == "" && strings.TrimSpace(args.Model) != "" && t.writableEngineFactory == nil:
+		// A per-call model requires the writable target factory. Unwired means
+		// a loud error, never a silent inherit.
 		return false, session.NewToolError(callID,
 			"Subagent: mode:\"read-write\" with a per-call `model` is not supported in this deployment; omit `model` to run the writable subagent on its default model"), false
 	case strings.TrimSpace(args.Agent) == "" && t.writableChildEngine == nil:
@@ -2274,13 +2143,13 @@ func (t *SubagentTool) maybeRouteModelTarget(ctx context.Context, args subagentA
 			return skipped(session.RoutingReasonRouterDisabled)
 		}
 		if writable {
-			if t.agentWritableFactory == nil || (t.agentWritableModelFactory == nil && t.agentWritableTargetFactory == nil) {
+			if t.agentWritableFactory == nil || t.agentWritableModelFactory == nil {
 				return skipped(session.RoutingReasonRouterDisabled)
 			}
-		} else if t.agentModelFactory == nil && t.agentTargetFactory == nil {
+		} else if t.agentModelFactory == nil {
 			return skipped(session.RoutingReasonRouterDisabled)
 		}
-	} else if writable && t.writableEngineFactory == nil && t.writableTargetFactory == nil {
+	} else if writable && t.writableEngineFactory == nil {
 		return skipped(session.RoutingReasonRouterDisabled)
 	}
 	if caps.routeDecision == nil {
@@ -2530,16 +2399,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 		routedCategory, routedTarget, routedModel, routingReason, routingDecision = "", ModelTarget{}, "", "", nil
 	}
 	factorySelector := selector
-	canUseTargetFactory := (!writable && t.targetEngineFactory != nil) || (writable && t.writableTargetFactory != nil)
-	automaticTarget := selector == nil && args.Agent == "" && routedModel != "" && canUseTargetFactory
-	if automaticTarget {
-		factorySelector = &ResolvedModelSelector{Target: routedTarget, ActualProvider: routedTarget.Provider}
-	}
 
 	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimitsTarget(call.ID, args, resuming, writable, routedModel, routedTarget, factorySelector)
-	if automaticTarget && ok {
-		routedAccepted = true
-	}
 	if !ok {
 		return errResult, nil
 	}
@@ -2557,9 +2418,9 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			return session.NewToolError(call.ID, "Subagent: resumed subagent has incomplete provider/model binding"), nil
 		}
 		if providerID != "" {
-			factory := t.targetEngineFactory
+			factory := t.engineFactory
 			if writable {
-				factory = t.writableTargetFactory
+				factory = t.writableEngineFactory
 			}
 			target := ModelTarget{Provider: providerID, Model: modelID}
 			if factory == nil {

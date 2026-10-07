@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -52,7 +53,7 @@ func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
 				}
 				return ResolvedModelSelector{Target: ModelTarget{Provider: "other", Model: "chosen"}, ActualProvider: "other", ProviderBearing: true}, nil
 			}),
-			WithParallelTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
 				return markerEngine(target.Provider + "/" + target.Model), true
 			}),
 		).(*ParallelTool)
@@ -108,8 +109,8 @@ func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
 		var classMu sync.Mutex
 		var classifies int
 		tl := NewParallelTool(markerEngine("PARENT"), forker,
-			WithParallelEngineFactory(func(model string) (*Engine, bool) {
-				return markerEngine("AUTO:" + model), true
+			WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				return markerEngine("AUTO:" + target.Model), true
 			}),
 		).(*ParallelTool)
 		caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
@@ -126,6 +127,82 @@ func TestADR_0369_Scenario4_ParallelSelector(t *testing.T) {
 		defer classMu.Unlock()
 		if classifies != 2 || strings.Count(res.Content, "AUTO:routed") != 2 {
 			t.Fatalf("classifies=%d result=%q", classifies, res.Content)
+		}
+	})
+}
+
+func TestDelegatedSessionPersistenceUsesActualEngineIdentity(t *testing.T) {
+	t.Run("Parallel branch falls back from declined routed target", func(t *testing.T) {
+		store := memstore.New()
+		parallel := NewParallelTool(markerEngine("fallback-model"), &countingParallelForker{},
+			WithParallelProvider("fallback-provider"),
+			WithParallelStore(store),
+			WithParallelEngineFactory(func(ModelTarget) (*Engine, bool) { return nil, false }),
+		).(*ParallelTool)
+		var start *session.ParallelPayload
+		result, err := parallel.ExecuteWithParent(t.Context(), session.NewToolCall("parallel", "Parallel", parallelArgsJSON("inspect")), memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvParallelBranch && ev.Parallel != nil && ev.Parallel.Kind == session.ParallelBranchStart {
+				start = ev.Parallel
+			}
+		}, parentCaps{
+			children: newChildRunRegistry(), parentSessionID: "parent", parentIncarnation: session.NewIncarnationID(),
+			routeDecision: func(context.Context, string) modelRoutingResult {
+				return modelRoutingResult{category: "large", provider: "routed-provider", model: "routed-model", ok: true}
+			},
+		})
+		if err != nil || result.IsError || start == nil {
+			t.Fatalf("ExecuteWithParent = (%+v, %v), start=%+v", result, err, start)
+		}
+		if start.Provider != "fallback-provider" || start.Model != "fallback-model" ||
+			start.RoutedModel != "" || start.RoutingReason != session.RoutingReasonTargetUnavailable {
+			t.Fatalf("branch event lost fallback evidence: %+v", start)
+		}
+		persisted, err := store.Load(t.Context(), "parallel-parent-parallel-0")
+		if err != nil {
+			t.Fatalf("load persisted branch: %v", err)
+		}
+		if persisted.ProviderID != "fallback-provider" || persisted.ModelID != "fallback-model" {
+			t.Fatalf("persisted branch identity = %q/%q, want fallback-provider/fallback-model", persisted.ProviderID, persisted.ModelID)
+		}
+	})
+
+	t.Run("Team member falls back from declined routed target", func(t *testing.T) {
+		store := memstore.New()
+		var factoryCalls int
+		teamTool := NewTeamTool(func(_ *team.Team, spec MemberSpec, _ string) MemberBuild {
+			factoryCalls++
+			if spec.Selector != nil {
+				return MemberBuild{}
+			}
+			return MemberBuild{Engine: NewEngine(Deps{
+				LLM: mockllm.New(mockllm.TextTurn("work"), mockllm.TextTurn("synthesis")), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "fallback-model",
+			}), Provider: "fallback-provider"}
+		}, WithTeamToolStore(store)).(*TeamTool)
+		var start *session.TeamPayload
+		args, _ := json.Marshal(teamArgs{Goal: "goal", Members: []TeamMemberArg{{Name: "lead", Role: "inspect"}}})
+		result, err := teamTool.ExecuteWithParent(t.Context(), session.NewToolCall("team", "Team", args), memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvTeamStart {
+				start = ev.Team
+			}
+		}, parentCaps{
+			children: newChildRunRegistry(), parentSessionID: "parent", parentIncarnation: session.NewIncarnationID(),
+			routeDecision: func(context.Context, string) modelRoutingResult {
+				return modelRoutingResult{category: "large", provider: "routed-provider", model: "routed-model", ok: true}
+			},
+		})
+		if err != nil || result.IsError || start == nil || len(start.Roster) != 1 {
+			t.Fatalf("ExecuteWithParent = (%+v, %v), start=%+v", result, err, start)
+		}
+		if factoryCalls != 2 || start.Roster[0].Provider != "fallback-provider" || start.Roster[0].Model != "fallback-model" ||
+			start.Roster[0].RoutedModel != "" || start.Roster[0].RoutingReason != session.RoutingReasonTargetUnavailable {
+			t.Fatalf("factory calls=%d team event lost fallback evidence: %+v", factoryCalls, start.Roster[0])
+		}
+		persisted, err := store.Load(t.Context(), "team-parent-team-lead")
+		if err != nil {
+			t.Fatalf("load persisted member: %v", err)
+		}
+		if persisted.ProviderID != "fallback-provider" || persisted.ModelID != "fallback-model" {
+			t.Fatalf("persisted member identity = %q/%q, want fallback-provider/fallback-model", persisted.ProviderID, persisted.ModelID)
 		}
 	})
 }
@@ -179,14 +256,16 @@ func TestTeamMemberSelectorValidationAndLifetime(t *testing.T) {
 		}
 		builds := 0
 		sup := NewSupervisor(tm, memEnv("/ws"), func(spec MemberSpec, _ string) MemberBuild {
-			return MemberBuild{Engine: memberEngine(spec, workerProvider, "worker-model"), Provider: "parent"}
-		}, WithTeamMemberSelectorFactory(func(spec MemberSpec, selected ResolvedModelSelector) MemberBuild {
-			builds++
-			if selected.Target != (ModelTarget{Provider: "other", Model: "selected-model"}) {
-				t.Fatalf("selected target = %+v", selected.Target)
+			if spec.Selector != nil {
+				builds++
+				selected := *spec.Selector
+				if selected.Target != (ModelTarget{Provider: "other", Model: "selected-model"}) {
+					t.Fatalf("selected target = %+v", selected.Target)
+				}
+				return MemberBuild{Engine: memberEngine(spec, leadProvider, "selected-model"), Provider: "other"}
 			}
-			return MemberBuild{Engine: memberEngine(spec, leadProvider, "selected-model"), Provider: "other"}
-		}), WithMaxRounds(10))
+			return MemberBuild{Engine: memberEngine(spec, workerProvider, "worker-model"), Provider: "parent"}
+		}, WithMaxRounds(10))
 		selected := ResolvedModelSelector{Target: ModelTarget{Provider: "other", Model: "selected-model"}, ActualProvider: "other", ProviderBearing: true}
 		if err := sup.AddMember(t.Context(), MemberSpec{Name: "lead", Lead: true, InitialPrompt: "delegate", Selector: &selected}); err != nil {
 			t.Fatalf("AddMember(lead): %v", err)
@@ -201,6 +280,31 @@ func TestTeamMemberSelectorValidationAndLifetime(t *testing.T) {
 		if builds != 1 || leadProvider.Calls() != 3 {
 			t.Fatalf("selected engine builds=%d calls=%d, want one build retained for three calls", builds, leadProvider.Calls())
 		}
+	})
+
+	t.Run("automatic target unavailable falls back with truthful evidence", func(t *testing.T) {
+		tm := team.New("fallback")
+		var attempts int
+		sup := NewSupervisor(tm, memEnv("/ws"), func(spec MemberSpec, _ string) MemberBuild {
+			attempts++
+			if spec.Selector != nil {
+				if spec.Selector.Target != (ModelTarget{Provider: "other", Model: "same-model"}) {
+					t.Fatalf("routed target = %+v", spec.Selector.Target)
+				}
+				return MemberBuild{}
+			}
+			return MemberBuild{Engine: markerEngine("same-model"), Provider: "parent"}
+		}, withParentCaps(parentCaps{routeDecision: func(context.Context, string) modelRoutingResult {
+			return modelRoutingResult{category: "large", provider: "other", model: "same-model", ok: true}
+		}}))
+		if err := sup.AddMember(t.Context(), MemberSpec{Name: "lead", Lead: true}); err != nil {
+			t.Fatalf("AddMember: %v", err)
+		}
+		category, model, reason := sup.MemberRouting("lead")
+		if attempts != 2 || category != "" || model != "" || reason != session.RoutingReasonTargetUnavailable || sup.members["lead"].provider != "parent" {
+			t.Fatalf("attempts=%d route=%q/%q reason=%q provider=%q", attempts, category, model, reason, sup.members["lead"].provider)
+		}
+		sup.cleanupAll()
 	})
 
 	t.Run("selectors resolve once at add and named provider intent is rejected", func(t *testing.T) {
@@ -219,17 +323,17 @@ func TestTeamMemberSelectorValidationAndLifetime(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolveMemberSelectors: %v", err)
 		}
-		factory := func(MemberSpec, string) MemberBuild {
+		factory := func(spec MemberSpec, _ string) MemberBuild {
+			if spec.Selector != nil {
+				builds++
+				if spec.Selector.Target.Model != "override" {
+					t.Fatalf("factory target = %#v", spec.Selector)
+				}
+				return MemberBuild{Engine: markerEngine("override"), Provider: "parent"}
+			}
 			return MemberBuild{Engine: markerEngine("default"), Provider: "parent"}
 		}
-		selectorFactory := func(_ MemberSpec, selected ResolvedModelSelector) MemberBuild {
-			builds++
-			if selected.Target.Model != "override" {
-				t.Fatalf("factory target = %#v", selected)
-			}
-			return MemberBuild{Engine: markerEngine("override"), Provider: "parent"}
-		}
-		sup := NewSupervisor(tm, memEnv("/ws"), factory, WithTeamMemberSelectorFactory(selectorFactory), withParentCaps(parentCaps{
+		sup := NewSupervisor(tm, memEnv("/ws"), factory, withParentCaps(parentCaps{
 			children: newChildRunRegistry(),
 			routeDecision: func(context.Context, string) modelRoutingResult {
 				routes++
@@ -239,8 +343,8 @@ func TestTeamMemberSelectorValidationAndLifetime(t *testing.T) {
 		if err := sup.AddMember(context.Background(), specs[0]); err != nil {
 			t.Fatalf("AddMember: %v", err)
 		}
-		if builds != 1 || resolves != 1 || routes != 0 || sup.MemberModel("specialist") != "override" || sup.MemberProvider("specialist") != "parent" || sup.members["specialist"].engine == nil {
-			t.Fatalf("builds=%d resolves=%d routes=%d model=%q provider=%q", builds, resolves, routes, sup.MemberModel("specialist"), sup.MemberProvider("specialist"))
+		if builds != 1 || resolves != 1 || routes != 0 || sup.MemberModel("specialist") != "override" || sup.members["specialist"].provider != "parent" || sup.members["specialist"].engine == nil {
+			t.Fatalf("builds=%d resolves=%d routes=%d model=%q provider=%q", builds, resolves, routes, sup.MemberModel("specialist"), sup.members["specialist"].provider)
 		}
 
 		for _, badMember := range []TeamMemberArg{
@@ -280,7 +384,7 @@ func TestADR_0369_Scenario4_DelegationEvidence(t *testing.T) {
 	t.Run("Subagent producer", func(t *testing.T) {
 		var start *session.SubagentPayload
 		toolUnderTest := NewSubagentTool(markerEngine("parent"), WithSubagentSelectorResolver(resolver),
-			WithSubagentTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			WithSubagentEngineFactory(func(target ModelTarget) (*Engine, bool) {
 				return markerEngine(target.Model), true
 			})).(*SubagentTool)
 		res, err := toolUnderTest.ExecuteWithParent(t.Context(), session.NewToolCall("s", "Subagent", json.RawMessage(`{"prompt":"private task","provider":"model-router","model":"deep"}`)), memEnv("/ws"), func(ev session.Event) {
@@ -302,7 +406,7 @@ func TestADR_0369_Scenario4_DelegationEvidence(t *testing.T) {
 		var starts []*session.ParallelPayload
 		toolUnderTest := NewParallelTool(markerEngine("parent"), &countingParallelForker{},
 			WithParallelSelectorResolver(resolver),
-			WithParallelTargetEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
 				return markerEngine(target.Model), true
 			})).(*ParallelTool)
 		args, _ := json.Marshal(parallelArgs{Tasks: []string{"one", "two"}, Provider: "model-router", Model: "deep"})
@@ -328,11 +432,13 @@ func TestADR_0369_Scenario4_DelegationEvidence(t *testing.T) {
 
 	t.Run("Team producer", func(t *testing.T) {
 		var start *session.TeamPayload
-		toolUnderTest := NewTeamTool(func(_ *team.Team, _ MemberSpec, _ string) MemberBuild {
+		toolUnderTest := NewTeamTool(func(_ *team.Team, spec MemberSpec, _ string) MemberBuild {
+			if spec.Selector != nil {
+				selected := *spec.Selector
+				return MemberBuild{Engine: NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("work"), mockllm.TextTurn("summary")), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: selected.Target.Model}), Provider: selected.ActualProvider}
+			}
 			return MemberBuild{Engine: markerEngine("parent"), Provider: "parent"}
-		}, WithTeamSelectorResolver(resolver), WithTeamToolSelectorFactory(func(_ *team.Team, _ MemberSpec, selected ResolvedModelSelector) MemberBuild {
-			return MemberBuild{Engine: NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("work"), mockllm.TextTurn("summary")), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: selected.Target.Model}), Provider: selected.ActualProvider}
-		})).(*TeamTool)
+		}, WithTeamSelectorResolver(resolver)).(*TeamTool)
 		args, _ := json.Marshal(teamArgs{Goal: "private goal", Members: []TeamMemberArg{{Name: "lead", Role: "lead", Provider: "model-router", Model: "deep"}}})
 		res, err := toolUnderTest.ExecuteWithParent(t.Context(), session.NewToolCall("t", "Team", args), memEnv("/ws"), func(ev session.Event) {
 			if ev.Type == session.EvTeamStart {

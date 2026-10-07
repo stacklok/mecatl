@@ -15,13 +15,7 @@ executable. Add `status_customization` to
 embedded and connected sessions. Project files, remote servers, prompts, and
 sessions cannot change it.
 
-With no `status_customization:` entry, `mecatui` uses its shipped responsive
-templates. The header includes the active session title at every width and the
-remote target in its full variant. Keyboard help, the header
-posture/scroll/changed-file indicators, and the footer activity lane remain part
-of the client interface; customization cannot remove them. In a debug session,
-the header also keeps a `⚠ DEBUG target` cue ahead of generated content and a
-privacy disclosure below it, even if a custom header is empty.
+With no `status_customization:` entry, `mecatui` uses its shipped templates. Customization cannot remove the required keyboard help, posture, scroll and changed-file indicators, or activity cue. In a debug session, it cannot remove the `⚠ DEBUG target` cue or privacy disclosure, even if the custom header is empty.
 
 ## Choose a source
 
@@ -135,8 +129,8 @@ refreshes it.
 |`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
 |`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
 |`Model.ProviderID`, `Model.ID`|strings|Exact provider and model routing identifiers for the resolved session.|
-|`Model.ProviderLabel`|string|Display identity from the resolved pair, `provider-id/model-id`. Uses the raw model ID if provider evidence is unavailable; empty when the model ID is unknown. Model IDs containing `/` retain that slash. The shipped full and compact headers show this label.|
-|`Model.FriendlyName`|string|Human-readable name from the matching provider/model inventory entry, falling back to the raw model ID. Available to custom templates and commands.|
+|`Model.ProviderLabel`|string|Provider-qualified identity (`provider-id/model-id`), or the raw model ID if provider evidence is unavailable. Slashes in the model ID are retained.|
+|`Model.FriendlyName`|string|Human-readable catalog name, falling back to the raw model ID. This is a display name, not the provider-qualified identity.|
 |`Model.Route`|string|Observed downstream route, separate from model identity.|
 |`Model.ContextWindow.{Raw,Human}`|integer, string|Resolved context capacity as exact and display-ready values.|
 |`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|

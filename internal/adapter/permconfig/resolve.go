@@ -172,15 +172,11 @@ type Resolver struct {
 	operatorSteer    bool
 	operatorSteerSet bool
 
-	// operatorModels is the OPERATOR-TIER models: subtree (ADR 0030), read ONCE at
-	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
-	// captureModels from loadUserRules; there is no second capture path). It carries
-	// the operator's own slots/aliases/default AND the non-wideable Allowlist cap that
-	// gates the PROJECT-tier bindings (Phase 4). A project-tier file's models: block is
-	// honoured only WITHIN this Allowlist on a trusted workspace (loadProjectRules) —
-	// when the Allowlist is empty the project block stays WARN-ignored (the opt-in).
-	// nil when no operator-tier file carried a models: section. CLI (explicit files)
-	// out-ranks user-global (first-non-nil keeps CLI).
+	// operatorModels is the first operator-tier models: block from user-global or
+	// CLI settings. Project-tier models: blocks are ignored regardless of trust.
+	// The legacy models.allowlist key is parsed for compatibility, but has no
+	// effect and warns when set. nil means neither operator tier supplied models:.
+	// CLI outranks user-global (first-non-nil keeps CLI).
 	operatorModels *ModelsSection
 
 	// operatorOpenRouter is the OPERATOR-TIER openrouter: subtree (issue #480), read
