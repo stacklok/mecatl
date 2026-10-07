@@ -4,11 +4,11 @@
 
 Explanation is a discussion. The reader is away from the keyboard, or at least away from the task, and wants to deepen their understanding: how does this work, why is it designed this way, how does it relate to the alternatives? Explanation is the mode that serves study rather than work, and it's the only mode where context, background, opinion, and trade-offs belong.
 
-Explanation typically lives in a concepts section (protocol primers, architecture overviews, security frameworks) and in each product section's Introduction page, which explains what the product is and who it's for.
+Place explanation by topic ownership in the [authoring contract](../../../../user-docs/_README.md). Shared capability concepts belong in `features/`; operator and builder context belongs in the corresponding journey. Diataxis mode does not require a separate concepts directory.
 
 ## Principles
 
-**Answer "why", not "how".** Explanation provides the reasoning, history, constraints, and mental models behind the machinery: why ToolHive runs MCP servers in containers, how the authorization pieces fit together, when vMCP makes sense. The moment you're writing numbered steps, you've left the mode.
+**Answer "why", not "how".** Explanation provides the reasoning, history, constraints, and mental models behind the machinery: how Mecatl's permission policy works, how shared server deployments relate to terminal clients, when embedding the engine makes sense. The moment you're writing numbered steps, you've left the mode.
 
 **Bound the topic.** A useful test: the page should make sense with "About" in front of its title ("About network isolation"). If it wouldn't, the scope is fuzzy. Say early what the page covers, and keep it there; explanation has no natural task boundary, so unbounded pages sprawl.
 
@@ -28,4 +28,4 @@ Explanation typically lives in a concepts section (protocol primers, architectur
 
 ## Structure
 
-Explanation is prose-first. Headings mark the major facets of the topic, and paragraphs, not bullet fragments, carry the reasoning; connected argument is the whole point of the mode, and bullets break the connections. Diagrams (Mermaid) help when the relationships are structural. Close with Next steps or Related information pointing to the quickstart or guides where the reader applies the understanding.
+Explanation is prose-first. Headings mark the major facets of the topic, and paragraphs, not bullet fragments, carry the reasoning; connected argument is the whole point of the mode, and bullets break the connections. Diagrams (Mermaid) help when the relationships are structural. Link to the guides where readers apply the understanding. Explanation pages do not require a Next steps section; follow the authoring contract when choosing closing sections.
