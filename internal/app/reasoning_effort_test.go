@@ -286,6 +286,30 @@ func TestFactoryDegradesOnNoReasoningModel(t *testing.T) {
 	}
 }
 
+func TestModelReasoningSupportLiveUnknownIsProviderNeutral(t *testing.T) {
+	reg, _, _ := regWithRemintRecorder("unused")
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
+		providerOpenAI: {
+			{ID: "unknown", reasoningUnknown: true},
+			{ID: "unsupported"},
+			{ID: "supported", Reasoning: true},
+		},
+	})
+	for _, tc := range []struct {
+		model            string
+		supported, known bool
+	}{
+		{model: "unknown"},
+		{model: "unsupported", known: true},
+		{model: "supported", supported: true, known: true},
+	} {
+		supported, known := modelReasoningSupport(reg, providerOpenAI, tc.model)
+		if supported != tc.supported || known != tc.known {
+			t.Errorf("%s: support = (%v, %v), want (%v, %v)", tc.model, supported, known, tc.supported, tc.known)
+		}
+	}
+}
+
 // TestFactoryFailsOpenOnUnknownModel is the capability-gate FAIL-OPEN
 // (adversarial fail-open arm): a session on an UNKNOWN (uncatalogued, no live entry)
 // model SENDS the effort anyway (re-mint happens) — the provider 400s honestly if it

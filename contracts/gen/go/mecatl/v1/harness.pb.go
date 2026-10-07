@@ -2955,7 +2955,8 @@ func (x *ListSessionsRequest) GetCursor() string {
 	return ""
 }
 
-// Principal is the verified caller an object is attributed to. Identity is the (issuer, subject) PAIR, never subject alone:
+// Principal is the verified caller an object is attributed to (caller
+// identity, threaded). Identity is the (issuer, subject) PAIR, never subject alone:
 // two IdPs or realms collide on `sub`. It carries NO scopes, NO credentials and NO
 // claims map — attribution only; enforcement is the isolation track's.
 //
@@ -13575,8 +13576,8 @@ type ModelInfo struct {
 	// context_limit is the model's total context window in tokens (0 when unknown).
 	ContextLimit int64 `protobuf:"varint,6,opt,name=context_limit,json=contextLimit,proto3" json:"context_limit,omitempty"`
 	// prompt_cached is true when mecatl ASKS the upstream to cache this
-	// (provider, model) pair's conversation prefix. mecatl arms the
-	// protocol-native breakpoint on EVERY Responses endpoint, so false means
+	// (provider, model) pair's conversation prefix. Mecatl arms
+	// the protocol-native breakpoint on EVERY Responses endpoint, so false means
 	// caching is off harness-wide (the server's --no-prompt-cache), NOT that this
 	// endpoint cannot cache. Whether an upstream HONOURS the ask is not
 	// statically knowable and this field does not claim it. Clients SHOULD mark a

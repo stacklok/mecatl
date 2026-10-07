@@ -61,14 +61,14 @@ func modelCapability(reg *providerRegistry, providerID, modelID string) port.Pro
 }
 
 // modelReasoningSupport reports whether the (provider, model) is known to support
-// reasoning-effort, and whether that fact is KNOWN at all (the reasoning-effort
-// capability gate). It mirrors modelCapability's precedence: (1) LIVE-FIRST — a live meta
-// entry's Reasoning bit is authoritative when present; (2) CATALOG floor — the
-// embedded catalog's SupportsReasoning; (3) UNKNOWN — neither source describes the
-// model (a passthrough/uncatalogued model), so known=false and the caller
-// FAILS-OPEN (sends effort anyway; the provider 400s honestly if it really cannot
-// — the same unknown=capable posture the thinking path takes). The mock provider
-// is treated as known-incapable so an offline test never sends effort to it.
+// reasoning-effort, and whether that fact is known (the reasoning-effort
+// capability gate). A live entry's Reasoning bit is authoritative only when its
+// support is known: Anthropic listings preserve omitted thinking as unknown
+// even when a model row exists. When no live row exists, the embedded catalog
+// supplies a floor; a model with no evidence also fails open, forwarding a configured effort so
+// the provider can reject it. The public inventory's boolean reasoning flag
+// cannot express unknown and does not control this gate. The mock provider is
+// known-incapable so offline tests never send effort to it.
 func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (supported, known bool) {
 	if providerID == providerMock {
 		return false, true

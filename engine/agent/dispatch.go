@@ -1419,11 +1419,10 @@ type preHookResult struct {
 //
 // TRUST / ORDERING (security-relevant): the permission policy (authorize →
 // Policy.Evaluate) has ALREADY run on the ORIGINAL, pre-mutation args by the time
-// preHook is called. A hook may rewrite the args but cannot rewrite a call past
-// the policy: when the effective Args differ, callers re-run every deterministic
-// gate on the effective call before executing it (authorizeBound; on approval
-// resume, reauthorizeApprovedCall, which denies a rewritten call that would need
-// a fresh ask). Callers MUST execute the returned call, not the input call.
+// preHook is called. When the hook changes the args, every caller re-authorizes
+// the byte-exact effective call (authorizeBound / reauthorizeApprovedCall), so a
+// rewrite cannot carry a call past a deny or a configured ask. Unchanged args are
+// not re-evaluated. Callers MUST execute the returned call, not the input call.
 func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall) (preHookResult, error) {
 	if e.deps.Hooks == nil {
 		return preHookResult{effective: c}, nil
