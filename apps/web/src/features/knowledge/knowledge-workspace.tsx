@@ -196,8 +196,7 @@ function ConfiguredSkills() {
 }
 
 /**
- * DECISION: learned-skill review follows the Studio design baseline (mecatl-prototypes PR
- * #46): a flat list, a review dialog with the version diff and body, and a "Recent changes"
+ * DECISION: learned-skill review follows the Studio design baseline (#1779): a flat list, a review dialog with the version diff and body, and a "Recent changes"
  * ledger. The dialog is driven by the route (`/workspace/skills/learned/$item`) so search
  * results and links still deep-link to one skill. Rejected: the routed detail page, which
  * the baseline folds into the dialog; its per-skill history is covered by the ledger.

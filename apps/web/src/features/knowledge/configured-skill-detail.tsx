@@ -19,9 +19,9 @@ import { humanizeSkillName } from "./humanize-skill-name";
  * TERM: skill detail sections — Summary (what the daemon reports), Manage (lifecycle
  * actions), Files (the skill's content). Sections of one page, not tabs. Avoid: "tabs".
  *
- * DECISION: the layout follows the Studio design baseline, mecatl-prototypes PR #46
- * (skill-detail-page.tsx): back pill, serif title, pill row, Summary and Manage in the left
- * column, Files in the right. Rejected: tabs, which the baseline does not have.
+ * DECISION: the layout follows the Studio design baseline (#1779): back pill, serif title,
+ * pill row, Summary and Manage in the left column, Files in the right. Rejected: tabs, which
+ * the baseline does not have.
  *
  * DECISION: Manage renders the baseline's Edit and Disable/Delete controls, permanently
  * disabled with an explanatory note. Reason: the issue holds configured-skill writes
