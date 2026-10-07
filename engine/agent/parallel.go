@@ -117,7 +117,7 @@ type ParallelTool struct {
 	childEngine *Engine
 
 	// engineFactory, when non-nil, mints a per-branch child engine for an OPT-IN
-	// model-router-classified model (ADR 0034), exactly the WithSubagentEngineFactory
+	// model-router-classified model, exactly the WithSubagentEngineFactory
 	// shape: a composition closure that RE-DERIVES the override branch engine's
 	// Compactor/TokenCounter/Env.Model/ContextWindow for the routed model (never a
 	// clone-and-swap). It is consulted ONLY when the parent run wired routeTask AND the
@@ -294,7 +294,7 @@ func WithParallelStore(store port.SessionStore) ParallelOption {
 }
 
 // WithParallelEngineFactory injects the composition-supplied factory that mints a per-branch
-// child engine on an OPT-IN model-router-classified model (ADR 0034). It is the EXACT shape
+// child engine on an OPT-IN model-router-classified model. It is the EXACT shape
 // WithSubagentEngineFactory takes (func(model string)(*Engine,bool)); the factory re-derives
 // the override branch engine's Compactor/TokenCounter/Env.Model/ContextWindow for the routed
 // model through the contamination-safe per-provider path (never a clone-and-swap). nil (the
@@ -563,7 +563,7 @@ func (e branchEmitter) start(join string, branchCount int) {
 // branch (both empty when the router was off, missed, or the branch never started); they
 // ride the branch_start event exactly as SubagentPayload's routed fields ride subagent.start.
 // routingReason is the bare-metadata WHY-NOT (issue #397), empty on a routed hit. model is
-// the concrete MODEL id this branch ACTUALLY runs on (issue #112, ADR 0035), independent
+// the concrete MODEL id this branch ACTUALLY runs on (issue #112), independent
 // of whether the router fired — inherited default or routed. When routed,
 // model == routedModel.
 func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goal, routedCategory, routedModel, routingReason, model string, decision *session.RoutingDecision) {
@@ -625,7 +625,7 @@ func (e branchEmitter) end(join string, branchCount, winner int, usage session.U
 
 // branchTool builds the per-branch translation closure handed to drainChildObserved.
 // drainChildObserved (the SINGLE redaction chokepoint, shared with Subagent) emits ONLY
-// EvSubagentTool events carrying name+error+count plus the ADR-0079 bounded previews
+// EvSubagentTool events carrying name+error+count plus the bounded previews
 // (Text/Detail/InnerKind, all clamped by clampPreview); this closure RE-TAGS each into
 // a parallel.branch{branch_tool} event for branch i, copying only those already-redacted
 // fields — it opens NO new content path. branch_start/branch_end are emitted by the
@@ -1016,7 +1016,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	childID := string(t.childSessionID(caps.parentSessionID, callID, i))
 	res := branchResult{index: i, label: label, childID: childID, artifact: ArtifactHandle("artifact-" + childID)}
 
-	// OPT-IN model router (ADR 0034): classify this branch's composed prompt ONCE (each
+	// OPT-IN model router: classify this branch's composed prompt ONCE (each
 	// branch routes at most once — this is the only call site, on the per-branch
 	// goroutine) and select the engine the branch runs on. routedCategory/routedModel are
 	// bare metadata for branch_start; branchEngine is the routed override engine on a hit
@@ -1106,7 +1106,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		return res, session.StopError
 	}
 	res.childIncarnation = childSess.Incarnation()
-	// The branch is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// The branch is attributed to the PARENT session's owner,
 	// or carries delegated authority when the parent run is authority-bound.
 	if caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(childSess, caps.owner, delegatedAuthority); authorityErr != nil {
@@ -1202,7 +1202,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	return res, stop
 }
 
-// maybeRouteBranchModel consults the OPT-IN semantic model router (ADR 0034) for a branch
+// maybeRouteBranchModel consults the OPT-IN semantic model router for a branch
 // and returns the classified category + the ALREADY-RESOLVED concrete model id the branch
 // should run on (both empty when not routed). It mirrors maybeRouteModel (the Subagent
 // gate): GATING — a branch has no per-call model and no agent def, so the only precondition

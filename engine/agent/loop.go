@@ -78,7 +78,7 @@ const noProgressExtractiveNudgeText = session.NoProgressExtractiveNudgeText
 // to the per-request system prompt's VOLATILE suffix by buildRequest when the LIVE
 // tool.Environment handed to Run has no CommandRunner (env.CommandRunner() == nil) and
 // is not the no-FS profile (whose noFSPostureNote already states "no shell"). It is the
-// ADR-0070 affordance for the shell-less default-FS posture: the model must learn from
+// model-visible affordance for the shell-less default-FS posture: the model must learn from
 // the PROMPT that the Shell tool is absent (the spec is also dropped from the advertised
 // tools), not from a trail of unknown-tool errors, so it plans around the file tools and
 // its own reasoning instead of burning turns attempting a shell it cannot call. It is
@@ -382,8 +382,8 @@ type Deps struct {
 	ProgressiveTools bool
 
 	// DeliveryQueue, when non-nil, is the DURABLE per-session pending-delivery queue
-	// the loop's turn-boundary drain reads (ADR 0075 decision #3, fire-result-delivery
-	// Scenario 4). The fire path (composition) enqueues a rendered fire-result note
+	// the loop's turn-boundary drain reads (fire-result delivery). The fire path
+	// (composition) enqueues a rendered fire-result note
 	// for an origin session that is BUSY or AWAITING (it cannot drive a delivery run
 	// without colliding); the loop drains the pending notes at Step 2a, BEFORE
 	// BeginTurn — the SAME turn-boundary seam injectBackgroundNotice uses — recording
@@ -403,7 +403,7 @@ type Deps struct {
 	// boundary (Step 2a, the same seam injectBackgroundNotice /
 	// drainPendingDelivery use) and records as an ordinary user continuation
 	// via recordContinuation, so it replays to the model and flows through
-	// compaction / session.ValidateToolPairing / ADR-0038 rehydration
+	// compaction / session.ValidateToolPairing / event-log rehydration
 	// unchanged. It is a plain loop-concern bool — NOT a port.LLMRequest field
 	// and never reaches the model as anything but an ordinary recorded user
 	// message. DEFAULT false (the zero value): no inbox is armed and the drain
@@ -519,7 +519,7 @@ func (e *Engine) ContextWindow() int {
 // (inherited default, agent-def pin, per-call override, or the opt-in router). The
 // string is bare metadata (a model id); the engine stays model-string-only — no
 // adapter/proto type crosses here. Used by the Subagent / Parallel / Team delegation
-// emit sites to populate the generic Model field (issue #112, ADR 0035).
+// emit sites to populate the generic Model field (issue #112).
 func (e *Engine) Model() string { return e.deps.Model }
 
 // HasTool reports whether a tool with the given registered name is present in
@@ -707,7 +707,7 @@ type Run struct {
 	// atomic because child/worker event paths may mint asks concurrently.
 	askSequence atomic.Uint64
 	// runID is the host-minted identity stamped onto every event this run emits
-	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
+	// Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
 	// extraToolNames is the snapshot of overlay registration keys captured at the
 	// same advertisement boundary that builds the provider request.
@@ -768,7 +768,7 @@ type Run struct {
 	// reviewer spend). nil on the default (no-reviewer) engine and on child runs.
 	// Set before the run goroutine starts and only read after.
 	askReview *askReviewBreaker
-	// router is this run's model-router circuit breaker (ADR 0031), created in
+	// router is this run's model-router circuit breaker, created in
 	// Engine.Run only when the engine carries a SubagentModelRouter — the
 	// router-non-nil ⇔ router-wired pairing the parentCaps closure keys on. Its mutex
 	// SERIALIZES classifications within the run (deterministic consecutive-miss
@@ -827,7 +827,7 @@ type Run struct {
 	// fragments are the EPHEMERAL turn-0 instruction fragments (project instructions /
 	// soul / memory index / user model, produced by Deps.Instructions) prepended to the
 	// LLMRequest.Messages on EVERY turn of this run (incl. resume) but NEVER persisted into
-	// Conversation.Messages, event-carried, or snapshotted (ADR 0043). They are assembled
+	// Conversation.Messages, event-carried, or snapshotted. They are assembled
 	// ONCE PER RUN (fragmentsOnce, in buildRequest's first turn) and reused on every
 	// subsequent turn, so the message prefix stays byte-stable within the run (preserving
 	// the prompt cache) without re-assembling per turn. Assembly is fail-soft: an
@@ -925,13 +925,13 @@ type RunRequest struct {
 	// authority unless the runtime explicitly records an exemption. It stays private so
 	// callers cannot use RunRequest to create an authority-bypassing tool.
 	extraToolOptions map[string]extraToolOptions
-	// RunID is the opaque, host-minted identity of THIS run (ADR 0249).
+	// RunID is the opaque, host-minted identity of THIS run.
 	//
 	// It does two things and nothing else. Every event this run emits is stamped
 	// with it at Run.emit/emitOrAbort, beside the existing Seq stamp, so no relay,
 	// transport, or persistence path downstream can omit it. And when
 	// AskIDDiscriminator is empty it also SUPPLIES the ask discriminator, which
-	// is what ADR 0044 always meant by "a durable host passes its own RunID" —
+	// is what "a durable host passes its own RunID" means —
 	// so a durable host sets ONE field, not two carrying the same value.
 	//
 	// HOST CONTRACT (inherited from AskIDDiscriminator, because it feeds it): the
@@ -947,7 +947,7 @@ type RunRequest struct {
 	//
 	// The loop's licence over this value is deliberately narrow: STAMP it, and
 	// DERIVE the ask discriminator from it. It must never be branched on, logged,
-	// sent to a provider, or used to reach storage — see ADR 0249's consequences.
+	// sent to a provider, or used to reach storage.
 	RunID string
 	// AskIDDiscriminator, when non-empty, supplies the colon-free HOST namespace
 	// of every askID minted this run. Live issuance appends a per-run `.aN`
@@ -965,7 +965,7 @@ type RunRequest struct {
 	// the legacy "r<serial>" behavior with no change — mecatui, tests, and
 	// in-memory hosts pass nothing and are unaffected. A durable host (e.g. a downstream consumer)
 	// passes its own RunID. Same opt-in RunRequest seam pattern as
-	// MaxRunTokensOverride/ExtraTools. See ADR-0044.
+	// MaxRunTokensOverride/ExtraTools.
 	//
 	// FOOTGUN GUARD: after startRun the RESOLVED value (this when valid, else the
 	// "r<serial>" fallback) lives on Run.askDiscriminator. askID minting (newAskID,
@@ -996,7 +996,7 @@ func (r RunRequest) extraToolAuthorityExempt(name string) bool {
 	return false
 }
 
-// RunID reports the opaque, host-minted identity of this run (ADR 0249), or ""
+// RunID reports the opaque, host-minted identity of this run, or ""
 // when the host supplied none.
 //
 // It exists so a caller holding a *Run can ASK which run it holds, rather than
@@ -1401,7 +1401,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run {
 	// The resumed run CONTINUES the run that parked awaiting this ask — it is not
 	// a new one — so it carries that run's identity forward, read from the session
-	// the host restored it onto (ADR 0249). This is what makes a cross-process
+	// the host restored it onto. This is what makes a cross-process
 	// Approve after a restart the SAME run to every observer.
 	//
 	// The fallback is deliberately confined to THIS seam. A prompt entry must
@@ -1429,10 +1429,9 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 // askDiscriminatorFor resolves the trailing askID component for a run, and
 // reports whether a supplied value was REJECTED for containing a colon.
 //
-// Precedence: an explicit AskIDDiscriminator wins; otherwise RunID supplies it
-// (ADR 0249 decision 2), which is what lets a durable host set ONE field and get
-// both a stamped run identity and reconstructable askIDs — the arrangement ADR
-// 0044 described as "a durable host passes its own RunID". The derivation is a
+// Precedence: an explicit AskIDDiscriminator wins; otherwise RunID supplies it,
+// which is what lets a durable host set ONE field and get both a stamped run
+// identity and reconstructable askIDs ("a durable host passes its own RunID"). The derivation is a
 // DEFAULT, not a constraint: a caller needing a discriminator that is NOT the run
 // id still sets the field directly.
 //
@@ -1713,7 +1712,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		r.reviewRoot.rootSessionID = sess.ID
 		r.ownsReviewRoot = true
 	}
-	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
+	// Resolve the trailing askID discriminator once; see
 	// askDiscriminatorFor for the precedence and the colon rule.
 	r.runID = req.RunID
 	resolved, colonRejected := askDiscriminatorFor(req, r.serial)
@@ -1736,7 +1735,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	if e.deps.ChildAskReviewer != nil {
 		r.askReview = &askReviewBreaker{max: e.deps.ChildAskReviewMaxDenies}
 	}
-	// An engine carrying the OPT-IN model router (ADR 0031) arms this run's router
+	// An engine carrying the OPT-IN model router arms this run's router
 	// breaker, mirroring the ask-review breaker: the parentCaps.routeTask closure
 	// consults it before every classification, so a run whose Subagent tasks keep
 	// failing to classify stops spending classifier turns after the threshold of
@@ -2211,7 +2210,7 @@ func shouldRunBoundaryInjections(firstIteration, skipFirst bool) bool {
 
 // runBoundaryInjections runs the Step 2a turn-boundary injection drains, in
 // order, BEFORE BeginTurn and the preTurnTerminal stop checks: the
-// background-completion notice, the fire-result delivery drain (ADR 0075), and
+// background-completion notice, the fire-result delivery drain, and
 // the operator steer drain (steer-while-running, issue #512). Extracting them
 // keeps runLoop's complexity flat; the ordering and the record-before-stop-checks
 // discipline are unchanged from when they were inline. Each is provider-legal at
@@ -2225,7 +2224,7 @@ func (e *Engine) runBoundaryInjections(ctx context.Context, r *Run, sess *sessio
 	if err := e.injectBackgroundNotice(ctx, r, sess); err != nil {
 		return err
 	}
-	// Fire-result delivery drain (ADR 0075 decision #3): pending notes queued for
+	// Fire-result delivery drain: pending notes queued for
 	// THIS session are recorded as ordinary harness-framed user continuations and
 	// marked delivered. nil DeliveryQueue is a no-op.
 	if err := e.drainPendingDelivery(ctx, r, sess); err != nil {
@@ -2415,8 +2414,8 @@ func (e *Engine) injectBackgroundNotice(ctx context.Context, r *Run, sess *sessi
 	return nil
 }
 
-// drainPendingDelivery is drive's Step 2a delivery-drain sibling (ADR 0075
-// decision #3): it reads the origin session's pending fire-result delivery
+// drainPendingDelivery is drive's Step 2a delivery-drain sibling:
+// it reads the origin session's pending fire-result delivery
 // notes off the DURABLE per-session DeliveryQueue, records each as an ordinary
 // harness-framed user continuation (recordContinuation — provider-legal at a
 // turn boundary, never inside a tool_use pair), and marks it delivered via
@@ -2658,7 +2657,7 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 		return false, reason, nil
 	}
 	// The turn-0 context fragments (project instructions / soul / memory index /
-	// user model) are NO LONGER persisted into the conversation (ADR 0043). They are
+	// user model) are NO LONGER persisted into the conversation. They are
 	// assembled once per run and prepended to LLMRequest.Messages EPHEMERALLY in
 	// buildRequest, so they are present on every run (incl. resume) without bloating
 	// the persisted history or recreating the compaction-pin ambiguity. Only the
@@ -2992,7 +2991,7 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 // can be refreshed from the live session snapshot when structured tools reveal
 // new directories. They are never written into Conversation.Messages, so
 // they cost no persisted-history bloat and converge the snapshot + event-sourced
-// rehydration paths (ADR 0043). Messages is a FRESH slice each call
+// rehydration paths. Messages is a FRESH slice each call
 // (fragments ++ conversation); Conversation.Messages is never mutated. The
 // prefix remains stable until a new structured directory is encountered.
 func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) port.LLMRequest {
@@ -3026,7 +3025,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	// makes anyway still resolves from the catalog and surfaces the honest
 	// bashNoShellResult "no shell available" tool error — it is never a silent pass),
 	// and (b) append ONE shell-less posture clause to the per-request system prompt
-	// (the ADR-0070 model-visible affordance) so the model learns from the PROMPT
+	// (the model-visible affordance) so the model learns from the PROMPT
 	// that Shell is absent, not from a trail of errors. The clause rides the VOLATILE
 	// suffix — environment capability is per-run/per-turn, so it must NOT be baked
 	// into the cache-stable prefix (that would be dishonest to the cache when an
@@ -3562,7 +3561,7 @@ func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 	// The run labels its own events with run-scoped identity. Seq answers "where
 	// in this run", RunID answers "which run" — Seq restarts every run, so it
 	// cannot distinguish two runs of one session. Stamping here rather than at a
-	// relay is ADR 0249 decision 4: there is no single downstream chokepoint that
+	// relay is deliberate: there is no single downstream chokepoint that
 	// feeds BOTH the durable log and the client wire, so any other placement means
 	// stamping at ~9 sites by hand. Empty when the host minted no id.
 	ev.RunID = r.runID

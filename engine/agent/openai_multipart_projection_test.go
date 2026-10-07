@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0302_EngineConcatenatesDistinctPartDeltasWithoutSeparators(t *testing.T) {
+func TestEngineConcatenatesDistinctPartDeltasWithoutSeparators(t *testing.T) {
 	llm := mockllm.New(mockllm.ChunksTurn(
 		mockllm.TextChunk("alpha"),
 		mockllm.TextChunk(" beta"),

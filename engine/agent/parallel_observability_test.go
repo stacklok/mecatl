@@ -272,8 +272,8 @@ func (p *canaryProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.
 	}, nil
 }
 
-// TestParallelNoContentLeakBehavioral is the gauntlet-#7 behavioral guard (ADR 0079
-// shape): a branch whose child tool args, tool result, and message text all contain a
+// TestParallelNoContentLeakBehavioral is the gauntlet-#7 behavioral guard (bounded-
+// preview shape): a branch whose child tool args, tool result, and message text all contain a
 // sentinel canary longer than the clampPreview cap and laced with control bytes. Assert
 // the canary NEVER appears VERBATIM in ANY string field of ANY emitted parallel.* event —
 // only its clamped, control-byte-scrubbed prefix may cross, plus the redacted metadata
@@ -343,13 +343,13 @@ func TestParallelNoContentLeakBehavioral(t *testing.T) {
 		t.Fatal("expected a branch_tool(Read) event to confirm metadata forwarding")
 	}
 	if !sawClampedPreview {
-		t.Fatal("expected a branch_tool event with a clamped canary-head preview (ADR 0079)")
+		t.Fatal("expected a branch_tool event with a clamped canary-head preview")
 	}
 }
 
 // TestParallelPayloadHasNoContentFields is the gauntlet-#7 STRUCTURAL guard: assert the
 // ParallelPayload struct's field set is exactly the documented metadata + bounded-preview
-// allow-list (ADR 0079). The preview fields (Text/Detail/InnerKind) are content-shaped but
+// allow-list. The preview fields (Text/Detail/InnerKind) are content-shaped but
 // are fed ONLY through clampPreview (control-byte scrub + rune cap) at the single
 // drainChildObserved chokepoint, and are client-only — never the parent's Conversation.
 // Raw-content fields (Args/Content/Summary/FailReason) remain BANNED. This trips if a
@@ -367,7 +367,7 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		"ChildID":          true,
 		"ChildIncarnation": true,
 		// RoutedCategory / RoutedModel are the OPT-IN model router's classification for
-		// this branch (ADR 0034): a CATEGORY label (operator-authored taxonomy name) and a
+		// this branch: a CATEGORY label (operator-authored taxonomy name) and a
 		// concrete MODEL id — bare metadata, never the branch prompt, summary, or the
 		// classifier's reasoning. Mirrors SubagentPayload's identically-justified routed
 		// fields; gauntlet-#7 safe (no branch content crosses).
@@ -377,12 +377,12 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// missReason, EMPTY on a routed hit — never the branch prompt or the
 		// classifier's reasoning. Same gauntlet-#7 footing as RoutedCategory/Model.
 		"RoutingReason": true,
-		// RoutingDecision (ADR 0352) is sanitized bounded classifier metadata only.
+		// RoutingDecision is sanitized bounded classifier metadata only.
 		"RoutingDecision": true,
-		// Model (issue #112 / ADR 0035) is the concrete MODEL id this branch ACTUALLY ran
+		// Model (issue #112) is the concrete MODEL id this branch ACTUALLY ran
 		// on, regardless of how it was chosen — bare metadata, never branch content.
 		"Model": true,
-		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields: Text
+		// Text / Detail / InnerKind are the BOUNDED PREVIEW fields: Text
 		// carries a clamped child message/result-text preview, Detail a clamped
 		// tool-call-args or tool-result-body preview, InnerKind the inner event kind
 		// the preview came from. Both content fields are fed ONLY through clampPreview
@@ -398,7 +398,7 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		if !allowed[f.Name] {
 			t.Fatalf("ParallelPayload grew an unexpected field %q (%s): a new field MUST be reviewed "+
 				"against gauntlet #7 — branch content may cross only as a clampPreview-bounded, "+
-				"client-only preview (ADR 0079). If it is legitimate redacted metadata or a bounded "+
+				"client-only preview. If it is legitimate redacted metadata or a bounded "+
 				"preview, add it to the allow-list with a justification.", f.Name, f.Type)
 		}
 	}

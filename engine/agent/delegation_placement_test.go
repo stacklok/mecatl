@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-func TestADR_0291_DelegationSchemasCannotSelectPlacement(t *testing.T) {
+func TestDelegationSchemasCannotSelectPlacement(t *testing.T) {
 	t.Parallel()
 	privateRoot := "/private/placement/root"
 	ref := session.EnvironmentRef{Kind: "remote", ID: "placement-7", Revision: "revision-3"}
@@ -40,7 +40,7 @@ func TestADR_0291_DelegationSchemasCannotSelectPlacement(t *testing.T) {
 	}
 }
 
-func TestADR_0291_DelegationObservabilityContainsNoPlacementPath(t *testing.T) {
+func TestDelegationObservabilityContainsNoPlacementPath(t *testing.T) {
 	t.Parallel()
 	typ := reflect.TypeOf(session.ParallelPayload{})
 	for _, forbidden := range []string{"Workspace", "WinnerWorkspace", "EnvironmentRef", "Selector"} {

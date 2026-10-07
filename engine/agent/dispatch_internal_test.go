@@ -51,7 +51,7 @@ func TestNewAskIDRunSerialDisjoint(t *testing.T) {
 	}
 }
 
-// TestNewAskIDDiscriminatorReconstructable pins ADR-0044's headline property: the
+// TestNewAskIDDiscriminatorReconstructable pins the discriminator's headline property: the
 // trailing component is now a plain string, so the SAME (session, n, callID,
 // discriminator) inputs mint an IDENTICAL askID across two independent calls — a
 // durable host that persists its discriminator can reconstruct the askID in a
@@ -72,8 +72,8 @@ func TestNewAskIDDiscriminatorReconstructable(t *testing.T) {
 // TestNewAskIDNoDiscriminatorMatchesSerial pins that the "r<serial>" fallback
 // reproduces today's EXACT askID format byte-for-byte: when startRun passes the
 // process-global serial as "r<n>", the minted id equals the legacy layout, so an
-// in-memory host that supplies no discriminator is unaffected (ADR-0044 "no
-// change when unset").
+// in-memory host that supplies no discriminator is unaffected (no change
+// when unset).
 func TestNewAskIDNoDiscriminatorMatchesSerial(t *testing.T) {
 	const (
 		id     session.SessionID  = "sess-x"
@@ -89,7 +89,7 @@ func TestNewAskIDNoDiscriminatorMatchesSerial(t *testing.T) {
 
 // TestNewAskIDDiscriminatorPreservesPrefix pins that a host-supplied discriminator
 // does NOT disturb the consumed "<sessionID>:" prefix that cmd/mecatui's isChildAsk
-// classifies main-vs-subagent on (ADR-0044 constraint 1). It mirrors the prefix
+// classifies main-vs-subagent on. It mirrors the prefix
 // assertion of TestNewAskIDSessionPrefixContract for the discriminator path.
 func TestNewAskIDDiscriminatorPreservesPrefix(t *testing.T) {
 	const sessionID session.SessionID = "sess-main-1"
@@ -99,15 +99,14 @@ func TestNewAskIDDiscriminatorPreservesPrefix(t *testing.T) {
 	}
 }
 
-// TestADR_0249_RunIDIsTheAskDiscriminator is AC4.2: a host that sets ONLY
+// TestRunIDIsTheAskDiscriminator is AC4.2: a host that sets ONLY
 // RunRequest.RunID gets reconstructable askIDs, because the run id SUPPLIES the
 // ask discriminator.
 //
-// This is the arrangement ADR 0044 wrote in terms of a run id that did not yet
-// exist ("A durable host passes its own RunID"). Before ADR 0249 the seam was
-// real but unused: nothing in the repo set AskIDDiscriminator, so the property
+// The discriminator was designed for "a durable host passes its own RunID"
+// before a run id existed. Before RunID the seam was real but unused: nothing in the repo set AskIDDiscriminator, so the property
 // was theoretical.
-func TestADR_0249_RunIDIsTheAskDiscriminator(t *testing.T) {
+func TestRunIDIsTheAskDiscriminator(t *testing.T) {
 	cases := []struct {
 		name         string
 		req          RunRequest

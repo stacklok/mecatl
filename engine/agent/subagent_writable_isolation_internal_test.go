@@ -7,7 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// TestWritableChildPostureNotIsolated pins the ADR 0041 security-relevant change: a
+// TestWritableChildPostureNotIsolated pins the direct-write security-relevant change: a
 // direct-write (mode:"read-write") child is NOT isolated (it shares the REAL parent
 // tree), so the A2 isolation auto-approve (governance.IsolationApprovable) must NOT
 // fire for its Shell. The test drives resolveChildAsk with an isolation-APPROVABLE Shell

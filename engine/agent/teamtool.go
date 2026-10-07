@@ -47,7 +47,7 @@ const maxTeamPreview = 200
 // session — it is the exact shape server.MemberEngineFactory has, so one factory
 // serves both paths.
 //
-// routedModel is the OPT-IN model router's classification (ADR 0034) — the
+// routedModel is the OPT-IN model router's classification — the
 // ALREADY-RESOLVED concrete model id for an UNDEFINED member, "" otherwise. The factory
 // substitutes it for the default child model on the undefined branch only; a DEFINED
 // member's factory ignores it (its def pins the model). The supervisor owns the route
@@ -399,7 +399,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	}
 
 	if emit != nil {
-		// Project each member's OPT-IN model-router classification (ADR 0034) onto its
+		// Project each member's OPT-IN model-router classification onto its
 		// roster entry: AddMember routed each undefined member once and recorded the bare
 		// category/model metadata, which MemberRouting reads back by name. A defined member
 		// (its def pinned the model) and a router miss both leave the fields empty. This is

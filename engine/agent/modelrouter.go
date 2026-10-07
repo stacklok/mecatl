@@ -108,7 +108,7 @@ func routerDecision(router *SubagentModelRouter, result ModelRouteResult, outcom
 }
 
 // modelrouter.go is the engine half of the OPT-IN semantic Subagent model router
-// (ADR 0031 / ADR 0030 Layer 3b, the headline Phase 5 feature). It is a SIBLING of
+// (the headline Phase 5 feature). It is a SIBLING of
 // guardrailcheck.go and askadjudicator.go: a free function that drives a dedicated,
 // composition-built, tool-less ONE-TURN classifier Engine over a fenced task prompt
 // and parses a single-JSON verdict naming the chosen category. The engine layer is

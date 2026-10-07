@@ -14,7 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// teamsupervisor_router_test.go drives the team-member routing seam (ADR 0034): the
+// teamsupervisor_router_test.go drives the team-member routing seam: the
 // supervisor classifies each PLAIN UNDEFINED member ONCE at AddMember (decide-once,
 // off InitialPrompt) and threads the routed model into the factory. It asserts the
 // precedence (defined member skipped), fail-soft, the zero-caps no-route, and that the
@@ -76,7 +76,7 @@ func TestMemberRoutesAtAddMember(t *testing.T) {
 	if cat != "large" || model != "big-model" || reason != "" {
 		t.Fatalf("MemberRouting = (%q, %q, %q), want (large, big-model, empty-reason)", cat, model, reason)
 	}
-	// MemberModel (issue #112 / ADR 0035) reads back the concrete model the routed
+	// MemberModel (issue #112) reads back the concrete model the routed
 	// member's engine ACTUALLY runs on — the routed model, == MemberRouting's model.
 	if mm := sup.MemberModel("worker"); mm != "big-model" {
 		t.Fatalf("MemberModel = %q, want big-model (the routed model)", mm)
@@ -323,7 +323,7 @@ func TestMemberSessionIDUnaffectedByRouting(t *testing.T) {
 //
 // Scope note: the test asserts the secret stays out of the ROUTING-introduced fields, NOT
 // out of the whole payload — the EvTeamStart roster legitimately carries the member's
-// clamped Role label (the pre-existing teamRoster projection, ADR 0014), which is not the
+// clamped Role label (the pre-existing teamRoster projection), which is not the
 // gauntlet-#7 surface this slice added. The classifier here returns a CLEAN category/model;
 // a buggy router that echoed the classified text into the model id would trip (b).
 func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {

@@ -43,7 +43,7 @@ func multiTurnMarkerEngine(marker string) *Engine {
 	})
 }
 
-// parallel_router_test.go drives the Parallel runBranch routing seam (ADR 0034) directly,
+// parallel_router_test.go drives the Parallel runBranch routing seam directly,
 // asserting the per-branch precedence/fail-soft/decide-once contract and the gauntlet-#7
 // no-leak guarantee on the routed metadata — the seams the composition end-to-end test
 // cannot reach in isolation. It is the structural twin of modelrouter_internal_test.go.
@@ -275,7 +275,7 @@ func TestParallelBranchStartCarriesRoutedMetadata(t *testing.T) {
 			t.Fatalf("branch_start routed metadata = (%q, %q), want (large, big-model)",
 				ev.Parallel.RoutedCategory, ev.Parallel.RoutedModel)
 		}
-		// The generic Model field (issue #112 / ADR 0035) equals the routed branch
+		// The generic Model field (issue #112) equals the routed branch
 		// engine's resolved model — the router minted it on "ROUTED:big-model" (the
 		// routerParallelTool factory's marker for the routed model), so Model must equal
 		// that and equal RoutedModel's routed-engine manifestation. When routed, Model
@@ -415,7 +415,7 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 	}
 }
 
-// GAUNTLET #7 (ADR 0079 shape): no branch-AUTHORED content rides ANY parallel.* event
+// GAUNTLET #7 (bounded-preview shape): no branch-AUTHORED content rides ANY parallel.* event
 // UNBOUNDED when the router classifies. The routed branch's child returns a secret
 // SUMMARY longer than the clampPreview cap, laced with control bytes; the projection may
 // carry only its clamped, scrubbed prefix — the full raw body and every control byte

@@ -326,7 +326,7 @@ func TestAuxiliaryTokenUsage_Scenario1_PreservesOpaqueKindsWithoutBudgetEffect(t
 	}
 }
 
-func TestADR_0350_RouterUsageRetainsSpendBound(t *testing.T) {
+func TestRouterUsageRetainsSpendBound(t *testing.T) {
 	const budget = 350
 	llm := &countingProvider{inner: mockllm.New(mockllm.TextTurn("should-never-run"))}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, loopTool()), MaxRunTokens: budget})

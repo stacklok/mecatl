@@ -19,7 +19,7 @@ import (
 )
 
 // teamsupervisor.go is the APPLICATION-layer orchestrator for agent teams (see
-// docs/adr/0014-agent-teams.md). It owns one shared *team.Team and drives a
+// docs/architecture/subagents-and-teams.md). It owns one shared *team.Team and drives a
 // set of long-lived member sessions that coordinate through that team's task list
 // and mailbox. Unlike Subagent/Fork (one-shot, drained internally), team members are
 // re-driven across rounds and their events are STREAMED to the caller (tagged with
@@ -122,7 +122,7 @@ const defaultMemberTurnBudget = 200
 
 // defaultMemberErrorRetries is how many times a member whose round ended in
 // StopError — and whose session the supervisor then RECOVERED successfully — is left
-// SCHEDULABLE instead of benched (ADR 0200, issue #318). One retry is the
+// SCHEDULABLE instead of benched (issue #318). One retry is the
 // default because the failure this closes is a TRANSIENT one (the terminal 180s
 // stream-idle stall): a single re-drive is enough to survive a network hiccup, while
 // keeping the wasted provider spend of a permanently-failing member to one extra
@@ -264,7 +264,7 @@ type MemberBuild struct {
 // isolated member MAY be given Shell while a base-sharing read-only member must not.
 //
 // routedModel is the OPT-IN semantic model router's classification for an UNDEFINED
-// member (ADR 0034), the ALREADY-RESOLVED concrete model id the member's engine should
+// member, the ALREADY-RESOLVED concrete model id the member's engine should
 // be minted on; it is "" when the router was off, missed, or the member is DEFINED (a
 // def pins its own model — the factory IGNORES routedModel then). The supervisor owns
 // the route decision (it holds the parent caps) and passes the result here; composition
@@ -474,7 +474,7 @@ type memberRT struct {
 	// folded in the same capture block as turnsUsed, before Reopen.
 	tokensUsed session.Usage
 	// routedCategory / routedModel are the OPT-IN semantic model router's classification
-	// for this member (ADR 0034), captured ONCE at AddMember (decide-once — a member's
+	// for this member, captured ONCE at AddMember (decide-once — a member's
 	// engine is built once and reused across rounds via Reopen, so it is never re-routed).
 	// Both empty when the router was off, missed, or the member is DEFINED (a def pins its
 	// own model so the router never fired). routingReason is the bare-metadata WHY-NOT
@@ -606,7 +606,7 @@ func WithMemberTurnBudget(n int) SupervisorOption {
 // WithMemberErrorRetries sets how many times a member whose round ended in
 // session.StopError — and whose session the supervisor then RECOVERED successfully —
 // is left SCHEDULABLE for a later round instead of being benched (default
-// defaultMemberErrorRetries = 1; ADR 0200, issue #318). A retried member
+// defaultMemberErrorRetries = 1; issue #318). A retried member
 // releases its in-progress task claim (so it, or a peer, can re-claim the work) and is
 // force-scheduled for exactly one turn even when it holds no message and no claimable
 // task. Once its errored-round count EXCEEDS this cap it is benched exactly as before
@@ -747,7 +747,7 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		concurrency: defaultTeamConcurrency,
 		turnBudget:  defaultMemberTurnBudget,
 		// The retry cap is a NONZERO default, so a caller that never sets an option still
-		// survives one transient member failure (ADR 0200).
+		// survives one transient member failure.
 		memberErrorRetries: defaultMemberErrorRetries,
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
 		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
@@ -800,7 +800,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		}
 	}
 
-	// OPT-IN model router (ADR 0034): classify this member ONCE here, before the engine
+	// OPT-IN model router: classify this member ONCE here, before the engine
 	// is built (decide-once — the member engine is built once and reused across rounds via
 	// Reopen, never re-routed). maybeRouteMember gates on a PLAIN UNDEFINED member (no
 	// agent def) AND a wired routeTask, and is FAIL-SOFT (a miss returns ""). routedModel
@@ -899,7 +899,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("agent: stamp team-member relationship: %w", err)
 	}
-	// The member is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// The member is attributed to the PARENT session's owner,
 	// or carries delegated authority when the parent run is authority-bound.
 	if s.caps.parentSessionID != "" && s.caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(sess, s.caps.owner, delegatedAuthority); authorityErr != nil {
@@ -973,7 +973,7 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 	return nil
 }
 
-// maybeRouteMember consults the OPT-IN semantic model router (ADR 0034) for a PLAIN
+// maybeRouteMember consults the OPT-IN semantic model router for a PLAIN
 // UNDEFINED member and returns the classified category + the ALREADY-RESOLVED concrete
 // model id the member's engine should be minted on (both empty when not routed).
 // PRECEDENCE is enforced by GATING, mirroring maybeRouteModel (the Subagent gate): a
@@ -1045,7 +1045,7 @@ func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.Inc
 // it was chosen (inherited default member model, agent-def pin, or the opt-in router).
 // Captured at AddMember (the engine is built once and reused). Bare metadata, never
 // member content. When the router classified the member, MemberModel == the routed
-// model. See issue #112 / ADR 0035.
+// model. See issue #112.
 func (s *Supervisor) MemberModel(name string) string {
 	if m, ok := s.members[name]; ok {
 		return m.engine.Model()
@@ -1215,8 +1215,8 @@ type MemberOutcome struct {
 	// done member.
 	Reason MemberStopReason
 	// ErrorRounds is how many of this member's rounds ended in session.StopError,
-	// whether it was RETRIED through them or finally benched by them (issue #318 /
-	// ADR 0200). It is the disposition-HONESTY signal: a bounded retry means
+	// whether it was RETRIED through them or finally benched by them (issue #318).
+	// It is the disposition-HONESTY signal: a bounded retry means
 	// a member can fail a round and still finish, and such a member reports
 	// DispositionDone with no Reason — so without this count a transient failure would
 	// be invisible to the caller and the run would read as silently clean. It is a
@@ -1582,7 +1582,6 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	// where an errored round LANDS, though: the bounded-retry block ~20 lines below leaves
 	// a member that is still under the cap schedulable and stop-reason-free. Read the two
 	// together — this comment describes the benched end state, not every errored round.
-	// See docs/adr/0200-resume-a-failed-subagent.md.
 	var reopenErr error
 	if m.sess.State == session.StateFailed {
 		reopenErr = m.sess.Recover()
@@ -1591,7 +1590,7 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	}
 	warnUnexpectedRecovery(ctx, s.caps.diag, m.spec.Name, stop, reopenErr)
 
-	// BOUNDED RETRY (ADR 0200, issue #318). Recovering the session made the
+	// BOUNDED RETRY (issue #318). Recovering the session made the
 	// member DRIVABLE again; on its own that only rescued the lead's synthesis turn,
 	// because `stopped` still descheduled the member for the rest of the run. A member
 	// that hits ONE transient stall must still participate in later rounds, so an errored

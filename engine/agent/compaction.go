@@ -239,8 +239,8 @@ func snapCutToRecentUserTurn(msgs []session.Message, cut int, floor int) int {
 //     session.Tier4SummaryMarker) — this arm is LOAD-BEARING: a re-compaction must
 //     not anchor the pin/back-snap on a PRIOR summary;
 //   - turn-0 context fragments (project instructions / soul / memory index / user
-//     model), recognised by prompt.IsInjectedTurn0Fragment. As of ADR 0043 these
-//     fragments are EPHEMERAL — prepended to the request per-run, never persisted
+//     model), recognised by prompt.IsInjectedTurn0Fragment. These fragments are
+//     EPHEMERAL — prepended to the request per-run, never persisted
 //     into Conversation.Messages — so they normally do not appear here at all. This
 //     arm is therefore DEFENSE-IN-DEPTH: it keeps the predicate correct for any
 //     legacy/persisted history that still carries injected fragments (e.g. a
@@ -256,8 +256,8 @@ func snapCutToRecentUserTurn(msgs []session.Message, cut int, floor int) int {
 // content-identified.
 func isGenuineUserTurn(m session.Message) bool {
 	// Widens session.IsGenuineUserPrompt with the prompt.IsInjectedTurn0Fragment
-	// arm (defense-in-depth for legacy persisted fragments; ADR 0043 makes turn-0
-	// fragments ephemeral so they don't appear in persisted history today, but
+	// arm (defense-in-depth for legacy persisted fragments; turn-0 fragments are
+	// ephemeral so they don't appear in persisted history today, but
 	// this arm keeps the predicate sound if that ever changes). The two predicates
 	// MUST agree on every persisted message — session.IsGenuineUserPrompt is the
 	// subset the title's read-time consumers (DeriveTitle, eventsource.Fold) use.

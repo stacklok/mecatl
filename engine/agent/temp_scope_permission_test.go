@@ -47,9 +47,9 @@ func runScopedShell(t *testing.T, rules []governance.Rule, call session.ToolCall
 	return events, result
 }
 
-// TestADR_0281_ShellManagedScopeDefaultAndValidation pins managed as the enabled
+// TestShellManagedScopeDefaultAndValidation pins managed as the enabled
 // default and ensures an unrecognised scope never reaches a command runner.
-func TestADR_0281_ShellManagedScopeDefaultAndValidation(t *testing.T) {
+func TestShellManagedScopeDefaultAndValidation(t *testing.T) {
 	t.Parallel()
 	rules := []governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}
 	for _, tc := range []struct{ name, args string }{
@@ -77,9 +77,9 @@ func TestADR_0281_ShellManagedScopeDefaultAndValidation(t *testing.T) {
 	}
 }
 
-// TestADR_0281_SystemScopeRequiresIndependentCapability pins the AND gate and
+// TestSystemScopeRequiresIndependentCapability pins the AND gate and
 // deny dominance for the synthetic capability.
-func TestADR_0281_SystemScopeRequiresIndependentCapability(t *testing.T) {
+func TestSystemScopeRequiresIndependentCapability(t *testing.T) {
 	t.Parallel()
 	call := scopedShellCall("c", "go test ./...", "system")
 	for _, tc := range []struct {
@@ -104,10 +104,10 @@ func TestADR_0281_SystemScopeRequiresIndependentCapability(t *testing.T) {
 	}
 }
 
-// TestADR_0281_SystemTempCapabilityIsGlobalButNotShellAllow pins that the
+// TestSystemTempCapabilityIsGlobalButNotShellAllow pins that the
 // synthetic capability does not itself grant Shell, while its explicit allow is
 // independent of the ordinary command pattern.
-func TestADR_0281_SystemTempCapabilityIsGlobalButNotShellAllow(t *testing.T) {
+func TestSystemTempCapabilityIsGlobalButNotShellAllow(t *testing.T) {
 	t.Parallel()
 	systemCapability := governance.Rule{Tool: shellSystemTempToolName, Effect: governance.Allow}
 	for _, tc := range []struct {
@@ -131,10 +131,10 @@ func TestADR_0281_SystemTempCapabilityIsGlobalButNotShellAllow(t *testing.T) {
 	}
 }
 
-// TestADR_0281_SystemTempApprovalDoesNotLeakPath pins the approval projection:
+// TestSystemTempApprovalDoesNotLeakPath pins the approval projection:
 // it names system scope and a safe command summary, never runner-owned paths or
 // temporary environment values.
-func TestADR_0281_SystemTempApprovalDoesNotLeakPath(t *testing.T) {
+func TestSystemTempApprovalDoesNotLeakPath(t *testing.T) {
 	t.Parallel()
 	runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}}
 	events, _ := runScopedShell(t, []governance.Rule{{Tool: "Shell", Pattern: "go test*", Effect: governance.Allow}}, scopedShellCall("c", "go test ./...", "system"), runner)
