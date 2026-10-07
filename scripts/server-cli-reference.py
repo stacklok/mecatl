@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,8 @@ def render():
         if help_requested:
             help_text = help_text[:help_text.index('Version:')] + 'Version: mecak8s --version prints the build version and exits.\n'
         help_text = help_text.replace(str(scratch), '<XDG_ROOT>').replace(str(ROOT), '<WORKSPACE>')
+        # Flag help can wrap a long checkout path before the exact replacement matches.
+        help_text = re.sub(r'(default session workspace root \(default)\s+"[^"]+"', r'\1 "<WORKSPACE>"', help_text)
         if env.get('HOME'):
             help_text = help_text.replace(env['HOME'], '<HOME>')
         parts.append(f'\n## {title}\n\n```text\n{help_text.rstrip()}\n```\n')

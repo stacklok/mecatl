@@ -233,6 +233,14 @@ Flags:
         maximum cumulative input and output tokens across a team run; checked between
         rounds. A per-call team limit can only lower it. Default 0 allows unlimited
         tokens.
+  --mcp-broker-address string
+        Remote broker host:port; requires verified TLS and projected workload JWT
+  --mcp-broker-server-name string
+        Expected remote broker TLS DNS name
+  --mcp-broker-tls-ca string
+        Remote broker PEM CA bundle
+  --mcp-broker-token-file string
+        Projected workload JWT file reread for every RPC
   --mcp-prompts
         expand /mcp__<server>__<prompt> inputs using connected-server prompts. Prompt
         content steers the model, so use only trusted servers. (default true)
@@ -548,8 +556,7 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default
-        "<WORKSPACE>")
+        default session workspace root (default "<WORKSPACE>")
   --yolo
         alias for --posture=yolo. Allows tools server-wide and lets child command
         substitutions run automatically. Deny rules and configured ask rules still
@@ -691,6 +698,15 @@ Usage: mecak8s [flags]
         with stop=budget; zero is unlimited
   --max-team-tokens int
         Maximum cumulative input and output tokens per team run. Zero is unlimited
+  --mcp-broker-address string
+        Host:port of the remote internal MCP broker. Requires projected-token
+        authentication and verified TLS
+  --mcp-broker-server-name string
+        Expected DNS name in the remote MCP broker certificate
+  --mcp-broker-tls-ca string
+        PEM CA bundle used to verify the remote MCP broker
+  --mcp-broker-token-file string
+        Projected workload identity token file reread for every remote broker RPC
   --mcp-server value
         remote MCP server as name=URL (repeatable); auth token read from
         MCP_<NAME>_TOKEN. The name must match [A-Za-z0-9_]+ and be case-insensitively
