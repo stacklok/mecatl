@@ -273906,6 +273906,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791376916119,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8048811afd9335e27ebe58df6f8cf841cb399656",
+          "message": "docs: fix docs that contradict the code (salvaged from #2107) (#2144)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T08:49:43-04:00",
+          "tree_id": "4929ee0cd8b5a23f90c4efe97f191d68eacc8d68",
+          "url": "https://github.com/stacklok/mecatl/commit/8048811afd9335e27ebe58df6f8cf841cb399656"
+        },
+        "date": 1791378112328,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -397225,6 +397259,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791378108082,
+  "lastUpdate": 1791378113461,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
