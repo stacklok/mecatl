@@ -455,7 +455,7 @@ func TestDiscoverInstructionsAgentsPresent(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
 	mustWrite(t, ws, "AGENTS.md", "Use tabs, not spaces.")
 
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestDiscoverInstructionsAgentsPresent(t *testing.T) {
 
 func TestDiscoverInstructionsNeitherPresent(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestDiscoverInstructionsAgentsWinsOverClaude(t *testing.T) {
 	mustWrite(t, ws, "AGENTS.md", "AGENTS content")
 	mustWrite(t, ws, "CLAUDE.md", "CLAUDE content")
 
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestDiscoverInstructionsClaudeFallback(t *testing.T) {
 	mustWrite(t, ws, "AGENTS.md", "   \n\t  ") // whitespace-only -> treated as absent
 	mustWrite(t, ws, "CLAUDE.md", "CLAUDE fallback content")
 
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

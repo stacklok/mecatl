@@ -23,8 +23,10 @@ import (
 
 type hcAssembler string
 
-func (a hcAssembler) Assemble(context.Context) ([]session.Message, error) {
-	return []session.Message{session.NewUserMessage(string(a))}, nil
+func (hcAssembler) TargetScoped() bool { return false }
+
+func (a hcAssembler) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	return []session.Message{session.NewUserMessage(string(a))}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceCustom, HasGuidance: true}}, nil
 }
 
 type hcCommands struct {
@@ -73,7 +75,7 @@ func hcConfiguredFiles(t *testing.T, source tool.Workspace) Config {
 	}
 	return Config{Workspace: t.TempDir(), UseMock: true, Headless: true, TrustProject: true, UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file},
 		HarnessInstructionSources: []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "source", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
-			return prompt.RootAssembler{Source: source}, nil, nil
+			return prompt.RootAssembler{Source: source, SourceID: "source", SourcePrefix: "."}, nil, nil
 		}}},
 		HarnessCommandSources: []HarnessSourceRegistration[server.CommandSourceBinding]{{ID: "source", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
 			return prompt.NewDirCommandExpander(source), nil, nil

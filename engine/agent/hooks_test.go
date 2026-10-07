@@ -387,9 +387,11 @@ type fakeAssembler struct {
 	msg    string
 }
 
-func (a *fakeAssembler) Assemble(_ context.Context) ([]session.Message, error) {
+func (*fakeAssembler) TargetScoped() bool { return false }
+
+func (a *fakeAssembler) Assemble(_ context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []prompt.InstructionManifest, error) {
 	a.called++
-	return []session.Message{session.NewUserMessage(a.msg)}, nil
+	return []session.Message{session.NewUserMessage(a.msg)}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceCustom}}, nil
 }
 
 // TestLoopUsesInjectedAssembler asserts the loop calls the injected
@@ -446,7 +448,7 @@ func TestTurn0InjectsMemoryIndexAfterAgentsMD(t *testing.T) {
 	}
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
-	asm := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws}, prompt.MemoryIndexAssembler{Src: store})
+	asm := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}, prompt.MemoryIndexAssembler{Src: store})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
 
 	sess := newSession(t, session.Limits{})
@@ -509,7 +511,7 @@ func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	asm := prompt.NewMultiAssembler(
-		prompt.RootAssembler{Source: ws},
+		prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."},
 		prompt.SoulAssembler{Src: fakeSoulSrc{body: "PERSONA-MARKER terse engineer"}},
 		prompt.MemoryIndexAssembler{Src: store},
 	)

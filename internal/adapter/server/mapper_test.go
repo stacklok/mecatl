@@ -24,6 +24,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -293,6 +294,31 @@ func TestIncarnationsAreNotProjectedToNormalClients(t *testing.T) {
 
 // TestToProtoTable round-trips every EventType and each structured submessage
 // through toProto, asserting the proto shape matches the domain Event.
+func TestProjectInstructionWarningRealRunToProto(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+	if err := ws.Write(t.Context(), "AGENTS.md", []byte(strings.Repeat("secret", 20))); err != nil {
+		t.Fatal(err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}
+	env := tool.MustEnvironment(ref, ws, memledger.New(), nil)
+	sess := session.New("instruction-warning", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Instructions: prompt.RootAssembler{Source: ws, SourceID: "test", SourcePrefix: "."}, ProjectInstructionMaxBytes: 32})
+	warnings := 0
+	for ev := range engine.Run(t.Context(), sess, env, agent.RunRequest{Text: "go"}).Events() {
+		if ev.Type != session.EvHook {
+			continue
+		}
+		got := toProto(ev)
+		if got.GetType() != "hook" || got.GetHook().GetPhase() != "ProjectInstructions" || got.GetHook().GetDecision() != mecatlv1.HookDecision_HOOK_DECISION_ADVISORY || got.GetHook().GetCallId() != "" || strings.Contains(got.GetText(), "secret") || got.GetText() != "Project instructions: scope guidance truncated or omitted (content limit reached)." {
+			t.Fatalf("unsafe client projection: %+v", got)
+		}
+		warnings++
+	}
+	if warnings != 1 {
+		t.Fatalf("projected warnings=%d", warnings)
+	}
+}
+
 func TestToProtoTable(t *testing.T) {
 	cases := []struct {
 		name   string

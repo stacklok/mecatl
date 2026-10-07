@@ -218,7 +218,7 @@ func testHarnessChildFactoryLifetime(t *testing.T) {
 			if provider.sourceCloses.Load() != 2 {
 				t.Fatalf("source closes=%d", provider.sourceCloses.Load())
 			}
-			if _, err := cfg.harnessInstructions.Assemble(t.Context()); err == nil {
+			if _, _, err := cfg.harnessInstructions.Assemble(t.Context(), nil, nil, 65536); err == nil {
 				t.Fatal("released generation remained readable")
 			}
 		})

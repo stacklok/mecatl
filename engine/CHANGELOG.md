@@ -13,6 +13,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **File-backed hierarchy prompt flag** — adds `prompt.Config.ProjectInstructionHierarchy`
+  to render the next-request discovery limitation through the default builder,
+  without appending to host-owned prompts. Added (minor).
+
+- **Instruction-snapshot metadata accounting** — adds
+  `session.InstructionSnapshot.MetadataBytes` for the canonical metadata-budget
+  calculation used by instruction discovery and pending target reservations.
+  Added (minor).
+
 - **Live tool-result availability** — adds `session.EvToolResultAvailable` for
   safe display payloads ahead of the canonical `tool.result`. Added (minor).
 
@@ -353,6 +362,20 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Target-scoped project guidance and ephemeral snapshot** — `prompt.InstructionAssembler`
+  now requires `Assemble(context.Context, []string, *session.InstructionSnapshot, int)`
+  and `TargetScoped() bool`. `prompt.AssembleWithManifest` requires the directory
+  list, snapshot, and content-budget arguments; `prompt.DiscoverInstructions`
+  requires a source-relative directory. Both functions and the assembler method
+  return `([]session.Message, []prompt.InstructionManifest, error)`. Callers and
+  implementations must migrate to these signatures; this is a breaking pre-v1
+  minor change. `agent.Deps.ProjectInstructionMaxBytes` adds a 64 KiB default with
+  separately byte-accounted metadata allowance. `tool.EnvironmentForker`
+  implementations must preserve the base workspace's relative execution subtree,
+  including a selected repository subfolder, so inherited guidance maps to child
+  targets without consulting child checkout files; this is also a breaking pre-v1
+  minor contract change.
 
 - **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
 

@@ -61,6 +61,10 @@ type HarnessContextSection struct {
 	EnabledSources []string `yaml:"enabled_sources"`
 	// Kinds must include all five content kinds, each with an explicit mode.
 	Kinds HarnessContextKinds `yaml:"kinds"`
+	// ProjectInstructionMaxBytes bounds retained project instruction content in bytes
+	// across selected sources; omitted uses 65536. A separate equal-sized budget
+	// bounds discovered directory and scope metadata. Must be positive when set.
+	ProjectInstructionMaxBytes *int `yaml:"project_instruction_max_bytes,omitempty"`
 }
 
 // HarnessContextKinds contains the five closed harness content kinds.

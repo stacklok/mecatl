@@ -217,6 +217,7 @@ Selects trusted deployment-registered instruction and customization source IDs i
 | `harness_context.kinds.agent_defs.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
 | `harness_context.kinds.agent_defs.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
 | `harness_context.kinds.agent_defs.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.project_instruction_max_bytes` | `int` | `(absent)` | ProjectInstructionMaxBytes bounds retained project instruction content in bytes across selected sources; omitted uses 65536. A separate equal-sized budget bounds discovered directory and scope metadata. Must be positive when set. |
 
 ## `learning`
 

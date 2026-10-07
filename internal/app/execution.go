@@ -183,7 +183,7 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 func registerRepositorySources(cfg *Config) {
 	cfg.HarnessInstructionSources = append(cfg.HarnessInstructionSources, HarnessSourceRegistration[prompt.InstructionAssembler]{
 		ID: "repository", Scope: HarnessSourceScopePrincipal,
-		Provenance: HarnessProvenancePolicy{Fixed: harnessProjectTier}, UsesExecutionWorkspace: true,
+		Provenance: HarnessProvenancePolicy{Fixed: harnessProjectTier}, UsesExecutionWorkspace: true, repositoryBinding: true,
 		Bind: func(ctx context.Context, sourceScope HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 			if sourceScope.AcquireExecutionWorkspace == nil {
 				return nil, nil, errors.New("repository instruction source requires execution workspace acquisition")
@@ -192,7 +192,7 @@ func registerRepositorySources(cfg *Config) {
 			if acquireErr != nil {
 				return nil, nil, acquireErr
 			}
-			return prompt.RootAssembler{Source: workspace}, release, nil
+			return prompt.RootAssembler{Source: workspace, SourceID: "repository", SourcePrefix: "."}, release, nil
 		},
 	})
 	cfg.HarnessCommandSources = append(cfg.HarnessCommandSources, HarnessSourceRegistration[server.CommandSourceBinding]{

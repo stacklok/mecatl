@@ -195,9 +195,10 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly_Compos
 			if err != nil {
 				t.Fatal(err)
 			}
-			diagnostics := make([]any, 0, len(diag.msgs))
-			for i, msg := range diag.msgs {
-				diagnostics = append(diagnostics, []any{msg, diag.attrs[i]})
+			msgs, attrs := diag.snapshot()
+			diagnostics := make([]any, 0, len(msgs))
+			for i, msg := range msgs {
+				diagnostics = append(diagnostics, []any{msg, attrs[i]})
 			}
 			mu.Lock()
 			served, actualCalls := positiveControl, calls

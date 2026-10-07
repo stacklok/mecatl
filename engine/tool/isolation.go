@@ -28,6 +28,10 @@ import "context"
 //     namespace (Workspace + bound runner) with a fresh child-session read
 //     ledger; it never inherits or writes the base Environment's selected
 //     ledger, including when the base selected durable storage;
+//   - the child workspace preserves the base workspace's relative execution
+//     paths (including when the base is a subfolder of a Git repository), so
+//     guidance selected for the base can be applied to child tool targets
+//     without discovering a new source or guessing from absolute roots;
 //   - writes through the child do NOT affect the base tree;
 //   - cleanup tears the child down (removes the worktree/copy) and is safe to
 //     call exactly once after the child is no longer in use.

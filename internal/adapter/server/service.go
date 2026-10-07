@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -260,7 +261,9 @@ type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelecto
 type ExecutionWorkspaceAcquirer func(context.Context) (tool.Workspace, func() error, error)
 
 // SessionContextEngineFactory builds a session engine with its stored source identity.
-type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ExecutionWorkspaceAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error)
+// The trailing source ID is set only while constructing a same-placement successor
+// carrying a live instruction snapshot; ordinary builds and rehydration receive empty.
+type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ExecutionWorkspaceAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, session.SessionID) (SessionEngineResult, error)
 
 // Config wires the Service's collaborators and resolved composition values.
 type Config struct {
@@ -841,6 +844,11 @@ type Config struct {
 // zero. It bounds memory growth from teams that are created but never cleaned up.
 const defaultMaxTeams = 64
 
+type liveInstructionSnapshot struct {
+	incarnation session.IncarnationID
+	snapshot    session.InstructionSnapshot
+}
+
 // defaultMaxSessionEngines is the per-session engine registry cap applied when
 // Config.MaxSessionEngines is zero. It is generous (a per-session engine is a
 // legitimate per-conversation resource) but finite, so a client that never
@@ -976,6 +984,9 @@ type Service struct {
 	// Config.MaxSessionEngines (mirroring MaxTeams): createSession returns
 	// ErrTooManySessionEngines once the cap is reached, and CloseSession frees a slot.
 	sessionEngines map[session.SessionID]*sessionEngine
+	// instructionSnapshots is process-local guidance, bounded independently of engine
+	// registrations so shared-engine sessions cannot accumulate without limit.
+	instructionSnapshots map[session.SessionID]liveInstructionSnapshot
 	// brokerAttachments are process-local handles. Closing one never deletes the
 	// broker's logical session state. brokerMu serializes attach/build/commit,
 	// local detach, and permanent logical deletion for one canonical session ID;
@@ -1542,6 +1553,7 @@ func NewService(cfg Config) (*Service, error) {
 		teams:                    make(map[string]*teamState),
 		reviewDetails:            configuredReviewDetailRegistry(cfg.ReviewDetails),
 		sessionEngines:           make(map[session.SessionID]*sessionEngine),
+		instructionSnapshots:     make(map[session.SessionID]liveInstructionSnapshot),
 		brokerAttachments:        make(map[session.SessionID]brokercontract.Attachment),
 		authorizationExpiry:      make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments:      make(map[session.SessionID]tool.Environment),
@@ -3121,6 +3133,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	if ok {
 		delete(s.sessionEngines, id)
 	}
+	delete(s.instructionSnapshots, id)
 	brokerAttachment := s.brokerAttachments[id]
 	delete(s.brokerAttachments, id)
 	// Drop any per-session environment override too: it closes over the (now
@@ -3284,6 +3297,7 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	engines := s.sessionEngines
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
+	s.instructionSnapshots = nil
 	teams := s.teams
 	s.teams = make(map[string]*teamState)
 	brokerAttachments := s.brokerAttachments
@@ -4507,6 +4521,49 @@ func (s *Service) maybeReplayApprovals(ctx context.Context, sess *session.Sessio
 	s.cfg.ReplayApprovals(ctx, sess)
 }
 
+// attachLiveInstructions runs only after the caller has authorized the loaded
+// aggregate and acquired its run/mutation lease. No storage snapshot carries this
+// state; a new Service intentionally rediscovers it. Idle loads borrow an
+// existing snapshot without reserving capacity until a run is admitted.
+func (s *Service) attachLiveInstructions(sess *session.Session, reserve bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.draining.Load() {
+		return ErrUnavailable
+	}
+	entry, present := s.instructionSnapshots[sess.ID]
+	if present && entry.incarnation != sess.Incarnation() {
+		delete(s.instructionSnapshots, sess.ID)
+		entry = liveInstructionSnapshot{}
+		present = false
+	}
+	if !present && reserve {
+		if len(s.instructionSnapshots) >= s.cfg.MaxSessionEngines {
+			return fmt.Errorf("%w: live instruction capacity %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
+		}
+		s.instructionSnapshots[sess.ID] = liveInstructionSnapshot{incarnation: sess.Incarnation()}
+	}
+	sess.ReplaceInstructionSnapshot(entry.snapshot)
+	return nil
+}
+
+// publishLiveInstructionsLocked requires s.mu and an admitted run whose lease
+// has not been lost. Copies are detached in both directions by the aggregate API.
+func (s *Service) publishLiveInstructionsLocked(sess *session.Session) {
+	if sess == nil {
+		return
+	}
+	entry, ok := s.instructionSnapshots[sess.ID]
+	if !ok || entry.incarnation != sess.Incarnation() {
+		return
+	}
+	if _, lost := s.lostOwnership[sess.ID]; lost {
+		return
+	}
+	entry.snapshot = sess.InstructionSnapshot()
+	s.instructionSnapshots[sess.ID] = entry
+}
+
 // loadAndReopen is the shared load + reopen-if-completed / interrupt-if-cancelled
 // / recover-if-failed body of LoadSession and LoadSessionWithMCP, factored out so
 // the two cannot drift: it loads the latest snapshot, and if the session cleanly
@@ -4541,6 +4598,9 @@ func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, 
 	// Persisted workspace authority is enforced at the top of reopenLoadedSession.
 	sess, err = s.reopenLoadedSession(ctx, sess)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.attachLiveInstructions(sess, false); err != nil {
 		return nil, err
 	}
 	if activate && s.cfg.Commands != nil {
@@ -5176,6 +5236,9 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 		// repair into a brokerless continuation: only the authorization control
 		// owns the paired result/resolution lifecycle.
 		return nil, fmt.Errorf("%w: restored MCP authorization requires its control", ErrFailedPrecondition)
+	}
+	if err := s.attachLiveInstructions(sess, true); err != nil {
+		return nil, err
 	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -6287,12 +6350,12 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 // the engine, the create-time discipline.
 //
 //nolint:gocyclo // Explicit validation, rebuild, broker, capacity, and rollback gates stay ordered.
-func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool) (*sessionEngine, error) {
-	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, false)
+func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, forkSource ...session.SessionID) (*sessionEngine, error) {
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, false, forkSource...)
 }
 
 //nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
-func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool) (*sessionEngine, error) {
+func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool, forkSource ...session.SessionID) (*sessionEngine, error) {
 	id := sess.ID
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
@@ -6331,7 +6394,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...), forkSource...)
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
@@ -6342,7 +6405,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker), forkSource...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
@@ -6915,6 +6978,9 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
+	if err := s.attachLiveInstructions(sess, true); err != nil {
+		return nil, err
+	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -7373,6 +7439,12 @@ func (s *Service) persistRun(ctx context.Context, id session.SessionID, st *runS
 	}
 	if st.sess.State == session.StateAwaiting {
 		st.awaiting.Store(true)
+		// The parked aggregate may be reloaded for approval before FinishRun.
+		s.mu.Lock()
+		if s.runs[id] == st {
+			s.publishLiveInstructionsLocked(st.sess)
+		}
+		s.mu.Unlock()
 	}
 	if st.sess.TitleRevision != st.titleRevision {
 		s.publishTitle(context.WithoutCancel(ctx), st.sess)
@@ -8148,6 +8220,7 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	// Local mutation capability is invalidated before the owning run is stopped.
 	expected.valid = false
 	s.lostOwnership[id] = struct{}{}
+	delete(s.instructionSnapshots, id)
 	s.cfg.MutationCapability.Invalidate(id)
 	leaseCancel = expected.cancel
 	lease = expected.lease
@@ -8636,6 +8709,18 @@ func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID
 	return st, ctx, nil
 }
 
+func (s *Service) releaseSettledInstructionSnapshotLocked(id session.SessionID, st *runState) {
+	// A cancelled local run can leave a durable approval parked for resume.
+	preserveAwaiting := st.awaiting.Load() && st.sess.State == session.StateCancelled
+	if entry, ok := s.instructionSnapshots[id]; ok && entry.incarnation == st.sess.Incarnation() && !preserveAwaiting && (st.sess.State == session.StateIdle || st.sess.State.IsTerminal()) {
+		// Keep examined absence/errors while parked or alongside retained text,
+		// but do not charge settled guidance-free sessions for load metadata.
+		if !slices.ContainsFunc(entry.snapshot.Scopes, func(scope session.InstructionScope) bool { return scope.Text != "" }) {
+			delete(s.instructionSnapshots, id)
+		}
+	}
+}
+
 func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	removeCapability := false
 	var stopRunContext context.CancelFunc
@@ -8644,6 +8729,10 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	var abandonedRun *agent.Run
 	s.mu.Lock()
 	if s.runs[id] == st {
+		if st.run != nil && st.run.Outcome() != agent.RunOutcomeUnknown {
+			s.publishLiveInstructionsLocked(st.sess)
+		}
+		s.releaseSettledInstructionSnapshotLocked(id, st)
 		delete(s.runs, id)
 		abandonedContinuation = st.planContinuation
 		abandonedRun = st.run

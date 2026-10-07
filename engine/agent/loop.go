@@ -16,11 +16,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -224,7 +226,8 @@ type Deps struct {
 	// Instructions assembles the project-instruction messages recorded once at
 	// the start of a run; nil → prompt.RootAssembler (root-only AGENTS.md /
 	// CLAUDE.md, the v1 default).
-	Instructions prompt.InstructionAssembler
+	Instructions               prompt.InstructionAssembler
+	ProjectInstructionMaxBytes int
 	// CommandExpander rewrites a raw user prompt into the text the model sees,
 	// expanding slash-command invocations (e.g. "/review foo.go") against the
 	// workspace before the prompt is recorded; nil → prompt.NoopExpander (no
@@ -440,6 +443,9 @@ func (e *Engine) now() time.Time {
 // NewEngine constructs an Engine from deps, applying defaults for the optional
 // Compactor and CompactionRatio.
 func NewEngine(deps Deps) *Engine {
+	if deps.ProjectInstructionMaxBytes <= 0 {
+		deps.ProjectInstructionMaxBytes = 65536
+	}
 	if deps.TokenCounter == nil {
 		deps.TokenCounter = HeuristicTokenCounter{}
 	}
@@ -461,8 +467,15 @@ func NewEngine(deps Deps) *Engine {
 	if deps.ChildAskReviewMaxDenies <= 0 {
 		deps.ChildAskReviewMaxDenies = DefaultAskReviewMaxDenies
 	}
-	if deps.Instructions == nil {
-		deps.Instructions = prompt.RootAssembler{}
+	switch a := deps.Instructions.(type) {
+	case prompt.RootAssembler:
+		if a.Source == nil {
+			deps.Instructions = nil
+		}
+	case *prompt.RootAssembler:
+		if a == nil || a.Source == nil {
+			deps.Instructions = nil
+		}
 	}
 	if deps.CommandExpander == nil {
 		deps.CommandExpander = prompt.NoopExpander{}
@@ -593,6 +606,60 @@ const (
 // out-of-band controls the bidi API needs (Approve resolves a permission.ask;
 // Cancel aborts the run). The Events channel is closed exactly once, when the run
 // terminates.
+type instructionScopes struct {
+	mu        sync.Mutex
+	dirs      []string // pending targets only; examined targets live in snapshot
+	snapshot  session.InstructionSnapshot
+	reserved  int
+	limit     int
+	exhausted bool
+	dirty     bool
+}
+
+// cacheGlobalInstructions keeps target-independent contributions stable for a run
+// while allowing selected project sources to discover later scopes.
+func cacheGlobalInstructions(a prompt.InstructionAssembler) prompt.InstructionAssembler {
+	switch v := a.(type) {
+	case prompt.MultiAssembler:
+		children := make([]prompt.InstructionAssembler, len(v.Assemblers))
+		for i, child := range v.Assemblers {
+			children[i] = cacheGlobalInstructions(child)
+		}
+		return prompt.MultiAssembler{Assemblers: children}
+	case *prompt.MultiAssembler:
+		if v != nil {
+			return cacheGlobalInstructions(*v)
+		}
+	}
+	if a == nil || a.TargetScoped() {
+		return a
+	}
+	return &runInstructionContributor{source: a}
+}
+
+type runInstructionContributor struct {
+	source   prompt.InstructionAssembler
+	messages []session.Message
+	rows     []prompt.InstructionManifest
+	cached   bool
+}
+
+func (*runInstructionContributor) TargetScoped() bool { return false }
+
+func (c *runInstructionContributor) Assemble(ctx context.Context, dirs []string, state *session.InstructionSnapshot, limit int) ([]session.Message, []prompt.InstructionManifest, error) {
+	if c.cached {
+		return append([]session.Message(nil), c.messages...), append([]prompt.InstructionManifest(nil), c.rows...), nil
+	}
+	messages, rows, err := prompt.AssembleWithManifest(ctx, c.source, dirs, state, limit)
+	if err == nil {
+		c.cached = true
+		c.messages = append([]session.Message(nil), messages...)
+		c.rows = append([]prompt.InstructionManifest(nil), rows...)
+	}
+	return messages, rows, err
+}
+
+// Run is an asynchronous agent execution.
 type Run struct {
 	events  chan session.Event
 	asks    *askRegistry
@@ -767,12 +834,19 @@ type Run struct {
 	// Instructions.Assemble error leaves fragments nil and the run continues. They are
 	// written once (under fragmentsOnce) and read on every turn of the SAME goroutine
 	// (the run loop is single-goroutine for buildRequest), so the Once is belt-and-braces.
-	fragments             []session.Message
-	fragmentManifest      []prompt.InstructionManifest
-	fragmentsOnce         sync.Once
-	operatorProfile       []tool.MemoryEntry
-	operatorProfileLoaded bool
-	operatorProfileWarned bool
+	fragments                 []session.Message
+	fragmentManifest          []prompt.InstructionManifest
+	fragmentsOnce             sync.Once
+	instructionScopes         *instructionScopes
+	instructionAssembly       prompt.InstructionAssembler
+	warnedInstructionOmission bool
+	warnedInstructionMetadata bool
+	warnedInstructionError    bool
+	warnedInstructionUnmapped bool
+	warnedInstructionReplace  bool
+	operatorProfile           []tool.MemoryEntry
+	operatorProfileLoaded     bool
+	operatorProfileWarned     bool
 	// reviewRoot is the delegation-root contextual trajectory and reviewer binding.
 	// Child runs inherit the same pointer through private RunRequest fields; no
 	// conversation content crosses that seam.
@@ -2442,6 +2516,62 @@ func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
 }
 
+func (r *Run) noteInstructionTargets(root string, call session.ToolCall) {
+	scopes := r.instructionScopes
+	if scopes == nil {
+		return
+	}
+	switch call.Name {
+	case readToolName, "Edit", "Write", "Remove", "Copy", "Move":
+	default:
+		return
+	}
+	for _, name := range r.extraToolNames {
+		if name == call.Name {
+			return // a run overlay is opaque, even when named like a built-in
+		}
+	}
+	for _, operand := range tool.LocalFileOperands(call.Name, call.Args) {
+		if strings.Contains(operand, "\\") { // never treat backslash as a lexical separator on Unix
+			continue
+		}
+		rel := tool.LedgerKey(root, operand)
+		if rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		if dir == "." {
+			continue // the starting scope was already assembled on the first request
+		}
+		scopes.mu.Lock()
+		if !scopes.exhausted && !scopes.snapshot.DiscoveryExhausted {
+			found := false
+			for _, old := range scopes.snapshot.Directories {
+				if old == dir {
+					found = true
+					break
+				}
+			}
+			for _, old := range scopes.dirs {
+				if old == dir {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if len(dir)+1 > scopes.limit-scopes.snapshot.MetadataBytes()-scopes.reserved {
+					scopes.exhausted = true
+				} else {
+					scopes.dirs = append(scopes.dirs, dir)
+					scopes.reserved += len(dir) + 1
+				}
+				scopes.dirty = true
+			}
+		}
+		scopes.mu.Unlock()
+	}
+}
+
 // lookupTool resolves a tool by name for THIS run: the run-scoped ExtraTools overlay
 // is consulted FIRST (so a structured-output SubmitResult, or any per-run tool, wins
 // over a same-named catalog tool for this run only), then the shared catalog. It is
@@ -2858,13 +2988,13 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 // EPHEMERAL turn-0 instruction fragments prepended ahead of the persisted
 // conversation history, and the mode-filtered tool specs.
 //
-// The instruction fragments (project instructions / soul / memory index / user
-// model) are assembled ONCE per run (r.fragmentsOnce, fail-soft) and prepended to
-// Messages on EVERY turn — they are never written into Conversation.Messages, so
+// The global instruction fragments are assembled once per run; project fragments
+// can be refreshed from the live session snapshot when structured tools reveal
+// new directories. They are never written into Conversation.Messages, so
 // they cost no persisted-history bloat and converge the snapshot + event-sourced
 // rehydration paths (ADR 0043). Messages is a FRESH slice each call
-// (fragments ++ conversation); Conversation.Messages is never mutated. Assembling
-// once per run keeps the message prefix byte-stable within the run (prompt cache).
+// (fragments ++ conversation); Conversation.Messages is never mutated. The
+// prefix remains stable until a new structured directory is encountered.
 func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) port.LLMRequest {
 	cfg := e.deps.PromptConfig
 	// Progressive disclosure (pattern 9): when enabled, advertise lightweight
@@ -2923,40 +3053,23 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		cfg.Env.Cwd = env.Workspace().Root()
 	}
 	e.refreshOperatorProfile(ctx, r, &cfg)
-	// PromptBuilder (issue #127): a host-supplied builder replaces prompt.Build
-	// when non-nil, so a host embedding the engine for a non-coding agent can
-	// fully own the system prompt. nil → prompt.Build (byte-identical to v0.0.1).
-	build := e.deps.PromptBuilder
-	if build == nil {
-		build = prompt.Build
+	targetedInstructions := env.Ref().Kind != session.EnvKindNoFS && e.deps.Instructions != nil && e.deps.Instructions.TargetScoped()
+	if targetedInstructions {
+		cfg.ProjectInstructionHierarchy = true
 	}
-	// Assemble the ephemeral turn-0 instruction fragments ONCE per run, then prepend
-	// them ahead of the persisted conversation on EVERY turn (incl. resume). Assembly
-	// is fail-soft: an Instructions.Assemble error (or a nil assembler) leaves
-	// r.fragments nil and the run proceeds without fragments rather than aborting.
-	r.fragmentsOnce.Do(func() {
-		if e.deps.Instructions == nil {
-			return
-		}
-		var (
-			discovered []session.Message
-			aerr       error
-		)
-		if e.deps.EnableDurableEvidence {
-			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, e.deps.Instructions)
-		} else {
-			discovered, aerr = e.deps.Instructions.Assemble(ctx)
-		}
-		if aerr != nil {
-			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)
-			return
-		}
-		r.fragments = discovered
-	})
+	e.assembleRequestInstructions(ctx, r, sess, targetedInstructions)
+	if targetedInstructions && r.instructionScopes == nil {
+		cfg.ProjectInstructionHierarchy = false
+	}
 	// Build a NEW slice — fragments first, then the persisted conversation — so
 	// Conversation.Messages is never mutated and the prefix is byte-stable per run.
 	msgs := requestMessages(r.fragments, sess.Conversation.Messages)
-	system := build(cfg)
+	var system prompt.Layered
+	if e.deps.PromptBuilder == nil {
+		system = prompt.Build(cfg)
+	} else {
+		system = e.deps.PromptBuilder(cfg)
+	}
 	// Append the shell-less posture clause to the VOLATILE suffix (issue #462
 	// review) ONLY when the loop owns the system prompt — i.e. the DEFAULT builder
 	// (prompt.Build) is in use. A host-supplied PromptBuilder fully owns the system
@@ -2978,6 +3091,213 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		Messages: msgs,
 		Tools:    cfg.Tools,
 		Model:    e.deps.Model,
+	}
+}
+
+func (e *Engine) assembleRequestInstructions(ctx context.Context, r *Run, sess *session.Session, targeted bool) {
+	if e.deps.Instructions == nil {
+		return
+	}
+	r.fragmentsOnce.Do(func() {
+		r.instructionAssembly = cacheGlobalInstructions(e.deps.Instructions)
+		if targeted {
+			r.instructionScopes = &instructionScopes{limit: e.deps.ProjectInstructionMaxBytes}
+		}
+		var (
+			discovered []session.Message
+			aerr       error
+		)
+		snapshot := sess.InstructionSnapshot()
+		discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, r.instructionAssembly, []string{"."}, &snapshot, e.deps.ProjectInstructionMaxBytes)
+		sess.ReplaceInstructionSnapshot(snapshot)
+		if scopes := r.instructionScopes; scopes != nil {
+			scopes.snapshot = snapshot
+		}
+		if aerr != nil {
+			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing with available turn-0 fragments")
+			r.fragments = append(discovered, session.NewUserMessage(instructionErrorWarning))
+			r.fragmentManifest = append(r.fragmentManifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+			limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+			e.warnInstructionAssembly(r, session.InstructionSnapshot{}, snapshot, true, limited)
+			return
+		}
+		r.fragments = discovered
+		limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+		e.warnInstructionAssembly(r, session.InstructionSnapshot{}, snapshot, false, limited)
+	})
+	if scopes := r.instructionScopes; scopes != nil {
+		e.refreshTargetedInstructions(ctx, r, sess, scopes)
+	}
+}
+
+func (e *Engine) refreshTargetedInstructions(ctx context.Context, r *Run, sess *session.Session, scopes *instructionScopes) {
+	scopes.mu.Lock()
+	if !scopes.dirty {
+		scopes.mu.Unlock()
+		return
+	}
+	directories := append([]string{"."}, scopes.dirs...)
+	prior := sess.InstructionSnapshot()
+	snapshot := sess.InstructionSnapshot()
+	scopes.dirty = false
+	discovered, manifest, err := prompt.AssembleWithManifest(ctx, r.instructionAssembly, directories, &snapshot, e.deps.ProjectInstructionMaxBytes)
+	if scopes.exhausted && !snapshot.DiscoveryExhausted {
+		snapshot.DiscoveryExhausted = true
+		discovered = append(discovered, session.NewUserMessage(instructionMetadataWarning))
+		manifest = append(manifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+	}
+	scopes.snapshot = snapshot
+	scopes.dirs = nil
+	scopes.reserved = 0
+	scopes.mu.Unlock()
+	sess.ReplaceInstructionSnapshot(snapshot)
+	r.fragments, r.fragmentManifest = discovered, manifest
+	limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+	if err != nil {
+		e.replaceInstructionRefreshWarning(ctx, r, prior, snapshot, limited)
+		return
+	}
+	e.warnInstructionAssembly(r, prior, snapshot, false, limited)
+}
+
+func (e *Engine) replaceInstructionRefreshWarning(ctx context.Context, r *Run, prior, snapshot session.InstructionSnapshot, limited bool) {
+	r.diag.Log(ctx, port.LevelWarn, "scoped instruction assembly failed; continuing with available guidance")
+	const warning = "Project instructions: additional guidance unavailable; continuing with previously loaded context."
+	r.fragments = append(r.fragments, session.NewUserMessage(warning))
+	r.fragmentManifest = append(r.fragmentManifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+	e.warnInstructionAssembly(r, prior, snapshot, true, limited)
+}
+
+func boundProjectFragments(ctx context.Context, r *Run, limit int) bool {
+	used, limited, capped := 0, false, false
+	for i, row := range r.fragmentManifest {
+		if i >= len(r.fragments) || row.Provenance != prompt.InstructionProvenanceProject {
+			continue
+		}
+		if !row.HasGuidance && strings.HasPrefix(r.fragments[i].Text, "Project instructions: further scopes omitted") {
+			limited = true
+		}
+		if !row.HasGuidance {
+			continue
+		}
+		marker, body, framed := strings.Cut(r.fragments[i].Text, "\n\n")
+		framed = framed && row.SourceID != "" && row.File != "" && strings.HasPrefix(marker, "Project instructions (")
+		if !framed {
+			body = r.fragments[i].Text
+		}
+		body = strings.ToValidUTF8(body, "")
+		if len(body) > limit-used {
+			capped = true
+			body = body[:limit-used]
+			for !utf8.ValidString(body) {
+				body = body[:len(body)-1]
+			}
+			limited = true
+			used = limit
+			if framed {
+				marker += " [TRUNCATED: remaining guidance omitted]"
+			} else {
+				body += "\n[TRUNCATED: remaining guidance omitted]"
+			}
+		} else {
+			used += len(body)
+		}
+		if row.Partial || row.Omitted {
+			limited = true
+		}
+		if framed {
+			r.fragments[i].Text = marker + "\n\n" + body
+		} else {
+			r.fragments[i].Text = body
+		}
+	}
+	if limited {
+		r.diag.Log(ctx, port.LevelWarn, "automatic project instruction guidance truncated or omitted")
+	}
+	return capped
+}
+
+const (
+	instructionContentWarning  = "Project instructions: guidance truncated or omitted (content limit reached)."
+	instructionScopeWarning    = "Project instructions: scope guidance truncated or omitted (content limit reached)."
+	instructionMetadataWarning = "Project instructions: further scopes omitted (metadata budget exhausted)."
+	instructionErrorWarning    = "Project instructions: selected guidance unavailable; ordinary tools remain available."
+	instructionUnmappedWarning = "Project instructions: child workspace scope mapping unavailable; nested guidance is not automatically loaded. Selected root guidance remains available; ordinary tools remain available."
+	instructionReplaceWarning  = "Project instructions: replacement guidance incomplete; lower-priority sources were not loaded."
+)
+
+// Only harness-authored, fixed text crosses the event boundary. Scope names and
+// backend errors are never interpolated into an operator-facing warning.
+func (e *Engine) warnInstructionAssembly(r *Run, prior, snapshot session.InstructionSnapshot, failed, limited bool) {
+	warn := func(text string) {
+		e.emit(r, session.Event{Type: session.EvHook, Text: text, Hook: &session.HookPayload{Phase: "ProjectInstructions", Decision: session.HookAdvisory}})
+	}
+	newLimited, newUnavailable := instructionScopeWarnings(prior, snapshot)
+	if newLimited && !r.warnedInstructionOmission {
+		warn(instructionScopeWarning)
+		r.warnedInstructionOmission = true
+	}
+	if (instructionOmissionWarning(r) || limited) && !r.warnedInstructionOmission {
+		warn(instructionContentWarning)
+		r.warnedInstructionOmission = true
+	}
+	if (newUnavailable || failed) && !r.warnedInstructionError {
+		warn(instructionErrorWarning)
+		r.warnedInstructionError = true
+	}
+	warnInstructionReplacement(r, warn)
+	if snapshot.DiscoveryExhausted && !r.warnedInstructionMetadata {
+		warn(instructionMetadataWarning)
+		r.warnedInstructionMetadata = true
+	}
+}
+
+func instructionScopeWarnings(prior, snapshot session.InstructionSnapshot) (limited, unavailable bool) {
+	for _, scope := range snapshot.Scopes {
+		if instructionScopeSeen(prior.Scopes, scope) {
+			continue
+		}
+		limited = limited || scope.Partial || scope.Omitted
+		unavailable = unavailable || scope.Unavailable
+	}
+	return limited, unavailable
+}
+
+func instructionScopeSeen(scopes []session.InstructionScope, scope session.InstructionScope) bool {
+	for _, previous := range scopes {
+		if previous.SourceID == scope.SourceID && previous.Directory == scope.Directory && previous.Partial == scope.Partial && previous.Omitted == scope.Omitted && previous.Unavailable == scope.Unavailable {
+			return true
+		}
+	}
+	return false
+}
+
+func instructionOmissionWarning(r *Run) bool {
+	for i, row := range r.fragmentManifest {
+		if i < len(r.fragments) && row.Provenance == prompt.InstructionProvenanceProject && !row.HasGuidance && strings.HasPrefix(r.fragments[i].Text, "Project instructions: further scopes omitted") && !strings.Contains(r.fragments[i].Text, "metadata budget exhausted") {
+			return true
+		}
+	}
+	return false
+}
+
+func warnInstructionReplacement(r *Run, warn func(string)) {
+	for i, row := range r.fragmentManifest {
+		if i >= len(r.fragments) || row.Provenance != prompt.InstructionProvenanceProject || row.HasGuidance {
+			continue
+		}
+		switch r.fragments[i].Text {
+		case instructionUnmappedWarning:
+			if !r.warnedInstructionUnmapped {
+				warn(instructionUnmappedWarning)
+				r.warnedInstructionUnmapped = true
+			}
+		case instructionReplaceWarning:
+			if !r.warnedInstructionReplace {
+				warn(instructionReplaceWarning)
+				r.warnedInstructionReplace = true
+			}
+		}
 	}
 }
 

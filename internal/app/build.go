@@ -137,8 +137,9 @@ const (
 type Config struct {
 	// ServerImplementation is the stable composition family exposed by GetServerInfo.
 	// Empty safely reports as "unknown" for generic embeddings.
-	ServerImplementation string
-	Workspace            string
+	ServerImplementation       string
+	Workspace                  string
+	ProjectInstructionMaxBytes int
 	// PlacementProvider optionally replaces the trusted local default with one
 	// deployment-owned provider implementing ADR 0291's Bind/Reattach and scoped
 	// worktree-discovery protocol. The provider owns private placement identity and
@@ -976,6 +977,9 @@ type Config struct {
 	HarnessSkillSources       []HarnessSourceRegistration[tool.SkillSource]
 	HarnessAgentDefSources    []HarnessSourceRegistration[tool.AgentDefSource]
 	harnessInstructions       prompt.InstructionAssembler
+	// defaultInstructionMapping is established only by the admitted startup source;
+	// per-session placement may subsequently revoke it.
+	defaultInstructionMapping bool
 	harnessRules              prompt.RulesSource
 	harnessSkills             tool.SkillSource
 	harnessAgentDefs          tool.AgentDefSource
@@ -1535,6 +1539,9 @@ func validateMCPAuthority(cfg Config) error {
 //
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
+	if cfg.ProjectInstructionMaxBytes < 0 {
+		return nil, fmt.Errorf("project instruction max bytes must be nonnegative")
+	}
 	// Prompt-cache key salt (ADR 0346): one value per process, minted before the
 	// provider registry so every entry's construct closure captures the same one.
 	// A crypto/rand failure is NOT fatal — an empty salt degrades to ADR 0100's
@@ -1663,6 +1670,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the child deps builders (the workspace-PINNED child resolver) consume the
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
+	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
+		if section := resolver.OperatorHarnessContext(); section != nil && section.ProjectInstructionMaxBytes != nil {
+			cfg.ProjectInstructionMaxBytes = *section.ProjectInstructionMaxBytes
+		}
+	}
+	if cfg.ProjectInstructionMaxBytes == 0 {
+		cfg.ProjectInstructionMaxBytes = 65536
+	}
 	cfg = foldOperatorCommitCoauthor(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
 	var executionErr error
@@ -3290,6 +3305,10 @@ func remoteSessionConfiguration(cfg Config, profile server.SessionProfile, works
 	return "", true, instructions, policy
 }
 
+func defaultInstructionMappingForSession(cfg Config, profile server.SessionProfile, workspace string, remote bool) bool {
+	return cfg.defaultInstructionMapping && !remote && workspace == cfg.Workspace && profile != server.ProfileNoFS
+}
+
 func sessionEngineFactoryWithTools(
 	cfg Config,
 	reg *providerRegistry,
@@ -3318,6 +3337,7 @@ func sessionEngineFactoryWithTools(
 		// build-time pin over cfg.Workspace (the server's own root — the one
 		// the shared engine was assembled for).
 		projectWorkspace, remote, sessionInstructions, sessionPolicy := remoteSessionConfiguration(cfg, profile, workspace, instructions, policy)
+		cfg.defaultInstructionMapping = defaultInstructionMappingForSession(cfg, profile, workspace, remote)
 		cfg.childPermResolver = childPermResolverFor(cfg, projectWorkspace)
 		// The NO-FS profile (issue #55): the service routes every no-fs session
 		// through this factory unconditionally (the shared engine has the FS tools
@@ -4309,7 +4329,8 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// own assembler and remains untouched.
 	if cfg.harnessInstructions == nil && cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
 		instructionSource, _ := osfs.NewWorkspace(cfg.Workspace)
-		cfg.harnessInstructions = prompt.RootAssembler{Source: instructionSource}
+		cfg.harnessInstructions = prompt.RootAssembler{Source: instructionSource, SourceID: harnessLocalSource, SourcePrefix: "."}
+		cfg.defaultInstructionMapping = instructionSource != nil && cfg.PlacementProvider == nil && !cfg.RemoteExecution && cfg.EnvironmentForkers[session.EnvKindLocal] == nil
 	}
 
 	// agentReg (threaded from Build's single resolveAgentSeam) is shared with
@@ -4495,7 +4516,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// not per per-session stop (one of the two sanctioned per-session deltas).
 	assets.sessionFactoryWithTools = sessionEngineFactoryWithTools(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	if cfg.harnessResolver != nil {
-		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool) (server.SessionEngineResult, error) {
+		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool, forkSource session.SessionID) (server.SessionEngineResult, error) {
 			// Reject an invalid selector before principal-scoped source binding creates
 			// unpublished state that cannot be adopted by a session.
 			if selector.ProviderID != "" {
@@ -4510,7 +4531,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 			resolved := binding.(*resolvedCommandBinding)
 			bound := resolved.context
 			sessionCfg := cfg
-			sessionCfg.harnessInstructions = generationInstructions{harnessGeneration: resolved.generation, source: bound.harnessInstructions}
+			sessionCfg.harnessInstructions = generationInstructions{harnessGeneration: resolved.generation, source: bound.harnessInstructions, executionRoot: workspace, inherited: cfg.harnessResolver.inheritedInstructionSources(forkSource, owner, string(profile), resolved.generation.entry)}
 			sessionCfg.harnessRules = bound.harnessRules
 			sessionCfg.harnessSkills = generationSkills{harnessGeneration: resolved.generation, source: bound.harnessSkills}
 			sessionCfg.harnessAgentDefs = bound.harnessAgentDefs
@@ -4587,14 +4608,14 @@ func buildInstructionAssembler(source tool.Workspace, rulesSrc prompt.RulesSourc
 			// zero-child MultiAssembler assembles to (nil, nil) — an honest no-op.
 			return prompt.NewMultiAssembler()
 		}
-		return prompt.RootAssembler{Source: source}
+		return prompt.RootAssembler{Source: source, SourceID: harnessLocalSource, SourcePrefix: "."}
 	}
 	var assemblers []prompt.InstructionAssembler
 	if !noRoot {
 		// RootAssembler (AGENTS.md/CLAUDE.md) is project-tier ingestion: omitted when
 		// project ingestion is not admitted (issue #359 redesign — the ingestion gate
 		// is projectIngestionAdmitted, trust AND the ingestion grant).
-		assemblers = append(assemblers, prompt.RootAssembler{Source: source})
+		assemblers = append(assemblers, prompt.RootAssembler{Source: source, SourceID: harnessLocalSource, SourcePrefix: "."})
 	}
 	if rulesSrc != nil {
 		assemblers = append(assemblers, prompt.RulesAssembler{Src: rulesSrc})
@@ -4883,11 +4904,12 @@ func engineDepsForProvider(
 		compactorCounter = buildTokenCounter(compactorCfg)
 	}
 	return agent.Deps{
-		LLM:                provider,
-		Policy:             policy,
-		AuthorityEvaluator: cfg.authorityEvaluator,
-		Hooks:              hooks,
-		Instructions:       instructions,
+		LLM:                        provider,
+		Policy:                     policy,
+		AuthorityEvaluator:         cfg.authorityEvaluator,
+		Hooks:                      hooks,
+		Instructions:               instructions,
+		ProjectInstructionMaxBytes: cfg.ProjectInstructionMaxBytes,
 		// Persist mid-run transitions (tool results, terminal state) so a durable
 		// store (StoreDir) holds current state. The Service additionally persists on
 		// entering awaiting and at run end; both share this store, so the latest
@@ -6932,8 +6954,9 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, provide
 	// childEngineDepsForProvider — the two child deps builders must not drift.
 	sink, recorder := childTelemetryFor(cfg, role)
 	return agent.Deps{
-		LLM:     provider,
-		Catalog: cat,
+		ProjectInstructionMaxBytes: cfg.ProjectInstructionMaxBytes,
+		LLM:                        provider,
+		Catalog:                    cat,
 		// Child/member engines are non-interactive (allow-all floor) and never
 		// learn (nil store disables Learn entirely). childPermPolicy adds the
 		// AudienceSubagent pin + the workspace-pinned config resolver (issue #32)
@@ -7025,7 +7048,15 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 		default:
 			instructions := cfg.harnessInstructions
 			if generation, ok := instructions.(generationInstructions); ok {
-				instructions = childGenerationInstructions{generationInstructions: generation}
+				if generation.executionRoot != "" {
+					instructions = childGenerationInstructions{generationInstructions: generation}
+				} else {
+					instructions = childUnmappedInstructions{source: childGenerationInstructions{generationInstructions: generation}}
+				}
+			} else if !cfg.defaultInstructionMapping {
+				// Only the admitted startup source at this session's exact root has
+				// a verified child-relative layout outside a generation binding.
+				instructions = childUnmappedInstructions{source: instructions}
 			}
 			deps.Instructions = prompt.NewMultiAssembler(instructions, prompt.RulesAssembler{Src: cfg.harnessRules})
 		}
