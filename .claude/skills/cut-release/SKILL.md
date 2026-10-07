@@ -168,13 +168,13 @@ Run from the repo root.
 ## The engine module is tagged separately
 
 The `vX.Y.Z` release above is the **root repo / `mecated` image** release. The importable
-core, `github.com/stacklok/mecatl/engine`, is its **own Go module** (ADR 0036) with its own
+core, `github.com/stacklok/mecatl/engine`, is its **own Go module** with its own
 tag grammar `engine/vX.Y.Z` (distinct from the root tags). It carries a public-API
-compatibility contract (`engine/COMPATIBILITY.md`, ADR 0037).
+compatibility contract (`engine/COMPATIBILITY.md`).
 
 - **The first `engine/vX.Y.Z` tag is `engine/v0.0.1`** — a deliberate "earliest, no stability
   promise" initial cut (the lowest pre-v1 patch, signalling zero stability commitment for the very
-  first published surface). Cutting it is a deliberate maintainer decision (deferred per ADR 0037) —
+  first published surface). Cutting it is a deliberate maintainer decision —
   do NOT cut it as part of a routine root release unless asked. The grammar is `engine/vX.Y.Z`,
   **distinct** from the root `vX.Y.Z` tags; the two version lines are independent. SUBSEQUENT bumps
   follow `engine/COMPATIBILITY.md` (pre-v1: minor = additive, patch = fixes).
@@ -219,7 +219,7 @@ tag is the whole release.
 **IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew formula bump.** `release.yml` triggers on `v*` (the root tag
 glob), which does **not** match `engine/v*`, so cutting an engine tag runs none of the ko build /
 cosign / SBOM / SLSA pipeline. It only publishes the module version, making it resolvable for
-`go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers (ADR 0036/0037). There is no pin
+`go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers. There is no pin
 bump and no `release.yml` run to confirm — the push of the tag is the whole release.
 
 ## Notes

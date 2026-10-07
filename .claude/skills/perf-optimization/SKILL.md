@@ -29,7 +29,7 @@ the `perf-mcp-interpretation` skill instead — different tool, different signal
 
 - `task bench` — hot-path microbenchmarks (`engine/prompt`, `engine/governance`,
   `engine/agent`). `BENCHCOUNT` default 10. Offline (mockllm + memfs). Not part of
-  `task test`. **The engine is its own Go module** (ADR 0036), so `task bench`/`task fuzz`
+  `task test`. **The engine is its own Go module**, so `task bench`/`task fuzz`
   run these as `cd engine && go test … ./prompt/ ./governance/ ./agent/`. An ad-hoc
   re-run on an engine package must do the same: `cd engine && go test -bench=… ./agent/`
   (an explicit `./engine/agent/` path also resolves via the committed `go.work`, but the
@@ -109,7 +109,7 @@ Update the baseline snapshot in `docs/perf-tracking.md`.
   restore with `cp` — never `git checkout`, it wipes uncommitted work). A guard that
   stays green when the behaviour is broken is worse than none.
 - **A perf change touching an EXPORTED `engine/` symbol trips the `api-compat` CI gate**
-  (`task api:check`, ADR 0036/0037) — a failure mode a perf optimizer wouldn't expect. Keep
+  (`task api:check`) — a failure mode a perf optimizer wouldn't expect. Keep
   pure-perf changes byte-identical to the engine's public surface and it never fires; if the
   surface legitimately changed, run `task api:update` and add an `engine/CHANGELOG.md` entry
   classified per `engine/COMPATIBILITY.md`.
