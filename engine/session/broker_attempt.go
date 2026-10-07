@@ -1,84 +1,60 @@
 package session
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"math"
 	"time"
 	"unicode/utf8"
 )
 
-// BrokerAttempt identifies a reusable broker slot, not a provider call ID.
+// BrokerAttempt identifies one occurrence, never a reusable provider call ID.
+// It carries no retry authority or broker-side idempotency promise.
 type BrokerAttempt struct {
-	Slot     uint32 `json:"slot"`
-	Sequence uint64 `json:"sequence"`
+	ID string `json:"id"`
 }
 
-// Valid checks attempt framing, not admission or execution authority.
-func (a BrokerAttempt) Valid() bool { return a.Slot < 64 && a.Sequence > 0 }
+// NewBrokerAttempt allocates an unguessable occurrence identity.
+func NewBrokerAttempt() BrokerAttempt {
+	var b [32]byte
+	_, _ = rand.Read(b[:])
+	return BrokerAttempt{ID: base64.RawURLEncoding.EncodeToString(b[:])}
+}
 
-// BrokerAttemptDisposition records effects, independently of transport errors.
+// Valid checks framing, not execution authority.
+func (a BrokerAttempt) Valid() bool { return validBrokerReference(a.ID) }
+
+// BrokerAttemptDisposition describes the immediate execution response only.
 type BrokerAttemptDisposition string
 
 const (
-	// BrokerAttemptCompleted requires the current occurrence's paired result.
-	BrokerAttemptCompleted BrokerAttemptDisposition = "completed"
-	// BrokerAttemptNotDispatched is affirmative evidence of no dispatch.
+	BrokerAttemptCompleted     BrokerAttemptDisposition = "completed"
 	BrokerAttemptNotDispatched BrokerAttemptDisposition = "not_dispatched"
-	// BrokerAttemptUnknown cannot release the host's uncertain-effect fence.
-	BrokerAttemptUnknown BrokerAttemptDisposition = "unknown"
+	BrokerAttemptUnknown       BrokerAttemptDisposition = "unknown"
 )
 
-// BrokerHostAttempt contains no arguments or execution authority.
+// BrokerHostAttempt is the host's sole durable may-execute marker.
+// Legacy slot snapshots have no valid opaque identity and fail closed.
 type BrokerHostAttempt struct {
-	Attempt     BrokerAttempt            `json:"attempt"`
-	CallID      ToolCallID               `json:"call_id"`
-	Digest      [32]byte                 `json:"digest"`
-	Phase       string                   `json:"phase"`
-	Disposition BrokerAttemptDisposition `json:"disposition,omitempty"`
+	Attempt BrokerAttempt `json:"attempt"`
+	CallID  ToolCallID    `json:"call_id"`
+	Digest  [32]byte      `json:"digest"`
 }
 
-var errBrokerAttemptFenced = errors.New("session: broker attempt fenced; reconcile without executing")
+var errBrokerAttemptFenced = errors.New("session: broker execution outcome uncertain; automatic resend forbidden")
 
 func validateBrokerHostAttempt(a BrokerAccess) error {
-	if a.Current == nil {
-		if a.AdmittedSequence != 0 && (len(a.Attempted) != 0 || a.Pending != "") {
+	if c := a.Current; c != nil {
+		if !c.Attempt.Valid() || c.CallID == "" || len(c.CallID) > 256 || !utf8.ValidString(string(c.CallID)) || c.Digest == ([32]byte{}) {
 			return errBrokerAttemptFenced
 		}
-		return nil
-	}
-	c := a.Current
-	if len(a.Attempted) != 0 || a.Pending != "" || !c.Attempt.Valid() || c.Attempt.Slot != 0 ||
-		c.CallID == "" || len(c.CallID) > 256 || !utf8.ValidString(string(c.CallID)) || c.Digest == ([32]byte{}) {
-		return errBrokerAttemptFenced
-	}
-	if c.Attempt.Sequence != a.AdmittedSequence &&
-		(a.AdmittedSequence == math.MaxUint64 || c.Attempt.Sequence != a.AdmittedSequence+1) {
-		return errBrokerAttemptFenced
-	}
-	switch c.Phase {
-	case "reserved", "dispatched":
-		if c.Disposition != "" {
-			return errBrokerAttemptFenced
-		}
-	case "terminal":
-		if c.Disposition != BrokerAttemptUnknown && c.Attempt.Sequence != a.AdmittedSequence {
-			return errBrokerAttemptFenced
-		}
-		switch c.Disposition {
-		case BrokerAttemptCompleted, BrokerAttemptNotDispatched, BrokerAttemptUnknown:
-		default:
-			return errBrokerAttemptFenced
-		}
-	default:
-		return errBrokerAttemptFenced
 	}
 	return nil
 }
 
-// BrokerCallDigest uses the byte-exact outer call, including query arguments.
-// Its encoding matches the transport-neutral broker Call, without importing it.
+// BrokerCallDigest binds the byte-exact prepared outer call, including query args.
 func BrokerCallDigest(call ToolCall) [32]byte {
 	b, _ := json.Marshal(struct {
 		ID        ToolCallID
@@ -88,134 +64,72 @@ func BrokerCallDigest(call ToolCall) [32]byte {
 	return sha256.Sum256(b)
 }
 
-// PrepareBrokerInvocation allocates host slot 0. Save before any broker preflight.
-// Allocation is not admission: only verified broker evidence advances high-water.
-// The legacy execution path cannot be mixed with this staged slot path.
+// PrepareBrokerInvocation prepares process-local metadata. Preflight cannot
+// execute and does not persist uncertainty or reserve broker execution.
 func (s *Session) PrepareBrokerInvocation(ref BrokerSessionRef, catalogue BrokerCatalogueRef, call ToolCall, now time.Time) (BrokerAttempt, error) {
 	a, ok := s.BrokerAccess()
-	if !ok || a.Withdrawn || a.Session != ref || a.Catalogue != catalogue || !a.ExpiresAt.After(now) ||
-		len(a.Attempted) != 0 || a.Pending != "" || a.AdmittedSequence == math.MaxUint64 ||
-		call.ID == "" || len(call.ID) > 256 || !utf8.ValidString(string(call.ID)) ||
+	if !ok || a.Withdrawn || a.Current != nil || a.Session != ref || a.Catalogue != catalogue || !a.ExpiresAt.After(now) ||
+		len(a.Attempted) != 0 || a.Pending != "" || call.ID == "" || len(call.ID) > 256 || !utf8.ValidString(string(call.ID)) ||
 		call.Name == "" || len(call.Name) > 256 || !utf8.ValidString(call.Name) || len(call.Args) > 256*1024 || !json.Valid(call.Args) {
 		return BrokerAttempt{}, errBrokerAttemptFenced
 	}
-	if a.Current != nil && (a.Current.Phase != "terminal" || a.Current.Disposition == BrokerAttemptUnknown) {
-		return BrokerAttempt{}, errBrokerAttemptFenced
-	}
-	attempt := BrokerAttempt{Sequence: a.AdmittedSequence + 1}
-	a.Current = &BrokerHostAttempt{Attempt: attempt, CallID: call.ID, Digest: BrokerCallDigest(call), Phase: "reserved"}
-	s.brokerAccess = &a
-	s.brokerAttemptCompleted = BrokerAttempt{}
-	s.brokerAttemptRestored = false
+	attempt := NewBrokerAttempt()
+	s.brokerPrepared = &BrokerHostAttempt{Attempt: attempt, CallID: call.ID, Digest: BrokerCallDigest(call)}
 	return attempt, nil
 }
 
-// AdmitBrokerInvocation records verified exact admission without dispatching.
-// The caller must validate broker status/outcome; readiness alone is not authority.
-func (s *Session) AdmitBrokerInvocation(attempt BrokerAttempt) error {
-	if s.brokerAccess == nil || s.brokerAccess.Current == nil || s.brokerAccess.Current.Attempt != attempt || s.brokerAccess.Current.Phase == "terminal" {
-		return errBrokerAttemptFenced
-	}
-	s.brokerAccess.AdmittedSequence = attempt.Sequence
-	return nil
-}
-
-// ReattachBrokerAuthorization restores a reserved occurrence only after the host
-// has verified its original process-local parked control and exact broker status.
-// It grants neither permission nor catalogue authority.
-func (s *Session) ReattachBrokerAuthorization(call ToolCall, attempt BrokerAttempt) error {
-	if s.brokerAccess == nil || s.brokerAccess.Withdrawn || s.brokerAccess.Current == nil {
-		return errBrokerAttemptFenced
-	}
-	c := s.brokerAccess.Current
-	pending, ok := s.PendingAuthorization()
-	if !ok || c.Attempt != attempt || c.Phase != "reserved" || c.Digest != BrokerCallDigest(call) || BrokerCallDigest(pending.Call) != c.Digest {
-		return errBrokerAttemptFenced
-	}
-	s.brokerAttemptRestored = false
-	return nil
-}
-
-// ContinueBrokerInvocation binds only a live original reserved occurrence.
-// Restored calls require passive reconciliation, never automatic continuation.
+// ContinueBrokerInvocation accepts only the exact live prepared call.
 func (s *Session) ContinueBrokerInvocation(call ToolCall) (BrokerAttempt, error) {
-	if s.brokerAccess == nil || s.brokerAccess.Withdrawn || s.brokerAttemptRestored || s.brokerAccess.Current == nil {
+	if s.brokerAccess == nil || s.brokerAccess.Withdrawn || s.brokerAccess.Current != nil || s.brokerPrepared == nil {
 		return BrokerAttempt{}, errBrokerAttemptFenced
 	}
-	c := s.brokerAccess.Current
-	if c.Phase != "reserved" || c.CallID != call.ID || c.Digest != BrokerCallDigest(call) {
+	c := s.brokerPrepared
+	if c.CallID != call.ID || c.Digest != BrokerCallDigest(call) {
 		return BrokerAttempt{}, errBrokerAttemptFenced
 	}
 	return c.Attempt, nil
 }
 
-// DispatchBrokerInvocation must be saved before Execute. Restored unfinished
-// attempts cannot dispatch; their owner must first inspect and settle them.
+// DispatchBrokerInvocation installs uncertainty; save it before sending once.
 func (s *Session) DispatchBrokerInvocation(attempt BrokerAttempt) error {
-	if s.brokerAccess == nil || s.brokerAccess.Withdrawn || s.brokerAttemptRestored {
+	if s.brokerAccess == nil || s.brokerAccess.Withdrawn || s.brokerAccess.Current != nil || s.brokerPrepared == nil || s.brokerPrepared.Attempt != attempt {
 		return errBrokerAttemptFenced
 	}
-	c := s.brokerAccess.Current
-	if c == nil || c.Attempt != attempt || c.Phase != "reserved" {
-		return errBrokerAttemptFenced
-	}
-	c.Phase = "dispatched"
-	return nil
-}
-
-// SettleBrokerInvocation records verified exact non-dispatch or an irreversible
-// uncertain-effect fence. Generic Interrupted/FailedPrecondition is not evidence
-// of non-dispatch or admission. Completed requires a newly recorded pair.
-func (s *Session) SettleBrokerInvocation(attempt BrokerAttempt, disposition BrokerAttemptDisposition) error {
-	if s.brokerAccess == nil || s.brokerAccess.Current == nil {
-		return errBrokerAttemptFenced
-	}
-	c := s.brokerAccess.Current
-	if c.Attempt != attempt || (disposition != BrokerAttemptNotDispatched && disposition != BrokerAttemptUnknown) {
-		return errBrokerAttemptFenced
-	}
-	if c.Phase == "terminal" {
-		if c.Disposition != disposition {
-			return errBrokerAttemptFenced
-		}
-		return nil
-	}
-	c.Phase, c.Disposition = "terminal", disposition
-	if disposition == BrokerAttemptNotDispatched {
-		s.brokerAccess.AdmittedSequence = attempt.Sequence
-	}
-	s.brokerAttemptCompleted = BrokerAttempt{}
-	return nil
-}
-
-// RejectUnadmittedBrokerInvocation discards an allocation only after a verified
-// metadata-only not_admitted inspection of this exact next sequence. Errors,
-// missing acknowledgements and generic refusals must never call this method.
-func (s *Session) RejectUnadmittedBrokerInvocation(attempt BrokerAttempt) error {
-	if s.brokerAccess == nil || s.brokerAccess.Current == nil {
-		return errBrokerAttemptFenced
-	}
-	a := s.brokerAccess
-	if a.Current.Attempt != attempt || a.Current.Phase == "terminal" || a.AdmittedSequence == math.MaxUint64 || attempt.Sequence != a.AdmittedSequence+1 {
-		return errBrokerAttemptFenced
-	}
-	a.Current = nil
-	s.brokerAttemptCompleted = BrokerAttempt{}
+	current := *s.brokerPrepared
+	s.brokerAccess.Current = &current
+	s.brokerPrepared = nil
 	s.brokerAttemptRestored = false
+	s.brokerAttemptCompleted = BrokerAttempt{}
 	return nil
 }
 
-// RecordBrokerInvocationResult marks an exact successful receipt for the next
-// RecordToolResults call. The marker is process-local and never restored.
+// RecordBrokerInvocationResult accepts only the immediate verified response for
+// the current occurrence. Clearing happens together with the paired result.
 func (s *Session) RecordBrokerInvocationResult(attempt BrokerAttempt, id ToolCallID) error {
 	if s.brokerAccess == nil || s.brokerAccess.Current == nil || s.brokerAttemptRestored {
 		return errBrokerAttemptFenced
 	}
 	c := s.brokerAccess.Current
-	if c.Attempt != attempt || c.CallID != id || c.Phase != "dispatched" {
+	if c.Attempt != attempt || c.CallID != id {
 		return errBrokerAttemptFenced
 	}
 	s.brokerAttemptCompleted = attempt
+	return nil
+}
+
+// ParkBrokerInvocation replaces verified zero-dispatch uncertainty with the
+// already-installed pending authorization. Save both changes atomically.
+func (s *Session) ParkBrokerInvocation(attempt BrokerAttempt) error {
+	pending, ok := s.PendingAuthorization()
+	if !ok || s.brokerAccess == nil || s.brokerAccess.Current == nil || s.brokerAttemptRestored {
+		return errBrokerAttemptFenced
+	}
+	current := s.brokerAccess.Current
+	if current.Attempt != attempt || current.Digest != BrokerCallDigest(pending.Call) || pending.Authorization.Binding != AuthorizationBinding(s.brokerAccess.Session) {
+		return errBrokerAttemptFenced
+	}
+	s.brokerAccess.Current = nil
+	s.brokerAttemptCompleted = BrokerAttempt{}
 	return nil
 }
 
@@ -224,9 +138,8 @@ func (s *Session) recordBrokerAttemptPair(id ToolCallID) {
 		return
 	}
 	c := s.brokerAccess.Current
-	if c.Phase == "dispatched" && c.CallID == id && c.Attempt == s.brokerAttemptCompleted {
-		c.Phase, c.Disposition = "terminal", BrokerAttemptCompleted
-		s.brokerAccess.AdmittedSequence = c.Attempt.Sequence
+	if c.CallID == id && c.Attempt == s.brokerAttemptCompleted && !s.brokerAttemptRestored {
+		s.brokerAccess.Current = nil
 		s.brokerAttemptCompleted = BrokerAttempt{}
 	}
 }

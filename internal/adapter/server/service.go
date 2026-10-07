@@ -8859,8 +8859,7 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 	s.removeRunState(id, st)
 	s.clearGuardrailReviewDetails(id)
 	if parked {
-		access, _ := st.sess.BrokerAccess()
-		s.scheduleAuthorizationExpiry(id, pending, pendingOK, access.Current)
+		s.scheduleAuthorizationExpiry(id, pending, pendingOK)
 	}
 }
 

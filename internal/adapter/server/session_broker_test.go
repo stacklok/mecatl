@@ -41,7 +41,16 @@ type sessionBrokerFailStore struct {
 func (s *sessionBrokerFailStore) Save(ctx context.Context, sess *session.Session) error {
 	phase, _ := s.phase.Load().(string)
 	a, _ := sess.BrokerAccess()
-	phaseFailure := phase != "" && a.Current != nil && a.Current.Phase == phase
+	phaseFailure := phase == "dispatched" && a.Current != nil
+	if phase == "terminal" && a.Current == nil {
+		if previous, err := s.Store.Load(ctx, sess.ID); err == nil {
+			before, _ := previous.BrokerAccess()
+			phaseFailure = before.Current != nil
+		}
+	}
+	if phase == "parked" {
+		_, phaseFailure = sess.PendingAuthorization()
+	}
 	if s.fail.Load() || phaseFailure {
 		if s.ambiguous.Load() {
 			if err := s.Store.Save(ctx, sess); err != nil {
@@ -140,14 +149,14 @@ func testSessionBrokerHostNativeOccurrences(t *testing.T, count int) {
 	store := &sessionBrokerFailStore{Store: memstore.New()}
 	upstream := sdk.NewServer(&sdk.Implementation{Name: "host-proof", Version: "test"}, nil)
 	sdk.AddTool(upstream, &sdk.Tool{Name: "echo"}, func(ctx context.Context, _ *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, any, error) {
-		sequence := calls.Add(1)
+		calls.Add(1)
 		durable, err := store.Load(ctx, "broker-session-host")
 		if err != nil {
 			t.Error(err)
 			return nil, nil, err
 		}
 		a, _ := durable.BrokerAccess()
-		if a.Current == nil || a.Current.Phase != "dispatched" || a.Current.Attempt.Slot != 0 || a.Current.Attempt.Sequence != uint64(sequence) {
+		if a.Current == nil || !a.Current.Attempt.Valid() || a.Current.CallID == "" {
 			t.Errorf("upstream invoked before exact durable dispatch: %+v", a.Current)
 		}
 		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "native"}}}, nil, nil
@@ -265,8 +274,8 @@ func testSessionBrokerHostNativeOccurrences(t *testing.T, count int) {
 		t.Fatal(err)
 	}
 	fenced, _ := saved.BrokerAccess()
-	if fenced.Current == nil || fenced.Current.CallID != "once" || fenced.Current.Disposition != session.BrokerAttemptCompleted || fenced.AdmittedSequence != uint64(count) {
-		t.Fatalf("missing crash fence: %+v current=%+v", fenced, fenced.Current)
+	if fenced.Current != nil {
+		t.Fatalf("paired result retained uncertainty: %+v", fenced.Current)
 	}
 	if _, err := saved.PrepareBrokerInvocation(fenced.Session, fenced.Catalogue, session.NewToolCall("once", "mcp__echo__echo", []byte(`{}`)), time.Now()); err != nil {
 		t.Fatal("durably paired occurrence prevented provider ID reuse")
@@ -310,7 +319,7 @@ func testSessionBrokerHostNativeOccurrences(t *testing.T, count int) {
 	}
 	saved, _ = store.Load(t.Context(), created.ID)
 	reconnected, _ := saved.BrokerAccess()
-	if reconnected.Withdrawn || reconnected.Session != withdrawn.Session || reconnected.Catalogue == withdrawn.Catalogue || reconnected.AdmittedSequence != withdrawn.AdmittedSequence {
+	if reconnected.Withdrawn || reconnected.Session != withdrawn.Session || reconnected.Catalogue == withdrawn.Catalogue {
 		t.Fatal("reconnect lost exact identity/revision or replay fence")
 	}
 	if _, err := saved.PrepareBrokerInvocation(withdrawn.Session, withdrawn.Catalogue, session.NewToolCall("stale", "mcp__echo__echo", []byte(`{}`)), time.Now()); err == nil {

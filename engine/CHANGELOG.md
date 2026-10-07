@@ -18,17 +18,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Added (minor); local approved F4 follow-up only.
 
 - **Broker invocation context metadata** — adds `tool.WithBrokerInvocation` and
-  `tool.BrokerInvocationFromContext` for host-assigned reusable attempts. Added
-  (minor); framing is not authorization or admission. The trusted coordinator
-  prepares and saves the exact occurrence before broker preflight.
+  `tool.BrokerInvocationFromContext` for opaque occurrence IDs. Framing conveys
+  neither authorization nor retry authority. Nonexecuting preflight stays outside
+  the durable uncertainty boundary.
 
-- **Staged reusable broker host state** — adds `BrokerAttempt`,
-  `BrokerHostAttempt`, closed `BrokerAttemptDisposition` constants,
-  `BrokerAccess.Current` / `AdmittedSequence`, byte-exact `BrokerCallDigest`, and
-  aggregate prepare/admit/dispatch/settle/verified-nonadmission/result-pair methods.
-  Restored unresolved attempts cannot dispatch and unknown remains fenced.
-  Added (minor), local approved follow-up only. Host slot-0 wiring uses these
-  aggregates; legacy ID state is retained only for fail-closed decoding.
+- **Host-owned broker uncertainty** — adds `NewBrokerAttempt` for random occurrence
+  IDs and `BrokerAccess.Current` for the sole durable may-execute marker. Prepare
+  is process-local; dispatch must be saved before sending once. A verified current
+  result clears the marker only with its paired result. Restored uncertainty
+  never authorizes resend; legacy unresolved slot snapshots fail closed.
 
 - **Local broker authority contributions** — adds optional
   `session.Authority.BrokerToolScope`, required `BrokerAccess.IndependentTools`
@@ -395,14 +393,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   connection without deriving cleanup authority from an execution catalogue.
   Changed (breaking, pre-v1 minor); local approved F4 follow-up only.
 
-- **Reusable broker host execution** — `tool.DurableBrokerInvocation` now requires
-  typed passive inspection/acknowledgement and disposition classification.
-  `RecordBrokerInvocationResult` takes the exact attempt and call ID;
-  `FenceBrokerInvocation` is removed. Preparation
-  and dispatch are saved before preflight and execution respectively; completion
-  releases only the durably paired current occurrence. Legacy attempted/pending
-  broker state fails closed without migration. Changed (breaking, pre-v1 minor),
-  local approved follow-up only; unknown effects remain globally fenced.
+- **Broker execution simplification** — replaces slot/sequence identities with
+  opaque occurrence IDs and removes `AdmittedSequence`, host phases/dispositions,
+  `BrokerAttemptControl`, `BrokerAttemptStatus`, and admission/reconciliation
+  methods. `DurableBrokerInvocation` retains immediate disposition classification
+  but no inspection or acknowledgement. Changed/Removed (breaking, pre-v1 minor),
+  operator-authorized local experiment; not release-approved.
 
 - **Local broker authority restoration** — remote experimental records without
   both contribution arrays now fail closed. Catalogue adoption and withdrawal

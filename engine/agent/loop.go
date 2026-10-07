@@ -1468,12 +1468,24 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
 		runCtx := ctx
 		e.emit(r, session.Event{Type: session.EvSessionInit})
+		toolToRun, toolAvailable := e.deps.Catalog.Lookup(pending.Call.Name)
+		abortUndispatched := func() error {
+			if _, ok := toolToRun.(tool.DurableBrokerInvocation); !ok {
+				return nil
+			}
+			// Only live preparation proves that Resume has not started. Never
+			// cancel a dispatched occurrence, including an uncertain result.
+			attempt, err := sess.ContinueBrokerInvocation(pending.Call)
+			if err != nil {
+				return nil
+			}
+			requester, _ := toolToRun.(tool.AuthorizationRequester)
+			return abortAuthorization(ctx, &dispatchPark{authorization: pending.Authorization, requester: requester, attempt: attempt})
+		}
 		reject := func(callReason, resultReason string) {
-			if t, ok := e.deps.Catalog.Lookup(pending.Call.Name); ok {
-				if err := e.retireBrokerAttempt(ctx, sess, t); err != nil {
-					e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
-					return
-				}
+			if err := abortUndispatched(); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+				return
 			}
 			results := []session.ToolResult{session.NewToolError(pending.Call.ID, resultReason)}
 			for _, deferred := range pending.Deferred {
@@ -1487,18 +1499,13 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, results)
 			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, fmt.Errorf("%s: %q", callReason, pending.Call.Name), false)
 		}
-		toolToRun, ok := e.deps.Catalog.Lookup(pending.Call.Name)
-		if !ok {
+		if !toolAvailable {
 			reject("tool unavailable", "authorization continuation tool is unavailable")
 			return
 		}
 		if _, ok := toolToRun.(tool.DurableBrokerInvocation); ok {
 			attempt, err := sess.ContinueBrokerInvocation(pending.Call)
 			if err != nil {
-				if cleanupErr := e.retireBrokerAttempt(ctx, sess, toolToRun); cleanupErr != nil {
-					e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.Join(err, cleanupErr), false)
-					return
-				}
 				reject("broker continuation fenced", "broker authorization cannot resume a restored or changed attempt")
 				return
 			}
@@ -1518,11 +1525,11 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 		}
 		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, sess.Counters.Turns, pending.Call)
 		if cancelled {
-			cleanupErr := e.retireBrokerAttempt(ctx, sess, toolToRun)
-			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, cleanupErr, false)
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, abortUndispatched(), false)
 			return
 		}
 		var result session.ToolResult
+		var park *dispatchPark
 		if decision.Effect != governance.Allow {
 			result = denyResult(pending.Call, decision.Reason)
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(result)})
@@ -1532,23 +1539,43 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 				enqueue = e.deps.Clock.Now()
 			}
 			var proceed bool
-			result, _, cancelled, proceed = e.reviewActionWithTail(ctx, r, sess, env, sess.Counters.Turns, pending.Call, &auth, true, func() (session.ToolResult, *dispatchPark, bool) {
-				executed, wasCancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
-				return executed, nil, wasCancelled
+			result, park, cancelled, proceed = e.reviewActionWithTail(ctx, r, sess, env, sess.Counters.Turns, pending.Call, &auth, true, func() (session.ToolResult, *dispatchPark, bool) {
+				return e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
 			})
 			if proceed {
-				result, cancelled = e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+				result, park, cancelled = e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
 			}
+		}
+		if err := abortUndispatched(); err != nil {
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+			return
+		}
+		if park != nil {
+			park.deferred = pending.Deferred
+			outcome := e.parkAuthorization(ctx, r, sess, sess.Counters.Turns, park, nil)
+			if outcome.parked {
+				return
+			}
+			if outcome.fatal != nil || outcome.cancelled {
+				stop := session.StopError
+				if outcome.cancelled {
+					stop = session.StopCancelled
+				}
+				e.terminate(ctx, r, sess, stop, "", session.Usage{}, outcome.fatal, false)
+				return
+			}
+			if err := e.recordBrokerResults(ctx, sess, outcome.results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+				return
+			}
+			e.runLoop(runCtx, r, sess, env, session.Usage{}, "", false)
+			return
 		}
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
 			results = append(results, deferredResult)
-		}
-		if err := e.retireBrokerAttempt(ctx, sess, toolToRun); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
-			return
 		}
 		var recordErr error
 		if _, ok := toolToRun.(tool.DurableBrokerInvocation); ok {
@@ -2066,7 +2093,7 @@ func (e *Engine) abortPreparedAuthorization(ctx context.Context, sess *session.S
 	if park.attempt.Valid() {
 		ctx = tool.WithBrokerInvocation(ctx, park.attempt)
 	}
-	return errors.Join(abortAuthorization(ctx, park), e.retireBrokerAttempt(ctx, sess, park.broker))
+	return abortAuthorization(ctx, park)
 }
 
 func (e *Engine) rollbackAuthorization(ctx context.Context, sess *session.Session, park *dispatchPark, reason string) error {
@@ -2126,7 +2153,16 @@ func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Se
 		}
 		return authorizationParkResult{cancelled: true}
 	}
+	before, hadAccess := sess.BrokerAccess()
+	if park.zeroDispatch {
+		if err := sess.ParkBrokerInvocation(park.attempt); err != nil {
+			return authorizationParkResult{fatal: errors.Join(err, e.rollbackAuthorization(ctx, sess, park, "failed"))}
+		}
+	}
 	if err := e.saveRequired(ctx, sess); err != nil {
+		if park.zeroDispatch && hadAccess {
+			err = errors.Join(err, sess.RestoreBrokerAccess(before))
+		}
 		rollbackErr := e.rollbackAuthorization(ctx, sess, park, "failed")
 		return authorizationParkResult{fatal: errors.Join(fmt.Errorf("persist external authorization: %w", err), rollbackErr)}
 	}

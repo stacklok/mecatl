@@ -102,18 +102,6 @@ func (t *catalogueTool) BrokerInvocationDisposition(err error) session.BrokerAtt
 	}
 	return session.BrokerAttemptUnknown
 }
-func (t *catalogueTool) InspectBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
-	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
-		return b.InspectBrokerAttempt(ctx, attempt)
-	}
-	return tool.BrokerAttemptStatus{}, ErrStateUnavailable
-}
-func (t *catalogueTool) AcknowledgeBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
-	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
-		return b.AcknowledgeBrokerAttempt(ctx, attempt)
-	}
-	return tool.BrokerAttemptStatus{}, ErrStateUnavailable
-}
 
 func (t *catalogueTool) ReadOnly() bool            { return t.readOnly }
 func (t *catalogueTool) Advertised() tool.ToolSpec { return cloneToolSpec(t.advertised) }

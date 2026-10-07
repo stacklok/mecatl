@@ -28,10 +28,7 @@ func TestSessionWireDescriptorFields(t *testing.T) {
 		"SessionSnapshot":             "ref:1:string expires_at:2:message catalogue:3:message",
 		"Catalogue":                   "ref:1:string connection_ref:3:string tools:2:message",
 		"Call":                        "id:1:string name:2:string arguments:3:bytes",
-		"Attempt":                     "slot:1:uint32 sequence:2:uint64",
-		"InspectAttemptRequest":       "session_ref:1:string attempt:2:message",
-		"AcknowledgeAttemptRequest":   "session_ref:1:string attempt:2:message",
-		"AttemptStatus":               "attempt:1:message phase:2:string disposition:3:string outcome:4:message",
+		"Attempt":                     "id:3:string",
 		"InvokeToolRequest":           "session_ref:1:string catalogue_ref:2:string call:3:message attempt:4:message",
 		"CheckAuthorizationRequest":   "attempt:5:message session_ref:1:string catalogue_ref:2:string call:3:message authorization_ref:4:string",
 		"FlowRef":                     "ref:1:string expires_at:2:message",
@@ -94,7 +91,6 @@ func TestSessionWireDescriptorFields(t *testing.T) {
 	}
 	service := file.Services().ByName("SessionService")
 	bindings := map[string]string{
-		"InspectAttempt": "InspectAttemptRequest:AttemptStatus", "AcknowledgeAttempt": "AcknowledgeAttemptRequest:AttemptStatus",
 		"InspectConnectors": "InspectConnectorsRequest:InspectConnectorsResponse",
 		"OpenSession":       "OpenSessionRequest:SessionSnapshot", "InvokeTool": "InvokeToolRequest:InvocationOutcome", "CheckAuthorization": "CheckAuthorizationRequest:CheckAuthorizationResponse",
 		"BeginAuthorization": "BeginAuthorizationRequest:BrowserPrompt", "ObserveAuthorization": "ObserveAuthorizationRequest:FlowStatus", "CancelAuthorization": "CancelAuthorizationRequest:CancelOutcome",
@@ -195,12 +191,6 @@ func TestSessionWireValidationAnnotations(t *testing.T) {
 			}
 			if field.Kind() == protoreflect.EnumKind && (!rules.GetEnum().GetDefinedOnly() || len(rules.GetEnum().GetNotIn()) != 1 || rules.GetEnum().GetNotIn()[0] != 0) {
 				t.Fatalf("%s not closed", field.FullName())
-			}
-			if field.FullName() == "mecatl.broker.v1.AttemptStatus.outcome" {
-				if rules.GetRequired() {
-					t.Fatal("attempt status outcome must remain optional")
-				}
-				continue
 			}
 			if field.Kind() == protoreflect.MessageKind && field.ContainingOneof() == nil && !field.IsList() && !rules.GetRequired() {
 				t.Fatalf("%s no longer required", field.FullName())

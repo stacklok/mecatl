@@ -10,8 +10,6 @@ import "google/protobuf/timestamp.proto";
 
 // Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
 service SessionService {
-  rpc InspectAttempt(InspectAttemptRequest) returns (AttemptStatus);
-  rpc AcknowledgeAttempt(AcknowledgeAttemptRequest) returns (AttemptStatus);
   rpc InspectConnectors(InspectConnectorsRequest) returns (InspectConnectorsResponse);
   rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
   rpc InvokeTool(InvokeToolRequest) returns (InvocationOutcome);
@@ -27,23 +25,11 @@ service SessionService {
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
 }
 
+// Occurrence metadata only; the broker makes no durable idempotency promise.
 message Attempt {
-  uint32 slot = 1 [(buf.validate.field).uint32.lt = 64];
-  uint64 sequence = 2 [(buf.validate.field).uint64.gt = 0];
-}
-message InspectAttemptRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  Attempt attempt = 2 [(buf.validate.field).required = true];
-}
-message AcknowledgeAttemptRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  Attempt attempt = 2 [(buf.validate.field).required = true];
-}
-message AttemptStatus {
-  Attempt attempt = 1 [(buf.validate.field).required = true];
-  string phase = 2;
-  string disposition = 3;
-  InvocationOutcome outcome = 4;
+  reserved 1, 2;
+  reserved "slot", "sequence";
+  string id = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
 }
 
 message InspectConnectorsRequest {

@@ -71,9 +71,6 @@ func TestSessionBrokerConnectionCleanupReplacement(t *testing.T) {
 			if err := durable.DispatchBrokerInvocation(attempt); err != nil {
 				t.Fatal(err)
 			}
-			if err := durable.SettleBrokerInvocation(attempt, session.BrokerAttemptUnknown); err != nil {
-				t.Fatal(err)
-			}
 			if err := store.Save(t.Context(), durable); err != nil {
 				t.Fatal(err)
 			}
@@ -105,7 +102,7 @@ func TestSessionBrokerConnectionCleanupReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			withdrawn, _ := durable.BrokerAccess()
-			if !withdrawn.Withdrawn || withdrawn.Connection != old.Connection || withdrawn.AdmittedSequence != old.AdmittedSequence || !reflect.DeepEqual(withdrawn.Current, old.Current) {
+			if !withdrawn.Withdrawn || withdrawn.Connection != old.Connection || !reflect.DeepEqual(withdrawn.Current, old.Current) {
 				t.Fatalf("withdrawal changed fence: %+v", withdrawn)
 			}
 			pending, err = svc.ConnectWorkspaceServices(t.Context(), created.ID)
@@ -136,7 +133,7 @@ func TestSessionBrokerConnectionCleanupReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			next, _ := durable.BrokerAccess()
-			if next.Connection == old.Connection || next.Connection == "" || next.Withdrawn || next.AdmittedSequence != old.AdmittedSequence || !reflect.DeepEqual(next.Current, old.Current) {
+			if next.Connection == old.Connection || next.Connection == "" || next.Withdrawn || !reflect.DeepEqual(next.Current, old.Current) {
 				t.Fatalf("reconnect identity/fence: %+v", next)
 			}
 			out, err = fresh.DisconnectTools(t.Context(), old.Session, old.Connection)

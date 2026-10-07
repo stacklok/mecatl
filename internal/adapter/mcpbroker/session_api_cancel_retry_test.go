@@ -2,16 +2,15 @@ package mcpbroker
 
 import (
 	"context"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// The durable terminal write succeeds just as the native cleanup deadline expires.
+// Metadata returns just as the native cancellation deadline expires.
 type cancelDeadlineRedis struct{ redis.UniversalClient }
 
-func (r *cancelDeadlineRedis) Set(ctx context.Context, key string, value any, ttl time.Duration) *redis.StatusCmd {
-	cmd := r.UniversalClient.Set(ctx, key, value, ttl)
+func (r *cancelDeadlineRedis) Get(ctx context.Context, key string) *redis.StringCmd {
+	cmd := r.UniversalClient.Get(ctx, key)
 	if cmd.Err() == nil {
 		<-ctx.Done()
 	}

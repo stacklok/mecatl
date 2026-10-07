@@ -17,7 +17,7 @@ type durableNativeCall struct {
 }
 
 // Only dispatchInvocation creates this single-use, exact native-call exemption,
-// after its durable dispatched fence. It conveys no authorization or tokens.
+// after process-local admission. It conveys no authorization or tokens.
 func (t *sessionTool) claimSessionCallLocked(ctx context.Context, grant *oauthGrant, call session.ToolCall, hash [32]byte) error {
 	claim, ok := ctx.Value(durableNativeKey{}).(*durableNativeCall)
 	if !ok {

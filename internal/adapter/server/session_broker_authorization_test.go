@@ -64,10 +64,9 @@ func (b *sessionHostAuthBroker) CheckAuthorization(ctx context.Context, ref c.Se
 			return c.AuthorizationCheck{}, err
 		}
 		a, _ := durable.BrokerAccess()
-		exact := session.NewToolCall(call.ID, call.Name, call.Arguments)
-		if a.Current == nil || a.Current.Attempt != attempt || a.Current.Phase != "reserved" || a.Current.Digest != session.BrokerCallDigest(exact) {
-			b.t.Errorf("preflight before exact durable preparation: %+v", a.Current)
-			return c.AuthorizationCheck{}, errors.New("missing durable preparation")
+		if a.Current != nil || !attempt.Valid() {
+			b.t.Errorf("preflight wrote uncertainty or omitted occurrence: %+v", a.Current)
+			return c.AuthorizationCheck{}, errors.New("invalid preflight")
 		}
 		b.parked = *call
 		b.parked.Arguments = append([]byte(nil), call.Arguments...)
@@ -88,7 +87,7 @@ func (b *sessionHostAuthBroker) ResumeTool(_ context.Context, ref c.SessionRef, 
 		b.t.Fatal(err)
 	}
 	a, _ := durable.BrokerAccess()
-	if a.Session != ref || a.Catalogue != cat || a.Current == nil || a.Current.CallID != b.parked.ID || a.Current.Attempt != attempt || a.Current.Digest != session.BrokerCallDigest(session.NewToolCall(b.parked.ID, b.parked.Name, b.parked.Arguments)) || a.Current.Phase != "dispatched" || auth != b.auth {
+	if a.Session != ref || a.Catalogue != cat || a.Current == nil || a.Current.CallID != b.parked.ID || a.Current.Attempt != attempt || a.Current.Digest != session.BrokerCallDigest(session.NewToolCall(b.parked.ID, b.parked.Name, b.parked.Arguments)) || auth != b.auth {
 		b.t.Fatalf("resume before exact durable adoption/fence: %+v", a)
 	}
 	result := session.NewToolResult(b.parked.ID, string(b.parked.Arguments))
@@ -98,23 +97,13 @@ func (b *sessionHostAuthBroker) CancelAuthorization(context.Context, c.SessionRe
 	return c.Cancelled, nil
 }
 
-func (b *sessionHostAuthBroker) InspectAttempt(_ context.Context, _ c.SessionRef, attempt c.BrokerAttempt) (c.AttemptStatus, error) {
-	if b.resumes > 0 {
-		return c.AttemptStatus{Attempt: attempt, Phase: "terminal", Disposition: session.BrokerAttemptCompleted}, nil
-	}
-	return c.AttemptStatus{Attempt: attempt, Phase: "parked"}, nil
-}
-func (b *sessionHostAuthBroker) AcknowledgeAttempt(_ context.Context, _ c.SessionRef, attempt c.BrokerAttempt) (c.AttemptStatus, error) {
-	return c.AttemptStatus{Attempt: attempt, Phase: "terminal", Disposition: session.BrokerAttemptNotDispatched}, nil
-}
-
 func (b *sessionHostAuthBroker) InvokeTool(context.Context, c.SessionRef, c.CatalogueRef, c.Call, c.BrokerAttempt) (c.InvocationOutcome, error) {
 	b.t.Error("host invoked instead of exact Resume")
 	return c.InvocationOutcome{}, errors.New("unexpected invoke")
 }
 
 func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *testing.T) {
-	for _, mode := range []string{"resume", "definitive", "ambiguous", "restart", "prepare-definitive", "prepare-ambiguous", "dispatch-save-failure", "completion-save-failure"} {
+	for _, mode := range []string{"resume", "definitive", "ambiguous", "restart", "parking-definitive", "parking-ambiguous", "dispatch-save-failure", "dispatch-save-ambiguous", "completion-save-failure"} {
 		fail := mode == "definitive" || mode == "ambiguous"
 		t.Run(mode, func(t *testing.T) {
 			store := &sessionBrokerFailStore{Store: memstore.New()}
@@ -138,9 +127,9 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 			if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "prepare-definitive" || mode == "prepare-ambiguous" {
-				store.phase.Store("reserved")
-				store.ambiguous.Store(mode == "prepare-ambiguous")
+			if mode == "parking-definitive" || mode == "parking-ambiguous" {
+				store.phase.Store("parked")
+				store.ambiguous.Store(mode == "parking-ambiguous")
 			}
 			run, err := svc.StartInteractiveRunContent(t.Context(), created.ID, "call", nil)
 			if err != nil {
@@ -154,13 +143,13 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode == "prepare-definitive" || mode == "prepare-ambiguous" {
-				if broker.parked.ID != "" || broker.resumes != 0 {
-					t.Fatal("failed preparation save reached broker preflight")
+			if mode == "parking-definitive" || mode == "parking-ambiguous" {
+				if broker.parked.ID == "" || broker.resumes != 0 {
+					t.Fatal("parking save failure executed or skipped preflight")
 				}
 				a, _ := saved.BrokerAccess()
-				if mode == "prepare-ambiguous" && (a.Current == nil || a.Current.Phase != "reserved" || a.AdmittedSequence != 0) {
-					t.Fatalf("ambiguous allocation lost unresolved fence: %+v", a)
+				if a.Current != nil {
+					t.Fatal("nonexecuting preflight persisted uncertainty")
 				}
 				return
 			}
@@ -172,20 +161,8 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 				t.Fatal("preflight executed or changed bytes")
 			}
 			if mode == "restart" {
-				replacement := sessionBrokerTestHost(t, client, store, mockllm.New(mockllm.TextTurn("must not run")), nil)
-				_, err := replacement.RecheckMCPAuthorization(t.Context(), created.ID, MCPAuthorizationControl{SessionID: created.ID, AuthorizationID: pending.Authorization.ID})
-				if err == nil || broker.resumes != 0 {
-					t.Fatal("replacement host automatically resumed saved authorization")
-				}
-				durable, err := store.Load(t.Context(), created.ID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				a, _ := durable.BrokerAccess()
-				if a.Current == nil || a.Current.Disposition != session.BrokerAttemptNotDispatched {
-					t.Fatalf("replacement failed passive non-dispatch settlement: %+v", a.Current)
-				}
-				return
+				// Simulate loss without graceful shutdown settling pending authorization.
+				svc = sessionBrokerTestHost(t, client, store, mockllm.New(mockllm.TextTurn("done")), nil)
 			}
 			if fail {
 				store.ambiguous.Store(mode == "ambiguous")
@@ -215,8 +192,9 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 				}
 				return
 			}
-			if mode == "dispatch-save-failure" {
+			if mode == "dispatch-save-failure" || mode == "dispatch-save-ambiguous" {
 				store.phase.Store("dispatched")
+				store.ambiguous.Store(mode == "dispatch-save-ambiguous")
 			}
 			if mode == "completion-save-failure" {
 				store.phase.Store("terminal")
@@ -230,19 +208,20 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 			}
 			for range result.Run.Events() {
 			}
+			local, _ := svc.runs[created.ID].sess.BrokerAccess()
 			svc.FinishRun(created.ID, result.Run)
-			if mode == "dispatch-save-failure" || mode == "completion-save-failure" {
+			if mode == "dispatch-save-failure" || mode == "dispatch-save-ambiguous" || mode == "completion-save-failure" {
 				durable, err := store.Load(t.Context(), created.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				a, _ := durable.BrokerAccess()
-				if mode == "dispatch-save-failure" {
-					if broker.resumes != 0 || a.Current == nil || a.Current.Disposition != session.BrokerAttemptNotDispatched {
-						t.Fatalf("dispatch save failure executed or lost non-dispatch settlement: calls=%d current=%+v", broker.resumes, a.Current)
+				if mode == "dispatch-save-failure" || mode == "dispatch-save-ambiguous" {
+					if broker.resumes != 0 || local.Current == nil || (mode == "dispatch-save-ambiguous" && a.Current == nil) {
+						t.Fatalf("dispatch save failure executed or lost uncertainty: calls=%d local=%+v durable=%+v", broker.resumes, local.Current, a.Current)
 					}
 				} else {
-					if broker.resumes != 1 || a.Current == nil || a.Current.Phase != "dispatched" {
+					if broker.resumes != 1 || a.Current == nil {
 						t.Fatalf("unsaved completion released exact occurrence: calls=%d current=%+v", broker.resumes, a.Current)
 					}
 					if _, err := durable.PrepareBrokerInvocation(a.Session, a.Catalogue, pending.Call, time.Now()); err == nil {
@@ -259,7 +238,7 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 				t.Fatal(err)
 			}
 			a, _ := durable.BrokerAccess()
-			if a.Current == nil || a.Current.Disposition != session.BrokerAttemptCompleted {
+			if a.Current != nil {
 				t.Fatal("paired completion did not release unresolved fence")
 			}
 		})

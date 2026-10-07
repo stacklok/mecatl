@@ -103,7 +103,7 @@ func TestSessionAPICoordinationRecoveredRefreshCancellation(t *testing.T) {
 	source.mu.Unlock()
 	entered := make(chan context.Context, 1)
 	source.issue = func(ctx context.Context) (*oauth2.Token, error) { entered <- ctx; <-ctx.Done(); return nil, ctx.Err() }
-	attempt := c.BrokerAttempt{Slot: 3, Sequence: 1}
+	attempt := session.NewBrokerAttempt()
 	call := c.Call{ID: "refresh", Name: "mcp__private__status", Arguments: []byte(`{}`)}
 	prepared := make(chan error, 1)
 	go func() {
@@ -181,12 +181,12 @@ func TestSessionAPICoordinationPendingCapacity(t *testing.T) {
 	t.Cleanup(func() { _ = cold.Close() })
 	done := make(chan error, 32)
 	for _, ref := range refs[:32] {
-		go func() { _, err := cold.InspectAttempt(ctx, ref, c.BrokerAttempt{Sequence: 1}); done <- err }()
+		go func() { _, err := cold.OpenSession(ctx, &ref); done <- err }()
 	}
 	for range 32 {
 		awaitCoordination(t, block.entered)
 	}
-	if _, err := cold.InspectAttempt(ctx, refs[32], c.BrokerAttempt{Sequence: 1}); err != c.ErrCapacity {
+	if _, err := cold.OpenSession(ctx, &refs[32]); err != c.ErrCapacity {
 		t.Fatalf("pending loads bypassed capacity: %v", err)
 	}
 	cold.mu.Lock()
@@ -224,7 +224,7 @@ func TestSessionAPICoordinationWorkersAcrossSessions(t *testing.T) {
 	done := make(chan c.InvocationOutcome, 2)
 	for _, snapshot := range []c.SessionSnapshot{{Ref: opened.Ref, Catalogue: cat}, {Ref: other.Ref, Catalogue: enrolled.Catalogue}} {
 		go func() {
-			out, _ := api.InvokeTool(caller, snapshot.Ref, snapshot.Catalogue.Ref(), c.Call{ID: "parallel", Name: "mcp__slots__echo", Arguments: []byte(`{}`)}, c.BrokerAttempt{Sequence: 1})
+			out, _ := api.InvokeTool(caller, snapshot.Ref, snapshot.Catalogue.Ref(), c.Call{ID: "parallel", Name: "mcp__slots__echo", Arguments: []byte(`{}`)}, session.NewBrokerAttempt())
 			done <- out
 		}()
 	}
@@ -240,7 +240,7 @@ func TestSessionAPICoordinationWorkersAcrossSessions(t *testing.T) {
 }
 
 func TestSessionAPICoordinationDelayedWriteDeleteWins(t *testing.T) {
-	api, ctx, opened, cat := slotAPI(t, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	api, ctx, opened, _ := slotAPI(t, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		return slotResult(), nil
 	})
 	block := &coordinationRedis{UniversalClient: api.redis, key: sessionAPIPrefix + string(opened.Ref), set: true, entered: make(chan context.Context, 1), release: make(chan struct{})}
@@ -251,12 +251,14 @@ func TestSessionAPICoordinationDelayedWriteDeleteWins(t *testing.T) {
 			close(block.release)
 		}
 	}()
+	if _, err := api.DisconnectTools(ctx, opened.Ref, api.states[opened.Ref].catalogue.Connection()); err != nil {
+		t.Fatal(err)
+	}
 	block.armed.Store(true)
 	api.redis = block
-	call := c.Call{ID: "delete", Name: "mcp__slots__echo", Arguments: []byte(`{}`)}
 	prepared := make(chan error, 1)
 	go func() {
-		_, err := api.CheckAuthorization(ctx, opened.Ref, cat.Ref(), &call, "", c.BrokerAttempt{Sequence: 1})
+		_, err := api.BeginEnrollment(ctx, opened.Ref)
 		prepared <- err
 	}()
 	op := awaitCoordination(t, block.entered)
@@ -427,7 +429,7 @@ func TestSessionAPICoordinationWithdrawalInterruptsPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	attempt := c.BrokerAttempt{Sequence: 1}
+	attempt := session.NewBrokerAttempt()
 	call := c.Call{ID: "prepare", Name: "mcp__slots__echo", Arguments: []byte(`{}`)}
 	prepared := make(chan error, 1)
 	go func() { _, err := api.InvokeTool(ctx, opened.Ref, cat.Ref(), call, attempt); prepared <- err }()
@@ -450,16 +452,14 @@ func TestSessionAPICoordinationWithdrawalInterruptsPreparation(t *testing.T) {
 	if err := awaitCoordination(t, disconnected); err != nil {
 		t.Fatal(err)
 	}
-	status, err := api.InspectAttempt(ctx, opened.Ref, attempt)
-	if err != nil || status.Disposition != session.BrokerAttemptNotDispatched || calls.Load() != 0 {
-		t.Fatalf("preparation effects: %#v %v calls=%d", status, err, calls.Load())
+	if calls.Load() != 0 || !receiptFinished(st.running) {
+		t.Fatalf("preparation dispatched or retained worker: calls=%d", calls.Load())
 	}
 }
 
 func TestSessionAPICoordinationDelayedWriteWithdrawalWins(t *testing.T) {
-	api, ctx, opened, cat := slotAPI(t, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-		return slotResult(), nil
-	})
+	api, _, ctx, record := seedCleanupConnection(t)
+	opened := c.SessionSnapshot{Ref: record.Ref}
 	block := &coordinationRedis{UniversalClient: api.redis, key: sessionAPIPrefix + string(opened.Ref), set: true, entered: make(chan context.Context, 1), release: make(chan struct{})}
 	block.armed.Store(true)
 	defer func() {
@@ -470,16 +470,17 @@ func TestSessionAPICoordinationDelayedWriteWithdrawalWins(t *testing.T) {
 		}
 	}()
 	api.redis = block
-	attempt := c.BrokerAttempt{Sequence: 1}
-	call := c.Call{ID: "delayed", Name: "mcp__slots__echo", Arguments: []byte(`{}`)}
 	prepared := make(chan error, 1)
 	go func() {
-		_, err := api.CheckAuthorization(ctx, opened.Ref, cat.Ref(), &call, "", attempt)
+		_, err := api.OpenSession(ctx, &opened.Ref)
 		prepared <- err
 	}()
 	op := awaitCoordination(t, block.entered)
 	disconnected := make(chan error, 1)
-	go func() { _, err := api.DisconnectTools(ctx, opened.Ref, cat.Connection()); disconnected <- err }()
+	go func() {
+		_, err := api.DisconnectTools(ctx, opened.Ref, c.ConnectionRef(record.Connection))
+		disconnected <- err
+	}()
 	awaitCoordination(t, op.Done())
 	select {
 	case <-disconnected:
@@ -494,9 +495,9 @@ func TestSessionAPICoordinationDelayedWriteWithdrawalWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, err := block.UniversalClient.Get(ctx, block.key).Bytes()
-	var record apiRecord
-	if err != nil || json.Unmarshal(b, &record) != nil || record.Connected || record.Withdrawing || record.Slots[0].Disposition != session.BrokerAttemptNotDispatched {
-		t.Fatalf("late SET resurrected authority: %#v %v", record, err)
+	var persisted apiRecord
+	if err != nil || json.Unmarshal(b, &persisted) != nil || persisted.Connected || persisted.Withdrawing {
+		t.Fatalf("late SET resurrected authority: %#v %v", persisted, err)
 	}
 }
 
@@ -536,7 +537,7 @@ func TestSessionAPICoordinationInvalidatedWorkerReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := c.Call{ID: "worker", Name: "mcp__slots__echo", Arguments: []byte(`{}`)}
-	attempt := c.BrokerAttempt{Slot: 5, Sequence: 1}
+	attempt := session.NewBrokerAttempt()
 	observed := make(chan c.InvocationOutcome, 1)
 	go func() { out, _ := api.InvokeTool(ctx, opened.Ref, cat.Ref(), call, attempt); observed <- out }()
 	awaitCoordination(t, started)
@@ -544,20 +545,14 @@ func TestSessionAPICoordinationInvalidatedWorkerReceipt(t *testing.T) {
 		close(release)
 		t.Fatal(err)
 	}
-	status, err := api.InspectAttempt(ctx, opened.Ref, attempt)
-	if err != nil || status.Phase != "dispatched" {
-		close(release)
-		t.Fatalf("live worker retired: %#v %v", status, err)
+	if receiptFinished(api.states[opened.Ref].running) {
+		t.Fatal("live worker retired")
 	}
 	close(release)
 	if out := awaitCoordination(t, observed); out.Kind != c.InvocationOutcomeUnknown {
 		t.Fatalf("withdrawn worker claimed completion: %#v", out)
 	}
-	status, err = api.InspectAttempt(ctx, opened.Ref, attempt)
-	if err != nil || status.Disposition != session.BrokerAttemptUnknown {
-		t.Fatalf("finished worker remains busy: %#v %v", status, err)
-	}
-	if _, err := api.AcknowledgeAttempt(ctx, opened.Ref, attempt); err != nil {
-		t.Fatal(err)
+	if !receiptFinished(api.states[opened.Ref].running) {
+		t.Fatal("finished worker remains busy")
 	}
 }

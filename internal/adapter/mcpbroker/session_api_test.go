@@ -31,7 +31,7 @@ import (
 // separately prove the real Process/encrypted-custody and MCP execution path.
 func TestSessionAPINativeAuthorizationRetainsExactBytes(t *testing.T) {
 	t.Run("cancel-retry", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "cancel-retry") })
-	t.Run("ack-retry", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "ack-retry") })
+	t.Run("cancel-retry-query", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, true, "cancel-retry") })
 	t.Run("tool", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "") })
 	t.Run("query", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, true, "") })
 	t.Run("stale-adoption", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "catalogue") })
@@ -149,7 +149,7 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 		call.Name = "CallMcpWithQuery"
 		call.Arguments = []byte(`{ "server" : "private", "tool" : "create", "args" : { "title" : "original" }, "jq_filter" : ".keep" }`)
 	}
-	attempt := c.BrokerAttempt{Sequence: 1}
+	attempt := session.NewBrokerAttempt()
 	owner = tool.WithBrokerInvocation(owner, attempt)
 	requester := find(snapshot.Catalogue, call.Name).(tool.AuthorizationRequester)
 	authRequest, required, err := requester.RequestAuthorization(owner, session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
@@ -162,7 +162,7 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 	if err := requester.AbortAuthorization(owner, foreign); err == nil {
 		t.Fatal("abort accepted foreign binding")
 	}
-	if refusal == "cancel-retry" || refusal == "ack-retry" {
+	if refusal == "cancel-retry" {
 		parked := st.parked[out.Authorization]
 		a.logical.mu.Lock()
 		transaction, err := a.lookupAuthorizationLocked(parked.native)
@@ -178,20 +178,17 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 		api.redis = &cancelDeadlineRedis{UniversalClient: underlying}
 		_, err = api.CancelAuthorization(deadline, opened.Ref, out.Authorization, attempt)
 		api.redis = underlying
-		if !errors.Is(err, context.DeadlineExceeded) || st.record.Slots[attempt.Slot].Phase != "terminal" {
-			t.Fatalf("native cleanup deadline: %v slot=%+v", err, st.record.Slots[attempt.Slot])
+		if !errors.Is(err, context.DeadlineExceeded) || parked.terminal == nil || !parked.cleanupPending {
+			t.Fatalf("native cancellation deadline lost retry ownership: %v", err)
 		}
-		if _, err := api.CancelAuthorization(owner, opened.Ref, out.Authorization, c.BrokerAttempt{Sequence: attempt.Sequence + 1}); err == nil {
-			t.Fatal("cleanup retry accepted different attempt")
+		blocked, err := api.InvokeTool(owner, opened.Ref, st.catalogue.Ref(), call, session.NewBrokerAttempt())
+		if err != nil || blocked.Kind != c.InvocationNotDispatched || blocked.Reason != c.FailureCapacity || st.parked[out.Authorization] != parked {
+			t.Fatalf("unfinished native cleanup was evicted: %+v %v", blocked, err)
 		}
-		if _, err := api.AcknowledgeAttempt(owner, opened.Ref, c.BrokerAttempt{Sequence: attempt.Sequence + 1}); err == nil {
-			t.Fatal("ack cleanup accepted different attempt")
+		if _, err := api.CancelAuthorization(owner, opened.Ref, c.AuthorizationRef(apiRef()), session.NewBrokerAttempt()); err == nil {
+			t.Fatal("cleanup retry accepted different authorization")
 		}
-		if refusal == "ack-retry" {
-			if _, err := api.AcknowledgeAttempt(owner, opened.Ref, attempt); err != nil {
-				t.Fatal(err)
-			}
-		} else if _, err := api.CancelAuthorization(owner, opened.Ref, out.Authorization, attempt); err != nil {
+		if _, err := api.CancelAuthorization(owner, opened.Ref, out.Authorization, attempt); err != nil {
 			t.Fatal(err)
 		}
 		status, err := a.AuthorizationStatus(owner, parked.native)
@@ -217,7 +214,7 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 	for _, mode := range []string{"cancel", "expire"} {
 		t.Run("capacity-"+mode, func(t *testing.T) {
 			for i := 0; i < 20; i++ {
-				attempt.Sequence++
+				attempt = session.NewBrokerAttempt()
 				check, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "", attempt)
 				if err != nil || check.Authorization == "" {
 					t.Fatalf("cycle %d: %#v %v", i, check, err)
@@ -231,7 +228,18 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 					expired := check.ExpiresAt.Add(time.Second)
 					api.now = func() time.Time { return expired }
 					api.mu.Unlock()
-					if _, err := remote.ObserveAuthorization(owner, opened.Ref, check.Authorization); err != nil {
+					freshAttempt := session.NewBrokerAttempt()
+					st.parked[check.Authorization].cleanupPending = true
+					blocked, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "", freshAttempt)
+					if err != nil || blocked.Ready || blocked.Reason != c.FailureCapacity {
+						t.Fatalf("expiry released failed cleanup fence: %+v %v", blocked, err)
+					}
+					st.parked[check.Authorization].cleanupPending = false
+					fresh, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "", freshAttempt)
+					if err != nil || fresh.Authorization == "" || fresh.Authorization == check.Authorization {
+						t.Fatalf("expired authorization blocked fresh admission: %+v %v", fresh, err)
+					}
+					if _, err := remote.CancelAuthorization(owner, opened.Ref, fresh.Authorization, freshAttempt); err != nil {
 						t.Fatal(err)
 					}
 					api.mu.Lock()
@@ -240,7 +248,7 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 				}
 				exactResumeRef.Store(string(check.Authorization))
 				out, err := remote.ResumeTool(owner, opened.Ref, check.Authorization, st.catalogue.Ref(), attempt)
-				if err != nil || out.Kind != c.InvocationNotDispatched || calls.Load() != 0 {
+				if calls.Load() != 0 || (mode == "cancel" && (err != nil || out.Kind != c.InvocationNotDispatched)) || (mode == "expire" && err == nil) {
 					t.Fatalf("old resume: %#v %v", out, err)
 				}
 			}
@@ -253,11 +261,11 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 		t.Fatalf("unbounded terminal records: %d", parkedCount)
 	}
 	exactResumeRef.Store(string(out.Authorization))
-	old, err := remote.ResumeTool(owner, opened.Ref, out.Authorization, st.catalogue.Ref(), c.BrokerAttempt{Sequence: 1})
+	old, err := remote.ResumeTool(owner, opened.Ref, out.Authorization, st.catalogue.Ref(), session.NewBrokerAttempt())
 	if err == nil || calls.Load() != 0 {
 		t.Fatalf("evicted/cancelled ref resumed: %#v %v", old, err)
 	}
-	attempt.Sequence++
+	attempt = session.NewBrokerAttempt()
 	owner = tool.WithBrokerInvocation(owner, attempt)
 	check, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "", attempt)
 	if err != nil || check.Authorization == "" || calls.Load() != 0 {
@@ -302,15 +310,13 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 		if err != nil || out.Reason != c.FailureCatalogueChanged || calls.Load() != 0 {
 			t.Fatalf("refusal: %#v %v", out, err)
 		}
-		status, err := remote.InspectAttempt(owner, opened.Ref, attempt)
-		if err != nil || status.Disposition != session.BrokerAttemptNotDispatched {
-			t.Fatalf("refusal left admitted slot busy: %#v %v", status, err)
+		if !receiptFinished(st.running) {
+			t.Fatal("refusal retained running ownership")
 		}
 		return
 	}
-	status, err := remote.InspectAttempt(owner, opened.Ref, attempt)
-	if err != nil || status.Phase != "parked" || calls.Load() != 0 {
-		t.Fatalf("parked inspection: %#v %v", status, err)
+	if st.parked[auth] == nil || calls.Load() != 0 {
+		t.Fatal("authorization lost parked call or dispatched")
 	}
 	resumedTool, err := remote.ResumeToolWrapper(opened.Ref, flow.Catalogue, call.Name, call.ID, auth, attempt)
 	if err != nil {
@@ -327,13 +333,13 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 		t.Fatalf("resume exact bytes: err=%v calls=%d", err, calls.Load())
 	}
 	out, err = remote.ResumeTool(owner, opened.Ref, auth, flow.Catalogue.Ref(), attempt)
-	if err != nil || out.Kind != c.InvocationCompleted || calls.Load() != 1 {
+	if err != nil || out.Kind != c.InvocationNotDispatched || calls.Load() != 1 {
 		t.Fatalf("resume receipt: %#v %v", out, err)
 	}
 	// Reuse the same provider ID and native grant beyond the donor ledger bound.
 	grant := a.logical.grants["private"]
 	for i := 0; i < 4100; i++ {
-		attempt.Sequence++
+		attempt = session.NewBrokerAttempt()
 		repeated, err := remote.InvokeTool(owner, opened.Ref, flow.Catalogue.Ref(), frozenCall, attempt)
 		if err != nil || repeated.Kind != c.InvocationCompleted {
 			t.Fatalf("slot reuse %d: %#v %v", i, repeated, err)
@@ -342,8 +348,8 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, re
 	if a.logical.grants["private"] != grant || len(grant.executed) != 0 || calls.Load() != 4101 {
 		t.Fatal("slot path rotated grant or used lifetime ledger")
 	}
-	if len(st.parked) != 0 || st.record.Slots[0].Sequence != attempt.Sequence {
-		t.Fatal("unbounded parked state or lost sequence")
+	if len(st.parked) != 0 {
+		t.Fatal("unbounded parked state")
 	}
 }
 
@@ -463,14 +469,14 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 		t.Fatalf("nonreplacement: %#v %v", again, err)
 	}
 	call := c.Call{ID: "one", Name: enrolled.Catalogue.ToolNames()[0], Arguments: []byte(`{ "value": "exact" }`)}
-	stale, err := api.InvokeTool(owner, opened.Ref, opened.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
+	stale, err := api.InvokeTool(owner, opened.Ref, opened.Catalogue.Ref(), call, session.NewBrokerAttempt())
 	if err != nil || stale.Reason != c.FailureCatalogueChanged {
 		t.Fatalf("stale: %#v %v", stale, err)
 	}
 	ctx, cancel := context.WithCancel(owner)
 	done := make(chan c.InvocationOutcome, 1)
 	go func() {
-		o, e := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
+		o, e := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, session.NewBrokerAttempt())
 		if e != nil {
 			done <- c.InvocationOutcome{}
 			return
@@ -487,15 +493,16 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 		t.Fatalf("cancel: %#v", out)
 	}
 	close(release)
-	out, err := api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
-	if err != nil || out.Kind != c.InvocationCompleted || out.Result.Content != "exact" || calls.Load() != 1 {
-		t.Fatalf("receipt: %#v %v calls=%d", out, err, calls.Load())
+	awaitCoordination(t, api.states[opened.Ref].running.done)
+	out, err := api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call, session.NewBrokerAttempt())
+	if err != nil || out.Kind != c.InvocationCompleted || out.Result.Content != "exact" || calls.Load() != 2 {
+		t.Fatalf("raw resend: %#v %v calls=%d", out, err, calls.Load())
 	}
 	changed := call
 	changed.Arguments = []byte(`{"value":"changed"}`)
-	out, err = api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), changed, c.BrokerAttempt{Sequence: 1})
-	if err != nil || out.Reason != c.FailureCallChanged || calls.Load() != 1 {
-		t.Fatalf("changed call: %#v %v", out, err)
+	out, err = api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), changed, session.NewBrokerAttempt())
+	if err != nil || out.Kind != c.InvocationCompleted || out.Result.Content != "changed" || calls.Load() != 3 {
+		t.Fatalf("new raw call: %#v %v", out, err)
 	}
 	// Lose the entire native Process and facade, retain only Redis metadata.
 	if err = process.Close(); err != nil {
@@ -514,8 +521,8 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 	if err != nil || recovered.Ref != opened.Ref || len(recovered.Catalogue.Tools()) != 2 || find(recovered.Catalogue, "CallMcpWithQuery") == nil || recovered.Catalogue.Ref() == enrolled.Catalogue.Ref() {
 		t.Fatalf("reopen: %#v %v", recovered, err)
 	}
-	out, err = api2.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
-	if err != nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
+	out, err = api2.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call, session.NewBrokerAttempt())
+	if err != nil || out.Kind != c.InvocationNotDispatched || calls.Load() != 3 {
 		t.Fatalf("restart replay: %#v %v", out, err)
 	}
 	disconnected, err := api2.DisconnectTools(owner, opened.Ref, c.ConnectionRef(apiRef()))
@@ -526,8 +533,8 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 	if err != nil || disconnected != c.Disconnected {
 		t.Fatalf("disconnect: %v %v", disconnected, err)
 	}
-	out, err = api2.InvokeTool(owner, opened.Ref, recovered.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
-	if err != nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
+	out, err = api2.InvokeTool(owner, opened.Ref, recovered.Catalogue.Ref(), call, session.NewBrokerAttempt())
+	if err != nil || out.Kind != c.InvocationNotDispatched || calls.Load() != 3 {
 		t.Fatalf("withdrawn: %#v %v", out, err)
 	}
 	api3, err := NewSessionAPI(process2, client, workload)

@@ -18,8 +18,6 @@ type SessionService interface {
 	InspectConnectors(context.Context, SessionRef, CatalogueRef) (ConnectorInventory, error)
 	OpenSession(context.Context, *session.BrokerSessionRef) (SessionSnapshot, error)
 	CheckAuthorization(context.Context, SessionRef, CatalogueRef, *Call, AuthorizationRef, BrokerAttempt) (AuthorizationCheck, error)
-	InspectAttempt(context.Context, SessionRef, BrokerAttempt) (AttemptStatus, error)
-	AcknowledgeAttempt(context.Context, SessionRef, BrokerAttempt) (AttemptStatus, error)
 	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call, BrokerAttempt) (InvocationOutcome, error)
 	BeginAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (BrowserPrompt, error)
 	ObserveAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (FlowStatus, error)

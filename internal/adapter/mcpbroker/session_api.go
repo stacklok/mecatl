@@ -42,7 +42,6 @@ type SessionAPI struct {
 }
 type apiRecord struct {
 	WriteToken      string
-	Slots           [64]apiSlotRecord
 	Ref             c.SessionRef
 	Owner, Workload [32]byte
 	Incarnation     session.IncarnationID
@@ -68,24 +67,23 @@ type apiState struct {
 	catalogue      c.Catalogue
 	enrollment     *apiEnrollment
 	parked         map[c.AuthorizationRef]*apiParked
-	receipts       [64]*apiReceipt
+	running        *apiReceipt
 	pendingWrite   *apiRecord
 	recovering     bool
 	recoveryRecord *apiRecord
 
 	// Mutable session data above is owned by ioGate. Registry snapshots and
 	// cancellation below are protected by SessionAPI.mu.
-	ioGate         chan struct{}
-	generation     uint64
-	invalidated    bool
-	opCancel       context.CancelFunc
-	snapshot       apiRecord
-	loaded         bool
-	deleted        bool
-	users          int
-	retained       bool
-	enrollmentRef  c.EnrollmentRef
-	authorizations map[c.AuthorizationRef]c.BrokerAttempt
+	ioGate        chan struct{}
+	generation    uint64
+	invalidated   bool
+	opCancel      context.CancelFunc
+	snapshot      apiRecord
+	loaded        bool
+	deleted       bool
+	users         int
+	retained      bool
+	enrollmentRef c.EnrollmentRef
 }
 type apiEnrollment struct {
 	ref    c.EnrollmentRef
@@ -105,13 +103,8 @@ type apiParked struct {
 	cleanupPending bool
 }
 type apiReceipt struct {
-	attempt  c.BrokerAttempt
-	running  bool
-	check    *c.AuthorizationCheck
-	prepared chan struct{}
-	digest   [32]byte
-	done     chan struct{}
-	outcome  c.InvocationOutcome
+	done    chan struct{}
+	outcome c.InvocationOutcome
 }
 
 var _ c.SessionService = (*SessionAPI)(nil)
@@ -196,7 +189,7 @@ func (s *SessionAPI) InspectConnectors(ctx context.Context, ref c.SessionRef, ca
 		if err != nil {
 			return c.ConnectorInventory{}, err
 		}
-		if json.Unmarshal(b, &record) != nil || !validAPISlots(b, record) {
+		if json.Unmarshal(b, &record) != nil {
 			return c.ConnectorInventory{}, c.ErrStateUnavailable
 		}
 	}
@@ -375,7 +368,6 @@ func (s *SessionAPI) finishRecovery(ctx context.Context, st *apiState) error {
 	// Retain the exact handle and candidate revision across both save ambiguity
 	// and Commit cancellation. Abort would invalidate a possibly adopted binding.
 	next := *st.recoveryRecord
-	next.Slots = st.record.Slots
 	if err := s.saveRecord(ctx, st, next); err != nil {
 		return err
 	}
@@ -484,11 +476,8 @@ func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, er
 		}
 	}
 	for _, p := range st.parked {
-		if p.terminal == nil && st.record.Slots[p.attempt.Slot].Phase == "parked" && !s.now().Before(p.native.ExpiresAt) {
+		if p.terminal == nil && receiptFinished(st.running) && !s.now().Before(p.native.ExpiresAt) {
 			if _, err := st.attachment.CancelAuthorization(ctx, p.native); err != nil {
-				return nil, err
-			}
-			if err := s.terminalSlot(ctx, st, p.attempt, c.FailureExpired); err != nil {
 				return nil, err
 			}
 			status := c.FlowStatus{Kind: c.FlowExpired}
@@ -913,16 +902,6 @@ func (s *SessionAPI) nativePreflight(ctx context.Context, st *apiState, cat c.Ca
 	if !validCall(call) {
 		return c.InvocationOutcome{}, nil, c.ErrStateUnavailable
 	}
-	active := 0
-	for ref, p := range st.parked {
-		if p.terminal != nil {
-			if len(st.parked) >= 32 {
-				delete(st.parked, ref)
-			}
-			continue
-		}
-		active++
-	}
 	if cat != st.catalogue.Ref() || cat != st.record.Catalogue {
 		return noDispatch(c.FailureCatalogueChanged), nil, nil
 	}
@@ -938,9 +917,6 @@ func (s *SessionAPI) nativePreflight(ctx context.Context, st *apiState, cat c.Ca
 		return noDispatch(c.FailureCatalogueChanged), nil, nil
 	}
 	digest := callDigest(call)
-	if active >= 16 {
-		return noDispatch(c.FailureCapacity), nil, nil
-	}
 	native := session.ToolCall{ID: call.ID, Name: call.Name, Args: append([]byte(nil), call.Arguments...)}
 	if requester, ok := t.(tool.AuthorizationRequester); ok {
 		if s.process.custody != nil {
@@ -993,26 +969,20 @@ func (s *SessionAPI) invoke(ctx context.Context, st *apiState, cat c.CatalogueRe
 
 func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
 	if err := ctx.Err(); err != nil {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer cancel()
-		if saveErr := s.terminalSlot(cleanup, st, attempt, c.FailureInterrupted); saveErr != nil {
-			return c.InvocationOutcome{}, nil, saveErr
-		}
-		return noDispatch(c.FailureInterrupted), nil, nil
+		return c.InvocationOutcome{}, nil, err
+	}
+	if !receiptFinished(st.running) {
+		return noDispatch(c.FailureCapacity), nil, nil
 	}
 	if cat != st.record.Catalogue || !st.record.Connected || st.catalogue == nil || cat != st.catalogue.Ref() {
-		if err := s.terminalSlot(ctx, st, attempt, c.FailureCatalogueChanged); err != nil {
-			return c.InvocationOutcome{}, nil, err
-		}
 		return noDispatch(c.FailureCatalogueChanged), nil, nil
 	}
 	t := find(st.catalogue, call.Name)
 	native := session.ToolCall{ID: call.ID, Name: call.Name, Args: append([]byte(nil), call.Arguments...)}
-	receipt := st.receipts[attempt.Slot]
-	slot := st.record.Slots[attempt.Slot]
-	if receipt == nil || slot.Sequence != attempt.Sequence || (slot.Phase != "reserved" && slot.Phase != "parked") || slot.Digest != callDigest(call) || t == nil {
+	if t == nil {
 		return c.InvocationOutcome{}, nil, c.ErrStateUnavailable
 	}
+	receipt := &apiReceipt{done: make(chan struct{})}
 	durableCall := native
 	filter := ""
 	if call.Name == "CallMcpWithQuery" {
@@ -1029,19 +999,11 @@ func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c
 		ready, readinessErr := s.process.nativeGrantReady(ctx, tsid)
 		account, accountErr := s.process.nativeAccount(ctx, tsid)
 		if readinessErr != nil || accountErr != nil || !ready || account != st.record.Account || account == ([32]byte{}) {
-			if err := s.terminalSlot(ctx, st, attempt, c.FailureAuthorityWithdrawn); err != nil {
-				return c.InvocationOutcome{}, nil, err
-			}
 			return noDispatch(c.FailureAuthorityWithdrawn), nil, nil
 		}
 	}
-	slot.Phase = "dispatched"
-	if err := s.saveSlot(ctx, st, attempt, slot); err != nil {
-		return c.InvocationOutcome{}, nil, err
-	}
 	ctx = context.WithValue(ctx, durableNativeKey{}, &durableNativeCall{attachment: st.attachment, hash: callHash(durableCall), filter: filter})
-	// Cancellation changes only what the caller observes. Dispatch ownership and
-	// the bounded receipt outlive the caller; no retry ever executes a second time.
+	// The worker, not the RPC waiter, owns the session until Execute exits.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	stop := context.AfterFunc(s.ctx, cancel)
 	s.mu.Lock()
@@ -1054,7 +1016,14 @@ func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c
 	s.workers.Add(1)
 	st.users++
 	s.mu.Unlock()
-	receipt.running = true
+	st.running = receipt
+	for _, p := range st.parked {
+		if p.attempt == attempt {
+			p.call.Arguments = nil
+			terminal := c.FlowStatus{Kind: c.FlowCompleted, Catalogue: st.catalogue}
+			p.terminal = &terminal
+		}
+	}
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: string(st.record.Ref), Revision: string(cat)}, nofs.New(), memledger.New(), nil)
 	go func() {
 		defer s.finishOwnership(st)
@@ -1065,40 +1034,13 @@ func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c
 			if recover() != nil {
 				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
 			}
-			persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(runCtx), 2*time.Second)
-			defer persistCancel()
-			locked := false
-			if s.validOperation(persistCtx) {
-				select {
-				case <-st.ioGate:
-					locked = true
-				case <-persistCtx.Done():
-				}
-			}
-			if locked {
-				defer func() { st.ioGate <- struct{}{} }()
-			}
-			if locked && s.validOperation(persistCtx) && st.pendingWrite == nil {
-				slot := st.record.Slots[attempt.Slot]
-				slot.Phase, slot.Disposition = "terminal", session.BrokerAttemptUnknown
-				if out.Kind == c.InvocationCompleted {
-					slot.Disposition = session.BrokerAttemptCompleted
-				}
-				if err := s.saveSlot(persistCtx, st, attempt, slot); err != nil {
-					out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
-				}
-				for _, p := range st.parked {
-					if p.attempt == attempt {
-						p.call.Arguments = nil
-						terminal := c.FlowStatus{Kind: c.FlowCompleted, Catalogue: st.catalogue}
-						p.terminal = &terminal
-					}
-				}
-			} else {
+			s.mu.Lock()
+			if s.closed || !s.workerGeneration(runCtx, st) {
 				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
 			}
 			receipt.outcome = out
 			close(receipt.done)
+			s.mu.Unlock()
 		}()
 		result, err := t.Execute(runCtx, native, env)
 		encoded, _ := json.Marshal(result)
@@ -1143,14 +1085,12 @@ func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, c
 	}
 	if call == nil {
 		p := st.parked[auth]
-		if p == nil || p.attempt != attempt || p.terminal != nil || st.record.Slots[attempt.Slot].Phase != "parked" {
+		if p == nil || p.terminal != nil {
 			return c.AuthorizationCheck{Reason: c.FailureInterrupted}, nil
 		}
 		defer func() {
 			if resultErr == nil && result.Reason.Valid() {
-				if err := s.terminalSlot(ctx, st, attempt, result.Reason); err != nil {
-					result, resultErr = c.AuthorizationCheck{}, err
-				}
+				s.endPark(st, p.attempt, result.Reason)
 			}
 		}()
 		if cat != st.record.Catalogue || cat != st.catalogue.Ref() {
@@ -1269,9 +1209,7 @@ func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef,
 	if status != session.AuthorizationGranted {
 		status := flow(status)
 		if status.Kind != c.FlowPending {
-			if err := s.terminalSlot(ctx, st, p.attempt, c.FailureAuthorizationFailed); err != nil {
-				return c.FlowStatus{}, err
-			}
+			s.endPark(st, p.attempt, c.FailureAuthorizationFailed)
 			p.terminal = &status
 			p.call.Arguments = nil
 		}
@@ -1293,9 +1231,7 @@ func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef,
 		if e != nil || p.account == ([32]byte{}) || account != p.account {
 			terminal := c.FlowStatus{Kind: c.FlowFailed, Reason: c.FailureAuthorityWithdrawn}
 			p.terminal = &terminal
-			if err := s.terminalSlot(ctx, st, p.attempt, c.FailureAuthorityWithdrawn); err != nil {
-				return c.FlowStatus{}, err
-			}
+			s.endPark(st, p.attempt, c.FailureAuthorityWithdrawn)
 			p.call.Arguments = nil
 			return terminal, nil
 		}
@@ -1320,7 +1256,7 @@ func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, 
 	if !attempt.Valid() || !validAPIRef(string(a)) {
 		return 0, c.ErrStateUnavailable
 	}
-	ctx, release, err := s.operation(ctx, ref, apiControl{authorization: a, attempt: attempt})
+	ctx, release, err := s.operation(ctx, ref, apiControl{passive: true})
 	if err != nil {
 		return 0, err
 	}
@@ -1330,20 +1266,14 @@ func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, 
 		return 0, err
 	}
 	p := st.parked[a]
-	if p == nil || p.attempt != attempt {
+	if p == nil {
 		return 0, c.ErrStateUnavailable
 	}
-	if err := s.controlGeneration(ctx, st); err != nil {
-		return 0, err
-	}
-	if (p.terminal != nil || st.record.Slots[attempt.Slot].Phase != "parked") && !p.cleanupPending {
-		s.rearm(ctx, st)
+	if p.terminal != nil && !p.cleanupPending {
 		return c.AlreadyResolved, nil
 	}
 	if !p.cleanupPending {
-		if err := s.terminalSlot(ctx, st, attempt, c.FailureInterrupted); err != nil {
-			return 0, err
-		}
+		s.endPark(st, p.attempt, c.FailureInterrupted)
 		p.cleanupPending = true
 	}
 	r, err := st.attachment.CancelAuthorization(ctx, p.native)
@@ -1354,7 +1284,6 @@ func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, 
 		return 0, err
 	}
 	p.cleanupPending = false
-	s.rearm(ctx, st)
 	if r == c.CancelCancelled {
 		status := c.FlowStatus{Kind: c.FlowCancelled}
 		p.terminal = &status
@@ -1378,23 +1307,13 @@ func (s *SessionAPI) ResumeTool(ctx context.Context, ref c.SessionRef, a c.Autho
 		return c.InvocationOutcome{}, err
 	}
 	p := st.parked[a]
-	if p == nil || p.attempt != attempt {
+	if p == nil {
 		release()
 		return c.InvocationOutcome{}, c.ErrStateUnavailable
 	}
-	slot := st.record.Slots[attempt.Slot]
-	if slot.Phase == "dispatched" || slot.Phase == "terminal" {
-		if slot.Phase == "dispatched" {
-			r := st.receipts[attempt.Slot]
-			release()
-			return waitReceipt(caller, c.InvocationOutcome{}, r, nil)
-		}
-		status, err := s.slotStatus(st, attempt)
+	if !receiptFinished(st.running) {
 		release()
-		if status.Outcome != nil {
-			return *status.Outcome, err
-		}
-		return c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}, err
+		return noDispatch(c.FailureCapacity), nil
 	}
 	reason := c.FailureUnspecified
 	switch {
@@ -1421,13 +1340,11 @@ func (s *SessionAPI) ResumeTool(ctx context.Context, ref c.SessionRef, a c.Autho
 		}
 	}
 	if reason.Valid() {
-		err := s.terminalSlot(ctx, st, attempt, reason)
+		s.endPark(st, p.attempt, reason)
 		release()
-		if err != nil {
-			return c.InvocationOutcome{}, err
-		}
 		return noDispatch(reason), nil
 	}
+	p.attempt = attempt
 	out, r, err := s.dispatchInvocation(ctx, st, cat, p.call, attempt)
 	release()
 	return waitReceipt(caller, out, r, err)
@@ -1441,22 +1358,13 @@ func (s *SessionAPI) disconnect(ctx context.Context, st *apiState) error {
 		next := st.record
 		next.Connected, next.Withdrawing = false, true
 		next.Catalogue = c.CatalogueRef(apiRef())
-		for i, slot := range next.Slots {
-			if slot.Phase == "reserved" || slot.Phase == "parked" {
-				slot.Phase, slot.Disposition, slot.Reason = "terminal", session.BrokerAttemptNotDispatched, c.FailureInterrupted
-				next.Slots[i] = slot
-			}
-		}
 		if err := s.saveRecord(ctx, st, next); err != nil {
 			return err
 		}
 	}
 	for _, parked := range st.parked {
-		slot := st.record.Slots[parked.attempt.Slot]
-		if slot.Phase == "terminal" && slot.Disposition == session.BrokerAttemptNotDispatched {
-			parked.call.Arguments = nil
-			status := c.FlowStatus{Kind: c.FlowFailed, Reason: slot.Reason}
-			parked.terminal = &status
+		if parked.terminal == nil {
+			s.endPark(st, parked.attempt, c.FailureAuthorityWithdrawn)
 		}
 	}
 	if err := s.empty(st); err != nil {

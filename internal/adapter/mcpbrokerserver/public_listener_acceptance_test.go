@@ -117,7 +117,7 @@ func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCa
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := remote.InvokeTool(t.Context(), snapshot.Ref, snapshot.Catalogue.Ref(), contract.Call{ID: "call", Name: "read", Arguments: []byte(`{}`)}, contract.BrokerAttempt{Sequence: 1})
+	out, err := remote.InvokeTool(t.Context(), snapshot.Ref, snapshot.Catalogue.Ref(), contract.Call{ID: "call", Name: "read", Arguments: []byte(`{}`)}, session.NewBrokerAttempt())
 	if err != nil || out.Result == nil || out.Result.Content != "ok" || executes.Load() != 1 {
 		t.Fatalf("bounded gRPC invocation = %#v, %v; dispatches=%d", out, err, executes.Load())
 	}

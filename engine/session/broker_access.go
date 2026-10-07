@@ -19,7 +19,6 @@ type BrokerAccess struct {
 	Pending          ToolCallID          `json:"pending,omitempty"`
 	IndependentTools []string            `json:"independent_tools"`
 	BrokerTools      []string            `json:"broker_tools"`
-	AdmittedSequence uint64              `json:"admitted_sequence,omitempty"`
 	Current          *BrokerHostAttempt  `json:"current,omitempty"`
 }
 
@@ -58,7 +57,8 @@ func (s *Session) RestoreBrokerAccess(a BrokerAccess) error {
 	a.BrokerTools = slices.Clone(a.BrokerTools)
 	s.brokerAccess = &a
 	s.brokerAttemptCompleted = BrokerAttempt{}
-	s.brokerAttemptRestored = a.Current != nil && a.Current.Phase != "terminal"
+	s.brokerPrepared = nil
+	s.brokerAttemptRestored = a.Current != nil
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -61,6 +62,36 @@ func (r *sessionTLSRedis) Ping(ctx context.Context) *redis.StatusCmd {
 		return cmd
 	}
 	return r.UniversalClient.Ping(ctx)
+}
+
+// Freeze writes after the selected result save fails, including terminal cleanup.
+// The landed variant retains the result snapshot but discards its acknowledgement.
+type sessionBrokerResultSaveStore struct {
+	*memstore.Store
+	armed, failed atomic.Bool
+	landed        bool
+	attempt       session.BrokerAttempt
+}
+
+func (s *sessionBrokerResultSaveStore) Save(ctx context.Context, sess *session.Session) error {
+	if s.failed.Load() {
+		return errors.New("result save unavailable")
+	}
+	if s.armed.Load() {
+		a, _ := sess.BrokerAccess()
+		if a.Current != nil {
+			s.attempt = a.Current.Attempt
+		} else if s.attempt.Valid() {
+			s.failed.Store(true)
+			if s.landed {
+				if err := s.Store.Save(ctx, sess); err != nil {
+					return err
+				}
+			}
+			return errors.New("result save acknowledgement lost")
+		}
+	}
+	return s.Store.Save(ctx, sess)
 }
 
 // Reuses the donor's OAuth and MCP fixtures, but never substitutes execution or
@@ -200,7 +231,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 						continue // Query arguments and projection have dedicated boundary proofs.
 					}
 					call := c.Call{ID: session.ToolCallID(cat.ToolNames()[index]), Name: candidate.Spec().Name, Arguments: []byte(`{}`)}
-					attempt := c.BrokerAttempt{Slot: uint32(index), Sequence: 1}
+					attempt := session.NewBrokerAttempt()
 					check, err := client.CheckAuthorization(ctx, opened.Ref, cat.Ref(), &call, "", attempt)
 					if err != nil || !check.Ready || check.Authorization != "" {
 						t.Fatalf("native preflight: %+v %v", check, err)
@@ -225,6 +256,97 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							t.Fatal("native credential injection missing")
 						}
 					}
+				}
+			}
+			if topology == "anonymous" {
+				for _, landed := range []bool{false, true} {
+					t.Run(map[bool]string{false: "result-save-not-landed", true: "result-save-landed-ack-lost"}[landed], func(t *testing.T) {
+						store := &sessionBrokerResultSaveStore{Store: memstore.New(), landed: landed}
+						call := session.NewToolCall("reused-provider-id", "mcp__public__whoami", []byte(`{}`))
+						provider := mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("first done"), mockllm.ToolCallTurn(call), mockllm.TextTurn("must not continue after failed save"))
+						svc := sessionBrokerTestHost(t, client, store, provider, nil)
+						created, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if _, err := svc.ConnectWorkspaceServices(ctx, created.ID); err != nil {
+							t.Fatal(err)
+						}
+						_, before := anonymous.snapshot()
+						for occurrence := range 2 {
+							store.armed.Store(occurrence == 1)
+							run, err := svc.StartInteractiveRunContent(ctx, created.ID, "call", nil)
+							if err != nil {
+								t.Fatal(err)
+							}
+							results := 0
+							for ev := range run.Events() {
+								if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == call.ID && !ev.ToolResult.IsError {
+									results++
+								}
+							}
+							svc.FinishRun(created.ID, run)
+							_, after := anonymous.snapshot()
+							if results != 1 || after-before != occurrence+1 {
+								t.Fatalf("occurrence %d: results=%d upstream delta=%d", occurrence, results, after-before)
+							}
+						}
+						if !store.failed.Load() || !store.attempt.Valid() {
+							t.Fatal("did not fail the executed second occurrence's result save")
+						}
+						store.armed.Store(false)
+						store.failed.Store(false)
+						durable, err := store.Load(ctx, created.ID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						access, _ := durable.BrokerAccess()
+						if !landed && (access.Current == nil || access.Current.Attempt != store.attempt || access.Current.CallID != call.ID) {
+							t.Fatalf("older same-ID result released second occurrence: %+v", access)
+						}
+						if landed && access.Current != nil {
+							t.Fatalf("durable second result retained uncertainty: %+v", access)
+						}
+						restoreProvider := mockllm.New(mockllm.TextTurn("restored without resend"))
+						if !landed {
+							restoreProvider = mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("fenced"))
+						}
+						replacement := sessionBrokerTestHost(t, client, store, restoreProvider, nil)
+						_, err = replacement.LoadSession(ctx, created.ID)
+						if (err == nil) != landed {
+							t.Fatalf("restore landed=%v: %v", landed, err)
+						}
+						if landed {
+							run, err := replacement.StartInteractiveRunContent(ctx, created.ID, "continue", nil)
+							if err != nil {
+								t.Fatal(err)
+							}
+							for range run.Events() {
+							}
+							replacement.FinishRun(created.ID, run)
+						} else if run, err := replacement.StartInteractiveRunContent(ctx, created.ID, "retry", nil); err == nil {
+							for ev := range run.Events() {
+								if ev.Type == session.EvToolResult && ev.ToolResult != nil && !ev.ToolResult.IsError {
+									t.Error("restored uncertainty produced a successful tool result")
+								}
+							}
+							replacement.FinishRun(created.ID, run)
+						}
+						if !landed {
+							durable, err := store.Load(ctx, created.ID)
+							if err != nil {
+								t.Fatal(err)
+							}
+							restored, _ := durable.BrokerAccess()
+							if restored.Current == nil || *restored.Current != *access.Current {
+								t.Fatal("restore released or replaced the uncertain occurrence")
+							}
+						}
+						_, after := anonymous.snapshot()
+						if after-before != 2 {
+							t.Fatalf("restore resent executed occurrence: delta=%d", after-before)
+						}
+					})
 				}
 			}
 			if topology == "protected" {
@@ -257,7 +379,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 					headers, before := private.snapshot()
 					time.Sleep(1100 * time.Millisecond)
 					call := c.Call{ID: "refreshed", Name: "mcp__private__whoami", Arguments: []byte(`{}`)}
-					check, err := client.CheckAuthorization(ctx, opened.Ref, flow.Catalogue.Ref(), &call, "", c.BrokerAttempt{Sequence: 1})
+					check, err := client.CheckAuthorization(ctx, opened.Ref, flow.Catalogue.Ref(), &call, "", session.NewBrokerAttempt())
 					if err != nil || !check.Ready || check.Authorization != "" {
 						t.Fatalf("refreshed preflight: %+v %v", check, err)
 					}
@@ -273,7 +395,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 					if err != nil || reopened.Catalogue.Ref() != flow.Catalogue.Ref() {
 						t.Fatalf("refresh changed catalogue: %+v %v", reopened, err)
 					}
-					out, err := client.InvokeTool(ctx, opened.Ref, flow.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
+					out, err := client.InvokeTool(ctx, opened.Ref, flow.Catalogue.Ref(), call, session.NewBrokerAttempt())
 					if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError {
 						t.Fatalf("refreshed invocation: %+v %v", out, err)
 					}
@@ -383,7 +505,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							t.Fatal(err)
 						}
 						access, _ := saved.BrokerAccess()
-						if mode == "lost-reply" && (access.Current == nil || access.Current.CallID != "original" || access.Current.Disposition != session.BrokerAttemptUnknown) {
+						if mode == "lost-reply" && (access.Current == nil || access.Current.CallID != "original") {
 							t.Fatalf("uncertainty lost durable fence: %+v", access)
 						}
 						if mode == "lost-reply" {
@@ -392,7 +514,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							if _, err := replacement.LoadSession(ctx, created.ID); err == nil {
 								t.Fatal("restored unknown attempt became executable")
 							}
-							if inspections.Load() != beforeInspection+1 || preflights.Load() != beforePreflight || dispatched.Load() != 1 {
+							if inspections.Load() != beforeInspection || preflights.Load() != beforePreflight || dispatched.Load() != 1 {
 								t.Fatal("restore did not inspect passively before preflight/invocation")
 							}
 							durable, err := store.Load(ctx, created.ID)
@@ -409,7 +531,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 						}
 					})
 				}
-				for _, mode := range []string{"resume", "query-resume", "save-failure", "permission-deny-resume", "changed-account", "cancel"} {
+				for _, mode := range []string{"resume", "query-resume", "save-failure", "permission-deny-resume", "permission-cancel-resume", "changed-account", "cancel"} {
 					t.Run("native-expiry-"+mode, func(t *testing.T) {
 						issuer.mu.Lock()
 						// Enrollment discovery may refresh the short-lived initial token.
@@ -471,7 +593,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 									}
 								}
 							}
-							if access.Catalogue == oldAccess.Catalogue || access.Current == nil || access.Current.CallID != "parked" || access.Current.Phase != "dispatched" || !exactSaved {
+							if access.Catalogue == oldAccess.Catalogue || access.Current == nil || access.Current.CallID != "parked" || !exactSaved {
 								t.Errorf("dispatch before exact durable adoption: %+v", access)
 							}
 						}
@@ -524,7 +646,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							if response.StatusCode == http.StatusOK {
 								t.Fatal("cancelled flow accepted callback")
 							}
-							out, err := client.ResumeTool(ctx, oldAccess.Session, c.AuthorizationRef(parked.Authorization.ID), oldAccess.Catalogue, c.BrokerAttempt{Sequence: 1})
+							out, err := client.ResumeTool(ctx, oldAccess.Session, c.AuthorizationRef(parked.Authorization.ID), oldAccess.Catalogue, session.NewBrokerAttempt())
 							if err != nil || out.Kind != c.InvocationNotDispatched {
 								t.Fatalf("cancel resume: %+v %v", out, err)
 							}
@@ -549,18 +671,17 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							t.Fatalf("reauth callback: %d", response.StatusCode)
 						}
 						callBeforeAdoption := c.Call{ID: "parked", Name: callName, Arguments: exact}
-						check, err := client.CheckAuthorization(ctx, oldAccess.Session, oldAccess.Catalogue, &callBeforeAdoption, "", c.BrokerAttempt{Sequence: 1})
-						if err != nil || check.Authorization != c.AuthorizationRef(parked.Authorization.ID) || check.Ready {
+						check, err := client.CheckAuthorization(ctx, oldAccess.Session, oldAccess.Catalogue, &callBeforeAdoption, "", session.NewBrokerAttempt())
+						if err != nil || check.Authorization != "" || check.Ready || check.Reason != c.FailureCapacity {
 							t.Fatalf("callback-before-adoption preflight: %+v %v", check, err)
 						}
 						callBeforeAdoption.ID = "different-call"
-						check, err = client.CheckAuthorization(ctx, oldAccess.Session, oldAccess.Catalogue, &callBeforeAdoption, "", c.BrokerAttempt{Sequence: 1})
+						check, err = client.CheckAuthorization(ctx, oldAccess.Session, oldAccess.Catalogue, &callBeforeAdoption, "", session.NewBrokerAttempt())
 						if err != nil || check.Ready || check.Authorization != "" {
 							t.Fatalf("another call replaced new grant: %+v %v", check, err)
 						}
-						inspection, err := client.InspectAttempt(ctx, oldAccess.Session, c.BrokerAttempt{Sequence: 1})
-						if err != nil || inspection.Phase != "parked" {
-							t.Fatalf("before adoption parked attempt: %+v %v", inspection, err)
+						if check.Reason != c.FailureCapacity {
+							t.Fatalf("parked authorization did not retain exclusive ownership: %+v", check)
 						}
 						if mode == "save-failure" {
 							store.fail.Store(true)
@@ -573,7 +694,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							}
 							return
 						}
-						if mode == "permission-deny-resume" {
+						if mode == "permission-deny-resume" || mode == "permission-cancel-resume" {
 							svc.cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
 								catalogue := tool.NewCatalog()
 								for _, candidate := range tools {
@@ -581,8 +702,12 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 										return SessionEngineResult{}, err
 									}
 								}
-								policy := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeManaged, Tool: "mcp__private__whoami", Pattern: "*", Effect: governance.Deny}}, nil)
-								return SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: catalogue, Store: store, AuthorityEvaluator: localauthority.New(), Policy: policy}), Close: func() error { return nil }}, nil
+								effect := governance.Deny
+								if mode == "permission-cancel-resume" {
+									effect = governance.Ask
+								}
+								policy := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeManaged, Tool: "mcp__private__whoami", Pattern: "*", Effect: effect}}, nil)
+								return SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: catalogue, Store: store, AuthorityEvaluator: localauthority.New(), Policy: policy, Interactive: true}), Close: func() error { return nil }}, nil
 							}
 						}
 						if mode == "changed-account" {
@@ -604,12 +729,12 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 								}
 								svc.FinishRun(created.ID, result.Run)
 							}
-							out, err := client.ResumeTool(ctx, oldAccess.Session, c.AuthorizationRef(parked.Authorization.ID), oldAccess.Catalogue, c.BrokerAttempt{Sequence: 1})
+							out, err := client.ResumeTool(ctx, oldAccess.Session, c.AuthorizationRef(parked.Authorization.ID), oldAccess.Catalogue, session.NewBrokerAttempt())
 							if err != nil || out.Kind != c.InvocationNotDispatched {
 								t.Fatalf("account-change resume: %+v %v", out, err)
 							}
-							out, err = client.InvokeTool(ctx, oldAccess.Session, oldAccess.Catalogue, c.Call{ID: "parked", Name: callName, Arguments: exact}, c.BrokerAttempt{Sequence: 1})
-							if err != nil || out.Kind != c.InvocationNotDispatched || out.Reason != c.FailureAuthorityWithdrawn {
+							out, err = client.InvokeTool(ctx, oldAccess.Session, oldAccess.Catalogue, c.Call{ID: "parked", Name: callName, Arguments: exact}, session.NewBrokerAttempt())
+							if !((err != nil && out.Kind == c.InvocationOutcomeUnknown) || (err == nil && out.Kind == c.InvocationNotDispatched && out.Reason == c.FailureAuthorityWithdrawn)) {
 								t.Fatalf("changed-account original call replay: %+v %v", out, err)
 							}
 							_, after = private.snapshot()
@@ -622,16 +747,37 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 							t.Fatal("no native continuation")
 						}
 						var resumed session.ToolResult
+						permissionCancelled := false
 						for ev := range result.Run.Events() {
+							if mode == "permission-cancel-resume" && ev.Type == session.EvPermissionAsk {
+								permissionCancelled = true
+								result.Run.Cancel()
+							}
 							if ev.ToolResult != nil && ev.ToolResult.CallID == "parked" {
 								resumed = *ev.ToolResult
 							}
 						}
 						svc.FinishRun(created.ID, result.Run)
 						_, after = private.snapshot()
-						if mode == "permission-deny-resume" {
-							if after != before || !resumed.IsError || !strings.Contains(resumed.Content, "permission denied:") {
-								t.Fatalf("resume deny: %+v delta=%d", resumed, after-before)
+						if mode == "permission-deny-resume" || mode == "permission-cancel-resume" {
+							if after != before || (mode == "permission-deny-resume" && (!resumed.IsError || !strings.Contains(resumed.Content, "permission denied:"))) || (mode == "permission-cancel-resume" && !permissionCancelled) {
+								t.Fatalf("resume rejected: %+v delta=%d cancelled=%v", resumed, after-before, permissionCancelled)
+							}
+							durable, err := store.Load(ctx, created.ID)
+							if err != nil {
+								t.Fatal(err)
+							}
+							adopted, _ := durable.BrokerAccess()
+							private.mu.Lock()
+							private.onCall = nil
+							private.mu.Unlock()
+							out, err := client.InvokeTool(ctx, adopted.Session, adopted.Catalogue, c.Call{ID: "next", Name: callName, Arguments: exact}, session.NewBrokerAttempt())
+							if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError {
+								t.Fatalf("host rejection left broker parked: %+v %v", out, err)
+							}
+							_, after = private.snapshot()
+							if after-before != 1 {
+								t.Fatalf("next call execution delta=%d, want 1", after-before)
 							}
 							return
 						}
@@ -650,24 +796,26 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 								}
 							}
 						}
-						if adopted.Catalogue == oldAccess.Catalogue || adopted.Current == nil || adopted.Current.Disposition != session.BrokerAttemptCompleted {
+						if adopted.Catalogue == oldAccess.Catalogue || adopted.Current != nil {
 							t.Fatalf("adoption/fence: %+v", adopted)
 						}
-						// The production broker receipt proves Resume used retained bytes:
-						// the exact call is cached; alternate whitespace with the same ID is refused.
+						// Raw-client resends carry no durable replay guarantee.
+						private.mu.Lock()
+						private.onCall = nil
+						private.mu.Unlock()
 						call := c.Call{ID: "parked", Name: callName, Arguments: exact}
-						out, err := client.InvokeTool(ctx, adopted.Session, adopted.Catalogue, call, c.BrokerAttempt{Sequence: 1})
+						out, err := client.InvokeTool(ctx, adopted.Session, adopted.Catalogue, call, session.NewBrokerAttempt())
 						if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError {
 							t.Fatalf("exact receipt: %+v %v", out, err)
 						}
-						call.Arguments = []byte("{}")
-						out, err = client.InvokeTool(ctx, adopted.Session, adopted.Catalogue, call, c.BrokerAttempt{Sequence: 1})
-						if err != nil || out.Kind != c.InvocationNotDispatched || out.Reason != c.FailureCallChanged {
-							t.Fatalf("retained byte proof: %+v %v", out, err)
+						call.Arguments = append([]byte(" "), exact...)
+						out, err = client.InvokeTool(ctx, adopted.Session, adopted.Catalogue, call, session.NewBrokerAttempt())
+						if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError {
+							t.Fatalf("raw changed call: %+v %v", out, err)
 						}
 						_, after = private.snapshot()
-						if after-before != 1 {
-							t.Fatal("receipt replay dispatched twice")
+						if after-before != 3 {
+							t.Fatal("raw resends unexpectedly deduplicated")
 						}
 					})
 				}
@@ -675,7 +823,7 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 					defer func() { private.mu.Lock(); private.revoked = false; private.mu.Unlock() }()
 					headers, before := private.snapshot()
 					call := c.Call{ID: "revoked", Name: cat.ToolNames()[0], Arguments: []byte("{ }")}
-					attempt := c.BrokerAttempt{Slot: 63, Sequence: 1}
+					attempt := session.NewBrokerAttempt()
 					check, err := client.CheckAuthorization(ctx, opened.Ref, cat.Ref(), &call, "", attempt)
 					if err != nil || !check.Ready || check.Authorization != "" {
 						t.Fatalf("native credential readiness failed: %+v %v", check, err)
@@ -697,8 +845,8 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 						t.Fatalf("uncertain receipt changed: %+v %v", repeated, err)
 					}
 					repeatedHeaders, after := private.snapshot()
-					if len(repeatedHeaders) != len(rejectedHeaders) {
-						t.Fatal("rejected call was blindly replayed")
+					if len(repeatedHeaders) <= len(rejectedHeaders) {
+						t.Fatal("raw resend unexpectedly deduplicated")
 					}
 					if after != before {
 						t.Fatal("revoked grant executed upstream tool")
@@ -744,12 +892,12 @@ func TestSessionBrokerProductionTLSNativeProfiles(t *testing.T) {
 			if err != nil || recovered.Catalogue.Ref() == cat.Ref() || len(recovered.Catalogue.Tools()) != len(cat.Tools()) {
 				t.Fatalf("native replacement: %+v %v", recovered, err)
 			}
-			for index, name := range recovered.Catalogue.ToolNames() {
+			for _, name := range recovered.Catalogue.ToolNames() {
 				if name == "CallMcpWithQuery" {
 					continue
 				}
 				old := c.Call{ID: session.ToolCallID(name), Name: name, Arguments: []byte(`{}`)}
-				attempt := c.BrokerAttempt{Slot: uint32(32 + index), Sequence: 1}
+				attempt := session.NewBrokerAttempt()
 				out, err := fresh.InvokeTool(ctx, opened.Ref, cat.Ref(), old, attempt)
 				if err != nil || out.Kind != c.InvocationNotDispatched || out.Reason != c.FailureCatalogueChanged {
 					t.Fatalf("replacement old-revision fence: %+v %v", out, err)

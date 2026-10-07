@@ -22,8 +22,6 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SessionService_InspectAttempt_FullMethodName       = "/mecatl.broker.v1.SessionService/InspectAttempt"
-	SessionService_AcknowledgeAttempt_FullMethodName   = "/mecatl.broker.v1.SessionService/AcknowledgeAttempt"
 	SessionService_InspectConnectors_FullMethodName    = "/mecatl.broker.v1.SessionService/InspectConnectors"
 	SessionService_OpenSession_FullMethodName          = "/mecatl.broker.v1.SessionService/OpenSession"
 	SessionService_InvokeTool_FullMethodName           = "/mecatl.broker.v1.SessionService/InvokeTool"
@@ -45,8 +43,6 @@ const (
 //
 // Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
 type SessionServiceClient interface {
-	InspectAttempt(ctx context.Context, in *InspectAttemptRequest, opts ...grpc.CallOption) (*AttemptStatus, error)
-	AcknowledgeAttempt(ctx context.Context, in *AcknowledgeAttemptRequest, opts ...grpc.CallOption) (*AttemptStatus, error)
 	InspectConnectors(ctx context.Context, in *InspectConnectorsRequest, opts ...grpc.CallOption) (*InspectConnectorsResponse, error)
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error)
 	InvokeTool(ctx context.Context, in *InvokeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error)
@@ -68,26 +64,6 @@ type sessionServiceClient struct {
 
 func NewSessionServiceClient(cc grpc.ClientConnInterface) SessionServiceClient {
 	return &sessionServiceClient{cc}
-}
-
-func (c *sessionServiceClient) InspectAttempt(ctx context.Context, in *InspectAttemptRequest, opts ...grpc.CallOption) (*AttemptStatus, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AttemptStatus)
-	err := c.cc.Invoke(ctx, SessionService_InspectAttempt_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *sessionServiceClient) AcknowledgeAttempt(ctx context.Context, in *AcknowledgeAttemptRequest, opts ...grpc.CallOption) (*AttemptStatus, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AttemptStatus)
-	err := c.cc.Invoke(ctx, SessionService_AcknowledgeAttempt_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *sessionServiceClient) InspectConnectors(ctx context.Context, in *InspectConnectorsRequest, opts ...grpc.CallOption) (*InspectConnectorsResponse, error) {
@@ -226,8 +202,6 @@ func (c *sessionServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 //
 // Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
 type SessionServiceServer interface {
-	InspectAttempt(context.Context, *InspectAttemptRequest) (*AttemptStatus, error)
-	AcknowledgeAttempt(context.Context, *AcknowledgeAttemptRequest) (*AttemptStatus, error)
 	InspectConnectors(context.Context, *InspectConnectorsRequest) (*InspectConnectorsResponse, error)
 	OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error)
 	InvokeTool(context.Context, *InvokeToolRequest) (*InvocationOutcome, error)
@@ -251,12 +225,6 @@ type SessionServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedSessionServiceServer struct{}
 
-func (UnimplementedSessionServiceServer) InspectAttempt(context.Context, *InspectAttemptRequest) (*AttemptStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method InspectAttempt not implemented")
-}
-func (UnimplementedSessionServiceServer) AcknowledgeAttempt(context.Context, *AcknowledgeAttemptRequest) (*AttemptStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AcknowledgeAttempt not implemented")
-}
 func (UnimplementedSessionServiceServer) InspectConnectors(context.Context, *InspectConnectorsRequest) (*InspectConnectorsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InspectConnectors not implemented")
 }
@@ -315,42 +283,6 @@ func RegisterSessionServiceServer(s grpc.ServiceRegistrar, srv SessionServiceSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&SessionService_ServiceDesc, srv)
-}
-
-func _SessionService_InspectAttempt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(InspectAttemptRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SessionServiceServer).InspectAttempt(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SessionService_InspectAttempt_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SessionServiceServer).InspectAttempt(ctx, req.(*InspectAttemptRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SessionService_AcknowledgeAttempt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AcknowledgeAttemptRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SessionServiceServer).AcknowledgeAttempt(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SessionService_AcknowledgeAttempt_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SessionServiceServer).AcknowledgeAttempt(ctx, req.(*AcknowledgeAttemptRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _SessionService_InspectConnectors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -594,14 +526,6 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "mecatl.broker.v1.SessionService",
 	HandlerType: (*SessionServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "InspectAttempt",
-			Handler:    _SessionService_InspectAttempt_Handler,
-		},
-		{
-			MethodName: "AcknowledgeAttempt",
-			Handler:    _SessionService_AcknowledgeAttempt_Handler,
-		},
 		{
 			MethodName: "InspectConnectors",
 			Handler:    _SessionService_InspectConnectors_Handler,

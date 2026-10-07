@@ -224,7 +224,7 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T, failure string) *stage
 		}
 		access, ok := durable.BrokerAccess()
 		exact := session.NewToolCall("query", "CallMcpWithQuery", queryArgs)
-		if !ok || access.Session != adopted.Session || access.Catalogue == adopted.Catalogue || access.Withdrawn || access.Current == nil || access.Current.CallID != exact.ID || access.Current.Digest != session.BrokerCallDigest(exact) || access.Current.Phase != "dispatched" {
+		if !ok || access.Session != adopted.Session || access.Catalogue == adopted.Catalogue || access.Withdrawn || access.Current == nil || access.Current.CallID != exact.ID || access.Current.Digest != session.BrokerCallDigest(exact) {
 			return errors.New("native query reached upstream before exact durable catalogue adoption and dispatch fence")
 		}
 		return nil
@@ -256,7 +256,7 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T, failure string) *stage
 			t.Fatal(err)
 		}
 		access, ok := uncertain.BrokerAccess()
-		if !ok || access.Current == nil || access.Current.Disposition != session.BrokerAttemptUnknown || access.Current.Attempt.Sequence != 2 {
+		if !ok || access.Current == nil || !access.Current.Attempt.Valid() {
 			t.Fatalf("synthetic paired result released unknown fence: %+v", access)
 		}
 		runAndDrain(ownerCtx, t, built.Service, sess.ID, "retry identical query")
@@ -272,7 +272,7 @@ func runSingletonBrokerStage3RemoteVertical(t *testing.T, failure string) *stage
 			t.Fatal(err)
 		}
 		restoredAccess, ok := restored.BrokerAccess()
-		if !ok || restoredAccess.Current == nil || restoredAccess.Current.Disposition != session.BrokerAttemptUnknown || restoredAccess.Current.Attempt != access.Current.Attempt {
+		if !ok || restoredAccess.Current == nil || restoredAccess.Current.Attempt != access.Current.Attempt {
 			t.Fatalf("restore lost unknown fence: %+v", restoredAccess)
 		}
 		if _, err := restored.PrepareBrokerInvocation(restoredAccess.Session, restoredAccess.Catalogue, session.NewToolCall("query", "CallMcpWithQuery", queryArgs), time.Now()); err == nil {

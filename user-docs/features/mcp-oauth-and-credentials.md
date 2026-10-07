@@ -339,6 +339,14 @@ enrollment intact, and cleanup for that previous connection cannot withdraw a
 newly published connection. This experimental path is not a released deployment
 contract.
 
+In this experimental path, Mecatl saves an uncertainty marker before sending a
+broker tool call. A lost reply or failed result save leaves further broker calls
+blocked for that session, including after restart. Check the upstream service
+before deciding whether to repeat the action: the original call could have taken
+effect. There is no automatic resend or recovery operation that clears this
+uncertainty. Authorization checks do not execute tools; a verified request for
+browser authorization can instead be saved as pending authorization.
+
 In `mecak8s` broker mode, each session starts one opaque enrollment, and
 ToolHive authorizes the configured protected upstreams sequentially. ToolHive
 owns upstream callback state, code exchange, refresh, and provider-specific

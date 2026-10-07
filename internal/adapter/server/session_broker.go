@@ -33,18 +33,6 @@ func (t *durableSessionTool) BrokerInvocationDisposition(err error) session.Brok
 	}
 	return session.BrokerAttemptUnknown
 }
-func (t *durableSessionTool) InspectBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
-	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
-		return b.InspectBrokerAttempt(ctx, attempt)
-	}
-	return tool.BrokerAttemptStatus{}, ErrFailedPrecondition
-}
-func (t *durableSessionTool) AcknowledgeBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
-	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
-		return b.AcknowledgeBrokerAttempt(ctx, attempt)
-	}
-	return tool.BrokerAttemptStatus{}, ErrFailedPrecondition
-}
 
 type durableSessionAuthTool struct {
 	*durableSessionTool
@@ -111,45 +99,6 @@ func brokerAuthorityCandidate(sess *session.Session) (*session.Session, error) {
 	return snapshot.Restore()
 }
 
-func (s *Service) reconcileSessionBrokerAttempt(ctx context.Context, sess *session.Session) error {
-	a, ok := sess.BrokerAccess()
-	if !ok || a.Current == nil {
-		return ErrFailedPrecondition
-	}
-	attempt := a.Current.Attempt
-	out, err := s.cfg.SessionBroker.InspectAttempt(ctx, c.SessionRef(a.Session), attempt)
-	if err != nil || !out.Valid() || out.Attempt != attempt {
-		return errors.Join(ErrFailedPrecondition, err)
-	}
-	if a.Current.Phase == "terminal" {
-		return ErrFailedPrecondition
-	}
-	candidate, err := brokerAuthorityCandidate(sess)
-	if err != nil {
-		return err
-	}
-	if out.Phase == "not_admitted" {
-		err = candidate.RejectUnadmittedBrokerInvocation(attempt)
-	} else {
-		if out.Phase == "reserved" || out.Phase == "parked" {
-			out, err = s.cfg.SessionBroker.AcknowledgeAttempt(ctx, c.SessionRef(a.Session), attempt)
-		}
-		if err != nil || !out.Valid() || out.Attempt != attempt || out.Phase != "terminal" || out.Disposition != session.BrokerAttemptNotDispatched {
-			return errors.Join(ErrFailedPrecondition, err)
-		}
-		err = candidate.SettleBrokerInvocation(attempt, session.BrokerAttemptNotDispatched)
-	}
-	if err != nil {
-		return err
-	}
-	if err := s.saveSession(ctx, candidate); err != nil {
-		s.withdrawBrokerEngine(sess.ID)
-		return errors.Join(errBrokerAuthoritySave, err)
-	}
-	settled, _ := candidate.BrokerAccess()
-	return sess.RestoreBrokerAccess(settled)
-}
-
 func (s *Service) restoreSessionBrokerTools(ctx context.Context, sess *session.Session) ([]tool.Tool, error) {
 	a, ok := sess.BrokerAccess()
 	if !ok {
@@ -159,10 +108,8 @@ func (s *Service) restoreSessionBrokerTools(ctx context.Context, sess *session.S
 		return nil, nil
 	}
 	ref := c.SessionRef(a.Session)
-	if a.Current != nil && (a.Current.Phase != "terminal" || a.Current.Disposition == session.BrokerAttemptUnknown) {
-		if err := s.reconcileSessionBrokerAttempt(ctx, sess); err != nil {
-			return nil, err
-		}
+	if a.Current != nil {
+		return nil, ErrFailedPrecondition
 	}
 	snapshot, err := s.cfg.SessionBroker.OpenSession(ctx, &ref)
 	if err != nil {
@@ -473,20 +420,14 @@ func (a *sessionAuthorizationControl) CancelAuthorization(ctx context.Context, a
 		return "", err
 	}
 	if result == c.Cancelled {
-		if err := a.host.reconcileSessionBrokerAttempt(ctx, a.sess); err != nil {
-			return "", err
-		}
 		return c.CancelCancelled, nil
 	}
 	return c.CancelAlreadyResolved, nil
 }
 func (s *Service) sessionBrokerResumeTools(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization) ([]tool.Tool, error) {
 	a, ok := sess.BrokerAccess()
-	if !ok || a.Withdrawn || a.Current == nil || a.Current.CallID != claimed.Call.ID || a.Current.Digest != session.BrokerCallDigest(claimed.Call) || claimed.Authorization.Binding != session.AuthorizationBinding(a.Session) {
+	if !ok || a.Withdrawn || a.Current != nil || claimed.Authorization.Binding != session.AuthorizationBinding(a.Session) {
 		return nil, ErrFailedPrecondition
-	}
-	if _, err := sess.ContinueBrokerInvocation(claimed.Call); err != nil {
-		return nil, errors.Join(ErrFailedPrecondition, s.reconcileSessionBrokerAttempt(ctx, sess))
 	}
 	ref := c.SessionRef(a.Session)
 	flow, err := s.cfg.SessionBroker.ObserveAuthorization(ctx, ref, c.AuthorizationRef(claimed.Authorization.ID))
@@ -499,7 +440,11 @@ func (s *Service) sessionBrokerResumeTools(ctx context.Context, sess *session.Se
 	if err := s.adoptSessionBrokerCatalogue(ctx, sess, flow.Catalogue); err != nil {
 		return nil, err
 	}
-	resume, err := s.cfg.SessionBroker.ResumeToolWrapper(ref, flow.Catalogue, claimed.Call.Name, claimed.Call.ID, c.AuthorizationRef(claimed.Authorization.ID), a.Current.Attempt)
+	attempt, err := sess.PrepareBrokerInvocation(a.Session, flow.Catalogue.Ref(), claimed.Call, s.cfg.Now())
+	if err != nil {
+		return nil, err
+	}
+	resume, err := s.cfg.SessionBroker.ResumeToolWrapper(ref, flow.Catalogue, claimed.Call.Name, claimed.Call.ID, c.AuthorizationRef(claimed.Authorization.ID), attempt)
 	if err != nil {
 		return nil, err
 	}

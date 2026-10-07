@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -47,8 +46,6 @@ func seedCleanupConnection(t *testing.T) (*SessionAPI, *continuityProofFixture, 
 	}
 	st.record.Custody = &c.StagedCredentialCustody{RecoveryReference: string(staged.Recovery), ExpiresAt: staged.ExpiresAt, ProfileDigest: guard.ProfileDigest, Providers: guard.Providers}
 	st.record.Account, st.record.Connected, st.record.Connection = account, true, apiRef()
-	st.record.Slots[0] = apiSlotRecord{Sequence: 7, Digest: [32]byte{1}, Catalogue: st.record.Catalogue, Phase: "reserved"}
-	st.record.Slots[1] = apiSlotRecord{Sequence: 9, Digest: [32]byte{2}, Catalogue: st.record.Catalogue, Phase: "terminal", Disposition: session.BrokerAttemptUnknown}
 	if err := saveAPIRecord(t, api, ctx, st); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +132,7 @@ func TestSessionAPIConnectionCleanupColdRetryAndAmbiguity(t *testing.T) {
 					t.Fatal("cold cleanup activated native state")
 				}
 				got := api.states[old.Ref].record
-				if got.Connected || got.Withdrawing || got.Custody != nil || got.Connection != old.Connection || got.Slots[0].Sequence != 7 || got.Slots[0].Disposition != session.BrokerAttemptNotDispatched || got.Slots[1] != old.Slots[1] {
+				if got.Connected || got.Withdrawing || got.Custody != nil || got.Connection != old.Connection {
 					t.Fatalf("cleanup changed durable fences: %+v", got)
 				}
 			})
@@ -192,7 +189,7 @@ func TestSessionAPIConnectionCleanupChangedRecoveredAccount(t *testing.T) {
 	if err != nil || out != c.Disconnected {
 		t.Fatalf("original cleanup after refused recovery: %v %v", out, err)
 	}
-	if !reflect.DeepEqual(st.record.Slots[1], old.Slots[1]) {
-		t.Fatal("cleanup released unknown slot")
+	if st.record.Connection != old.Connection || st.record.Custody != nil {
+		t.Fatal("cleanup lost connection identity or retained custody")
 	}
 }

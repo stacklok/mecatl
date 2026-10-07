@@ -31,14 +31,6 @@ func (t *sessionRemoteTool) BrokerInvocationDisposition(err error) session.Broke
 	}
 	return session.BrokerAttemptUnknown
 }
-func (t *sessionRemoteTool) InspectBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
-	out, err := t.client.InspectAttempt(ctx, t.ref, attempt)
-	return tool.BrokerAttemptStatus{Attempt: out.Attempt, Phase: out.Phase, Disposition: out.Disposition}, err
-}
-func (t *sessionRemoteTool) AcknowledgeBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
-	out, err := t.client.AcknowledgeAttempt(ctx, t.ref, attempt)
-	return tool.BrokerAttemptStatus{Attempt: out.Attempt, Phase: out.Phase, Disposition: out.Disposition}, err
-}
 
 func (t *sessionRemoteTool) Spec() tool.ToolSpec {
 	s := t.spec
@@ -69,6 +61,15 @@ func (t *sessionRemoteTool) Execute(ctx context.Context, call session.ToolCall, 
 	}
 	if out.Kind == c.InvocationNotDispatched {
 		return session.ToolResult{}, errInvocationNotDispatched
+	}
+	if out.Kind == c.InvocationAuthorizationRequired {
+		check, checkErr := t.client.CheckAuthorization(ctx, t.ref, t.catalogue, nil, out.Authorization, attempt)
+		if checkErr != nil || check.Ready || check.Authorization != out.Authorization {
+			return session.ToolResult{}, errors.Join(errInvocationNotDispatched, checkErr)
+		}
+		return session.ToolResult{}, &tool.BrokerAuthorizationRequired{Authorization: session.ExternalAuthorization{
+			ID: string(check.Authorization), Binding: session.AuthorizationBinding(t.ref), ExpiresAt: check.ExpiresAt,
+		}}
 	}
 	if out.Kind != c.InvocationCompleted {
 		return session.ToolResult{}, errors.New("mcpbrokergrpc: invocation not completed")

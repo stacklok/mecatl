@@ -86,8 +86,8 @@ type dispatchPark struct {
 	call          session.ToolCall
 	deferred      []session.ToolCall
 	requester     tool.AuthorizationRequester
-	broker        tool.Tool
 	attempt       session.BrokerAttempt
+	zeroDispatch  bool
 	fatal         error
 }
 
@@ -1083,8 +1083,6 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}
-	var prepared bool
-	var parked bool
 	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
 		var err error
 		ctx, err = e.prepareBrokerAttempt(ctx, sess, c, broker)
@@ -1093,16 +1091,7 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			return res, nil, false
 		}
-		prepared = true
 	}
-	defer func() {
-		if prepared && !parked {
-			if err := e.retireBrokerAttempt(ctx, sess, t); err != nil {
-				park = &dispatchPark{call: c, fatal: err}
-				cancelled = false
-			}
-		}
-	}()
 	if requester, ok := t.(tool.AuthorizationRequester); ok {
 		if !r.req.CanPresentAuthorization || e.deps.Role != "" {
 			res := session.NewToolError(c.ID, "external authorization cannot be presented by this run")
@@ -1127,23 +1116,12 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 				fatal: fmt.Errorf("request external authorization: %w", err),
 			}, false
 		}
-		if prepared {
-			attempt, _ := tool.BrokerInvocationFromContext(ctx)
-			if err := sess.AdmitBrokerInvocation(attempt); err != nil {
-				return session.ToolResult{}, &dispatchPark{call: c, fatal: err}, false
-			}
-			if err := e.saveRequired(ctx, sess); err != nil {
-				return session.ToolResult{}, &dispatchPark{call: c, fatal: err}, false
-			}
-		}
 		if required {
-			parked = true
 			attempt, _ := tool.BrokerInvocationFromContext(ctx)
-			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester, broker: t, attempt: attempt}, false
+			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester, attempt: attempt}, false
 		}
 	}
-	res, cancelled := e.execute(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
-	return res, nil, cancelled
+	return e.execute(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
 }
 
 // surfaceAsk is the shared SPINE both ask sites (authorize's policy ask and
@@ -1721,6 +1699,7 @@ func planApprovedTargetForVerdict(v session.ApprovalVerdict) session.PermissionM
 // annotates (the tool already ran; a block neither undoes nor suppresses the
 // result).
 type executionRecord struct {
+	park           *dispatchPark
 	result         session.ToolResult
 	queued         time.Duration
 	duration       time.Duration
@@ -1742,16 +1721,20 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	var res session.ToolResult
 	var dur time.Duration
 	var auxiliaryUsage session.AuxiliaryUsage
+	var park *dispatchPark
 	if auth == nil || !auth.authorityStillValid(sess, c, env) {
 		res = session.NewToolError(c.ID, "tool was not executed: authority binding changed after admission")
 	} else if _, ok := t.(*tool.Search); ok {
 		if authority, bound := sess.BoundAuthority(); bound {
 			res = authorityToolSearch(c, e.deps.Catalog, authority.CapabilitySet)
 		} else {
-			res, dur, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+			res, dur, park, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
 		}
 	} else {
-		res, dur, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+		res, dur, park, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+	}
+	if park != nil {
+		return executionRecord{park: park}
 	}
 	res, postEvents := e.postHook(ctx, sess, turnIdx, c, res)
 	res = session.RepairToolResult(res)
@@ -1791,13 +1774,16 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 	}
 }
 
-func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, bool) {
+func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, *dispatchPark, bool) {
 	record := e.executePrivate(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
+	if record.park != nil {
+		return session.ToolResult{}, record.park, false
+	}
 	r.recordCompleteAuxiliaryUsageWhileActive(sess, record.auxiliaryUsage)
 	r.drainPendingAuxiliaryUsage(sess)
 	result, cancelled, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
 	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil, originalReleased, true)
-	return result, cancelled
+	return result, nil, cancelled
 }
 
 const callMcpWithQueryToolName = "CallMcpWithQuery"
@@ -2044,7 +2030,7 @@ func (r *Run) reportAuxiliaryUsage(usage session.AuxiliaryUsage) {
 // concurrent, read-parallel) tool goroutine — consistent with the existing
 // dispatch emits, which e.emit serialises. Tools that do not implement the seam
 // take the ordinary Execute path unchanged.
-func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, start time.Time) (session.ToolResult, time.Duration, session.AuxiliaryUsage) {
+func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, start time.Time) (session.ToolResult, time.Duration, *dispatchPark, session.AuxiliaryUsage) {
 	var (
 		res            session.ToolResult
 		err            error
@@ -2060,7 +2046,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		ev.Turn = turnIdx
 		r.children.safeEmit(ev)
 	}
-	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
+	if _, ok := t.(tool.DurableBrokerInvocation); ok {
 		attempt, framed := tool.BrokerInvocationFromContext(ctx)
 		if !framed {
 			err = errors.New("broker invocation requires prepared attempt")
@@ -2071,12 +2057,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 			}
 		}
 		if err != nil {
-			if framed {
-				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
-				err = errors.Join(err, e.reconcileBrokerAttempt(cleanup, sess, broker, attempt))
-				cancel()
-			}
-			return session.NewToolError(c.ID, err.Error()), 0
+			return session.NewToolError(c.ID, err.Error()), 0, nil, session.AuxiliaryUsage{}
 		}
 	}
 	switch ct := t.(type) {
@@ -2097,22 +2078,23 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	}
 	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
 		attempt, _ := tool.BrokerInvocationFromContext(ctx)
+		var required *tool.BrokerAuthorizationRequired
+		if errors.As(err, &required) {
+			if requester, ok := t.(tool.AuthorizationRequester); ok {
+				return session.ToolResult{}, 0, &dispatchPark{authorization: required.Authorization, call: c, requester: requester, attempt: attempt, zeroDispatch: true}, auxiliaryUsage
+			}
+		}
 		switch broker.BrokerInvocationDisposition(err) {
 		case session.BrokerAttemptCompleted:
 			if err == nil && res.CallID == c.ID {
 				err = sess.RecordBrokerInvocationResult(attempt, c.ID)
 			} else {
 				err = errors.New("broker completion did not match exact call")
-				_ = sess.SettleBrokerInvocation(attempt, session.BrokerAttemptUnknown)
 			}
 		case session.BrokerAttemptNotDispatched:
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
-			err = errors.Join(err, e.reconcileBrokerAttempt(cleanup, sess, broker, attempt))
-			cancel()
-		default:
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
-			err = errors.Join(err, sess.SettleBrokerInvocation(attempt, session.BrokerAttemptUnknown), e.saveRequired(cleanup, sess))
-			cancel()
+			// Pair the immediate verified refusal with a tool error. A lost
+			// response is never reconstructed or used to authorize a resend.
+			err = errors.Join(err, sess.RecordBrokerInvocationResult(attempt, c.ID))
 		}
 	}
 	if err != nil {
@@ -2122,7 +2104,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	if e.deps.Clock != nil {
 		dur = e.deps.Clock.Now().Sub(start)
 	}
-	return res, dur, auxiliaryUsage
+	return res, dur, nil, auxiliaryUsage
 }
 
 // parentCaps builds the parent-capability bundle threaded into a subagent-spawning

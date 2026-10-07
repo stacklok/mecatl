@@ -15,18 +15,16 @@ type apiOperation struct {
 }
 
 type apiControl struct {
-	connection    c.ConnectionRef
-	enrollment    c.EnrollmentRef
-	authorization c.AuthorizationRef
-	attempt       c.BrokerAttempt
-	delete        bool
-	passive       bool
+	connection c.ConnectionRef
+	enrollment c.EnrollmentRef
+	delete     bool
+	passive    bool
 }
 
 func newAPIState(record apiRecord) *apiState {
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{}
-	return &apiState{record: record, snapshot: record, ioGate: gate, parked: make(map[c.AuthorizationRef]*apiParked), authorizations: make(map[c.AuthorizationRef]c.BrokerAttempt)}
+	return &apiState{record: record, snapshot: record, ioGate: gate, parked: make(map[c.AuthorizationRef]*apiParked)}
 }
 
 func (s *SessionAPI) validOperation(ctx context.Context) bool {
@@ -80,11 +78,10 @@ func (s *SessionAPI) operation(ctx context.Context, ref c.SessionRef, control ap
 			return ctx, nil, c.ErrStateUnavailable
 		}
 	}
-	invalidating := control.delete || control.connection != "" || control.enrollment != "" || control.authorization != ""
+	invalidating := control.delete || control.connection != "" || control.enrollment != ""
 	matches := st.loaded && ((control.delete) ||
 		(control.connection != "" && string(control.connection) == st.snapshot.Connection && (st.snapshot.Connected || st.snapshot.Withdrawing)) ||
-		(control.enrollment != "" && control.enrollment == st.enrollmentRef) ||
-		(control.authorization != "" && st.authorizations[control.authorization] == control.attempt))
+		(control.enrollment != "" && control.enrollment == st.enrollmentRef))
 	if matches {
 		s.invalidateLocked(st)
 	}
@@ -125,12 +122,6 @@ func (s *SessionAPI) operation(ctx context.Context, ref c.SessionRef, control ap
 		st.enrollmentRef = ""
 		if st.enrollment != nil && st.enrollment.status.Kind == c.FlowPending {
 			st.enrollmentRef = st.enrollment.ref
-		}
-		st.authorizations = make(map[c.AuthorizationRef]c.BrokerAttempt, len(st.parked))
-		for ref, p := range st.parked {
-			if p.terminal == nil {
-				st.authorizations[ref] = p.attempt
-			}
 		}
 		s.mu.Unlock()
 		st.ioGate <- struct{}{}

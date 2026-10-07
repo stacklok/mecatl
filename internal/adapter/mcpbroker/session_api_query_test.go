@@ -57,7 +57,7 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 	if query == nil || !query.ReadOnly() || !isAuth(query) || isSerial(query) {
 		t.Fatalf("native query markers not preserved: %T", query)
 	}
-	for i, tc := range []struct {
+	for _, tc := range []struct {
 		name, target, filter string
 		dispatch, failure    bool
 	}{
@@ -71,7 +71,7 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 			args, _ := json.Marshal(map[string]any{"server": "search", "tool": tc.target, "args": map[string]any{}, "jq_filter": tc.filter})
 			call := c.Call{ID: session.ToolCallID(tc.name), Name: "CallMcpWithQuery", Arguments: args}
 			before := calls.Load()
-			out, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Slot: uint32(i), Sequence: 1})
+			out, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, session.NewBrokerAttempt())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,12 +85,6 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 				if !tc.failure && out.Result.Content != `"projected"` {
 					t.Fatalf("unfiltered or wrong result: %q", out.Result.Content)
 				}
-				if tc.failure {
-					status, err := api.InspectAttempt(ctx, opened.Ref, c.BrokerAttempt{Slot: uint32(i), Sequence: 1})
-					if err != nil || status.Disposition != session.BrokerAttemptUnknown {
-						t.Fatalf("uncertain query lost slot fence: %#v %v", status, err)
-					}
-				}
 				if calls.Load() != before+1 {
 					t.Fatal("query did not dispatch exactly once")
 				}
@@ -98,8 +92,12 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 				t.Fatalf("invalid target/filter dispatched: %#v", out)
 			}
 			after := calls.Load()
-			if _, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Slot: uint32(i), Sequence: 1}); err != nil || calls.Load() != after {
-				t.Fatalf("repeat redispatched: %v", err)
+			additional := int32(0)
+			if tc.dispatch {
+				additional = 1
+			}
+			if _, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, session.NewBrokerAttempt()); err != nil || calls.Load() != after+additional {
+				t.Fatalf("raw resend did not follow non-idempotent contract: %v", err)
 			}
 		})
 	}
@@ -162,7 +160,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 	}
 	call := c.Call{ID: "protected-query", Name: "CallMcpWithQuery", Arguments: []byte(`{"server":"private","tool":"status","args":{},"jq_filter":"."}`)}
 	before := f.upstreamCalls.Load()
-	attempt := c.BrokerAttempt{Sequence: 1}
+	attempt := session.NewBrokerAttempt()
 	check, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", attempt)
 	if err != nil || !check.Ready || f.upstreamCalls.Load() != before {
 		t.Fatalf("native readiness must be nonexecuting: %#v %v", check, err)
@@ -173,7 +171,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 	}
 	grant := api.states[opened.Ref].attachment.logical.recoveredCalls
 	for n := uint64(2); n <= 4100; n++ {
-		out, err := api.InvokeTool(ctx, opened.Ref, recovered.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: n})
+		out, err := api.InvokeTool(ctx, opened.Ref, recovered.Catalogue.Ref(), call, session.NewBrokerAttempt())
 		if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError {
 			t.Fatalf("native same-grant call %d: %#v result=%+v %v", n, out, out.Result, err)
 		}
@@ -188,7 +186,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 	}
 	call.ID = "changed-account"
 	before = f.upstreamCalls.Load()
-	if _, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", c.BrokerAttempt{Sequence: 4101}); err == nil || f.upstreamCalls.Load() != before {
+	if _, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", session.NewBrokerAttempt()); err == nil || f.upstreamCalls.Load() != before {
 		t.Fatalf("changed account was accepted or dispatched: %v", err)
 	}
 	// Expired native tokens without refresh must park authorization, not invoke MCP.
@@ -198,7 +196,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	call.ID = "expired-grant"
-	check, err = api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", c.BrokerAttempt{Sequence: 4102})
+	check, err = api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", session.NewBrokerAttempt())
 	if err != nil || check.Ready || check.Authorization == "" || f.upstreamCalls.Load() != before {
 		t.Fatalf("expired native grant must park: %#v %v", check, err)
 	}
