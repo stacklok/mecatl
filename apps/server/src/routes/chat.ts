@@ -870,7 +870,7 @@ function successorFailure(context: Parameters<typeof problem>[0], error: unknown
         "Worktree unavailable",
         "Relist eligible worktrees and try again.",
       );
-    if (error.code === "placement_selector_invalid" || error.code === "invalid_argument")
+    if (error.code === "placement_selector_invalid")
       return problem(
         context,
         400,
@@ -878,13 +878,30 @@ function successorFailure(context: Parameters<typeof problem>[0], error: unknown
         "Invalid worktree selection",
         "Relist eligible worktrees and try again.",
       );
-    if (error.code === "placement_selector_stale" || error.code === "failed_precondition")
+    if (error.code === "placement_selector_stale")
       return problem(
         context,
         409,
         "placement_selector_stale",
         "Worktree selection expired",
         "Relist eligible worktrees and try again.",
+      );
+    // Generic rejections are not selector faults: say so, without upstream text.
+    if (error.code === "invalid_argument")
+      return problem(
+        context,
+        400,
+        "successor_rejected",
+        "Successor rejected",
+        "The successor request was rejected.",
+      );
+    if (error.code === "failed_precondition")
+      return problem(
+        context,
+        409,
+        "successor_unavailable",
+        "Successor unavailable",
+        "The session cannot be forked or cleared right now.",
       );
     if (
       error.code === "placement_unavailable" ||

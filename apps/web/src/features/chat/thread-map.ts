@@ -358,9 +358,13 @@ export function useThreadAssociations(
   useEffect(() => {
     let active = true;
     const refresh = () => {
-      void readThreadAssociations(parentSessionId, transcript).then((next) => {
-        if (active) setAssociations(next);
-      });
+      void readThreadAssociations(parentSessionId, transcript)
+        .then((next) => {
+          if (active) setAssociations(next);
+        })
+        .catch(() => {
+          if (active) setAssociations(emptyAssociations());
+        });
     };
     setAssociations(emptyAssociations());
     refresh();

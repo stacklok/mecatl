@@ -514,6 +514,39 @@ describe("chat routes", () => {
     expect(forkSession).toHaveBeenCalledTimes(1);
   });
 
+  it("does not blame the worktree selector for generic successor rejections", async () => {
+    const send = (code: "invalid_argument" | "failed_precondition") => {
+      const failure = new MecatlError("run owns control for opaque-choice", {
+        code,
+        status: 9,
+        transport: "grpc",
+      });
+      const selected = createApp({
+        chat: { ...chat, forkSession: vi.fn().mockRejectedValue(failure) },
+      });
+      return selected.request("/api/v1/sessions/source/fork", {
+        body: JSON.stringify({
+          model: { id: "model", providerId: "provider" },
+          reasoningEffort: "default",
+          worktreeSelector: "opaque-choice",
+        }),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+    };
+    for (const [code, status, problemCode] of [
+      ["invalid_argument", 400, "successor_rejected"],
+      ["failed_precondition", 409, "successor_unavailable"],
+    ] as const) {
+      const response = await send(code);
+      const text = await response.text();
+      expect(response.status).toBe(status);
+      expect(text).toContain(problemCode);
+      expect(text).not.toContain("placement_selector");
+      expect(text).not.toContain("opaque-choice");
+    }
+  });
+
   it("streams durable session activity", async () => {
     const response = await request("/api/v1/sessions/session-1/activity");
 

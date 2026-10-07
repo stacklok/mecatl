@@ -95,9 +95,18 @@ test("an early minimap marker reaches its own row without moving the page", asyn
   const first = minimap.getByRole("button", { name: /^Jump to message 1:/ });
   await first.click();
   await expect(first).toHaveAttribute("aria-current", "location");
-  await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThan(200);
   const row = transcript.getByRole("article").first();
   await expect(row).toContainText("Recorded message 1 with enough text");
+  // The jump scrolls smoothly: wait for the row to settle at the scrollport top.
+  await expect
+    .poll(async () => {
+      const [rowTop, portTop] = await Promise.all([
+        row.boundingBox().then((box) => box?.y ?? Number.NEGATIVE_INFINITY),
+        transcript.boundingBox().then((box) => box?.y ?? Number.POSITIVE_INFINITY),
+      ]);
+      return rowTop >= portTop - 2;
+    })
+    .toBe(true);
   const rowBounds = await row.boundingBox();
   const portBounds = await transcript.boundingBox();
   expect(rowBounds).not.toBeNull();

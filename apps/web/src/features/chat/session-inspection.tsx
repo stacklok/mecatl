@@ -53,13 +53,14 @@ function unavailable(reason: string, fallback: string): string {
   return reason || fallback;
 }
 
-/** A rejected selector is stale, unknown, or malformed: relist rather than retry it. */
+/** Only a selector-specific rejection warrants relisting; other failures are not the choice's fault. */
 function isSelectorRejection(caught: unknown): boolean {
   return (
     typeof caught === "object" &&
     caught !== null &&
-    "status" in caught &&
-    (caught.status === 400 || caught.status === 404 || caught.status === 409)
+    "code" in caught &&
+    typeof caught.code === "string" &&
+    caught.code.startsWith("placement_selector_")
   );
 }
 

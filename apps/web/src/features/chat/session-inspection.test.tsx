@@ -85,6 +85,7 @@ class Bff {
   connection: "online" | "offline" = "online";
   transcriptStatus = 200;
   forkStatus = 201;
+  forkCode = "";
   worktreeCalls = 0;
   readonly fetch = async (request: Request) => {
     const path = decodeURIComponent(new URL(request.url).pathname);
@@ -159,9 +160,13 @@ class Bff {
       });
     if (path === "/api/v1/sessions/child/fork")
       return json(
-        this.forkStatus === 409 || this.forkStatus === 404
+        this.forkStatus !== 201
           ? {
-              code: "stale_worktree_selector",
+              code:
+                this.forkCode ||
+                (this.forkStatus === 404
+                  ? "placement_selector_not_found"
+                  : "placement_selector_stale"),
               detail: "Selection is stale",
               status: this.forkStatus,
             }
@@ -436,6 +441,25 @@ describe("session inspection", () => {
       expect(mounted.router.state.location.search).toMatchObject({ sessionId: "child" });
     },
   );
+
+  it("does not relist when a successor is rejected for a non-selector reason", async () => {
+    const bff = new Bff();
+    bff.rows = [row("child", false)];
+    bff.forkStatus = 409;
+    bff.forkCode = "successor_unavailable";
+    await mount(bff);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Chat options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Inspect session" }));
+    const details = await screen.findByRole("dialog", { name: "Session details" });
+    fireEvent.click(within(details).getByRole("button", { name: "Choose worktree" }));
+    const picker = await screen.findByRole("dialog", { name: "Choose successor worktree" });
+    fireEvent.click(await within(picker).findByRole("radio", { name: /Feature/ }));
+    fireEvent.click(within(picker).getByRole("button", { name: "Fork in selected worktree" }));
+    await waitFor(() => expect(bff.calls("/api/v1/sessions/child/fork")).toHaveLength(1));
+    expect(await screen.findByText(/could not create a successor/i)).toBeTruthy();
+    expect(bff.worktreeCalls).toBe(1);
+  });
 
   it("discards a worktree choice after close and a source-session switch", async () => {
     const bff = new Bff();
