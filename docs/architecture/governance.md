@@ -60,9 +60,14 @@ evaluator.
 | Posture | Allow-all rule | Substitution floor loosened | Raises project trust |
 | --- | --- | --- | --- |
 | `strict` (default) | No | No | No |
-| `trusted` | No | No | Interactive roots only |
-| `auto` | Main and children | Main engine | Interactive roots only |
-| `yolo` | Main and children | Main and children | Interactive roots only |
+| `trusted` | No | No | Unless headless |
+| `auto` | Main and children | Main engine | Unless headless |
+| `yolo` | Main and children | Main and children | Unless headless |
+
+`trusted` changes no permission rule; its only effect is raising project trust. Headless
+is a per-binary setting, not inferred from the environment: `mecatui` is always
+interactive, `mecated` is interactive unless started with `--headless`, and `mecak8s` and
+`mecatequi` default to headless.
 
 The allow-all rule is one ordinary `ScopeCLI` Allow, pinned per audience, so it loosens
 only the built-in floor: every Deny and configured Ask still applies at `yolo`. Only
@@ -79,9 +84,10 @@ nothing of it. `resolveTrust` (`internal/app/trust.go`) takes the first match of
 `--trust-project` flag, a declared `trustedWorkspaces:` entry, or a remembered registry
 entry whose identity anchor still matches.
 
-Trust is root-aware. Posture raises it only on interactive roots, so a headless server
-or CI run never trusts a checkout from posture alone, and a session-selected alternate
-root never inherits the launch root's trust. Untrusted means "ask the human", not "do nothing": project Allow rules are dropped while
+Trust is root-aware. Posture never raises it on a headless root, so a `mecak8s`
+deployment, a `mecatequi` CI run, or `mecated --headless` never trusts a checkout from
+posture alone, and a session-selected alternate root never inherits the launch root's
+trust. Untrusted means "ask the human", not "do nothing": project Allow rules are dropped while
 project Deny and Ask rules still apply, user-tier and explicit operator configuration
 stay active, and read-only subagents lose their shell. Trust only grants; it never
 overrides a Deny or a configured Ask.
