@@ -9,7 +9,7 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, GraduationCap, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +22,11 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent } from "../../components/ui/dialog";
+import { Input } from "../../components/ui/input";
+import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
+import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
 import { pageTitleClass } from "../../lib/typography";
+import { filterSkills, type SkillSortKey, sortSkills } from "./skill-inventory";
 
 export type KnowledgeView = "configured" | "learned";
 type LearnedSkill = ListLearnedSkillsResponse["items"][number];
@@ -65,7 +69,7 @@ export function KnowledgeWorkspace({
         </div>
         <div className="mt-5">
           {view === "configured" ? (
-            <ConfiguredSkills selectedName={item} />
+            <ConfiguredSkills onSelect={onItemChange} />
           ) : (
             <LearnedSkills onSelect={onItemChange} selectedId={item} />
           )}
@@ -75,49 +79,119 @@ export function KnowledgeWorkspace({
   );
 }
 
-function ConfiguredSkills({ selectedName }: { selectedName?: string }) {
+function ConfiguredSkills({ onSelect }: { onSelect: (name: string) => void }) {
   const query = useQuery(listConfiguredSkillsOptions());
-  useEffect(() => {
-    if (!selectedName || !query.data) return;
-    const target = document.getElementById(knowledgeTargetId("configured", selectedName));
-    target?.scrollIntoView({ behavior: "smooth", block: "center" });
-    target?.focus({ preventScroll: true });
-  }, [query.data, selectedName]);
+  const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<{ direction: SortDirection; key: SkillSortKey }>({
+    direction: "asc",
+    key: "name",
+  });
   if (query.isPending) return <StateCard text="Loading skills…" />;
   if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
   if (!query.data.supported)
     return <StateCard text={query.data.reason} title="Skills are unavailable" />;
   if (query.data.items.length === 0) return <StateCard icon="skill" text="No skills here yet" />;
+  const rows = sortSkills(filterSkills(query.data.items, filter), sort.key, sort.direction);
+  const toggle = (key: SkillSortKey) =>
+    setSort((current) => ({
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+      key,
+    }));
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
         Configured skills are read-only here and managed by the Mecatl deployment.
       </p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {query.data.items.map((skill) => (
-          <article
-            className={`rounded-xl border bg-card p-4 ${skill.name === selectedName ? "ring-2 ring-brand-ink" : ""}`}
-            id={knowledgeTargetId("configured", skill.name)}
-            key={skill.name}
-            tabIndex={-1}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="font-semibold">{humanize(skill.name)}</h2>
-              {skill.agentOwned && <Badge variant="info">agent-owned</Badge>}
-            </div>
-            <p className="mt-1 font-mono text-xs text-muted-foreground">{skill.name}</p>
-            <p className="mt-3 line-clamp-3 text-sm leading-6 text-muted-foreground">
-              {skill.description || "No description recorded."}
-            </p>
-            {(skill.activeVersion || skill.ownerAgent) && (
-              <p className="mt-3 text-xs text-muted-foreground">
-                {skill.activeVersion || "unversioned"}
-                {skill.ownerAgent && ` · ${skill.ownerAgent}`}
-              </p>
-            )}
-          </article>
-        ))}
-      </div>
+      <Input
+        aria-label="Filter skills"
+        onChange={(event) => setFilter(event.target.value)}
+        placeholder="Filter by name, description, or owner"
+        value={filter}
+      />
+      {rows.length === 0 ? (
+        <StateCard text={`No skills match "${filter.trim()}".`} />
+      ) : (
+        <>
+          <div className="hidden overflow-hidden rounded-xl border bg-card md:block">
+            <Table>
+              <TableHeader className="text-xs text-muted-foreground">
+                <TableRow>
+                  {(
+                    [
+                      ["name", "Skill"],
+                      ["version", "Version"],
+                      ["owner", "Owner"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <SortableHead
+                      className="px-4"
+                      direction={sort.key === key ? sort.direction : undefined}
+                      key={key}
+                      label={label}
+                      onSort={() => toggle(key)}
+                    />
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((skill) => (
+                  <TableRow key={skill.name}>
+                    <TableCell className="whitespace-normal px-4 py-3">
+                      <button
+                        className="text-left font-medium"
+                        onClick={() => onSelect(skill.name)}
+                        type="button"
+                      >
+                        {humanize(skill.name)}
+                      </button>
+                      <span className="ml-2 font-mono text-xs text-muted-foreground">
+                        {skill.name}
+                      </span>
+                      {skill.agentOwned && (
+                        <Badge className="ml-2" variant="info">
+                          agent-owned
+                        </Badge>
+                      )}
+                      <p className="mt-1 line-clamp-1 text-muted-foreground">
+                        {skill.description || "No description recorded."}
+                      </p>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-xs">
+                      {skill.activeVersion || "unversioned"}
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+                      {skill.ownerAgent || "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <ul className="divide-y overflow-hidden rounded-xl border bg-card md:hidden">
+            {rows.map((skill) => (
+              <li key={skill.name}>
+                <button
+                  className="block w-full p-4 text-left"
+                  onClick={() => onSelect(skill.name)}
+                  type="button"
+                >
+                  <span className="flex items-center gap-2 font-medium">
+                    {humanize(skill.name)}
+                    {skill.agentOwned && <Badge variant="info">agent-owned</Badge>}
+                  </span>
+                  <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
+                    {skill.description || "No description recorded."}
+                  </span>
+                  <span className="mt-2 block font-mono text-xs text-muted-foreground">
+                    {skill.activeVersion || "unversioned"}
+                    {skill.ownerAgent && ` · ${skill.ownerAgent}`}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -311,10 +385,6 @@ function SkillState({ state }: { state: string }) {
           ? "warning"
           : "muted";
   return <Badge variant={variant}>{state || "unknown"}</Badge>;
-}
-
-function knowledgeTargetId(view: KnowledgeView, item: string) {
-  return `${view}-${encodeURIComponent(item)}`;
 }
 
 export function StateCard({
