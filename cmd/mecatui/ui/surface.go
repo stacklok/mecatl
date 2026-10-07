@@ -9,7 +9,7 @@ package ui
 // point. The structural gate (surface_arch_test.go) confines surface/soul
 // vocabulary to surface.go + the surface's own file. The deps are held ON THE
 // SURFACE STATE (set once at Open): a surface non-Render method with a deps
-// param is archived-past design, not current (see docs/design/surface-migration-plan.md).
+// param is archived-past design, not current (see docs/proposals/surface-migration-plan.md).
 
 import (
 	"context"

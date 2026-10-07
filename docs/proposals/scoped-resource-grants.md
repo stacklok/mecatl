@@ -1,3 +1,7 @@
+Status: exploring\
+Owner: Joe Beda\
+Last updated: 2026-10-07
+
 # Scoped resource grants: a filesystem and tool substrate
 
 *Status: strawman / working draft. Speculative scoping, not a design record under

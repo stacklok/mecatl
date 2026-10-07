@@ -1,3 +1,7 @@
+Status: exploring\
+Owner: Juan Antonio Osorio\
+Last updated: 2026-10-07
+
 # Cloud-Native Harness Kit — definition
 
 Status: **strawman / working draft.**

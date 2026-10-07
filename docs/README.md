@@ -27,6 +27,7 @@ Each kind of guidance has one home. Put a fact at the narrowest level that cover
 | `.claude/rules/*.md` | Invariants for a file pattern that spans directories, such as `*_test.go` | When an agent reads a matching file |
 | `.claude/skills/` | Multi-step workflows, such as cutting a release | When invoked |
 | `docs/` | How the system works inside, for contributors | When read |
+| [`docs/proposals/`](proposals/README.md) | Designs not yet built, each with a status and owner; never current behavior | When read |
 | [`user-docs/`](../user-docs/intro.md) | How to use Mecatl, published at mecatl.dev | When read |
 
 Every `AGENTS.md` stays under 200 lines and has a `CLAUDE.md` symlink beside it; rules
@@ -36,5 +37,5 @@ stay at or under 25 lines. `task docs` checks these limits.
 
 - [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, and operator/library routes).
 - [`architecture.md`](architecture.md) — the living architecture reference.
-- [Public documentation](https://mecatl.dev/docs/) — canonical user-facing guidance and reference.
-- [Drafts](drafts/README.md) — proposals, not current behavior.
+- [Public documentation](../user-docs/intro.md) — canonical user-facing guidance and reference.
+- [Proposals](proposals/README.md) — designs, not current behavior.

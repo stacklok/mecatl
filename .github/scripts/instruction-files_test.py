@@ -96,6 +96,20 @@ case("file under removed .claude/plans fails", False, ".claude/plans/x.md: this 
      edit=lambda f, l: f.__setitem__(".claude/plans/x.md", "# Plan\n"))
 case("similar path outside removed dirs passes", True,
      edit=lambda f, l: f.__setitem__("docs/adr-notes.md", "# Not an ADR dir\n"))
+PROPOSAL = "Status: exploring\\\nOwner: Ada\\\nLast updated: 2026-10-07\n\n# Idea\n"
+case("proposal with complete header passes", True,
+     edit=lambda f, l: (f.__setitem__("docs/proposals/idea.md", PROPOSAL),
+                        f.__setitem__("docs/proposals/README.md", "# Proposals\n")))
+case("proposal without header fails", False, "idea.md: proposal header lacks Status, Owner, Last updated",
+     edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", "# Idea\n"))
+case("proposal missing owner fails", False, "idea.md: proposal header lacks Owner",
+     edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("Owner: Ada\\\n", "")))
+case("implemented proposal fails", False, "idea.md: Status: implemented",
+     edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("exploring", "implemented")))
+case("unknown proposal status fails", False, "idea.md: Status 'draft' must be one of",
+     edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("exploring", "draft")))
+case("proposal with bad date fails", False, "idea.md: Last updated 'soon' must be YYYY-MM-DD",
+     edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("2026-10-07", "soon")))
 case("missing description fails", False, "no description",
      edit=lambda f, l: f.__setitem__(".claude/skills/release/SKILL.md", "---\nname: release\n---\n"))
 

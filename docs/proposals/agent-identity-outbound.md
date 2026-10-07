@@ -1,3 +1,7 @@
+Status: exploring\
+Owner: Juan Antonio Osorio\
+Last updated: 2026-10-07
+
 # Agent identity, part 2: the outbound hop
 
 *Status: strawman / working draft. Speculative scoping, not a design record under

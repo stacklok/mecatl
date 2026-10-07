@@ -1,3 +1,7 @@
+Status: exploring\
+Owner: Joe Beda\
+Last updated: 2026-10-07
+
 # Cloud-Native Harness Systems — future work scoping
 
 *Status: speculative scoping only. Nothing in this doc is a committed direction, a

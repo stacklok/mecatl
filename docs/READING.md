@@ -43,7 +43,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 - [Qualify local microVM source builds](architecture/microvm-environments.md#qualify-local-microvm-source-builds) - contributor artifact preparation and offline guest checks.
 
 - [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
-- [Drafts](drafts/README.md) — proposals, not current behavior.
+- [Proposals](proposals/README.md) — designs, not current behavior.
 - [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
 - [User-docs authoring contract](../user-docs/_README.md) and [style guide](../user-docs/_STYLE.md) — where public documentation lives and how it is written.
 - Design notes: [design principles](design/principles.md).

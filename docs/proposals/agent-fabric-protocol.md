@@ -1,3 +1,7 @@
+Status: exploring\
+Owner: Dániel Kántor\
+Last updated: 2026-10-07
+
 # Agent Fabric Protocol
 
 **Version 0.1 — Draft**

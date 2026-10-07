@@ -109,7 +109,7 @@ Caller identity and audit records are useful building blocks, not a complete
 tenant-isolation boundary. Cross-process cryptographic proof and authority
 attenuation remain active design work. See the
 [agent identity tracker](https://github.com/stacklok/mecatl/issues/377) and the
-[working identity model](./docs/drafts/agent-identity-model.md).
+[working identity model](./docs/proposals/agent-identity-model.md).
 
 ## Try it locally
 

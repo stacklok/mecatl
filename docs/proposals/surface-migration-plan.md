@@ -1,3 +1,7 @@
+Status: accepted\
+Owner: Joe Beda\
+Last updated: 2026-10-07
+
 # Surface migration — the general template (issue #555 Phase 2)
 
 **Status:** active migration template. **Scope:** the GENERAL migration template
