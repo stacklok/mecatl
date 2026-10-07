@@ -151,4 +151,4 @@ binding defers cleanup until the last borrower releases it.
 - [The ports](ports.md)
 - [The agent loop](agent-loop.md)
 - [Context and compaction](context-and-compaction.md)
-- [Engine and session (public docs)](../../user-docs/building/what-you-get/engine-and-session.md)
+- [Engine and session (public docs)](../../user-docs/building/go/engine-and-session.md)

@@ -107,7 +107,7 @@ Optional capabilities are found by type assertion. `port.PrunableStore` is the
 retention mechanism; policy lives in `internal/app/childgc.go`, and all cleanup
 goes through `internal/sessionretention/planner.go`, which protects running,
 awaiting, live, and leased sessions. See
-[session storage operations](../../user-docs/building/deployment/session-storage-operations.md).
+[session storage operations](../../user-docs/operating/session-storage-operations.md).
 
 ### Session lease and single-writer
 
@@ -132,7 +132,7 @@ directory (`internal/adapter/flocklease`). A local JSONL store always gets a flo
 lease beneath its root; otherwise the store is asked whether it provides one.
 Replica operations are in [deployment and hardening](deployment-and-hardening.md);
 the contract is in
-[the session lease extension point](../../user-docs/building/extension-points/session-lease.md).
+[the session lease extension point](../../user-docs/building/go/extension-points/session-lease.md).
 
 ### Remote store + source drivers (`adapters/grpcdriver`)
 
@@ -142,7 +142,7 @@ holds client adapters for the engine ports and server wrappers for Go backends.
 `app.Build` selects each seam independently: session store, memory store, event
 log, lease, schedule store, and the skill, soul, agent, and command sources. Equal
 URLs share one connection. See the
-[store integration guide](../../user-docs/building/extension-points/session-store.md)
+[store integration guide](../../user-docs/building/go/extension-points/session-store.md)
 and [`adapters/COMPATIBILITY.md`](../../adapters/COMPATIBILITY.md). A driver is
 trusted like a store directory, but never trusted to sanitize:
 
@@ -166,7 +166,7 @@ against the gRPC clients over an in-memory connection, so drivers cannot drift.
 belongs to the decorator and the loop never replays a model step. It adds bounded
 retries with backoff and provider retry hints, per-attempt and stream-idle
 timeouts, and a circuit breaker. Settings are in
-[observability and resilience](../../user-docs/building/what-you-get/observability.md).
+[observability and resilience](../../user-docs/operating/observability.md).
 
 ### Semantic stream retry
 
@@ -196,4 +196,4 @@ conversation. Retry diagnostics never record prompts, headers, or raw error bodi
 - [Ports](ports.md)
 - [Providers](providers.md)
 - [Deployment and hardening](deployment-and-hardening.md)
-- [Observability and resilience (user docs)](../../user-docs/building/what-you-get/observability.md)
+- [Observability and resilience (user docs)](../../user-docs/operating/observability.md)

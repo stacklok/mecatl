@@ -4,7 +4,7 @@ This page maps performance questions to the measurement technique that answers
 them, and to what Mecatl actually runs for each. For catching regressions between
 commits, see [performance regression tracking](perf-tracking.md); for operator
 flags and endpoints, see
-[observability and resilience](../user-docs/building/what-you-get/observability.md).
+[observability and resilience](../user-docs/operating/observability.md).
 
 ## Pick the clock first
 
@@ -80,4 +80,4 @@ gated, because shared CI runners are too noisy for them.
 - [Performance regression tracking](perf-tracking.md)
 - [Observability](architecture/observability.md)
 - [Agent loop](architecture/agent-loop.md)
-- [Observability and resilience](../user-docs/building/what-you-get/observability.md)
+- [Observability and resilience](../user-docs/operating/observability.md)

@@ -124,7 +124,7 @@ in-memory storage and validation. Your embedding application owns proposal
 persistence, review authorization, scheduling, and transport. Use the
 [learning API](https://pkg.go.dev/github.com/stacklok/mecatl/engine/learning)
 for symbols and the
-[evidence contract](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
+[evidence contract](https://github.com/stacklok/mecatl/blob/main/docs/architecture/memory.md#evidence-backed-reflection)
 for selection and output validation.
 
 ## Next steps

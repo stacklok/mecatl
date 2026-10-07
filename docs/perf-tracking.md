@@ -217,4 +217,4 @@ To make a real profile, capture from a production-representative `mecated`:
 
 - [Measuring performance](perf-measurement-survey.md)
 - [Observability](architecture/observability.md)
-- [Observability and resilience](../user-docs/building/what-you-get/observability.md)
+- [Observability and resilience](../user-docs/operating/observability.md)

@@ -38,19 +38,20 @@ Also for contributors:
 - [Performance regression tracking](perf-tracking.md) and
   [measuring performance](perf-measurement-survey.md): benchmarks, gates, and live
   diagnosis.
+- [Qualify local microVM source builds](architecture/microvm-environments.md#qualify-local-microvm-source-builds):
+  contributor procedure for the macOS development path.
 - The [formal domain model](architecture/mecatl.modelith.md), generated from its `.yaml`.
 - [User-docs authoring contract](../user-docs/_README.md) and
   [style guide](../user-docs/_STYLE.md), for public documentation.
 
 ## Operators
 
-| Step | Page |
-| --- | --- |
-| 1 | [Project README](../README.md): feature overview and quick start |
-| 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
-| 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
-| 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
-| Then | Pick a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
+Start with [Deploy and operate Mecatl](../user-docs/operating/index.md). Use the
+[lightweight server guide](../user-docs/operating/mecated.md), then the
+[Kubernetes tutorial](../user-docs/operating/kubernetes.md) and
+[shared deployment guide](../user-docs/operating/mecak8s.md). The
+[capability matrix](../user-docs/features/get-oriented/capability-matrix.md)
+compares availability; public operator pages own procedures and prerequisites.
 
 ## Library consumers
 
@@ -58,6 +59,6 @@ Also for contributors:
 | --- | --- |
 | 1 | [Building on Mecatl](../user-docs/building/index.md) |
 | 2 | [`engine/session`](../engine/session), the domain entry point |
-| 3 | [Extension points](../user-docs/building/extension-points/index.md) |
+| 3 | [Extension points](../user-docs/building/go/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md), the stability contract |
 | Adapters | [`adapters/COMPATIBILITY.md`](../adapters/COMPATIBILITY.md): published stores and the remote driver |

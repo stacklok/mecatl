@@ -4,7 +4,7 @@ The agent loop in `engine/agent` turns one prompt into a finished run: it calls 
 model, dispatches the tool calls the model asks for, records the results, and
 repeats. This page explains how the loop is ordered and why. For the behavior a
 library caller or client sees, read
-[the agent loop user guide](../../user-docs/building/what-you-get/agent-loop.md).
+[the agent loop user guide](../../user-docs/features/sessions/agent-loop.md).
 
 ## Engine and run
 
@@ -171,7 +171,7 @@ the default text.
 
 ## Related
 
-- [The agent loop user guide](../../user-docs/building/what-you-get/agent-loop.md)
+- [The agent loop user guide](../../user-docs/features/sessions/agent-loop.md)
 - [Ports](ports.md)
 - [Context and compaction](context-and-compaction.md)
 - [Governance](governance.md)

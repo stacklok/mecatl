@@ -5,7 +5,7 @@ Before each model turn, the [agent loop](agent-loop.md) measures the complete re
 and, when it nears the window, compacts the persisted conversation. This page explains
 how the window and the token estimate are produced, what each compactor does, and why
 compaction must never split a tool call from its result. The operator-facing settings
-are in [context windows](../../user-docs/features/context-windows.md).
+are in [context windows](../../user-docs/features/sessions/context-windows.md).
 
 ## The window
 
@@ -106,4 +106,4 @@ Compaction is best-effort and never fails a run by itself.
 - [The agent loop](agent-loop.md)
 - [Providers](providers.md)
 - [Observability](observability.md)
-- [Context windows](../../user-docs/features/context-windows.md)
+- [Context windows](../../user-docs/features/sessions/context-windows.md)

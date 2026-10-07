@@ -153,7 +153,7 @@ records its origin session from the run context, never from model input; after e
 fire, a fenced result note is queued for that origin (`port.DeliveryQueue`) and drained
 as a new run or at its next turn boundary. Without a store directory the queue is
 in-memory, so notes can be lost on restart. Details are in
-[scheduled tasks](../../user-docs/building/what-you-get/scheduled-tasks.md).
+[scheduled tasks](../../user-docs/features/sessions/scheduled-tasks.md).
 
 ## Clients
 
@@ -201,7 +201,7 @@ replicas scale horizontally on one shared secret. The container image refuses `s
 and `mock` and requires an opt-in to run unauthenticated. Feature routes are gated on
 the daemon's advertised capabilities. Studio is early access; see
 [`apps/README.md`](../../apps/README.md) and the
-[Studio deployment guide](../../user-docs/building/deployment/studio.md).
+[Studio deployment guide](../../user-docs/operating/studio.md).
 
 ## Engine as a library
 
@@ -209,7 +209,7 @@ A Go program can embed the `engine/` module instead of calling a server. Its sta
 surface is the exported identifiers of the core packages listed in `arch.CorePackages`
 (`engine/arch/surface.go`), snapshotted in `engine/api/*.txt` and checked by
 `task api:check`. The rules are in [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md)
-and [API stability](../../user-docs/building/api-stability.md).
+and [API stability](../../user-docs/building/go/api-stability.md).
 
 ## Related
 
@@ -217,4 +217,4 @@ and [API stability](../../user-docs/building/api-stability.md).
 - [Observability](observability.md)
 - [Deployment and hardening](deployment-and-hardening.md)
 - [Governance](governance.md)
-- [Drive Mecatl over gRPC or HTTP](../../user-docs/building/deployment/grpc-http.md)
+- [Drive Mecatl over gRPC or HTTP](../../user-docs/building/grpc-http.md)

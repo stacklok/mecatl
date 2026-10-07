@@ -3,7 +3,8 @@
 _Placement_ decides which `tool.Environment` (Workspace, CommandRunner, and read ledger)
 backs a session's tools. This page covers the server-owned placement contract, then the
 local microVM runtime that implements it with one VM per repository. Operator steps are in
-the [local microVM guide](../../user-docs/building/deployment/microvm-environments.md).
+the [local microVM guide](../../user-docs/operating/microvm-environments.md); contributors
+can [qualify local source builds](#qualify-local-microvm-source-builds).
 
 ## Server-owned placement
 
@@ -240,4 +241,4 @@ back to host execution.
 - [Subagents and teams](subagents-and-teams.md): child environments and merge-back
 - [Deployment and hardening](deployment-and-hardening.md): caller identity and deployment shapes
 - [Governance](governance.md): permissions keyed by the governance root
-- [Local microVM guide](../../user-docs/building/deployment/microvm-environments.md)
+- [Local microVM guide](../../user-docs/operating/microvm-environments.md)

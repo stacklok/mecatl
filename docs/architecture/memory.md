@@ -4,7 +4,7 @@ Mecatl remembers across sessions in two stores: **project memory** holds facts a
 workspace, and the **user model** holds facts about the operator across every workspace.
 **Consolidation** (dreaming) tidies either store. **Evidence-backed reflection** proposes
 new facts and skills from completed work, and only promotes them under strict rules. For
-what operators see and configure, read [Memory and knowledge](../../user-docs/building/what-you-get/memory.md).
+what operators see and configure, read [Memory and knowledge](../../user-docs/features/agent-behavior/memory.md).
 
 ## One contract, two stores
 
@@ -77,7 +77,7 @@ inspected, so a concurrent edit turns into a conflict instead of a lost write.
   after a few minutes, so a restart or a request routed to another replica means
   generating a fresh plan. Operations apply independently, so a receipt can be partial.
 
-Settings and the review workflow are in [Dreaming and memory consolidation](../../user-docs/features/dreaming.md).
+Settings and the review workflow are in [Dreaming and memory consolidation](../../user-docs/features/agent-behavior/dreaming.md).
 
 ## Evidence-backed reflection
 
@@ -85,7 +85,7 @@ Reflection lets Mecatl learn from finished work without letting a model rewrite 
 memory or skills on a hunch. Every proposal must cite evidence from the source session,
 every step is bounded and durable, and anything that can't be verified fails closed.
 `engine/learning` holds the storage-neutral domain; `internal/app` composes it. Modes and
-budgets are in [Learning](../../user-docs/features/learning.md).
+budgets are in [Learning](../../user-docs/features/agent-behavior/learning.md).
 
 1. **Admission.** `learning.ThresholdPolicy` scores signals from the verified current span
    of a main session that ended cleanly: repeated correction, trusted-host contradiction,
@@ -145,5 +145,5 @@ disabled; that's why tests inject a temporary `UserModelDir`
 - [Agent loop](agent-loop.md)
 - [Governance](governance.md)
 - [Extensibility](extensibility.md)
-- [Memory and knowledge](../../user-docs/building/what-you-get/memory.md)
-- [Learning](../../user-docs/features/learning.md)
+- [Memory and knowledge](../../user-docs/features/agent-behavior/memory.md)
+- [Learning](../../user-docs/features/agent-behavior/learning.md)

@@ -37,6 +37,17 @@ and marks a second failure not retryable. `provider/ssefilter` drops data-less S
 frames (keepalives) before the OpenAI SDK decoder can choke on them. Upstream error
 text maps to a closed set of display categories and never reaches clients raw.
 
+Reasoning visibility is settled per wire. The Responses adapter asks every request
+for reasoning summaries (`reasoning.summary: auto`), even with no effort set; an
+endpoint that rejects the option returns its provider error, with no retry without
+it. The Messages adapter picks Anthropic's thinking mode per model from live listing
+metadata (`anthropic.WithThinkingResolver`, wired in `internal/app/registry.go`):
+reported adaptive or manual support selects that mode, an explicit "unsupported"
+omits thinking and drops a configured effort, and missing metadata falls back to a
+model-ID table. The inventory's boolean reasoning flag stays false when support is
+unknown, so it is not the gate for effort. Per-model behavior is in
+[choose models](../../user-docs/features/sessions/choose-models.md).
+
 ## Wire adapters and registry identities
 
 A wire adapter speaks one protocol. There are three, each its own Go module:
@@ -198,5 +209,5 @@ decision snapshot: metadata only, never task content.
 - [Context and compaction](context-and-compaction.md)
 - [Observability](observability.md)
 - [Subagents and teams](subagents-and-teams.md)
-- [Choose models](../../user-docs/features/choose-models.md) and the
+- [Choose models](../../user-docs/features/sessions/choose-models.md) and the
   [configuration reference](../../user-docs/reference/configuration.md)

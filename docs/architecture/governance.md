@@ -6,8 +6,8 @@ Governance decides whether a tool call runs, which project files the harness bel
 what a command sees in its environment, and how untrusted text reaches a model. The
 policy lives in `engine/governance`, a standard-library-only, session-free domain leaf;
 `internal/app` composes the rules, posture, and trust for a process. For details, see
-[permissions](../../user-docs/building/what-you-get/permissions.md) and
-[hooks](../../user-docs/building/what-you-get/hooks.md).
+[permissions](../../user-docs/features/security-and-execution/permissions-and-posture.md) and
+[hooks](../../user-docs/features/security-and-execution/hooks.md).
 
 ## Permission resolution
 
@@ -186,5 +186,5 @@ is dropped, not recorded.
 - [The agent loop](agent-loop.md)
 - [Subagents and teams](subagents-and-teams.md)
 - [Deployment and hardening](deployment-and-hardening.md)
-- [Permissions and posture](../../user-docs/features/permissions-and-posture.md)
-- [Hooks](../../user-docs/building/what-you-get/hooks.md)
+- [Permissions and posture](../../user-docs/features/security-and-execution/permissions-and-posture.md)
+- [Hooks](../../user-docs/features/security-and-execution/hooks.md)

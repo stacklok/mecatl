@@ -246,5 +246,5 @@ Elsewhere: [`tui.md`](tui.md) (mecatui contributor standards),
 - [Reading map](READING.md)
 - [Contributor instructions in `AGENTS.md`](../AGENTS.md)
 - [Building on Mecatl](../user-docs/building/index.md)
-- [Embed the engine](../user-docs/building/deployment/embed-engine.md)
+- [Embed the engine](../user-docs/building/go/embed-engine.md)
 - [Public documentation](../user-docs/intro.md)

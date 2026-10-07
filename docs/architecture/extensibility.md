@@ -161,7 +161,7 @@ An embedder of the `engine` module registers `tool.Tool` values and can supply a
 `tool.SkillSource`, `prompt.CommandSource`, `prompt.InstructionAssembler`, or
 `tool.SearchProvider`. `skillfs`, `webfetch`, and `search` ship in the engine
 module; the MCP client is root-module `internal/`, so an embedder brings its own.
-See [extension points](../../user-docs/building/extension-points/index.md) and
+See [extension points](../../user-docs/building/go/extension-points/index.md) and
 the [API surface](api-surface.md) for the compatibility contract.
 
 ## Related
@@ -169,5 +169,5 @@ the [API surface](api-surface.md) for the compatibility contract.
 - [Ports](ports.md)
 - [Governance](governance.md)
 - [Memory](memory.md)
-- [MCP client](../../user-docs/building/what-you-get/mcp-client.md)
-- [Skills, commands, and soul](../../user-docs/features/skills-commands-and-soul.md)
+- [MCP client](../../user-docs/features/security-and-execution/mcp-client.md)
+- [Skills, commands, and soul](../../user-docs/features/agent-behavior/skills-commands-and-soul.md)

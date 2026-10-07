@@ -127,4 +127,4 @@ behave like production because both pass the same contract.
 - [The domain model](domain-model.md)
 - [The agent loop](agent-loop.md)
 - [Providers](providers.md)
-- [Extension points (public docs)](../../user-docs/building/extension-points/index.md)
+- [Extension points (public docs)](../../user-docs/building/go/extension-points/index.md)

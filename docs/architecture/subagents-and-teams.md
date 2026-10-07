@@ -5,7 +5,7 @@
 The parent agent hands work to child loops through three tools. Each child runs
 [the agent loop](agent-loop.md) on an engine that `internal/app` builds with a narrower catalog.
 The tools live in `engine/agent`; team coordination state lives in `engine/team`. For arguments
-and flags, see [the user guide](../../user-docs/building/what-you-get/subagents-teams-parallel.md).
+and flags, see [the user guide](../../user-docs/features/agent-behavior/subagents-and-teams.md).
 
 | Tool | Intent | Child workspace | Returns to the parent |
 | --- | --- | --- | --- |
@@ -169,4 +169,4 @@ The remote-execution profile omits all three tools.
 - [Governance](governance.md): child permission resolution, workspace trust, and fences.
 - [Providers](providers.md): child model selection and the semantic router.
 - [MicroVM environments](microvm-environments.md): server-owned placement and child worktrees.
-- [Subagents, teams, and parallel work](../../user-docs/building/what-you-get/subagents-teams-parallel.md): user-facing arguments and flags.
+- [Subagents, teams, and parallel work](../../user-docs/features/agent-behavior/subagents-and-teams.md): user-facing arguments and flags.

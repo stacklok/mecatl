@@ -167,7 +167,7 @@ approval and the strict posture. Session store and event log are each in memory,
 or a remote driver. A local store directory always gets a file-lock session lease;
 otherwise leasing is off unless the operator selects a lease backend.
 `mecated config validate` checks operator settings offline with the runtime parser. See
-[run mecated](../../user-docs/building/deployment/mecated.md).
+[run mecated](../../user-docs/operating/mecated.md).
 
 **`mecak8s`** is the Kubernetes peer. Pods hold no durable state by default: sessions and
 the event log live in Redis, and a `coordination.k8s.io` Lease per session enforces the
@@ -177,12 +177,12 @@ is drain-gated, and a separate drain-only listener serves the `preStop` hook. On
 in-flight runs are cancelled, not completed, since a long model turn cannot fit a
 rolling-update grace period; the successor recovers the session from Redis. Server
 certificates and Redis credentials reload in place, keeping the last valid set. See
-[mecak8s](../../user-docs/building/deployment/mecak8s.md).
+[mecak8s](../../user-docs/operating/mecak8s.md).
 
 **`mecatequi`** runs one prompt in CI against an in-process service with no listeners or
 UI, emits a git diff, a JSON run summary, and optionally the event log, and maps the stop
 reason to an exit code. It has no approver, so a main-engine permission request cancels
-the run. See [mecatequi](../../user-docs/building/deployment/mecatequi.md).
+the run. See [mecatequi](../../user-docs/building/ci/mecatequi.md).
 
 ## Build and release
 
@@ -197,5 +197,5 @@ actions current.
 - [Governance](governance.md)
 - [Observability](observability.md)
 - [API surface](api-surface.md)
-- [Caller identity](../../user-docs/features/caller-identity.md)
-- [Deployment guides](../../user-docs/building/deployment/index.md)
+- [Caller identity](../../user-docs/features/security-and-execution/caller-identity.md)
+- [Deployment guides](../../user-docs/operating/index.md)
