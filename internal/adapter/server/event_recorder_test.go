@@ -97,6 +97,67 @@ func TestRunEventRecorderOmitsToolResultAvailable(t *testing.T) {
 	}
 }
 
+func TestRunEventRecorderOmitsDelegatedAvailability(t *testing.T) {
+	for _, family := range []string{"subagent", "parallel", "team"} {
+		t.Run(family, func(t *testing.T) {
+			log := &countingEventLog{}
+			recorder := NewRunEventRecorder(t.Context(), recorderService(log, port.NopDiagnostics{}), "s1")
+			event := session.Event{Turn: 1}
+			switch family {
+			case "subagent":
+				event.Type = session.EvSubagentTool
+				event.Subagent = &session.SubagentPayload{InnerKind: session.EvToolResultAvailable, Detail: "early"}
+			case "parallel":
+				event.Type = session.EvParallelBranch
+				event.Parallel = &session.ParallelPayload{InnerKind: session.EvToolResultAvailable, Detail: "early"}
+			case "team":
+				event.Type = session.EvTeamMember
+				event.Team = &session.TeamPayload{InnerKind: session.EvToolResultAvailable, Detail: "early"}
+			}
+			recorder.Observe(session.Event{Type: session.EvMessageDelta, Turn: 1, Text: "pending"})
+			recorder.Observe(event)
+			if len(log.attempts) != 0 {
+				t.Fatalf("provisional result flushed or persisted: %+v", log.attempts)
+			}
+			switch family {
+			case "subagent":
+				event.Subagent.InnerKind = session.EvToolResult
+			case "parallel":
+				event.Parallel.InnerKind = session.EvToolResult
+			case "team":
+				event.Team.InnerKind = session.EvToolResult
+			}
+			event.Seq = 2
+			recorder.Observe(event)
+			recorder.Close()
+			if len(log.recorded) != 2 || log.recorded[0].Text != "pending" || log.recorded[1].Type != event.Type {
+				t.Fatalf("durable projection = %+v", log.recorded)
+			}
+			for replayed, err := range log.Read(t.Context(), "s1") {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if replayed.Type != event.Type {
+					continue
+				}
+				var kind session.EventType
+				var detail string
+				switch family {
+				case "subagent":
+					kind, detail = replayed.Subagent.InnerKind, replayed.Subagent.Detail
+				case "parallel":
+					kind, detail = replayed.Parallel.InnerKind, replayed.Parallel.Detail
+				case "team":
+					kind, detail = replayed.Team.InnerKind, replayed.Team.Detail
+				}
+				if kind != session.EvToolResult || detail != "early" {
+					t.Fatalf("replayed child result = %+v", replayed)
+				}
+			}
+		})
+	}
+}
+
 func TestRunEventRecorderCoalescesDeltasInFirstObservedOrder(t *testing.T) {
 	log := &countingEventLog{}
 	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")

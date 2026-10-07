@@ -23,7 +23,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume(t *testing.T) {
 		inspected := openToolcallsForTest(t, m)
 		s := toolcallsForTest(t, inspected)
 		entry := toolcallEntryByID(t, s.entries, callID, m.conv.scrollback)
-		glyph, status, _ := entry.state.status()
+		glyph, status := entry.state.status()
 		if status != wantStatus || uint64(entry.blockID) != id || len(rows) == 0 {
 			t.Fatalf("%s: entry=%#v rows=%q, want %s", callID, entry, rows, wantStatus)
 		}
@@ -44,8 +44,8 @@ func TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume(t *testing.T) {
 			if len(rows) != 1 || strings.ContainsAny(text, "╭╮╰╯┌┐└┘─│") || !strings.Contains(plain, glyph+" "+entry.summary()) {
 				t.Fatalf("%s: settled call must use exactly one summary line: %q", callID, rows)
 			}
-		} else if !strings.ContainsAny(text, "╭╮╰╯┌┐└┘─│") || strings.Contains(plain, "✓") || strings.Contains(plain, " done ") {
-			t.Fatalf("%s: unresolved call must stay bordered without success: %q", callID, rows)
+		} else if !strings.ContainsAny(text, "╭╮╰╯┌┐└┘─│") || (entry.state != toolcallProvisional && strings.Contains(plain, "✓")) || strings.Contains(plain, " done ") {
+			t.Fatalf("%s: unresolved call must stay bordered and unconfirmed: %q", callID, rows)
 		}
 		if result != "" && strings.Contains(plain, result) {
 			t.Fatalf("%s: conversation fabricated or leaked result %q: %q", callID, result, plain)
@@ -62,7 +62,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume(t *testing.T) {
 			t.Fatalf("%s: missing inspector detail", callID)
 		}
 		detail := inspectorDetail(t, s, 100, 20)
-		if !strings.Contains(detail, glyph+" "+entry.fullName+" · "+status) {
+		if !strings.Contains(detail, glyph+" "+entry.fullName) || (entry.state != toolcallDone && !strings.Contains(detail, status)) {
 			t.Fatalf("%s: inspector detail status differs from conversation: %q", callID, detail)
 		}
 		if result != "" && (s.detailEntry.result.Body != "" || strings.Contains(detail, result)) {

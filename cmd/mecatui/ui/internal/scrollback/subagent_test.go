@@ -40,15 +40,16 @@ func TestSubagentTraceRetainsTrailingEntriesInOrder(t *testing.T) {
 	if !c.Subagents().Start("sub", SubagentStart{}) {
 		t.Fatal("start subagent")
 	}
-	trace := make([]TraceEntry, MaxTraceEntries+2)
-	for i := range trace {
-		trace[i].Text = string(rune('a' + i))
+	trace := make([]TraceEntry, 0, 2*(MaxTraceEntries+2))
+	for i := 0; i < 129; i++ {
+		trace = append(trace, TraceEntry{Kind: "tool", Text: string(rune('a' + i))})
+		trace = append(trace, TraceEntry{Kind: "message", Text: string(rune('a' + i))})
 	}
 	if !c.Subagents().Update("sub", SubagentUpdate{Trace: trace}) {
 		t.Fatal("update subagent")
 	}
 	got := c.SnapshotAt(0).Payload.(SubagentCardSnapshot).Update.Trace
-	if len(got) != MaxTraceEntries || got[0].Text != "c" || got[len(got)-1].Text != string(rune('a'+MaxTraceEntries+1)) {
-		t.Fatalf("trace = %#v; want trailing %d entries in order", got, MaxTraceEntries)
+	if len(got) != MaxTraceEntries || got[0].Kind != "tool" || got[0].Text != "b" || got[1].Kind != "tool" || got[len(got)-1].Kind != "message" || got[len(got)-1].Text != string(rune('a'+128)) {
+		t.Fatalf("trace = %#v; want 128 calls and 12 messages in order", got)
 	}
 }

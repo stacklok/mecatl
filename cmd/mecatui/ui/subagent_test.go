@@ -120,7 +120,7 @@ func TestSubagentErrorResolves(t *testing.T) {
 		// caller-neutral: "Subagent: " + "failed without producing a summary").
 		c.resolveTool("p1", "Subagent: failed without producing a summary", true)
 	})
-	if got, want := out, " ✗ Subagent · investigate the loop"; got != want {
+	if got, want := out, " ✗ Subagent · investigate the loop · failed"; got != want {
 		t.Errorf("failed subagent line = %q, want %q", got, want)
 	}
 }

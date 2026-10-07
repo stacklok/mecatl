@@ -1489,102 +1489,48 @@ func teamStopReasonLabel(reason string) string {
 	}
 }
 
-// renderTrace renders a delegation lane's expanded trace — the SHARED format for
-// the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
-// lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
-// prefixed "  ") interleave with tool chips (✓/✗ name) carrying their bounded
-// arg/result preview, in arrival order. A chip with a preview gets its own line
-// ("  ✓ Grep — pattern: foo"); bare chips coalesce onto one wrapped row. Returns
-// "" for an empty trace. All text is sanitized; the previews are capped again here
-// (maxTraceDetailLen / maxTraceMessageLen) on top of the server clamp — the
-// intentional double-truncation defense-in-depth.
+// renderTrace renders the shared bounded delegation trace for Subagent, Parallel,
+// Team and the Agents overlay. Results change status, never call-side intent.
 func (r *renderer) renderTrace(trace []teamTrace) string {
 	if len(trace) == 0 {
 		return ""
 	}
 	muted := r.th.Style("muted")
-	okStyle := r.th.Style("toolOk")
-	errStyle := r.th.Style("toolErr")
 	nameStyle := r.th.Style("toolName")
-
 	var b strings.Builder
-	var chips []string
-	flush := func() {
-		if len(chips) == 0 {
-			return
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		for i, row := range wrapDelegationRow("  ", strings.Join(chips, chipSep), r.traceWidth) {
-			if i > 0 {
-				b.WriteString("\n")
+	for _, t := range trace {
+		if t.kind == teamTraceMessage {
+			for _, row := range wrapDelegationRow("  ", truncate(terminaltext.Sanitize(oneLine(t.text)), maxTraceMessageLen), r.traceWidth) {
+				if b.Len() > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(muted.Render(row))
 			}
-			b.WriteString(nameStyle.Render(row))
+			continue
 		}
-		chips = nil
-	}
-	writeLine := func(prefix, text string, style lipgloss.Style) {
-		flush()
-		for _, row := range wrapDelegationRow(prefix, text, r.traceWidth) {
+		line := delegationToolLine(t.name, t.intent, t.resolved, t.isError, t.provisional)
+		offset := 0
+		for _, row := range wrapDelegationRow("  ", line.Text(), r.traceWidth) {
 			if b.Len() > 0 {
-				b.WriteString("\n")
+				b.WriteByte('\n')
 			}
-			b.WriteString(style.Render(row))
-		}
-	}
-	writeToolLine := func(glyph, name, detail string, glyphStyle lipgloss.Style) {
-		flush()
-		rows := wrapDelegationRow("  ", glyph+" "+name+" — "+detail, r.traceWidth)
-		regularPrefix := r.traceWidth <= 0 || r.traceWidth > 2
-		offset, glyphStart := 0, 0
-		if !regularPrefix {
-			glyphStart = 2
-		}
-		for _, row := range rows {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			if regularPrefix {
+			// wrapDelegationRow retains the two-cell indent on ordinary widths.
+			if r.traceWidth <= 0 || r.traceWidth > 2 {
 				b.WriteString(row[:2])
 				row = row[2:]
 			}
-			b.WriteString(renderTraceToolRow(row, offset, glyphStart, name, glyphStyle, nameStyle, muted))
+			b.WriteString(renderTraceToolRow(row, offset, line, r.th.Style(line.StatusStyle()), nameStyle, muted))
 			offset += len([]rune(row))
 		}
 	}
-	for i := range trace {
-		t := &trace[i]
-		switch t.kind {
-		case teamTraceTool:
-			glyph := "✓"
-			style := okStyle
-			if t.isError {
-				glyph = "✗"
-				style = errStyle
-			}
-			name := truncate(terminaltext.Sanitize(t.name), maxTraceToolNameLen)
-			if detail := terminaltext.Sanitize(oneLine(t.detail)); detail != "" {
-				writeToolLine(glyph, name, truncate(detail, maxTraceDetailLen), style)
-			} else {
-				chips = append(chips, glyph+" "+name)
-			}
-		case teamTraceMessage:
-			writeLine("  ", truncate(terminaltext.Sanitize(oneLine(t.text)), maxTraceMessageLen), muted)
-		}
-	}
-	flush()
 	return b.String()
 }
 
-// renderTraceToolRow restores a trace tool row's semantic styles after its raw
-// text has been wrapped: status glyph, tool name, then muted preview. offset and
-// glyphStart are rune offsets in the unwrapped text, letting a style boundary fall
-// on either side of a wrapped row.
-func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphStyle, nameStyle, muted lipgloss.Style) string {
-	nameStart := glyphStart + 2 // glyph plus its following space
-	detailStart := nameStart + len([]rune(name))
-
+// renderTraceToolRow reapplies semantic styles after wrapping the plain line.
+func renderTraceToolRow(row string, offset int, line renderfmt.ToolLine, statusStyle, nameStyle, muted lipgloss.Style) string {
+	nameStart := len([]rune(line.Glyph())) + 1
+	intentStart := nameStart + len([]rune(line.Name()))
+	statusStart := len([]rune(line.Text())) - len([]rune(line.Status()))
 	var b strings.Builder
 	var runes []rune
 	style := -1
@@ -1596,7 +1542,7 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 		text := string(runes)
 		switch style {
 		case 0:
-			b.WriteString(glyphStyle.Render(text))
+			b.WriteString(statusStyle.Render(text))
 		case 1:
 			b.WriteString(nameStyle.Render(text))
 		case 2:
@@ -1611,11 +1557,13 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 		position := offset + i
 		next := -1
 		switch {
-		case position == glyphStart:
+		case position < len([]rune(line.Glyph())):
 			next = 0
-		case position >= nameStart && position < detailStart:
+		case position >= nameStart && position < intentStart:
 			next = 1
-		case position >= detailStart:
+		case line.Status() != "" && position >= statusStart:
+			next = 0
+		case position >= intentStart:
 			next = 2
 		}
 		if next != style {
@@ -1811,31 +1759,41 @@ type editDiffArgs struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+type editRequest struct {
+	path, oldString, newString string
+	replaceAll                 bool
+}
+
+func parseEditRequest(rawArgs string) (editRequest, bool) {
+	var args editDiffArgs
+	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" || (args.OldString == "" && args.NewString == "") {
+		return editRequest{}, false
+	}
+	return editRequest{path: args.Path, oldString: args.OldString, newString: args.NewString, replaceAll: args.ReplaceAll}, true
+}
+
 // renderEditDiff renders an Edit as a red/green unified-style diff:
 // removed (old_string) lines prefixed "-", added (new_string) lines prefixed
 // "+", under a muted path header (with a "(replace all)" tag when set). Returns
 // false on malformed/empty args so the caller falls back to JSON.
 func (r *renderer) renderEditDiff(rawArgs string, expand bool, bodyWidth int) (string, bool) {
-	var args editDiffArgs
-	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil {
-		return "", false
-	}
-	if args.Path == "" || (args.OldString == "" && args.NewString == "") {
+	args, ok := parseEditRequest(rawArgs)
+	if !ok {
 		return "", false
 	}
 
 	// Size signal: removed/added line counts (empty side = 0 lines).
-	removed := lineCount(args.OldString)
-	added := lineCount(args.NewString)
-	header := fmt.Sprintf("%s  -%d +%d", args.Path, removed, added)
-	if args.ReplaceAll {
+	removed := lineCount(args.oldString)
+	added := lineCount(args.newString)
+	header := fmt.Sprintf("%s  -%d +%d", args.path, removed, added)
+	if args.replaceAll {
 		header += " (replace all)"
 	}
 	var b strings.Builder
 	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	b.WriteString("\n")
-	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand, bodyWidth))
-	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.oldString, "-", "removed text", "diffRemove", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.newString, "+", "added text", "diffAdd", expand, bodyWidth))
 	return strings.TrimRight(b.String(), "\n"), true
 }
 
@@ -1865,7 +1823,7 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	if args.Content != "" {
 		b.WriteString("\n")
-		b.WriteString(r.diffSide(args.Content, "+", "diffAdd", expand, bodyWidth))
+		b.WriteString(r.diffSide(args.Content, "+", "content", "diffAdd", expand, bodyWidth))
 	}
 	return strings.TrimRight(b.String(), "\n"), true
 }
@@ -1873,12 +1831,14 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 // diffSide renders one side of a diff (all-removed or all-added): every line of
 // text gets the prefix and the themed style, line-capped unless expanded. An
 // empty side renders nothing. The text is sanitized (these go through lipgloss).
-func (r *renderer) diffSide(text, prefix, slot string, expand bool, bodyWidth int) string {
-	text = terminaltext.Sanitize(strings.TrimRight(text, "\n"))
+func (r *renderer) diffSide(text, prefix, field, slot string, expand bool, bodyWidth int) string {
 	if text == "" {
 		return ""
 	}
 	lines := strings.Split(text, "\n")
+	if strings.HasSuffix(text, "\n") {
+		lines = lines[:len(lines)-1]
+	}
 	var marker string
 	if !expand && len(lines) > maxDiffLines {
 		extra := len(lines) - maxDiffLines
@@ -1891,12 +1851,15 @@ func (r *renderer) diffSide(text, prefix, slot string, expand bool, bodyWidth in
 		// Prefix before wrapping so the source's diff marker and leading whitespace
 		// remain attached to this source line, rather than being reconstructed after
 		// a styled-card wrap.
-		b.WriteString(style.Render(wrapToolCardRegion(prefix+" "+ln, bodyWidth)))
+		b.WriteString(style.Render(wrapToolCardRegion(prefix+" "+terminaltext.Sanitize(ln), bodyWidth)))
 		b.WriteString("\n")
 	}
 	if marker != "" {
 		// The collapse marker is muted, not coloured as a diff line.
 		b.WriteString(lipgloss.NewStyle().Render(wrapToolCardRegion(marker, bodyWidth)))
+		b.WriteString("\n")
+	} else if !strings.HasSuffix(text, "\n") {
+		b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion("\\ No newline at end of "+field, bodyWidth)))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -2342,13 +2305,16 @@ func collapseMarkerMark(n int, inspectMark string) string {
 	return marker
 }
 
-// lineCount returns the number of text lines in s (0 for empty, otherwise one
-// more than the number of newlines, ignoring a single trailing newline). Used
-// for the diff header size signals.
+// lineCount returns the number of content lines in s (0 for empty, otherwise
+// every newline-terminated line plus a final unterminated line). Used for the
+// diff header size signals.
 func lineCount(s string) int {
-	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return 0
 	}
-	return strings.Count(s, "\n") + 1
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }

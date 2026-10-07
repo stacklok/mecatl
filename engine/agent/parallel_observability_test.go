@@ -390,7 +390,7 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// drainChildObserved chokepoint (re-tagged by branchTool), are client-only,
 		// and never enter the parent's Conversation — the behavioral canary suite
 		// (TestParallelNoContentLeakBehavioral) proves the raw body never crosses.
-		"Text": true, "Detail": true, "InnerKind": true,
+		"Text": true, "Detail": true, "InnerKind": true, "ChildToolCallID": true,
 	}
 	rt := reflect.TypeOf(session.ParallelPayload{})
 	for i := 0; i < rt.NumField(); i++ {

@@ -1507,7 +1507,7 @@ func planBodyFromArgs(rawArgs string) string {
 func approvalNotice(msg client.ApprovalMsg) string {
 	tool := msg.Tool
 	if tool == "" {
-		tool = "tool"
+		tool = toolKind
 	}
 	switch msg.Verdict {
 	case "allow_once":
