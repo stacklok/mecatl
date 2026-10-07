@@ -278202,6 +278202,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791403492191,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dcf1ea4a2c393c83f6cbcea20aebbf753e9cb2e9",
+          "message": "feat(mecatui): inspect Edit requests and bounded Subagent activity (#2139)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T15:54:41-07:00",
+          "tree_id": "d3049f821ef9da09003d16ac3f16c78bc7932ebf",
+          "url": "https://github.com/stacklok/mecatl/commit/dcf1ea4a2c393c83f6cbcea20aebbf753e9cb2e9"
+        },
+        "date": 1791414400886,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -403357,6 +403391,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791414397847,
+  "lastUpdate": 1791414402155,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
