@@ -14,3 +14,5 @@ rely on them for how Mecatl works.
 | [agent-fabric-protocol.md](agent-fabric-protocol.md) | Dániel Kántor | Draft HTTP/JSON protocol for remote files, folders, and callable actions. | **2026-11-06** |
 | [mecak8s-vmcp-delegation-contract.md](mecak8s-vmcp-delegation-contract.md) | Jakub Hrozek | Work record of the mecak8s and vMCP token-delegation contract qualification. | **2026-11-06** |
 | [contextual-guardrails-capacity.md](contextual-guardrails-capacity.md) | Juan Antonio Osorio | Work record of capacity calibration evidence for contextual guardrails. | **2026-11-06** |
+| [session-commit-history.md](session-commit-history.md) | Joe Beda | Design discussion for authoritative committed session history, recovery, and shared client interaction. | **2026-11-06** |
+| [session-commit-history.modelith.md](session-commit-history.modelith.md) | Joe Beda | Rendered companion domain model for the session-history design, with [YAML source](session-commit-history.modelith.yaml). | **2026-11-06** |
