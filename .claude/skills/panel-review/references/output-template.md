@@ -37,7 +37,7 @@ in SKILL.md Step 9; this fenced example stays here so SKILL.md remains concise.
 - **[blocker · Violation]** `<path/to/file>:42` uses an error-wrapping form
   forbidden by `.claude/rules/code-style.md § Errors`.
 - **[advisory · Judgement]** New file `<path/to/new-file>` introduces a
-  package-level singleton — `docs/design/principles.md` forbids
+  package-level singleton — the `docs/architecture.md` platform principles forbid
   global state. Was this discussed?
 
 (Or: "Standards axis: no project standards docs found — axis

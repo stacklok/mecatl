@@ -138,7 +138,7 @@ them):
 - `STYLE.md`, `STANDARDS.md`, `STYLEGUIDE.md` at repo root or under
   `docs/`
 - `.claude/rules/*.md`
-- `docs/design/principles.md` if present
+- the "Platform principles" section of `docs/architecture.md` if present
 
 **Explicit skip rule** (inherited from Matt's design): tell the Standards
 subagent not to re-check anything enforced by detected formatter, linter,
