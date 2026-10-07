@@ -176,7 +176,7 @@ type config struct {
 	llmBreakerThreshold  int
 	llmBreakerCooldown   time.Duration
 
-	// Provider-side prompt caching (ADR 0100).
+	// Provider-side prompt caching.
 	noPromptCache     bool
 	anthropicCacheTTL string
 
@@ -223,11 +223,11 @@ type config struct {
 	// --metrics-addr (the admin listener it rides) AND that address to be loopback:
 	// the surface is UNAUTHENTICATED and can embed goroutine-derived names/timing,
 	// so serve() FAILS CLOSED if --perf-mcp is set on a non-loopback --metrics-addr
-	// (decision 6 + the security review's CWE-306 Low finding).
+	// (the security review's CWE-306 Low finding).
 	perfMCP bool
 
 	// goroutineWarnThreshold arms a background watchdog that logs slog.Warn when
-	// runtime.NumGoroutine() exceeds it (decision 10: a live leak alarm, not just
+	// runtime.NumGoroutine() exceeds it (a live leak alarm, not just
 	// the test-time goleak gate). 0 (default) disables it. The runtime collector
 	// already exports the goroutine COUNT as a series; this is the ALARM on top.
 	goroutineWarnThreshold int
@@ -267,7 +267,7 @@ type config struct {
 	sessionLeaseTTL           time.Duration
 	sessionLeaseRenewInterval time.Duration
 
-	// Scheduled tasks (issue #189, Phase 1f; ADR 0073): the in-process scheduler
+	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler
 	// ticks the durable ScheduleStore and fires due schedules. ON by default on
 	// any schedule-capable store (--store-dir / --redis-url / a driver store that
 	// exposes the accessor); a store with no ScheduleStore (the in-memory
@@ -330,7 +330,7 @@ type config struct {
 	// modelSlots binds a named internal lightweight call (compaction/ask-reviewer/
 	// guardrail) — or a tier (cheap/fast/reasoning) a slot falls through to — to a
 	// model selector (an alias or a concrete id), via the repeatable --model-slot
-	// flag. Resolved THROUGH modelAliases in the composition layer (ADR 0030).
+	// flag. Resolved THROUGH modelAliases in the composition layer.
 	modelSlots *cliconfig.KeyValueList
 
 	// Headless ask reviewer (issue #31): subagentAskReviewer names the model (or
@@ -345,7 +345,7 @@ type config struct {
 	subagentAskReviewerPolicyFile string
 	subagentAskReviewerPolicy     string
 
-	// Subagent model router (ADR 0031; enable model per ADR 0042): the router is ENABLED
+	// Subagent model router: the router is ENABLED
 	// by configuring a `models.router:` taxonomy in the user-global settings.yaml — the
 	// guardrails-parity enable model (no flag to forget). The --subagent-model-router
 	// flag is a KILL-SWITCH: subagentModelRouter holds its value and
@@ -359,7 +359,7 @@ type config struct {
 	// Guardrails (issue #27): guardrailsModel names the tool-less checker model that
 	// inspects PreToolUse (outbound-args exfil) and PostToolUse (inbound-result
 	// injection) tool content. Configuring a model here OR via a bound `guardrail`
-	// model slot ENABLES guardrails (configure = enable, ADR 0046); empty + no slot
+	// model slot ENABLES guardrails (configure = enable); empty + no slot
 	// disables them. guardrailsOff is the master kill-switch (--guardrails=off) that
 	// forces guardrails off regardless of config. The RULE LIST + cost knobs live in
 	// the OPERATOR-TIER `guardrails:` subtree of the user-global settings.yaml (a flag
@@ -409,7 +409,7 @@ type config struct {
 	mainRetention         time.Duration
 	mainRetentionMaxTotal int
 
-	// Schedule-fire retention/GC (ADR 0059 decision #7 Phase-2): age threshold
+	// Schedule-fire retention/GC: age threshold
 	// for persisted "sched--"-prefixed fire-session snapshots. Default 7d when
 	// scheduling is on (applied below); 0 disables (fire sessions never swept).
 	scheduleFireRetention         time.Duration
@@ -508,16 +508,16 @@ type config struct {
 	// settings.yaml posture: key raises it). The resolved tier is reported by the
 	// structured `operator posture` startup diagnostic emitted by app.Build.
 	posture string
-	// deploymentID is the operator-set opaque label surfaced on GetServerInfo
-	// (ADR 0248). Sanitised by sanitizeDeploymentID before it reaches app.Config.
+	// deploymentID is the operator-set opaque label surfaced on GetServerInfo.
+	// Sanitised by sanitizeDeploymentID before it reaches app.Config.
 	deploymentID string
-	// corsOrigins is the EXACT-match browser origin allowlist for the HTTP API
-	// (ADR 0248). Empty (the default) installs no CORS middleware at all.
+	// corsOrigins is the EXACT-match browser origin allowlist for the HTTP API.
+	// Empty (the default) installs no CORS middleware at all.
 	corsOrigins stringList
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
-	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055): ""
+	// reasoningEffort is the operator-tier reasoning-effort default: ""
 	// or "auto" (unset → the provider default) or low/medium/high/xhigh/max.
 	// Operator-tier only: the operator-global settings.yaml reasoning-effort: key
 	// folds in, a project-tier key is WARN-ignored. A per-session CreateSession
@@ -661,7 +661,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 }
 
 // runConfigDaemonInit implements `mecated config daemon init [--print] [--force]`:
-// it scaffolds a minimal, commented v1 daemon.yaml (issue #338, ADR 0088) at the
+// it scaffolds a minimal, commented v1 daemon.yaml (issue #338) at the
 // documented conventional path <XDG_CONFIG_HOME>/mecatl/daemon.yaml. It does NOT
 // cause automatic loading — the file is loaded ONLY when `mecated serve --config
 // PATH` is supplied explicitly. --print emits the skeleton to out and writes
@@ -806,7 +806,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 
 // runPerfMCPPrintConfig implements `mecated perf-mcp print-config [--metrics-addr
 // host:port]`: it prints the paste-ready client .mcp.json snippet pointing at the
-// loopback perf MCP server's /mcp endpoint. Per decision 6 (loopback, no auth) the
+// loopback perf MCP server's /mcp endpoint. Because it is loopback-only with no auth, the
 // snippet carries NO Authorization header — adding one is a future off-loopback
 // concern. --metrics-addr sets the host:port in the printed URL (default
 // 127.0.0.1:9090, matching defaultMetricsAddr). Output goes to stdout so it can be
@@ -885,7 +885,7 @@ func run(mode commandMode, remaining []string) error {
 	// perf surface's nil-Logger fallback) is correctly routed there. cmd/ mains are the
 	// only layer allowed to call slog.SetDefault; all of internal/ flows through the
 	// injected port.Diagnostics (ban-guarded). The TUI, by contrast, redirects the
-	// default to a FILE because it owns the alt-screen. See docs/adr/0020-diagnostics.md.
+	// default to a FILE because it owns the alt-screen. See docs/architecture/observability.md#diagnostics.
 	slog.SetDefault(logger)
 	// Diagnostics and ambient slog share this configured logger.
 	// The warning, if any, was emitted by the logger factory above.
@@ -1063,7 +1063,7 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		return observability{}, fmt.Errorf("setup metrics: %w", err)
 	}
 	// Process-RSS gauge (mecatl.process.rss): Linux-only, no-op elsewhere. It
-	// rides the same MeterProvider so it renders on /metrics (decision 9).
+	// rides the same MeterProvider so it renders on /metrics.
 	if rerr := telemetry.RegisterProcessGauges(providers.Meter, diag); rerr != nil {
 		return observability{}, fmt.Errorf("setup process gauges: %w", rerr)
 	}
@@ -1102,7 +1102,7 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		}
 	}
 
-	// Live goroutine-leak alarm (decision 10): the runtime collector already
+	// Live goroutine-leak alarm: the runtime collector already
 	// exports the goroutine COUNT as a /metrics series; this is the operator-facing
 	// ALARM on top — a background watchdog logging slog.Warn when the count exceeds
 	// a configured ceiling. Disabled by default (threshold 0). It is bound to ctx
@@ -1146,7 +1146,7 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 // before starting the heartbeat goroutine and before returning — never
 // deferred to a check on the returned handles' FirstRun field afterward,
 // which would leave a window where the pipeline could record/export before
-// a human ever saw the notice (ADR 0338). run() only threads the resulting
+// a human ever saw the notice. run() only threads the resulting
 // handles and the heartbeat-context cancel func (both callers must defer
 // unconditionally: the handles' Shutdown is always a safe no-op when
 // disabled/errored). The returned error is informational only — a caller
@@ -1282,7 +1282,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SubagentAskReviewerModel:      cfg.subagentAskReviewer,
 		SubagentAskReviewerMaxDenies:  cfg.subagentAskReviewerMaxDenies,
 		SubagentAskReviewerPolicy:     cfg.subagentAskReviewerPolicy,
-		// Subagent model router (ADR 0042): the router is enabled by the operator-tier
+		// Subagent model router: the router is enabled by the operator-tier
 		// models.router: taxonomy (folded by foldOperatorModelRouter); this flag is a
 		// KILL-SWITCH. =false forces the router OFF (RouterDisabled). A bare flag / =true
 		// is a harmless no-op (the router stays governed by the taxonomy). Unset leaves
@@ -1339,7 +1339,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
 		DeploymentID:   cfg.deploymentID,
-		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
+		// Reasoning-effort tier: operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
 		ReasoningEffortFlagSet: cfg.reasoningEffortFlagSet,
@@ -1538,7 +1538,7 @@ func (c config) tcpGRPCConfigured() bool {
 // The rule is intentionally UDS-only; loopback TCP is still a network listener.
 //
 //   - A workspace path lends the daemon's FILESYSTEM authority over a root the
-//     operator already chose. Loopback is accepted there as ADR 0237's shipped
+//     operator already chose. Loopback is accepted there as the shipped
 //     precedent.
 //   - An MCP endpoint plus its auth headers lends the daemon's OUTBOUND NETWORK
 //     authority: the caller names a host and the daemon connects to it carrying
@@ -1549,20 +1549,19 @@ func (c config) tcpGRPCConfigured() bool {
 //     (listenUnixSocket creates the parent directory owner-only).
 //
 // So this is the fail-closed reading of AC9.2 — "the same request over a TCP
-// listener is refused" — and of ADR 0248, which already publishes the words "a
-// feature that is only reachable on a UDS listener is advertised only on that
-// listener". A loopback TCP daemon is a TCP daemon.
+// listener is refused" — and of the published GetServerInfo contract that a
+// feature only reachable on some listeners is advertised only on a listener
+// that permits it. A loopback TCP daemon is a TCP daemon.
 //
 // It costs the intended consumer nothing: the SDK-spawned daemon shape from
 // Scenario 8 is exactly --grpc-unix-socket with --http-addr "", which is the one
 // topology this returns true for.
 //
-// DEPLOYMENT-SCOPED, not per-connection, per ADR 0237's Decision: authority is "a
+// DEPLOYMENT-SCOPED, not per-connection: authority is a
 // deployment/composition policy, not an inference made from a request or from the
-// server package's socket state". One *Service backs both listeners, so adding
+// server package's socket state. One *Service backs both listeners, so adding
 // ANY TCP listener gives the feature up on all of them, the UNIX socket included.
-// A per-connection answer would contradict 0237 as written and would need its own
-// ADR.
+// A per-connection answer would contradict that policy.
 //
 // The two tests are asymmetric because the two listeners are. HTTP is always TCP
 // (serve() binds it with net.Listen("tcp", ...)), so an empty --http-addr — the
@@ -1639,7 +1638,7 @@ func validateEffectiveConfig(cfg config) error {
 	// FAIL CLOSED on a non-loopback --metrics-addr with --perf-mcp set, BEFORE
 	// serve() binds any listener, so the refusal is a pure config error with no
 	// side effects (matching the embed path). The /mcp surface is UNAUTHENTICATED
-	// and can embed goroutine-derived function names and timing (decision 6 + the
+	// and can embed goroutine-derived function names and timing (the
 	// security review's CWE-306 Low finding), so it must never be reachable off
 	// loopback — including via a file-supplied metrics_addr.
 	if cfg.perfMCP && !isLoopbackHostPort(cfg.metricsAddr) {
@@ -1796,7 +1795,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/operating/mecated). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
-	// Scheduled tasks (issue #189, Phase 1f; ADR 0073). The scheduler is ON by
+	// Scheduled tasks (issue #189, Phase 1f). The scheduler is ON by
 	// default whenever the configured store exposes a ScheduleStore; the flag
 	// surface is the opt-OUT knob.
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "disable scheduling for a schedule-capable durable store. Create, list, and manual fire operations remain available.")
@@ -1961,7 +1960,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	}
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
-	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
+	// explicitly: the scheduler is ON by
 	// default on a schedule-capable store, and a durable store accumulates a
 	// "sched--" session per fire, so a sane default keeps it bounded. An explicit
 	// --schedule-fire-retention=0 leaves fire sessions untouched (the sweep is
@@ -2050,7 +2049,7 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 		case "shell":
 			cfg.shellFlagSet = true
 		case "subagent-model-router":
-			// Tri-state (ADR 0042): record that the kill-switch flag was given so
+			// Tri-state: record that the kill-switch flag was given so
 			// appConfig can distinguish "unset" (router governed by the taxonomy) from
 			// "=false" (kill-switch); "=true/bare" is inert (the taxonomy still governs).
 			cfg.subagentModelRouterSet = true
@@ -2113,11 +2112,10 @@ func validateMicroVMDevelopmentFlags(mode commandMode, cfg config) error {
 
 // applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days
 // when the operator did not pass --schedule-fire-retention explicitly. The
-// scheduler is ON by default on any schedule-capable store (ADR 0073), so the
+// scheduler is ON by default on any schedule-capable store, so the
 // default activates on the default path too — not only under an explicit
 // enable flag. An explicit --schedule-fire-retention=0 disables the sweep.
-// Extracted from parseFlags to keep its cyclomatic complexity under the gate
-// (ADR 0059 decision #7 Phase-2).
+// Extracted from parseFlags to keep its cyclomatic complexity under the gate.
 func applyScheduleFireRetentionDefault(cfg *config) {
 	if !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
 		cfg.scheduleFireRetention = 7 * 24 * time.Hour
@@ -2449,7 +2447,7 @@ func (l *boundListeners) serveAdmin(metricsSrv *http.Server, cfg config, adminPa
 // SECURITY: pprof/FlightRecorder/expvar output can embed prompt text, file
 // paths, and goroutine stacks. This listener is loopback-bound by default and
 // MUST stay loopback — these endpoints are never mounted on the public
-// gRPC/HTTP service surface (decision 6 in docs/adr/0018-perf-observability.md).
+// gRPC/HTTP service surface.
 func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) (*http.Server, string) {
 	adminPaths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
 	if cfg.metricsAddr == "" || cfg.httpAddr == "" {
@@ -2459,7 +2457,7 @@ func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.
 	// Perf MCP server: mount /mcp on the SAME loopback admin mux. It is
 	// UNAUTHENTICATED and its output can embed goroutine-derived function names
 	// and timing, so a non-loopback --metrics-addr with --perf-mcp is REFUSED
-	// (decision 6 + the security review's CWE-306 Low finding). That refusal is
+	// (the security review's CWE-306 Low finding). That refusal is
 	// enforced fail-closed in parseFlags (config validation), BEFORE serve()
 	// binds anything — so by the time we reach here the address is loopback.
 	if cfg.perfMCP {
@@ -2513,7 +2511,7 @@ func logListenerPosture(cfg config, callerAuthenticated bool) {
 // exactly one job, and adding a secret to it would break its own tests first.
 //
 // Capabilities are deliberately dropped from that projection: the ready file is
-// an unauthenticated local artefact, and ADR 0245 keeps operator configuration
+// an unauthenticated local artefact, and operator configuration stays
 // out of the equivalent unauthenticated-shaped surface. A parent that wants the
 // capability set can ask for it over the socket it just learned about.
 func publishReadyFile(cfg config, svc *server.Service, lis boundListeners) error {
@@ -2548,7 +2546,7 @@ func publishReadyFile(cfg config, svc *server.Service, lis boundListeners) error
 // ctx is the SERVER-ROOT context: the validator owns background JWKS refresh, so
 // it must outlive any request. EVERY failure here is fatal and the daemon
 // refuses to start — silently falling back to the unauthenticated path would
-// turn an authenticated deployment into an open one (ADR 0204).
+// turn an authenticated deployment into an open one.
 func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authenticator, *server.CORSPolicy, error) {
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {

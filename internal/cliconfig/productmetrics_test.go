@@ -85,7 +85,7 @@ func TestBuildProductMetricsDisabledDryRunStillNoop(t *testing.T) {
 }
 
 // TestBuildProductMetricsInstallIDOverrideSkipsTheLocalFile is the mecak8s
-// contract (storage-free, no PVC, ADR 0048): a chart-provisioned install id
+// contract (storage-free, no PVC): a chart-provisioned install id
 // must bypass LoadOrCreateInstallIDDefault ENTIRELY, not merely take
 // precedence over whatever it returns.
 //
@@ -144,7 +144,7 @@ func TestBuildProductMetricsInstallIDOverrideNeverReportsFirstRun(t *testing.T) 
 // TestArmFirstValueTrackingSkipsWhenInstallIDIsOverridden pins the fix for the
 // finding in the final whole-branch review: mecak8s (which passes a non-empty
 // installIDOverride) has no durable local marker for time_to_first_value's
-// once-ever contract, the same storage-free problem (ADR 0048) install-id
+// once-ever contract, the same storage-free problem install-id
 // solves via a Helm ConfigMap. Arming anyway would make every pod
 // restart/replica rearm with alreadyRecorded=false, turning "once per
 // install, ever" into "once per pod start" — a silent correctness bug in the

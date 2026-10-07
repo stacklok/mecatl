@@ -49,7 +49,7 @@ type Config struct {
 	// TrustedCAPEM is the CA bundle's PEM-encoded bytes, used by
 	// AllowPrivateHTTPSIssuer's scoped transport to validate the issuer
 	// certificate. The caller is responsible for reading TrustedCAFile from
-	// disk; this package must not touch the host filesystem (ADR 0206).
+	// disk; this package must not touch the host filesystem.
 	TrustedCAPEM []byte
 	// HTTPClient optionally supplies trusted roots and transport policy. Nil uses
 	// the validator's hardened client. When set, the caller is responsible for

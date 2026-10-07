@@ -360,7 +360,7 @@ func mdParagraph(s string) string {
 	return strings.Join(strings.Fields(s), " ") + "\n"
 }
 
-// flagDrivenSection is the hand-written pointer block (decision 1): the settings.yaml
+// flagDrivenSection is the hand-written pointer block: the settings.yaml
 // reference covers the settings subtrees above; the other operator-facing
 // features are wired through CLI flags / their own files, not settings.yaml. This
 // block points operators at the rendered user docs rather than auto-harvesting
