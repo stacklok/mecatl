@@ -6,7 +6,7 @@ example of this is that the agent loop may run in a different process than the e
 actually run). This provides an interesting security property: the loop can keep credentials and permission checks outside
 the shell. But, as mentioned, this separation needs clear contracts between services. The [cloud-native harness
 explanation](../../user-docs/building/cloud-native-harness.md) describes the broader design. The [agent
-identity](../agent-identity-model.md) and [scoped resource grants](../scoped-resource-grants.md) drafts describe a
+identity][identity-draft] and [scoped resource grants][grant-draft] drafts describe a
 possible future identity system for agents that takes into account the delegation chain.
 
 We use Kubernetes Pods so deployments can reuse the isolation mechanisms their cluster already provides. The operator
@@ -390,8 +390,8 @@ before claiming support; a full qualification plan belongs with its implementati
 [juice-meta]: https://github.com/juicedata/juicefs/blob/adcca1cc61bb4d668a945d64b2e176b44ac8e5b5/pkg/meta/redis.go#L3132-L3175
 [juice-csi]: https://github.com/juicedata/juicefs-csi-driver/blob/2d2bd8a9ceb6233a9dc84a18ea169d8cacede157/docs/en/introduction.md
 [go-fuse]: https://github.com/hanwen/go-fuse/blob/efadbedbc68e9f5781e3cc04e8be7217e89bf775/fs/api.go
-[grant-draft]: ../scoped-resource-grants.md
-[identity-draft]: ../agent-identity-model.md
+[grant-draft]: https://github.com/stacklok/mecatl/blob/443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c/docs/scoped-resource-grants.md
+[identity-draft]: https://github.com/stacklok/mecatl/blob/443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c/docs/agent-identity-model.md
 [link-2]: https://github.com/stacklok/mecatl/blob/e731897077c75b020190f0d7b6e0b78af15082f1/engine/tool/environment.go#L9-L43
 [link-3]: https://github.com/stacklok/mecatl/blob/e731897077c75b020190f0d7b6e0b78af15082f1/engine/tool/tool.go#L427-L505
 [link-4]: https://github.com/stacklok/mecatl/blob/e731897077c75b020190f0d7b6e0b78af15082f1/internal/adapter/executionclient/client.go#L753-L792
