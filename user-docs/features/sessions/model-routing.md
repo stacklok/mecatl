@@ -84,6 +84,11 @@ delegated tasks. These bindings leave the session's base model unchanged. Use
 `compaction`, `ask-reviewer`, `guardrail`, and `router` for internal calls;
 `plan` selects the model for plan-mode turns.
 
+An internal-call slot without its own binding uses the `cheap` tier. Binding only
+`cheap` therefore also binds `guardrail`, which turns on
+[guardrails](../security-and-execution/permissions-and-posture.md#guardrails) and
+their checker cost.
+
 Router categories apply to plain Subagents, unpinned named specialists
 (including `mode: "read-write"`), Parallel branches, and team members without a
 named definition. A configured category list enables routing; without one,

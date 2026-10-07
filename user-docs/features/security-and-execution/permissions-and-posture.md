@@ -244,6 +244,9 @@ checker model to enable them:
 mecated serve --guardrails-model gpt-5.6-luna
 ```
 
+Binding the `cheap` model tier also enables guardrails when the `guardrail` slot has
+no binding of its own, because that slot falls back to `cheap`.
+
 The checker reviews exact effective actions before execution and
 already-produced results before delivery. A configured checker with no custom
 rule list uses the expanded default enforcing set for Shell, local
