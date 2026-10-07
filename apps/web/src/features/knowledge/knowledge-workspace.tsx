@@ -127,7 +127,7 @@ function ConfiguredSkills() {
         <StateCard text={`No skills match "${filter.trim()}".`} />
       ) : (
         <>
-          <div className="overflow-hidden rounded-xl border bg-card max-[499px]:hidden">
+          <div className="overflow-hidden rounded-xl border bg-card max-[500px]:hidden">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">

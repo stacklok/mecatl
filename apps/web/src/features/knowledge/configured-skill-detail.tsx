@@ -57,7 +57,7 @@ export function ConfiguredSkillDetail({ name }: { name: string }) {
         <div className="space-y-3">
           <h1
             className={pageTitleClass(
-              "break-words text-[44px] leading-[1.05] max-[499px]:text-3xl",
+              "break-words text-[44px] leading-[1.05] max-[500px]:text-3xl",
             )}
           >
             {humanizeSkillName(skill.name)}
