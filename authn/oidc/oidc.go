@@ -4,15 +4,27 @@ package oidc
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/stacklok/toolhive-core/authn"
+	"github.com/stacklok/toolhive-core/networking"
 
 	"github.com/stacklok/mecatl/engine/session"
+)
+
+const (
+	// maxIdentityDocumentBytes bounds a discovery or JWKS document read here.
+	maxIdentityDocumentBytes = 1 << 20
+	// readinessTimeout matches the timeout ToolHive applies to its own JWKS client.
+	readinessTimeout = 15 * time.Second
 )
 
 // Config is the trusted issuer, audience, and key-fetch policy for a Validator.
@@ -34,8 +46,9 @@ type Config struct {
 	// HTTPS issuer. This legacy escape hatch remains for isolated tests that need
 	// both HTTP and private-address access.
 	InsecureAllowPrivateIssuer bool
-	// AllowPrivateHTTPSIssuer permits only the configured issuer and optional
-	// JWKS host's resolved private addresses. Its internal scoped transport
+	// AllowPrivateHTTPSIssuer permits only the resolved private addresses of the
+	// JWKS host when JWKSURI is set (the issuer is then never contacted), or of
+	// the issuer host when JWKSURI is empty. Its internal scoped transport
 	// re-validates addresses on every dial, bounds keep-alives, refuses redirects,
 	// and retains HTTPS and TLS hostname verification.
 	// TrustedCAFile is required when this mode is enabled.
@@ -76,6 +89,8 @@ type Validator struct {
 	// internalClient is owned by this validator; caller-supplied clients remain
 	// caller-owned and are never closed here.
 	internalClient *http.Client
+	healthClient   *http.Client
+	healthURL      string
 	closeOnce      sync.Once
 }
 
@@ -114,8 +129,49 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
-	return &Validator{validator: validator, internalClient: internalClient}, nil
+	// Ready probes with the validator's own client when this package built it.
+	healthClient := internalClient
+	if healthClient == nil && cfg.JWKSURI != "" {
+		healthClient, err = readinessClient(cfg)
+		if err != nil {
+			validator.Close()
+			return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		}
+	}
+	return &Validator{validator: validator, internalClient: internalClient, healthClient: healthClient, healthURL: cfg.JWKSURI}, nil
 }
+
+// readinessClient returns the client Ready uses when the validator owns no
+// transport. It applies the policy ToolHive applies to its own JWKS fetches, so
+// a readiness probe cannot follow a redirect to an internal address or hang: a
+// supplied client keeps its transport but gains redirect refusal and a timeout
+// when it set none, and otherwise the client enforces the private-address, CA,
+// and timeout policy of the validator's configuration.
+func readinessClient(cfg Config) (*http.Client, error) {
+	if cfg.HTTPClient != nil {
+		client := *cfg.HTTPClient
+		if client.CheckRedirect == nil {
+			client.CheckRedirect = refuseRedirects
+		}
+		if client.Timeout == 0 {
+			client.Timeout = readinessTimeout
+		}
+		return &client, nil
+	}
+	client, err := networking.NewHttpClientBuilder().
+		WithPrivateIPs(cfg.InsecureAllowPrivateIssuer).
+		WithInsecureAllowHTTP(cfg.InsecureAllowPrivateIssuer).
+		WithCABundle(cfg.TrustedCAFile).
+		WithTimeout(readinessTimeout).
+		Build()
+	if err != nil {
+		return nil, fmt.Errorf("build readiness client: %w", err)
+	}
+	client.CheckRedirect = refuseRedirects
+	return client, nil
+}
+
+func refuseRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 func authnConfig(cfg Config) authn.Config {
 	audiences := []string{cfg.Audience}
@@ -147,6 +203,65 @@ func (v *Validator) Validate(ctx context.Context, bearer string) (*session.Princ
 		return nil, fmt.Errorf("%w: verified claims have no issuer or subject", ErrInvalidToken)
 	}
 	return out, nil
+}
+
+// Ready performs a bounded, read-only check that the configured JWKS endpoint
+// returns usable signing keys. It changes no identity-provider state and adds
+// no credential of its own; a validator from NewKubernetesValidator sends its
+// token file's contents to that one endpoint. Redirects are refused.
+//
+// Ready checks nothing when no JWKSURI is configured (discovery mode), where
+// the endpoint is only known to the underlying validator, and returns nil.
+func (v *Validator) Ready(ctx context.Context) error {
+	if v == nil || v.healthURL == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("OIDC health request: %w", err)
+	}
+	response, err := v.healthClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("OIDC health request: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("OIDC health endpoint returned status %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxIdentityDocumentBytes+1))
+	if err != nil {
+		return fmt.Errorf("OIDC health response: %w", err)
+	}
+	if len(body) > maxIdentityDocumentBytes || !usableJWKS(body) {
+		return errors.New("OIDC health endpoint returned no usable signing keys")
+	}
+	return nil
+}
+
+// usableJWKS reports whether body is a key set holding at least one key that
+// parses as an RSA or EC public key, the key types toolhive-core accepts. It
+// parses the way core does, so a malformed key does not hide its siblings.
+// It approximates core's policy rather than reproducing it: core also enforces
+// a minimum RSA size, use, key_ops, and algorithm match, so a set of only
+// weak or mismatched keys passes here while core rejects it.
+func usableJWKS(body []byte) bool {
+	set, err := jwk.Parse(body, jwk.WithStrictKeySetParsing(false))
+	if err != nil {
+		return false
+	}
+	for i := range set.Len() {
+		key, ok := set.Key(i)
+		if !ok {
+			continue
+		}
+		if _, err := jwk.Export[*rsa.PublicKey](key); err == nil {
+			return true
+		}
+		if _, err := jwk.Export[*ecdsa.PublicKey](key); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Close stops background JWKS refresh.
