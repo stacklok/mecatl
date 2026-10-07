@@ -46,7 +46,7 @@ type mcpSpecRecorder struct {
 	calls [][]mcp.ServerConfig
 	// closes counts SessionEngineResult.Close calls, so a test can prove a REFUSED
 	// create tore the freshly-built engine down instead of leaking its MCP
-	// connections for the process lifetime (ADR 0027 List 1 discipline).
+	// connections for the process lifetime.
 	closes int
 }
 

@@ -22,7 +22,7 @@ import (
 
 // TestCreateSessionWithSessionIDOverride: a caller passing WithSessionID mints
 // the session under that id (the override wins over the Service's NewID). Pins
-// ADR 0059 decision #7 Phase-2: the scheduler fire path passes a "sched--"
+// the scheduler fire path: it passes a "sched--"
 // id and the persisted session carries it.
 func TestCreateSessionWithSessionIDOverride(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), nil)

@@ -101,7 +101,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
-	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
+	// Client-provided MCP servers (issue #821). Both wire transports go
 	// through the ONE Service seam, which classifies through the same validator the
 	// ACP surface uses and then applies the deployment policy — so this handler
 	// neither classifies an entry nor decides whether the field is accepted here.
@@ -1105,7 +1105,7 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 }
 
 // staleStreamControl reports a Converse control frame that names a run which is
-// no longer active (ADR 0249). Callers decide whether their control type has a
+// no longer active. Callers decide whether their control type has a
 // client-visible refusal lane; cancel remains fire-and-forget, while approval
 // emits control.refused correlated by ask id.
 func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) error {
@@ -1305,11 +1305,10 @@ func (h *HarnessServer) GetMcpPrompt(ctx context.Context, req *mecatlv1.GetMcpPr
 	return &mecatlv1.GetMcpPromptResponse{Description: res.Description, Messages: msgs}, nil
 }
 
-// GetCompatibilityInfo returns the deployment's compatibility descriptor
-// (ADR 0248).
+// GetCompatibilityInfo returns the deployment's compatibility descriptor.
 //
 // Distinct from GetServerInfo above, which answers "which BUILD is this?" under
-// ADR 0245's privacy boundary. This answers "what may I do with this server?"
+// the server-info privacy boundary. This answers "what may I do with this server?"
 // and carries exactly the capabilities/configuration that boundary keeps out of
 // the identity response.
 //
@@ -1925,8 +1924,8 @@ func sameMCPAuthorizationControlEvent(first, next session.Event) bool {
 		first.Authorization.Status == next.Authorization.Status
 }
 
-// StreamSessionLive is the LIVE per-session event stream (ADR 0075
-// fire-result-delivery Scenario 6 / Wave 3): a thin transport over the in-process
+// StreamSessionLive is the LIVE per-session event stream
+// (fire-result delivery): a thin transport over the in-process
 // per-session subscription registry (Service.Subscribe / PublishSessionEvent). It
 // is the UNIFIED bridge serving BOTH the embedded mecatui (which dials its
 // in-process server over a real gRPC UNIX socket) AND a remote mecated — ONE
@@ -1990,8 +1989,8 @@ func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest
 	}
 }
 
-// WatchSessionEvents is the DURABLE replay-then-follow stream (issue #821, ADR
-// 0250): a thin transport over Service.WatchSessionEvents.
+// WatchSessionEvents is the DURABLE replay-then-follow stream (issue #821):
+// a thin transport over Service.WatchSessionEvents.
 //
 // The SSE route GET /v1/sessions/{id}/watch consumes the SAME service method, so
 // the two transports deliver identical envelope sequences by construction rather
@@ -2298,7 +2297,7 @@ func statusForEntry(entry errorCodeEntry, err error) error {
 		// AC2.2 requires the IDENTICAL string on both transports, and the HTTP
 		// problem body's `code`/`type` are lowercase to match RFC 9457 style.
 		// Upper-casing here would give one error identity two spellings, and
-		// every SDK a case conversion to know about. ADR 0248 decision 7 records
+		// every SDK a case conversion to know about. The contract accepts
 		// the trade; TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity
 		// fails if the two ever diverge.
 		Reason: entry.Code,

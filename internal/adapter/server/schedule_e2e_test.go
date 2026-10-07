@@ -167,7 +167,7 @@ func TestScheduleE2E(t *testing.T) {
 	if fireID == "" || sessID == "" || fireID != sessID {
 		t.Fatalf("FireNow fire_id=%q session_id=%q (want non-empty and equal)", fireID, sessID)
 	}
-	// ADR 0059 decision #7 Phase-2: the fire's session id is "sched--"-prefixed
+	// The fire's session id is "sched--"-prefixed
 	// (the fire path pre-mints it via newFireID and passes it as the
 	// WithSessionID override on CreateSessionWithProfile, so the persisted
 	// session carries the sched-- GC-retention family prefix).
@@ -448,7 +448,7 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 // a fresh "sched--"-prefixed session reattached to the schedule's exact
 // placement via the WithSessionID override, drives it to
 // the terminal EvResult via StartScheduledRunContent, and returns the fire record. The
-// fire id IS the session id (ADR 0059 decision #7 Phase-2). Read-leaning
+// fire id IS the session id. Read-leaning
 // schedules run in plan mode (a read-only toolset).
 func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {

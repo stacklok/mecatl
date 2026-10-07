@@ -511,7 +511,7 @@ func TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuatio
 // TestAuthenticatedMCPMetadataReplacement_RebuildPreservesClientMCPSpecs pins
 // the fix for a session-engine rebuild silently dropping client-provided MCP
 // tools: buildAndRegisterSessionEngineWithBrokerTools hardcoded nil specs on
-// every rebuild (mode change, ADR-0310 enrollment freeze, and a lazy grant
+// every rebuild (mode change, enrollment freeze, and a lazy grant
 // refresh), so a session with client MCP configured lost it the first time any
 // of those rebuilt its engine. The Service must thread the session's original
 // specs (recorded at creation/load, s.clientMCPSpecs) through instead.

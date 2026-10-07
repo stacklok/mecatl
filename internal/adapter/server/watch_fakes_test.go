@@ -11,7 +11,7 @@ import (
 )
 
 // errAppendRejected is the injected backend failure the gap tiers respond to. It
-// stands for ADR 0250's LIKELY failure — one rejected or unencodable record —
+// stands for the LIKELY failure — one rejected or unencodable record —
 // rather than a total outage, which by construction cannot record its own
 // failure.
 var errAppendRejected = errors.New("backend rejected the record")

@@ -199,7 +199,7 @@ func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *
 	return svc
 }
 
-func TestADR_0291_ScopedWorktreeSelectorsFailClosed(t *testing.T) {
+func TestScopedWorktreeSelectorsFailClosed(t *testing.T) {
 	store := &placementStoreSpy{Store: memstore.New()}
 	provider := &placementProviderSpy{}
 	inventory := &discoverySpy{worktrees: []Worktree{{Path: "/feature", Branch: "feature", Head: "h1"}}}
@@ -301,7 +301,7 @@ func TestADR_0291_ScopedWorktreeSelectorsFailClosed(t *testing.T) {
 	}
 }
 
-func TestADR_0291_NoFSDiscoveryDoesNotInvokeFilesystemProviders(t *testing.T) {
+func TestNoFSDiscoveryDoesNotInvokeFilesystemProviders(t *testing.T) {
 	store := &placementStoreSpy{Store: memstore.New()}
 	provider := &placementProviderSpy{}
 	worktrees := &discoverySpy{worktrees: []Worktree{{Path: "/must-not-run"}}}
@@ -327,7 +327,7 @@ func TestADR_0291_NoFSDiscoveryDoesNotInvokeFilesystemProviders(t *testing.T) {
 	}
 }
 
-func TestADR_0291_ClearSessionIsLeaseSafeAndNonDestructive(t *testing.T) {
+func TestClearSessionIsLeaseSafeAndNonDestructive(t *testing.T) {
 	store := &placementStoreSpy{Store: memstore.New()}
 	provider := &placementProviderSpy{}
 	lease := &placementLeaseSpy{}

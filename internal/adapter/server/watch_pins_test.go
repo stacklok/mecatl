@@ -18,7 +18,7 @@ import (
 // asserting a rule the suite cannot see is the defect shape this package is most
 // prone to, precisely because its comments are good enough to be trusted.
 
-// TestADR_0250_GapOutranksEveryOtherTerminal pins the precedence: a faulted watch
+// TestGapOutranksEveryOtherTerminal pins the precedence: a faulted watch
 // reports the gap even when it had ALREADY recorded a different terminal.
 //
 // The lagging row is the one that matters and the one that was unpinned. A
@@ -26,7 +26,7 @@ import (
 // nothing"; a gap tells it "records are missing and no retry recovers them". If
 // lagging wins, the client is handed the reassuring message in exactly the case
 // where it is false.
-func TestADR_0250_GapOutranksEveryOtherTerminal(t *testing.T) {
+func TestGapOutranksEveryOtherTerminal(t *testing.T) {
 	other := errors.New("some other terminal")
 	for _, tc := range []struct {
 		name     string
@@ -62,12 +62,12 @@ func TestADR_0250_GapOutranksEveryOtherTerminal(t *testing.T) {
 	}
 }
 
-// TestADR_0250_FaultTerminatesEveryAttachedWatcher pins the fan-out. Terminating
+// TestFaultTerminatesEveryAttachedWatcher pins the fan-out. Terminating
 // only the first watcher on a session would satisfy AC7.6's single-watcher
 // assertion while leaving every other client on that session reading a stream it
 // believes is complete — and a fan-out registry whose fan-out is untested is a
 // map with extra steps.
-func TestADR_0250_FaultTerminatesEveryAttachedWatcher(t *testing.T) {
+func TestFaultTerminatesEveryAttachedWatcher(t *testing.T) {
 	log := newCountingCursorLog(memstore.NewEventLog())
 	svc, client, id := watchedRun(t, log)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -121,14 +121,14 @@ func TestADR_0250_FaultTerminatesEveryAttachedWatcher(t *testing.T) {
 	log.failAppends(false)
 }
 
-// TestADR_0250_ShutdownEndsAttachedWatchesCleanly pins two halves of one rule.
+// TestShutdownEndsAttachedWatchesCleanly pins two halves of one rule.
 //
 // A watch attached at shutdown must END — goleak.VerifyTestMain depends on
 // closeWatches silently, so a pump that outlived its Service would surface as an
 // unrelated leak failure in whatever test ran last rather than as this one. And
 // it must end CLEANLY: no append failed, so reporting a gap would be a lie the
 // client would act on by discarding a transcript that is in fact whole.
-func TestADR_0250_ShutdownEndsAttachedWatchesCleanly(t *testing.T) {
+func TestShutdownEndsAttachedWatchesCleanly(t *testing.T) {
 	log := memstore.NewEventLog()
 	svc, _, id := watchedRun(t, log)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -171,11 +171,11 @@ func TestADR_0250_ShutdownEndsAttachedWatchesCleanly(t *testing.T) {
 	}
 }
 
-// TestADR_0250_WatchAfterCloseIsBornCancelled pins the other side of the same
+// TestWatchAfterCloseIsBornCancelled pins the other side of the same
 // registry rule: a watch that RACES the close must not start following a log
 // nobody is writing. registerWatch cancels a registration made after
 // watchesClosed, and nothing else asserted that.
-func TestADR_0250_WatchAfterCloseIsBornCancelled(t *testing.T) {
+func TestWatchAfterCloseIsBornCancelled(t *testing.T) {
 	log := memstore.NewEventLog()
 	svc, _, id := watchedRun(t, log)
 	svc.Close()
@@ -199,13 +199,13 @@ func TestADR_0250_WatchAfterCloseIsBornCancelled(t *testing.T) {
 	}
 }
 
-// TestADR_0250_BackendFaultDuringFollowTerminates pins the FOLLOW half of the
+// TestBackendFaultDuringFollowTerminates pins the FOLLOW half of the
 // pump's error handling. The replay half is exercised by the legacy-route pin;
 // this arm is a separate loop with its own `terminal = err`, and a follow that
 // swallowed a mid-stream backend error would leave a client parked on a stream
 // that is no longer being read — the silent failure the whole feature exists to
 // abolish.
-func TestADR_0250_BackendFaultDuringFollowTerminates(t *testing.T) {
+func TestBackendFaultDuringFollowTerminates(t *testing.T) {
 	inner := memstore.NewEventLog()
 	log := &followFaultLog{CursorEventLog: inner}
 	svc, _, id := watchedRun(t, log)
@@ -228,13 +228,13 @@ func TestADR_0250_BackendFaultDuringFollowTerminates(t *testing.T) {
 	}
 }
 
-// TestADR_0250_EmptyLogAnnouncesTheBoundaryImmediately pins the case a
+// TestEmptyLogAnnouncesTheBoundaryImmediately pins the case a
 // bootstrapping client hits FIRST: a session with nothing durable yet. The
 // boundary must still arrive, because it is what tells the client the replay is
 // complete. Deriving it from port.LogRecord.Live instead would hang here forever
 // — there is no record to carry the flag — which is the whole reason the read is
 // split in two.
-func TestADR_0250_EmptyLogAnnouncesTheBoundaryImmediately(t *testing.T) {
+func TestEmptyLogAnnouncesTheBoundaryImmediately(t *testing.T) {
 	svc := watchService(t, memstore.NewEventLog(), false)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0108_PublicCreateCannotForgeKind(t *testing.T) {
+func TestPublicCreateCannotForgeKind(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newMCPServiceStore(t, "ok", nil)
 
@@ -109,7 +109,7 @@ func TestInvariant_non_main_sessions_cannot_start_as_chat(t *testing.T) {
 	}
 }
 
-func TestADR_0108_SchedulerPurposeOnlyDrivesScheduled(t *testing.T) {
+func TestSchedulerPurposeOnlyDrivesScheduled(t *testing.T) {
 	t.Parallel()
 	svc, store := runPurposeService(t, false)
 	scheduledSession, scheduledErr := session.NewScheduled("custom-fire-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0), "nightly", "", "")
@@ -140,7 +140,7 @@ func TestADR_0108_SchedulerPurposeOnlyDrivesScheduled(t *testing.T) {
 	}
 }
 
-func TestADR_0108_LegacySafetyGate(t *testing.T) {
+func TestSessionKindLegacySafetyGate(t *testing.T) {
 	t.Parallel()
 	for _, prefix := range []string{agent.SubagentSessionPrefix, agent.ParallelSessionPrefix, agent.TeamSessionPrefix, "sched--"} {
 		for _, kind := range []session.SessionKind{session.SessionKindMain, session.SessionKindUnknown} {

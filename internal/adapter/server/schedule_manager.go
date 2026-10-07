@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 )
 
-// schedule_manager.go is the STORE-SHAPED schedule manager (ADR 0076): the
+// schedule_manager.go is the STORE-SHAPED schedule manager: the
 // validated create/read/update/fire seam lives on a standalone value
 // constructable from a port.SessionStore + a now-func ALONE, BEFORE the
 // *Service exists. The manager holds the ScheduleStore (either an explicit
@@ -32,7 +32,7 @@ import (
 // (grpc_schedule.go, the REST /v1/schedules handlers, the mecatui /schedule
 // overlay) is byte-identical; the create-seam (validateScheduleSpec +
 // applyScheduleDefaults + the origin/selector/cadence checks) moved verbatim
-// from *Service, one seam, one truth (ADR 0073).
+// from *Service, one seam, one truth.
 //
 // The manager is OPTIONAL: a store that backs no ScheduleStore (the in-memory
 // memstore default) yields a nil/absent manager — the honest no-scheduling
@@ -41,7 +41,7 @@ import (
 // registration agree.
 
 // ScheduleManagerConfig is the pre-Service construction input for a
-// scheduleManager (ADR 0076): the plain inputs available before buildEngine.
+// scheduleManager: the plain inputs available before buildEngine.
 // Store is a port.SessionStore; the ScheduleStore is type-asserted off it via
 // the scheduleStoreProvider accessor (the jsonlstore + redisstore expose one).
 // ScheduleStore is the OPTIONAL explicit override (the --schedule-store-url
@@ -75,8 +75,8 @@ type ScheduleManagerConfig struct {
 	Diagnostics    port.Diagnostics
 	// OwnershipEnforced mirrors server.Config.OwnershipEnforced (true only when
 	// the request edge has a verifier wired). It gates whether the manager
-	// namespaces the store-facing schedule key by verified caller (issue #368,
-	// ADR-0212 decision 1): a schedule Name is a caller-chosen, human-readable
+	// namespaces the store-facing schedule key by verified caller (issue #368):
+	// a schedule Name is a caller-chosen, human-readable
 	// key exactly like a memory key, so two DIFFERENT owners may legitimately
 	// pick the identical name without colliding — mirroring
 	// memory.CallerStore's owner-digest scheme. When false (no verifier wired,
@@ -85,8 +85,8 @@ type ScheduleManagerConfig struct {
 	OwnershipEnforced bool
 }
 
-// scheduleManager is the store-shaped schedule create/read/update/fire seam
-// (ADR 0076). It is the single truth the *Service delegates to: the nine
+// scheduleManager is the store-shaped schedule create/read/update/fire seam.
+// It is the single truth the *Service delegates to: the nine
 // port.ScheduleManager verbs + GetFire. It holds the
 // ScheduleStore (type-asserted at construction), the session store (origin
 // validation reads store.Load), a now-func, the cadence floor, the late-set
@@ -114,7 +114,7 @@ type scheduleManager struct {
 	// now is the now-func (the same clock the Service uses). Stamped on
 	// create/update and passed to the scheduler's FireNow.
 	now func() time.Time
-	// scheduleMinIntervalNanos is the scheduler cadence floor (ADR 0073, the
+	// scheduleMinIntervalNanos is the scheduler cadence floor (the
 	// create-seam half of scheduler.Config.MinInterval): a schedule whose
 	// cadence is tighter is rejected fail-closed by validateScheduleSpec. 0 =
 	// no floor (the byte-identical pre-floor posture). An atomic so the
@@ -184,7 +184,7 @@ func scheduleStoreFrom(store port.SessionStore) port.ScheduleStore {
 type ScheduleManagerImpl = scheduleManager
 
 // NewScheduleManager constructs a scheduleManager from the plain pre-Service
-// inputs (ADR 0076): a port.SessionStore + a now-func ALONE (no *Service value
+// inputs: a port.SessionStore + a now-func ALONE (no *Service value
 // required, resolvable before buildEngine). It resolves the ScheduleStore as
 // follows: when ScheduleManagerConfig.ScheduleStore is non-nil (the
 // --schedule-store-url composition override) it WINS — the registry is a remote
@@ -203,7 +203,7 @@ type ScheduleManagerImpl = scheduleManager
 // the Service's own pointer so SetModels keeps working with no second copy.
 // Diagnostics is OPTIONAL and nil-safe.
 //
-//nolint:revive // intentional unexported return: the manager is an adapter-internal type (ADR 0076); callers consume it via the port.ScheduleManager interface, and the *Service embeds + delegates to it. The unexported type keeps the schedule surface from leaking into the server adapter's public API.
+//nolint:revive // intentional unexported return: the manager is an adapter-internal type; callers consume it via the port.ScheduleManager interface, and the *Service embeds + delegates to it. The unexported type keeps the schedule surface from leaking into the server adapter's public API.
 func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
 	schedStore := cfg.ScheduleStore
 	if schedStore == nil {
@@ -242,8 +242,8 @@ func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
 	return m
 }
 
-// setModelsPointer late-binds the shared model-inventory pointer (ADR 0076:
-// the model-inventory is a late-bound atomic field, NOT a construction input —
+// setModelsPointer late-binds the shared model-inventory pointer (the
+// model-inventory is a late-bound atomic field, NOT a construction input —
 // the manager is resolvable before buildEngine; the pointer is created at
 // NewService when the Service seeds its own atomic from cfg.Models). The
 // Service calls this when it adopts a pre-built manager (cfg.ScheduleManager)
@@ -302,7 +302,7 @@ func (m *scheduleManager) requireCaller(ctx context.Context) bool {
 }
 
 // ownerScheduleNamespace derives the store-facing key namespace a schedule
-// name is scoped into (issue #368, ADR-0212 decision 1): a digest of the
+// name is scoped into (issue #368): a digest of the
 // verified caller's (Issuer, Subject) pair, mirroring
 // memory.CallerStore.scoped's owner-digest scheme. It returns "" when the
 // manager was constructed without ownership enforcement (no verifier wired) —
@@ -461,7 +461,7 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 		return port.Schedule{}, fmt.Errorf("%w: schedule placement was not resolved", ErrFailedPrecondition)
 	}
 	applyScheduleDefaults(&spec)
-	// Capture the owner ONCE, here (ADR 0204 decision 6). A caller can never
+	// Capture the owner ONCE, here. A caller can never
 	// name it in the request body (protoToScheduleSpec drops any inbound owner,
 	// the same discipline that keeps an owner field off CreateSessionRequest) —
 	// it is derived from the create SURFACE. The origin session's owner comes
@@ -582,7 +582,7 @@ func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 // the zero time (the caller already knows a one-shot's first fire is its own
 // OneShot instant).
 //
-// It is a manager METHOD (ADR 0076): the selector validation resolves against
+// It is a manager METHOD: the selector validation resolves against
 // the projected selectable-model inventory (the same provider+model pairs
 // ListModels advertises) and the cadence floor against the composition-
 // injected scheduler MinInterval — two deployment-level inputs the spec alone
@@ -659,7 +659,7 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
 	}
-	// The cadence floor (ADR 0073, AC1.3 — SchedulerMinInterval, no longer
+	// The cadence floor (AC1.3 — SchedulerMinInterval, no longer
 	// inert): two consecutive computed fires are the schedule's true
 	// cadence, so a fixed-field cron that fires multiple times within one
 	// minute (e.g. "*/30 * * * * *" has no seconds field, but "* * * * *"
@@ -678,11 +678,11 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 	return next, nil
 }
 
-// captureScheduleOwner resolves the owner a schedule is created with (ADR 0204
-// decision 6), by CREATE SURFACE:
+// captureScheduleOwner resolves the owner a schedule is created with,
+// by CREATE SURFACE:
 //
 //   - the Schedule-TOOL path runs inside a session, and the spec arrives with
-//     OriginSessionID already stamped (ADR 0209: startRun binds the executing
+//     OriginSessionID already stamped (startRun binds the executing
 //     session id onto the run context, and the tool reads it there when it
 //     builds the spec) — so the owner is that EXECUTING session's owner. The
 //     tool's caller context belongs to whoever prompted the run, which is not
@@ -697,7 +697,7 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 // (nil for an ownerless or absent origin). It is threaded in rather than re-read
 // here: a childgc sweep landing between the two reads would turn a validated,
 // owned create into a silently OWNERLESS schedule — the exact deletion hazard
-// ADR 0204 decision 6 exists for.
+// the one-time owner capture exists for.
 func captureScheduleOwner(ctx context.Context, spec port.ScheduleSpec, originOwner *session.Principal) *session.Principal {
 	if spec.OriginSessionID == "" {
 		return session.PrincipalFromContext(ctx)
@@ -881,7 +881,7 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	// to the zero value (which the reconcile update path would otherwise do on
 	// every restart, destroying the audit trail).
 	spec.CreatedAt = existing.Spec.CreatedAt
-	// The owner is WRITE-ONCE (ADR 0204 decision 4/6): an Update carries the
+	// The owner is WRITE-ONCE: an Update carries the
 	// captured owner forward verbatim, so editing a schedule can never re-own it
 	// to the updating caller.
 	spec.Owner = existing.Spec.Owner
@@ -1106,7 +1106,7 @@ func (m *scheduleManager) SetScheduler(sch *scheduler.Scheduler) {
 }
 
 // SetScheduleMinInterval injects the scheduler cadence floor the create-seam
-// enforces (ADR 0073, AC1.3 — the composition half of
+// enforces (AC1.3 — the composition half of
 // scheduler.Config.MinInterval / app Config.SchedulerMinInterval, previously
 // inert while there was no in-band create API). It lives on the manager, NOT
 // the scheduler: the floor guards the SHARED validateScheduleSpec — the
