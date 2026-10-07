@@ -239,8 +239,8 @@ func TestTeamOverlaySanitizesMemberContent(t *testing.T) {
 	if !strings.Contains(focus, "]0;pwnedscout") {
 		t.Errorf("sanitized member name not rendered as inert text in the focus pane:\n%q", focus)
 	}
-	if !strings.Contains(focus, "pattern: handleErr") {
-		t.Errorf("sanitized tool Detail not rendered as inert text in the focus pane:\n%q", focus)
+	if strings.Contains(focus, "pattern: handleErr") || !strings.Contains(focus, "Grep") {
+		t.Errorf("malformed call Detail must not render as intent in the focus pane:\n%q", focus)
 	}
 }
 
@@ -314,8 +314,8 @@ func TestAgentsSelectionAndFocus(t *testing.T) {
 	if !strings.Contains(out, "searching the codebase") || !strings.Contains(out, "Grep") {
 		t.Errorf("focus pane should show the member's trace, got %q", out)
 	}
-	if !strings.Contains(out, "3 matches") {
-		t.Errorf("focus pane should show the bounded Detail preview, got %q", out)
+	if strings.Contains(out, "3 matches") || !strings.Contains(out, "✓ Grep") {
+		t.Errorf("focus pane should show call status without result preview, got %q", out)
 	}
 
 	// esc → back to roster.
@@ -1567,11 +1567,12 @@ func TestAgentsFocusWindowed(t *testing.T) {
 	if !strings.Contains(out, "lines 1–") {
 		t.Errorf("a bounded focus pane should show an accurate visible range, got %q", out)
 	}
-	// On a TALL terminal the same trace fits with no tail (the bound is min(cap, fit)).
+	// On a tall terminal, the same trace remains scrollable rather than being
+	// silently truncated to the old twelve-entry budget.
 	tall := resize(m, 100, 80)
 	tallOut := stripANSIstr(tall.View().Content)
-	if strings.Contains(tallOut, " of 12") {
-		t.Errorf("a tall terminal should not truncate the trace, got %q", tallOut)
+	if !strings.Contains(tallOut, " of 129") {
+		t.Errorf("retained trace lost its scroll range: %q", tallOut)
 	}
 }
 

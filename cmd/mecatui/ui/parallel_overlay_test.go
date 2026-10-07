@@ -331,8 +331,8 @@ func TestParallelOverlayBoundsBranchContent(t *testing.T) {
 	if strings.Contains(out, longPreview) {
 		t.Errorf("an unbounded preview leaked into the group focus (past maxTraceDetailLen):\n%s", out)
 	}
-	if strings.Count(out, "z") < maxTraceDetailLen-1 {
-		t.Errorf("the bounded preview should render (truncated):\n%s", out)
+	if strings.Count(out, "z") != 0 {
+		t.Errorf("malformed call arguments must fall back to name only:\n%s", out)
 	}
 	// A canary in a tool NAME renders only as a name chip — never as a body line.
 	m2 := newMCPModel(t, aztec(), nil)

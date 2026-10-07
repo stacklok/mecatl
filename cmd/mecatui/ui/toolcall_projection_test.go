@@ -22,10 +22,14 @@ func TestToolcallProjectionStates(t *testing.T) {
 			c.Tools().Add(scrollback.ToolCall{ID: "call", Name: "Read"})
 			c.Tools().Finish("call", true)
 		}, toolcallFailed},
-		{"provisional", func(c *scrollback.Conversation) {
+		{"provisional success", func(c *scrollback.Conversation) {
 			c.Tools().Add(scrollback.ToolCall{ID: "call", Name: "Read"})
 			c.Tools().ResolveAvailable("call", scrollback.ToolResult{})
 		}, toolcallProvisional},
+		{"provisional failure", func(c *scrollback.Conversation) {
+			c.Tools().Add(scrollback.ToolCall{ID: "call", Name: "Read"})
+			c.Tools().ResolveAvailable("call", scrollback.ToolResult{IsError: true})
+		}, toolcallProvisionalFailed},
 		{"canonical ok", func(c *scrollback.Conversation) {
 			c.Tools().Add(scrollback.ToolCall{ID: "call", Name: "Read"})
 			c.Tools().Resolve("call", scrollback.ToolResult{})
@@ -114,8 +118,8 @@ func TestToolcallProjectionInspectorListRow(t *testing.T) {
 	s := toolcallsForTest(t, m)
 	body, _ := s.Render(240, 12)
 	entry := s.entries[0].toolcallProjection
-	_, status, _ := entry.state.status()
-	want := status + " · " + entry.displayName + " · " + entry.intent
+	_, status := entry.state.status()
+	want := entry.displayName + " · " + entry.intent + " · " + status
 	if !strings.Contains(stripANSIstr(body), want) {
 		t.Fatalf("list row does not use projection:\nwant %q\ngot %q", want, stripANSIstr(body))
 	}

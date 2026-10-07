@@ -342,7 +342,7 @@ func TestTeamErrorResolves(t *testing.T) {
 		c.finishTeamCard("t1", "", 1, "error", client.Usage{}, nil)
 		c.resolveTool("t1", "Team: the run failed", true)
 	})
-	if got, want := out, " ✗ Team · ship the feature"; got != want {
+	if got, want := out, " ✗ Team · ship the feature · failed"; got != want {
 		t.Errorf("failed team line = %q, want %q", got, want)
 	}
 }

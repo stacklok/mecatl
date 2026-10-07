@@ -178,7 +178,7 @@ func TestSubagentErrorCardShowsProviderCause(t *testing.T) {
 			"\n\nLast activity before the failure: Now let me check the tests."+
 			"\n\nagentId: subagent-p1", true)
 	})
-	if got, want := out, " ✗ Subagent · investigate the loop"; got != want {
+	if got, want := out, " ✗ Subagent · investigate the loop · failed"; got != want {
 		t.Fatalf("failed subagent line = %q, want %q", got, want)
 	}
 }

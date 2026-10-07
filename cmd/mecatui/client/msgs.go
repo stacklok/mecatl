@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	tea "charm.land/bubbletea/v2"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -274,7 +276,10 @@ type SubagentMsg struct {
 	// RoutedModel. Bare metadata, never child content, so gauntlet #7 holds.
 	Model    string
 	ToolName string
-	IsError  bool
+	// ChildToolCallID pairs child tool.call/tool.result within this child lane;
+	// empty on other events and when reading older servers.
+	ChildToolCallID string
+	IsError         bool
 	// InnerKind / Text / Detail are the bounded previews, set on a
 	// subagent.tool event per the child's forwarded inner event kind:
 	// InnerKind is "tool.call" (Detail = the bounded args preview), "tool.result"
@@ -402,6 +407,7 @@ type TeamMsg struct {
 	InnerKind       string
 	Text            string
 	ToolName        string
+	ChildToolCallID string
 	Detail          string
 	IsError         bool
 	// Rounds / Stop are set on TeamEnd.
@@ -500,7 +506,10 @@ type ParallelMsg struct {
 	// ToolName / IsError / ToolCount carry per-branch tool activity (branch_tool;
 	// ToolCount is also final on branch_end).
 	ToolName string
-	IsError  bool
+	// ChildToolCallID pairs child tool.call/tool.result within this child lane;
+	// empty on other events and when reading older servers.
+	ChildToolCallID string
+	IsError         bool
 	// InnerKind / Text / Detail are the bounded previews, set on a
 	// branch_tool event per the branch's forwarded inner event kind (tool.call /
 	// tool.result / message.delta), exactly as on SubagentMsg; empty from an older
@@ -977,11 +986,20 @@ func routingDecisionFrom(in *mecatlv1.RoutingDecision) *RoutingDecision {
 	return out
 }
 
+// childPreviewID admits only exact, bounded IDs. Never repair or truncate an
+// invalid key: either operation could correlate a result with a different call.
+func childPreviewID(id string) string {
+	if len(id) > 256 || !utf8.ValidString(id) {
+		return ""
+	}
+	return id
+}
+
 // subagentMsg builds a SubagentMsg of the given kind from a proto Subagent
 // payload (nil-safe via the generated getters). It is the single translation
 // point for the three subagent.* event kinds.
 func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
-	return SubagentMsg{
+	msg := SubagentMsg{
 		Kind:            kind,
 		ParentCallID:    s.GetParentCallId(),
 		ChildID:         s.GetChildId(),
@@ -993,6 +1011,7 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 		RoutingDecision: routingDecisionFrom(s.GetRoutingDecision()),
 		Model:           s.GetModel(),
 		ToolName:        s.GetToolName(),
+		ChildToolCallID: childPreviewID(s.GetChildToolCallId()),
 		IsError:         s.GetIsError(),
 		InnerKind:       s.GetInnerKind(),
 		Text:            s.GetText(),
@@ -1003,6 +1022,10 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 		Cause:           s.GetCause(),
 		DurationMs:      s.GetDurationMs(),
 	}
+	if s.GetChildToolCallId() != "" && msg.ChildToolCallID == "" {
+		msg.InnerKind, msg.ToolName, msg.Detail = "", "", ""
+	}
+	return msg
 }
 
 // parallelMsg builds a ParallelMsg from a proto Parallel payload (nil-safe via the
@@ -1010,7 +1033,7 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 // parallel.branch event, the proto kind discriminant (branch_start/tool/end). It is the
 // single translation point for the parallel.* event family.
 func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
-	return ParallelMsg{
+	msg := ParallelMsg{
 		Kind:            kind,
 		ParentCallID:    p.GetParentCallId(),
 		Join:            p.GetJoin(),
@@ -1025,6 +1048,7 @@ func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 		RoutingDecision: routingDecisionFrom(p.GetRoutingDecision()),
 		Model:           p.GetModel(),
 		ToolName:        p.GetToolName(),
+		ChildToolCallID: childPreviewID(p.GetChildToolCallId()),
 		IsError:         p.GetIsError(),
 		InnerKind:       p.GetInnerKind(),
 		Text:            p.GetText(),
@@ -1036,6 +1060,10 @@ func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 		DurationMs:      p.GetDurationMs(),
 		Winner:          int(p.GetWinner()),
 	}
+	if p.GetChildToolCallId() != "" && msg.ChildToolCallID == "" {
+		msg.InnerKind, msg.ToolName, msg.Detail = "", "", ""
+	}
+	return msg
 }
 
 // parallelBranchKind maps the proto parallel.branch kind discriminant to its
@@ -1066,6 +1094,7 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 		InnerKind:       t.GetInnerKind(),
 		Text:            t.GetText(),
 		ToolName:        t.GetToolName(),
+		ChildToolCallID: childPreviewID(t.GetChildToolCallId()),
 		Detail:          t.GetDetail(),
 		IsError:         t.GetIsError(),
 		Rounds:          int(t.GetRounds()),
@@ -1074,6 +1103,9 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 		ContextUsed:     t.GetContextUsed(),
 		ContextWindow:   t.GetContextWindow(),
 		Cause:           t.GetCause(),
+	}
+	if t.GetChildToolCallId() != "" && msg.ChildToolCallID == "" {
+		msg.InnerKind, msg.ToolName, msg.Detail = "", "", ""
 	}
 	for _, r := range t.GetRoster() {
 		msg.Roster = append(msg.Roster, TeamMemberSpec{

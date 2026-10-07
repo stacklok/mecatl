@@ -325,7 +325,7 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 		// RoutingDecision is sanitized bounded classifier metadata only;
 		// it contains no task, criteria, response body, or dynamic error text.
 		"RoutingDecision": true,
-		"ToolName":        true, "IsError": true, "ToolCount": true,
+		"ToolName":        true, "ChildToolCallID": true, "IsError": true, "ToolCount": true,
 		"Usage": true, "Stop": true, "DurationMs": true,
 		// Text / Detail / InnerKind are the BOUNDED PREVIEW fields, fed
 		// ONLY through clampPreview at the single drainChildObserved chokepoint;

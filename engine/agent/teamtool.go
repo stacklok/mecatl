@@ -602,16 +602,18 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		}
 		base.Text = clampPreview(ev.Text)
 	case session.EvToolCall:
-		if ev.ToolCall == nil {
+		if ev.ToolCall == nil || !previewChildToolCallID(ev.ToolCall.ID) {
 			return session.Event{}, false
 		}
 		base.ToolName = ev.ToolCall.Name
+		base.ChildToolCallID = ev.ToolCall.ID
 		base.Detail = clampPreview(string(ev.ToolCall.Args))
-	case session.EvToolResult:
-		if ev.ToolResult == nil {
+	case session.EvToolResultAvailable, session.EvToolResult:
+		if ev.ToolResult == nil || !previewChildToolCallID(ev.ToolResult.CallID) {
 			return session.Event{}, false
 		}
 		base.IsError = ev.ToolResult.IsError
+		base.ChildToolCallID = ev.ToolResult.CallID
 		base.Detail = clampPreview(ev.ToolResult.Content)
 	case session.EvTurnEnd:
 		if ev.TurnEnd != nil {

@@ -48,7 +48,10 @@ func NewRunEventRecorder(ctx context.Context, svc *Service, id session.SessionID
 // then appended itself. Every projected event is attempted exactly once because
 // EventLog.Append may return an error after durably writing it.
 func (r *RunEventRecorder) Observe(ev session.Event) {
-	if ev.Type == session.EvToolResultAvailable {
+	if ev.Type == session.EvToolResultAvailable ||
+		(ev.Type == session.EvSubagentTool && ev.Subagent != nil && ev.Subagent.InnerKind == session.EvToolResultAvailable) ||
+		(ev.Type == session.EvParallelBranch && ev.Parallel != nil && ev.Parallel.InnerKind == session.EvToolResultAvailable) ||
+		(ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.InnerKind == session.EvToolResultAvailable) {
 		return
 	}
 	if ev.Type != session.EvMessageDelta && ev.Type != session.EvReasoningDelta {

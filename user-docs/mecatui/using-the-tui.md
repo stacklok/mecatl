@@ -9,11 +9,29 @@ description:
 
 # Work in the TUI
 
-Press `ctrl+t` to open `/toolcalls` and inspect calls during a run. The
-inspector also works when revisiting a session transcript. Running Edit and
-Write cards show their diffs inline; settled calls keep their full arguments and
-results in the inspector. When `mecatui` receives a result before its final update,
-it keeps the card open and shows `result received · finalizing`.
+Press `ctrl+t` to open `/toolcalls` and inspect top-level calls during a run.
+Use `↑`/`↓` to choose a row, then `enter` or click it to open its detail;
+press `esc` to return to the list. The inspector also works when revisiting a
+session transcript. Running Edit and Write cards show their request diffs inline;
+settled calls keep their full arguments and results in the inspector. When
+`mecatui` receives a result before its final update, it keeps the card open
+and shows `result received · finalizing`.
+
+A Subagent call's detail shows one-line ✓/✗/pending summaries of up to
+128 retained child tool calls, without child drilldown. Each summary shows
+call-side intent (such as `Read · path`), not the result body. An early
+observed result shows `result received · finalizing` (or `failed · finalizing`)
+until the canonical result confirms or changes its outcome. A call without a
+result stays pending. The server scrubs controls and caps preview length;
+previews are neither complete child calls nor guaranteed secret redaction.
+Results without a matching retained call are omitted rather than shown as
+new rows. A reconstructed session may have no Subagent activity preview and
+notes that history may be incomplete. Press `f6` for the Agents view to
+navigate Subagent children, Parallel branches, and Team members, including
+their task and findings views. Each lane retains up to 128 tool calls and
+12 independent message previews. Child previews with invalid UTF-8 or IDs
+longer than 256 bytes are omitted; child execution and the parent session
+are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
 per-turn usage, permanent error details, and changed files. Tool results stay in

@@ -640,15 +640,16 @@ func (e branchEmitter) branchTool(i int) func(session.Event) {
 			return
 		}
 		e.emit(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
-			ParentCallID: e.parentCallID,
-			Kind:         session.ParallelBranchTool,
-			BranchIndex:  i,
-			ToolName:     ev.Subagent.ToolName,
-			IsError:      ev.Subagent.IsError,
-			ToolCount:    ev.Subagent.ToolCount,
-			Text:         ev.Subagent.Text,
-			Detail:       ev.Subagent.Detail,
-			InnerKind:    ev.Subagent.InnerKind,
+			ParentCallID:    e.parentCallID,
+			Kind:            session.ParallelBranchTool,
+			BranchIndex:     i,
+			ToolName:        ev.Subagent.ToolName,
+			ChildToolCallID: ev.Subagent.ChildToolCallID,
+			IsError:         ev.Subagent.IsError,
+			ToolCount:       ev.Subagent.ToolCount,
+			Text:            ev.Subagent.Text,
+			Detail:          ev.Subagent.Detail,
+			InnerKind:       ev.Subagent.InnerKind,
 		}})
 	}
 }

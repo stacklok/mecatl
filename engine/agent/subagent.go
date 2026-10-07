@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
@@ -4265,7 +4266,7 @@ func projectChildEvent(emit func(session.Event), ev session.Event, names map[ses
 
 func projectableChildEvent(emit func(session.Event), ev session.Event) bool {
 	switch ev.Type {
-	case session.EvToolCall, session.EvToolResult, session.EvMessageDelta, session.EvResult, session.EvTurnEnd:
+	case session.EvToolCall, session.EvToolResultAvailable, session.EvToolResult, session.EvMessageDelta, session.EvResult, session.EvTurnEnd:
 		return true
 	case session.EvHook:
 		if ev.Hook != nil && ev.Hook.Phase == "ProjectInstructions" && ev.Hook.Decision == session.HookAdvisory && ev.Hook.Tool == "" && ev.Hook.CallID == "" && ev.Hook.Guardrail == nil && isInstructionWarning(ev.Text) {
@@ -4289,7 +4290,7 @@ func projectChildPayload(payload *session.SubagentPayload, ev session.Event, nam
 	switch ev.Type {
 	case session.EvToolCall:
 		return projectChildToolCall(payload, ev, names)
-	case session.EvToolResult:
+	case session.EvToolResultAvailable, session.EvToolResult:
 		return projectChildToolResult(payload, ev, names)
 	case session.EvMessageDelta:
 		if strings.TrimSpace(ev.Text) == "" {
@@ -4310,15 +4311,25 @@ func projectChildPayload(payload *session.SubagentPayload, ev session.Event, nam
 	}
 }
 
+// maxChildToolCallIDBytes bounds exact provider-supplied IDs in delegation previews.
+// Invalid or longer IDs are omitted with their preview, never modified into a
+// different correlation key. Child execution and its session retain the original.
+const maxChildToolCallIDBytes = 256
+
+func previewChildToolCallID(id session.ToolCallID) bool {
+	return len(id) <= maxChildToolCallIDBytes && utf8.ValidString(string(id))
+}
+
 // projectChildToolCall populates the payload from a child EvToolCall and records the
 // callID→name mapping so a later tool.result can be attributed without re-deriving it
 // from the clamped args preview. Returns false when the event carries no call.
 func projectChildToolCall(payload *session.SubagentPayload, ev session.Event, names map[session.ToolCallID]string) bool {
-	if ev.ToolCall == nil {
+	if ev.ToolCall == nil || !previewChildToolCallID(ev.ToolCall.ID) {
 		return false
 	}
 	names[ev.ToolCall.ID] = ev.ToolCall.Name
 	payload.ToolName = ev.ToolCall.Name
+	payload.ChildToolCallID = ev.ToolCall.ID
 	payload.Detail = clampPreview(string(ev.ToolCall.Args))
 	return true
 }
@@ -4326,10 +4337,11 @@ func projectChildToolCall(payload *session.SubagentPayload, ev session.Event, na
 // projectChildToolResult populates the payload from a child EvToolResult, resolving the
 // tool name from the recorded call. Returns false when the event carries no result.
 func projectChildToolResult(payload *session.SubagentPayload, ev session.Event, names map[session.ToolCallID]string) bool {
-	if ev.ToolResult == nil {
+	if ev.ToolResult == nil || !previewChildToolCallID(ev.ToolResult.CallID) {
 		return false
 	}
 	payload.ToolName = names[ev.ToolResult.CallID]
+	payload.ChildToolCallID = ev.ToolResult.CallID
 	payload.IsError = ev.ToolResult.IsError
 	payload.Detail = clampPreview(ev.ToolResult.Content)
 	return true

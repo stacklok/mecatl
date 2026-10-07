@@ -60,6 +60,28 @@ func TestRenderWriteDiff(t *testing.T) {
 	}
 }
 
+func TestRenderDiffPreservesTerminalBlankLines(t *testing.T) {
+	r := newTestRenderer()
+	for _, tc := range []struct {
+		name, args string
+		want       []string
+	}{
+		{"Edit", `{"path":"a.go","old_string":"old\n\n","new_string":"new"}`, []string{"a.go  -2 +1", "- old\n- \n", "+ new\n\\ No newline at end of added text"}},
+		{"Write", `{"path":"a.go","content":"\n"}`, []string{"a.go · 1 line", "\n+ "}},
+	} {
+		out, ok := r.renderToolDiff(tc.name, tc.args, true)
+		if !ok {
+			t.Fatalf("%s request did not render", tc.name)
+		}
+		plain := stripANSIstr(out)
+		for _, want := range tc.want {
+			if !strings.Contains(plain, want) {
+				t.Errorf("%s diff lost %q: %q", tc.name, want, plain)
+			}
+		}
+	}
+}
+
 func TestRenderToolDiffMalformedFallsBack(t *testing.T) {
 	r := newTestRenderer()
 	// Not JSON at all.

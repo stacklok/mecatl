@@ -191,12 +191,11 @@ const (
 	// content. It carries only the parent call id, the child session id, and a
 	// short goal label so a client can attribute and title the subagent card.
 	EvSubagentStart EventType = "subagent.start"
-	// EvSubagentTool is emitted each time a Subagent tool's child tool call
-	// resolves. It is a REDACTED observability projection: it forwards ONLY the
-	// child tool's NAME and error bool plus a running count — never the child's
-	// tool args or result content, and never the child's message text. This keeps
-	// the context-isolation guarantee (gauntlet #7) intact: nothing the child
-	// produces enters the parent's conversation.
+	// EvSubagentTool projects bounded child activity, including early available and
+	// canonical results. It is a REDACTED observability projection: it forwards
+	// the child tool's name, error bool, bounded preview, and a running count.
+	// Bounded previews keep the context-isolation guarantee (gauntlet #7) intact:
+	// nothing the child produces enters the parent's conversation.
 	EvSubagentTool EventType = "subagent.tool"
 	// EvSubagentEnd is emitted when a Subagent tool run terminates. It is a
 	// REDACTED observability projection carrying only aggregate metadata — the
@@ -211,7 +210,7 @@ const (
 	// member content). See TeamPayload for the redaction contract.
 	EvTeamStart EventType = "team.start"
 	// EvTeamMember is emitted for each forwarded member-session event during a Team
-	// run. Unlike the metadata-only subagent.tool projection, it is deliberately
+	// run. Unlike the narrower subagent.tool projection, it is deliberately
 	// FULLER — a team is meant to be watched — so it carries the member's message
 	// text and BOUNDED tool-call/result previews, tagged by member name. It ALWAYS
 	// sets Member (the member whose activity it projects) and InnerKind (that
@@ -252,11 +251,9 @@ const (
 	EvParallelStart EventType = "parallel.start"
 	// EvParallelBranch is emitted for each per-branch lifecycle transition of a Parallel
 	// run, discriminated by ParallelPayload.Kind (branch_start / branch_tool / branch_end).
-	// Like EvSubagentTool it is METADATA ONLY: a branch_tool carries only the child tool's
-	// NAME + error bool + running count (forwarded via the SAME drainChildObserved
-	// chokepoint Subagent uses), and a branch_end carries only the branch's stop / usage /
-	// duration / failed flag / fork-root path — never branch args, result bodies, or
-	// message text. This keeps gauntlet #7 intact.
+	// EvParallelBranch includes bounded branch activity, including early available
+	// and canonical results; branch_end carries only stop / usage / duration /
+	// failed / fork-root-path metadata. This keeps gauntlet #7 intact.
 	EvParallelBranch EventType = "parallel.branch"
 	// EvParallelEnd is emitted when a Parallel run terminates. It is a REDACTED, RUN-LEVEL
 	// projection carrying the join strategy, the WINNER branch index (-1 for join=all /
@@ -857,8 +854,8 @@ type RoutingDecision struct {
 // Which fields are set depends on the event kind:
 //   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount, and —
-//     when a preview is available — Text / Detail / InnerKind (which inner event kind
-//     the preview came from: message.delta / tool.call / tool.result / result).
+//     when a preview is available — Text / Detail / InnerKind (message.delta /
+//     tool.call / tool.result.available / tool.result / result).
 //   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, [Cause], DurationMs.
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
@@ -916,6 +913,10 @@ type SubagentPayload struct {
 	// ToolName is the name of a child tool that just ran. Set on EvSubagentTool
 	// only. It is the tool NAME alone — never the child's tool args or result.
 	ToolName string
+	// ChildToolCallID is the exact child call, available-result, or canonical-result ID
+	// for tool projections only. It is scoped by ChildID; older and non-tool events leave it empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether the child tool call failed. Set on EvSubagentTool
 	// only.
 	IsError bool
@@ -931,13 +932,13 @@ type SubagentPayload struct {
 	// kinds when a preview is available.
 	Text string
 	// Detail is a BOUNDED preview of a child tool call's args (tool.call) or a
-	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// tool result's body (tool.result.available or tool.result) — control-byte scrubbed and rune-capped by
 	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
-	// on EvSubagentTool for the tool.call / tool.result inner kinds when a preview
+	// on EvSubagentTool for the tool.call / tool.result.available / tool.result inner kinds when a preview
 	// is available.
 	Detail string
 	// InnerKind discriminates which inner child event kind the projection came from
-	// (message.delta / tool.call / tool.result / result / turn.end) and which preview
+	// (message.delta / tool.call / tool.result.available / tool.result / result / turn.end) and which preview
 	// fields it populates (Text/Detail). A turn.end projection carries NO Text/Detail;
 	// it only advances Usage. A child's permission.ask is never projected.
 	InnerKind EventType
@@ -1068,6 +1069,10 @@ type ParallelPayload struct {
 	// ToolName is the name of a branch's child tool that just ran. Set on the
 	// branch_tool kind only. It is the tool NAME alone — never branch args/result.
 	ToolName string
+	// ChildToolCallID is the exact branch call/result ID for tool.call/tool.result
+	// projections only, scoped by the branch lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether that branch tool call failed. Set on branch_tool only.
 	IsError bool
 	// ToolCount is the running (branch_tool) or final (branch_end) number of a branch's
@@ -1079,13 +1084,13 @@ type ParallelPayload struct {
 	// inner kinds when a preview is available.
 	Text string
 	// Detail is a BOUNDED preview of a branch tool call's args (tool.call) or a
-	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// tool result's body (tool.result.available or tool.result) — control-byte scrubbed and rune-capped by
 	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
-	// on the branch_tool kind for the tool.call / tool.result inner kinds when a
+	// on the branch_tool kind for the tool.call / tool.result.available / tool.result inner kinds when a
 	// preview is available.
 	Detail string
 	// InnerKind discriminates which inner branch event kind the preview came from
-	// (message.delta / tool.call / tool.result / result). Set on the branch_tool
+	// (message.delta / tool.call / tool.result.available / tool.result / result). Set on the branch_tool
 	// kind alongside Text / Detail. A branch's permission.ask is never projected.
 	InnerKind EventType
 
@@ -1363,17 +1368,21 @@ type TeamPayload struct {
 	// MemberIncarnation is internal durable correlation metadata, never projected.
 	MemberIncarnation IncarnationID
 	// InnerKind is the member's underlying session event kind being projected
-	// (e.g. "message.delta", "tool.call", "tool.result", "turn.end", "result").
+	// (e.g. "message.delta", "tool.call", "tool.result.available", "tool.result", "turn.end", "result").
 	// Set on EvTeamMember only. permission.ask is never projected.
 	InnerKind EventType
 	// Text is the member's message/result text or a BOUNDED preview of it. Set on
 	// EvTeamMember for message.delta / result inner kinds.
 	Text string
 	// ToolName is the name of a member tool that was called. Set on EvTeamMember
-	// for tool.call / tool.result inner kinds.
+	// for tool.call / tool.result.available / tool.result inner kinds.
 	ToolName string
+	// ChildToolCallID is the exact member call/result ID for tool.call/tool.result
+	// projections only, scoped by the member lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// Detail is a BOUNDED preview of a member tool call's args (tool.call) or
-	// result body (tool.result) — capped at maxTeamPreview runes. It is never the
+	// result body (tool.result.available or tool.result) — capped at maxTeamPreview runes. It is never the
 	// raw, unbounded args/result body. Set on EvTeamMember for tool.* inner kinds.
 	Detail string
 	// IsError reports whether a member tool.result failed. Set on EvTeamMember for
