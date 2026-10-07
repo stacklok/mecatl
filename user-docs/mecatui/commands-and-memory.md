@@ -47,9 +47,9 @@ server. For configuration details, see
 
 - `/dream` proposes maintenance for the selected project-memory or user-model
   store. Generating a plan sends selected memory values to the configured model
-  and uses tokens. Review the plan before applying it. Confirmation applies the
-  whole plan; dismissal changes nothing. A server restart discards pending
-  plans.
+  and uses tokens. Review the plan before applying it. Use the arrow keys to read
+  a long plan. Confirmation applies the whole plan; dismissal changes nothing. A
+  server restart discards pending plans.
 - `/reflections` opens staged learning proposals. Review their evidence and
   approve or reject each proposal when the server allows it.
 - `/reflect` submits the completed session for immediate reflection, even when

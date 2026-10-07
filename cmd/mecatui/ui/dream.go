@@ -7,10 +7,12 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 type dreamView int
@@ -33,7 +35,7 @@ type dreamState struct {
 	plan           *client.DreamPlan
 	receipt        *client.DreamReceipt
 	err            error
-	scroll         int
+	viewport       *bounded.Viewport
 	decision       string
 	regenerateFrom dreamView
 	requestID      uint64
@@ -116,13 +118,13 @@ func (m Model) onDreamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	case dreamReview:
 		switch {
 		case key.Matches(msg, m.keys.Up):
-			m.dream.scroll = max(0, m.dream.scroll-1)
+			m.moveDreamViewport(bounded.LineUp)
 		case key.Matches(msg, m.keys.Down):
-			m.dream.scroll++
+			m.moveDreamViewport(bounded.LineDown)
 		case key.Matches(msg, m.keys.ScrollU):
-			m.dream.scroll = max(0, m.dream.scroll-10)
+			m.moveDreamViewport(bounded.PageUp)
 		case key.Matches(msg, m.keys.ScrollD):
-			m.dream.scroll += 10
+			m.moveDreamViewport(bounded.PageDown)
 		case msg.String() == "a":
 			_, capability := m.dreamTarget()
 			if capability.Decide {
@@ -143,6 +145,14 @@ func (m Model) onDreamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		retryable := errorKind == client.DreamDecisionInProgress || errorKind == client.DreamDecisionUnknown
 		regenerable := errorKind == client.DreamDecisionPlanGone || errorKind == client.DreamDecisionTerminalConflict
 		switch {
+		case key.Matches(msg, m.keys.Up):
+			m.moveDreamViewport(bounded.LineUp)
+		case key.Matches(msg, m.keys.Down):
+			m.moveDreamViewport(bounded.LineDown)
+		case key.Matches(msg, m.keys.ScrollU):
+			m.moveDreamViewport(bounded.PageUp)
+		case key.Matches(msg, m.keys.ScrollD):
+			m.moveDreamViewport(bounded.PageDown)
 		case msg.String() == "t" && m.dream.err != nil && retryable && m.dream.plan != nil && m.dream.decision != "":
 			m.dreamGen++
 			m.dreamRequest++
@@ -175,6 +185,15 @@ func (m Model) onDreamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
+func (m *Model) moveDreamViewport(move bounded.Move) {
+	if m.dream.viewport == nil {
+		m.dream.viewport = new(bounded.Viewport)
+	}
+	_, _, rows, width, height := dreamReaderLayout(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	m.dream.viewport.SetGeometry(width, height, 0, bounded.Clip)
+	m.dream.viewport.Move(move, len(rows))
+}
+
 func (m Model) updateDreamMsg(msg tea.Msg) (tea.Model, bool) {
 	x, ok := msg.(client.DreamMsg)
 	if !ok {
@@ -187,7 +206,10 @@ func (m Model) updateDreamMsg(msg tea.Msg) (tea.Model, bool) {
 	if m.dream.view == dreamGenerating {
 		if x.Err == nil && x.Plan != nil {
 			m.dream.plan = x.Plan
-			m.dream.scroll = 0
+			if m.dream.viewport == nil {
+				m.dream.viewport = new(bounded.Viewport)
+			}
+			m.dream.viewport.Reset()
 			m.dream.view = dreamReview
 		} else {
 			m.dream.view = dreamTargets
@@ -196,12 +218,19 @@ func (m Model) updateDreamMsg(msg tea.Msg) (tea.Model, bool) {
 	}
 	if m.dream.view == dreamDeciding {
 		m.dream.receipt = x.Receipt
+		if m.dream.viewport == nil {
+			m.dream.viewport = new(bounded.Viewport)
+		}
+		m.dream.viewport.Reset()
 		m.dream.view = dreamReceipt
 	}
 	return m, true
 }
 
 func renderDreamOverlay(th theme.Theme, st dreamState, caps client.Capabilities, hk helpKeys, width, height int) string {
+	if st.view == dreamReview || st.view == dreamReceipt {
+		return renderDreamReader(th, st, caps, hk, width, height)
+	}
 	lines := []string{th.Style("overlayTitle").Render("Dream — manual memory maintenance")}
 	switch st.view {
 	case dreamTargets:
@@ -219,15 +248,6 @@ func renderDreamOverlay(th theme.Theme, st dreamState, caps client.Capabilities,
 		}
 	case dreamGenerating:
 		lines = append(lines, th.Style("muted").Render("generating plan…"))
-	case dreamReview:
-		capability := client.DreamTargetCapability{}
-		if caps.ManualDream != nil {
-			capability = caps.ManualDream.ProjectMemory
-			if st.plan != nil && st.plan.Target == client.DreamTargetUserModel {
-				capability = caps.ManualDream.UserModel
-			}
-		}
-		lines = append(lines, renderDreamPlan(st.plan, width, capability.Decide, capability.UnavailableReason)...)
 	case dreamConfirmApply:
 		lines = append(lines, fmt.Sprintf("Apply this whole plan? %d sources will be processed.", st.plan.SourceCount), "Synthesized survivor revisions shown in the plan will be written; displayed sources retire atomically per operation.", "", "Enter apply   Esc back")
 	case dreamConfirmDismiss:
@@ -236,17 +256,91 @@ func renderDreamOverlay(th theme.Theme, st dreamState, caps client.Capabilities,
 		lines = append(lines, "Generate a fresh plan? This sends the selected full memory to the model again and spends more tokens.", "", "Enter regenerate   Esc back")
 	case dreamDeciding:
 		lines = append(lines, th.Style("muted").Render(st.decision+"ing plan…"))
-	case dreamReceipt:
-		lines = append(lines, renderDreamReceipt(st)...)
 	}
-	if (st.view == dreamReview || st.view == dreamReceipt) && len(lines) > max(4, height-6) {
-		window := max(4, height-6)
-		start := min(max(0, st.scroll), max(0, len(lines)-window))
-		end := min(len(lines), start+window)
-		lines = append(append([]string(nil), lines[start:end]...), fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines)))
-	}
-	lines = append(lines, "", th.Style("muted").Render(hk.closeOnly+" back/close  ↑/↓ scroll"))
+	lines = append(lines, "", th.Style("muted").Render(hk.closeOnly+" back/close"))
 	return centerCard(th, strings.Join(lines, "\n"), width, height)
+}
+
+func renderDreamReader(th theme.Theme, st dreamState, caps client.Capabilities, hk helpKeys, width, height int) string {
+	title, footer, rows, contentWidth, bodyHeight := dreamReaderLayout(th, st, caps, hk, width, height)
+	if bodyHeight < 1 {
+		if st.viewport != nil {
+			st.viewport.SetGeometry(0, 0, 0, bounded.Clip)
+		}
+		if width <= 0 || height <= 0 {
+			return ""
+		}
+		return dreamCompact(th, hk, width)
+	}
+	viewport := st.viewport
+	if viewport == nil {
+		viewport = new(bounded.Viewport)
+	}
+	viewport.SetGeometry(contentWidth, bodyHeight, 0, bounded.Clip)
+	projection := viewport.View(rows)
+	body := append(append([]string{}, title...), "")
+	body = append(body, projection.Rows...)
+	if len(rows) > bodyHeight {
+		indicator := th.Style("muted").Render(fmt.Sprintf("lines %d–%d of %d", projection.Above+1, len(rows)-projection.Below, len(rows)))
+		body = append(body, ansi.Cut(indicator, 0, contentWidth)+"\x1b[0m")
+	}
+	body = append(body, "")
+	body = append(body, footer...)
+	return centerCard(th, strings.Join(body, "\n"), width, height)
+}
+
+func dreamReaderLayout(th theme.Theme, st dreamState, caps client.Capabilities, hk helpKeys, width, height int) (title, footer, rows []string, contentWidth, bodyHeight int) {
+	card := th.Style("askCard")
+	contentWidth = cardTextWidth(width)
+	if width <= 0 || height <= 0 || contentWidth <= 0 || contentWidth+card.GetHorizontalFrameSize() > width {
+		return nil, nil, nil, 0, 0
+	}
+	title = dreamPhysicalRows([]string{th.Style("overlayTitle").Render("Dream — manual memory maintenance")}, contentWidth)
+	footer = dreamPhysicalRows([]string{th.Style("muted").Render(hk.closeOnly + " back/close  ↑/↓ scroll")}, contentWidth)
+	rows = dreamPhysicalRows(dreamReaderLines(st, caps, width), contentWidth)
+	available := height - card.GetVerticalFrameSize()
+	bodyHeight = available - len(title) - len(footer) - 2
+	if len(rows) > bodyHeight {
+		bodyHeight-- // reserve the reader-owned overflow indicator
+	}
+	if bodyHeight < 1 {
+		return nil, nil, nil, 0, 0
+	}
+	return title, footer, rows, contentWidth, bodyHeight
+}
+
+func dreamCompact(th theme.Theme, hk helpKeys, width int) string {
+	return ansi.Cut(th.Style("muted").Render(hk.closeOnly+" close"), 0, max(0, width)) + "\x1b[0m"
+}
+
+func dreamReaderLines(st dreamState, caps client.Capabilities, width int) []string {
+	if st.view == dreamReceipt {
+		return renderDreamReceipt(st)
+	}
+	capability := client.DreamTargetCapability{}
+	if caps.ManualDream != nil {
+		capability = caps.ManualDream.ProjectMemory
+		if st.plan != nil && st.plan.Target == client.DreamTargetUserModel {
+			capability = caps.ManualDream.UserModel
+		}
+	}
+	return renderDreamPlan(st.plan, width, capability.Decide, capability.UnavailableReason)
+}
+
+func dreamPhysicalRows(lines []string, width int) []string {
+	var rows []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "│ ") {
+			// The reader may wrap a framed model value again. Keep its provenance
+			// marker on every resulting physical row, not only the first.
+			for _, part := range strings.Split(ansi.Wrap(strings.TrimPrefix(line, "│ "), width-2, ""), "\n") {
+				rows = append(rows, "│ "+part)
+			}
+			continue
+		}
+		rows = append(rows, strings.Split(ansi.Wrap(line, width, ""), "\n")...)
+	}
+	return rows
 }
 
 func dreamTargetLine(selected bool, label string, capability client.DreamTargetCapability) string {
@@ -367,7 +461,7 @@ func renderDreamReceipt(st dreamState) []string {
 		return []string{"No receipt returned."}
 	}
 	r := st.receipt
-	lines := []string{"disposition: " + reflectionDisplayText(r.Disposition, 64), fmt.Sprintf("planned: %d  applied: %d  conflicted: %d  skipped: %d  failed: %d", r.Planned, r.Applied, r.Conflicted, r.Skipped, r.Failed)}
+	lines := []string{"│ disposition: " + reflectionDisplayText(r.Disposition, 64), fmt.Sprintf("planned: %d  applied: %d  conflicted: %d  skipped: %d  failed: %d", r.Planned, r.Applied, r.Conflicted, r.Skipped, r.Failed)}
 	if r.Conflicted > 0 {
 		lines = append(lines, "Memory changed after generation; nothing is auto-refreshed.")
 	}

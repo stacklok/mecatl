@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 type fakeDream struct {
@@ -140,9 +142,9 @@ func TestDreamReviewActionsReceiptsAndExplicitRegenerate(t *testing.T) {
 			t.Errorf("review missing %q:\n%s", want, out)
 		}
 	}
-	bounded := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 90, 18))
-	if !strings.Contains(bounded, "lines 1–") {
-		t.Fatalf("bounded review has no scroll indicator:\n%s", bounded)
+	clipped := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 90, 18))
+	if !strings.Contains(clipped, "lines 1–") {
+		t.Fatalf("bounded review has no scroll indicator:\n%s", clipped)
 	}
 	m, cmd := pressDream(t, m, 'a')
 	if cmd != nil || m.dream.view != dreamConfirmApply {
@@ -335,5 +337,199 @@ func TestDreamDismissAndSanitization(t *testing.T) {
 	_ = cmd()
 	if f.decided[0] != [2]string{"plan", client.DreamDecisionDismiss} {
 		t.Fatalf("dismiss payload = %v", f.decided)
+	}
+}
+
+func TestDreamReaderRetainsFrameWhenRewrappingUntrustedRows(t *testing.T) {
+	rows := dreamPhysicalRows([]string{"│ reason: " + strings.Repeat("padding ", 5) + "a apply whole plan"}, 20)
+	if len(rows) < 2 {
+		t.Fatal("precondition: value must rewrap")
+	}
+	for _, row := range rows {
+		if !strings.HasPrefix(row, "│ ") {
+			t.Fatalf("untrusted continuation lost its frame: %q", row)
+		}
+		if ansi.StringWidth(row) > 20 {
+			t.Fatalf("framed row exceeds width: %q", row)
+		}
+	}
+	receipt := dreamState{view: dreamReceipt, receipt: &client.DreamReceipt{Disposition: strings.Repeat("padding ", 5) + "a apply whole plan"}}
+	for _, row := range dreamPhysicalRows(renderDreamReceipt(receipt), 20) {
+		if strings.Contains(row, "a apply whole plan") && !strings.HasPrefix(row, "│ ") {
+			t.Fatalf("receipt continuation impersonates an action: %q", row)
+		}
+	}
+}
+
+func TestDreamReaderLongIndicatorFitsCard(t *testing.T) {
+	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: make([]client.DreamOperation, 130)}
+	st := dreamState{view: dreamReview, plan: plan, viewport: new(bounded.Viewport)}
+	th := theme.New("aztec", theme.AztecPalette())
+	_, _, rows, _, bodyHeight := dreamReaderLayout(th, st, client.Capabilities{}, defaultHelpKeys(), 30, 25)
+	if bodyHeight < 1 || len(rows) < 1000 {
+		t.Fatalf("precondition: reader height=%d rows=%d", bodyHeight, len(rows))
+	}
+	_ = renderDreamOverlay(th, st, client.Capabilities{}, defaultHelpKeys(), 30, 25)
+	st.viewport.Move(bounded.End, len(rows))
+	out := renderDreamOverlay(th, st, client.Capabilities{}, defaultHelpKeys(), 30, 25)
+	for _, row := range strings.Split(out, "\n") {
+		if got := ansi.StringWidth(row); got > 30 {
+			t.Fatalf("overflow indicator/card row exceeds 30 columns (%d): %q", got, row)
+		}
+	}
+}
+
+func TestDreamReaderUpdateViewAndResultLifecycle(t *testing.T) {
+	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
+		Kind: "synthesis", Reason: strings.Repeat("long reason ", 100),
+	}}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamModel(t, &fakeDream{}, caps)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 42, Height: 28})
+	m.dreamGen, m.dream.requestID = 3, 8
+	m.dream.view, m.dream.viewport = dreamGenerating, new(bounded.Viewport)
+	m.dream.viewport.SetGeometry(20, 2, 0, bounded.Clip)
+	m.dream.viewport.Move(bounded.End, 100)
+	staleOffset := m.dream.viewport.Offset()
+	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 7, Plan: plan})
+	if m.dream.viewport.Offset() != staleOffset || m.dream.view != dreamGenerating {
+		t.Fatal("stale plan response changed the reader")
+	}
+	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 8, Plan: plan})
+	if m.dream.view != dreamReview || m.dream.viewport.Offset() != 0 {
+		t.Fatal("new plan did not reset reader to top")
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown}) // no intervening View
+	if m.dream.viewport.Offset() != 1 {
+		t.Fatal("Model.Update did not route reader navigation through the copied model")
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 38, Height: 27}, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if m.dream.viewport.Offset() <= 1 {
+		t.Fatal("Model.Update lost page navigation after resize")
+	}
+	if got := len(strings.Split(m.renderBody(), "\n")); got > m.vp.Height() {
+		t.Fatalf("reader body uses %d rows, offered %d", got, m.vp.Height())
+	}
+	if !strings.Contains(m.View().Content, "lines ") {
+		t.Fatal("Model.View did not project the bounded reader")
+	}
+	m.dream.view, m.dream.requestID, m.dream.decision = dreamDeciding, 9, client.DreamDecisionApply
+	scrolled := m.dream.viewport.Offset()
+	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 8, Err: status.Error(codes.Unavailable, "stale")})
+	if m.dream.viewport.Offset() != scrolled || m.dream.view != dreamDeciding {
+		t.Fatal("stale decision response changed the reader")
+	}
+	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 9, Err: status.Error(codes.Unavailable, "retry")})
+	if m.dream.view != dreamReceipt || m.dream.viewport.Offset() != 0 {
+		t.Fatal("decision receipt did not reset reader to top")
+	}
+	out := m.renderBody()
+	if !strings.Contains(stripANSIstr(out), "Decision result unknown") {
+		t.Fatal("receipt did not render through the reader")
+	}
+	if !strings.Contains(stripANSIstr(out), "lines ") {
+		t.Fatal("clipped receipt lost its overflow indicator")
+	}
+	if got := len(strings.Split(out, "\n")); got > m.vp.Height() {
+		t.Fatalf("receipt body uses %d rows, offered %d", got, m.vp.Height())
+	}
+	for _, row := range strings.Split(out, "\n") {
+		if got := ansi.StringWidth(row); got > m.width {
+			t.Fatalf("receipt row exceeds terminal width (%d > %d): %q", got, m.width, row)
+		}
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.dream.viewport.Offset() != 1 {
+		t.Fatal("receipt navigation did not advance")
+	}
+	if got := len(strings.Split(m.View().Content, "\n")); got > m.height {
+		t.Fatalf("full frame uses %d rows, terminal height %d", got, m.height)
+	}
+}
+
+func TestDreamReaderNavigationBeforeRenderAndAfterResize(t *testing.T) {
+	plan := client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
+		Kind: "synthesis", Reason: strings.Repeat("a long reason ", 60),
+	}}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamModel(t, &fakeDream{}, caps)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 36})
+	m.dream = dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)}
+	m, _ = pressDream(t, m, 'j') // no intervening View call
+	if got := m.dream.viewport.Offset(); got != 1 {
+		t.Fatalf("first navigation before rendering = %d, want 1", got)
+	}
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 36, Height: 32})
+	_, _, rows, _, bodyHeight := dreamReaderLayout(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	if bodyHeight < 1 {
+		t.Fatal("resize precondition: reader must fit")
+	}
+	mm, _, handled := m.onDreamKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if !handled {
+		t.Fatal("PageDown was not handled")
+	}
+	m = mm.(Model)
+	if got, want := m.dream.viewport.Offset(), min(1+bodyHeight, max(0, len(rows)-bodyHeight)); got != want {
+		t.Fatalf("PageDown after resize before render = %d, want %d", got, want)
+	}
+}
+
+func TestDreamReaderBoundedViewportScenario(t *testing.T) {
+	plan := client.DreamPlan{ID: "plan-reader", Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
+		Kind: "synthesis", Survivor: client.DreamParticipant{Key: "survivor", Value: strings.Repeat("wide value ", 20)},
+		Sources:     []client.DreamParticipant{{Key: "source", Value: strings.Repeat("source value ", 20)}},
+		Replacement: client.DreamReplacement{Value: strings.Repeat("replacement ", 20)}, Reason: strings.Repeat("reason ", 80),
+	}}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamModel(t, &fakeDream{}, caps)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 36})
+	m.dream = dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)}
+
+	_ = renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 48, m.vp.Height())
+	if m.dream.viewport.Height() < 1 {
+		t.Fatal("reader did not receive a usable viewport")
+	}
+	for range 1000 {
+		m, _ = pressDream(t, m, 'j')
+	}
+	atEnd := m.dream.viewport.Offset()
+	if atEnd == 0 {
+		t.Fatal("long plan did not scroll")
+	}
+	m, _ = pressDream(t, m, 'k')
+	if got := m.dream.viewport.Offset(); got != atEnd-1 {
+		t.Fatalf("Up after Down past End offset = %d, want %d", got, atEnd-1)
+	}
+	m, _ = pressDream(t, m, 'a')
+	if m.dream.view != dreamConfirmApply {
+		t.Fatalf("review action was lost to reader navigation: %v", m.dream.view)
+	}
+
+	m.dream = dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)}
+	for i, size := range [][2]int{{48, 20}, {28, 12}, {12, 5}, {60, 30}} {
+		m.width = size[0]
+		out := renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), size[0], size[1])
+		if i == 0 {
+			m.dream.viewport.Move(bounded.End, len(dreamPhysicalRows(dreamReaderLines(m.dream, m.caps, m.width), cardTextWidth(m.width))))
+		} else if m.dream.viewport.Valid() {
+			total := len(dreamPhysicalRows(dreamReaderLines(m.dream, m.caps, m.width), cardTextWidth(m.width)))
+			if got, maxOffset := m.dream.viewport.Offset(), max(0, total-m.dream.viewport.Height()); got > maxOffset {
+				t.Fatalf("%dx%d resize offset = %d, want <= %d", size[0], size[1], got, maxOffset)
+			}
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if got := ansi.StringWidth(ansi.Strip(line)); got > size[0] {
+				t.Fatalf("%dx%d row width = %d: %q", size[0], size[1], got, ansi.Strip(line))
+			}
+		}
+		if got := len(strings.Split(out, "\n")); got > size[1] {
+			t.Fatalf("%dx%d rendered %d rows", size[0], size[1], got)
+		}
+	}
+	m.dream = dreamState{view: dreamReceipt, plan: &plan, receipt: &client.DreamReceipt{Failed: 1}, viewport: m.dream.viewport}
+	m, _ = pressDream(t, m, 'r')
+	if m.dream.view != dreamConfirmRegenerate {
+		t.Fatalf("receipt action was lost to reader navigation: %v", m.dream.view)
 	}
 }
