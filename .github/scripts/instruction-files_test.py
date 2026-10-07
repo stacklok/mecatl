@@ -108,6 +108,8 @@ case("implemented proposal fails", False, "idea.md: Status: implemented",
      edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("exploring", "implemented")))
 case("unknown proposal status fails", False, "idea.md: Status 'draft' must be one of",
      edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("exploring", "draft")))
+case("abandoned proposal fails", False, "idea.md: Status 'abandoned' must be one of",
+     edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("exploring", "abandoned")))
 case("proposal with bad date fails", False, "idea.md: Last updated 'soon' must be YYYY-MM-DD",
      edit=lambda f, l: f.__setitem__("docs/proposals/idea.md", PROPOSAL.replace("2026-10-07", "soon")))
 case("missing description fails", False, "no description",

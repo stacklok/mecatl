@@ -41,7 +41,7 @@ REMOVED_HINT = "put plan or design notes in the PR description or an issue; curr
 
 PROPOSALS_DIR = "docs/proposals/"
 PROPOSAL_FIELDS = ("Status", "Owner", "Last updated")
-PROPOSAL_STATUSES = ("exploring", "accepted", "implemented", "abandoned")
+PROPOSAL_STATUSES = ("exploring", "accepted", "implemented")
 PROPOSAL_HEADER_LINE = re.compile(r"^(Status|Owner|Last updated):\s*(.*?)\s*\\?\s*$")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

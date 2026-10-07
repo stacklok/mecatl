@@ -6,7 +6,7 @@ When one is implemented, the implementing PR moves what is now true into
 proposal; abandoned proposals are deleted too, and git history keeps them.
 
 Every proposal starts with a three-line header: `Status: exploring | accepted |
-implemented | abandoned`, `Owner: <name>`, and `Last updated: <YYYY-MM-DD>`. `task docs`
+implemented`, `Owner: <name>`, and `Last updated: <YYYY-MM-DD>`. `task docs`
 checks the header and fails on `Status: implemented`, because an implemented proposal
 should already have been folded into the current docs and deleted.
 
