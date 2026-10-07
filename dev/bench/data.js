@@ -273190,6 +273190,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791364152702,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b93b601378bb0f2c0762d2acab5837af2928f47e",
+          "message": "fix(studio): unify verdict ledger and guard late side-thread verdicts (#2143)",
+          "timestamp": "2026-10-07T13:47:21+02:00",
+          "tree_id": "84c3202e1ddaafecb9b64d123acee0f3a2fbab46",
+          "url": "https://github.com/stacklok/mecatl/commit/b93b601378bb0f2c0762d2acab5837af2928f47e"
+        },
+        "date": 1791374403975,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -396203,6 +396237,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791374400600,
+  "lastUpdate": 1791374404729,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
