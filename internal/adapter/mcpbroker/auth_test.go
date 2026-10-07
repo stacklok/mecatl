@@ -33,7 +33,7 @@ func protectedConfig(tokenURL string) mcpauthority.BrokerConfig {
 				Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
 					AuthorizationEndpoint: "https://accounts.example/authorize", TokenEndpoint: tokenURL,
 				}},
-				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretEnv: "MECATL_TEST_CLIENT_SECRET"}},
+				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretFile: "testdata/client-secret"}},
 				Scopes: []string{"issues:write"}, RequestRefreshToken: true,
 			}},
 		}},
@@ -74,7 +74,7 @@ func newProtectedHarness(t *testing.T, tokenServer *httptest.Server) *protectedH
 		},
 		WithAuthorizedCaller(authorized),
 		WithOAuthLoopbackForTest(t, roots),
-		WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "client-secret", nil }),
+		WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "client-secret", nil }),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -841,7 +841,7 @@ func TestAttachmentCloseWaitsForRequestAuthorization(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(ctx context.Context, _ string) (string, error) {
 			close(entered)
 			select {
 			case <-release:
@@ -916,7 +916,7 @@ func TestRuntimeCloseAndDrainWaitsForActiveOperations(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-release
 			return "client-secret", nil
@@ -983,7 +983,7 @@ func TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-hang // ignores ctx cancellation on purpose: a genuinely wedged op
 			return "client-secret", nil

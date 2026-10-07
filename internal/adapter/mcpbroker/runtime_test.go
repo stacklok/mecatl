@@ -291,7 +291,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationDelegatesExactNati
 		return session.ToolResult{}, errors.New("must not execute before authorization")
 	}), WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 		return session.ToolResult{}, errors.New("must not execute before authorization")
-	}), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+	}), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 	if err != nil {
 		t.Fatal(err)
 	}

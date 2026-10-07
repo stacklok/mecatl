@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ type oauthRoute struct {
 	tokenEndpoint         string
 	callbackURL           string
 	clientID              string
-	secretEnv             string
+	secretFile            string
 	clientSecret          string
 	scopes                []string
 	requestRefresh        bool
@@ -67,15 +66,11 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		"token endpoint":         profile.Upstream.OAuth2.TokenEndpoint,
 		"callback URL":           callbackURL,
 	} {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		if err := ValidateProtectedURL(raw, label); err != nil {
 			return nil, fmt.Errorf("%w: route %q has invalid %s", ErrInvalidCatalogue, declaration.Name, label)
 		}
-		if parsed.Scheme != "https" {
-			return nil, fmt.Errorf("%w: route %q requires HTTPS for %s", ErrInvalidCatalogue, declaration.Name, label)
-		}
 	}
-	if profile.Client.Preregistered.ID == "" || profile.Client.Preregistered.SecretEnv == "" || len(profile.Scopes) == 0 {
+	if profile.Client.Preregistered.ID == "" || profile.Client.Preregistered.SecretFile == "" || len(profile.Scopes) == 0 {
 		return nil, fmt.Errorf("%w: route %q has incomplete OAuth client metadata", ErrInvalidCatalogue, declaration.Name)
 	}
 	return &oauthRoute{
@@ -83,21 +78,21 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		tokenEndpoint:         profile.Upstream.OAuth2.TokenEndpoint,
 		callbackURL:           callbackURL,
 		clientID:              profile.Client.Preregistered.ID,
-		secretEnv:             profile.Client.Preregistered.SecretEnv,
+		secretFile:            profile.Client.Preregistered.SecretFile,
 		scopes:                append([]string(nil), profile.Scopes...),
 		requestRefresh:        profile.RequestRefreshToken,
 		resource:              declaration.URL,
 	}, nil
 }
 
-func (route *oauthRoute) resolveClientSecret(ctx context.Context, resolve func(context.Context, string) (string, error)) (string, error) {
+func (route *oauthRoute) resolveClientSecret(ctx context.Context, readFile func(context.Context, string) (string, error)) (string, error) {
 	if route.clientSecret != "" {
 		return route.clientSecret, nil
 	}
-	if route.secretEnv == "" {
+	if route.secretFile == "" {
 		return "", nil
 	}
-	return resolve(ctx, route.secretEnv)
+	return readFile(ctx, route.secretFile)
 }
 
 func (c *Catalogue) protected() bool {
@@ -111,7 +106,7 @@ func (c *Catalogue) protected() bool {
 
 type oauthRuntimeOptions struct {
 	httpClient           *http.Client
-	resolveSecret        func(context.Context, string) (string, error)
+	readSecretFile       func(context.Context, string) (string, error)
 	now                  func() time.Time
 	random               func([]byte) (int, error)
 	ttl                  time.Duration
@@ -130,14 +125,8 @@ type oauthRuntimeOptions struct {
 
 func defaultOAuthRuntimeOptions() oauthRuntimeOptions {
 	return oauthRuntimeOptions{
-		resolveSecret: func(_ context.Context, name string) (string, error) {
-			value, ok := os.LookupEnv(name)
-			if !ok || value == "" {
-				return "", errors.New("OAuth client secret is unavailable")
-			}
-			return value, nil
-		},
-		now: time.Now, random: rand.Read, ttl: defaultAuthorizationTTL, timeout: defaultExchangeTimeout,
+		readSecretFile: func(_ context.Context, path string) (string, error) { return readClientSecretFile(path) },
+		now:            time.Now, random: rand.Read, ttl: defaultAuthorizationTTL, timeout: defaultExchangeTimeout,
 	}
 }
 
@@ -173,11 +162,11 @@ func WithBrokerHTTPClientForTest(t interface{ Helper() }, client *http.Client) O
 	return func(runtime *Runtime) { runtime.oauth.testBrokerHTTPClient = client }
 }
 
-// WithOAuthSecretResolver resolves trusted secret references from P07 declarations.
-func WithOAuthSecretResolver(resolver func(context.Context, string) (string, error)) Option {
+// WithOAuthSecretFileReader installs a test-only reader for configured client-secret files.
+func WithOAuthSecretFileReader(reader func(context.Context, string) (string, error)) Option {
 	return func(runtime *Runtime) {
-		if resolver != nil {
-			runtime.oauth.resolveSecret = resolver
+		if reader != nil {
+			runtime.oauth.readSecretFile = reader
 		}
 	}
 }
@@ -379,7 +368,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	// deletion and Runtime.Close's ability to even reach the point of
 	// cancelling this operation's context, so holding it here would block
 	// unrelated shutdown/deletion for the duration of the round trip.
-	secret, err := t.route.oauth.resolveClientSecret(opCtx, t.attachment.runtime.oauth.resolveSecret)
+	secret, err := t.route.oauth.resolveClientSecret(opCtx, t.attachment.runtime.oauth.readSecretFile)
 	if err != nil {
 		return session.ExternalAuthorization{}, false, err
 	}
