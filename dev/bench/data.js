@@ -277128,6 +277128,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791399373766,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c079a040518b70119d75c5e7b91d10f2d14fd058",
+          "message": "docs: restore the technical writing skill (#2181)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Codex <noreply@openai.com>",
+          "timestamp": "2026-10-07T15:01:57-04:00",
+          "tree_id": "fcd42d61d74d33490a29811cd075ed790a579026",
+          "url": "https://github.com/stacklok/mecatl/commit/c079a040518b70119d75c5e7b91d10f2d14fd058"
+        },
+        "date": 1791400472689,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -401824,6 +401858,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791400469782,
+  "lastUpdate": 1791400473581,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
