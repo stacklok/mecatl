@@ -111,8 +111,10 @@ tool output does not enter those paths.
 
 ## Use the shell hook runner
 
-`internal/adapter/hookexec` maps phases to shell commands in the shipped
-applications:
+The shipped applications use `internal/adapter/hookexec` to map phases to shell
+commands. This internal package is available only within the Mecatl repository;
+an external embedding implements `HookRunner` directly. The following fragment
+shows the shipped runner's configuration:
 
 ```go
 hooks := hookexec.New(map[governance.HookPhase]string{
@@ -175,6 +177,8 @@ Mecatl fails closed on errors from `SessionStart`, `UserPromptSubmit`, and
 broken hook cannot stop team coordination. `PostToolUse` errors leave the tool
 result unchanged, and notification errors have no effect on the run.
 
+### Coordinate hooks with contextual guardrails
+
 The contextual guardrail reviewer is downstream of trusted hook mutation rather
 than a replacement `HookRunner` outcome. Action review sees the exact effective
 call after deterministic gates are repeated when mutation changed arguments.
@@ -183,8 +187,9 @@ enforcing finding before recorder, history, event, client, or model delivery.
 
 A held result can be released exactly once by an interactive owner. Release does
 not rerun the tool, PostToolUse hook, or checker. Checker rationale is not added
-to hook events: machine fields are durable, while bounded concern/source/next-action
-text is fetched from the live owner-authorized detail RPC.
+to hook events: machine fields are durable, while bounded
+concern/source/next-action text is fetched from the live owner-authorized detail
+RPC.
 
 The same applicable review rules bind main and worker calls. Only the dedicated
 checker engine is inert and tool-limited; this is the recursion guard.

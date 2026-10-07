@@ -2,14 +2,13 @@
 sidebar_position: 110
 title: Operate local session storage
 description:
-  Operate and protect the local JSONL session store through Mecatl's management
-  API.
+  Inspect, clean up, and back up the local JSONL session store safely.
 ---
 
 # Operate local session storage
 
-Use Mecatl's management API to inspect and clean up a local JSONL session
-store. Do not edit or delete store files directly.
+Use Mecatl's management API to inspect and clean up a local JSONL session store.
+Do not edit or delete store files directly.
 
 This guide covers a single-user `mecated` daemon with stable configuration and
 state paths. For the API, see the [gRPC reference](/reference/grpc-api.md). For
@@ -52,9 +51,9 @@ retention:
   acknowledge_main_deletion: false
 ```
 
-Keep the settings file mode `0600` and its parent directory mode `0700`.
-Unknown keys, negative values, and unsupported versions prevent startup.
-Explicit retention flags override file settings.
+Keep the settings file mode `0600` and its parent directory mode `0700`. Unknown
+keys, negative values, and unsupported versions prevent startup. Explicit
+retention flags override file settings.
 
 Main-session retention also requires `acknowledge_main_deletion: true` or the
 equivalent flag. Review the effective retention summary before enabling it.
@@ -68,8 +67,8 @@ Install `mecated`, then confirm its absolute path. The example uses
 `/home/linuxbrew/.linuxbrew/bin/mecated`. systemd does not search `PATH` or
 expand shell expressions in `ExecStart`.
 
-Create the configuration and state directories before enabling the service.
-Save the following unit as `~/.config/systemd/user/mecated.service`. `%h` is the
+Create the configuration and state directories before enabling the service. Save
+the following unit as `~/.config/systemd/user/mecated.service`. `%h` is the
 systemd home-directory specifier.
 
 {/* scenario9-systemd */}
@@ -143,7 +142,9 @@ Keep every token as a separate `ProgramArguments` item. A path containing spaces
 must remain one item. Supply provider credentials through a protected launchd
 environment or secret facility rather than the property list.
 
-## Management truth and safe cleanup
+<span id="management-truth-and-safe-cleanup"></span>
+
+## Inspect storage and clean up sessions
 
 Use only Mecatl's management API for cleanup. External deletion can bypass
 session-family ordering, locks, active-run and Lease checks, generation-bound
@@ -199,21 +200,21 @@ Before deleting sessions:
 
 Discard a stale plan and create a new one.
 
-For an unsupported backend, use the maintenance and backup procedure supplied
-by that backend's operator. Do not infer safety from empty fields or fall back
-to filesystem deletion.
+For an unsupported backend, use the maintenance and backup procedure supplied by
+that backend's operator. Do not infer safety from empty fields or fall back to
+filesystem deletion.
 
 ## Quiesced backup and restore runbook
 
-Use this sequence for upgrades, retention changes, and recovery drills. Use
-your platform's backup tooling while the service is stopped.
+Use this sequence for upgrades, retention changes, and recovery drills. Use your
+platform's backup tooling while the service is stopped.
 
 1. **Stop and quiesce the store.** Stop the service and confirm that no daemon,
    replica, or cleanup job uses the same store. The store and its parent
    directories must be physical directories, not symbolic links. On macOS, use
    the physical `/private/...` path instead of its `/var/...` alias.
-1. **Confirm durability.** Check storage health before relying on a backup.
-   Mecatl can report filesystems that do not support its full durability
+1. **Confirm durability.** Review the storage-health result before relying on a
+   backup. Mecatl can report filesystems that do not support its full durability
    contract. Successful sync probes show syscall support, but the underlying
    storage must still honor sync and atomic rename. Temporary filesystems do not
    survive host failure. Event-log append, deletion, and retention fail before
@@ -221,9 +222,10 @@ your platform's backup tooling while the service is stopped.
    record requires operator recovery; only an interrupted final record can be
    treated as a torn tail.
 1. **Back up the complete state directory.** Include current snapshots under
-   `sid-v1`, event and tool sidecars, catalog data, and lock sentinels. Preserve ownership, permissions, timestamps, and filesystem boundaries. Record the Mecatl version,
-   configuration, effective retention policy, and backup checksum. Keep
-   directories mode `0700` and files mode `0600`.
+   `sid-v1`, event and tool sidecars, catalog data, and lock sentinels. Preserve
+   ownership, permissions, timestamps, and filesystem boundaries. Record the
+   Mecatl version, configuration, effective retention policy, and backup
+   checksum. Keep directories mode `0700` and files mode `0600`.
 1. **Validate a restore.** Restore the backup to a new directory with owner-only
    permissions. Point a separate test instance at it, then inspect inventory,
    representative transcripts, sidecars, and storage health. Do not overwrite
@@ -234,13 +236,13 @@ your platform's backup tooling while the service is stopped.
    before admitting new work.
 
 If inventory reports a malformed current snapshot, quiesce every service using
-the namespace and preserve a byte-for-byte copy for diagnosis. Restore the complete
-namespace from a verified backup in a separate location, validate it, and then
-switch the service to that restored namespace. Do not directly edit the
+the namespace and preserve a byte-for-byte copy for diagnosis. Restore the
+complete namespace from a verified backup in a separate location, validate it,
+and then switch the service to that restored namespace. Do not directly edit the
 artifact or delete the damaged namespace as the default recovery action.
 
-If validation fails, keep the service stopped. Preserve the failed namespace
-and the last known-good backup for diagnosis; do not merge partial state trees.
+If validation fails, keep the service stopped. Preserve the failed namespace and
+the last known-good backup for diagnosis; do not merge partial state trees.
 
 ## Next steps
 

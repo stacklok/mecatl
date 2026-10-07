@@ -1,13 +1,14 @@
 ---
 sidebar_position: 10
 title: Observability and resilience
-description: Understand runtime signals, resilient model calls, and product metrics.
+description:
+  Understand runtime signals, resilient model calls, and product metrics.
 ---
 
 # Observability and resilience
 
-Mecatl records session activity and runtime health through several channels.
-The event stream retains session facts; structured diagnostics report degraded
+Mecatl records session activity and runtime health through several channels. The
+event stream retains session facts; structured diagnostics report degraded
 integrations and operational failures. Metrics summarize activity, traces follow
 execution, and tool audit records account for individual calls and their timing.
 
@@ -70,16 +71,14 @@ OpenRouter. The current OpenAI Chat Completions route uses no cache dialect.
 
 Use `mecatl_tokens_total` and `mecatl_cache_hit_ratio` to confirm cache use.
 
-To stop asking for a prompt cache, run with `--no-prompt-cache`. It turns off
-every Responses-side ask and the three conversation breakpoints on the Anthropic
-Messages providers.
+`--no-prompt-cache` disables Responses cache requests and the three conversation
+breakpoints on Anthropic Messages providers. Messages providers still emit a
+system-prompt breakpoint, which asks the provider to retain that prefix for the
+cache lifetime.
 
-It does not turn off caching completely. On a Messages provider, the breakpoint
-covering the system prompt is emitted whatever you set, so the provider is still
-asked to retain that prefix for the cache lifetime. A deployment relying on a
-zero-retention arrangement therefore needs `--no-prompt-cache` *and* a model
-route that avoids the Messages providers: `anthropic`, `openrouter-anthropic`,
-`toolhive-anthropic`, and any provider you defined with
+For a zero-retention arrangement, use `--no-prompt-cache` and a model route that
+avoids Messages providers: `anthropic`, `openrouter-anthropic`,
+`toolhive-anthropic`, and custom providers with
 `api_flavor: anthropic-messages`.
 
 ### Failure diagnostics
@@ -88,12 +87,10 @@ Retry decisions and breaker transitions go to structured diagnostics without raw
 errors or request content. The event log also receives sanitized
 `network.attempt` records. `InspectSession {"view":"network"}` returns bounded
 retry and terminal decisions without prompts, credentials, or response bodies.
-Each attempt also carries a bounded structural summary — whether the
-provider's protocol terminal was actually observed, and a closed outcome
-(complete, incomplete, stream error, or cancelled) — covering successful and
-cancelled streams as well as failures, so a session that finished without
-error but produced unexpected output can still be distinguished from one whose
-stream was cut off or errored in transport.
+Each attempt also records whether the provider's protocol terminal was observed
+and an outcome: complete, incomplete, stream error, or cancelled. These bounded
+summaries cover successful and cancelled streams as well as failures. Use them
+to distinguish unexpected model output from an interrupted or failed transport.
 
 ## Anonymous product metrics
 
@@ -119,6 +116,8 @@ observations instead of sending them.
 
 ## Related information
 
-- [Collect metrics, traces, and diagnostics](/operating/observability.md) for endpoints and collection setup.
-- [Session continuity](/features/sessions/session-continuity.md) for persistence and recovery.
+- [Collect metrics, traces, and diagnostics](/operating/observability.md) for
+  endpoints and collection setup.
+- [Session continuity](/features/sessions/session-continuity.md) for persistence
+  and recovery.
 - [Go embedding](/building/go/embed-engine.md) for sink integration.

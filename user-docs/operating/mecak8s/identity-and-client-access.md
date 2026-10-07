@@ -1,18 +1,22 @@
 ---
 title: Secure mecak8s client access
-description: Configure server TLS, verified caller identity, and global tool access.
+description:
+  Configure server TLS, verified caller identity, and global tool access.
 sidebar_position: 4
 ---
 
 # Secure mecak8s client access
 
-Configure authentication and transport together before admitting callers. Ownership scopes durable resources; shared filesystem isolation remains an operator responsibility.
+Configure authentication and transport together before admitting callers.
+Ownership scopes durable resources; shared filesystem isolation remains an
+operator responsibility.
 
 ## Server TLS
 
 Server TLS is independent of Redis TLS. It is off by default and uses an
-operator-created, same-namespace `kubernetes.io/tls` Secret. The quick start
-creates this Secret and enables these values:
+operator-created, same-namespace `kubernetes.io/tls` Secret. The
+[deployment quick start](/operating/mecak8s.md#quick-start) creates this Secret
+and enables these values:
 
 ```yaml
 tls:
@@ -20,22 +24,33 @@ tls:
   secretName: mecak8s-tls
 ```
 
-The chart creates no Secret. With `tls.enabled=true`, it projects only
-`tls.certKey` and `tls.keyKey` from that Secret, read-only with mode `0440`.
-They default to the standard `tls.crt` and `tls.key` data keys; set the values
-when your Secret uses different PEM key names. The container receives the fixed
-mounted paths `/var/run/secrets/tls/<certKey>` and
-`/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
-for both gRPC and HTTP/SSE. The chart also changes health and readiness requests
-to HTTPS; the Pod-only drain listener remains plaintext HTTP on port 8082. This
-is the in-pod TLS + OIDC secure real-provider posture; include the OIDC values
-shown above for a real provider. For an operator-owned edge TLS boundary
-instead, set `security.tlsTerminatedUpstream=true` with OIDC. Keeping
-`tls.enabled=true` is valid re-encryption and preserves that upstream
-attestation; setting it false selects the ClusterIP-only plaintext h2c backend,
-which must be reachable only from the gateway or mesh. Rotated certificate/key
-pairs are loaded transactionally for new handshakes without a rollout; invalid
-candidates retain the last valid generation.
+Create the Secret before enabling TLS. The chart projects `tls.certKey` and
+`tls.keyKey` read-only with mode `0440`; their defaults are `tls.crt` and
+`tls.key`. Set those values when your Secret uses different PEM key names. The
+container receives the mounted paths `/var/run/secrets/tls/<certKey>` and
+`/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`.
+
+TLS protects both gRPC and HTTP/SSE. The chart changes health and readiness
+requests to HTTPS, while the Pod-only drain listener remains plaintext HTTP on
+port 8082. Enable [OIDC](#enable-oidc) alongside TLS for a real-provider
+deployment. For certificate rotation, follow the procedure below.
+
+### Secure an edge-terminated backend
+
+For an operator-owned edge TLS boundary, set
+`security.tlsTerminatedUpstream=true` with OIDC. Keep `tls.enabled=true` for
+re-encryption, or set it to `false` for a ClusterIP-only plaintext h2c backend
+reachable only from the gateway or mesh.
+
+Edge-terminated h2c sends the caller's bearer token across the pod network in
+cleartext. Restrict the Service to gateway pods with NetworkPolicy or an mTLS
+mesh. The chart does not verify the gateway or provide a general NetworkPolicy.
+The gateway must forward the original bearer token and expose only the gRPC
+route. Keep `/drain`, `/healthz`, and `/readyz` private.
+
+The chart creates no Gateway, Route, Certificate, or `BackendTLSPolicy`.
+Configure those resources or retain in-pod TLS for re-encryption. Move an
+existing in-pod TLS release to h2c through a blue-green or maintenance cutover.
 
 ## Rotate server TLS certificates
 
@@ -53,8 +68,8 @@ still requires a pod restart to change the trusted client identities.
 
 Enable OIDC to authenticate every request and isolate sessions, schedules,
 teams, and memory by the verified `(issuer, subject)` owner. See
-[Caller identity and OIDC](/features/security-and-execution/caller-identity.md) for the shared behavior
-and client workflows.
+[Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
+for the shared behavior and client workflows.
 
 ## Check existing data first
 
@@ -89,16 +104,15 @@ or replay skipped work.
 
 ## Validator and bounded signing-key cache
 
-The production OIDC/JWT validator is a delegated, actively-maintained library.
-Mecatl never hand-rolls token verification. A bad OIDC configuration, including
-an unreachable initial key fetch, fails closed at startup rather than serving
-unauthenticated traffic. After a successful fetch, the last good JWKS can cover
-a short IdP outage. The chart's default `oidc.maxJWKSStaleness` sets
-`--oidc-max-jwks-staleness=1h`: once keys are older than that, the validator
-refreshes before deciding and returns **503 Service Unavailable** when it cannot
-obtain current keys. A bad, expired, wrong-issuer, or wrong-audience token
-remains **401**. Set the flag to `0` only to deliberately accept unbounded
-cached-key availability and its signing-key revocation exposure.
+An invalid OIDC configuration, including an unreachable initial key fetch, fails
+closed at startup rather than serving unauthenticated traffic. After a
+successful fetch, the last good JWKS can cover a short IdP outage. The chart's
+default `oidc.maxJWKSStaleness` sets `--oidc-max-jwks-staleness=1h`: once keys
+are older than that, the validator refreshes before deciding and returns **503
+Service Unavailable** when it cannot obtain current keys. A bad, expired,
+wrong-issuer, or wrong-audience token remains **401**. Set the flag to `0` only
+to deliberately accept unbounded cached-key availability and its signing-key
+revocation exposure.
 
 This bounds **signing-key** revocation exposure during an IdP outage; it does
 not provide per-token revocation before normal token expiry. The JWKS cache is
@@ -148,31 +162,9 @@ The chart rejects partial profiles and never derives the public resource URL
 from pod addresses. Metadata discovery is anonymous HTTPS and remains separate
 from authenticated gRPC transport.
 
-## Troubleshooting: start here
-
-Two IdP misconfigurations account for most first-deployment 401s, and neither
-produces a helpful error:
-
-1. **The audience is not in the token.** Keycloak, for example, puts only
-   `account` in `aud` by default; your client id appears only if you attach an
-   Audience protocol mapper. Then `--oidc-audience=<your-client-id>` never
-   matches and **every** caller gets 401. Decode a token and check `aud` before
-   anything else.
-2. **The issuer string does not match.** `iss` is compared byte-exact, and an
-   IdP stamps whatever external hostname it is configured to advertise,
-   regardless of how your pods reach it. Take `--oidc-issuer` from the IdP's
-   `/.well-known/openid-configuration`, never from the in-cluster Service URL.
-
-Beyond that: a **401** means the credential was rejected; a **503** means a
-required JWKS refresh could not obtain current keys after the configured
-staleness bound. Before that bound, a last-good JWKS can keep validation
-available during a short IdP outage. Authn failures are **not currently
-logged**, so inspect the caller response's status
-code and nothing else.
-
 ## Security boundaries
 
-|||
+|Boundary|Operator responsibility|
 |-|-|
 |**Filesystem isolation**|Ownership does not isolate a shared pod filesystem. Use separate workspaces or deployments for tenants that must not share files.|
 |**Raw storage drivers**|Drivers are trusted infrastructure and do not authenticate end users. Restrict them to agent workloads and keep them off public Services.|
@@ -281,9 +273,34 @@ stale broker connection.
 
 ## Give clients connection details
 
-Give users the public gRPC address, server CA requirements, and advertised login metadata. They can then follow [Connect to a server](/mecatui/remote-servers.md) without access to Kubernetes or server credentials. Broker catalog inspection also belongs to the connected client workflow.
+Give users the public gRPC address, server CA requirements, and advertised login
+metadata. They can then follow [Connect to a server](/mecatui/remote-servers.md)
+without access to Kubernetes or server credentials. Broker catalog inspection
+also belongs to the connected client workflow.
 
 ## Next steps
 
 - [Observe and troubleshoot the service](/operating/mecak8s/observe-and-troubleshoot.md).
 - [Scale and recover the deployment](/operating/mecak8s/scale-recover-and-upgrade.md).
+
+<span id="troubleshooting-start-here"></span>
+
+## Troubleshooting
+
+For a first-deployment 401, check the token audience and issuer:
+
+1. **The audience is not in the token.** Keycloak, for example, puts only
+   `account` in `aud` by default; your client ID appears only if you attach an
+   Audience protocol mapper. Then `--oidc-audience=<CLIENT_ID>` never matches
+   and **every** caller gets 401. Inspect `aud` locally without sharing or
+   logging the token.
+2. **The issuer string does not match.** `iss` is compared byte-exact, and an
+   IdP stamps whatever external hostname it is configured to advertise,
+   regardless of how your pods reach it. Take `--oidc-issuer` from the IdP's
+   `/.well-known/openid-configuration`, never from the in-cluster Service URL.
+
+Beyond that: a **401** means the credential was rejected; a **503** means a
+required JWKS refresh could not obtain current keys after the configured
+staleness bound. Before that bound, a last-good JWKS can keep validation
+available during a short IdP outage. Authn failures are **not currently
+logged**, so inspect the caller response's status code.

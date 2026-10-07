@@ -6,7 +6,8 @@ sidebar_position: 1
 
 # Configure mecak8s state and execution
 
-Redis owns durable session state. Choose filesystem access separately, based on the work sessions must perform.
+Redis owns durable session state. Choose filesystem access separately, based on
+the work sessions must perform.
 
 ## Choose filesystem access
 
@@ -15,33 +16,33 @@ not send workspace paths or private environment references. By default, new
 sessions have no filesystem access. Schedules retain that placement, and
 delegation cannot add filesystem access that the parent lacks.
 
-See [Execution environments](/features/security-and-execution/execution-environments.md) for the
-shared placement, no-FS, child-environment, and reattachment model.
+See
+[Execution environments](/features/security-and-execution/execution-environments.md)
+for the shared placement, no-FS, child-environment, and reattachment model.
 
 ## Native Kubernetes execution
 
-For per-session PVC-backed workspaces, [configure the execution provider](native-execution.md). Follow its [authority and retained-state lifecycle](execution-provider-lifecycle.md) for rotation, upgrades, retirement, and deletion.
+For per-session PVC-backed workspaces,
+[configure the execution provider](native-execution.md). Follow its
+[authority and retained-state lifecycle](execution-provider-lifecycle.md) for
+rotation, upgrades, retirement, and deletion.
 
-When `execution.enabled` is `false`, the `mecak8s` chart mounts no execution mTLS
-Secret and passes no execution-provider flags. The separate provider chart and
-any environments it owns continue independently.
-
-The no-FS default is intentional. A standard mecak8s pod is storage-free and has
-no authoritative filesystem root, so the server binds omitted/default profile to
-its configured no-FS placement. Clients never send a workspace path; explicit
-`profile:"no-fs"` attenuates to the same filesystem-free surface.
+When `execution.enabled` is `false`, the chart mounts no execution mTLS Secret
+and passes no execution-provider flags. The separate provider and its existing
+environments continue independently. Clients can explicitly request
+`profile: "no-fs"` to keep a session filesystem-free.
 
 ## Mounted workspace (shared filesystem root)
 
 To give sessions a real filesystem, mount a volume into the pod and point
 `--workspace` at it (for example a PVC mounted at `/workspace`). A configured
-root turns mecak8s into a **server-assigned filesystem deployment** rooted
+root turns `mecak8s` into a **server-assigned filesystem deployment** rooted
 there: every session is assigned that single root, the filesystem tools and
 Shell operate on it, and clients have no field with which to select another
 root. The path must be absolute and clean; a relative value is refused at
 startup.
 
-This does not change mecak8s's storage-free posture: harness and session state
+This does not change `mecak8s`'s storage-free posture: harness and session state
 still live in Redis and the Kubernetes API, and the mounted volume holds only
 agent working files. A root shared across the two default replicas needs a
 `ReadWriteMany` volume; a `ReadWriteOnce` PVC binds to a single node, so scale
@@ -63,8 +64,8 @@ This mode is deliberately file-lite: it has no Shell, executable-file semantics,
 git worktrees, or filesystem branch/merge workflow. It is mutually exclusive
 with `workspace`. Set `redis.readLedger.enabled=true` independently to persist
 each session's read-before-write evidence; deleting a session deletes that
-ledger but not the principal's shared files. mecak8s sets no TTL on either
-representation. Redis durability, backups, capacity and eviction policy remain
+ledger but not the principal's shared files. `mecak8s` sets no TTL on either
+representation. Redis durability, backups, capacity, and eviction policy remain
 operator concerns.
 
 ## State topology
@@ -81,9 +82,9 @@ API:
 ## Secure Redis credentials and TLS
 
 Redis credentials reach `mecak8s` as **paths to files** projected from a
-Kubernetes Secret volume. They never appear as container arguments, environment variables,
-or ConfigMap entries. Mount the Secret read-only (`defaultMode: 0440` is a good
-default), then point the flags at the mounted paths:
+Kubernetes Secret volume. They never appear as container arguments, environment
+variables, or ConfigMap entries. Mount the Secret read-only (`defaultMode: 0440`
+is a good default), then point the flags at the mounted paths:
 
 ```text
 --redis-url=redis.example.internal:6379                     # bare host:port, never a redis:// URL
@@ -111,23 +112,22 @@ username, and password file, so Kubernetes projected-Secret `..data` swaps are
 observed. One coalesced event re-reads the **complete** configured file set. The
 process builds fresh durability and follow clients through the same validation
 and verified-TLS path, and publishes the pair only after bounded successful
-PING/TLS/auth probes. Invalid or
-partially projected material leaves the last valid client active; bounded
-single-flight retries cover the window where the Secret projection and
-Redis-side ACL/trust update settle in different orders. New operations use the
-replacement pair, while in-flight operations and migration locks finish on their
-original durability client before it closes. No Redis files configured means no
-reload watcher. Credential files may end in one newline, as Kubernetes Secret
-projections commonly do; other whitespace remains part of the credential.
+PING/TLS/auth probes. Invalid or partially projected material leaves the last
+valid client active; bounded single-flight retries cover the window where the
+Secret projection and Redis-side ACL/trust update settle in different orders.
+New operations use the replacement pair, while in-flight operations and
+migration locks finish on their original durability client before it closes. No
+Redis files configured means no reload watcher. Credential files may end in one
+newline, as Kubernetes Secret projections commonly do; other whitespace remains
+part of the credential.
 
 `--redis-url` takes a bare `host:port`. A `redis://` or `rediss://` URL is
 rejected on every path, plaintext included, and the rejection never repeats the
-address back because a URL's userinfo can carry a password, and these errors land in
-the operator's log.
+address back because a URL's userinfo can carry a password, and these errors
+land in the operator's log.
 
-Client-certificate (mTLS) authentication is **not supported**: the shared
-`toolhive-core/redisconn` connection layer cannot express it,
-and it is tracked upstream at
+Redis client-certificate (mTLS) authentication is not supported
+and is tracked upstream at
 [toolhive-core#240](https://github.com/stacklok/toolhive-core/issues/240).
 
 :::warning[Plaintext Redis is fixture-only]

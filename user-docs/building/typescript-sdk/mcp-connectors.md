@@ -183,4 +183,4 @@ cancel.
 ## Related information
 
 - [TypeScript SDK core API](/reference/typescript-sdk-api/core.md)
-- [Drive Mecatl through gRPC or HTTP](/building/grpc-http.md)
+- [Connect with gRPC or HTTP](/building/grpc-http.md)

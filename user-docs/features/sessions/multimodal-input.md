@@ -38,13 +38,13 @@ Conceptually:
 
 ```json
 {
-  "session_id": "session-id",
+  "session_id": "<SESSION_ID>",
   "text": "Describe this image.",
   "parts": [
     {
       "kind": "KIND_IMAGE",
       "mime_type": "image/png",
-      "data": "<base64-encoded-image-bytes>"
+      "data": "<BASE64_IMAGE_BYTES>"
     }
   ]
 }
@@ -56,7 +56,7 @@ A URL-sourced part uses `url` instead of `data`:
 {
   "kind": "KIND_IMAGE",
   "mime_type": "image/jpeg",
-  "url": "https://cdn.example/image.jpg"
+  "url": "https://cdn.example.com/image.jpg"
 }
 ```
 

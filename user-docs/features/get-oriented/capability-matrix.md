@@ -39,25 +39,26 @@ durable storage. A connected client uses the server's capabilities.
 |Interactive permission approvals|Opt|Headless by default|✓|
 |ACP editor integration|✓, `mecated acp` only|No|No|
 
-For deployment tasks, start with [Deploy and operate Mecatl](/operating/index.md).
-This matrix compares capabilities; the operator journey explains the service
-lifecycle, durability, and coordination choices.
+For deployment tasks, start with
+[Deploy and operate Mecatl](/operating/index.md). This matrix compares
+capabilities; the operator journey explains the service lifecycle, durability,
+and coordination choices.
 
 ## Workspace and Shell execution
 
 Filesystem tools and Shell operate in the namespace where the harness runs. In
-`mecak8s`, that normally means the pod’s workspace and command environment, not
-the client’s machine. A remote client does not upload or share its local
-checkout. See
+`mecak8s`, that normally means the pod's workspace and command environment. A
+remote client does not upload or share its local checkout. See
 [Execution environments](/features/security-and-execution/execution-environments.md)
 for the workspace, runner, no-FS, child-environment, and reattachment model.
 
 ## ACP editor integration
 
-ACP is a local `mecated` integration. It creates a session using the editor
-client’s working directory. When the editor supports read/write access, ACP can
-install a shell-less editor-buffer environment for that session. ACP resume
-restores conversation state but does not yet restore the editor-buffer override.
+ACP is a local `mecated` integration. Its session uses the server's configured
+placement. The editor's required `cwd` must match that placement; it cannot
+select a different workspace. When the editor supports read/write access, ACP
+can install a shell-less editor-buffer environment for the session. Both new and
+loaded sessions can use this overlay when the editor advertises support.
 
 ## Feature availability at runtime
 

@@ -6,7 +6,9 @@ sidebar_position: 2
 
 # Configure mecated providers and storage
 
-Configure the server under its service account, then select durable storage before admitting sessions. For shared-team deployments, start with [mecak8s](/operating/mecak8s.md).
+Configure the server under its service account, then select durable storage
+before admitting sessions. For shared-team deployments, start with
+[mecak8s](/operating/mecak8s.md).
 
 ## Configure providers
 
@@ -18,7 +20,8 @@ the client to the service and leaves server provider setup with its operator.
 ### Provider credential file
 
 Supply API keys through `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
-`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`, or use an operator-owned `auth.yaml`:
+`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`, or use an operator-owned
+`auth.yaml`:
 
 ```yaml
 providers:
@@ -39,13 +42,13 @@ The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 
 The parser reports unknown providers, fields, duplicate keys, and invalid
 credential formats without printing values. A missing conventional file is
-accepted; a missing explicitly selected file produces a warning. On Unix,
-Mecatl warns when group or other users can read the file. Use mode `0600` and
-restart the server after replacing a credential.
+accepted; a missing explicitly selected file produces a warning. On Unix, Mecatl
+warns when group or other users can read the file. Use mode `0600` and restart
+the server after replacing a credential.
 
 The file is plaintext. Another process running under the same OS account can
-read it even with mode `0600`, including an authorized agent Shell command.
-Use a dedicated service account or stronger sandbox when that access must be
+read it even with mode `0600`, including an authorized agent Shell command. Use
+a dedicated service account or stronger sandbox when that access must be
 isolated. Keep the file outside project-controlled paths and source control.
 
 ### Manual Codex subscription token
@@ -63,14 +66,15 @@ providers:
 ```
 
 Replace the expiry placeholder with an RFC3339 timestamp. `account_id` and
-`expires_at` are optional when the token contains usable values for those claims.
-When both the token and file supply an account ID, they must agree. When both
-supply an expiry, the earlier expiry applies.
+`expires_at` are optional when the token contains usable values for those
+claims. When both the token and file supply an account ID, they must agree. When
+both supply an expiry, the earlier expiry applies.
 
 The daemon reads the snapshot once at startup. This provider has no login or
-refresh flow; replace an expired token through your credential-management process
-and restart the daemon. The provider setup wizard can reuse a valid local token
-for default selection, but never requests, writes, refreshes, imports, or removes it.
+refresh flow; replace an expired token through your credential-management
+process and restart the daemon. The provider setup wizard can reuse a valid
+local token for default selection, but never requests, writes, refreshes,
+imports, or removes it.
 
 ## Operator-defined providers
 
@@ -82,49 +86,57 @@ precedence. See the [configuration reference](/reference/configuration.md).
 If a self-hosted endpoint lacks required Responses API features, use the
 `openai-chat-completions` flavor.
 
-The built-in `openai` and `openrouter` providers send prompt-cache hints only
-through their canonical base URLs. A base URL override disables these hints so a
-compatible endpoint cannot reject an unsupported cache field.
+Responses providers request a protocol-native prompt-cache breakpoint on every
+endpoint, including overridden base URLs, unless `--no-prompt-cache` is set.
+Endpoint-specific cache fields depend on the provider and URL. See
+[prompt caching](/features/runtime/observability-and-resilience.md#prompt-caching)
+for cache controls and Messages-provider behavior.
 
-## Context discovery recovery
+<span id="context-discovery-recovery"></span>
+
+## Recover unavailable model context
 
 For a provider that supports discovery, the first session prompt starts or joins
-listing when the model has no known context window. A failed or empty listing returns
-`context_window_unavailable` (HTTP 503 or gRPC `Unavailable`) without recording the
-prompt. Native authenticated providers list on demand; starting the daemon does
-not authenticate to their model-list endpoint. ToolHive and required Codex default
-selection retain their bounded startup probes.
+listing when the model has no known context window. A failed or empty listing
+returns `context_window_unavailable` (HTTP 503 or gRPC `Unavailable`) without
+recording the prompt. Native authenticated providers list on demand; starting
+the daemon does not authenticate to their model-list endpoint. ToolHive and
+required Codex default selection retain their bounded startup probes.
 
 Restore the configured provider's reachability and credentials, then retry after
-the ten-second per-provider cooldown. Each ordinary discovery attempt and admission
-wait is bounded to ten seconds. Client cancellation ends only that client's wait;
-shutdown cancels and joins discovery before closing its credential resources.
-ListModels requests can also refresh providers after cooldown, but opening the
-picker is not a prerequisite for retry.
+the ten-second per-provider cooldown. Each ordinary discovery attempt and
+admission wait is bounded to ten seconds. Client cancellation ends only that
+client's wait; shutdown cancels and joins discovery before closing its
+credential resources. ListModels requests can also refresh providers after
+cooldown, but opening the picker is not a prerequisite for retry.
 
-If the provider cannot supply metadata, configure a verified window under the exact
-provider/model key in operator-global `models.context_windows`, then restart
-`mecated` to load the settings. The deployment-wide `--context-window-override`
-takes precedence over that map. Use the provider's actual limit rather than a guessed
-value to bypass rejection; see [Context windows](/features/sessions/context-windows.md) for
-configuration and precedence. Discovery metadata is process-local and reacquired
-after restart; previously successful metadata can remain usable until then even
-after a listing failure. It does not establish current inference authorization.
+If the provider cannot supply metadata, configure a verified window under the
+exact provider/model key in operator-global `models.context_windows`, then
+restart `mecated` to load the settings. The deployment-wide
+`--context-window-override` takes precedence over that map. Use the provider's
+actual limit rather than a guessed value to bypass rejection; see
+[Context windows](/features/sessions/context-windows.md) for configuration and
+precedence. Discovery metadata is process-local and reacquired after restart;
+previously successful metadata can remain usable until then even after a listing
+failure. It does not establish current inference authorization.
 
 This gate covers Service session entry, including failed-step retry and restored
-approval resumption. Direct child, utility, and team engine entry can still use the
-128000 defensive fallback for unknown models. For rejected text and attachment
-recovery in `mecatui`, see [model context troubleshooting](/features/sessions/choose-models.md#model-context-metadata-is-unavailable).
+approval resumption. Direct child, utility, and team engine entry can still use
+the 128000 defensive fallback for unknown models. For rejected text and
+attachment recovery in `mecatui`, see
+[model context troubleshooting](/features/sessions/choose-models.md#model-context-metadata-is-unavailable).
 
-## A ToolHive-managed LLM gateway (no API key needed)
+<span id="a-toolhive-managed-llm-gateway-no-api-key-needed"></span>
+
+## Use a ToolHive-managed LLM gateway
 
 If you have configured access to an LLM gateway through
 [ToolHive](https://docs.stacklok.com/toolhive/), `--toolhive-llm` (on by
 default) detects that configuration and registers two provider IDs: `toolhive`
 uses OpenAI Responses, while `toolhive-anthropic` uses native Anthropic
-Messages. ToolHive manages the gateway credentials. Use `/models` to select
-either provider; the `mecatui` welcome screen reports when one is available but
-not selected. Disable detection with `--toolhive-llm=false` on shared hosts.
+Messages. ToolHive manages the gateway credentials. A connected `mecatui` client
+can use `/models` to select either provider. Disable detection with
+`--toolhive-llm=false` on shared hosts.
 
 `--toolhive-llm-mode` selects how both providers reach the gateway:
 
@@ -135,9 +147,9 @@ not selected. Disable detection with `--toolhive-llm=false` on shared hosts.
 - `proxy` requires a running local proxy and supports self-signed gateways.
 
 Run `thv llm setup` before using direct mode. `mecated` reads ToolHive's
-encrypted credentials, including THVSEC v1 files written by ToolHive v0.50.0.
-It does not open a browser when credentials are missing. Direct mode does not
-honor `tls_skip_verify`.
+encrypted credentials, including THVSEC v1 files written by ToolHive v0.50.0. It
+does not open a browser when credentials are missing. Direct mode does not honor
+`tls_skip_verify`.
 
 |Flag|Default|Purpose|
 |-|-|-|
@@ -161,11 +173,11 @@ mecated serve --store-dir /var/lib/mecatl/sessions
 
 The store writes current snapshots, tool-call audit, events, inventory, and
 lineage beneath `sid-v1`. Files at the addressed current paths must use the
-current format; malformed or incompatible content fails validation without
-being overwritten. Distinct root-level artifacts are not listed or loaded.
-Files are plaintext and owner-only; do not edit or share them. See
-[Session store](/building/go/extension-points/session-store.md) for the layout and
-durability guarantees.
+current format; malformed or incompatible content fails validation without being
+overwritten. Distinct root-level artifacts are not listed or loaded. Files are
+plaintext and owner-only; do not edit or share them. See
+[Session store](/building/go/extension-points/session-store.md) for the layout
+and durability guarantees.
 
 :::note[Kubernetes and persistent volumes]
 
@@ -178,8 +190,8 @@ When configured, its Redis-backed store has no PVC requirement.
 
 Configure retention in the operator `settings.yaml`. Main-session deletion is
 off by default and requires `acknowledge_main_deletion: true` when enabled.
-Follow [Operate local session storage](/operating/session-storage-operations.md) for the
-schema, service definitions, backups, cleanup, and restore.
+Follow [Operate local session storage](/operating/session-storage-operations.md)
+for the schema, service definitions, backups, cleanup, and restore.
 
 `--session-store-url` replaces the local store with a gRPC driver and cannot be
 combined with `--store-dir`. Session and memory drivers must negotiate Mecatl's
@@ -187,10 +199,10 @@ current contract at startup; old or partially implemented peers are rejected.
 Optional session operations such as listing, metadata paging, deletion, lineage,
 atomic create, and activity projection remain capability-gated. Remote driver
 operators own their backing namespace and upgrade policy: Mecatl does not scan,
-adopt, migrate, or reject unrelated old driver artifacts. Malformed data returned
-from the selected current namespace fails closed. Current remote drivers do not
-support OIDC caller ownership; use local JSONL or `mecak8s` for multi-user
-deployments.
+adopt, migrate, or reject unrelated old driver artifacts. Malformed data
+returned from the selected current namespace fails closed. Current remote
+drivers do not support OIDC caller ownership; use local JSONL or `mecak8s` for
+multi-user deployments.
 
 `--learning-store-url` selects a trusted single-tenant driver for distributed
 learning. Startup rejects partial driver support and deployments with OIDC
@@ -208,7 +220,7 @@ you want and use the same `--store-dir` when starting the server:
 ```sh
 mecated import \
   --from codex \
-  --session ~/.codex/sessions/2026/08/05/rollout-....jsonl \
+  --session <CODEX_SESSION_JSONL> \
   --store-dir ~/.local/share/mecatl/sessions \
   --workspace ~/work/imported-project \
   --copy-files \

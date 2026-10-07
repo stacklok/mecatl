@@ -24,7 +24,7 @@ Parallel branch, and `InspectMember` for a team member.
 For how Mecatl isolates child workspaces and handles direct writes, see
 [Execution environments](/features/security-and-execution/execution-environments.md).
 
-### Watch a delegation in `mecatui`
+## Watch a delegation in `mecatui`
 
 In `mecatui`, press `ctrl+t` or use the `f6` agents overlay to inspect bounded
 child messages, tool arguments, and results. These previews do not enter the
@@ -68,8 +68,8 @@ them.
 
 Direct-write calls run serially and never overlap sibling tool calls. They work
 with `fork`, `resume`, and `output_schema`, but not `background`. See
-[Agent definitions](/building/go/extension-points/agent-definitions.md) for routing
-restrictions on explicit agent and model combinations.
+[Agent definitions](/building/go/extension-points/agent-definitions.md) for
+routing restrictions on explicit agent and model combinations.
 
 ### Background subagents
 
@@ -176,6 +176,6 @@ router.
 
 - [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
   for delegated approval behavior.
-- [Agent definitions](/building/go/extension-points/agent-definitions.md) to define
-  named specialists.
+- [Agent definitions](/building/go/extension-points/agent-definitions.md) to
+  define named specialists.
 - [Core tools](/features/sessions/tools.md) for the rest of the default catalog.

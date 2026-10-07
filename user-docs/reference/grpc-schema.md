@@ -703,7 +703,7 @@ gate/cancellation family.
 | `resume_approval` | `ResumeApproval` |  | `kind` | resume_approval resolves a paused permission.ask. |
 | `cancel` | `Cancel` |  | `kind` | cancel aborts the in-flight run. |
 | `cancel_child` | `CancelChild` |  | `kind` | cancel_child cancels ONE child run (a subagent) of the in-flight run, leaving the run itself (and any sibling children) untouched. |
-| `steer` | `Steer` |  | `kind` | steer injects an operator instruction mid-run (steer-while-running, issue #512): the run&#39;s steer inbox parks it and the loop drains it at the next turn boundary, recording it as an ordinary user continuation. The server echoes the authoritative outcome back on the stream as a steer.outcome event. gRPC-only in v1 (the HTTP/SSE surface has no client→server mid-run channel). |
+| `steer` | `Steer` |  | `kind` | steer injects an operator instruction mid-run (steer-while-running, issue #512): the run&#39;s steer inbox parks it and the loop drains it at the next turn boundary, recording it as an ordinary user continuation. The server echoes the authoritative outcome back on the stream as a steer.outcome event. HTTP clients use the unary session steer route and follow the session watch for the resulting events. |
 | `steer_cancel` | `SteerCancel` |  | `kind` | steer_cancel retracts the run&#39;s PENDING (un-drained) steer, if any. The authoritative outcome rides back as a steer.outcome event (retracted / none_pending). |
 
 

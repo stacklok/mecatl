@@ -1,12 +1,16 @@
 ---
 title: Secure and expose mecated
-description: Authenticate callers and encrypt access to a standalone Mecatl server.
+description:
+  Authenticate callers and encrypt access to a standalone Mecatl server.
 sidebar_position: 1
 ---
 
 # Secure and expose mecated
 
-Secure the listeners before making this server reachable beyond loopback.
+Secure the listeners before making this server reachable beyond loopback. You
+need a running or prepared [mecated instance](/operating/mecated.md), server TLS
+material, and a chosen caller-authentication method. Keep the admin listener
+private while configuring public access.
 
 ## The trust model
 
@@ -55,28 +59,29 @@ for the full behavior.
 
 On a **headless** root (`--headless`), posture never raises `TrustProject`.
 Explicit `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust
-admits repository steering and the read-only child shell. Without a trust source,
-`--posture auto` does not grant either access merely because the directory contains `.git`. See
+admits repository steering and the read-only child shell. Without a trust
+source, `--posture auto` does not grant either access merely because the
+directory contains `.git`. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md#project-trust)
 for the trust sources and headless behavior.
 
 See
-[Permissions & guardrails](/features/security-and-execution/permissions-and-posture.md)
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
 for the full rule engine. Posture is read from the operator-global
-`settings.yaml` (`posture:` key) and out-ranked by the CLI flag when both are
+`settings.yaml` (`posture:` key) and overridden by the CLI flag when both are
 set.
 
 ## Guardrails
 
 |Flag|Default|Notes|
 |-|-|-|
-|`--guardrails-model`|`""` (off)|Model id or alias for the content checker. Configuring a model **enables** guardrails|
+|`--guardrails-model`|`""` (off)|Model ID or alias for the content checker. Configuring a model **enables** guardrails|
 |`--guardrails`|`""`|Kill-switch only: pass `--guardrails=off` to force off regardless of model config|
 
 The rule list and cost knobs live in the operator-global `settings.yaml`
 (`guardrails:` subtree). A project-tier `guardrails:` block is ignored with a
-WARN because a checked-in file cannot weaken an operator security check.
-Checker outage is fail-closed by default; set `onCheckerDown: warn` only when
+WARN because a checked-in file cannot weaken an operator security check. Checker
+outage is fail-closed by default; set `onCheckerDown: warn` only when
 continue-with-warning is the intended deployment policy. The owner-authorized
 coverage and transient detail APIs are gRPC-only; no HTTP paths are implied.
 
@@ -104,14 +109,15 @@ mecated serve \
 
 Adjust the example's path to the workspace's canonical absolute path. The broad
 permit establishes the example baseline; the explicit forbid blocks access to
-its vendor subtree. Review the policy for your deployment before using it.
-Cedar reads the file once at startup and rejects missing, unreadable, or invalid
+its vendor subtree. Review the policy for your deployment before using it. Cedar
+reads the file once at startup and rejects missing, unreadable, or invalid
 policies. Restart the server to load a changed policy.
 
 Cedar requires a verified session owner. OIDC supplies that identity; a shared
 bearer token or transport-only mTLS does not. Ownerless authority evaluation
 fails closed. Authority checks complement configured permission rules; they do
-not turn Ask or Deny into Allow. See [permissions and delegated authority](/features/security-and-execution/permissions-and-posture.md)
+not turn Ask or Deny into Allow. See
+[permissions and delegated authority](/features/security-and-execution/permissions-and-posture.md)
 for the shared behavior. `mecak8s` does not expose these Cedar selection flags.
 
 ## Browsers and CORS

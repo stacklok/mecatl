@@ -7,9 +7,9 @@ description:
 
 # Capabilities
 
-Each page in this section owns the shared behavior and availability of one
-Mecatl capability. Client, operator, and builder guides link here instead of
-repeating the same explanation for each way of running Mecatl.
+Explore the capabilities shared by Mecatl's clients and servers. These guides
+explain how each capability works, how to configure it, and which deployments
+support it.
 
 ## Get oriented
 
@@ -78,5 +78,5 @@ repeating the same explanation for each way of running Mecatl.
 
 - [Observability and resilience](./runtime/observability-and-resilience.md)
   explains runtime signals, model-call recovery, and product metrics.
-- [Collect metrics, traces, and diagnostics](/operating/observability.md)
-  covers operator collection and endpoint configuration.
+- [Collect metrics, traces, and diagnostics](/operating/observability.md) covers
+  operator collection and endpoint configuration.

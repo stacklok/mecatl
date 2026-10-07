@@ -11,6 +11,14 @@ A client returned by `spawn()` can expose Node.js or Bun functions as MCP tools.
 Register the complete callback-tool set before the client creates its first
 session.
 
+## Prerequisites
+
+Install the SDK and `mecated` as described in
+[Run a private local daemon](local-daemon.md#prerequisites). Use Node.js or Bun
+in a controlled local environment: this example disables authority evaluation
+with `--authority-evaluator noop`. Review the limitation below before adapting
+it for your application.
+
 ## Register a tool
 
 This local example uses a scripted offline provider so it produces the same tool
@@ -72,6 +80,9 @@ per-session names are absent from the daemon's root capability set. Both the
 default local evaluator and the Cedar evaluator deny them. Because `noop`
 disables authority evaluation, use callback tools only in a controlled local
 environment until this limitation is removed.
+
+The example prints `The callback tool returned the issue status.` after the
+daemon calls your registered handler.
 
 The schema is JSON Schema 2020-12. Invalid schemas, duplicate names, reserved
 namespaces, and invalid options fail locally with `ToolRegistrationError`.

@@ -183,14 +183,14 @@ A link keeps its display text separate from its destination. Use the StatusML
 nested-link children are not supported:
 
 ```text
-<footer><link href="https://docs.example.test/status">status docs</link></footer>
+<footer><link href="https://docs.example.com/status">status docs</link></footer>
 ```
 
 These forms are invalid:
 
 ```text
-<footer><a href="https://docs.example.test/status">status docs</a></footer>
-<footer><link href="https://docs.example.test/status"><text>status docs</text></link></footer>
+<footer><a href="https://docs.example.com/status">status docs</a></footer>
+<footer><link href="https://docs.example.com/status"><text>status docs</text></link></footer>
 ```
 
 ### Escaping dynamic command output
@@ -226,11 +226,11 @@ or validate it with a URL parser before producing the StatusML document.
 Only bounded `http` and `https` URLs without user information are retained.
 Links emit native OSC 8 terminal hyperlinks. Terminals and multiplexers that
 support OSC 8 make them followable; others retain the theme-styled underlined
-text as a visual fallback. Unsafe link destinations lose
-their destination but retain their display text. Control characters, including
-ANSI, OSC, newline, tab, and Unicode line-separator controls, are removed from
-markup text, link metadata, and theme data before rendering. StatusML is always
-rendered as one terminal line.
+text as a visual fallback. Unsafe link destinations lose their destination but
+retain their display text. Control characters, including ANSI, OSC, newline,
+tab, and Unicode line-separator controls, are removed from markup text, link
+metadata, and theme data before rendering. StatusML is always rendered as one
+terminal line.
 
 ### Handle command failures
 
@@ -257,10 +257,9 @@ diagnostics somewhere other than standard error. Malformed StatusML in a
 template renders as literal text; malformed command output triggers the fallback
 behavior above.
 
-The v1 token-to-palette mapping is a best effort, not a cross-widget
-compatibility promise.
-[Issue #799](https://github.com/stacklok/mecatl/issues/799) tracks the stable
-semantic theme-token contract.
+Semantic tokens map to the current theme palette, but their appearance can vary
+between widgets. [Issue #799](https://github.com/stacklok/mecatl/issues/799)
+tracks the stable semantic theme-token contract.
 
 ## Use a direct executable
 
@@ -349,9 +348,8 @@ surface with a stale marker when it fits, or falls back to the shipped default.
 it on a clean exit. Title templates produce plain text and are independent of
 StatusML and status commands.
 
-Configure the title in the client-owned
-`$XDG_CONFIG_HOME/mecatui/settings.yaml` file (normally
-`~/.config/mecatui/settings.yaml`):
+Configure the title in the client-owned `$XDG_CONFIG_HOME/mecatui/settings.yaml`
+file (normally `~/.config/mecatui/settings.yaml`):
 
 ```yaml
 terminal_title:
@@ -365,19 +363,19 @@ state-aware: it prefixes a titled session with a state label and elides the
 title to 40 display columns. Without a title, it shows the state label with
 `mecatui` when a session handle is available, otherwise just `mecatui`. It does
 not include the session handle itself; add `.Session.Handle` when you want one.
-Title templates use the shared template input described in [Status input
-reference](#status-input-reference), including `Workspace.Path`, and support
-the common `elide` and `lookup` functions.
+Title templates use the shared template input described in
+[Status input reference](#status-input-reference), including `Workspace.Path`,
+and support the common `elide` and `lookup` functions.
 
 Title writes follow this precedence:
 
-1. `--terminal-title=off` disables the controller, while
-   `--terminal-title=on` enables it even when settings disable it. Both forms
-   accept `true`, `false`, `1`, and `0`.
+1. `--terminal-title=off` disables the controller, while `--terminal-title=on`
+   enables it even when settings disable it. Both forms accept `true`, `false`,
+   `1`, and `0`.
 2. When the flag is absent, `MECATUI_NO_TERMINAL_TITLE=1` or `true` disables
    title writes.
-3. When neither explicit control applies, `terminal_title.enabled` controls
-   the feature. The default is enabled.
+3. When neither explicit control applies, `terminal_title.enabled` controls the
+   feature. The default is enabled.
 
 A terminal emulator or multiplexer decides whether and where to show the title,
 so a tab or pane label can remain unchanged. Disable titles when the terminal

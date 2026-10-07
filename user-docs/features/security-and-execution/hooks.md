@@ -25,11 +25,13 @@ change or disable them. For operator configuration, see
 |`Stop`|When a run ends|No|No||
 |`SubagentStop`|When a child run ends|No|No||
 |`TeammateIdle`|When a team member becomes idle|No|No||
-|`TaskCreated`|When the team supervisor creates a task|No|No||
-|`TaskCompleted`|When a team member completes a task|No|No||
+|`TaskCreated`|Before the team supervisor creates a task|Yes, prevents creation|No||
+|`TaskCompleted`|Before a team member marks a task complete|Yes, prevents completion|No||
 
-An execution error in `SessionStart` or `UserPromptSubmit` ends the run.
-`PreToolUse` and `PostToolUse` errors become annotations and do not abort it.
+An execution error in `SessionStart` or `UserPromptSubmit` ends the run. A
+`PreToolUse` execution error prevents the tool call and returns an error result
+to the model; the run can continue. A `PostToolUse` error becomes an annotation
+and leaves the already-executed call intact.
 
 ## Shell hook contract
 
@@ -114,19 +116,17 @@ Mecatl records and sends the mutated prompt.
 
 ### Redact a secret from a tool result
 
-This `PostToolUse` hook removes AWS credentials from shell output:
+This `PostToolUse` hook redacts AWS access key IDs from shell output while
+preserving the result's error status:
 
 ```sh
 #!/bin/sh
-event="$(cat)"
-content="$(printf '%s' "$event" | python3 -c "import sys,json; print(json.load(sys.stdin)['Input']['content'])")"
-clean="$(printf '%s' "$content" | sed 's/AKIA[A-Z0-9]\{16\}/[REDACTED_KEY]/g')"
-printf '%s' "$clean" | python3 -c "
-import json, sys
-content = sys.stdin.read()
-print(json.dumps({'mutated': {'content': content, 'is_error': False}}))
-"
-exit 0
+python3 -c '
+import json, re, sys
+result = json.load(sys.stdin)["Input"]
+result["content"] = re.sub(r"AKIA[A-Z0-9]{16}", "[REDACTED_KEY]", result["content"])
+print(json.dumps({"mutated": result}))
+'
 ```
 
 The client stream and model history both receive the redacted result.
@@ -139,14 +139,15 @@ A hook can therefore widen a call beyond what the original permission decision
 covered. Keep security controls in the permission policy when a hook must not
 bypass them.
 
-## Guardrails: a built-in model-backed hook
+<span id="guardrails-a-built-in-model-backed-hook" />
 
-Mecatl also includes model-backed `PreToolUse` and `PostToolUse` hooks for
-content that scripts cannot reliably classify, such as prompt injection in a
-fetched page or possible secret exfiltration in tool arguments. These guardrails
-remain off until you configure a checker model. See
+## Model-backed guardrails
+
+Guardrails provide a separate content-review path around tool execution. They
+inspect effective actions after hook rewriting and effective results before
+release to the client or model. Configure a checker model to enable them. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md#guardrails)
-for the default matchers, enforcement modes, and approval flow.
+for coverage, enforcement modes, and approval behavior.
 
 ## Next steps
 

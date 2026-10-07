@@ -3,7 +3,8 @@ slug: /building/extension-points/session-store
 sidebar_position: 3
 title: SessionStore and EventLog
 description:
-  Use built-in Go stores for session snapshots and durable event logs, or implement the persistence ports.
+  Use built-in Go stores for session snapshots and durable event logs, or
+  implement the persistence ports.
 ---
 
 # SessionStore and EventLog
@@ -26,8 +27,8 @@ Use the engine ports to expose only the operations your application needs.
 |Redis|`github.com/stacklok/mecatl/adapters/redisstore`|Shared persistence across replicas|
 |gRPC driver|`github.com/stacklok/mecatl/adapters/grpcdriver`|Clients and server wrappers over an independently operated backend|
 
-Install `adapters/v0.1.1` with Go 1.27 or later. It resolves through the
-public Go proxy with its support and driver dependencies. The
+Use Go 1.27 or later for the published adapters module. The example below pins
+`adapters/v0.1.1`. The
 [adapter compatibility and release policy](https://github.com/stacklok/mecatl/blob/main/adapters/COMPATIBILITY.md)
 records the module boundaries and release verification. Local workspace
 replacements are for repository development only.
@@ -60,9 +61,9 @@ func loadSnapshot(ctx context.Context, dir string, id session.SessionID) (*sessi
 ```
 
 `New` creates directories, probes atomic replacement and file/directory sync,
-and reaps abandoned temporary generations. It requires write access even when
-an application calls only `Load`. Use a separate copy of the store when
-inspecting data that must remain untouched.
+and reaps abandoned temporary generations. It requires write access even when an
+application calls only `Load`. Use a separate copy of the store when inspecting
+data that must remain untouched.
 
 JSONL has no `Store.Close`. Operations own their file handles; event iterators
 retain handles until iteration ends. Finish iteration, break out of the range,
@@ -97,10 +98,11 @@ func loadRedis(ctx context.Context, id session.SessionID) (snapshot *session.Ses
 }
 ```
 
-Replace the file placeholders with paths supplied by your deployment. `TLS: true`
-uses system trust; set `CAFile` for a private PEM trust bundle. Credentials require
-verified TLS. `redisstore.New(addr)` opts into unauthenticated plaintext and is
-intended for local fixtures, not production connections.
+Replace the file placeholders with paths supplied by your deployment.
+`TLS: true` uses system trust; set `CAFile` for a private PEM trust bundle.
+Credentials require verified TLS. `redisstore.New(addr)` opts into
+unauthenticated plaintext and is intended for local fixtures, not production
+connections.
 
 Call `store.Close()` during shutdown and handle its error. The store owns its
 connection pools, credential reloader, and followers. Stop consuming follow
@@ -109,11 +111,12 @@ iterators before shutdown; cancellation does not interrupt a consumer callback.
 Construction verifies or initializes metadata and lineage markers, using `SETNX`
 when markers are missing. On a preinitialized backend, read operations do not
 write data, but metadata pagination uses ordinary `EVALSHA`/`EVAL` with a
-read-only script body. Your Redis ACL still needs the relevant scripting and read
-permissions; this is not a guarantee of compatibility with a read-only replica
-or its ACL. `List` skips per-key `HGET` errors, so an incomplete ACL can produce an
-incomplete inventory. Verify the exact commands and key scopes on your Redis
-server. The offline miniredis write-denial fixture is not a real Redis ACL proof.
+read-only script body. Your Redis ACL still needs the relevant scripting and
+read permissions; this is not a guarantee of compatibility with a read-only
+replica or its ACL. `List` skips per-key `HGET` errors, so an incomplete ACL can
+produce an incomplete inventory. Verify the exact commands and key scopes on
+your Redis server. Validate your ACL against a real Redis server; an in-memory
+test backend cannot establish ACL compatibility.
 
 ### Read inventory, snapshots, and events
 
@@ -135,13 +138,12 @@ In particular, a gRPC client implements optional Go interfaces even when the
 remote backend does not advertise them. Handle operation errors as well as the
 capability checks. See [remote driver integration](#connect-a-remote-driver).
 
-A snapshot represents the latest successful save, not necessarily the live state.
-Use its saved usage values for usage accounting; counting log records measures
-recorded events, not tokens or turns. The event log is
-not a complete transactional reconstruction of every snapshot change. Use
-`ReadAfter` to see `LogRecordGap` markers, and persist each record's opaque
-`Cursor` only after successfully processing the record. Treat replay as
-at-least-once delivery.
+A snapshot represents the latest successful save, not necessarily the live
+state. Use its saved usage values for usage accounting; counting log records
+measures recorded events, not tokens or turns. The event log is not a complete
+transactional reconstruction of every snapshot change. Use `ReadAfter` to see
+`LogRecordGap` markers, and persist each record's opaque `Cursor` only after
+successfully processing the record. Treat replay as at-least-once delivery.
 
 An empty read from the zero cursor cannot distinguish a never-recorded log from
 a pruned one. A saved cursor expires when deletion/recreation changes the log's
@@ -182,8 +184,8 @@ func loadRemote(ctx context.Context, id session.SessionID) (*session.Session, er
 
 `Dial` is lazy. `NewSessionStore` performs bounded capability negotiation and
 requires the current base-contract marker. TLS options also accept `CAFile`,
-`ClientCertFile`, and `ClientKeyFile`; `WithBearerToken` supplies a per-RPC bearer
-credential. Non-local connections require TLS. The helper accepts its own
+`ClientCertFile`, and `ClientKeyFile`; `WithBearerToken` supplies a per-RPC
+bearer credential. Non-local connections require TLS. The helper accepts its own
 `grpcdriver.Option` values, not arbitrary `grpc.DialOption` values. If you need
 client interceptors, construct your own `grpc.ClientConnInterface` with verified
 transport credentials and the snapshot message limits.
@@ -192,8 +194,8 @@ transport credentials and the snapshot message limits.
 does not negotiate support at construction: unsupported cursor RPCs return
 `grpcdriver.ErrDriverCursorUnsupported` on invocation. Handle it separately from
 malformed or expired cursors. A backend follow-capacity error currently crosses
-the server wrapper as gRPC `Internal`; its local sentinel classification does not
-survive the transport.
+the server wrapper as gRPC `Internal`; its local sentinel classification does
+not survive the transport.
 
 ### Serve a backend
 
@@ -231,10 +233,10 @@ func newDriverServer(store port.SessionStore, log port.EventLog,
 Supply server TLS credentials and interceptors that authenticate callers and
 authorize each operation, including streaming reads. The wrappers provide **no
 authentication or authorization**. Your application owns the listener, server
-shutdown, and backend cleanup. A client-side read-only interface is not an access
-control boundary, and backend reads can still perform the storage maintenance
-described above. The wrappers advertise the backend's capabilities; atomic create
-is available only when that backend supports it.
+shutdown, and backend cleanup. A client-side read-only interface is not an
+access control boundary, and backend reads can still perform the storage
+maintenance described above. The wrappers advertise the backend's capabilities;
+atomic create is available only when that backend supports it.
 
 For protocol rationale and the complete conformance matrix, see the
 [driver architecture](https://github.com/stacklok/mecatl/blob/main/docs/architecture/observability.md#remote-store--source-drivers-adaptersgrpcdriver).
@@ -409,10 +411,11 @@ environment identity, profile, provider, model, owner, or creation time. The
 caller must supply this data through `eventsource.SessionMeta`.
 
 `EvUserPrompt` carries client prompts and harness-generated continuations, so a
-fold can reconstruct the conversation in stream order. Its `synthetic` field is
-server-authored origin metadata for replay clients only; `true` identifies a
-harness continuation, absent/false means genuine or legacy-unknown; and a fold
-does not consult it: the reconstructed conversation is the same either way.
+fold can reconstruct the conversation in stream order. The server-authored
+`synthetic` field identifies a harness continuation when `true`. An absent or
+`false` value means a genuine prompt or an event whose origin is unknown. Replay
+clients can use this metadata for display. The fold ignores it and reconstructs
+the same conversation either way.
 
 ### Replay-fidelity limitation
 
@@ -459,8 +462,8 @@ server composition also receives the `EventLog`, because the relay owns event
 persistence.
 
 `mecated --store-dir <PATH>` selects JSONL storage. Without a store flag,
-`mecated` uses in-memory storage. `mecak8s --redis-url <URL>` selects Redis for
-both snapshots and events.
+`mecated` uses in-memory storage. `mecak8s --redis-url <REDIS_ADDRESS>` selects
+Redis for both snapshots and events.
 
 ## Next steps
 

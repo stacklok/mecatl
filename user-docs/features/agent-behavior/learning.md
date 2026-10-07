@@ -8,10 +8,10 @@ description:
 
 # Learning
 
-Learning turns evidence from eligible completed runs into bounded reflection
-proposals. It does not record every conversation or let the model rewrite
-policy, safety rules, tools, or the soul. Memory tools remain available when
-automatic learning is off.
+Learning uses evidence from eligible completed runs to propose facts or reusable
+procedures for review. It operates within configured evidence and token limits.
+Policy, safety rules, tools, and the soul remain operator-controlled. Explicit
+memory tools remain available when automatic learning is off.
 
 ## Availability
 
@@ -60,9 +60,8 @@ cannot enable learning, raise autonomy, or weaken assurance.
 
 `learning.admission_interval` down-samples eligible automatic reflections with
 one process-wide counter. A value of `N` admits every Nth reflection. Values `0`
-and `1` admit every eligible reflection. The
-`--learning-admission-interval` flag overrides the settings value, including
-when you set the flag to `0`.
+and `1` admit every eligible reflection. The `--learning-admission-interval`
+flag overrides the settings value, including when you set the flag to `0`.
 
 ## What can be learned
 
@@ -159,7 +158,7 @@ prompts, transcripts, tool output, paths, identities, credentials, or raw
 diagnostics. Another caller receives the same not-found response as for a
 missing attempt.
 
-There is no attempt-watch endpoint. Re-read the attempt to follow its state.
+Re-read the attempt to follow its state; the API provides no watch endpoint.
 
 Retry failed attempts with `RetryLearningAttempt`, or abandon an unclaimed,
 nonterminal attempt with `AbandonLearningAttempt`. HTTP uses

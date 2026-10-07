@@ -61,10 +61,10 @@ Common fields are:
 |`permissionMode`|Specialist mode such as `default`, `plan`, or `acceptEdits`.|
 |`memory`|Optional read-only `user` or `project` memory tier.|
 
-See [Agent definitions](/building/go/extension-points/agent-definitions.md) for the
-complete field reference.
+See [Agent definitions](/building/go/extension-points/agent-definitions.md) for
+the complete field reference.
 
-A definition's body is instructions to the specialist. Keep it focused on the
+The Markdown body supplies the specialist's instructions. Keep it focused on the
 role, expected output, and boundaries. Do not put credentials in frontmatter,
 headers, or the body.
 
@@ -112,9 +112,9 @@ Treat an agent source as part of the harness trust boundary:
 - an inline MCP definition may use streamable HTTP, but stdio and command-based
   MCP entries are rejected.
 
-A definition's `memory: project` is also project-trust-gated and is read-only in
-this version. MCP headers are secret-shaped and are not displayed in agent
-inventories or snapshots.
+A definition's `memory: project` requires project trust and provides read-only
+access. MCP headers are secret-shaped and are not displayed in agent inventories
+or snapshots.
 
 ## Run a named agent
 

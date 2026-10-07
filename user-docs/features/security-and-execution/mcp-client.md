@@ -34,10 +34,12 @@ mecated serve \
 `mecated`, `mecatequi`, and `mecak8s` accept this flag. Embedded `mecatui`
 servers instead read operator profiles from `~/.config/mecatl/settings.yaml`.
 
+<span id="authentication-and-credentials" />
+
 ### Authenticate a configured server
 
-Use an operator `mcp.servers` profile for OAuth or deployment-managed credentials,
-or the bearer-token convention for a flag-configured server. See
+Use an operator `mcp.servers` profile for OAuth or deployment-managed
+credentials, or the bearer-token convention for a flag-configured server. See
 [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
 for setup, HTTPS requirements, login, encrypted custody, rotation, and recovery.
 Authentication identifies the MCP connection; namespaced tool permissions still
@@ -45,12 +47,12 @@ control what each session may call.
 
 ### ToolHive discovery
 
-Mecatl keeps one immutable direct MCP runtime and reconciles ToolHive discovery on
-one bounded polling loop. A successful complete candidate publishes additions and
-removals together. If source consultation or candidate construction fails, Mecatl
-keeps the last usable runtime and marks the cached source status stale. Use
-`--toolhive=false` to disable discovery or `--toolhive-group <group>` to select a
-group.
+Mecatl polls ToolHive discovery through one bounded loop and publishes each
+complete MCP runtime as an immutable revision. It publishes additions and
+removals together after validating the new runtime. If discovery or validation
+fails, Mecatl keeps the last usable runtime and marks the cached source status
+stale. Use `--toolhive=false` to disable discovery or `--toolhive-group <group>`
+to select a group.
 
 ## Tool namespacing
 
@@ -155,14 +157,14 @@ Automatic reconciliation updates availability but does not grant newly added
 names to an existing session. Run `/mcp-refresh` in `mecatui`, call
 `RefreshMcpSources`, or send a bodyless `POST` to
 `/v1/sessions/<SESSION_ID>/mcp-refresh` while the owned root session is idle or
-completed. The operation adds currently active direct MCP names to that session's
-existing name authority. It preserves completed state and does not reopen the
-conversation.
+completed. The operation adds currently active direct MCP names to that
+session's existing name authority. It preserves completed state and does not
+reopen the conversation.
 
 A name that disappears is unavailable but remains in the session's durable name
-authority. If the exact name returns, the existing grant applies again. A refresh
-response reports the runtime revision pinned for that operation, which may no
-longer be the latest revision when the response arrives, and whether that
+authority. If the exact name returns, the existing grant applies again. A
+refresh response reports the runtime revision pinned for that operation, which
+may no longer be the latest revision when the response arrives, and whether that
 operation's reconciliation cycle or authority union changed anything. Inspect
 `ListMcpSources` for the cached current revision, source diagnostics, stale, and
 reconciliation status; the status call does not probe upstream servers.
@@ -170,15 +172,9 @@ reconciliation status; the status call does not probe upstream servers.
 Refresh failures use generic client messages. Inspect `ListMcpSources` to decide
 whether reconciliation is stale or still running, then retry after the reported
 condition clears. A save or transport failure can be ambiguous once persistence
-starts: retry the same refresh. The stable union is idempotent, so a retry either
-confirms the committed names or applies the still-missing names without removing
-existing authority.
-
-## Authentication and credentials
-
-[MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
-covers OAuth login, encrypted credential storage, rotation, and Kubernetes
-provisioning.
+starts: retry the same refresh. The stable union is idempotent, so a retry
+either confirms the committed names or applies the still-missing names without
+removing existing authority.
 
 ## Global vs per-session MCP servers
 
@@ -193,7 +189,7 @@ per-session engines can remain open, so close sessions you no longer need with
 
 ## Next steps
 
-- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md) to
-  add custom tools and control the catalog exposed to the model.
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md)
+  to add custom tools and control the catalog exposed to the model.
 - [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
   to configure authentication and rotation.

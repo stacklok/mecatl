@@ -16,9 +16,9 @@ a trusted workspace.
 
 Project instructions and rules are available in `mecated`, `mecak8s`,
 `mecatui`'s embedded server, and engine embeddings that wire the prompt
-discovery sources. The sources are discovered at run/build time and assembled
-into the model's prompt as fenced data. They do not add tools or bypass
-permissions.
+discovery sources. Mecatl discovers them when building the server or preparing a
+run and includes them in the model's prompt as fenced data. They do not add
+tools or bypass permissions.
 
 User-tier guidance is always available. Project-tier guidance is admitted only
 when the workspace has an effective project-trust decision.

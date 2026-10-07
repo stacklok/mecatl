@@ -22,6 +22,13 @@ browser. Authorize credentials before the job, or inject a provisioned
 environment credential. See
 [MCP client](/features/security-and-execution/mcp-client.md).
 
+## Prerequisites
+
+Provide a Git repository checked out at its top level, a model-provider
+credential, and a trusted workflow configuration. Keep the provider credential
+separate from any token used to publish changes. The GitHub Actions workflow
+below builds `mecatequi` from the selected release tag.
+
 ## What mecatequi produces
 
 A run can produce three artifacts and an exit code:
@@ -70,7 +77,7 @@ drivers while producing the patch.
 ### Exit codes
 
 Exit codes are coarse. Always read `stop_reason` and `non_empty_diff` from the
-summary to judge whether real work landed.
+summary to decide whether the task produced the expected changes.
 
 |Exit code|Meaning|
 |-|-|
@@ -111,9 +118,8 @@ comment.
 but runs no agent code. It downloads the artifacts and applies the patch as
 data. It also reports a failed implementation run on the issue.
 
-The job that runs agent code never holds a GitHub write token. The job with the
-write token never runs agent code. Both the reusable workflow and the
-customizable example preserve this boundary.
+Preserve these credential boundaries when adapting the reusable workflow or
+customizable example.
 
 ## Prompt trust boundary
 
@@ -243,7 +249,7 @@ corrupt both.
 |`--posture`|`""` (strict)|Permission posture. Use `auto` for autonomous CI. With `strict` and `--headless`, a main-agent permission ask cancels the run and exits 1.|
 |`--trust-project`|`false`|Trust this workspace for project content and read-only child shell access. No posture grants project trust in headless mode. Without this flag or a declared or remembered trust decision, Mecatl ignores project content such as `AGENTS.md` and does not give read-only children a shell.|
 |`--headless`|`true`|Controls child permission requests. The default denies them or routes them to the optional ask reviewer. See [Headless posture and permission asks](#headless-posture-and-permission-asks).|
-|`--timeout`|`0` (disabled)|Wall-clock bound on the whole run (e.g. `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`.|
+|`--timeout`|`0` (disabled)|Wall-clock bound on the whole run (for example, `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`.|
 |`--max-run-tokens`|`0` (unlimited)|Input and output token limit for each run. The parent and every child apply this limit to their own run, so their combined usage can exceed it. Crossing the limit produces `stop_reason: budget`.|
 |`--max-team-tokens`|`0` (unlimited)|Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team.|
 |`--max-turns`|`0` (deployment default)|Turn cap for this run. `0` inherits the composition default.|
@@ -336,8 +342,7 @@ exits 2.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/operating/index.md) for other
-  deployment options.
+- [Choose how to run Mecatl](/operating/index.md) for other deployment options.
 - [Run mecated standalone](/operating/mecated.md) for interactive clients and
   durable sessions.
 - [Configure permissions and posture](/features/security-and-execution/permissions-and-posture.md)

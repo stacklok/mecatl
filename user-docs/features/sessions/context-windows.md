@@ -15,8 +15,9 @@ context window. You can also request a compaction before the next turn.
 
 Context-window resolution and automatic compaction are available in `mecated`,
 `mecak8s`, `mecatequi`, `mecatui`'s embedded server, and engine embeddings that
-provide a context-window resolver. The engine resolves the window for compaction;
-server responses report the window separately from the client's context meter.
+provide a context-window resolver. The engine resolves the window for
+compaction; server responses report the window separately from the client's
+context meter.
 
 ## Window resolution
 
@@ -27,27 +28,30 @@ Mecatl resolves a window at the point of use, taking the first positive value:
 3. retained live metadata for that provider/model; then
 4. the matching embedded model catalog entry.
 
-With no positive value, server session entry permits a 128000-token fallback only
-when the provider has no model lister or its latest completed non-empty listing
-omits the selected model or its window. Otherwise, session entry requests discovery
-as eligible before execution. An unattempted provider starts on the first prompt,
-including for a cold resumed session. Concurrent demand joins the same attempt.
-Native authenticated providers list on demand. Opening the model picker first is
-unnecessary.
+If no positive window is known, the server permits a 128000-token fallback only
+when the provider cannot list models or its latest completed, non-empty listing
+omits the selected model or its window. Otherwise, the server requests eligible
+model discovery before executing the prompt.
+
+The first prompt starts discovery for a provider that has not been queried,
+including when resuming a stored session. Concurrent requests share that
+attempt. Native authenticated providers list on demand, so you can submit a
+prompt without opening the model picker first.
 
 This admission check covers server prompt entry, failed-step retry, and
 restart-restored approval. Direct child, utility, and team engine entry bypass
 it and can still use the engine's defensive 128000-token floor. For discovery
 retention, retry behavior, and safe recovery from `context_window_unavailable`,
-see [Choose models and providers](./choose-models.md#model-context-metadata-is-unavailable).
+see
+[Choose models and providers](./choose-models.md#model-context-metadata-is-unavailable).
 
 Compaction uses the resolved window at its next check. The authoritative server
-context-window response is 0 when admission is blocked and 128000 when an unknown
-window's fallback is permitted. `mecatui`'s context meter uses client-held values;
-its existing refresh behavior does not guarantee that every server metadata change,
-including a lower window, reaches the footer. A displayed positive value is not
-proof that the server currently admits the model. Server resolution and client
-freshness are separate.
+context-window response is 0 when admission is blocked and 128000 when an
+unknown window's fallback is permitted. `mecatui`'s context meter uses
+client-held values; its existing refresh behavior does not guarantee that every
+server metadata change, including a lower window, reaches the footer. A
+displayed positive value is not proof that the server currently admits the
+model. Server resolution and client freshness are separate.
 
 ## Configure an override
 
@@ -60,10 +64,11 @@ mecated serve --context-window-override 128000
 
 The global override wins over exact configuration, retained live metadata, and
 the catalog. It controls server-side compaction and the reported context window.
-Set it to the limit the provider accepts. For per-model values, use operator-global
-[`models.context_windows`](/reference/configuration.md#models), keyed by exact
-provider ID and final model ID after alias and slot resolution. See the
-[daemon recovery guidance](/operating/mecated/configure-providers-and-storage.md#context-discovery-recovery)
+Set it to the limit the provider accepts. For per-model values, use
+operator-global [`models.context_windows`](/reference/configuration.md#models),
+keyed by exact provider ID and final model ID after alias and slot resolution.
+See the
+[daemon recovery guidance](/operating/mecated/configure-providers-and-storage.md#recover-unavailable-model-context)
 for applying that configuration.
 
 The equivalent server flag is available to `mecatui`'s embedded server. It does

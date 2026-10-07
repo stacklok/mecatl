@@ -1,17 +1,42 @@
 ---
 title: Observe and troubleshoot mecak8s
-description: Inspect durable events, logs, and readiness for a Kubernetes deployment.
+description:
+  Inspect durable events, logs, and readiness for a Kubernetes deployment.
 sidebar_position: 5
 ---
 
 # Observe and troubleshoot mecak8s
 
-Start with pod readiness and Redis connectivity, then inspect logs and durable session events for the affected workflow.
+Start with pod readiness and Redis connectivity, then inspect logs and durable
+session events for the affected workflow.
+
+## Readiness and health
+
+`mecak8s` exposes two unauthenticated probe endpoints on the HTTP port (default
+`0.0.0.0:8081`). A separate plaintext, Pod-only drain listener defaults to
+`0.0.0.0:8082` and serves only `GET /drain`:
+
+|Endpoint|Purpose|
+|-|-|
+|`GET /healthz`|Liveness, returns 200 unless the process is hung|
+|`GET /readyz`|Readiness, returns 200 only when `!draining && redisOK`; flips to 503 on drain or Redis failure|
+|`GET /drain` on port 8082|preStop hook target, arms the drain gate, blocks ~3s for endpoint propagation, returns 200|
+
+The Service exposes only ports 8080 and 8081, so normal Service/gateway API
+traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator
+network-isolation responsibility. The `readyz` probe is dynamic: it calls
+`svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis
+failure shows up as not-ready and removes the pod from Service endpoints without
+a restart. The startup and readiness probes use a 3-second kubelet timeout so
+the 2-second Redis bound can complete before Kubernetes abandons the request.
 
 ## Inspect the event log
 
-The durable event log at `mecatl:events:<SESSION_ID>` is a Redis
-Stream. Read it with:
+Use your authorized Redis connection with the deployment's TLS and ACL settings.
+The following command assumes those connection options are already configured.
+
+The durable event log at `mecatl:events:<SESSION_ID>` is a Redis Stream. Read it
+with:
 
 ```sh
 redis-cli XRANGE "mecatl:events:<SESSION_ID>" - +
@@ -41,8 +66,8 @@ watches. Size the follower limit for the expected per-pod watch concurrency,
 then give the pool at least that many connections. Include every replica and
 briefly overlapping credential generations in the Redis connection budget.
 
-When the process has admitted the maximum number of followers, a new watch
-ends with `watch_capacity`. gRPC reports `RESOURCE_EXHAUSTED`; HTTP retains its
+When the process has admitted the maximum number of followers, a new watch ends
+with `watch_capacity`. gRPC reports `RESOURCE_EXHAUSTED`; HTTP retains its
 status 200 event stream and sends a terminal `event: error` frame. The
 TypeScript SDK reconnects from the last processed cursor with the same filter.
 This code is separate from `watch_lagging`, which means a client did not consume
@@ -58,34 +83,16 @@ logging:
   level: debug
 ```
 
-This renders `--log-level=debug`, including the embedded
-ToolHive/authserver/vMCP `slog` records in the mecak8s container logs. The
-default empty value preserves the binary's `INFO` default. Supported values are
-`debug`, `info`, `warn`, and `error`. `extraArgs` remains available for flags
-that are not modeled by the chart; if it also contains `--log-level`, its later
-argument takes precedence.
+This renders `--log-level=debug`, including the embedded ToolHive, authserver,
+and vMCP records in the `mecak8s` container logs. The default empty value
+preserves the binary's `INFO` default. Supported values are `debug`, `info`,
+`warn`, and `error`. `extraArgs` remains available for flags that are not
+modeled by the chart; if it also contains `--log-level`, its later argument
+takes precedence.
 
-## Readiness and health
-
-mecak8s exposes two unauthenticated probe endpoints on the HTTP port (default
-`0.0.0.0:8081`). A separate plaintext, Pod-only drain listener defaults to
-`0.0.0.0:8082` and serves only `GET /drain`:
-
-|Endpoint|Purpose|
-|-|-|
-|`GET /healthz`|Liveness, returns 200 unless the process is hung|
-|`GET /readyz`|Readiness, returns 200 only when `!draining && redisOK`; flips to 503 on drain or Redis failure|
-|`GET /drain` on port 8082|preStop hook target, arms the drain gate, blocks ~3s for endpoint propagation, returns 200|
-
-The Service exposes only ports 8080 and 8081, so normal Service/gateway API
-traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator
-network-isolation responsibility. The `readyz` probe is dynamic: it calls
-`svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis
-failure shows up as not-ready and removes the pod from Service endpoints without
-a restart. The startup and readiness probes use a 3-second kubelet timeout so the
-2-second Redis bound can complete before Kubernetes abandons the request.
-
-For collector configuration, use [observability](/operating/observability.md). Diagnose identity failures in [client access](identity-and-client-access.md#troubleshooting-start-here).
+For collector configuration, use [observability](/operating/observability.md).
+Diagnose identity failures in
+[client access](identity-and-client-access.md#troubleshooting).
 
 ## Configure model recovery
 

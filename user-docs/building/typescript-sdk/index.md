@@ -12,8 +12,8 @@ Use `@stacklok-oss/mecatl-sdk` to create sessions, run agents, handle approvals,
 follow durable activity, and call the rest of the Mecatl API from TypeScript.
 The package supports Node.js, Bun, Deno, and browser applications.
 
-Start with [Use the TypeScript SDK](/building/typescript-sdk/first-run.md)
-to run one prompt against a private offline daemon.
+Start with [Use the TypeScript SDK](/building/typescript-sdk/first-run.md) to
+run one prompt against a private offline daemon.
 
 ## Choose a workflow
 
@@ -37,26 +37,29 @@ to run one prompt against a private offline daemon.
 The SDK also exposes typed namespaces for models, agents, skills, teams,
 schedules, learning, MCP inventory, and storage operations. See the
 [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md) for the
-complete public surface.
+complete API.
 
 On a gRPC session, `guardrailCoverage()` reads effective checker status and
 `guardrailReviewDetail(reviewId)` retrieves owner-authorized live review detail.
 HTTP connections raise `UnsupportedFeatureError` for these methods because the
-server exposes no HTTP routes. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+server exposes no HTTP routes. See
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
 for guardrail behavior.
 
 ## Workflow ownership
 
-The server validates requests and owns session state, permissions, and MCP authorization
-outcomes. The SDK binds requests to sessions, projects typed results, follows streams, and
-preserves cancellation and correlation. Your application chooses what to display and when to
-act, including pickers, browser opening, status rechecks, filtering, and local preferences.
+The server validates requests and owns session state, permissions, and MCP
+authorization outcomes. The SDK sends session-bound requests, returns typed
+results, and follows event streams. Your application chooses what to display and
+when to act, including opening a browser, rechecking authorization status, and
+saving local preferences.
 
-Use the [session guide](./sessions-and-runs.md) for inspection, mutation, and successor
-sessions; [server discovery](./server-discovery.md) before creating one; [MCP connector
-enrollment](./mcp-connectors.md) for workspace services; and [MCP authorization
-continuation](./permissions-and-plans.md#continue-after-mcp-authorization) for a parked run.
-The [runnable SDK examples](https://github.com/stacklok/mecatl/tree/main/sdk/typescript/examples)
+Use the [session guide](./sessions-and-runs.md) for inspection, mutation, and
+successor sessions; [server discovery](./server-discovery.md) before creating
+one; [MCP connector enrollment](./mcp-connectors.md) for workspace services; and
+[MCP authorization continuation](./permissions-and-plans.md#continue-after-mcp-authorization)
+for a parked run. The
+[runnable SDK examples](https://github.com/stacklok/mecatl/tree/main/sdk/typescript/examples)
 show these workflows from package exports.
 
 ## Package entry points
@@ -73,5 +76,5 @@ show these workflows from package exports.
 - [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md)
 - [Subagents, teams, and parallel work](/features/agent-behavior/subagents-and-teams.md)
 - [Scheduled tasks](/features/sessions/scheduled-tasks.md)
-- [Drive Mecatl through gRPC or HTTP](/building/grpc-http.md)
+- [Connect with gRPC or HTTP](/building/grpc-http.md)
 - [Feature availability](/features/get-oriented/capability-matrix.md)

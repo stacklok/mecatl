@@ -12,6 +12,13 @@ A `Session` is a durable conversation handle. Each call to `session.run()`
 creates one identified run and returns a single-consumption `Run` after the
 server accepts it.
 
+## Prerequisites
+
+[Connect an application](connect.md) or
+[start a private daemon](local-daemon.md). The examples use the resulting
+`client`; retain it while sessions and runs are in use. Check the deployment's
+capabilities before offering optional controls.
+
 ## Create or load a session
 
 Create a session for a new conversation:
@@ -27,6 +34,37 @@ the source conversation history.
 `session.close()` releases runtime resources without removing stored state.
 `session.delete()` permanently removes the session and its store-managed
 sidecars.
+
+## Choose one run-consumption mode
+
+Call `result()` when the application expects the run to complete with a terminal
+result:
+
+```ts
+const run = await session.run('Summarize this repository');
+const result = await run.result();
+
+console.log(result.text, result.stopReason, result.usage);
+```
+
+Iterate the run when the application needs intermediate events:
+
+```ts
+const run = await session.run('Summarize this repository');
+
+for await (const event of run) {
+  if (event.kind === 'message.delta') process.stdout.write(event.text);
+  if (event.kind === 'result' && event.payload !== undefined) {
+    console.log('\nstop:', event.payload.stop);
+  }
+}
+```
+
+A run can be iterated, drained with `result()`, or drained with `outcome()`,
+once. Calling more than one of these methods is an invalid local lifecycle
+operation. Server-declared terminal outcomes such as cancellation, limits, or
+budget exhaustion resolve as `RunResult` values. Transport and protocol failures
+throw typed SDK errors.
 
 ## Inspect a session and its transcript
 
@@ -133,41 +171,10 @@ The same request controls are available on session creation, loading, forking,
 inspection, mutations, closing, and deletion. The SDK preserves caller headers
 while adding its session-affinity hint when the session ID can be represented.
 
-## Choose one run-consumption mode
-
-Call `result()` when the application expects the run to complete with a terminal
-result:
-
-```ts
-const run = await session.run('Summarize this repository');
-const result = await run.result();
-
-console.log(result.text, result.stopReason, result.usage);
-```
-
-Iterate the run when the application needs intermediate events:
-
-```ts
-const run = await session.run('Summarize this repository');
-
-for await (const event of run) {
-  if (event.kind === 'message.delta') process.stdout.write(event.text);
-  if (event.kind === 'result' && event.payload !== undefined) {
-    console.log('\nstop:', event.payload.stop);
-  }
-}
-```
-
-A run can be iterated, drained with `result()`, or drained with `outcome()`,
-once. Calling more than one of these methods is an invalid local lifecycle
-operation. Server-declared terminal outcomes such as cancellation, limits, or
-budget exhaustion resolve as `RunResult` values. Transport and protocol failures
-throw typed SDK errors.
-
 ## Handle a run parked for MCP authorization
 
 Use `outcome()` when an MCP server can require external authorization. It
-returns either the completed result or a detached authorization handoff:
+returns either the completed result or a detached authorization handoff.
 
 This lifecycle applies to session-scoped ToolHive broker handoffs. Direct and
 global MCP profiles use the host-local
@@ -184,7 +191,7 @@ if (outcome.outcome === 'completed') {
   const authorization = session.mcpAuthorization(
     outcome.authorization.payload.authorizationId
   );
-  console.log(await authorization.presentation());
+  renderAuthorizationLink(await authorization.presentation());
 }
 ```
 
@@ -193,6 +200,9 @@ An authorization park is a normal run outcome. Event iteration yields the final
 method throws `RunAuthorizationRequiredError`; its `outcome` property carries
 the same handoff. All three paths release the SDK's live run ownership without
 cancelling or resolving the pending authorization.
+
+Replace `renderAuthorizationLink()` with your application's UI. Treat the URL as
+sensitive authorization material and keep it out of logs and stored state.
 
 The handoff contains the exact session, run, call, and authorization
 correlation. It does not contain the presentation URL or transfer lifecycle
@@ -297,7 +307,7 @@ prompt; the server remains authoritative.
 ## Related information
 
 - [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for the full
-  `Session`, `Run`, event, and media surfaces.
+  `Session`, `Run`, event, and media APIs.
 - [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
 - [Multimodal input](/features/sessions/multimodal-input.md)
 - [Agent loop](/features/sessions/agent-loop.md)

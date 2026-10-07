@@ -5834,8 +5834,8 @@ type ConverseRequest_Steer struct {
 	// issue #512): the run's steer inbox parks it and the loop drains it at
 	// the next turn boundary, recording it as an ordinary user continuation.
 	// The server echoes the authoritative outcome back on the stream as a
-	// steer.outcome event. gRPC-only in v1 (the HTTP/SSE surface has no
-	// client→server mid-run channel).
+	// steer.outcome event. HTTP clients use the unary session steer route
+	// and follow the session watch for the resulting events.
 	Steer *Steer `protobuf:"bytes,13,opt,name=steer,proto3,oneof"`
 }
 

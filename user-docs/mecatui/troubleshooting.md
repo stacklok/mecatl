@@ -27,7 +27,7 @@ mecatui --mock --workspace "$PWD"
 
 Do not put provider secrets in command-line flags. For provider credentials and
 server-side selection, use
-[Run mecated standalone](/reference/server-cli.md#mecated-serve).
+[Choose models and providers](/features/sessions/choose-models.md).
 
 ## Provider is not configured or credentials are unavailable
 
@@ -88,8 +88,9 @@ works for chat completions: a custom provider's context window is learned by
 fetching its live model list, and some OpenAI-compatible gateways authorize or
 implement that listing endpoint differently from the completion endpoint. Check
 the server's startup log for `live model fetch failed` and its reported state,
-and confirm the credential against the listing endpoint directly, for example
-`curl -H "Authorization: Bearer <key>" <base_url>/models`.
+and confirm that the credential has permission to call the gateway's
+`GET /models` endpoint. Keep API keys out of command arguments and diagnostic
+output.
 
 ### Recover OIDC credentials
 
@@ -108,7 +109,8 @@ and key, issuer trust, and network and TLS settings:
 - During logout, an unavailable enrollment requires checking the provider
   configuration and `mecatui providers status PROVIDER`.
 
-The [provider configuration guide](/operating/mecated/configure-providers-and-storage.md#configure-providers)
+The
+[provider configuration guide](/operating/mecated/configure-providers-and-storage.md#configure-providers)
 and [credential store reference](/reference/configuration.md#credential_store)
 describe the supported schema.
 
@@ -204,12 +206,13 @@ and allowed an action or released a result. Press `f9` (or your configured
 `--debug` always shows them, with the review's technical metadata.
 Stored-session transcripts use the same visibility rules.
 
-Warnings, unresolved reviews, checker outages, and unknown states remain visible.
-A warning's explanation updates its existing entry when available; a review that
-needs your decision shows the explanation in its approval prompt. An unavailable
-or expired explanation does not imply a security finding. Check the displayed
-outcome to see whether the action stopped, the result was withheld, or work
-continued. See [guardrail approvals](/features/security-and-execution/permissions-and-posture.md#guardrails)
+Warnings, unresolved reviews, checker outages, and unknown states remain
+visible. A warning's explanation updates its existing entry when available; a
+review that needs your decision shows the explanation in its approval prompt. An
+unavailable or expired explanation does not imply a security finding. Check the
+displayed outcome to see whether the action stopped, the result was withheld, or
+work continued. See
+[guardrail approvals](/features/security-and-execution/permissions-and-posture.md#guardrails)
 for the available choices.
 
 An explicit `--debug=false` overrides the environment. Debug mode is client-only

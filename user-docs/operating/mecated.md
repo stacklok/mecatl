@@ -9,8 +9,10 @@ import ReleaseArchivesAndSource from
 
 # Run mecated standalone
 
-`mecated` runs Mecatl as a standalone service over gRPC and HTTP/SSE. It
-is a lightweight starting point when you own one server and its local state. For a shared team, [mecak8s](/operating/mecak8s.md) supplies Redis-backed state and Kubernetes session coordination.
+`mecated` runs Mecatl as a standalone service over gRPC and HTTP/SSE. It is a
+lightweight starting point when you own one server and its local state. For a
+shared team, [mecak8s](/operating/mecak8s.md) supplies Redis-backed state and
+Kubernetes session coordination.
 
 ## Install mecated
 
@@ -35,7 +37,9 @@ your preferred package manager:
 
 ## Prepare model access
 
-Follow [provider setup](/features/sessions/choose-models.md) under the account that runs the server. Then choose [provider custody and storage](/operating/mecated/configure-providers-and-storage.md).
+Follow [provider setup](/features/sessions/choose-models.md) under the account
+that runs the server. Then choose
+[provider custody and storage](/operating/mecated/configure-providers-and-storage.md).
 
 ## Start the server
 
@@ -51,11 +55,6 @@ exits with a usage error.
 The minimal invocation starts a loopback-only server with in-memory sessions and
 no authentication.
 
-Authorize a global MCP OAuth profile before serving with
-`mecated mcp login SERVER [--no-browser]`. The daemon restores and refreshes the
-encrypted credential but never opens a browser. See
-[MCP client](/features/security-and-execution/mcp-client.md).
-
 Default addresses:
 
 |Listener|Default|
@@ -64,10 +63,10 @@ Default addresses:
 |HTTP/SSE|`127.0.0.1:8081`|
 |Prometheus + admin|`127.0.0.1:9090`|
 
-A slightly more configured invocation for unattended local operation:
+To retain sessions across restarts and authenticate local clients:
 
 ```sh
-export MECATL_AUTH_TOKEN="$(cat ~/.mecatl/token)"
+export MECATL_AUTH_TOKEN="<SERVER_BEARER_TOKEN>"
 mecated serve \
   --store-dir ~/.local/share/mecatl/sessions \
   --posture auto
@@ -79,7 +78,10 @@ logs the binary version with `msg="mecated starting"`.
 `--store-dir` enables local JSONL persistence. The path and its ancestors must
 be physical directories, not symlinks. On macOS, use `/private/...` instead of a
 path through the `/var` symlink. `--auth-token` requires the token on every
-request and can also read `MECATL_AUTH_TOKEN`. `--posture auto` permits unattended calls within configured permission rules while retaining child prompt-injection protections. Configured Ask and Deny rules still apply; project trust is a separate grant.
+request and can also read `MECATL_AUTH_TOKEN`. `--posture auto` permits
+unattended calls within configured permission rules while retaining child
+prompt-injection protections. Configured Ask and Deny rules still apply; project
+trust is a separate grant.
 
 Before binding a non-loopback address, add TLS and caller authentication. See
 [Secure and expose mecated](/operating/mecated/secure-and-expose.md).
@@ -92,14 +94,14 @@ Keep the server running, then open a second terminal:
 mecatui connect 127.0.0.1:8080
 ```
 
-The TUI header shows the connected address. Send a short request, such as
-“Reply with a brief greeting,” and confirm a response appears. The loopback
-connection uses the server's model access and workspace. To work with project
-files, start the server with `--workspace <PROJECT_DIRECTORY>`.
+The TUI header shows the connected address. Send a short request, such as "Reply
+with a brief greeting," and confirm a response appears. The loopback connection
+uses the server's model access and workspace. To work with project files, start
+the server with `--workspace <PROJECT_DIRECTORY>`.
 
-For shared-team operation, follow [Try Mecatl on Kubernetes](/operating/kubernetes.md)
-and [Deploy mecak8s](/operating/mecak8s.md). Before exposing this instance to
-remote clients, [secure its listeners and caller access](/operating/mecated/secure-and-expose.md).
+Before exposing this instance to remote clients,
+[secure its listeners and caller access](/operating/mecated/secure-and-expose.md).
+For a shared team, follow [Try Mecatl on Kubernetes](/operating/kubernetes.md).
 
 ## Server-owned session placement
 
@@ -122,30 +124,23 @@ for the shared placement and reattachment model.
 
 [Configure providers and durable storage](/operating/mecated/configure-providers-and-storage.md).
 
-<span id="flag-reference"></span>
-<span id="server"></span>
-<span id="session-state"></span>
-<span id="scheduled-tasks"></span>
-<span id="llm-resilience"></span>
-<span id="provider-and-model"></span>
-<span id="mcp"></span>
-<span id="skills"></span>
+<span id="flag-reference"></span> <span id="server"></span>
+<span id="session-state"></span> <span id="scheduled-tasks"></span>
+<span id="llm-resilience"></span> <span id="provider-and-model"></span>
+<span id="mcp"></span> <span id="skills"></span>
 <span id="observability"></span>
 
 [Look up server flags](/reference/server-cli.md).
 
-<span id="caller-identity-oidc"></span>
-<span id="posture"></span>
-<span id="guardrails"></span>
-<span id="the-trust-model"></span>
+<span id="caller-identity-oidc"></span> <span id="posture"></span>
+<span id="guardrails"></span> <span id="the-trust-model"></span>
 <span id="browsers-and-cors"></span>
 
 [Secure listeners and caller access](/operating/mecated/secure-and-expose.md).
 
 <span id="daemon-config-file-daemonyaml"></span>
 <span id="offline-mock-providers-no-credentials"></span>
-<span id="multi-replica"></span>
-<span id="operator-subcommands"></span>
+<span id="multi-replica"></span> <span id="operator-subcommands"></span>
 <span id="graceful-shutdown"></span>
 
 [Operate and recover the instance](/operating/mecated/operate-instance.md).
@@ -163,4 +158,5 @@ for the shared placement and reattachment model.
 
 ## Related information
 
-- [Server CLI reference](/reference/server-cli.md) lists every registered server flag.
+- [Server CLI reference](/reference/server-cli.md) lists every registered server
+  flag.

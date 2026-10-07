@@ -2,7 +2,8 @@
 slug: /building/api-stability
 sidebar_position: 6
 title: API stability
-description: Understand the Go engine compatibility promise and plan dependency upgrades.
+description:
+  Understand the Go engine compatibility promise and plan dependency upgrades.
 ---
 
 # API stability
@@ -10,7 +11,8 @@ description: Understand the Go engine compatibility promise and plan dependency 
 The importable `github.com/stacklok/mecatl/engine` module has an explicit
 compatibility contract for its core Go packages. Review that contract and the
 engine changelog when upgrading an embedding application. Engine version tags
-use `engine/vX.Y.Z`, independently of the host repository's binary and image tags.
+use `engine/vX.Y.Z`, independently of the host repository's binary and image
+tags.
 
 ## The stable surface
 
@@ -48,7 +50,8 @@ While the engine is at v0.x, a minor release can include additive or breaking
 API changes. Patch releases contain bug fixes without exported API changes.
 After v1.0.0, breaking changes require a major version bump.
 
-Read [the engine changelog](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md)
+Read
+[the engine changelog](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md)
 for classified additions and breaks, update engine and provider dependencies to
 compatible versions, and run your application's tests against its tools and
 adapters. Use [pkg.go.dev](https://pkg.go.dev/github.com/stacklok/mecatl/engine)
@@ -56,7 +59,8 @@ for the exact symbols in the version you select.
 
 The repository checks exported APIs and builds the engine independently of its
 host module. Contributor snapshot updates and release classification are
-maintained in the [engine compatibility policy](https://github.com/stacklok/mecatl/blob/main/engine/COMPATIBILITY.md).
+maintained in the
+[engine compatibility policy](https://github.com/stacklok/mecatl/blob/main/engine/COMPATIBILITY.md).
 
 ## Persistence compatibility
 
@@ -68,10 +72,13 @@ is required.
 
 ## Next steps
 
-- [Implement extension points](extension-points/index.md) against the guarded interfaces.
+- [Implement extension points](extension-points/index.md) against the guarded
+  interfaces.
 - [Embed the engine](embed-engine.md) with production lifecycle and storage.
 
-## Related topics
+<span id="related-topics" />
+
+## Related information
 
 <span id="event-sourced-load-contract" />
 <span id="required-reconstruction" />

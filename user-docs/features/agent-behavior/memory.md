@@ -90,11 +90,12 @@ the tool catalog.
 Mecatl rejects high-confidence credentials and model-authored role overrides
 before adding them to the operator profile. In `mecatui`, `/memory` provides a
 read-only view of saved facts, including their current values, provenance, and
-available history. Updates still use the memory tools and their permission rules.
+available history. Updates still use the memory tools and their permission
+rules.
 
 Set `--no-user-model` to disable the user model.
 
-Completed-trajectory learning is separate from explicit memory tools and dream
+Learning from completed runs is separate from explicit memory tools and dream
 consolidation. See [Learning](/features/agent-behavior/learning.md) for its
 review and activation policy.
 
@@ -113,5 +114,5 @@ No external memory service, embedding provider, or vector database is required.
 
 ## Next steps
 
-- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md) to
-  provide memory tools, skills, or custom tools.
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md)
+  to provide memory tools, skills, or custom tools.
