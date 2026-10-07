@@ -89,12 +89,8 @@ table becomes a list. A filter box matches name, description, and owner. A
 banner appears when the daemon reports its Skill tool as disabled, which means
 the agent loads no skills.
 
-Select a skill to open its page. **Summary** shows the description, and
-**Manage** and **Files** sit beside it. Studio shows configured skills as
-read-only: the Edit, Disable, and Delete controls stay disabled, so change the
-deployment's own skills directory to edit them. **Files** carries a note
-instead of a listing, because the daemon reports only a skill's name,
-description, owner, and version.
+Select a skill to open its page, which shows its description, its slug, and,
+for agent-owned skills, the owner and active version.
 
 The **Learned** view appears when the deployment enables learned skills, and a
 direct link to it explains why it is unavailable otherwise. It lists each

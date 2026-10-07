@@ -57,19 +57,12 @@ const inventory = {
   supported: true,
 };
 
-it("shows summary, inert manage controls, and the metadata-only files note", async () => {
+it("shows the humanized title and the description as text", async () => {
   const container = await renderDetail("deploy", inventory);
   expect(container.querySelector("h1")?.textContent).toBe("Deploy");
   expect(container.textContent).toContain("Summary");
+  expect(container.textContent).toContain("<b>escaped</b> deploys");
   expect(container.querySelector("b")).toBeNull(); // description is text, not markup
-  const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")];
-  const edit = buttons.find((button) => button.textContent === "Edit");
-  expect(edit?.disabled).toBe(true);
-  expect(
-    buttons.find((button) => button.getAttribute("aria-label")?.includes("More actions"))?.disabled,
-  ).toBe(true);
-  expect(container.textContent).toContain("Managed by the Mecatl deployment");
-  expect(container.textContent).toContain("metadata-only");
 });
 
 it("renders not-found for a skill missing from the inventory", async () => {
