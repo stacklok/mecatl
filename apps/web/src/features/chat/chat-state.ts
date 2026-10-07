@@ -72,6 +72,21 @@ export function approvalMatchesToolCall(approval: ApprovalRequest, tool: ToolAct
   );
 }
 
+/** Whether a pending ask is placed beside one of this message's tool rows. */
+export function messageOwnsApproval(message: ChatMessage, approval: ApprovalRequest): boolean {
+  return Boolean(message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)));
+}
+
+/** Asks no message in the transcript claims; these render as standalone cards. */
+export function unmatchedApprovals(
+  approvals: ApprovalRequest[],
+  messages: ChatMessage[],
+): ApprovalRequest[] {
+  return approvals.filter(
+    (approval) => !messages.some((message) => messageOwnsApproval(message, approval)),
+  );
+}
+
 export function approvalKey(target: { askId: string; runId: string; sessionId: string }): string {
   return JSON.stringify([target.sessionId, target.runId, target.askId]);
 }

@@ -4,7 +4,12 @@ import { ExternalLink, MessageSquareText } from "lucide-react";
 import { memo, useCallback, useRef } from "react";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
-import { approvalMatchesToolCall, type ChatMessage } from "./chat-state";
+import {
+  approvalMatchesToolCall,
+  type ChatMessage,
+  messageOwnsApproval,
+  unmatchedApprovals,
+} from "./chat-state";
 import {
   type DelegationActivity,
   DelegationCardRow,
@@ -25,9 +30,7 @@ function approvalsForMessage(
   message: ChatMessage,
   approvals: ApprovalRequest[],
 ): ApprovalRequest[] {
-  const matched = approvals.filter((approval) =>
-    message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
-  );
+  const matched = approvals.filter((approval) => messageOwnsApproval(message, approval));
   return matched.length ? matched : EMPTY_APPROVALS;
 }
 
@@ -113,10 +116,7 @@ function TranscriptRow({
     message.delivery ||
     message.images?.length ||
     message.reasoning ||
-    ((showToolCalls ||
-      approvals?.some((approval) =>
-        message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
-      )) &&
+    ((showToolCalls || approvals?.some((approval) => messageOwnsApproval(message, approval))) &&
       message.tools?.length) ||
     message.authorizations?.length ||
     (delegations && delegations.length > 0) ||
@@ -195,10 +195,7 @@ function TranscriptRow({
       ) : streaming ? (
         <StreamingIndicator />
       ) : null}
-      {(showToolCalls ||
-        approvals?.some((approval) =>
-          message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
-        )) &&
+      {(showToolCalls || approvals?.some((approval) => messageOwnsApproval(message, approval))) &&
         message.tools &&
         message.tools.length > 0 && (
           <ol className="mt-3 space-y-2">
@@ -445,12 +442,7 @@ export function ChatTranscript({
     [],
   );
 
-  const unmatched = approvals.filter(
-    (approval) =>
-      !messages.some((message) =>
-        message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
-      ),
-  );
+  const unmatched = unmatchedApprovals(approvals, messages);
 
   return (
     <div className="min-w-0 max-w-full space-y-5">

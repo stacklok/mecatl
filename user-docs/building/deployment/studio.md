@@ -229,6 +229,8 @@ hint confirms the available action. Enter or Space on a focused verdict button
 selects that verdict without sending the draft. The
 **Keyboard shortcuts** page lists the same behavior.
 
+### Review external authorization
+
 If a tool needs external authorization, select **Review authorization** in the
 chat. Select **Open authorization** to complete the external step in a
 new tab, then return to Studio and select **Recheck**. The panel shows the

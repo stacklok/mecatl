@@ -125,11 +125,11 @@ import { consumeChatSeed } from "./chat-seed";
 import { ChatSessionControls } from "./chat-session-controls";
 import {
   approvalKey,
-  approvalMatchesToolCall,
   type ChatMessage,
   enqueueApproval,
   errorMessage,
   failureFromResult,
+  messageOwnsApproval,
   payloadImages,
   payloadRecord,
   payloadText,
@@ -2313,7 +2313,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     } catch (caught) {
       planVerdictsUncertain.current.add(key);
       setPlanVerdictEpoch((value) => value + 1);
-      if (viewedSessionId.current === target.sessionId) setError(errorMessage(caught));
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
       planFollowController.current = undefined;
       planVerdictsInFlight.current.delete(key);
@@ -3195,9 +3196,7 @@ export function Message({
   // chip) renders nothing at all — never a "Thinking…" placeholder for a
   // run that has already finished (e.g. StopNoProgress with an empty final
   // turn).
-  const matching = approvals.filter((approval) =>
-    message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
-  );
+  const matching = approvals.filter((approval) => messageOwnsApproval(message, approval));
   const unmatched = approvals.filter((approval) => !matching.includes(approval));
   const hasVisibleTools = (showToolCalls || matching.length > 0) && Boolean(message.tools?.length);
   const hasExtras =

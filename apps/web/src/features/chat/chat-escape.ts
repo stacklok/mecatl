@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 /** One chat surface owns an Escape press. All verdict callbacks retain their captured exact target. */
 export interface ChatEscapeOptions {
@@ -41,15 +41,16 @@ export function useChatEscape(options: ChatEscapeOptions): void {
   const overlayPress = useRef(new WeakSet<KeyboardEvent>());
   const previousNavigation = useRef(options.navigationKey);
 
+  const disarm = useCallback(() => {
+    if (expiry.current !== undefined) window.clearTimeout(expiry.current);
+    expiry.current = undefined;
+    if (armedAt.current === undefined) return;
+    armedAt.current = undefined;
+    released.current = false;
+    latest.current.onHintChange(false);
+  }, []);
+
   useEffect(() => {
-    function disarm() {
-      if (expiry.current !== undefined) window.clearTimeout(expiry.current);
-      expiry.current = undefined;
-      if (armedAt.current === undefined) return;
-      armedAt.current = undefined;
-      released.current = false;
-      latest.current.onHintChange(false);
-    }
     function capture(event: KeyboardEvent) {
       if (event.key === "Escape" && (latest.current.overlayOpen || hasOverlay())) {
         overlayPress.current.add(event);
@@ -131,10 +132,7 @@ export function useChatEscape(options: ChatEscapeOptions): void {
         expiry.current = window.setTimeout(disarm, 500);
       }
     }
-    function changed(event: Event) {
-      if (event.type === "focusin" && armedAt.current !== undefined) disarm();
-      else if (event.type !== "focusin") disarm();
-    }
+    const changed = disarm;
     const observer = new MutationObserver(() => {
       if (hasOverlay()) disarm();
     });
@@ -166,7 +164,7 @@ export function useChatEscape(options: ChatEscapeOptions): void {
       window.removeEventListener("popstate", changed);
       window.removeEventListener("hashchange", changed);
     };
-  }, []);
+  }, [disarm]);
 
   // New higher layers, navigation to another surface, or draft edits disarm immediately.
   useEffect(() => {
@@ -181,13 +179,7 @@ export function useChatEscape(options: ChatEscapeOptions): void {
       options.runActive ||
       !options.draft
     ) {
-      if (armedAt.current !== undefined) {
-        if (expiry.current !== undefined) window.clearTimeout(expiry.current);
-        expiry.current = undefined;
-        armedAt.current = undefined;
-        released.current = false;
-        options.onHintChange(false);
-      }
+      disarm();
     }
   }, [
     options.active,
@@ -197,6 +189,6 @@ export function useChatEscape(options: ChatEscapeOptions): void {
     options.runActive,
     options.draft,
     options.navigationKey,
-    options.onHintChange,
+    disarm,
   ]);
 }
