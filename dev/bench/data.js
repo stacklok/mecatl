@@ -303910,6 +303910,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791378117991,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c",
+          "message": "docs: ADR-reference cleanup, rule hygiene, module AGENTS.md files (#2148)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T08:55:44-04:00",
+          "tree_id": "16f395ee7d85d4153b40f184cb41b405fbef72c9",
+          "url": "https://github.com/stacklok/mecatl/commit/443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c"
+        },
+        "date": 1791378823619,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3271.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 72,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -397770,6 +397809,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791378819162,
+  "lastUpdate": 1791378824476,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
