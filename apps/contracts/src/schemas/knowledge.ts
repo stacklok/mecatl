@@ -38,6 +38,16 @@ export const learnedSkillSchema = z.object({
   version: z.string(),
 });
 
+/**
+ * The daemon records a lifecycle action and then publishes the result into the live skill
+ * catalog. The two can diverge, so the response says whether publishing worked: an empty
+ * `publicationError` means it did (or was not needed).
+ */
+export const learnedSkillActionResponseSchema = learnedSkillSchema.extend({
+  publicationError: z.string(),
+  publicationStatus: z.string(),
+});
+
 export const learnedSkillsResponseSchema = z.object({
   complete: z.boolean(),
   items: z.array(learnedSkillSchema),
@@ -219,6 +229,7 @@ export type DecideMemoryConsolidationPlanRequest = z.infer<
 export type LearnedSkillActionRequest = z.infer<typeof learnedSkillActionRequestSchema>;
 export type LearnedSkillChangesResponse = z.infer<typeof learnedSkillChangesResponseSchema>;
 export type LearnedSkillDiffResponse = z.infer<typeof learnedSkillDiffResponseSchema>;
+export type LearnedSkillActionResponse = z.infer<typeof learnedSkillActionResponseSchema>;
 export type LearnedSkillResponse = z.infer<typeof learnedSkillSchema>;
 export type LearnedSkillsResponse = z.infer<typeof learnedSkillsResponseSchema>;
 export type LearningProposalResponse = z.infer<typeof learningProposalSchema>;

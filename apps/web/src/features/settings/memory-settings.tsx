@@ -5,8 +5,8 @@ import { getUserMemoryOptions, listUserMemoryOptions } from "@mecatl-studio/cont
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "../../components/ui/badge";
-import { StateCard } from "../knowledge/knowledge-workspace";
 import { MemoryConsolidation } from "../knowledge/memory-consolidation";
+import { StateCard } from "../knowledge/state-card";
 
 /** Settings → Memory: the facts the agent has remembered about this user. */
 export function MemorySettings() {

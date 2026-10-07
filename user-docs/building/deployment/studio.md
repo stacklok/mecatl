@@ -81,6 +81,29 @@ set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts**
 from **Settings > About**. The page lists the current browser bindings and
 features enabled by the connected deployment.
 
+### Browse and review skills
+
+Open **Skills** to see the deployment's configured skills in a sortable table
+with a name and a description column. On screens narrower than 500 pixels, the
+table becomes a list. A filter box matches name, description, and owner. A
+banner appears when the daemon reports its Skill tool as disabled, which means
+the agent loads no skills.
+
+Select a skill to open its page, which shows its description, its slug, and,
+for agent-owned skills, the owner and active version.
+
+The **Learned** view appears when the deployment enables learned skills, and a
+direct link to it explains why it is unavailable otherwise. It lists each
+agent-drafted version with its state. Select one to open the review dialog,
+which shows the diff against the version it replaces, the body, and the
+evidence count. The dialog offers the actions the daemon currently allows for
+that version (Activate, Reject, Roll back, or Archive), and each one asks for
+confirmation first. If the skill changed after the page loaded, the action
+fails with an error, Studio re-reads the skill, and the dialog shows the
+current state. **Recent changes** below the list records the 20 most recent
+lifecycle events. The list itself shows the first 100 learned skills, and Studio
+shows no further ones.
+
 ### Inspect delegated activity
 
 When a run delegates work, its transcript shows an activity card for each

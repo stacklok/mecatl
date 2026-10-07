@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { StateCard } from "../knowledge/knowledge-workspace";
+import { StateCard } from "../knowledge/state-card";
 
 /**
  * Settings → Storage: a plain-words summary of what the agent has saved —

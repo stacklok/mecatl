@@ -5,6 +5,7 @@ import type {
   DecideLearningProposalRequest,
   DecideMemoryConsolidationPlanRequest,
   LearnedSkillActionRequest,
+  LearnedSkillActionResponse,
   LearnedSkillChangesResponse,
   LearnedSkillDiffResponse,
   LearnedSkillResponse,
@@ -50,7 +51,10 @@ export class KnowledgeNotFoundError extends Error {
 
 export interface KnowledgeService {
   readonly capabilities: KnowledgeCapabilities;
-  actOnLearnedSkill(id: string, request: LearnedSkillActionRequest): Promise<LearnedSkillResponse>;
+  actOnLearnedSkill(
+    id: string,
+    request: LearnedSkillActionRequest,
+  ): Promise<LearnedSkillActionResponse>;
   decideLearningProposal(
     id: string,
     request: DecideLearningProposalRequest,
@@ -110,7 +114,11 @@ export function createMecatlKnowledgeService(
               ...target,
               version: request.version,
             });
-      return learnedSkillFromSdk(response.skill);
+      return {
+        ...learnedSkillFromSdk(response.skill),
+        publicationError: response.publicationError,
+        publicationStatus: response.publicationStatus,
+      };
     },
 
     async decideLearningProposal(id, request) {

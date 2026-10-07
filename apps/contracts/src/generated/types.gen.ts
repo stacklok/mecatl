@@ -2512,7 +2512,7 @@ export type ActOnLearnedSkillError = ActOnLearnedSkillErrors[keyof ActOnLearnedS
 
 export type ActOnLearnedSkillResponses = {
     /**
-     * The updated learned skill.
+     * The updated learned skill and whether publishing it into the live catalog succeeded.
      */
     200: {
         actions: {
@@ -2532,6 +2532,8 @@ export type ActOnLearnedSkillResponses = {
         supersedes: string;
         updatedAt: string;
         version: string;
+        publicationError: string;
+        publicationStatus: string;
     };
 };
 
