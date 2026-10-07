@@ -64,6 +64,11 @@ tasks:
       - task --list
     silent: true
 
+  build:broker:
+    desc: Compile the standalone mecabroker binary into bin/
+    cmds:
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecabroker ./cmd/mecabroker
+
   build:
     desc: Compile binaries into bin/
     cmds:
@@ -78,6 +83,8 @@ tasks:
       # Optional native Kubernetes execution provider and its fixed workload helper.
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-execution-provider ./cmd/mecatl-execution-provider
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-executor ./cmd/mecatl-executor
+      # mecabroker: the separately deployable authenticated ToolHive owner.
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecabroker ./cmd/mecabroker
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.

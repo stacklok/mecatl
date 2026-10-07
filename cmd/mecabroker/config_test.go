@@ -1,0 +1,209 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
+)
+
+func TestReadConfigRejectsCaseInsensitiveDuplicateMembers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broker.json")
+	if err := os.WriteFile(path, []byte(`{"api_version":"mecabroker.mecatl.dev/v1","API_VERSION":"duplicate"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readConfig(path); err == nil {
+		t.Fatal("case-insensitive duplicate JSON members accepted")
+	}
+}
+
+func validBrokerConfig() fileConfig {
+	cfg := fileConfig{APIVersion: brokerAPIVersion, CallbackURL: "https://broker.example/callback", SessionAPI: &mcpbrokerserver.SessionAPIConfig{Mode: "OWNERLESS", Deployment: "offline-a"}, ProtectedStorage: &fileProtectedStorage{Redis: fileProtectedRedis{Address: "redis.example:6379", PasswordFile: "fixture-password"}}}
+	cfg.Listener.PublicAddress, cfg.Listener.TLSCertFile, cfg.Listener.TLSKeyFile = ":8443", "cert", "key"
+	cfg.WorkloadJWT.Issuer, cfg.WorkloadJWT.JWKSURI, cfg.WorkloadJWT.Audience, cfg.WorkloadJWT.Subject, cfg.WorkloadJWT.TrustBundleFile = "https://issuer.example", "https://issuer.example/jwks", "audience", "subject", "ca.pem"
+	cfg.WorkloadJWT.MaxJWKSStaleness = duration(time.Minute)
+	cfg.Drain.PropagationDelay, cfg.Drain.Timeout, cfg.Drain.ListenerShutdownTimeout = duration(time.Second), duration(time.Second), duration(time.Second)
+	cfg.Transport.RPCDeadline, cfg.Transport.ExecuteDeadline = duration(time.Second), duration(time.Second)
+	cfg.Runtime.LogicalRetention = duration(time.Second)
+	cfg.Runtime.MaxLogicalSessions, cfg.Runtime.MaxPendingAuthStates = 1, 1
+	return cfg
+}
+
+func TestIdleBrokerConfigPermitsEmptyProfilesWithoutCallbackAuthority(t *testing.T) {
+	cfg := validBrokerConfig()
+	cfg.CallbackURL = ""
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("idle broker configuration rejected: %v", err)
+	}
+	if toolHive := cfg.toolHive(); len(toolHive.Profiles) != 0 || toolHive.CallbackURL != "" {
+		t.Fatalf("idle ToolHive configuration = %+v, want no profiles or callback authority", toolHive)
+	}
+
+	cfg.CallbackURL = "https://broker.example/callback"
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("idle broker with optional callback rejected: %v", err)
+	}
+	if callbackURL := cfg.toolHive().CallbackURL; callbackURL != "" {
+		t.Fatalf("idle ToolHive callback authority = %q, want none", callbackURL)
+	}
+}
+
+func TestBrokerOAuthProfileRequiresCallback(t *testing.T) {
+	cfg := validBrokerConfig()
+	cfg.CallbackURL = ""
+	secret := t.TempDir() + "/client-secret"
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Profiles = []fileProfile{{
+		Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth",
+		OAuth: &fileOAuth{Issuer: "https://issuer.example", ClientMode: "preregistered", ClientID: "client", ClientSecretFile: secret},
+	}}
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "callback is required") {
+		t.Fatalf("OAuth profile without callback validation error = %v", err)
+	}
+}
+
+func TestParseFlagsWithLoggingAcceptsInvalidLevelWithWarning(t *testing.T) {
+	original := os.Args
+	t.Cleanup(func() { os.Args = original })
+	os.Args = []string{"mecabroker", "--log-level=verbose"}
+	_, level, warning, err := parseFlagsWithLogging()
+	if err == nil || level.String() != "INFO" || !strings.Contains(warning, "invalid --log-level") {
+		t.Fatalf("invalid log level = level:%s warning:%q error:%v", level, warning, err)
+	}
+}
+
+func TestKubernetesWorkloadJWTBootstrapConfiguration(t *testing.T) {
+	cfg := validBrokerConfig()
+	cfg.Profiles = []fileProfile{{Name: "public", URL: "https://mcp.example", Auth: "none"}}
+	cfg.WorkloadJWT.Issuer, cfg.WorkloadJWT.JWKSURI = "", ""
+	cfg.WorkloadJWT.KubernetesBootstrap = &fileKubernetesBootstrap{
+		DiscoveryURL: "https://kubernetes.default.svc/.well-known/openid-configuration",
+		JWKSURI:      "https://kubernetes.default.svc/openid/v1/jwks",
+		TokenFile:    "/var/run/secrets/kubernetes.io/serviceaccount/token",
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("bootstrap configuration rejected: %v", err)
+	}
+	production := cfg.workloadJWTConfig([]byte("ca"))
+	if production.Issuer != "" || production.JWKSURI != "" || production.KubernetesBootstrap == nil || production.KubernetesBootstrap.DiscoveryURL != cfg.WorkloadJWT.KubernetesBootstrap.DiscoveryURL {
+		t.Fatalf("bootstrap production mapping = %#v", production)
+	}
+	cfg.WorkloadJWT.Issuer = "https://issuer.example"
+	if err := cfg.validate(); err == nil {
+		t.Fatal("bootstrap and explicit issuer were accepted together")
+	}
+}
+
+func TestToolHiveAdmitsCIMDConfiguration(t *testing.T) {
+	const cimd = "https://client.example/metadata.json"
+	for _, tc := range []struct {
+		name       string
+		oauth      fileOAuth
+		wantIssuer string
+		wantAuth   string
+		wantToken  string
+	}{
+		{
+			name:       "issuer discovery",
+			oauth:      fileOAuth{Issuer: "https://issuer.example", ClientMode: "cimd", CIMDDocumentURL: cimd},
+			wantIssuer: "https://issuer.example",
+		},
+		{
+			name:      "explicit OAuth2 endpoints",
+			oauth:     fileOAuth{ClientMode: "cimd", CIMDDocumentURL: cimd, AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token"},
+			wantAuth:  "https://issuer.example/authorize",
+			wantToken: "https://issuer.example/token",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBrokerConfig()
+			cfg.Profiles = []fileProfile{{
+				Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &tc.oauth,
+			}}
+			cfg.ProtectedStorage = testProtectedStorage()
+			if err := cfg.validate(); err != nil {
+				t.Fatalf("CIMD configuration rejected: %v", err)
+			}
+			oauth := cfg.toolHive().Profiles[0].OAuth
+			if oauth.ClientID != cimd || oauth.ClientSecretFile != "" || oauth.Issuer != tc.wantIssuer || oauth.AuthorizationEndpoint != tc.wantAuth || oauth.TokenEndpoint != tc.wantToken {
+				t.Fatalf("CIMD ToolHive mapping = %#v", oauth)
+			}
+		})
+	}
+}
+
+func TestBrokerRejectsUnsupportedOAuthNetworkSettings(t *testing.T) {
+	cfg := validBrokerConfig()
+	cfg.Profiles = []fileProfile{{
+		Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth",
+		OAuth: &fileOAuth{Issuer: "https://issuer.example", ClientID: "client", Network: &fileOAuthNetwork{MaxRedirects: 1}},
+	}}
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "OAuth network settings are unsupported") {
+		t.Fatalf("validate error = %v, want actionable unsupported-network error", err)
+	}
+}
+
+func TestBrokerRejectsDuplicateProfileNamesCaseInsensitively(t *testing.T) {
+	cfg := validBrokerConfig()
+	cfg.Profiles = []fileProfile{{
+		Name: "Public", URL: "https://one.example/mcp", Auth: "none",
+	}, {
+		Name: "public", URL: "https://two.example/mcp", Auth: "none",
+	}}
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "duplicate broker profile name") {
+		t.Fatalf("validate error = %v, want duplicate-name error", err)
+	}
+}
+
+func TestBrokerOAuthClientModeUnionIsStrict(t *testing.T) {
+	cases := []struct {
+		name  string
+		oauth fileOAuth
+		want  string
+	}{
+		{"missing mode", fileOAuth{ClientID: "id", ClientSecretFile: "/missing"}, "client_mode"},
+		{"preregistered missing secret", fileOAuth{ClientMode: "preregistered", ClientID: "id"}, "requires client_id and client_secret_file"},
+		{"preregistered with dcr", fileOAuth{ClientMode: "preregistered", ClientID: "id", ClientSecretFile: "/secret", DCRDiscoveryURL: "https://issuer.example/dcr"}, "cannot include CIMD or DCR"},
+		{"cimd missing url", fileOAuth{ClientMode: "cimd"}, "requires cimd_document_url"},
+		{"cimd with secret", fileOAuth{ClientMode: "cimd", CIMDDocumentURL: "https://client.example/meta", ClientSecretFile: "/secret", AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token"}, "cannot include client credentials"},
+		{"dcr missing url", fileOAuth{ClientMode: "dcr"}, "requires dcr_discovery_url"},
+		{"dcr missing endpoints", fileOAuth{ClientMode: "dcr", DCRDiscoveryURL: "https://issuer.example/dcr", Issuer: "https://issuer.example"}, "requires explicit authorization_endpoint and token_endpoint"},
+		{"dcr with client", fileOAuth{ClientMode: "dcr", DCRDiscoveryURL: "https://issuer.example/dcr", ClientID: "id", AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token"}, "cannot include client credentials"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBrokerConfig()
+			cfg.Profiles = []fileProfile{{Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &tc.oauth}}
+			if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validate error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	secret := t.TempDir() + "/client-secret"
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := validBrokerConfig()
+	cfg.Profiles = []fileProfile{{Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &fileOAuth{Issuer: "https://issuer.example", ClientMode: "preregistered", ClientID: "id", ClientSecretFile: secret}}}
+	cfg.ProtectedStorage = testProtectedStorage()
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("valid preregistered profile rejected: %v", err)
+	}
+	cfg.ProtectedStorage = nil
+	if err := cfg.validate(); err == nil {
+		t.Fatal("OAuth profile accepted without protected storage")
+	}
+}
+
+func testProtectedStorage() *fileProtectedStorage {
+	return &fileProtectedStorage{
+		Redis:      fileProtectedRedis{Address: "redis.example:6379", PasswordFile: "/run/redis/password"},
+		Encryption: fileProtectedEncryption{ActiveID: "active", Keys: []fileProtectedKey{{ID: "active", File: "/run/keks/active"}}},
+	}
+}
