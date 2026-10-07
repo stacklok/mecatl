@@ -128,6 +128,7 @@ func (s *SessionAPI) DisconnectTools(ctx context.Context, ref c.SessionRef, conn
 	if _, err := s.process.DeleteSession(ctx, session.SessionID(ref)); err != nil {
 		return 0, err
 	}
+	settleParkedAuthorizations(st, c.FailureAuthorityWithdrawn)
 	next := st.record
 	next.Connected = false
 	next.Withdrawing = false

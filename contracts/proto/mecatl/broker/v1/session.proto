@@ -13,6 +13,11 @@ import "google/protobuf/timestamp.proto";
 service SessionService {
   rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
   rpc InvokeTool(InvokeToolRequest) returns (InvocationOutcome);
+  rpc CheckAuthorization(CheckAuthorizationRequest) returns (CheckAuthorizationResponse);
+  rpc BeginAuthorization(BeginAuthorizationRequest) returns (BrowserPrompt);
+  rpc ObserveAuthorization(ObserveAuthorizationRequest) returns (FlowStatus);
+  rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelOutcome);
+  rpc ResumeTool(ResumeToolRequest) returns (InvocationOutcome);
   rpc BeginEnrollment(BeginEnrollmentRequest) returns (BeginEnrollmentResponse);
   rpc DisconnectTools(DisconnectToolsRequest) returns (DisconnectOutcome);
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
@@ -70,6 +75,17 @@ message InvokeToolRequest {
   Call call = 3 [(buf.validate.field).required = true];
   Attempt attempt = 4 [(buf.validate.field).required = true];
 }
+message CheckAuthorizationRequest {
+  Attempt attempt = 5 [(buf.validate.field).required = true];
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  oneof target {
+    option (buf.validate.oneof).required = true;
+    Call call = 3;
+    string authorization_ref = 4 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  }
+}
+message FlowRef { string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true]; }
 message InvocationOutcome {
   oneof outcome {
     option (buf.validate.oneof).required = true;
@@ -94,6 +110,34 @@ enum FailureReason {
   FAILURE_REASON_CALL_CHANGED = 6;
   FAILURE_REASON_EXPIRED = 7;
 }
+
+message CheckAuthorizationResponse {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    google.protobuf.Empty ready = 1;
+    FlowRef authorization_required = 2;
+    NonDispatch not_dispatched = 3;
+  }
+}
+message BeginAuthorizationRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message ObserveAuthorizationRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message CancelAuthorizationRequest { Attempt attempt = 3 [(buf.validate.field).required = true]; string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message BrowserPrompt { string url = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 8192, uri: true, pattern: "^https://[^/@]+([/?#]|$)"}]; google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true]; }
+message FlowStatus {
+  oneof status {
+    option (buf.validate.oneof).required = true;
+    google.protobuf.Empty pending = 1;
+    Catalogue completed = 2;
+    google.protobuf.Empty cancelled = 3;
+    google.protobuf.Empty expired = 4;
+    FailureReason failed = 5 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+  }
+}
+message CancelOutcome {
+  enum Value { UNSPECIFIED = 0; CANCELLED = 1; ALREADY_RESOLVED = 2; }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}
+message ResumeToolRequest { Attempt attempt = 4 [(buf.validate.field).required = true]; string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string adopted_catalogue = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
 
 // ToolResult is a model-visible tool completion.
 message ToolResult {

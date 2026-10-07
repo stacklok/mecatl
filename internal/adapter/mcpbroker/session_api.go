@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 const sessionAPIPrefix = "mecatl:poc:broker-session:v1:"
@@ -188,6 +189,7 @@ func (s *SessionAPI) Close() error {
 			_, e := st.attachment.Close(context.Background())
 			err = errors.Join(err, e)
 		}
+		settleParkedAuthorizations(st, c.FailureAuthorityWithdrawn)
 	}
 	if s.metadata != nil {
 		err = errors.Join(err, s.metadata.Close())
@@ -370,6 +372,7 @@ func (s *SessionAPI) DeleteSession(ctx context.Context, ref c.SessionRef) (c.Del
 				}
 			}
 		}
+		settleParkedAuthorizations(st, c.FailureAuthorityWithdrawn)
 		s.mu.Lock()
 		st.deleted = true
 		s.mu.Unlock()
@@ -386,6 +389,7 @@ func (s *SessionAPI) DeleteSession(ctx context.Context, ref c.SessionRef) (c.Del
 			return 0, err
 		}
 	}
+	settleParkedAuthorizations(st, c.FailureAuthorityWithdrawn)
 	if !s.validOperation(ctx) || st.pendingWrite != nil {
 		return 0, c.ErrStateUnavailable
 	}
@@ -415,22 +419,70 @@ func callDigest(call c.Call) [32]byte {
 	return session.BrokerCallDigest(session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
 }
 
+func sameCall(left, right c.Call) bool {
+	return left.ID == right.ID && left.Name == right.Name && bytes.Equal(left.Arguments, right.Arguments)
+}
+
+func apiToolDigest(candidate tool.Tool) [32]byte {
+	if candidate == nil {
+		return [32]byte{}
+	}
+	spec := candidate.Spec()
+	if advertised, ok := candidate.(tool.Disclosable); ok {
+		spec = advertised.Advertised()
+	}
+	_, serial := candidate.(tool.DispatchSerial)
+	_, authorization := candidate.(tool.AuthorizationRequester)
+	encoded, _ := json.Marshal(struct {
+		Spec           tool.ToolSpec
+		ReadOnly       bool
+		DispatchSerial bool
+		Authorization  bool
+	}{Spec: spec, ReadOnly: candidate.ReadOnly(), DispatchSerial: serial, Authorization: authorization})
+	return sha256.Sum256(encoded)
+}
+
 func validCall(call c.Call) bool {
 	return len(call.ID) > 0 && len(call.ID) <= 256 && utf8.ValidString(string(call.ID)) && len(call.Name) > 0 && len(call.Name) <= 256 && utf8.ValidString(call.Name) && len(call.Arguments) > 0 && len(call.Arguments) <= 256*1024 && json.Valid(call.Arguments)
 }
 
-func (s *SessionAPI) nativePreflight(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, _ c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
+func (s *SessionAPI) nativePreflight(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
 	if err := ctx.Err(); err != nil {
 		return c.InvocationOutcome{}, nil, err
 	}
 	if cat != st.catalogue.Ref() || cat != st.record.Catalogue || find(st.catalogue, call.Name) == nil {
 		return noDispatch(c.FailureCatalogueChanged), nil, nil
 	}
-	// V3 cannot present or verify authorization: never dispatch a protected call.
-	if _, ok := find(st.catalogue, call.Name).(tool.AuthorizationRequester); ok {
+	requester, ok := find(st.catalogue, call.Name).(tool.AuthorizationRequester)
+	if !ok {
+		return c.InvocationOutcome{}, nil, nil
+	}
+	native := session.ToolCall{ID: call.ID, Name: call.Name, Args: append([]byte(nil), call.Arguments...)}
+	authorization, required, err := requester.RequestAuthorization(ctx, native)
+	if err != nil {
 		return noDispatch(c.FailureAuthorizationFailed), nil, nil
 	}
-	return c.InvocationOutcome{}, nil, nil
+	if !required {
+		if authorization != (session.ExternalAuthorization{}) {
+			if err := requester.AbortAuthorization(ctx, authorization); err != nil {
+				return c.InvocationOutcome{}, nil, err
+			}
+		}
+		return c.InvocationOutcome{}, nil, nil
+	}
+	if !validAPIRef(authorization.ID) || authorization.Binding == "" || len(authorization.Binding) > 256 || !utf8.ValidString(string(authorization.Binding)) || (authorization.DisplayName != "" && (!utf8.ValidString(authorization.DisplayName) || len(authorization.DisplayName) > 256)) || authorization.ExpiresAt.IsZero() || !authorization.ExpiresAt.After(s.now()) || !s.validOperation(ctx) {
+		if abortErr := requester.AbortAuthorization(ctx, authorization); abortErr != nil {
+			return c.InvocationOutcome{}, nil, abortErr
+		}
+		return noDispatch(c.FailureAuthorizationFailed), nil, nil
+	}
+	ref := c.AuthorizationRef(apiRef())
+	target := find(st.catalogue, call.Name)
+	st.parked[ref] = &apiParked{
+		attempt: attempt, call: c.Call{ID: call.ID, Name: call.Name, Arguments: append([]byte(nil), call.Arguments...)},
+		native: authorization, connection: st.record.Connection, descriptor: apiToolDigest(target), account: st.record.Account,
+	}
+	return c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: ref}, nil, nil
 }
 
 func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
@@ -541,4 +593,317 @@ func (s *SessionAPI) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.Cat
 	}
 	release()
 	return waitReceipt(caller, out, r, err)
+}
+
+func (s *SessionAPI) parkedAuthorization(st *apiState, ref c.AuthorizationRef, attempt c.BrokerAttempt) (*apiParked, error) {
+	if !validAPIRef(string(ref)) || !attempt.Valid() {
+		return nil, c.ErrStateUnavailable
+	}
+	parked := st.parked[ref]
+	if parked == nil || parked.attempt != attempt {
+		return nil, c.ErrStateUnavailable
+	}
+	return parked, nil
+}
+
+func settleParkedAuthorizations(st *apiState, reason c.FailureReason) {
+	for _, parked := range st.parked {
+		flow := c.FlowStatus{Kind: c.FlowFailed, Reason: reason}
+		parked.terminal = &flow
+		parked.call.Arguments = nil
+		parked.native = session.ExternalAuthorization{}
+		parked.completed = nil
+		parked.cleanupPending = false
+	}
+}
+
+func (s *SessionAPI) parkedSnapshotValid(st *apiState, parked *apiParked) bool {
+	return st.record.Connected && !st.record.Withdrawing && st.attachment != nil && st.catalogue != nil &&
+		st.record.Connection == parked.connection && st.record.Catalogue == st.catalogue.Ref() &&
+		apiToolDigest(find(st.catalogue, parked.call.Name)) == parked.descriptor && st.record.Account == parked.account
+}
+
+func (s *SessionAPI) parkedAuthority(ctx context.Context, st *apiState, parked *apiParked) c.FailureReason {
+	if !s.parkedSnapshotValid(st, parked) {
+		return c.FailureCatalogueChanged
+	}
+	targetCall := session.ToolCall{ID: parked.call.ID, Name: parked.call.Name, Args: append([]byte(nil), parked.call.Arguments...)}
+	if targetCall.Name == "CallMcpWithQuery" {
+		var err error
+		targetCall, _, err = (&attachmentQueryTool{}).target(targetCall)
+		if err != nil {
+			return c.FailureCallChanged
+		}
+	}
+	if route, ok := st.attachment.lookupRoute(targetCall.Name); s.process.custody != nil && ok && route.broker {
+		st.attachment.mu.RLock()
+		tsid := st.attachment.verifiedTSID
+		st.attachment.mu.RUnlock()
+		ready, readyErr := s.process.nativeGrantReady(ctx, tsid)
+		account, accountErr := s.process.nativeAccount(ctx, tsid)
+		if readyErr != nil || accountErr != nil || !ready || account == ([32]byte{}) || account != parked.account {
+			return c.FailureAuthorityWithdrawn
+		}
+	}
+	return c.FailureUnspecified
+}
+
+func (s *SessionAPI) authorizationStatus(ctx context.Context, st *apiState, parked *apiParked) (c.FlowStatus, error) {
+	if parked.terminal != nil {
+		return *parked.terminal, nil
+	}
+	if !s.now().Before(parked.native.ExpiresAt) {
+		if _, err := st.attachment.CancelAuthorization(ctx, parked.native); err != nil {
+			parked.cleanupPending = true
+			return c.FlowStatus{}, err
+		}
+		status := c.FlowStatus{Kind: c.FlowExpired}
+		parked.terminal = &status
+		parked.call.Arguments = nil
+		parked.native = session.ExternalAuthorization{}
+		return status, nil
+	}
+	status, err := st.attachment.AuthorizationStatus(ctx, parked.native)
+	if err != nil {
+		return c.FlowStatus{}, err
+	}
+	var flow c.FlowStatus
+	switch status {
+	case session.AuthorizationPending:
+		flow.Kind = c.FlowPending
+	case session.AuthorizationGranted:
+		if reason := s.parkedAuthority(ctx, st, parked); reason != c.FailureUnspecified {
+			flow = c.FlowStatus{Kind: c.FlowFailed, Reason: reason}
+		} else {
+			parked.completed = st.catalogue
+			flow = c.FlowStatus{Kind: c.FlowCompleted, Catalogue: st.catalogue}
+		}
+	case session.AuthorizationCancelled:
+		flow.Kind = c.FlowCancelled
+	case session.AuthorizationExpired:
+		flow.Kind = c.FlowExpired
+	default:
+		flow = c.FlowStatus{Kind: c.FlowFailed, Reason: c.FailureAuthorizationFailed}
+	}
+	if !flow.Valid() {
+		return c.FlowStatus{}, c.ErrStateUnavailable
+	}
+	if flow.Kind != c.FlowPending {
+		parked.terminal = &flow
+		parked.native = session.ExternalAuthorization{}
+		if flow.Kind != c.FlowCompleted {
+			parked.call.Arguments = nil
+		}
+	}
+	return flow, nil
+}
+
+func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, authorization c.AuthorizationRef, attempt c.BrokerAttempt) (c.AuthorizationCheck, error) {
+	if !attempt.Valid() || !validAPIRef(string(cat)) || (call == nil) == (authorization == "") {
+		return c.AuthorizationCheck{}, c.ErrStateUnavailable
+	}
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.AuthorizationCheck{}, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		return c.AuthorizationCheck{}, err
+	}
+	if cat != st.record.Catalogue || st.catalogue == nil || cat != st.catalogue.Ref() {
+		return c.AuthorizationCheck{Reason: c.FailureCatalogueChanged}, nil
+	}
+	if call != nil {
+		out, _, err := s.prepareInvocation(ctx, st, cat, *call, attempt)
+		if err != nil {
+			return c.AuthorizationCheck{}, err
+		}
+		switch out.Kind {
+		case "":
+			return c.AuthorizationCheck{Ready: true}, nil
+		case c.InvocationAuthorizationRequired:
+			parked, err := s.parkedAuthorization(st, out.Authorization, attempt)
+			if err != nil {
+				return c.AuthorizationCheck{}, err
+			}
+			return c.AuthorizationCheck{Authorization: out.Authorization, ExpiresAt: parked.native.ExpiresAt}, nil
+		case c.InvocationNotDispatched:
+			return c.AuthorizationCheck{Reason: out.Reason}, nil
+		default:
+			return c.AuthorizationCheck{}, c.ErrStateUnavailable
+		}
+	}
+	parked, err := s.parkedAuthorization(st, authorization, attempt)
+	if err != nil {
+		return c.AuthorizationCheck{}, err
+	}
+	flow, err := s.authorizationStatus(ctx, st, parked)
+	if err != nil {
+		return c.AuthorizationCheck{}, err
+	}
+	switch flow.Kind {
+	case c.FlowPending:
+		return c.AuthorizationCheck{Authorization: authorization, ExpiresAt: parked.native.ExpiresAt}, nil
+	case c.FlowCompleted:
+		return c.AuthorizationCheck{Ready: true}, nil
+	case c.FlowExpired:
+		return c.AuthorizationCheck{Reason: c.FailureExpired}, nil
+	case c.FlowCancelled, c.FlowFailed:
+		reason := flow.Reason
+		if !reason.Valid() {
+			reason = c.FailureAuthorizationFailed
+		}
+		return c.AuthorizationCheck{Reason: reason}, nil
+	default:
+		return c.AuthorizationCheck{}, c.ErrStateUnavailable
+	}
+}
+
+func (s *SessionAPI) BeginAuthorization(ctx context.Context, ref c.SessionRef, authorization c.AuthorizationRef) (c.BrowserPrompt, error) {
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.BrowserPrompt{}, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		return c.BrowserPrompt{}, err
+	}
+	parked := st.parked[authorization]
+	if parked == nil || parked.terminal != nil || !s.parkedSnapshotValid(st, parked) {
+		return c.BrowserPrompt{}, c.ErrStateUnavailable
+	}
+	url, err := st.attachment.PresentAuthorization(ctx, parked.native)
+	if err != nil {
+		return c.BrowserPrompt{}, err
+	}
+	prompt := c.BrowserPrompt{URL: url, ExpiresAt: parked.native.ExpiresAt}
+	if !prompt.Valid() || !prompt.ExpiresAt.After(s.now()) {
+		return c.BrowserPrompt{}, c.ErrStateUnavailable
+	}
+	return prompt, nil
+}
+
+func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef, authorization c.AuthorizationRef) (c.FlowStatus, error) {
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.FlowStatus{}, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		return c.FlowStatus{}, err
+	}
+	parked := st.parked[authorization]
+	if parked == nil {
+		return c.FlowStatus{}, c.ErrStateUnavailable
+	}
+	return s.authorizationStatus(ctx, st, parked)
+}
+
+func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, authorization c.AuthorizationRef, attempt c.BrokerAttempt) (c.CancelResult, error) {
+	if !attempt.Valid() {
+		return 0, c.ErrStateUnavailable
+	}
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		return 0, err
+	}
+	parked, err := s.parkedAuthorization(st, authorization, attempt)
+	if err != nil {
+		return 0, err
+	}
+	flow, err := s.authorizationStatus(ctx, st, parked)
+	if err != nil {
+		return 0, err
+	}
+	if flow.Kind != c.FlowPending {
+		return c.AlreadyResolved, nil
+	}
+	outcome, err := st.attachment.CancelAuthorization(ctx, parked.native)
+	if err != nil {
+		parked.cleanupPending = true
+		return 0, err
+	}
+	parked.cleanupPending = false
+	if outcome == contract.CancelCancelled {
+		status := c.FlowStatus{Kind: c.FlowCancelled}
+		parked.terminal = &status
+		parked.call.Arguments = nil
+		parked.native = session.ExternalAuthorization{}
+		return c.Cancelled, nil
+	}
+	status, err := s.authorizationStatus(ctx, st, parked)
+	if err != nil {
+		return 0, err
+	}
+	if status.Kind == c.FlowPending {
+		return 0, c.ErrStateUnavailable
+	}
+	return c.AlreadyResolved, nil
+}
+
+func (s *SessionAPI) ResumeTool(ctx context.Context, ref c.SessionRef, authorization c.AuthorizationRef, adopted c.CatalogueRef, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	caller := ctx
+	if !attempt.Valid() || !validAPIRef(string(adopted)) {
+		return c.InvocationOutcome{}, c.ErrStateUnavailable
+	}
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.InvocationOutcome{}, err
+	}
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		release()
+		return c.InvocationOutcome{}, err
+	}
+	parked, err := s.parkedAuthorization(st, authorization, attempt)
+	if err != nil {
+		release()
+		return c.InvocationOutcome{}, err
+	}
+	flow, err := s.authorizationStatus(ctx, st, parked)
+	if err != nil {
+		release()
+		return c.InvocationOutcome{}, err
+	}
+	if flow.Kind != c.FlowCompleted {
+		reason := c.FailureCapacity
+		switch flow.Kind {
+		case c.FlowExpired:
+			reason = c.FailureExpired
+		case c.FlowCancelled:
+			reason = c.FailureAuthorizationFailed
+		case c.FlowFailed:
+			reason = flow.Reason
+			if !reason.Valid() {
+				reason = c.FailureAuthorizationFailed
+			}
+		}
+		release()
+		return noDispatch(reason), nil
+	}
+	if parked.completed == nil || adopted != st.catalogue.Ref() || adopted != parked.completed.Ref() {
+		release()
+		return noDispatch(c.FailureCatalogueChanged), nil
+	}
+	if reason := s.parkedAuthority(ctx, st, parked); reason != c.FailureUnspecified {
+		release()
+		return noDispatch(reason), nil
+	}
+	call := c.Call{ID: parked.call.ID, Name: parked.call.Name, Arguments: append([]byte(nil), parked.call.Arguments...)}
+	delete(st.parked, authorization)
+	out, receipt, err := s.dispatchInvocation(ctx, st, adopted, call, attempt)
+	if err != nil || receipt == nil {
+		release()
+		return out, err
+	}
+	release()
+	return waitReceipt(caller, out, receipt, nil)
 }

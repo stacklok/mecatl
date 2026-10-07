@@ -3,6 +3,7 @@ package mcpbroker
 import (
 	"context"
 
+	"github.com/stacklok/mecatl/engine/session"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -26,12 +27,16 @@ func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.
 			status := c.FlowStatus{Kind: c.FlowExpired}
 			p.terminal = &status
 			p.call.Arguments = nil
+			p.native = session.ExternalAuthorization{}
 		}
 		if p.terminal != nil {
+			if p.terminal.Kind == c.FlowCompleted {
+				return noDispatch(c.FailureAuthorizationFailed), nil, nil
+			}
 			delete(st.parked, ref)
 			continue
 		}
-		if p.attempt == attempt && callDigest(p.call) == callDigest(call) {
+		if p.attempt == attempt && sameCall(p.call, call) {
 			return c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: ref}, nil, nil
 		}
 		return noDispatch(c.FailureCapacity), nil, nil

@@ -22,11 +22,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SessionService_OpenSession_FullMethodName     = "/mecatl.broker.v1.SessionService/OpenSession"
-	SessionService_InvokeTool_FullMethodName      = "/mecatl.broker.v1.SessionService/InvokeTool"
-	SessionService_BeginEnrollment_FullMethodName = "/mecatl.broker.v1.SessionService/BeginEnrollment"
-	SessionService_DisconnectTools_FullMethodName = "/mecatl.broker.v1.SessionService/DisconnectTools"
-	SessionService_DeleteSession_FullMethodName   = "/mecatl.broker.v1.SessionService/DeleteSession"
+	SessionService_OpenSession_FullMethodName          = "/mecatl.broker.v1.SessionService/OpenSession"
+	SessionService_InvokeTool_FullMethodName           = "/mecatl.broker.v1.SessionService/InvokeTool"
+	SessionService_CheckAuthorization_FullMethodName   = "/mecatl.broker.v1.SessionService/CheckAuthorization"
+	SessionService_BeginAuthorization_FullMethodName   = "/mecatl.broker.v1.SessionService/BeginAuthorization"
+	SessionService_ObserveAuthorization_FullMethodName = "/mecatl.broker.v1.SessionService/ObserveAuthorization"
+	SessionService_CancelAuthorization_FullMethodName  = "/mecatl.broker.v1.SessionService/CancelAuthorization"
+	SessionService_ResumeTool_FullMethodName           = "/mecatl.broker.v1.SessionService/ResumeTool"
+	SessionService_BeginEnrollment_FullMethodName      = "/mecatl.broker.v1.SessionService/BeginEnrollment"
+	SessionService_DisconnectTools_FullMethodName      = "/mecatl.broker.v1.SessionService/DisconnectTools"
+	SessionService_DeleteSession_FullMethodName        = "/mecatl.broker.v1.SessionService/DeleteSession"
 )
 
 // SessionServiceClient is the client API for SessionService service.
@@ -37,6 +42,11 @@ const (
 type SessionServiceClient interface {
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error)
 	InvokeTool(ctx context.Context, in *InvokeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error)
+	CheckAuthorization(ctx context.Context, in *CheckAuthorizationRequest, opts ...grpc.CallOption) (*CheckAuthorizationResponse, error)
+	BeginAuthorization(ctx context.Context, in *BeginAuthorizationRequest, opts ...grpc.CallOption) (*BrowserPrompt, error)
+	ObserveAuthorization(ctx context.Context, in *ObserveAuthorizationRequest, opts ...grpc.CallOption) (*FlowStatus, error)
+	CancelAuthorization(ctx context.Context, in *CancelAuthorizationRequest, opts ...grpc.CallOption) (*CancelOutcome, error)
+	ResumeTool(ctx context.Context, in *ResumeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error)
 	BeginEnrollment(ctx context.Context, in *BeginEnrollmentRequest, opts ...grpc.CallOption) (*BeginEnrollmentResponse, error)
 	DisconnectTools(ctx context.Context, in *DisconnectToolsRequest, opts ...grpc.CallOption) (*DisconnectOutcome, error)
 	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteOutcome, error)
@@ -64,6 +74,56 @@ func (c *sessionServiceClient) InvokeTool(ctx context.Context, in *InvokeToolReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InvocationOutcome)
 	err := c.cc.Invoke(ctx, SessionService_InvokeTool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) CheckAuthorization(ctx context.Context, in *CheckAuthorizationRequest, opts ...grpc.CallOption) (*CheckAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckAuthorizationResponse)
+	err := c.cc.Invoke(ctx, SessionService_CheckAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) BeginAuthorization(ctx context.Context, in *BeginAuthorizationRequest, opts ...grpc.CallOption) (*BrowserPrompt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BrowserPrompt)
+	err := c.cc.Invoke(ctx, SessionService_BeginAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) ObserveAuthorization(ctx context.Context, in *ObserveAuthorizationRequest, opts ...grpc.CallOption) (*FlowStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlowStatus)
+	err := c.cc.Invoke(ctx, SessionService_ObserveAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) CancelAuthorization(ctx context.Context, in *CancelAuthorizationRequest, opts ...grpc.CallOption) (*CancelOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelOutcome)
+	err := c.cc.Invoke(ctx, SessionService_CancelAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) ResumeTool(ctx context.Context, in *ResumeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InvocationOutcome)
+	err := c.cc.Invoke(ctx, SessionService_ResumeTool_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +168,11 @@ func (c *sessionServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 type SessionServiceServer interface {
 	OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error)
 	InvokeTool(context.Context, *InvokeToolRequest) (*InvocationOutcome, error)
+	CheckAuthorization(context.Context, *CheckAuthorizationRequest) (*CheckAuthorizationResponse, error)
+	BeginAuthorization(context.Context, *BeginAuthorizationRequest) (*BrowserPrompt, error)
+	ObserveAuthorization(context.Context, *ObserveAuthorizationRequest) (*FlowStatus, error)
+	CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelOutcome, error)
+	ResumeTool(context.Context, *ResumeToolRequest) (*InvocationOutcome, error)
 	BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error)
 	DisconnectTools(context.Context, *DisconnectToolsRequest) (*DisconnectOutcome, error)
 	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteOutcome, error)
@@ -126,6 +191,21 @@ func (UnimplementedSessionServiceServer) OpenSession(context.Context, *OpenSessi
 }
 func (UnimplementedSessionServiceServer) InvokeTool(context.Context, *InvokeToolRequest) (*InvocationOutcome, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InvokeTool not implemented")
+}
+func (UnimplementedSessionServiceServer) CheckAuthorization(context.Context, *CheckAuthorizationRequest) (*CheckAuthorizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckAuthorization not implemented")
+}
+func (UnimplementedSessionServiceServer) BeginAuthorization(context.Context, *BeginAuthorizationRequest) (*BrowserPrompt, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeginAuthorization not implemented")
+}
+func (UnimplementedSessionServiceServer) ObserveAuthorization(context.Context, *ObserveAuthorizationRequest) (*FlowStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ObserveAuthorization not implemented")
+}
+func (UnimplementedSessionServiceServer) CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelOutcome, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelAuthorization not implemented")
+}
+func (UnimplementedSessionServiceServer) ResumeTool(context.Context, *ResumeToolRequest) (*InvocationOutcome, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResumeTool not implemented")
 }
 func (UnimplementedSessionServiceServer) BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BeginEnrollment not implemented")
@@ -189,6 +269,96 @@ func _SessionService_InvokeTool_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SessionServiceServer).InvokeTool(ctx, req.(*InvokeToolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_CheckAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).CheckAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_CheckAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).CheckAuthorization(ctx, req.(*CheckAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_BeginAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).BeginAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_BeginAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).BeginAuthorization(ctx, req.(*BeginAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_ObserveAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ObserveAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).ObserveAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_ObserveAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).ObserveAuthorization(ctx, req.(*ObserveAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_CancelAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).CancelAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_CancelAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).CancelAuthorization(ctx, req.(*CancelAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_ResumeTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).ResumeTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_ResumeTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).ResumeTool(ctx, req.(*ResumeToolRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -261,6 +431,26 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InvokeTool",
 			Handler:    _SessionService_InvokeTool_Handler,
+		},
+		{
+			MethodName: "CheckAuthorization",
+			Handler:    _SessionService_CheckAuthorization_Handler,
+		},
+		{
+			MethodName: "BeginAuthorization",
+			Handler:    _SessionService_BeginAuthorization_Handler,
+		},
+		{
+			MethodName: "ObserveAuthorization",
+			Handler:    _SessionService_ObserveAuthorization_Handler,
+		},
+		{
+			MethodName: "CancelAuthorization",
+			Handler:    _SessionService_CancelAuthorization_Handler,
+		},
+		{
+			MethodName: "ResumeTool",
+			Handler:    _SessionService_ResumeTool_Handler,
 		},
 		{
 			MethodName: "BeginEnrollment",

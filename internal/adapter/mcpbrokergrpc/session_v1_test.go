@@ -33,6 +33,7 @@ type lifecycleService struct {
 	cat        c.Catalogue
 	deleted    bool
 	beginCount int
+	callID     session.ToolCallID
 }
 
 func newLifecycleService(t *testing.T) *lifecycleService {
@@ -61,6 +62,42 @@ func (s *lifecycleService) OpenSession(_ context.Context, saved *c.SessionRef) (
 
 func (s *lifecycleService) InvokeTool(context.Context, c.SessionRef, c.CatalogueRef, c.Call, c.BrokerAttempt) (c.InvocationOutcome, error) {
 	return c.InvocationOutcome{Kind: c.InvocationNotDispatched, Reason: c.FailureAuthorityWithdrawn}, nil
+}
+
+func (s *lifecycleService) CheckAuthorization(_ context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, authorization c.AuthorizationRef, attempt c.BrokerAttempt) (c.AuthorizationCheck, error) {
+	if ref != s.ref || !validSessionRef(string(cat)) || !attempt.Valid() {
+		return c.AuthorizationCheck{}, c.ErrStateUnavailable
+	}
+	if call != nil {
+		s.callID = call.ID
+		return c.AuthorizationCheck{Authorization: c.AuthorizationRef(base64.RawURLEncoding.EncodeToString(bytes32(5))), ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+	if authorization != c.AuthorizationRef(base64.RawURLEncoding.EncodeToString(bytes32(5))) {
+		return c.AuthorizationCheck{}, c.ErrStateUnavailable
+	}
+	return c.AuthorizationCheck{Ready: true}, nil
+}
+
+func (s *lifecycleService) BeginAuthorization(context.Context, c.SessionRef, c.AuthorizationRef) (c.BrowserPrompt, error) {
+	return c.BrowserPrompt{URL: "https://broker.test/authorize", ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (s *lifecycleService) ObserveAuthorization(context.Context, c.SessionRef, c.AuthorizationRef) (c.FlowStatus, error) {
+	return c.FlowStatus{Kind: c.FlowPending}, nil
+}
+
+func (s *lifecycleService) CancelAuthorization(_ context.Context, ref c.SessionRef, _ c.AuthorizationRef, attempt c.BrokerAttempt) (c.CancelResult, error) {
+	if ref != s.ref || !attempt.Valid() {
+		return 0, c.ErrStateUnavailable
+	}
+	return c.Cancelled, nil
+}
+
+func (s *lifecycleService) ResumeTool(_ context.Context, ref c.SessionRef, authorization c.AuthorizationRef, _ c.CatalogueRef, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	if ref != s.ref || authorization == "" || !attempt.Valid() {
+		return c.InvocationOutcome{}, c.ErrStateUnavailable
+	}
+	return c.NewInvocationOutcome(c.InvocationCompleted, &session.ToolResult{CallID: s.callID, Content: "resumed"}, "", c.FailureUnspecified)
 }
 
 func (s *lifecycleService) BeginEnrollment(_ context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
@@ -179,22 +216,42 @@ func TestSessionClientLifecycleAndInvocationDescriptor(t *testing.T) {
 		t.Fatalf("V3 remote invocation did not preserve non-dispatch: result=%+v err=%v", result, err)
 	}
 	requester := remote.(tool.AuthorizationRequester)
-	if authorization, ready, err := requester.RequestAuthorization(t.Context(), session.ToolCall{}); err == nil || ready || authorization.ID != "" {
-		t.Fatalf("V4 scaffold claimed authorization readiness: %+v ready=%v err=%v", authorization, ready, err)
+	attempt := session.NewBrokerAttempt()
+	call := session.ToolCall{ID: "call", Name: "write", Args: []byte(`{}`)}
+	authorization, required, err := requester.RequestAuthorization(tool.WithBrokerInvocation(t.Context(), attempt), call)
+	if err != nil || !required || authorization.ID == "" || authorization.Binding == "" {
+		t.Fatalf("authorization followup = %+v required=%v err=%v", authorization, required, err)
 	}
-	if err := requester.AbortAuthorization(t.Context(), session.ExternalAuthorization{}); err == nil {
-		t.Fatal("V4 scaffold claimed successful authorization abort")
+	prompt, err := client.BeginAuthorization(t.Context(), service.ref, c.AuthorizationRef(authorization.ID))
+	if err != nil || !prompt.Valid() {
+		t.Fatalf("authorization prompt = %+v, %v", prompt, err)
+	}
+	flowStatus, err := client.ObserveAuthorization(t.Context(), service.ref, c.AuthorizationRef(authorization.ID))
+	if err != nil || flowStatus.Kind != c.FlowPending {
+		t.Fatalf("authorization flow = %+v, %v", flowStatus, err)
+	}
+	if err := requester.AbortAuthorization(t.Context(), authorization); err != nil {
+		t.Fatalf("authorization cancellation: %v", err)
+	}
+	request := c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}
+	check, err := client.CheckAuthorization(t.Context(), service.ref, descriptorRef, &request, "", attempt)
+	if err != nil || check.Authorization == "" {
+		t.Fatalf("authorization check: %+v %v", check, err)
+	}
+	resumed, err := client.ResumeTool(t.Context(), service.ref, check.Authorization, descriptorRef, attempt)
+	if err != nil || resumed.Kind != c.InvocationCompleted || resumed.Result == nil || resumed.Result.CallID != call.ID || resumed.Result.Content != "resumed" {
+		t.Fatalf("authorization resume: %+v %v", resumed, err)
 	}
 	if !validSessionRef(string(service.ref)) || validSessionRef(string(service.ref)[:42]+"B") {
 		t.Fatal("noncanonical reference accepted")
 	}
 }
 
-func TestSessionProtoV3SchemaSnapshot(t *testing.T) {
+func TestSessionProtoV4SchemaSnapshot(t *testing.T) {
 	file := p.File_mecatl_broker_v1_session_proto
 	service := file.Services().ByName("SessionService")
-	if service == nil || service.Methods().Len() != 5 || service.Methods().ByName("InvokeTool") == nil || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
-		t.Fatalf("unexpected V2 service methods: %v", service)
+	if service == nil || service.Methods().Len() != 10 || service.Methods().ByName("InvokeTool") == nil || service.Methods().ByName("CheckAuthorization") == nil || service.Methods().ByName("BeginAuthorization") == nil || service.Methods().ByName("ObserveAuthorization") == nil || service.Methods().ByName("CancelAuthorization") == nil || service.Methods().ByName("ResumeTool") == nil || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
+		t.Fatalf("unexpected V4 service methods: %v", service)
 	}
 	fields := func(message protoreflect.Name, want map[protoreflect.Name]protoreflect.FieldNumber) {
 		t.Helper()
@@ -215,6 +272,16 @@ func TestSessionProtoV3SchemaSnapshot(t *testing.T) {
 	}
 	fields("Call", map[protoreflect.Name]protoreflect.FieldNumber{"id": 1, "name": 2, "arguments": 3})
 	fields("InvokeToolRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "catalogue_ref": 2, "call": 3, "attempt": 4})
+	fields("CheckAuthorizationRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "catalogue_ref": 2, "call": 3, "authorization_ref": 4, "attempt": 5})
+	fields("CheckAuthorizationResponse", map[protoreflect.Name]protoreflect.FieldNumber{"ready": 1, "authorization_required": 2, "not_dispatched": 3})
+	fields("FlowRef", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "expires_at": 2})
+	fields("BeginAuthorizationRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "authorization_ref": 2})
+	fields("ObserveAuthorizationRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "authorization_ref": 2})
+	fields("CancelAuthorizationRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "authorization_ref": 2, "attempt": 3})
+	fields("ResumeToolRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "authorization_ref": 2, "adopted_catalogue": 3, "attempt": 4})
+	fields("BrowserPrompt", map[protoreflect.Name]protoreflect.FieldNumber{"url": 1, "expires_at": 2})
+	fields("FlowStatus", map[protoreflect.Name]protoreflect.FieldNumber{"pending": 1, "completed": 2, "cancelled": 3, "expired": 4, "failed": 5})
+	fields("CancelOutcome", map[protoreflect.Name]protoreflect.FieldNumber{"outcome": 1})
 	fields("InvocationOutcome", map[protoreflect.Name]protoreflect.FieldNumber{"completed": 1, "authorization_required": 2, "not_dispatched": 3, "outcome_unknown": 4})
 	fields("OpenSessionRequest", map[protoreflect.Name]protoreflect.FieldNumber{"saved_ref": 1})
 	fields("SessionSnapshot", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "expires_at": 2, "catalogue": 3})
@@ -241,6 +308,16 @@ func TestSessionProtoV3SchemaSnapshot(t *testing.T) {
 	values = file.Messages().ByName("DisconnectOutcome").Enums().Get(0).Values()
 	if values.Len() != 4 || values.Get(0).Number() != 0 || values.Get(1).Number() != 1 || values.Get(2).Number() != 2 || values.Get(3).Number() != 3 {
 		t.Fatalf("disconnect outcome enum values = %v", values)
+	}
+	values = file.Messages().ByName("CancelOutcome").Enums().Get(0).Values()
+	if values.Len() != 3 || values.Get(0).Name() != "UNSPECIFIED" || values.Get(0).Number() != 0 ||
+		values.Get(1).Name() != "CANCELLED" || values.Get(1).Number() != 1 ||
+		values.Get(2).Name() != "ALREADY_RESOLVED" || values.Get(2).Number() != 2 {
+		t.Fatalf("authorization cancel enum values = %v", values)
+	}
+	target := file.Messages().ByName("CheckAuthorizationRequest").Fields().ByName("call").ContainingOneof()
+	if target == nil || target.Name() != "target" || target.Fields().Len() != 2 {
+		t.Fatalf("authorization target is not a two-arm oneof: %v", target)
 	}
 }
 

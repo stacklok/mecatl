@@ -17,6 +17,11 @@ import (
 type SessionService interface {
 	OpenSession(context.Context, *session.BrokerSessionRef) (SessionSnapshot, error)
 	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call, BrokerAttempt) (InvocationOutcome, error)
+	CheckAuthorization(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, *Call, AuthorizationRef, BrokerAttempt) (AuthorizationCheck, error)
+	BeginAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (BrowserPrompt, error)
+	ObserveAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (FlowStatus, error)
+	CancelAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef, BrokerAttempt) (CancelResult, error)
+	ResumeTool(context.Context, session.BrokerSessionRef, AuthorizationRef, session.BrokerCatalogueRef, BrokerAttempt) (InvocationOutcome, error)
 	BeginEnrollment(context.Context, session.BrokerSessionRef) (BeginEnrollmentOutcome, error)
 	DisconnectTools(context.Context, session.BrokerSessionRef, ConnectionRef) (DisconnectResult, error)
 	DeleteSession(context.Context, session.BrokerSessionRef) (DeleteResult, error)

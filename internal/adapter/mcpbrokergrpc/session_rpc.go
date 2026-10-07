@@ -146,6 +146,141 @@ func (s *SessionRPC) InvokeTool(ctx context.Context, request *p.InvokeToolReques
 	}
 }
 
+func (s *SessionRPC) CheckAuthorization(ctx context.Context, request *p.CheckAuthorizationRequest) (*p.CheckAuthorizationResponse, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.CatalogueRef) || !wireAttemptValid(request.Attempt) {
+		return nil, invalidRequest("invalid authorization check")
+	}
+	var call *c.Call
+	var authorization c.AuthorizationRef
+	switch target := request.Target.(type) {
+	case *p.CheckAuthorizationRequest_Call:
+		if target.Call == nil {
+			return nil, invalidRequest("invalid authorization call")
+		}
+		decoded, err := callFrom(target.Call.Name, target.Call.Id, target.Call.Arguments, "")
+		if err != nil {
+			return nil, invalidRequest("invalid authorization call")
+		}
+		call = &c.Call{ID: decoded.ID, Name: decoded.Name, Arguments: decoded.Args}
+	case *p.CheckAuthorizationRequest_AuthorizationRef:
+		if !validSessionRef(target.AuthorizationRef) {
+			return nil, invalidRequest("invalid authorization reference")
+		}
+		authorization = c.AuthorizationRef(target.AuthorizationRef)
+	default:
+		return nil, invalidRequest("authorization target required")
+	}
+	check, err := s.service.CheckAuthorization(ctx, c.SessionRef(request.SessionRef), c.CatalogueRef(request.CatalogueRef), call, authorization, attemptFromWire(request.Attempt))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !check.Valid() {
+		return nil, status.Error(codes.Internal, "invalid authorization check")
+	}
+	switch {
+	case check.Ready:
+		return &p.CheckAuthorizationResponse{Outcome: &p.CheckAuthorizationResponse_Ready{Ready: &emptypb.Empty{}}}, nil
+	case check.Authorization != "":
+		return &p.CheckAuthorizationResponse{Outcome: &p.CheckAuthorizationResponse_AuthorizationRequired{AuthorizationRequired: &p.FlowRef{Ref: string(check.Authorization), ExpiresAt: timestamppb.New(check.ExpiresAt)}}}, nil
+	default:
+		return &p.CheckAuthorizationResponse{Outcome: &p.CheckAuthorizationResponse_NotDispatched{NotDispatched: &p.NonDispatch{Reason: p.FailureReason(check.Reason)}}}, nil
+	}
+}
+
+func (s *SessionRPC) BeginAuthorization(ctx context.Context, request *p.BeginAuthorizationRequest) (*p.BrowserPrompt, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.AuthorizationRef) {
+		return nil, invalidRequest("invalid authorization reference")
+	}
+	prompt, err := s.service.BeginAuthorization(ctx, c.SessionRef(request.SessionRef), c.AuthorizationRef(request.AuthorizationRef))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !prompt.Valid() || !prompt.ExpiresAt.After(time.Now()) {
+		return nil, status.Error(codes.Internal, "invalid browser prompt")
+	}
+	return &p.BrowserPrompt{Url: prompt.URL, ExpiresAt: timestamppb.New(prompt.ExpiresAt)}, nil
+}
+
+func flowStatusToWire(flow c.FlowStatus) (*p.FlowStatus, error) {
+	if !flow.Valid() {
+		return nil, status.Error(codes.Internal, "invalid authorization flow")
+	}
+	switch flow.Kind {
+	case c.FlowPending:
+		return &p.FlowStatus{Status: &p.FlowStatus_Pending{Pending: &emptypb.Empty{}}}, nil
+	case c.FlowCompleted:
+		catalogue, err := sessionCatalogue(flow.Catalogue)
+		if err != nil {
+			return nil, err
+		}
+		return &p.FlowStatus{Status: &p.FlowStatus_Completed{Completed: catalogue}}, nil
+	case c.FlowCancelled:
+		return &p.FlowStatus{Status: &p.FlowStatus_Cancelled{Cancelled: &emptypb.Empty{}}}, nil
+	case c.FlowExpired:
+		return &p.FlowStatus{Status: &p.FlowStatus_Expired{Expired: &emptypb.Empty{}}}, nil
+	case c.FlowFailed:
+		return &p.FlowStatus{Status: &p.FlowStatus_Failed{Failed: p.FailureReason(flow.Reason)}}, nil
+	default:
+		return nil, status.Error(codes.Internal, "invalid authorization flow")
+	}
+}
+
+func (s *SessionRPC) ObserveAuthorization(ctx context.Context, request *p.ObserveAuthorizationRequest) (*p.FlowStatus, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.AuthorizationRef) {
+		return nil, invalidRequest("invalid authorization reference")
+	}
+	flow, err := s.service.ObserveAuthorization(ctx, c.SessionRef(request.SessionRef), c.AuthorizationRef(request.AuthorizationRef))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	return flowStatusToWire(flow)
+}
+
+func (s *SessionRPC) CancelAuthorization(ctx context.Context, request *p.CancelAuthorizationRequest) (*p.CancelOutcome, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.AuthorizationRef) || !wireAttemptValid(request.Attempt) {
+		return nil, invalidRequest("invalid authorization cancellation")
+	}
+	outcome, err := s.service.CancelAuthorization(ctx, c.SessionRef(request.SessionRef), c.AuthorizationRef(request.AuthorizationRef), attemptFromWire(request.Attempt))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !outcome.Valid() {
+		return nil, status.Error(codes.Internal, "invalid authorization cancellation")
+	}
+	value := p.CancelOutcome_ALREADY_RESOLVED
+	if outcome == c.Cancelled {
+		value = p.CancelOutcome_CANCELLED
+	}
+	return &p.CancelOutcome{Outcome: value}, nil
+}
+
+func (s *SessionRPC) ResumeTool(ctx context.Context, request *p.ResumeToolRequest) (*p.InvocationOutcome, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.AuthorizationRef) || !validSessionRef(request.AdoptedCatalogue) || !wireAttemptValid(request.Attempt) {
+		return nil, invalidRequest("invalid authorization continuation")
+	}
+	outcome, err := s.service.ResumeTool(ctx, c.SessionRef(request.SessionRef), c.AuthorizationRef(request.AuthorizationRef), c.CatalogueRef(request.AdoptedCatalogue), attemptFromWire(request.Attempt))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !outcome.Valid() {
+		return nil, status.Error(codes.Internal, "invalid invocation outcome")
+	}
+	switch outcome.Kind {
+	case c.InvocationCompleted:
+		result, err := resultToWire(*outcome.Result)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "invalid result")
+		}
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_Completed{Completed: result}}, nil
+	case c.InvocationAuthorizationRequired:
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_AuthorizationRequired{AuthorizationRequired: string(outcome.Authorization)}}, nil
+	case c.InvocationNotDispatched:
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_NotDispatched{NotDispatched: &p.NonDispatch{Reason: p.FailureReason(outcome.Reason)}}}, nil
+	default:
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_OutcomeUnknown{OutcomeUnknown: &emptypb.Empty{}}}, nil
+	}
+}
+
 func (s *SessionRPC) BeginEnrollment(ctx context.Context, request *p.BeginEnrollmentRequest) (*p.BeginEnrollmentResponse, error) {
 	if request == nil || !validSessionRef(request.SessionRef) {
 		return nil, invalidRequest("invalid session reference")
