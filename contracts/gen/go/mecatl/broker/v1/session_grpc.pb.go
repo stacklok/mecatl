@@ -22,8 +22,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SessionService_OpenSession_FullMethodName   = "/mecatl.broker.v1.SessionService/OpenSession"
-	SessionService_DeleteSession_FullMethodName = "/mecatl.broker.v1.SessionService/DeleteSession"
+	SessionService_OpenSession_FullMethodName     = "/mecatl.broker.v1.SessionService/OpenSession"
+	SessionService_BeginEnrollment_FullMethodName = "/mecatl.broker.v1.SessionService/BeginEnrollment"
+	SessionService_DisconnectTools_FullMethodName = "/mecatl.broker.v1.SessionService/DisconnectTools"
+	SessionService_DeleteSession_FullMethodName   = "/mecatl.broker.v1.SessionService/DeleteSession"
 )
 
 // SessionServiceClient is the client API for SessionService service.
@@ -33,6 +35,8 @@ const (
 // Stable broker-owned session identity and immutable tool catalogue.
 type SessionServiceClient interface {
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error)
+	BeginEnrollment(ctx context.Context, in *BeginEnrollmentRequest, opts ...grpc.CallOption) (*BeginEnrollmentResponse, error)
+	DisconnectTools(ctx context.Context, in *DisconnectToolsRequest, opts ...grpc.CallOption) (*DisconnectOutcome, error)
 	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteOutcome, error)
 }
 
@@ -48,6 +52,26 @@ func (c *sessionServiceClient) OpenSession(ctx context.Context, in *OpenSessionR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionSnapshot)
 	err := c.cc.Invoke(ctx, SessionService_OpenSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) BeginEnrollment(ctx context.Context, in *BeginEnrollmentRequest, opts ...grpc.CallOption) (*BeginEnrollmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginEnrollmentResponse)
+	err := c.cc.Invoke(ctx, SessionService_BeginEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) DisconnectTools(ctx context.Context, in *DisconnectToolsRequest, opts ...grpc.CallOption) (*DisconnectOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DisconnectOutcome)
+	err := c.cc.Invoke(ctx, SessionService_DisconnectTools_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +95,8 @@ func (c *sessionServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 // Stable broker-owned session identity and immutable tool catalogue.
 type SessionServiceServer interface {
 	OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error)
+	BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error)
+	DisconnectTools(context.Context, *DisconnectToolsRequest) (*DisconnectOutcome, error)
 	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteOutcome, error)
 	mustEmbedUnimplementedSessionServiceServer()
 }
@@ -84,6 +110,12 @@ type UnimplementedSessionServiceServer struct{}
 
 func (UnimplementedSessionServiceServer) OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenSession not implemented")
+}
+func (UnimplementedSessionServiceServer) BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeginEnrollment not implemented")
+}
+func (UnimplementedSessionServiceServer) DisconnectTools(context.Context, *DisconnectToolsRequest) (*DisconnectOutcome, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DisconnectTools not implemented")
 }
 func (UnimplementedSessionServiceServer) DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteOutcome, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteSession not implemented")
@@ -127,6 +159,42 @@ func _SessionService_OpenSession_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionService_BeginEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).BeginEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_BeginEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).BeginEnrollment(ctx, req.(*BeginEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_DisconnectTools_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DisconnectToolsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).DisconnectTools(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_DisconnectTools_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).DisconnectTools(ctx, req.(*DisconnectToolsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SessionService_DeleteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteSessionRequest)
 	if err := dec(in); err != nil {
@@ -155,6 +223,14 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenSession",
 			Handler:    _SessionService_OpenSession_Handler,
+		},
+		{
+			MethodName: "BeginEnrollment",
+			Handler:    _SessionService_BeginEnrollment_Handler,
+		},
+		{
+			MethodName: "DisconnectTools",
+			Handler:    _SessionService_DisconnectTools_Handler,
 		},
 		{
 			MethodName: "DeleteSession",

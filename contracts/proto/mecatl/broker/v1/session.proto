@@ -6,11 +6,14 @@ package mecatl.broker.v1;
 option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
 
 import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
 // Stable broker-owned session identity and immutable tool catalogue.
 service SessionService {
   rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
+  rpc BeginEnrollment(BeginEnrollmentRequest) returns (BeginEnrollmentResponse);
+  rpc DisconnectTools(DisconnectToolsRequest) returns (DisconnectOutcome);
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
 }
 
@@ -47,6 +50,35 @@ message ToolDescriptor {
   bool read_only = 4;
   bool dispatch_serial = 5;
   bool authorization_capable = 6;
+}
+
+message BeginEnrollmentRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+
+message BeginEnrollmentResponse {
+  reserved 1;
+  reserved "started";
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    google.protobuf.Empty already_connected = 2;
+    Catalogue completed = 3;
+  }
+}
+
+message DisconnectToolsRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string expected_connection = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+
+message DisconnectOutcome {
+  enum Value {
+    UNSPECIFIED = 0;
+    DISCONNECTED = 1;
+    ALREADY_DISCONNECTED = 2;
+    CONNECTION_CHANGED = 3;
+  }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
 }
 
 message DeleteSessionRequest {

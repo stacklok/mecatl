@@ -290,7 +290,7 @@ func (s *SessionAPI) OpenSession(ctx context.Context, saved *c.SessionRef) (c.Se
 		if err != nil {
 			return c.SessionSnapshot{}, err
 		}
-		if st.record.Connected || st.record.Withdrawing || st.record.Connection != "" {
+		if st.record.Connected || st.record.Withdrawing {
 			return c.SessionSnapshot{}, c.ErrStateUnavailable
 		}
 		if st.catalogue == nil {

@@ -20,9 +20,10 @@ import (
 )
 
 type lifecycleService struct {
-	ref     c.SessionRef
-	cat     c.Catalogue
-	deleted bool
+	ref        c.SessionRef
+	cat        c.Catalogue
+	deleted    bool
+	beginCount int
 }
 
 func newLifecycleService(t *testing.T) *lifecycleService {
@@ -47,6 +48,30 @@ func (s *lifecycleService) OpenSession(_ context.Context, saved *c.SessionRef) (
 		return c.SessionSnapshot{}, c.ErrStateUnavailable
 	}
 	return c.SessionSnapshot{Ref: s.ref, ExpiresAt: time.Now().Add(time.Hour), Catalogue: s.cat}, nil
+}
+
+func (s *lifecycleService) BeginEnrollment(_ context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
+	if ref != s.ref {
+		return c.BeginEnrollmentOutcome{}, c.ErrStateUnavailable
+	}
+	s.beginCount++
+	if s.beginCount == 1 {
+		return c.BeginEnrollmentOutcome{Kind: c.EnrollmentCompletedKind, Catalogue: s.cat}, nil
+	}
+	if s.beginCount == 3 {
+		return c.BeginEnrollmentOutcome{Kind: c.EnrollmentStartedKind, Started: &c.EnrollmentStarted{
+			Ref:    c.EnrollmentRef(base64.RawURLEncoding.EncodeToString(bytes32(2))),
+			Prompt: c.BrowserPrompt{URL: "https://broker.test/authorize", ExpiresAt: time.Now().Add(time.Hour)},
+		}}, nil
+	}
+	return c.BeginEnrollmentOutcome{Kind: c.EnrollmentAlreadyConnected}, nil
+}
+
+func (s *lifecycleService) DisconnectTools(_ context.Context, ref c.SessionRef, _ c.ConnectionRef) (c.DisconnectResult, error) {
+	if ref != s.ref {
+		return 0, c.ErrStateUnavailable
+	}
+	return c.AlreadyDisconnected, nil
 }
 
 func (s *lifecycleService) DeleteSession(_ context.Context, ref c.SessionRef) (c.DeleteResult, error) {
@@ -87,6 +112,22 @@ func TestSessionClientLifecycleAndFailClosedDescriptorScaffold(t *testing.T) {
 	saved, err := client.OpenSession(t.Context(), &opened.Ref)
 	if err != nil || saved.Ref != opened.Ref {
 		t.Fatalf("saved open = %+v, %v", saved, err)
+	}
+	completed, err := client.BeginEnrollment(t.Context(), opened.Ref)
+	if err != nil || completed.Kind != c.EnrollmentCompletedKind || completed.Catalogue == nil || len(completed.Catalogue.Tools()) != 0 {
+		t.Fatalf("completed enrollment = %+v, %v", completed, err)
+	}
+	begun, err := client.BeginEnrollment(t.Context(), opened.Ref)
+	if err != nil || begun.Kind != c.EnrollmentAlreadyConnected {
+		t.Fatalf("begin enrollment = %+v, %v", begun, err)
+	}
+	if _, err := client.BeginEnrollment(t.Context(), opened.Ref); status.Code(err) != codes.Internal {
+		t.Fatalf("V2 published protected started arm: %v", err)
+	}
+	connection := c.ConnectionRef(base64.RawURLEncoding.EncodeToString(bytes32(4)))
+	disconnected, err := client.DisconnectTools(t.Context(), opened.Ref, connection)
+	if err != nil || disconnected != c.AlreadyDisconnected {
+		t.Fatalf("disconnect = %v, %v", disconnected, err)
 	}
 	empty := ""
 	if _, err := rpc.OpenSession(t.Context(), &p.OpenSessionRequest{SavedRef: &empty}); status.Code(err) != codes.InvalidArgument {
@@ -133,11 +174,11 @@ func TestSessionClientLifecycleAndFailClosedDescriptorScaffold(t *testing.T) {
 	}
 }
 
-func TestSessionProtoV1SchemaSnapshot(t *testing.T) {
+func TestSessionProtoV2SchemaSnapshot(t *testing.T) {
 	file := p.File_mecatl_broker_v1_session_proto
 	service := file.Services().ByName("SessionService")
-	if service == nil || service.Methods().Len() != 2 || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("DeleteSession") == nil {
-		t.Fatalf("unexpected V1 service methods: %v", service)
+	if service == nil || service.Methods().Len() != 4 || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
+		t.Fatalf("unexpected V2 service methods: %v", service)
 	}
 	fields := func(message protoreflect.Name, want map[protoreflect.Name]protoreflect.FieldNumber) {
 		t.Helper()
@@ -156,6 +197,13 @@ func TestSessionProtoV1SchemaSnapshot(t *testing.T) {
 	fields("SessionSnapshot", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "expires_at": 2, "catalogue": 3})
 	fields("Catalogue", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "tools": 2, "connection_ref": 3})
 	fields("ToolDescriptor", map[protoreflect.Name]protoreflect.FieldNumber{"name": 1, "description": 2, "schema": 3, "read_only": 4, "dispatch_serial": 5, "authorization_capable": 6})
+	fields("BeginEnrollmentRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1})
+	fields("BeginEnrollmentResponse", map[protoreflect.Name]protoreflect.FieldNumber{"already_connected": 2, "completed": 3})
+	if !file.Messages().ByName("BeginEnrollmentResponse").ReservedRanges().Has(1) {
+		t.Fatal("started arm field 1 must remain reserved for V5")
+	}
+	fields("DisconnectToolsRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "expected_connection": 2})
+	fields("DisconnectOutcome", map[protoreflect.Name]protoreflect.FieldNumber{"outcome": 1})
 	fields("DeleteSessionRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1})
 	fields("DeleteOutcome", map[protoreflect.Name]protoreflect.FieldNumber{"outcome": 1})
 	if !file.Messages().ByName("OpenSessionRequest").Fields().ByName("saved_ref").HasPresence() {
@@ -166,5 +214,9 @@ func TestSessionProtoV1SchemaSnapshot(t *testing.T) {
 		values.Get(1).Name() != "DELETED" || values.Get(1).Number() != 1 ||
 		values.Get(2).Name() != "ALREADY_ABSENT" || values.Get(2).Number() != 2 {
 		t.Fatalf("delete outcome enum values = %v", values)
+	}
+	values = file.Messages().ByName("DisconnectOutcome").Enums().Get(0).Values()
+	if values.Len() != 4 || values.Get(0).Number() != 0 || values.Get(1).Number() != 1 || values.Get(2).Number() != 2 || values.Get(3).Number() != 3 {
+		t.Fatalf("disconnect outcome enum values = %v", values)
 	}
 }

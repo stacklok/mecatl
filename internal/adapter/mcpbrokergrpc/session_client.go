@@ -112,6 +112,57 @@ func (s *SessionClient) OpenSession(ctx context.Context, saved *c.SessionRef) (c
 	return c.SessionSnapshot{Ref: c.SessionRef(response.Ref), ExpiresAt: response.ExpiresAt.AsTime(), Catalogue: catalogue}, nil
 }
 
+func (s *SessionClient) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
+	if !validSessionRef(string(ref)) {
+		return c.BeginEnrollmentOutcome{}, errSessionWire
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.rpcDeadline)
+	defer cancel()
+	response, err := s.rpc.BeginEnrollment(ctx, &p.BeginEnrollmentRequest{SessionRef: string(ref)}, grpc.MaxRetryRPCBufferSize(0))
+	if err != nil {
+		return c.BeginEnrollmentOutcome{}, err
+	}
+	if !cleanSessionWire(response) {
+		return c.BeginEnrollmentOutcome{}, errSessionWire
+	}
+	var outcome c.BeginEnrollmentOutcome
+	switch arm := response.Outcome.(type) {
+	case *p.BeginEnrollmentResponse_AlreadyConnected:
+		if arm.AlreadyConnected == nil {
+			return outcome, errSessionWire
+		}
+		outcome.Kind = c.EnrollmentAlreadyConnected
+	case *p.BeginEnrollmentResponse_Completed:
+		catalogue, err := s.catalogue(ref, arm.Completed)
+		if err != nil {
+			return outcome, err
+		}
+		outcome.Kind, outcome.Catalogue = c.EnrollmentCompletedKind, catalogue
+	default:
+		return outcome, errSessionWire
+	}
+	if !outcome.Valid() {
+		return c.BeginEnrollmentOutcome{}, errSessionWire
+	}
+	return outcome, nil
+}
+
+func (s *SessionClient) DisconnectTools(ctx context.Context, ref c.SessionRef, connection c.ConnectionRef) (c.DisconnectResult, error) {
+	if !validSessionRef(string(ref)) || !validSessionRef(string(connection)) {
+		return 0, errSessionWire
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.rpcDeadline)
+	defer cancel()
+	response, err := s.rpc.DisconnectTools(ctx, &p.DisconnectToolsRequest{SessionRef: string(ref), ExpectedConnection: string(connection)}, grpc.MaxRetryRPCBufferSize(0))
+	if err != nil {
+		return 0, err
+	}
+	if !cleanSessionWire(response) || response.Outcome < p.DisconnectOutcome_DISCONNECTED || response.Outcome > p.DisconnectOutcome_CONNECTION_CHANGED {
+		return 0, errSessionWire
+	}
+	return c.DisconnectResult(response.Outcome), nil
+}
+
 func (s *SessionClient) DeleteSession(ctx context.Context, ref c.SessionRef) (c.DeleteResult, error) {
 	if !validSessionRef(string(ref)) {
 		return 0, errSessionWire

@@ -12,6 +12,7 @@ import (
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -108,6 +109,45 @@ func (s *SessionRPC) OpenSession(ctx context.Context, request *p.OpenSessionRequ
 		return nil, err
 	}
 	return &p.SessionSnapshot{Ref: string(snapshot.Ref), ExpiresAt: timestamppb.New(snapshot.ExpiresAt), Catalogue: catalogue}, nil
+}
+
+func (s *SessionRPC) BeginEnrollment(ctx context.Context, request *p.BeginEnrollmentRequest) (*p.BeginEnrollmentResponse, error) {
+	if request == nil || !validSessionRef(request.SessionRef) {
+		return nil, invalidRequest("invalid session reference")
+	}
+	outcome, err := s.service.BeginEnrollment(ctx, c.SessionRef(request.SessionRef))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !outcome.Valid() {
+		return nil, status.Error(codes.Internal, "invalid enrollment outcome")
+	}
+	switch outcome.Kind {
+	case c.EnrollmentCompletedKind:
+		catalogue, err := sessionCatalogue(outcome.Catalogue)
+		if err != nil {
+			return nil, err
+		}
+		return &p.BeginEnrollmentResponse{Outcome: &p.BeginEnrollmentResponse_Completed{Completed: catalogue}}, nil
+	case c.EnrollmentAlreadyConnected:
+		return &p.BeginEnrollmentResponse{Outcome: &p.BeginEnrollmentResponse_AlreadyConnected{AlreadyConnected: &emptypb.Empty{}}}, nil
+	default:
+		return nil, status.Error(codes.Internal, "enrollment outcome unavailable")
+	}
+}
+
+func (s *SessionRPC) DisconnectTools(ctx context.Context, request *p.DisconnectToolsRequest) (*p.DisconnectOutcome, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.ExpectedConnection) {
+		return nil, invalidRequest("invalid connection reference")
+	}
+	outcome, err := s.service.DisconnectTools(ctx, c.SessionRef(request.SessionRef), c.ConnectionRef(request.ExpectedConnection))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !outcome.Valid() {
+		return nil, status.Error(codes.Internal, "invalid disconnect outcome")
+	}
+	return &p.DisconnectOutcome{Outcome: p.DisconnectOutcome_Value(outcome)}, nil
 }
 
 func (s *SessionRPC) DeleteSession(ctx context.Context, request *p.DeleteSessionRequest) (*p.DeleteOutcome, error) {
