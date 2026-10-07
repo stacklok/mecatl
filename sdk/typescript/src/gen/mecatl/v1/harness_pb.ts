@@ -1281,8 +1281,7 @@ export const ListSessionsRequestSchema: GenMessage<ListSessionsRequest> = /*@__P
   messageDesc(file_mecatl_v1_harness, 24);
 
 /**
- * Principal is the verified caller an object is attributed to (caller
- * identity, threaded). Identity is the (issuer, subject) PAIR, never subject alone:
+ * Principal is the verified caller an object is attributed to. Identity is the (issuer, subject) PAIR, never subject alone:
  * two IdPs or realms collide on `sub`. It carries NO scopes, NO credentials and NO
  * claims map — attribution only; enforcement is the isolation track's.
  *
@@ -7388,8 +7387,8 @@ export type ModelInfo = Message<"mecatl.v1.ModelInfo"> & {
 
   /**
    * prompt_cached is true when mecatl ASKS the upstream to cache this
-   * (provider, model) pair's conversation prefix. Mecatl arms
-   * the protocol-native breakpoint on EVERY Responses endpoint, so false means
+   * (provider, model) pair's conversation prefix. mecatl arms the
+   * protocol-native breakpoint on EVERY Responses endpoint, so false means
    * caching is off harness-wide (the server's --no-prompt-cache), NOT that this
    * endpoint cannot cache. Whether an upstream HONOURS the ask is not
    * statically knowable and this field does not claim it. Clients SHOULD mark a
@@ -10623,7 +10622,7 @@ export const HarnessService: GenService<{
    * otherwise rides CreateSessionResponse only).
    *
    * DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
-   * BUILD is this?" and sits behind an explicit privacy boundary:
+   * BUILD is this?" and carries an explicit privacy boundary:
    * its response must never carry capabilities, configuration, or auth details.
    * This one is exactly those things — negotiation input, not identity — so
    * folding the two would either breach that boundary or overload one message

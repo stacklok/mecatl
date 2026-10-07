@@ -136,7 +136,7 @@ type HarnessServiceClient interface {
 	// otherwise rides CreateSessionResponse only).
 	//
 	// DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
-	// BUILD is this?" and sits behind an explicit privacy boundary:
+	// BUILD is this?" and carries an explicit privacy boundary:
 	// its response must never carry capabilities, configuration, or auth details.
 	// This one is exactly those things — negotiation input, not identity — so
 	// folding the two would either breach that boundary or overload one message
@@ -1370,7 +1370,7 @@ type HarnessServiceServer interface {
 	// otherwise rides CreateSessionResponse only).
 	//
 	// DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
-	// BUILD is this?" and sits behind an explicit privacy boundary:
+	// BUILD is this?" and carries an explicit privacy boundary:
 	// its response must never carry capabilities, configuration, or auth details.
 	// This one is exactly those things — negotiation input, not identity — so
 	// folding the two would either breach that boundary or overload one message

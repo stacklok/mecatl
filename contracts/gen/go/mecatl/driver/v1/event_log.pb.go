@@ -476,7 +476,7 @@ func (x *ReadAfterRequest) GetFollow() bool {
 //
 // Unlike ReadResponse it carries a KIND, because a position may hold a gap
 // marker rather than an event. A gap is a delivery-envelope variant and never a
-// harness event (ADR 0250 decision 5), which is why it is a field here rather
+// harness event, which is why it is a field here rather
 // than a new event type inside the opaque payload.
 type ReadAfterResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
