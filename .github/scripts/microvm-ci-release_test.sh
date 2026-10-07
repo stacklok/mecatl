@@ -223,6 +223,12 @@ forbid 'go run ./cmd/mecatl-artifact-digest' "$install"
 require 'MICROVM_RELEASE_DEFAULTS_B64' "$release"
 require 'main.microVMReleaseDefaultsB64' "$repo_root/.ko.yaml"
 require 'anchore/sbom-action@' "$release"
+# sbom-action maps `path:` to syft's dir: source, which rejects a single binary.
+sbom_path_inputs=$(awk '/uses: anchore\/sbom-action@/{in_block=1; next} in_block && /^      - /{in_block=0} in_block && /^          path:/{print NR}' "$release")
+if [ -n "$sbom_path_inputs" ]; then
+  echo "sbom-action must scan binaries with file:, not path: (release.yml lines: $sbom_path_inputs)" >&2
+  exit 1
+fi
 require 'sign-microvm-release-evidence.sh' "$release"
 require 'reuse-platform-release-assets.sh' "$release"
 upload_microvm=$(awk '/^      - name: Upload microVM release assets$/{in_block=1; next} in_block && /^      - name: /{exit} in_block{print}' "$release")
