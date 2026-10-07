@@ -307086,6 +307086,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791399378015,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c079a040518b70119d75c5e7b91d10f2d14fd058",
+          "message": "docs: restore the technical writing skill (#2181)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Codex <noreply@openai.com>",
+          "timestamp": "2026-10-07T15:01:57-04:00",
+          "tree_id": "fcd42d61d74d33490a29811cd075ed790a579026",
+          "url": "https://github.com/stacklok/mecatl/commit/c079a040518b70119d75c5e7b91d10f2d14fd058"
+        },
+        "date": 1791400476741,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -401858,6 +401897,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791400473581,
+  "lastUpdate": 1791400477623,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
