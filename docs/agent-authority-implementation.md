@@ -16,6 +16,7 @@ Re-pin before implementation. Individual branch tests do not prove their combina
 |---|---|---|
 | **I** | Mecatl `acc/singleton-identity-mcp-integration` — `2ee96819939367e5f7c57fd48ead21fca828bd0a` | Harness-attested user evidence, logical-agent issuance and exact-call Execute admission. Issuer lacks human freshness; Execute checks it separately. |
 | **B** | Mecatl `acc/singleton-mcp-broker-review-remediation-squash` — `06d1ecc2c12d6533e060d90809f4425c8d78294f` | External broker, ToolHive OAuth and guarded encrypted credential recovery; recovery does not preserve the original canonical human subject. |
+| **B2** | Mecatl `broker-simple-take-2` — `0d9467664c7a496b8dda287183f89dedea3ec786` | Workload-authenticated broker sessions, browser OAuth, account continuity, encrypted custody and recovery. Initial caller-to-account authorization, instance-SVID exchange, and executing-run binding remain integration work. |
 | **W** | ToolHive `spiffe-v2-14-docs` — `36f85e4b0f6b9e449fd2099ec164bb1204ded5cc` | SPIFFE WIP; distinct logical-agent actor validation and exchanged-token upstream linkage remain gaps. |
 | **S** | Mecatl `broker-simple/04-toolhive-backend` — `e3ce6b374e74847c79f5ab9b69b987693d4540d6` | Newer committed-connection mapping with revision/provider checks; not B's storage implementation. |
 
@@ -99,7 +100,7 @@ Two source-review findings at **P**, not fixes or live reproductions:
 
 - Ordinary Kubernetes SA tokens are classified as user grants, while issuance
   requires a client-credentials grant. That blocks the ordinary-SA
-  [stage B](agent-authority.md#b--sa-authenticated-logical-agent-credential) flow at
+  [stage B](agent-authority.md#example-flow-serviceaccount-plus-agent-instance-jwt-svid) flow at
   this pin, between [GrantTypeFromClaims](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/engine/session/principal.go)
   and [IssueAttested](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/internal/identityissuer/host.go).
 - The [bundle-format gap](https://github.com/stacklok/mecatl/blob/db5bcd8845f87f05fa0c0efecb2092fd6c5e497c/internal/identityissuer/bundle.go)
@@ -168,6 +169,49 @@ new-user-evidence exploration for subject reuse and linkage; the SPIFFE brief
 still covers separate logical-agent actor support. Do not duplicate those adapter
 details or introduce a new opaque user-evidence platform here.
 
+### B2: enrollment and account continuity to reuse
+
+B2 is the starting point for extending the broker's connection machinery. The
+following findings come from source and test inspection at the pinned commit;
+the tests were not run during this review.
+
+Mecatl records the initiating principal and checks Connect ownership when ownership
+enforcement is enabled. Broker RPCs authenticate the workload instead. Production
+`OWNERLESS` partitions attachments by workload and deployment; it does not mean
+that ToolHive has no OAuth user, or that all sessions share one account. Each
+broker session can establish its own connection baseline. See the
+[host Connect path][b2-connect] and [broker partitioning][b2-partitions].
+
+Enrollment binds OAuth state and the retained PKCE verifier to the broker's
+logical session and authorization transaction. The callback rejects stale or
+replayed state and unexpected selectors, then exchanges the code. Authenticated
+observation performs ToolHive discovery before publishing the connection and
+catalogue. The broker records an account digest over the configured providers'
+verified user, upstream subject, and client identities. Later reauthorization or
+recovery rejects a changed account. Explicit disconnect clears the baseline and
+invalidates parked work before another connection is selected. Sources:
+[callback][b2-callback], [connection publication][b2-publication], and
+[account continuity][b2-account].
+
+This establishes transaction correlation and account continuity, not the initial
+caller's permission to use that account. If Alice owns the Mecatl session but Bob
+completes its genuine first enrollment URL, Bob's authenticated account can become
+the baseline while Alice remains the session owner. That outcome follows from the
+inspected flow; no dedicated first-connection Alice/Bob test was found. It can be
+legitimate account sharing, but the flow does not establish that Alice authorized
+that selection. A later changed-account continuation is rejected. The
+[production tests][b2-production-tests] cover that continuation check, not proof
+that the first browser user equals the initiating Mecatl user.
+
+Preserve B2's references, catalogue checks, credential custody, and host-side
+unknown-outcome fence. Its attempt identifier is not a durable idempotency key:
+the [occurrence test][b2-occurrences] deliberately demonstrates repeated execution
+of the same attempt. Session and account references also do not establish an
+executing-run binding. Production has browser authorization-code and refresh
+support, but no integrated logical-agent SVID actor exchange or admitted-run
+lifecycle. Those are additions to this foundation, not reasons to replace OAuth
+or invent another user-token lifecycle.
+
 ## Current gaps and foundation work
 
 Complete the identity/broker foundation first. These are requirements to implement
@@ -181,48 +225,82 @@ profile: I binds the agent SVID to an exact invocation and tracks its JTI as
 single-use. Move occurrence/replay enforcement into call admission before allowing
 identity-credential reuse; do not merely remove the existing checks.
 
-Define the trusted run binding, creation/termination authority, actor transitions
-for children, credential-cache partitioning, renewal limits and restart behavior.
-One run may use multiple resource-specific or renewed access tokens, but none may
-outlive its authorized use merely because a provider refresh token remains valid.
-Select how the execution boundary checks run status and how already-issued tokens
-are treated after cancellation. OAuth exchange alone does not establish these
-semantics. The relationship to the newer broker SessionService, and the concrete
-identity/delegation interface split, remain design work rather than selected RPCs.
+Extend B2's existing session/invocation machinery with an admitted executing-run
+association. The first preference is broker-held run context, addressed by a
+reference bound to authenticated requests alongside the attachment. Reuse existing
+reference machinery where possible; this does not select new RPCs or a token
+schema. Obtain the ToolHive user from the broker-held subject token and the actor
+from the instance SVID. Preserve the authorized connection association described
+below. Bind each actor's own run, retaining parent/root execution links separately
+from the instance's creation ancestry.
 
-### User evidence, exchange and account association
+Authenticate the initiating human when admitting work. Ordinary expiry of that
+login bearer does not end the admitted run; completion, cancellation, and configured
+budgets do. Renewal must remain within that run's authority, and explicit policy
+withdrawal can restrict subsequent calls. Dependent child access must close with
+its parent. An unfinished run can recover only when durable state establishes its
+binding; restoring a session or credential alone cannot revive ended work.
 
-- Qualify I's freshness, replay and lifetime rules and workload/invocation binding.
-  Prove rejection of stale, substituted or mismatched evidence. Decide how human
-  evidence constrains exchange lifetime without assuming I's issuer receives it.
-- Select the **authorized association mechanism** linking Mecatl `(Issuer, Subject)`,
-  ToolHive canonical user and provider account, including recovery. Equal subjects,
-  callback state and PKCE do not prove identity equivalence. Recovery must retain
-  or authoritatively resolve canonical subject identity, not just credentials.
-- Reuse the existing ToolHive auth-code access token as `subject_token`, never owner,
-  `ExternalBinding`, an attachment handle or `tsid`. Permit exchange in the broker
-  registration, which currently uses authorization code + refresh,
-  `openid`/`offline_access` and `client_secret_basic`. Select eligible resources,
-  scopes and subject/actor/policy lifetime bounds, and the broker's SVID client-auth
-  integration independently of harness-to-broker authentication.
-- Select a distinct actor-validation/exchange profile and authorized presenter
-  association. Broker-admission audience is not automatically AS actor audience:
-  choose a separate credential or explicitly compatible profile, not casual audience
-  widening or a workload token relabelled as agent identity.
-- Resolve an authorized local credential link from validated subject and broker
-  connection state, then pass it to ToolHive session construction. Verified user,
-  tenant, provider, connection/revision and target must agree; never copy an arbitrary
-  external `tsid`. Follow the continuity brief rather than inventing a new issuance
-  API, signing tier or consent-record platform.
-- Define the scope, lifetime and withdrawal/revalidation rules for both user/account
-  and actor/presenter associations, including effects on new exchanges and
-  already-issued tokens. A valid token or connected provider account must not by
-  itself preserve a withdrawn association.
-- Specify revocation behavior and residual lifetime of self-contained bearers,
-  including any live execution checks/introspection. Fresh Mecatl authentication
-  and broker exact-operation admission remain independent of refresh and exchange.
+Use short-lived delegated access tokens, renewable only within an active admitted
+run. One run can reuse suitable tokens or obtain resource-specific replacements.
+Define cache partitioning, actor-transition checks, lifecycle propagation, and restart
+behavior without confusing token refresh with new authority. Recipients that do
+not check live run status can still accept an issued bearer until expiry. Preserve
+unknown-outcome handling for dispatched calls rather than claiming immediate
+revocation or replay safety from the run reference.
 
-These decisions are foundation work, not deferred to mandates or scheduled consent.
+### Caller/account association and exchange on B2
+
+Reuse B2's enrollment and verified account baseline. The missing association is
+which authenticated Mecatl caller may use that connection for an admitted run.
+The provider account need not represent the same natural person. State/PKCE and
+account-continuity checks do not establish that permission on first enrollment.
+
+- Select how authenticated run admission establishes the caller's permission to
+  use the discovered ToolHive/provider account. Owner-bound completion,
+  authenticated account confirmation, and trusted entitlement mapping are
+  alternatives, not selected mechanisms. Equal subject strings or emails across
+  issuers are insufficient. Preserve the accepted association through recovery
+  without replaying or retaining the human's login bearer.
+- Extend the workload-authenticated boundary to carry or resolve the trusted
+  admission association. B2's injectable owner-partition resolver is not a shipped
+  per-human production mode, and partitioning by owner alone would not authorize
+  the first browser account. Keep harness-reported authentication distinct from
+  facts independently checked by the broker. Reconcile I's per-call freshness
+  gate with admission-time authentication; do not make an already-admitted run
+  depend on the continued validity of the original login token.
+- Integrate the instance SVID and token exchange into B2's production path. Reuse
+  the ToolHive auth-code access token as `subject_token`, never an owner label,
+  attachment handle, or `tsid`; use the instance credential as `actor_token` and
+  authenticate the broker OAuth client separately. B2's
+  [client registration][b2-client] currently enables authorization code and refresh.
+  Configure the exchange grant, eligible resources/scopes, actor validation, and
+  authorized presenter association. An SVID accepted for broker admission is not
+  automatically valid at the ToolHive authorization server.
+- Preserve or authoritatively resolve canonical ToolHive subject identity across
+  credential recovery. B2's [recovered bearer][b2-recovered] uses an owner-partition
+  subject and verified token-session linkage; recovering the connection does not
+  prove the required delegated token has the original human `sub`. Do not treat
+  the account digest as a substitute for canonical identity.
+- Resolve the authorized provider credential link from validated subject and
+  connection state. User, tenant, provider, connection/revision, and target must
+  agree; never accept a caller-selected storage key or external `tsid`. Reuse the
+  [credential-continuity brief](toolhive-credential-continuity-followup.md) for
+  ToolHive-specific exchange/storage integration rather than designing a second
+  OAuth subsystem here.
+
+Qualify the additions through the real host-to-broker path: admission for the
+correct caller/account; first enrollment completed by another account; unauthorized
+association and changed-account refusal; cross-instance/run reference substitution;
+continued admitted work after login-token expiry; completion/cancellation; and
+recovery without account substitution or replay of uncertain effects. An intentional
+account-sharing case must be distinguishable from an unauthorized association under
+the selected mechanism. Retain B2's existing callback and continuity regressions;
+their presence is not a test run of the future combination.
+
+Detailed association and authorization mechanisms remain separate design work.
+These integration requirements do not select a new user-evidence credential,
+consent UI, or mission/mandate system.
 
 ### Session-scoped definitions and uniform identity
 
@@ -248,10 +326,11 @@ explicit integration contract.
 ### Required identity integration
 
 **Carry one resolved identity through execution.** Trusted definition resolution
-should produce a value containing the source tier and exact name. Bind that identity
-to the session and pass it into execution evidence rather than reconstructing it
-from role strings, authority provenance or the session’s position in the delegation
-tree. Use `system/main` for the default root.
+should preserve category, namespace, and exact name, with the session incarnation
+identifying the instance. Bind these to the session and pass them into execution
+context rather than reconstructing them from role strings or authority provenance.
+Keep the built-in `system` definitions `main` and `explorer` distinct; their
+namespace assignment remains to be specified.
 
 **Keep configuration, identity and authority separate.** `AgentDef` supplies
 configuration; the resolved identity identifies the agent; `Session.Authority`
@@ -267,12 +346,24 @@ representing the root. Do not introduce a second depth counter. Fork and clear
 ancestry must not count as delegation. Retain execution-specific distinctions where
 team coordination, parallel execution, scheduling or debugging actually require them.
 
-**Preserve resolved identity across lifecycle operations.** A persisted definition
-name alone does not establish which source tier supplied it. Fork, clear and
-supported restoration must preserve the resolved identity. Select a reconstruction
-policy for definition changes: restoring a pinned definition and accepting updated
-configuration under restrictions are different contracts. Until supported, fail
-closed rather than silently select another identity or the default engine.
+**Preserve definition association across lifecycle operations.** A persisted name
+alone does not establish which namespace and source supplied it. Resume/recovery
+retains the instance incarnation and pinned definition revision. Peer fork/clear
+retains the definition identity but creates a new incarnation and resolves the
+current revision. Detailed revision/dependency retention is separate design work;
+unsupported recovery must fail explicitly rather than select another definition
+or silently update the existing instance.
+
+Choose a recoverable, issuer-verified source identifier for the instance and each
+creation-ancestry hop; the readable category/name is insufficient. Source adapters
+provide provenance without requiring the engine to understand Git, Kubernetes or
+database revision formats. Decide whether associated state or a versioned application
+claim carries what a verifier needs. A source-native revision can miss dirty local
+content, while a digest cannot reconstruct it; specify coverage and snapshot
+retention before relying on either. Keep private repository locations and filenames
+in guarded records rather than readable JWTs. Missing optional claims imply nothing,
+and claims repeating path fields must agree with them. Identifier, transport, claim
+fields and source-specific mapping remain open.
 
 **Integrate named roots with the broker without widening authority.** Define which
 broker tools a selected definition may expose, intersect discovery with its bound
@@ -285,10 +376,10 @@ into its credential representation; it must not assume that every root is
 `system/main` or parse diagnostic role strings to discover an agent’s identity.
 
 Verify that the same definition used as a main agent and delegated specialist
-produces the same logical subject while retaining distinct authority and call
-bindings. Cover default `system/main`, source-tier collisions, fork/clear behavior,
-definition changes on restore, child narrowing, broker discovery beyond the
-ceiling, and preservation of root permission asks and guardrails. Unsupported
+retains the same definition reference while producing distinct instance subjects
+and run/call bindings. Cover built-in definitions, source/namespace collisions,
+fork/clear behavior, definition changes on restore, child narrowing, broker discovery
+beyond the ceiling, and preservation of root permission asks and guardrails. Unsupported
 execution paths must remain rejected rather than gaining credential issuance
 implicitly. The concrete core representation and migration remain to be selected;
 these requirements do not mandate constructing every root through an `AgentDef`
@@ -440,6 +531,15 @@ conversation snapshots, not the evolving contract.
 
 ## Pinned references
 
+[b2-connect]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/server/session_broker.go#L127-L144
+[b2-partitions]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbrokerserver/session_api.go#L15-L64
+[b2-callback]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbroker/auth.go#L584-L749
+[b2-publication]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbroker/session_api.go#L662-L712
+[b2-account]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbroker/toolhive_process.go#L120-L153
+[b2-production-tests]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/server/session_broker_production_test.go#L659-L738
+[b2-occurrences]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbroker/session_api_occurrence_test.go#L53-L105
+[b2-client]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbroker/toolhive_process.go#L678-L717
+[b2-recovered]: https://github.com/stacklok/mecatl/blob/0d9467664c7a496b8dda287183f89dedea3ec786/internal/adapter/mcpbroker/toolhive_recovered_credential.go#L30-L94
 [current-authn]: https://github.com/stacklok/mecatl/blob/2ee96819939367e5f7c57fd48ead21fca828bd0a/internal/adapter/server/authn.go#L463-L495
 [current-evidence]: https://github.com/stacklok/mecatl/blob/2ee96819939367e5f7c57fd48ead21fca828bd0a/engine/port/authentication_evidence.go#L12-L40
 [current-execute]: https://github.com/stacklok/mecatl/blob/2ee96819939367e5f7c57fd48ead21fca828bd0a/internal/adapter/mcpbrokergrpc/server_execute.go#L216-L229

@@ -22,6 +22,13 @@ letting a restarted process rebuild the same per-session engine. `SessionKind` (
 scheduled, subagent, parallel branch, team member, or debug) and `SessionRelationship`
 record who produced the session; legacy data restores as `unknown`, which fails closed.
 
+`SessionID` addresses the conversation; `session.IncarnationID` identifies this
+lifetime of that ID. Restoration preserves the incarnation, while a newly created
+session with a reused ID gets a new one. A host-supplied `RunID` identifies one
+unit of work: fresh work gets a new ID, while approval or external-authorization
+continuation retains the pending run's ID across restart. Engine callers may omit
+`RunID`; it is a correlation label, not an authorization grant.
+
 `Limits` and `Counters` drive the stop conditions; a zero limit disables that check.
 `StopReason` is the loop's pre-turn guard and mixes the recorded reason with a limit
 check, so persistence uses `RecordedStopReason` instead.
