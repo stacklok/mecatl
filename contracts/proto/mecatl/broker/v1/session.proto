@@ -11,6 +11,7 @@ import "google/protobuf/timestamp.proto";
 
 // Stable broker-owned session identity and immutable tool catalogue.
 service SessionService {
+  rpc InspectConnectors(InspectConnectorsRequest) returns (InspectConnectorsResponse);
   rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
   rpc InvokeTool(InvokeToolRequest) returns (InvocationOutcome);
   rpc CheckAuthorization(CheckAuthorizationRequest) returns (CheckAuthorizationResponse);
@@ -31,6 +32,23 @@ message Attempt {
   string id = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
 }
 
+message InspectConnectorsRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+message InspectConnectorsResponse {
+  string availability = 1;
+  string enrollment_state = 2;
+  repeated ConnectorStatus connectors = 3 [(buf.validate.field).repeated.max_items = 256];
+  uint32 total_connectors = 4;
+  bool truncated = 5;
+}
+message ConnectorStatus {
+  string name = 1 [(buf.validate.field).string.max_len = 128];
+  string catalogue_state = 2;
+  uint32 tool_count = 3;
+}
+
 message OpenSessionRequest {
   // Reattach to this broker-owned session; absence creates a new session.
   optional string saved_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
@@ -44,6 +62,7 @@ message SessionSnapshot {
 
 message Catalogue {
   string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  optional string connection_ref = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
   repeated ToolDescriptor tools = 2 [
     (buf.validate.field).repeated.max_items = 1024,
     (buf.validate.field).cel = {
@@ -52,7 +71,6 @@ message Catalogue {
       expression: "this.all(t, size(bytes(t.name)) >= 1 && size(bytes(t.name)) <= 256 && size(t.schema) >= 1 && size(t.schema) <= 262144)"
     }
   ];
-  optional string connection_ref = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
 }
 
 // ToolDescriptor contains only the public frozen model-visible declaration and

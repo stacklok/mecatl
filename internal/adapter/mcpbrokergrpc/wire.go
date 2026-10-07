@@ -11,7 +11,6 @@ import (
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	c "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 func descriptors(in []tool.Tool) ([]*brokerv1.ToolDescriptor, map[string]tool.Tool, error) {
@@ -57,13 +56,6 @@ func callFrom(name, id string, args []byte, item string) (session.ToolCall, erro
 		return session.ToolCall{}, errors.New("mcpbrokergrpc: malformed invocation")
 	}
 	return session.ToolCall{ID: session.ToolCallID(id), Name: name, Args: append([]byte(nil), args...), ItemID: item}, nil
-}
-
-func wireCall(call c.Call) (*brokerv1.Call, error) {
-	if _, err := callFrom(call.Name, string(call.ID), call.Arguments, ""); err != nil {
-		return nil, err
-	}
-	return &brokerv1.Call{Id: string(call.ID), Name: call.Name, Arguments: append([]byte(nil), call.Arguments...)}, nil
 }
 
 func validInvocationText(value string, maximum int) bool {

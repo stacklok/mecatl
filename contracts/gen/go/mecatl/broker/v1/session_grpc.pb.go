@@ -22,6 +22,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	SessionService_InspectConnectors_FullMethodName    = "/mecatl.broker.v1.SessionService/InspectConnectors"
 	SessionService_OpenSession_FullMethodName          = "/mecatl.broker.v1.SessionService/OpenSession"
 	SessionService_InvokeTool_FullMethodName           = "/mecatl.broker.v1.SessionService/InvokeTool"
 	SessionService_CheckAuthorization_FullMethodName   = "/mecatl.broker.v1.SessionService/CheckAuthorization"
@@ -42,6 +43,7 @@ const (
 //
 // Stable broker-owned session identity and immutable tool catalogue.
 type SessionServiceClient interface {
+	InspectConnectors(ctx context.Context, in *InspectConnectorsRequest, opts ...grpc.CallOption) (*InspectConnectorsResponse, error)
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error)
 	InvokeTool(ctx context.Context, in *InvokeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error)
 	CheckAuthorization(ctx context.Context, in *CheckAuthorizationRequest, opts ...grpc.CallOption) (*CheckAuthorizationResponse, error)
@@ -62,6 +64,16 @@ type sessionServiceClient struct {
 
 func NewSessionServiceClient(cc grpc.ClientConnInterface) SessionServiceClient {
 	return &sessionServiceClient{cc}
+}
+
+func (c *sessionServiceClient) InspectConnectors(ctx context.Context, in *InspectConnectorsRequest, opts ...grpc.CallOption) (*InspectConnectorsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectConnectorsResponse)
+	err := c.cc.Invoke(ctx, SessionService_InspectConnectors_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *sessionServiceClient) OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error) {
@@ -190,6 +202,7 @@ func (c *sessionServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 //
 // Stable broker-owned session identity and immutable tool catalogue.
 type SessionServiceServer interface {
+	InspectConnectors(context.Context, *InspectConnectorsRequest) (*InspectConnectorsResponse, error)
 	OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error)
 	InvokeTool(context.Context, *InvokeToolRequest) (*InvocationOutcome, error)
 	CheckAuthorization(context.Context, *CheckAuthorizationRequest) (*CheckAuthorizationResponse, error)
@@ -212,6 +225,9 @@ type SessionServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedSessionServiceServer struct{}
 
+func (UnimplementedSessionServiceServer) InspectConnectors(context.Context, *InspectConnectorsRequest) (*InspectConnectorsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InspectConnectors not implemented")
+}
 func (UnimplementedSessionServiceServer) OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenSession not implemented")
 }
@@ -267,6 +283,24 @@ func RegisterSessionServiceServer(s grpc.ServiceRegistrar, srv SessionServiceSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&SessionService_ServiceDesc, srv)
+}
+
+func _SessionService_InspectConnectors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InspectConnectorsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).InspectConnectors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_InspectConnectors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).InspectConnectors(ctx, req.(*InspectConnectorsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _SessionService_OpenSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -492,6 +526,10 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "mecatl.broker.v1.SessionService",
 	HandlerType: (*SessionServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "InspectConnectors",
+			Handler:    _SessionService_InspectConnectors_Handler,
+		},
 		{
 			MethodName: "OpenSession",
 			Handler:    _SessionService_OpenSession_Handler,

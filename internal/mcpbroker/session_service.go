@@ -15,6 +15,7 @@ import (
 // It does not expose owner assertions, creation correlation, execution tickets, or credentials.
 // It is separate from Service and Attachment; those donor contracts remain broker-internal.
 type SessionService interface {
+	InspectConnectors(context.Context, SessionRef, CatalogueRef) (ConnectorInventory, error)
 	OpenSession(context.Context, *session.BrokerSessionRef) (SessionSnapshot, error)
 	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call, BrokerAttempt) (InvocationOutcome, error)
 	CheckAuthorization(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, *Call, AuthorizationRef, BrokerAttempt) (AuthorizationCheck, error)

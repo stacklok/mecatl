@@ -3,22 +3,23 @@ package mcpbrokergrpc
 import (
 	"context"
 	"errors"
-	"sync"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-var errRemoteSessionOperationUnavailable = errors.New("mcpbrokergrpc: remote session operation unavailable")
 var errInvocationNotDispatched = errors.New("mcpbrokergrpc: invocation not dispatched")
 
 type sessionRemoteTool struct {
-	client    *SessionClient
-	ref       c.SessionRef
-	catalogue c.CatalogueRef
-	spec      tool.ToolSpec
-	readOnly  bool
+	client        *SessionClient
+	ref           c.SessionRef
+	catalogue     c.CatalogueRef
+	spec          tool.ToolSpec
+	readOnly      bool
+	resume        c.AuthorizationRef
+	resumeAttempt c.BrokerAttempt
+	resumeID      session.ToolCallID
 }
 
 func (t *sessionRemoteTool) BrokerInvocationDisposition(err error) session.BrokerAttemptDisposition {
@@ -32,32 +33,48 @@ func (t *sessionRemoteTool) BrokerInvocationDisposition(err error) session.Broke
 }
 
 func (t *sessionRemoteTool) Spec() tool.ToolSpec {
-	spec := t.spec
-	spec.Schema = append([]byte(nil), spec.Schema...)
-	return spec
+	s := t.spec
+	s.Schema = append([]byte(nil), s.Schema...)
+	return s
 }
-
 func (t *sessionRemoteTool) ReadOnly() bool { return t.readOnly }
-
 func (t *sessionRemoteTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	if call.Name != t.spec.Name {
+	if call.Name != t.spec.Name || (t.resume != "" && call.ID != t.resumeID) {
 		return session.ToolResult{}, errSessionWire
 	}
 	attempt, ok := tool.BrokerInvocationFromContext(ctx)
-	if !ok {
+	if !ok || (t.resume != "" && attempt != t.resumeAttempt) {
 		return session.ToolResult{}, errSessionWire
 	}
-	out, err := t.client.InvokeTool(ctx, t.ref, t.catalogue, c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}, attempt)
+	var out c.InvocationOutcome
+	var err error
+	if t.resume != "" {
+		out, err = t.client.ResumeTool(ctx, t.ref, t.resume, t.catalogue, attempt)
+	} else {
+		out, err = t.client.InvokeTool(ctx, t.ref, t.catalogue, c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}, attempt)
+	}
 	if out.Kind == c.InvocationOutcomeUnknown {
 		return session.ToolResult{}, errors.Join(ErrSessionOutcomeUnknown, err)
 	}
 	if err != nil {
 		return session.ToolResult{}, err
 	}
-	if out.Kind == c.InvocationNotDispatched || out.Kind == c.InvocationAuthorizationRequired {
+	if out.Kind == c.InvocationNotDispatched {
 		return session.ToolResult{}, errInvocationNotDispatched
 	}
-	if out.Kind != c.InvocationCompleted || out.Result == nil || out.Result.CallID != call.ID {
+	if out.Kind == c.InvocationAuthorizationRequired {
+		check, checkErr := t.client.CheckAuthorization(ctx, t.ref, t.catalogue, nil, out.Authorization, attempt)
+		if checkErr != nil || check.Ready || check.Authorization != out.Authorization {
+			return session.ToolResult{}, errors.Join(errInvocationNotDispatched, checkErr)
+		}
+		return session.ToolResult{}, &tool.BrokerAuthorizationRequired{Authorization: session.ExternalAuthorization{
+			ID: string(check.Authorization), Binding: session.AuthorizationBinding(t.ref), ExpiresAt: check.ExpiresAt,
+		}}
+	}
+	if out.Kind != c.InvocationCompleted {
+		return session.ToolResult{}, errors.New("mcpbrokergrpc: invocation not completed")
+	}
+	if out.Result.CallID != call.ID {
 		return session.ToolResult{}, errors.Join(ErrSessionOutcomeUnknown, errSessionWire)
 	}
 	return *out.Result, nil
@@ -67,112 +84,83 @@ type sessionSerialTool struct{ *sessionRemoteTool }
 
 func (*sessionSerialTool) DispatchSerialTool() {}
 
-type sessionAuthorizationTool struct {
-	*sessionRemoteTool
-	mu       sync.Mutex
-	attempts map[c.AuthorizationRef]c.BrokerAttempt
-}
+type sessionAuthorizationTool struct{ *sessionRemoteTool }
 
 func (t *sessionAuthorizationTool) RequestAuthorization(ctx context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
-	if call.Name != t.spec.Name {
+	if call.Name != t.spec.Name || (t.resume != "" && call.ID != t.resumeID) {
 		return session.ExternalAuthorization{}, false, errSessionWire
 	}
 	attempt, ok := tool.BrokerInvocationFromContext(ctx)
-	if !ok {
+	if !ok || (t.resume != "" && attempt != t.resumeAttempt) {
 		return session.ExternalAuthorization{}, false, errSessionWire
 	}
-	request := c.Call{ID: call.ID, Name: call.Name, Arguments: append([]byte(nil), call.Args...)}
-	check, err := t.client.CheckAuthorization(ctx, t.ref, t.catalogue, &request, "", attempt)
+	var prepared *c.Call
+	if t.resume == "" {
+		prepared = &c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}
+	}
+	check, err := t.client.CheckAuthorization(ctx, t.ref, t.catalogue, prepared, t.resume, attempt)
 	if err != nil {
 		return session.ExternalAuthorization{}, false, err
-	}
-	if check.Ready || check.Reason.Valid() {
-		t.mu.Lock()
-		for ref, previous := range t.attempts {
-			if previous == attempt {
-				delete(t.attempts, ref)
-			}
-		}
-		t.mu.Unlock()
 	}
 	if check.Ready {
 		return session.ExternalAuthorization{}, false, nil
 	}
 	if check.Authorization == "" {
-		return session.ExternalAuthorization{}, false, errInvocationNotDispatched
+		return session.ExternalAuthorization{}, false, errors.New("mcpbrokergrpc: authorization check refused")
 	}
-	t.mu.Lock()
-	if t.attempts == nil {
-		t.attempts = make(map[c.AuthorizationRef]c.BrokerAttempt)
-	}
-	if previous, exists := t.attempts[check.Authorization]; exists && previous != attempt {
-		t.mu.Unlock()
-		return session.ExternalAuthorization{}, false, errSessionWire
-	}
-	t.attempts[check.Authorization] = attempt
-	t.mu.Unlock()
-	return session.ExternalAuthorization{ID: string(check.Authorization), Binding: session.AuthorizationBinding(check.Authorization), DisplayName: t.spec.Name, ExpiresAt: check.ExpiresAt}, true, nil
+	return session.ExternalAuthorization{ID: string(check.Authorization), Binding: session.AuthorizationBinding(t.ref), ExpiresAt: check.ExpiresAt}, true, nil
 }
-
-func (t *sessionAuthorizationTool) AbortAuthorization(ctx context.Context, authorization session.ExternalAuthorization) error {
-	ref := c.AuthorizationRef(authorization.ID)
-	if !validSessionRef(authorization.ID) || authorization.Binding != session.AuthorizationBinding(ref) {
+func (t *sessionAuthorizationTool) AbortAuthorization(ctx context.Context, a session.ExternalAuthorization) error {
+	if a.Binding != session.AuthorizationBinding(t.ref) || !sessionRef(a.ID) || (t.resume != "" && a.ID != string(t.resume)) {
 		return errSessionWire
 	}
-	t.mu.Lock()
-	attempt, ok := t.attempts[ref]
-	delete(t.attempts, ref)
-	t.mu.Unlock()
-	if !ok {
-		return errRemoteSessionOperationUnavailable
+	attempt, ok := tool.BrokerInvocationFromContext(ctx)
+	if !ok || (t.resume != "" && attempt != t.resumeAttempt) {
+		return errSessionWire
 	}
-	_, err := t.client.CancelAuthorization(ctx, t.ref, ref, attempt)
+	_, err := t.client.CancelAuthorization(ctx, t.ref, c.AuthorizationRef(a.ID), attempt)
 	return err
-}
-
-func (t *sessionAuthorizationTool) BeginAuthorization(ctx context.Context, authorization session.ExternalAuthorization) (c.BrowserPrompt, error) {
-	if authorization.Binding != session.AuthorizationBinding(authorization.ID) || !validSessionRef(authorization.ID) {
-		return c.BrowserPrompt{}, errSessionWire
-	}
-	return t.client.BeginAuthorization(ctx, t.ref, c.AuthorizationRef(authorization.ID))
-}
-
-func (t *sessionAuthorizationTool) ObserveAuthorization(ctx context.Context, authorization session.ExternalAuthorization) (c.FlowStatus, error) {
-	if authorization.Binding != session.AuthorizationBinding(authorization.ID) || !validSessionRef(authorization.ID) {
-		return c.FlowStatus{}, errSessionWire
-	}
-	return t.client.ObserveAuthorization(ctx, t.ref, c.AuthorizationRef(authorization.ID))
-}
-
-func (t *sessionAuthorizationTool) ResumeTool(ctx context.Context, authorization session.ExternalAuthorization, adopted c.CatalogueRef) (c.InvocationOutcome, error) {
-	ref := c.AuthorizationRef(authorization.ID)
-	if authorization.Binding != session.AuthorizationBinding(ref) || !validSessionRef(string(ref)) {
-		return unknownInvocation(errSessionWire)
-	}
-	t.mu.Lock()
-	attempt, ok := t.attempts[ref]
-	delete(t.attempts, ref)
-	t.mu.Unlock()
-	if !ok {
-		return unknownInvocation(errRemoteSessionOperationUnavailable)
-	}
-	return t.client.ResumeTool(ctx, t.ref, ref, adopted, attempt)
 }
 
 type sessionAuthorizationSerialTool struct{ *sessionAuthorizationTool }
 
 func (*sessionAuthorizationSerialTool) DispatchSerialTool() {}
-
-func sessionToolMarkers(base *sessionRemoteTool, authorization, serial bool) tool.Tool {
-	if authorization {
-		requester := &sessionAuthorizationTool{sessionRemoteTool: base}
+func sessionToolMarkers(base *sessionRemoteTool, auth, serial bool) tool.Tool {
+	if auth {
+		a := &sessionAuthorizationTool{base}
 		if serial {
-			return &sessionAuthorizationSerialTool{requester}
+			return &sessionAuthorizationSerialTool{a}
 		}
-		return requester
+		return a
 	}
 	if serial {
 		return &sessionSerialTool{base}
 	}
 	return base
+}
+
+// ResumeToolWrapper binds a host-adopted catalogue to the exact parked flow and
+// call ID. It sends only authorization/session/catalogue references, never args.
+// The host must save adoption and its unresolved-call fence before exposing this
+// tool; the normal engine permission hook still governs its execution.
+func (s *SessionClient) ResumeToolWrapper(ref c.SessionRef, cat c.Catalogue, name string, id session.ToolCallID, auth c.AuthorizationRef, attempt c.BrokerAttempt) (tool.Tool, error) {
+	if !attempt.Valid() || cat == nil || !cat.Valid() || !validInvocationText(string(id), maxInvocationCallIDBytes) {
+		return nil, errSessionWire
+	}
+	if err := sessionRefs(string(ref), string(cat.Ref()), string(auth)); err != nil {
+		return nil, err
+	}
+	for _, candidate := range cat.Tools() {
+		if candidate.Spec().Name != name {
+			continue
+		}
+		_, capable := candidate.(tool.AuthorizationRequester)
+		if !capable {
+			return nil, errSessionWire
+		}
+		_, serial := candidate.(tool.DispatchSerial)
+		base := &sessionRemoteTool{client: s, ref: ref, catalogue: cat.Ref(), spec: candidate.Spec(), readOnly: candidate.ReadOnly(), resume: auth, resumeID: id, resumeAttempt: attempt}
+		return sessionToolMarkers(base, true, serial), nil
+	}
+	return nil, errSessionWire
 }
