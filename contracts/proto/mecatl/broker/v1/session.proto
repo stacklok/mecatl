@@ -12,9 +12,16 @@ import "google/protobuf/timestamp.proto";
 // Stable broker-owned session identity and immutable tool catalogue.
 service SessionService {
   rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
+  rpc InvokeTool(InvokeToolRequest) returns (InvocationOutcome);
   rpc BeginEnrollment(BeginEnrollmentRequest) returns (BeginEnrollmentResponse);
   rpc DisconnectTools(DisconnectToolsRequest) returns (DisconnectOutcome);
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
+}
+
+message Attempt {
+  reserved 1, 2;
+  reserved "slot", "sequence";
+  string id = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
 }
 
 message OpenSessionRequest {
@@ -50,6 +57,83 @@ message ToolDescriptor {
   bool read_only = 4;
   bool dispatch_serial = 5;
   bool authorization_capable = 6;
+}
+
+message Call {
+  string id = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}];
+  string name = 2 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}];
+  bytes arguments = 3 [(buf.validate.field).bytes = {min_len: 1, max_len: 262144}];
+}
+message InvokeToolRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  Call call = 3 [(buf.validate.field).required = true];
+  Attempt attempt = 4 [(buf.validate.field).required = true];
+}
+message InvocationOutcome {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    ToolResult completed = 1 [(buf.validate.field).cel = {
+      id: "invocation.call_id_bounds",
+      message: "completed call ID must be 1..256 bytes",
+      expression: "size(bytes(this.call_id)) >= 1 && size(bytes(this.call_id)) <= 256"
+    }];
+    string authorization_required = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+    NonDispatch not_dispatched = 3;
+    google.protobuf.Empty outcome_unknown = 4;
+  }
+}
+message NonDispatch { FailureReason reason = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0]; }
+enum FailureReason {
+  FAILURE_REASON_UNSPECIFIED = 0;
+  FAILURE_REASON_CATALOGUE_CHANGED = 1;
+  FAILURE_REASON_AUTHORITY_WITHDRAWN = 2;
+  FAILURE_REASON_CAPACITY = 3;
+  FAILURE_REASON_INTERRUPTED = 4;
+  FAILURE_REASON_AUTHORIZATION_FAILED = 5;
+  FAILURE_REASON_CALL_CHANGED = 6;
+  FAILURE_REASON_EXPIRED = 7;
+}
+
+// ToolResult is a model-visible tool completion.
+message ToolResult {
+  // Exact opaque requested call identity.
+  string call_id = 1;
+  // Valid UTF-8 model-visible summary; never raw binary.
+  string content = 2;
+  // Whether content and parts represent an error.
+  bool is_error = 3;
+  // Structured text, resource, and binary content blocks.
+  repeated ResultPart parts = 4;
+}
+// ResultPart is one structured tool-result component.
+message ResultPart {
+  // Valid UTF-8 neutral content-block taxonomy.
+  string block_kind = 1;
+  // Valid UTF-8 neutral media-kind taxonomy.
+  string media_kind = 2;
+  // MIME token preserved byte-exact by the neutral layer.
+  string mime_type = 3;
+  // Raw binary, not UTF-8 text; never log or coerce to text.
+  bytes data = 4;
+  // Valid UTF-8 opaque untrusted resource URL/reference, not a local path.
+  string url = 5;
+  // Valid UTF-8 text payload.
+  string text = 6;
+  // Valid UTF-8 resource/display name.
+  string name = 7;
+  // Valid UTF-8 display title.
+  string title = 8;
+  // Valid UTF-8 description.
+  string description = 9;
+  // Declared resource size when applicable.
+  int64 size = 10;
+  // Valid UTF-8 audience labels.
+  repeated string audience = 11;
+  // Relative resource priority when applicable.
+  double priority = 12;
+  // Valid UTF-8 source last-modified presentation value.
+  string last_modified = 13;
 }
 
 message BeginEnrollmentRequest {

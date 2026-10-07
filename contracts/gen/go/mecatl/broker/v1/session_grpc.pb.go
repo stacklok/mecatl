@@ -23,6 +23,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SessionService_OpenSession_FullMethodName     = "/mecatl.broker.v1.SessionService/OpenSession"
+	SessionService_InvokeTool_FullMethodName      = "/mecatl.broker.v1.SessionService/InvokeTool"
 	SessionService_BeginEnrollment_FullMethodName = "/mecatl.broker.v1.SessionService/BeginEnrollment"
 	SessionService_DisconnectTools_FullMethodName = "/mecatl.broker.v1.SessionService/DisconnectTools"
 	SessionService_DeleteSession_FullMethodName   = "/mecatl.broker.v1.SessionService/DeleteSession"
@@ -35,6 +36,7 @@ const (
 // Stable broker-owned session identity and immutable tool catalogue.
 type SessionServiceClient interface {
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error)
+	InvokeTool(ctx context.Context, in *InvokeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error)
 	BeginEnrollment(ctx context.Context, in *BeginEnrollmentRequest, opts ...grpc.CallOption) (*BeginEnrollmentResponse, error)
 	DisconnectTools(ctx context.Context, in *DisconnectToolsRequest, opts ...grpc.CallOption) (*DisconnectOutcome, error)
 	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteOutcome, error)
@@ -52,6 +54,16 @@ func (c *sessionServiceClient) OpenSession(ctx context.Context, in *OpenSessionR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionSnapshot)
 	err := c.cc.Invoke(ctx, SessionService_OpenSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) InvokeTool(ctx context.Context, in *InvokeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InvocationOutcome)
+	err := c.cc.Invoke(ctx, SessionService_InvokeTool_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +107,7 @@ func (c *sessionServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 // Stable broker-owned session identity and immutable tool catalogue.
 type SessionServiceServer interface {
 	OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error)
+	InvokeTool(context.Context, *InvokeToolRequest) (*InvocationOutcome, error)
 	BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error)
 	DisconnectTools(context.Context, *DisconnectToolsRequest) (*DisconnectOutcome, error)
 	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteOutcome, error)
@@ -110,6 +123,9 @@ type UnimplementedSessionServiceServer struct{}
 
 func (UnimplementedSessionServiceServer) OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenSession not implemented")
+}
+func (UnimplementedSessionServiceServer) InvokeTool(context.Context, *InvokeToolRequest) (*InvocationOutcome, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InvokeTool not implemented")
 }
 func (UnimplementedSessionServiceServer) BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BeginEnrollment not implemented")
@@ -155,6 +171,24 @@ func _SessionService_OpenSession_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SessionServiceServer).OpenSession(ctx, req.(*OpenSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_InvokeTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InvokeToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).InvokeTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_InvokeTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).InvokeTool(ctx, req.(*InvokeToolRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -223,6 +257,10 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenSession",
 			Handler:    _SessionService_OpenSession_Handler,
+		},
+		{
+			MethodName: "InvokeTool",
+			Handler:    _SessionService_InvokeTool_Handler,
 		},
 		{
 			MethodName: "BeginEnrollment",

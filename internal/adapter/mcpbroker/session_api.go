@@ -10,8 +10,11 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -393,4 +396,149 @@ func (s *SessionAPI) DeleteSession(ctx context.Context, ref c.SessionRef) (c.Del
 	st.deleted = true
 	s.mu.Unlock()
 	return c.Deleted, nil
+}
+
+func noDispatch(reason c.FailureReason) c.InvocationOutcome {
+	return c.InvocationOutcome{Kind: c.InvocationNotDispatched, Reason: reason}
+}
+
+func find(cat c.Catalogue, name string) tool.Tool {
+	for _, candidate := range cat.Tools() {
+		if candidate.Spec().Name == name {
+			return candidate
+		}
+	}
+	return nil
+}
+
+func callDigest(call c.Call) [32]byte {
+	return session.BrokerCallDigest(session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
+}
+
+func validCall(call c.Call) bool {
+	return len(call.ID) > 0 && len(call.ID) <= 256 && utf8.ValidString(string(call.ID)) && len(call.Name) > 0 && len(call.Name) <= 256 && utf8.ValidString(call.Name) && len(call.Arguments) > 0 && len(call.Arguments) <= 256*1024 && json.Valid(call.Arguments)
+}
+
+func (s *SessionAPI) nativePreflight(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, _ c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		return c.InvocationOutcome{}, nil, err
+	}
+	if cat != st.catalogue.Ref() || cat != st.record.Catalogue || find(st.catalogue, call.Name) == nil {
+		return noDispatch(c.FailureCatalogueChanged), nil, nil
+	}
+	// V3 cannot present or verify authorization: never dispatch a protected call.
+	if _, ok := find(st.catalogue, call.Name).(tool.AuthorizationRequester); ok {
+		return noDispatch(c.FailureAuthorizationFailed), nil, nil
+	}
+	return c.InvocationOutcome{}, nil, nil
+}
+
+func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		return c.InvocationOutcome{}, nil, err
+	}
+	if !receiptFinished(st.running) {
+		return noDispatch(c.FailureCapacity), nil, nil
+	}
+	if cat != st.record.Catalogue || !st.record.Connected || st.catalogue == nil || cat != st.catalogue.Ref() {
+		return noDispatch(c.FailureCatalogueChanged), nil, nil
+	}
+	t := find(st.catalogue, call.Name)
+	if t == nil || st.attachment == nil {
+		return noDispatch(c.FailureCatalogueChanged), nil, nil
+	}
+	native := session.ToolCall{ID: call.ID, Name: call.Name, Args: append([]byte(nil), call.Arguments...)}
+	durableCall := native
+	filter := ""
+	if call.Name == "CallMcpWithQuery" {
+		var err error
+		durableCall, filter, err = (&attachmentQueryTool{}).target(native)
+		if err != nil {
+			return noDispatch(c.FailureCatalogueChanged), nil, nil
+		}
+	}
+	if route, ok := st.attachment.lookupRoute(durableCall.Name); s.process.custody != nil && ok && route.broker {
+		st.attachment.mu.RLock()
+		tsid := st.attachment.verifiedTSID
+		st.attachment.mu.RUnlock()
+		ready, readinessErr := s.process.nativeGrantReady(ctx, tsid)
+		account, accountErr := s.process.nativeAccount(ctx, tsid)
+		if readinessErr != nil || accountErr != nil || !ready || account != st.record.Account || account == ([32]byte{}) {
+			return noDispatch(c.FailureAuthorityWithdrawn), nil, nil
+		}
+	}
+	ctx = context.WithValue(ctx, durableNativeKey{}, &durableNativeCall{attachment: st.attachment, hash: callHash(durableCall), filter: filter})
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	stop := context.AfterFunc(s.ctx, cancel)
+	s.mu.Lock()
+	if s.closed || !s.workerGeneration(ctx, st) {
+		s.mu.Unlock()
+		cancel()
+		stop()
+		return c.InvocationOutcome{}, nil, c.ErrStateUnavailable
+	}
+	s.workers.Add(1)
+	st.users++
+	s.mu.Unlock()
+	receipt := &apiReceipt{done: make(chan struct{})}
+	st.running = receipt
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: string(st.record.Ref), Revision: string(cat)}, nofs.New(), memledger.New(), nil)
+	go func() {
+		defer s.finishOwnership(st)
+		defer stop()
+		defer cancel()
+		out := c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+		defer func() {
+			if recover() != nil {
+				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+			}
+			s.mu.Lock()
+			if s.closed || !s.workerGeneration(runCtx, st) {
+				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+			}
+			receipt.outcome = out
+			close(receipt.done)
+			s.mu.Unlock()
+		}()
+		result, err := t.Execute(runCtx, native, env)
+		encoded, _ := json.Marshal(result)
+		if err == nil && result.CallID == native.ID && len(encoded) <= 256*1024 {
+			out, _ = c.NewInvocationOutcome(c.InvocationCompleted, &result, "", c.FailureUnspecified)
+			if !out.Valid() {
+				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+			}
+		}
+	}()
+	return c.InvocationOutcome{}, receipt, nil
+}
+
+func waitReceipt(ctx context.Context, out c.InvocationOutcome, r *apiReceipt, err error) (c.InvocationOutcome, error) {
+	if err != nil || r == nil {
+		return out, err
+	}
+	select {
+	case <-r.done:
+		return c.NewInvocationOutcome(r.outcome.Kind, r.outcome.Result, r.outcome.Authorization, r.outcome.Reason)
+	case <-ctx.Done():
+		return c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}, nil
+	}
+}
+
+func (s *SessionAPI) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	caller := ctx
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.InvocationOutcome{}, err
+	}
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		release()
+		return c.InvocationOutcome{}, err
+	}
+	out, r, err := s.prepareInvocation(ctx, st, cat, call, attempt)
+	if err == nil && r == nil && out.Kind == "" {
+		out, r, err = s.dispatchInvocation(ctx, st, cat, call, attempt)
+	}
+	release()
+	return waitReceipt(caller, out, r, err)
 }

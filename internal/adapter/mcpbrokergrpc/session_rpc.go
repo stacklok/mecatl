@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	p "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
 	"google.golang.org/grpc/codes"
@@ -109,6 +110,40 @@ func (s *SessionRPC) OpenSession(ctx context.Context, request *p.OpenSessionRequ
 		return nil, err
 	}
 	return &p.SessionSnapshot{Ref: string(snapshot.Ref), ExpiresAt: timestamppb.New(snapshot.ExpiresAt), Catalogue: catalogue}, nil
+}
+
+func (s *SessionRPC) InvokeTool(ctx context.Context, request *p.InvokeToolRequest) (*p.InvocationOutcome, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.CatalogueRef) || request.Call == nil || !wireAttemptValid(request.Attempt) {
+		return nil, invalidRequest("invalid invocation")
+	}
+	call, err := callFrom(request.Call.Name, request.Call.Id, request.Call.Arguments, "")
+	if err != nil {
+		return nil, invalidRequest("invalid call")
+	}
+	out, err := s.service.InvokeTool(ctx, c.SessionRef(request.SessionRef), c.CatalogueRef(request.CatalogueRef), c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}, attemptFromWire(request.Attempt))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !out.Valid() {
+		return nil, status.Error(codes.Internal, "invalid invocation outcome")
+	}
+	switch out.Kind {
+	case c.InvocationCompleted:
+		if out.Result.CallID != session.ToolCallID(call.ID) {
+			return nil, status.Error(codes.Internal, "invalid result call ID")
+		}
+		result, err := resultToWire(*out.Result)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "invalid result")
+		}
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_Completed{Completed: result}}, nil
+	case c.InvocationAuthorizationRequired:
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_AuthorizationRequired{AuthorizationRequired: string(out.Authorization)}}, nil
+	case c.InvocationNotDispatched:
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_NotDispatched{NotDispatched: &p.NonDispatch{Reason: p.FailureReason(out.Reason)}}}, nil
+	default:
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_OutcomeUnknown{OutcomeUnknown: &emptypb.Empty{}}}, nil
+	}
 }
 
 func (s *SessionRPC) BeginEnrollment(ctx context.Context, request *p.BeginEnrollmentRequest) (*p.BeginEnrollmentResponse, error) {

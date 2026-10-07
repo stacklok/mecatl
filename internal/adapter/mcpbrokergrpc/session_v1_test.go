@@ -3,13 +3,21 @@ package mcpbrokergrpc
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/redis/go-redis/v9"
 	p "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type lifecycleService struct {
@@ -48,6 +57,10 @@ func (s *lifecycleService) OpenSession(_ context.Context, saved *c.SessionRef) (
 		return c.SessionSnapshot{}, c.ErrStateUnavailable
 	}
 	return c.SessionSnapshot{Ref: s.ref, ExpiresAt: time.Now().Add(time.Hour), Catalogue: s.cat}, nil
+}
+
+func (s *lifecycleService) InvokeTool(context.Context, c.SessionRef, c.CatalogueRef, c.Call, c.BrokerAttempt) (c.InvocationOutcome, error) {
+	return c.InvocationOutcome{Kind: c.InvocationNotDispatched, Reason: c.FailureAuthorityWithdrawn}, nil
 }
 
 func (s *lifecycleService) BeginEnrollment(_ context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
@@ -85,7 +98,7 @@ func (s *lifecycleService) DeleteSession(_ context.Context, ref c.SessionRef) (c
 	return c.Deleted, nil
 }
 
-func TestSessionClientLifecycleAndFailClosedDescriptorScaffold(t *testing.T) {
+func TestSessionClientLifecycleAndInvocationDescriptor(t *testing.T) {
 	service := newLifecycleService(t)
 	rpc, err := NewSessionRPC(service)
 	if err != nil {
@@ -161,9 +174,9 @@ func TestSessionClientLifecycleAndFailClosedDescriptorScaffold(t *testing.T) {
 	if _, ok := remote.(tool.DispatchSerial); !ok {
 		t.Fatal("serial dispatch marker was lost")
 	}
-	result, err := remote.Execute(t.Context(), session.ToolCall{ID: "call", Name: "write", Args: []byte(`{}`)}, tool.Environment{})
-	if err == nil || result.CallID != "" {
-		t.Fatalf("V3 scaffold executed remotely: result=%+v err=%v", result, err)
+	result, err := remote.Execute(tool.WithBrokerInvocation(t.Context(), session.NewBrokerAttempt()), session.ToolCall{ID: "call", Name: "write", Args: []byte(`{}`)}, tool.Environment{})
+	if !errors.Is(err, errInvocationNotDispatched) || result.CallID != "" {
+		t.Fatalf("V3 remote invocation did not preserve non-dispatch: result=%+v err=%v", result, err)
 	}
 	requester := remote.(tool.AuthorizationRequester)
 	if authorization, ready, err := requester.RequestAuthorization(t.Context(), session.ToolCall{}); err == nil || ready || authorization.ID != "" {
@@ -172,12 +185,15 @@ func TestSessionClientLifecycleAndFailClosedDescriptorScaffold(t *testing.T) {
 	if err := requester.AbortAuthorization(t.Context(), session.ExternalAuthorization{}); err == nil {
 		t.Fatal("V4 scaffold claimed successful authorization abort")
 	}
+	if !validSessionRef(string(service.ref)) || validSessionRef(string(service.ref)[:42]+"B") {
+		t.Fatal("noncanonical reference accepted")
+	}
 }
 
-func TestSessionProtoV2SchemaSnapshot(t *testing.T) {
+func TestSessionProtoV3SchemaSnapshot(t *testing.T) {
 	file := p.File_mecatl_broker_v1_session_proto
 	service := file.Services().ByName("SessionService")
-	if service == nil || service.Methods().Len() != 4 || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
+	if service == nil || service.Methods().Len() != 5 || service.Methods().ByName("InvokeTool") == nil || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
 		t.Fatalf("unexpected V2 service methods: %v", service)
 	}
 	fields := func(message protoreflect.Name, want map[protoreflect.Name]protoreflect.FieldNumber) {
@@ -193,6 +209,13 @@ func TestSessionProtoV2SchemaSnapshot(t *testing.T) {
 			}
 		}
 	}
+	fields("Attempt", map[protoreflect.Name]protoreflect.FieldNumber{"id": 3})
+	if !file.Messages().ByName("Attempt").ReservedRanges().Has(1) || !file.Messages().ByName("Attempt").ReservedRanges().Has(2) {
+		t.Fatal("former slot framing must remain reserved")
+	}
+	fields("Call", map[protoreflect.Name]protoreflect.FieldNumber{"id": 1, "name": 2, "arguments": 3})
+	fields("InvokeToolRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "catalogue_ref": 2, "call": 3, "attempt": 4})
+	fields("InvocationOutcome", map[protoreflect.Name]protoreflect.FieldNumber{"completed": 1, "authorization_required": 2, "not_dispatched": 3, "outcome_unknown": 4})
 	fields("OpenSessionRequest", map[protoreflect.Name]protoreflect.FieldNumber{"saved_ref": 1})
 	fields("SessionSnapshot", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "expires_at": 2, "catalogue": 3})
 	fields("Catalogue", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "tools": 2, "connection_ref": 3})
@@ -218,5 +241,166 @@ func TestSessionProtoV2SchemaSnapshot(t *testing.T) {
 	values = file.Messages().ByName("DisconnectOutcome").Enums().Get(0).Values()
 	if values.Len() != 4 || values.Get(0).Number() != 0 || values.Get(1).Number() != 1 || values.Get(2).Number() != 2 || values.Get(3).Number() != 3 {
 		t.Fatalf("disconnect outcome enum values = %v", values)
+	}
+}
+
+type v3Fixture struct {
+	p.UnimplementedSessionServiceServer
+	invoke func(context.Context, *p.InvokeToolRequest) (*p.InvocationOutcome, error)
+}
+
+func (f *v3Fixture) InvokeTool(ctx context.Context, request *p.InvokeToolRequest) (*p.InvocationOutcome, error) {
+	return f.invoke(ctx, request)
+}
+
+func v3Client(t *testing.T, f *v3Fixture) *SessionClient {
+	t.Helper()
+	server := grpc.NewServer()
+	p.RegisterSessionServiceServer(server, f)
+	listener := bufconn.Listen(1 << 20)
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+	go func() { _ = server.Serve(listener) }()
+	client, err := NewSessionClient("passthrough:///session-v3", 100*time.Millisecond, 100*time.Millisecond,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
+		grpc.WithDefaultServiceConfig(`{"methodConfig":[{"name":[{"service":"mecatl.broker.v1.SessionService"}],"retryPolicy":{"MaxAttempts":4,"InitialBackoff":"0.001s","MaxBackoff":"0.001s","BackoffMultiplier":1,"RetryableStatusCodes":["UNAVAILABLE"]}}]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+func v3Invoke(t *testing.T, client *SessionClient) (c.InvocationOutcome, error) {
+	t.Helper()
+	return client.InvokeTool(t.Context(), c.SessionRef(base64.RawURLEncoding.EncodeToString(bytes32(1))), c.CatalogueRef(base64.RawURLEncoding.EncodeToString(bytes32(2))), c.Call{ID: "one", Name: "echo", Arguments: []byte(`{}`)}, session.NewBrokerAttempt())
+}
+
+func TestSessionClientMalformedInvocationFailsClosed(t *testing.T) {
+	unknown := &p.InvocationOutcome{Outcome: &p.InvocationOutcome_OutcomeUnknown{OutcomeUnknown: &emptypb.Empty{}}}
+	unknown.ProtoReflect().SetUnknown([]byte{0x98, 0x06, 0x01})
+	cases := map[string]*p.InvocationOutcome{
+		"missing arm":         {},
+		"bad auth ref":        {Outcome: &p.InvocationOutcome_AuthorizationRequired{AuthorizationRequired: "bad"}},
+		"unknown reason":      {Outcome: &p.InvocationOutcome_NotDispatched{NotDispatched: &p.NonDispatch{Reason: 257}}},
+		"wrong call":          {Outcome: &p.InvocationOutcome_Completed{Completed: &p.ToolResult{CallId: "other"}}},
+		"invalid result kind": {Outcome: &p.InvocationOutcome_Completed{Completed: &p.ToolResult{CallId: "one", Parts: []*p.ResultPart{{BlockKind: "made_up", Text: "bad"}}}}},
+		"oversized result":    {Outcome: &p.InvocationOutcome_Completed{Completed: &p.ToolResult{CallId: "one", Content: string(make([]byte, 256*1024))}}},
+		"unknown wire fields": unknown,
+	}
+	for name, response := range cases {
+		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
+			client := v3Client(t, &v3Fixture{invoke: func(context.Context, *p.InvokeToolRequest) (*p.InvocationOutcome, error) {
+				calls.Add(1)
+				return response, nil
+			}})
+			out, err := v3Invoke(t, client)
+			if err == nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
+				t.Fatalf("out=%#v err=%v calls=%d", out, err, calls.Load())
+			}
+		})
+	}
+}
+
+func TestSessionClientNoRetry(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		var calls atomic.Int32
+		client := v3Client(t, &v3Fixture{invoke: func(ctx context.Context, _ *p.InvokeToolRequest) (*p.InvocationOutcome, error) {
+			calls.Add(1)
+			if timeout {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return nil, status.Error(codes.Unavailable, "lost return")
+		}})
+		out, err := v3Invoke(t, client)
+		if err == nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
+			t.Fatalf("out=%#v err=%v calls=%d", out, err, calls.Load())
+		}
+	}
+}
+
+func TestSessionClientValidToolErrorIsNotFabricatedSuccess(t *testing.T) {
+	client := v3Client(t, &v3Fixture{invoke: func(_ context.Context, request *p.InvokeToolRequest) (*p.InvocationOutcome, error) {
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_Completed{Completed: &p.ToolResult{CallId: request.Call.Id, IsError: true, Content: "upstream error"}}}, nil
+	}})
+	out, err := v3Invoke(t, client)
+	if err != nil || out.Kind != c.InvocationCompleted || !out.Result.IsError {
+		t.Fatalf("error result lost: %#v %v", out, err)
+	}
+}
+
+func TestSessionRemoteToolV3VerifiedNonDispatch(t *testing.T) {
+	client := v3Client(t, &v3Fixture{invoke: func(context.Context, *p.InvokeToolRequest) (*p.InvocationOutcome, error) {
+		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_AuthorizationRequired{AuthorizationRequired: base64.RawURLEncoding.EncodeToString(bytes32(4))}}, nil
+	}})
+	remote := &sessionRemoteTool{client: client, ref: c.SessionRef(base64.RawURLEncoding.EncodeToString(bytes32(1))), catalogue: c.CatalogueRef(base64.RawURLEncoding.EncodeToString(bytes32(2))), spec: tool.ToolSpec{Name: "echo"}}
+	_, err := remote.Execute(tool.WithBrokerInvocation(t.Context(), session.NewBrokerAttempt()), session.ToolCall{ID: "one", Name: "echo", Args: []byte(`{}`)}, tool.Environment{})
+	if !errors.Is(err, errInvocationNotDispatched) || remote.BrokerInvocationDisposition(err) != session.BrokerAttemptNotDispatched {
+		t.Fatalf("authorization required must remain verified non-dispatch: %v", err)
+	}
+}
+
+func TestSessionRPCNativeAnonymous(t *testing.T) {
+	var calls atomic.Int32
+	upstream := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "rpc-v3", Version: "test"}, nil)
+	upstream.AddTool(&mcpsdk.Tool{Name: "echo", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		calls.Add(1)
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "native-rpc"}}}, nil
+	})
+	httpServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream }, nil))
+	t.Cleanup(httpServer.Close)
+	process, err := mcpbroker.NewToolHiveProcess(t.Context(), mcpbroker.ToolHiveConfig{DeferAnonymousDiscovery: true, Profiles: []mcpbroker.ToolHiveProfile{{Name: "echo", URL: httpServer.URL, Auth: "none"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	db := miniredis.RunT(t)
+	storage := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: db.Addr()})
+	t.Cleanup(func() { _ = storage.Close() })
+	api, err := mcpbroker.NewSessionAPI(process, storage, func(context.Context) *session.Principal {
+		return &session.Principal{Issuer: "https://verified-workload.test", Subject: "client"}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = api.Close() })
+	rpc, err := NewSessionRPC(api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(session.WithPrincipal(ctx, &session.Principal{Issuer: "https://verified-owner.test", Subject: "owner"}), request)
+	}))
+	p.RegisterSessionServiceServer(server, rpc)
+	listener := bufconn.Listen(1 << 20)
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+	go func() { _ = server.Serve(listener) }()
+	client, err := NewSessionClient("passthrough:///session-native-v3", time.Second, time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	opened, err := client.OpenSession(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrolled, err := client.BeginEnrollment(t.Context(), opened.Ref)
+	if err != nil || enrolled.Kind != c.EnrollmentCompletedKind || len(enrolled.Catalogue.Tools()) != 1 {
+		t.Fatalf("enrollment: %#v %v", enrolled, err)
+	}
+	call := session.ToolCall{ID: "one", Name: enrolled.Catalogue.Tools()[0].Spec().Name, Args: []byte(`{}`)}
+	remote := enrolled.Catalogue.Tools()[0]
+	result, err := remote.Execute(tool.WithBrokerInvocation(t.Context(), session.NewBrokerAttempt()), call, tool.Environment{})
+	if err != nil || result.CallID != call.ID || result.Content != "native-rpc" || calls.Load() != 1 {
+		t.Fatalf("native invocation: %#v %v calls=%d", result, err, calls.Load())
+	}
+	invalid := &p.InvokeToolRequest{SessionRef: string(opened.Ref), CatalogueRef: string(enrolled.Catalogue.Ref()), Call: &p.Call{Id: "one", Name: call.Name, Arguments: []byte(`{}`)}, Attempt: &p.Attempt{Id: session.NewBrokerAttempt().ID}}
+	invalid.Attempt.ProtoReflect().SetUnknown([]byte{0x08, 0x01})
+	if _, err := rpc.InvokeTool(t.Context(), invalid); status.Code(err) != codes.InvalidArgument || calls.Load() != 1 {
+		t.Fatalf("legacy slot dispatched: %v calls=%d", err, calls.Load())
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	p "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
 	"google.golang.org/grpc"
@@ -15,6 +16,7 @@ import (
 )
 
 var errSessionWire = errors.New("mcpbrokergrpc: invalid session response")
+var ErrSessionOutcomeUnknown = errors.New("mcpbrokergrpc: invocation outcome unknown; do not retry")
 
 // SessionClient owns its connection and applies a finite deadline to lifecycle RPCs.
 type SessionClient struct {
@@ -77,7 +79,7 @@ func (s *SessionClient) catalogue(ref c.SessionRef, wire *p.Catalogue) (c.Catalo
 			return nil, errSessionWire
 		}
 		seen[descriptor.Name] = true
-		base := &sessionRemoteTool{spec: tool.ToolSpec{Name: descriptor.Name, Description: descriptor.Description, Schema: append([]byte(nil), descriptor.Schema...)}, readOnly: descriptor.ReadOnly}
+		base := &sessionRemoteTool{client: s, ref: ref, catalogue: c.CatalogueRef(wire.Ref), spec: tool.ToolSpec{Name: descriptor.Name, Description: descriptor.Description, Schema: append([]byte(nil), descriptor.Schema...)}, readOnly: descriptor.ReadOnly}
 		tools = append(tools, sessionToolMarkers(base, descriptor.AuthorizationCapable, descriptor.DispatchSerial))
 	}
 	catalogue, err := c.NewCatalogue(c.CatalogueRef(wire.Ref), c.ConnectionRef(wire.GetConnectionRef()), tools)
@@ -110,6 +112,61 @@ func (s *SessionClient) OpenSession(ctx context.Context, saved *c.SessionRef) (c
 		return c.SessionSnapshot{}, err
 	}
 	return c.SessionSnapshot{Ref: c.SessionRef(response.Ref), ExpiresAt: response.ExpiresAt.AsTime(), Catalogue: catalogue}, nil
+}
+
+func unknownInvocation(err error) (c.InvocationOutcome, error) {
+	return c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}, err
+}
+
+func decodeSessionInvocation(out *p.InvocationOutcome, id session.ToolCallID) (c.InvocationOutcome, error) {
+	if !cleanSessionWire(out) || proto.Size(out) > 256*1024 {
+		return unknownInvocation(errSessionWire)
+	}
+	var decoded c.InvocationOutcome
+	switch arm := out.Outcome.(type) {
+	case *p.InvocationOutcome_Completed:
+		result, err := resultFromWire(arm.Completed)
+		if err != nil || result.CallID != id {
+			return unknownInvocation(errSessionWire)
+		}
+		decoded = c.InvocationOutcome{Kind: c.InvocationCompleted, Result: &result}
+	case *p.InvocationOutcome_AuthorizationRequired:
+		decoded = c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: c.AuthorizationRef(arm.AuthorizationRequired)}
+	case *p.InvocationOutcome_NotDispatched:
+		if arm.NotDispatched == nil || arm.NotDispatched.Reason < 1 || arm.NotDispatched.Reason > 7 {
+			return unknownInvocation(errSessionWire)
+		}
+		decoded = c.InvocationOutcome{Kind: c.InvocationNotDispatched, Reason: c.FailureReason(arm.NotDispatched.Reason)}
+	case *p.InvocationOutcome_OutcomeUnknown:
+		if arm.OutcomeUnknown == nil {
+			return unknownInvocation(errSessionWire)
+		}
+		decoded = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+	default:
+		return unknownInvocation(errSessionWire)
+	}
+	frozen, err := c.NewInvocationOutcome(decoded.Kind, decoded.Result, decoded.Authorization, decoded.Reason)
+	if err != nil {
+		return unknownInvocation(errSessionWire)
+	}
+	return frozen, nil
+}
+
+func (s *SessionClient) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	if !attempt.Valid() || !validSessionRef(string(ref)) || !validSessionRef(string(cat)) {
+		return unknownInvocation(errSessionWire)
+	}
+	wire, err := wireCall(call)
+	if err != nil {
+		return unknownInvocation(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.executeDeadline)
+	defer cancel()
+	out, err := s.rpc.InvokeTool(ctx, &p.InvokeToolRequest{SessionRef: string(ref), CatalogueRef: string(cat), Call: wire, Attempt: attemptToWire(attempt)}, grpc.MaxRetryRPCBufferSize(0))
+	if err != nil {
+		return unknownInvocation(err)
+	}
+	return decodeSessionInvocation(out, call.ID)
 }
 
 func (s *SessionClient) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {

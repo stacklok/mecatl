@@ -991,7 +991,7 @@ func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCal
 		}
 		grant.firstPending = false
 	}
-	if err := claimGrantCallLocked(grant, call, hash); err != nil {
+	if err := t.claimSessionCallLocked(ctx, grant, call, hash); err != nil {
 		logical.mu.Unlock()
 		return session.ToolResult{}, err
 	}
@@ -1015,7 +1015,7 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 		logical.mu.Unlock()
 		return session.ToolResult{}, contract.ErrAuthorizationNotFound
 	}
-	if err := claimGrantCallLocked(grant, call, hash); err != nil {
+	if err := t.claimSessionCallLocked(ctx, grant, call, hash); err != nil {
 		logical.mu.Unlock()
 		return session.ToolResult{}, err
 	}

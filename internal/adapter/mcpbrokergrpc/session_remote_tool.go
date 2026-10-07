@@ -6,13 +6,28 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	c "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 var errRemoteSessionOperationUnavailable = errors.New("mcpbrokergrpc: remote session operation unavailable")
+var errInvocationNotDispatched = errors.New("mcpbrokergrpc: invocation not dispatched")
 
 type sessionRemoteTool struct {
-	spec     tool.ToolSpec
-	readOnly bool
+	client    *SessionClient
+	ref       c.SessionRef
+	catalogue c.CatalogueRef
+	spec      tool.ToolSpec
+	readOnly  bool
+}
+
+func (t *sessionRemoteTool) BrokerInvocationDisposition(err error) session.BrokerAttemptDisposition {
+	if err == nil {
+		return session.BrokerAttemptCompleted
+	}
+	if errors.Is(err, errInvocationNotDispatched) {
+		return session.BrokerAttemptNotDispatched
+	}
+	return session.BrokerAttemptUnknown
 }
 
 func (t *sessionRemoteTool) Spec() tool.ToolSpec {
@@ -23,9 +38,28 @@ func (t *sessionRemoteTool) Spec() tool.ToolSpec {
 
 func (t *sessionRemoteTool) ReadOnly() bool { return t.readOnly }
 
-// Execute is deliberately fail-closed until the V3 invocation boundary exists.
-func (*sessionRemoteTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
-	return session.ToolResult{}, errRemoteSessionOperationUnavailable
+func (t *sessionRemoteTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	if call.Name != t.spec.Name {
+		return session.ToolResult{}, errSessionWire
+	}
+	attempt, ok := tool.BrokerInvocationFromContext(ctx)
+	if !ok {
+		return session.ToolResult{}, errSessionWire
+	}
+	out, err := t.client.InvokeTool(ctx, t.ref, t.catalogue, c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}, attempt)
+	if out.Kind == c.InvocationOutcomeUnknown {
+		return session.ToolResult{}, errors.Join(ErrSessionOutcomeUnknown, err)
+	}
+	if err != nil {
+		return session.ToolResult{}, err
+	}
+	if out.Kind == c.InvocationNotDispatched || out.Kind == c.InvocationAuthorizationRequired {
+		return session.ToolResult{}, errInvocationNotDispatched
+	}
+	if out.Kind != c.InvocationCompleted || out.Result == nil || out.Result.CallID != call.ID {
+		return session.ToolResult{}, errors.Join(ErrSessionOutcomeUnknown, errSessionWire)
+	}
+	return *out.Result, nil
 }
 
 type sessionSerialTool struct{ *sessionRemoteTool }

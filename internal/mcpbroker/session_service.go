@@ -16,6 +16,7 @@ import (
 // It is separate from Service and Attachment; those donor contracts remain broker-internal.
 type SessionService interface {
 	OpenSession(context.Context, *session.BrokerSessionRef) (SessionSnapshot, error)
+	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call, BrokerAttempt) (InvocationOutcome, error)
 	BeginEnrollment(context.Context, session.BrokerSessionRef) (BeginEnrollmentOutcome, error)
 	DisconnectTools(context.Context, session.BrokerSessionRef, ConnectionRef) (DisconnectResult, error)
 	DeleteSession(context.Context, session.BrokerSessionRef) (DeleteResult, error)
