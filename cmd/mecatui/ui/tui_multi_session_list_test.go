@@ -198,3 +198,57 @@ func TestTUIMultiSession_FooterShowsSessionsKey(t *testing.T) {
 		t.Fatalf("a rebound sessions key must show in the footer:\n%s", view)
 	}
 }
+
+func TestTUIMultiSession_ListCtrlCQuits(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+
+	single := readyWindow(t, newWindowConv(), nil)
+	single.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if view := windowView(single); !strings.Contains(view, "ctrl+c quit") {
+		t.Fatalf("the list footer must offer ctrl+c quit:\n%s", view)
+	}
+	single.press(ctrlC)
+	single.until("one ctrl+c in the list quits", func(window) bool { return single.quit })
+
+	// Another session running still asks once, and declining keeps the window.
+	d, keys := windowListFixture(t)
+	_ = keys
+	d.press(tea.KeyPressMsg{Code: tea.KeyLeft}, ctrlC)
+	if d.quit || d.w.quitConfirm == nil || d.w.list != nil {
+		t.Fatalf("ctrl+c in the list with other active sessions must ask first: quit=%v confirm=%v", d.quit, d.w.quitConfirm != nil)
+	}
+	d.press(keyText('n'))
+	if d.quit || d.w.quitConfirm != nil {
+		t.Fatal("declining must keep the window open")
+	}
+}
+
+func TestTUIMultiSession_ListHighlightAndDetailColours(t *testing.T) {
+	d := readyWindow(t, newWindowConv(), nil)
+	d.mutate(d.w.activeKey, func(m *Model) {
+		m.sessionTitle = "Check disk"
+		m.conv.scrollback.Messages().AddAssistant(scrollback.AssistantInput{Text: "all clear"})
+	})
+	d.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m := d.w.activeModel()
+	raw := d.w.View().Content
+
+	var selected string
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.Contains(stripANSIstr(line), "› ● Check disk") {
+			selected = line
+		}
+	}
+	if selected == "" {
+		t.Fatalf("no selected row in:\n%s", stripANSIstr(raw))
+	}
+	bar := windowListHighlight(m)
+	if !strings.HasPrefix(selected, bar.Render("› ")[:strings.Index(bar.Render("› "), "›")]) {
+		t.Errorf("the selected row must start with the highlight bar style: %q", selected)
+	}
+	for _, want := range []string{windowListHeading(m).Render("Last message"), windowListContent(m).Render("all clear")} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("details are missing styled %q", stripANSIstr(want))
+		}
+	}
+}

@@ -243,18 +243,38 @@ func (w window) renderTable(m Model, visible []windowRow, width, height int) []s
 	now := w.clock()
 	for i := start; i < len(visible) && i < start+rowsShown; i++ {
 		row := visible[i]
-		marker, nameStyle := "  ", th.Style("toolArgs")
-		if i == w.list.cursor {
-			marker, nameStyle = th.Style("accent").Render("› "), th.Style("accent").Bold(true)
-		}
+		name := pad(windowRowName(row, row.key == w.activeKey, nameWidth-1), nameWidth)
 		updated := windowUpdated(w.sessions[w.index(row.key)].updatedAt, now)
+		if i == w.list.cursor {
+			// The selection is one solid highlight bar across the table.
+			line := pad("› ● "+name+pad(row.status, windowListStatusWidth)+updated, width)
+			lines = append(lines, windowListHighlight(m).Render(line))
+			continue
+		}
 		status := windowStatusStyle(m, row.status)
-		lines = append(lines, marker+status.Render("●")+" "+
-			nameStyle.Render(pad(windowRowName(row, row.key == w.activeKey, nameWidth-1), nameWidth))+
+		lines = append(lines, "  "+status.Render("●")+" "+
+			th.Style("toolArgs").Render(name)+
 			status.Render(pad(row.status, windowListStatusWidth))+
 			muted.Render(updated))
 	}
 	return lines
+}
+
+// windowListHighlight is the selected row's bar: bold warning-coloured (yellow)
+// text on the theme's solid selection background.
+func windowListHighlight(m Model) lipgloss.Style {
+	th := m.deps.Theme
+	return lipgloss.NewStyle().Background(th.Color("selection")).Foreground(th.Color("warning")).Bold(true)
+}
+
+// windowListHeading and windowListContent style the details column: section
+// titles in the primary text colour, their content in the muted grey.
+func windowListHeading(m Model) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(m.deps.Theme.Color("text")).Bold(true)
+}
+
+func windowListContent(m Model) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(m.deps.Theme.Color("textMuted"))
 }
 
 // windowRowName fits a row's title, worktree branch, and current marker into
@@ -283,7 +303,8 @@ func windowRowName(row windowRow, current bool, width int) string {
 // renderDetails renders the selected session's details column.
 func (w window) renderDetails(m Model, row windowRow, width, height int) []string {
 	th := m.deps.Theme
-	muted, text := th.Style("muted"), th.Style("toolArgs")
+	muted := th.Style("muted")
+	heading, text := windowListHeading(m), windowListContent(m)
 	s, _ := w.modelFor(row.key)
 	var lines []string
 	add := func(style lipgloss.Style, value string, limit int) {
@@ -296,15 +317,15 @@ func (w window) renderDetails(m Model, row windowRow, width, height int) []strin
 		}
 	}
 	rule := muted.Render(strings.Repeat("─", width))
-	lines = append(lines, muted.Render("Session details"))
-	add(th.Style("askTitle"), row.label, 2)
+	lines = append(lines, heading.Render("Session details"))
+	add(heading, row.label, 2)
 	lines = append(lines, windowStatusStyle(m, row.status).Render("● "+row.status), rule)
 	if last := s.windowLastText(scrollback.KindAssistant); last != "" {
-		lines = append(lines, muted.Render("Last message"))
+		lines = append(lines, heading.Render("Last message"))
 		add(text, last, windowListDetailLines)
 		lines = append(lines, rule)
 	}
-	lines = append(lines, muted.Render("Project"))
+	lines = append(lines, heading.Render("Project"))
 	project := terminaltext.SanitizeSingleLine(s.activePlacement.Label)
 	if row.branch != "" && row.branch != project {
 		project = strings.TrimSpace(project + " · " + row.branch)
@@ -320,7 +341,7 @@ func (w window) renderDetails(m Model, row windowRow, width, height int) []strin
 		add(text, "Tokens: "+renderfmt.HumanizeTokens(s.usage.InputTokens)+" in · "+renderfmt.HumanizeTokens(s.usage.OutputTokens)+" out", 1)
 	}
 	if prompt := s.windowLastText(scrollback.KindUser); prompt != "" {
-		lines = append(lines, rule, muted.Render("Prompt"))
+		lines = append(lines, rule, heading.Render("Prompt"))
 		add(text, prompt, windowListDetailLines)
 	}
 	if len(lines) > height {
@@ -358,7 +379,7 @@ func (window) renderListFooter(m Model, width int) string {
 	if m.caps.CreateWorktrees {
 		parts = append(parts, "w new worktree session")
 	}
-	parts = append(parts, "d delete", "o saved sessions (/sessions)", hk.closeOnly+" close")
+	parts = append(parts, "d delete", "o saved sessions (/sessions)", hk.closeOnly+" close", hk.quit+" quit")
 	muted := m.deps.Theme.Style("muted")
 	rows := strings.Split(wrapCardText(strings.Join(parts, " · "), max(1, width-1)), "\n")
 	for i, row := range rows {

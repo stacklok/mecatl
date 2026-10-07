@@ -155,6 +155,7 @@ when `mecatui` exits. To bring in a saved session, press `o` in the list or run
 |`d`|Delete the selected session after confirmation.|
 |`o`|Open the `/sessions` picker.|
 |`esc` or `←`|Close the list.|
+|`ctrl+c`|Quit `mecatui` with one press. If other sessions are running or waiting for approval, you are asked first.|
 
 To open the list with another key, remap the `Sessions` action; see
 [Remap actions](./keybindings.md#remap-actions).

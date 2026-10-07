@@ -652,6 +652,12 @@ func (w window) onListKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if row, ok := selected(); ok {
 			return w.startDelete(row.key)
 		}
+	case teakey.Matches(msg, w.keys.Quit) && w.activeModel().pendingRecovery == nil:
+		// No draft to clear here, so quit at once. requestQuit still asks
+		// first when other sessions are running or awaiting approval. A
+		// recovered approval keeps the session's own ctrl+c handling below.
+		w.list = nil
+		return w.requestQuit()
 	case teakey.Matches(msg, w.keys.Quit), teakey.Matches(msg, w.keys.QuitD), teakey.Matches(msg, w.keys.Suspend):
 		w.list = nil
 		return w.updateSession(w.activeKey, msg)
