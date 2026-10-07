@@ -162,8 +162,8 @@ func WithThinkingResolver(resolve thinkingResolver) Option {
 
 // WithThinkingBudget sets budget_tokens for the manual (type:"enabled") thinking
 // config used on older model families (Sonnet 4.5, Opus 4.5, Haiku 4.5 and
-// earlier). It is ignored by adaptive-thinking models (Opus 4.8/4.7/4.6, Sonnet
-// 4.6). The builder clamps it to ≥1024 and strictly below max_tokens.
+// earlier). It is ignored by adaptive-thinking models (the Claude 5 families,
+// Opus 4.8/4.7/4.6, Sonnet 4.6). The builder clamps it to ≥1024 and strictly below max_tokens.
 func WithThinkingBudget(n int64) Option {
 	return func(c *config) { c.thinkingBudget = n }
 }

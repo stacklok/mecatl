@@ -281,7 +281,8 @@ func buildSystem(l prompt.Layered, ttl sdk.CacheControlEphemeralTTL) []sdk.TextB
 // thinkingConfigFor selects the model-CLASS-appropriate extended-thinking config.
 // There are THREE outcomes (a wrong one 400s):
 //
-//   - ADAPTIVE — {type:"adaptive"} — Opus 4.8/4.7/4.6, Sonnet 4.6, Mythos preview.
+//   - ADAPTIVE — {type:"adaptive"} — Claude 5 families (Opus, Sonnet, Fable), Opus
+//     4.8/4.7/4.6, Sonnet 4.6, Mythos preview.
 //     The only mode on Opus 4.8/4.7 (manual 400s there).
 //   - MANUAL — {type:"enabled",budget_tokens:N} (N≥1024, N<max_tokens) — older
 //     thinking-CAPABLE families (Claude 4: Sonnet 4.5/4, Opus 4.5/4.1/4, Haiku 4.5;
@@ -355,7 +356,8 @@ func thinkingMode(model string, resolve thinkingResolver) (adaptive, manual bool
 }
 
 // usesAdaptiveThinking reports whether model REQUIRES (or, for 4.6, recommends and
-// accepts) adaptive thinking: Opus 4.8/4.7/4.6, Sonnet 4.6, Mythos preview. The
+// accepts) adaptive thinking: the Claude 5 families, Opus 4.8/4.7/4.6, Sonnet 4.6,
+// Mythos preview. The
 // match is on the dateless/aliased id prefix so a dated snapshot
 // (claude-opus-4-8-20YYMMDD) also matches.
 func usesAdaptiveThinking(model string) bool {
@@ -396,8 +398,13 @@ func hasAnyPrefix(model string, prefixes []string) bool {
 // adaptiveThinkingPrefixes are the model-id prefixes that take adaptive thinking.
 // Verified against the live Anthropic docs (adaptive-thinking, 2026-06-06):
 // adaptive is supported on Mythos preview, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet
-// 4.6; it is the ONLY mode on Opus 4.8/4.7.
+// 4.6; it is the ONLY mode on Opus 4.8/4.7. The Claude 5 families (Opus, Sonnet,
+// Fable) follow the Opus 4.7+ contract; a family prefix covers every 5.x release
+// and dated snapshot, so a new point release does not fall back to manual budgets.
 var adaptiveThinkingPrefixes = []string{
+	"claude-opus-5",
+	"claude-sonnet-5",
+	"claude-fable-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-opus-4-6",

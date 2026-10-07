@@ -140,7 +140,7 @@ func TestMaxTokensResolverNilFallsBack(t *testing.T) {
 }
 
 // TestThinkingConfigModelAware verifies the THREE-class thinking config: adaptive
-// (Opus 4.8/4.7/4.6 + Sonnet 4.6 + Mythos), manual enabled+budget (older capable:
+// (Claude 5 families, Opus 4.8/4.7/4.6, Sonnet 4.6, Mythos), manual enabled+budget (older capable:
 // 4.x + 3.7 sonnet), and NONE (3.5 and earlier — incapable). A wrong config 400s,
 // so this is load-bearing.
 func TestThinkingConfigModelAware(t *testing.T) {
@@ -155,6 +155,12 @@ func TestThinkingConfigModelAware(t *testing.T) {
 		"claude-sonnet-4-6",
 		"claude-opus-4-8-20260101", // dated snapshot still matches
 		"claude-mythos-preview",
+		"claude-opus-5",
+		"claude-opus-5-5",
+		"claude-sonnet-5",
+		"claude-sonnet-5-5",
+		"claude-fable-5",
+		"claude-fable-5-1",
 		"  CLAUDE-OPUS-4-8  ", // whitespace + case-insensitive
 	}
 	for _, m := range adaptive {

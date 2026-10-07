@@ -8,8 +8,8 @@
 // cache_control breakpoint at the StablePrefix/VolatileSuffix boundary, so the
 // byte-stable prompt prefix is cached across turns.
 //
-// Extended thinking is ON and MODEL-AWARE: Claude Opus 4.8/4.7/4.6 and Sonnet
-// 4.6 require thinking:{type:"adaptive"} (a manual {type:"enabled",budget_tokens}
+// Extended thinking is ON and MODEL-AWARE: the Claude 5 families, Claude Opus
+// 4.8/4.7/4.6, and Sonnet 4.6 require thinking:{type:"adaptive"} (a manual {type:"enabled",budget_tokens}
 // 400s on Opus 4.8/4.7); older families (Sonnet 4.5, Opus 4.5, Haiku 4.5 and
 // earlier) take thinking:{type:"enabled",budget_tokens:N}. The adapter selects
 // the config by model class (see thinkingConfigFor) so a wrong config never
