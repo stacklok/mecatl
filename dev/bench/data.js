@@ -307483,6 +307483,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791400476741,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6de1345dd9d03103715ca6c32d112b39a2af2605",
+          "message": "fix(release): scan microVM and host binaries with sbom-action file: (#2180)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T21:10:53+02:00",
+          "tree_id": "b67c8bc8c4adc9b28a8f183a9b81872cda4be110",
+          "url": "https://github.com/stacklok/mecatl/commit/6de1345dd9d03103715ca6c32d112b39a2af2605"
+        },
+        "date": 1791401170524,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3274,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 74,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -402369,6 +402408,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791401167179,
+  "lastUpdate": 1791401171969,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
