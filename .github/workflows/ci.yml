@@ -977,8 +977,8 @@ jobs:
       - name: Run managed temporary storage tests
         run: |
           go test ./internal/adapter/managedtemp -count=1
-          go test ./internal/adapter/osfs -run '^TestADR_0281_.*' -count=1
-          go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+          go test ./internal/adapter/osfs -run '^TestManagedTemp_' -count=1
+          go test ./internal/app -run '^TestManagedModeUnixAdmission$' -count=1
           # The FreeBSD check covers the OS adapter. The app is released for
           # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
