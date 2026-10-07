@@ -41,7 +41,7 @@ func identityMiddleware(wantBrokerToken, provider, upstreamToken string) func(ht
 	}
 }
 
-func TestADR_0298_AuthenticatedDiscoveryUsesToolHiveIdentityMiddleware(t *testing.T) {
+func TestAuthenticatedDiscoveryUsesToolHiveIdentityMiddleware(t *testing.T) {
 	queries := &discoveryQueries{response: validDiscoveryResponse()}
 	process := discoveryProcess(queries, identityMiddleware("opaque-broker", "provider-private", "upstream-private"), "provider-private")
 

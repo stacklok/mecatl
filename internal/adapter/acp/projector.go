@@ -39,7 +39,7 @@ import (
 //	                    session/update; see permissionRequest below.
 //	EvResult         -> the prompt's terminal stopReason (see stopReasonFor).
 //
-//	DROPPED/FOLDED this phase (no clean ACP mapping yet, see the ADR):
+//	DROPPED/FOLDED this phase (no clean ACP mapping yet):
 //	  - turn.start / turn.end      -> dropped (lifecycle bookkeeping).
 //	  - compaction                 -> dropped.
 //	  - subagent.start / team.start -> dropped (the parent tool_call already names

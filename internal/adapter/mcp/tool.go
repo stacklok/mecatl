@@ -22,8 +22,7 @@ import (
 // consumes neither its Workspace nor its CommandRunner.
 //
 // It holds the owning *Server (not a *ClientSession) so Execute can re-establish
-// a dropped session transparently via Server.withSession (see reconnect.go,
-// ADR 0056).
+// a dropped session transparently via Server.withSession (see reconnect.go).
 //
 // outputSchema carries the remote tool's optional OutputSchema (a JSON Schema),
 // marshaled to json.RawMessage at construction time. It is used ONLY for the

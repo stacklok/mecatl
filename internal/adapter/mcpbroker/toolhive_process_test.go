@@ -150,7 +150,7 @@ func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
 	}
 }
 
-func TestADR_0299_BrokerClientSecretNeverCrossesPublicBoundary(t *testing.T) {
+func TestBrokerClientSecretNeverCrossesPublicBoundary(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
@@ -339,7 +339,7 @@ func TestToolHiveConstructionRejectsInvalidProfiles(t *testing.T) {
 	}
 }
 
-func TestADR_0298_ToolHiveConstructionMapsEveryProtectedProfileInOrder(t *testing.T) {
+func TestToolHiveConstructionMapsEveryProtectedProfileInOrder(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	first := protectedToolHiveProfile("GitHub_Cloud")
 	first.Static = []StaticTool{{Name: "reviewed", Schema: json.RawMessage(`{"type":"object"}`)}}
@@ -392,7 +392,7 @@ func TestADR_0298_ToolHiveConstructionMapsEveryProtectedProfileInOrder(t *testin
 	}
 }
 
-func TestADR_0298_ToolHiveConstructionRejectsCollidingProviderKeys(t *testing.T) {
+func TestToolHiveConstructionRejectsCollidingProviderKeys(t *testing.T) {
 	_, err := compileToolHiveConstruction([]ToolHiveProfile{protectedToolHiveProfile("foo_bar"), protectedToolHiveProfile("foo-bar")}, "https://broker.example/v1/mcp/broker")
 	if !errors.Is(err, ErrInvalidCatalogue) || !strings.Contains(err.Error(), `map to provider "foo-bar"`) {
 		t.Fatalf("compileToolHiveConstruction error = %v, want colliding provider-key rejection", err)
@@ -593,7 +593,7 @@ func TestToolHiveStaticToolAuthorizationStartsBundle(t *testing.T) {
 	}
 }
 
-func TestADR_0310_StaticProtectedToolIsVisibleBeforeEnrollment(t *testing.T) {
+func TestStaticProtectedToolIsVisibleBeforeEnrollment(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	var anonymousRequests, protectedRequests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "status", &anonymousRequests)
@@ -641,7 +641,7 @@ func TestADR_0310_StaticProtectedToolIsVisibleBeforeEnrollment(t *testing.T) {
 	}
 }
 
-func TestADR_0298_ToolHiveEnrollmentUsesRealIdentityMiddleware(t *testing.T) {
+func TestToolHiveEnrollmentUsesRealIdentityMiddleware(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		mode string
@@ -1282,7 +1282,7 @@ func toolHiveOIDCIssuer(t *testing.T) *httptest.Server {
 	return server
 }
 
-func TestADR_0314_ToolHiveConstructionCarriesDCRConfig(t *testing.T) {
+func TestToolHiveConstructionCarriesDCRConfig(t *testing.T) {
 	profile := protectedToolHiveProfile("private")
 	profile.OAuth.ClientID = ""
 	profile.OAuth.ClientSecretEnv = ""
@@ -1297,7 +1297,7 @@ func TestADR_0314_ToolHiveConstructionCarriesDCRConfig(t *testing.T) {
 	}
 }
 
-func TestADR_0314_DCRRequiresExplicitOAuth2Upstream(t *testing.T) {
+func TestDCRRequiresExplicitOAuth2Upstream(t *testing.T) {
 	profile := protectedToolHiveProfile("private")
 	profile.OAuth.ClientID = ""
 	profile.OAuth.ClientSecretEnv = ""
@@ -1362,7 +1362,7 @@ func TestMcpBrokerDCRClient_Scenario2_ReusesCachedRegistration(t *testing.T) {
 	}
 }
 
-func TestADR_0314_RegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
+func TestRegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
 	fixture := newToolHiveDCRFixture(t, true)
 	process, err := newToolHiveProcess(t.Context(), fixture.config(), fixture.options())
 	if err == nil {

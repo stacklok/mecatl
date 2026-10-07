@@ -1002,7 +1002,7 @@ func TestInitializeAdvertisesHTTPMCP(t *testing.T) {
 	}
 }
 
-func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
+func TestACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	root := testCWD(t)
 	ref := session.EnvironmentRef{Kind: "remote", ID: "private-placement-id", Revision: "private-revision"}
 	var binds, reattaches atomic.Int32

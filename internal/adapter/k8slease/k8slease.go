@@ -1,6 +1,6 @@
 // Package k8slease is the Kubernetes-backed port.SessionLease: cross-process,
 // cross-HOST single-writer enforcement for the multi-replica cloud-native
-// posture (ADR 0027 Phase 4), backed by a coordination.k8s.io/v1 Lease object
+// posture, backed by a coordination.k8s.io/v1 Lease object
 // per session id. It is the multi-host story the single-host flock lease cannot
 // give: an API-server-coordinated lease survives a replica moving between nodes.
 //

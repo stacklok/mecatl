@@ -25,7 +25,7 @@ var acpTestLedgers sync.Map
 
 // testLedger returns a per-fsWorkspace-instance ReadLedger for tests that need
 // to record/inspect ledger state directly (the production fsWorkspace carries
-// NO ledger of its own — ADR 0281; content and read evidence are independently
+// NO ledger of its own; content and read evidence are independently
 // composed at the Environment).
 func testLedger(w *fsWorkspace) tool.ReadLedger {
 	ledger, _ := acpTestLedgers.LoadOrStore(w, memledger.New())
@@ -787,7 +787,7 @@ func TestFSWorkspaceReadTimeoutSane(t *testing.T) {
 	}
 }
 
-// --- absolute in-root path acceptance (issue #154 / ADR 0047 parity) ---------
+// --- absolute in-root path acceptance (issue #154 / osfs parity) ----------
 
 // TestFSWorkspaceAbsoluteInRootReadWriteStat pins that an ABSOLUTE in-root path
 // is now accepted by the ACP workspace's Read/Write/Stat (the absPath change had
@@ -963,7 +963,7 @@ func TestFSWorkspaceLedgerCrossForm(t *testing.T) {
 }
 
 // TestFSWorkspaceLedgerNotBlockedByParkedRPC proves capability separation
-// (ADR 0208, ADR 0294): an Environment-selected ReadLedger is independent of
+// proves capability separation: an Environment-selected ReadLedger is independent of
 // ACP's RPC CAS mutex (callMu), so a parked RPC mutation holding callMu never
 // blocks ledger RecordRead/RecordedVersion. AC3.8 pins this separation.
 func TestFSWorkspaceLedgerNotBlockedByParkedRPC(t *testing.T) {
@@ -1004,13 +1004,13 @@ func TestFSWorkspaceLedgerNotBlockedByParkedRPC(t *testing.T) {
 	}
 }
 
-// --- ADR 0315: fsWorkspace namespace operations ------------------------------
+// --- fsWorkspace namespace operations ---------------------------------------
 
-// TestADR_0315_FSWorkspace_ReadDir_DelegatesToLocal pins that ReadDir uses the
+// TestFSWorkspace_ReadDir_DelegatesToLocal pins that ReadDir uses the
 // confined LOCAL disk view (fsWorkspace.local, an osfs.Workspace), per the
 // documented limitation that ACP exposes no directory-listing RPC and cannot
 // enumerate unsaved buffer-only files.
-func TestADR_0315_FSWorkspace_ReadDir_DelegatesToLocal(t *testing.T) {
+func TestFSWorkspace_ReadDir_DelegatesToLocal(t *testing.T) {
 	ctx := context.Background()
 	ws, _, root := newTestFSWorkspace(t, nil)
 	// Write directly to disk (bypassing the peer buffer entirely) so ReadDir can
@@ -1027,10 +1027,10 @@ func TestADR_0315_FSWorkspace_ReadDir_DelegatesToLocal(t *testing.T) {
 	}
 }
 
-// TestADR_0315_FSWorkspace_Remove_Unsupported pins that Remove is UNSUPPORTED
+// TestFSWorkspace_Remove_Unsupported pins that Remove is UNSUPPORTED
 // (ACP has no delete RPC and mutating local disk would bypass the editor's
 // authoritative buffer), returning tool.ErrFileOperationUnsupported.
-func TestADR_0315_FSWorkspace_Remove_Unsupported(t *testing.T) {
+func TestFSWorkspace_Remove_Unsupported(t *testing.T) {
 	ws, _, _ := newTestFSWorkspace(t, map[string]string{"a.txt": "hello"})
 	err := ws.Remove(context.Background(), "a.txt")
 	if !errors.Is(err, tool.ErrFileOperationUnsupported) {
@@ -1038,10 +1038,10 @@ func TestADR_0315_FSWorkspace_Remove_Unsupported(t *testing.T) {
 	}
 }
 
-// TestADR_0315_FSWorkspace_Rename_Unsupported pins that Rename is UNSUPPORTED
+// TestFSWorkspace_Rename_Unsupported pins that Rename is UNSUPPORTED
 // for the same reason as Remove (no rename RPC; local-disk mutation would
 // bypass the editor's authoritative buffers).
-func TestADR_0315_FSWorkspace_Rename_Unsupported(t *testing.T) {
+func TestFSWorkspace_Rename_Unsupported(t *testing.T) {
 	ws, _, _ := newTestFSWorkspace(t, map[string]string{"a.txt": "hello"})
 	err := ws.Rename(context.Background(), "a.txt", "b.txt")
 	if !errors.Is(err, tool.ErrFileOperationUnsupported) {
@@ -1049,12 +1049,12 @@ func TestADR_0315_FSWorkspace_Rename_Unsupported(t *testing.T) {
 	}
 }
 
-// TestADR_0315_FSWorkspace_CopyFile_IsBufferAware pins that CopyFile reads the
+// TestFSWorkspace_CopyFile_IsBufferAware pins that CopyFile reads the
 // EDITOR BUFFER (via Read, i.e. fs/read_text_file), not disk — so a source
 // whose in-memory buffer has diverged from its on-disk content is copied with
 // the buffer's content, honoring the editor's authoritative view the same way
 // Read/Write already do.
-func TestADR_0315_FSWorkspace_CopyFile_IsBufferAware(t *testing.T) {
+func TestFSWorkspace_CopyFile_IsBufferAware(t *testing.T) {
 	ctx := context.Background()
 	ws, peer, root := newTestFSWorkspace(t, map[string]string{"src.txt": "buffer-content"})
 	// The on-disk content (if any existed) would differ; there is deliberately
@@ -1075,10 +1075,10 @@ func TestADR_0315_FSWorkspace_CopyFile_IsBufferAware(t *testing.T) {
 	}
 }
 
-// TestADR_0315_FSWorkspace_CopyFile_NoClobber pins that CopyFile refuses to
+// TestFSWorkspace_CopyFile_NoClobber pins that CopyFile refuses to
 // overwrite an existing destination buffer, mirroring the shared Copy tool's
 // no-clobber contract (it delegates to CreateFile, the create-only mutation).
-func TestADR_0315_FSWorkspace_CopyFile_NoClobber(t *testing.T) {
+func TestFSWorkspace_CopyFile_NoClobber(t *testing.T) {
 	ctx := context.Background()
 	ws, _, _ := newTestFSWorkspace(t, map[string]string{
 		"src.txt": "source",

@@ -105,11 +105,10 @@ func (a *Attachment) ResetWorkspaceEnrollment(ctx context.Context) error {
 	a.logical.completedEnrollment = nil
 	a.logical.mu.Unlock()
 
-	// Withdraws ADR 0310's static declared protected-tool wrappers entirely
+	// Withdraws the static declared protected-tool wrappers entirely
 	// (unlike a fresh AttachSession, which keeps them as protectedSessionTool
 	// placeholders): starting a refresh must leave no broker tool usable until
-	// replacement succeeds (ADR 0335, "Static declared-tool behavior during
-	// destructive replacement").
+	// replacement succeeds.
 	staticRoutes := make([]route, 0, len(a.runtime.catalogue.routes))
 	tools := make([]tool.Tool, 0, len(a.runtime.catalogue.routes))
 	for _, route := range a.runtime.catalogue.routes {

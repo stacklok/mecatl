@@ -33,7 +33,7 @@ const (
 // RuntimeSnapshot is a plain, JSON-serialisable view of the process runtime
 // state at one instant. It carries NO OTel/SDK types deliberately: it is the
 // reusable read contract that Phase-2's perf-over-MCP server projects directly
-// into tool output (decision 4 in docs/adr/0018-perf-observability.md). Treat the
+// into tool output. Treat the
 // field set + JSON tags as a stable wire shape — additive changes only. One
 // deliberate exception on record: heap_alloc_bytes was RENAMED to
 // heap_allocs_total_bytes — the old key read as a live-heap gauge (the

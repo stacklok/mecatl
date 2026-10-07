@@ -60,7 +60,7 @@ type Agent struct {
 	// the SAME value the gRPC/HTTP CreateSessionResponse echoes for a default-engine
 	// session — so the ACP gate and the wire echo cannot disagree. A per-session ACP
 	// capability gate (capture-once → per-session lookup) lands only when an ACP
-	// selector lands (P1+); see docs/adr/0016-multi-provider.md.
+	// selector lands (P1+).
 	caps port.ProviderCapabilities
 
 	// resume reports whether session/load is supported (a session store is

@@ -34,7 +34,7 @@ type noArgs struct{}
 //
 // The httptest listener close is self-registered via t.Cleanup (NOT returned to
 // the caller) so it runs AFTER the *Server.Close cleanup (LIFO), which is
-// required now that the standalone SSE GET stream is enabled (ADR 0057):
+// required now that the standalone SSE GET stream is enabled:
 // closing the listener while the SDK's handleSSE goroutine is still attached
 // wedges httptest.Server.Close. Returning a stop-func would invite a future
 // `defer stop()` that re-introduces the wedge, so the helper returns only the
@@ -95,7 +95,7 @@ func newTestServer(t *testing.T, gotAuth *string) string {
 	}))
 
 	cleanup := httpSrv.Close
-	// With the standalone SSE GET stream enabled (ADR 0057) the SDK spawns a
+	// With the standalone SSE GET stream enabled the SDK spawns a
 	// persistent handleSSE goroutine per connected server. That goroutine must
 	// unwind BEFORE the test HTTP server's listener closes, otherwise it enters
 	// its reconnect loop against a dead endpoint and outlives the test (tripping
