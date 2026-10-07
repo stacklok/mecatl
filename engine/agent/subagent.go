@@ -2336,10 +2336,13 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	var forkInstructions session.InstructionSnapshot
 	if args.Fork && caps.forkSession != nil {
 		forkInstructions = caps.forkSession.InstructionSnapshot()
-		// A fork starts at its own execution root. Retain the parent's examined
-		// guidance, but not paths visited only in the parent's conversation.
-		forkInstructions.Directories = []string{"."}
-		forkInstructions.DiscoveryExhausted = false
+		if t.childEngine.deps.Instructions == nil {
+			forkInstructions = session.InstructionSnapshot{}
+		} else if !t.childEngine.deps.Instructions.TargetScoped() {
+			// Only the source assembler knows which source-relative ancestors
+			// correspond to starting guidance in an unmapped child.
+			forkInstructions.Directories = []string{"."}
+		}
 	}
 
 	resuming := strings.TrimSpace(args.Resume) != ""

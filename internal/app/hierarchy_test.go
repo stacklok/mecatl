@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func TestADR_0376_AgentsHierarchy_Scenario3_SourceMapping(t *testing.T) {
@@ -271,6 +274,191 @@ func TestHierarchyFactoryMixedHostSourceCachesEmptyGlobal(t *testing.T) {
 	}
 }
 
+func TestDefaultSourceChildAndConversationForkInstructionSnapshots(t *testing.T) {
+	ws := osfsWorkspaceForHierarchy(t)
+	if err := os.WriteFile(filepath.Join(ws.Root(), "nested/draft.txt"), []byte("draft"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Workspace: ws.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, NoShell: true, AllowAllTools: true, UserModelDir: t.TempDir()}
+	var requests []port.LLMRequest
+	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
+		requests = append(requests, r)
+		// The parent has loaded nested guidance by its second request. Change the
+		// source before forking to distinguish its snapshot from a fresh child.
+		if len(requests) == 2 {
+			if err := os.WriteFile(filepath.Join(ws.Root(), "nested/AGENTS.md"), []byte("NEW-NESTED"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})},
+		mockllm.ToolCallTurn(session.ToolCall{ID: "parent-read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "fork", Name: "Subagent", Args: json.RawMessage(`{"prompt":"inspect","fork":true}`)}),
+		mockllm.TextTurn("fork done"),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "fresh", Name: "Subagent", Args: json.RawMessage(`{"prompt":"inspect"}`)}),
+		mockllm.ToolCallTurn(session.ToolCall{ID: "child-read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}),
+		mockllm.TextTurn("fresh done"),
+		mockllm.TextTurn("parent done"))
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	events := harnessRun(t, built, t.Context(), harnessCreate(t, built, t.Context()), "inspect")
+	if len(requests) != 7 {
+		t.Fatalf("requests=%d events=%v", len(requests), events)
+	}
+	has := func(i int, text string) bool { return strings.Contains(fmt.Sprint(requests[i].Messages), text) }
+	if !has(1, "NESTED-HIERARCHY") || !has(2, "NESTED-HIERARCHY") || has(2, "NEW-NESTED") || has(4, "NESTED-HIERARCHY") || !has(5, "NEW-NESTED") || has(5, "NESTED-HIERARCHY") || !has(6, "NESTED-HIERARCHY") || has(6, "NEW-NESTED") {
+		t.Fatalf("parent/fork/fresh snapshots: parent=%v fork=%v fresh=%v next=%v resumed parent=%v", requests[1].Messages, requests[2].Messages, requests[4].Messages, requests[5].Messages, requests[6].Messages)
+	}
+}
+
+func TestHierarchyNoFSChildKeepsOnlyStartingGuidance(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured=%v", configured), func(t *testing.T) {
+			ws := osfsWorkspaceForHierarchy(t)
+			cfg := Config{Workspace: ws.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, NoShell: true, AllowAllTools: true, UserModelDir: t.TempDir()}
+			prefix := "."
+			if configured {
+				// The execution root is below the source root. Both ancestors are
+				// starting guidance, although only one has source-relative path '.'.
+				prefix = "website"
+				cfg = hcConfiguredFiles(t, ws)
+				cfg.NoSoul, cfg.NoShell, cfg.AllowAllTools = true, true, true
+				cfg.HarnessInstructionSources[0].Bind = func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+					return prompt.RootAssembler{Source: ws, SourceID: "source", SourcePrefix: prefix}, nil, nil
+				}
+				if err := ws.Write(t.Context(), "website/AGENTS.md", []byte("START-OLD")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := ws.Write(t.Context(), filepath.Join(prefix, "nested/AGENTS.md"), []byte("NESTED-POISON")); err != nil {
+				t.Fatal(err)
+			}
+			var requests []port.LLMRequest
+			cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
+				requests = append(requests, r)
+				if len(requests) == 1 {
+					if err := ws.Write(t.Context(), "AGENTS.md", []byte("ROOT-NEW")); err != nil {
+						t.Fatal(err)
+					}
+					if configured {
+						if err := ws.Write(t.Context(), "website/AGENTS.md", []byte("START-NEW")); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			})},
+				mockllm.ToolCallTurn(session.ToolCall{ID: "delegate", Name: "Subagent", Args: json.RawMessage(`{"prompt":"inspect","fork":true}`)}),
+				mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"nested/file.txt"}`)}),
+				mockllm.TextTurn("child done"), mockllm.TextTurn("parent done"))
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			parent, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := harnessRun(t, built, t.Context(), parent.ID, "delegate")
+			if len(requests) != 4 {
+				t.Fatalf("requests=%d events=%v", len(requests), events)
+			}
+			for _, i := range []int{1, 2} {
+				text := harnessRequestText(requests[i])
+				if !strings.Contains(text, "ROOT-HIERARCHY") || !strings.Contains(text, "scope mapping unavailable") || configured && !strings.Contains(text, "START-OLD") || strings.Contains(text, "NESTED-POISON") || strings.Contains(text, "ROOT-NEW") || strings.Contains(text, "START-NEW") {
+					t.Fatalf("no-FS child lost starting guidance or gained nested mapping: %s", text)
+				}
+				for _, spec := range requests[i].Tools {
+					if spec.Name == "Read" {
+						t.Fatal("no-FS child gained file tools")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestHierarchyDefaultSourceChildPlacementMapping(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_TEMPLATE_DIR", t.TempDir())
+	for _, sameWorkspace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sameWorkspace=%v", sameWorkspace), func(t *testing.T) {
+			selected := osfsWorkspaceForHierarchy(t)
+			execution := selected
+			if !sameWorkspace {
+				wtInitRepo(t, selected.Root())
+				wtRunGit(t, selected.Root(), "commit", "--allow-empty", "-m", "test fixture\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>")
+				otherRoot := filepath.Join(t.TempDir(), "other")
+				wtRunGit(t, selected.Root(), "worktree", "add", "-b", "other", otherRoot)
+				var err error
+				execution, err = osfs.NewWorkspace(otherRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range []string{"AGENTS.md", "nested/CLAUDE.md"} {
+					if err := execution.Write(t.Context(), name, []byte("UNSELECTED-CHECKOUT-GUIDANCE")); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := execution.Write(t.Context(), "nested/draft.txt", []byte("execution draft")); err != nil {
+				t.Fatal(err)
+			}
+			cfg := Config{Workspace: selected.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, Shell: "/bin/sh", AllowAllTools: true, UserModelDir: t.TempDir()}
+			var requests []port.LLMRequest
+			cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
+				mockllm.ToolCallTurn(session.ToolCall{ID: "parent-read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}),
+				mockllm.ToolCallTurn(session.ToolCall{ID: "delegate", Name: "Subagent", Args: json.RawMessage(`{"prompt":"inspect","fork":true}`)}),
+				mockllm.ToolCallTurn(session.ToolCall{ID: "child-read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}),
+				mockllm.TextTurn("child done"), mockllm.TextTurn("parent done"))
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			// Supply an exact server-owned placement without a custom provider, which
+			// would independently disable default mapping before the session-root gate.
+			ref := configuredLocalPlacementRef(execution.Root())
+			if !sameWorkspace {
+				ref.Revision = wtHead(t, execution.Root())
+			}
+			placement := server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, execution, memledger.New(), nil)}
+			parent, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(placement))
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := harnessRun(t, built, t.Context(), parent.ID, "inspect")
+			if len(requests) != 5 {
+				t.Fatalf("requests=%d events=%v", len(requests), events)
+			}
+			if strings.Contains(harnessRequestText(requests[0]), "NESTED-HIERARCHY") || !strings.Contains(harnessRequestText(requests[1]), "NESTED-HIERARCHY") || !strings.Contains(harnessRequestText(requests[4]), "NESTED-HIERARCHY") {
+				t.Fatal("parent did not discover and retain selected nested guidance before delegation")
+			}
+			for _, i := range []int{2, 3} {
+				text := harnessRequestText(requests[i])
+				if strings.Count(text, "ROOT-HIERARCHY") != 1 || strings.Contains(text, "NESTED-HIERARCHY") != sameWorkspace || strings.Contains(text, "scope mapping unavailable") == sameWorkspace || strings.Contains(text, "UNSELECTED-CHECKOUT-GUIDANCE") {
+					t.Fatalf("child request %d lost starting guidance or used the wrong mapping: %s", i, text)
+				}
+				if !requestHasTool(requests[i], "Read") {
+					t.Fatal("workspace child lost file tools")
+				}
+			}
+			readSucceeded := false
+			for _, message := range requests[3].Messages {
+				if result := message.ToolResult; result != nil && result.CallID == "child-read" {
+					readSucceeded = !result.IsError
+				}
+			}
+			if !readSucceeded {
+				t.Fatal("workspace child could not read its execution file")
+			}
+		})
+	}
+}
+
 func osfsWorkspaceForHierarchy(t *testing.T) *osfs.Workspace {
 	t.Helper()
 	root := t.TempDir()
@@ -312,6 +500,310 @@ func TestHierarchyUnmappedChildWarningRealRun(t *testing.T) {
 	if warnings != 1 || !strings.Contains(fmt.Sprint(request.Messages), "scope mapping unavailable") || !strings.Contains(fmt.Sprint(request.Messages), "root guidance") {
 		t.Fatalf("warnings=%d model request=%v", warnings, request.Messages)
 	}
+}
+
+func TestHierarchyUnmappedPartialRoot(t *testing.T) {
+	ws := &policyFaultWorkspace{Workspace: memfs.NewWorkspace("/selected")}
+	harnessSeed(t, ws.Workspace, "AGENTS.md", "ADMITTED-ROOT")
+	state := session.InstructionSnapshot{
+		Directories: []string{"nested"},
+		Scopes:      []session.InstructionScope{{SourceID: "source", Directory: "bad/nested", File: "bad/nested/AGENTS.md", Text: "NESTED-POISON", Examined: true}},
+	}
+	a := childUnmappedInstructions{source: fixedInstructionAssembler{
+		inner:      prompt.RootAssembler{Source: ws, SourceID: "source", SourcePrefix: "bad"},
+		provenance: HarnessProvenancePolicy{Fixed: "project"}, projectAdmitted: true,
+	}}
+	messages, rows, err := a.Assemble(t.Context(), []string{"nested"}, &state, 65536)
+	text := fmt.Sprint(messages)
+	if !errors.Is(err, os.ErrPermission) || len(messages) != len(rows) || !strings.Contains(text, "ADMITTED-ROOT") || !strings.Contains(text, "scope mapping unavailable") || strings.Contains(text, "NESTED-POISON") || strings.Contains(text, "permission denied") {
+		t.Fatalf("partial unmapped result: %v rows=%v err=%v", messages, rows, err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/selected", Revision: "test"}
+	sess := session.New("partial-unmapped", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	var request port.LLMRequest
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { request = r })}, mockllm.TextTurn("done"))
+	engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Instructions: a})
+	unmapped := false
+	for ev := range engine.Run(t.Context(), sess, tool.MustEnvironment(ref, ws, memledger.New(), nil), agent.RunRequest{Text: "go"}).Events() {
+		if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Decision == session.HookAdvisory && strings.Contains(ev.Text, "scope mapping unavailable") {
+			unmapped = true
+		}
+	}
+	if !unmapped || !strings.Contains(harnessRequestText(request), "ADMITTED-ROOT") || !strings.Contains(harnessRequestText(request), "scope mapping unavailable") {
+		t.Fatalf("warning=%v request=%v", unmapped, request.Messages)
+	}
+}
+
+type failingRefreshInstructions struct{ calls int }
+
+func (*failingRefreshInstructions) TargetScoped() bool { return true }
+
+func (a *failingRefreshInstructions) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	a.calls++
+	if a.calls > 1 {
+		return nil, nil, errors.New("PRIVATE-SOURCE-FAILURE")
+	}
+	return []session.Message{session.NewUserMessage("ADMITTED-CUSTOM-GUIDANCE")}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject, HasGuidance: true}}, nil
+}
+
+func TestHierarchyConfiguredNilRefreshRetainsGuidance(t *testing.T) {
+	for _, mode := range []string{harnessModeCombine, harnessModeReplace} {
+		t.Run(mode, func(t *testing.T) {
+			kinds := harnessEmptyKinds()
+			kinds.Instructions = permconfig.HarnessContextKind{Sources: []string{"custom", "lower"}, Mode: mode}
+			cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"custom", "lower"}, Kinds: kinds})
+			cfg.AllowAllTools, cfg.NoSoul, cfg.NoShell = true, true, true
+			source := &failingRefreshInstructions{}
+			lower := &policyCountWorkspace{Workspace: memfs.NewWorkspace("/lower")}
+			harnessSeed(t, lower.Workspace, "AGENTS.md", "LOWER-GUIDANCE")
+			cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{
+				{ID: "custom", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+					return source, nil, nil
+				}},
+				{ID: "lower", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+					return prompt.RootAssembler{Source: lower, SourceID: "lower", SourcePrefix: "."}, nil, nil
+				}},
+			}
+			var turns []mockllm.Turn
+			for _, dir := range []string{"one", "two", "three"} {
+				if err := os.MkdirAll(filepath.Join(cfg.Workspace, dir), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(cfg.Workspace, dir, "file.txt"), []byte("draft"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				turns = append(turns, mockllm.ToolCallTurn(session.ToolCall{ID: session.ToolCallID(dir), Name: "Read", Args: json.RawMessage(fmt.Sprintf(`{"path":%q}`, dir+"/file.txt"))}))
+			}
+			turns = append(turns, mockllm.TextTurn("done"), mockllm.TextTurn("next run done"))
+			var requests []port.LLMRequest
+			var lowerReads []int
+			cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
+				requests = append(requests, r)
+				lowerReads = append(lowerReads, lower.reads)
+			})}, turns...)
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			id := harnessCreate(t, built, t.Context())
+			events := harnessRun(t, built, t.Context(), id, "inspect")
+			if len(requests) != 4 || source.calls != 4 {
+				t.Fatalf("requests=%d assemblies=%d events=%v", len(requests), source.calls, events)
+			}
+			for i, request := range requests {
+				text := harnessRequestText(request)
+				if strings.Count(text, "ADMITTED-CUSTOM-GUIDANCE") != 1 || strings.Contains(text, "PRIVATE-SOURCE-FAILURE") {
+					t.Fatalf("request %d lost/duplicated guidance or leaked error: %s", i, text)
+				}
+				wantWarnings := 0
+				if i > 0 {
+					wantWarnings = 1
+				}
+				if strings.Count(text, "additional guidance unavailable") != wantWarnings {
+					t.Fatalf("request %d warning count differs from %d: %s", i, wantWarnings, text)
+				}
+				if lowerReads[i] != lowerReads[0] || strings.Contains(text, "LOWER-GUIDANCE") != (mode == harnessModeCombine) {
+					t.Fatalf("request %d reread lower source or changed admitted guidance: %s", i, text)
+				}
+			}
+			if mode == harnessModeReplace && lower.reads != 0 {
+				t.Fatal("replacement failure consulted lower source")
+			}
+			warned := false
+			for _, ev := range events {
+				if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Phase == "ProjectInstructions" {
+					warned = warned || strings.Contains(ev.Text, "unavailable")
+					if strings.Contains(ev.Text, "PRIVATE-SOURCE-FAILURE") {
+						t.Fatalf("unsafe client warning: %+v", ev)
+					}
+				}
+			}
+			if !warned {
+				t.Fatal("refresh failure did not warn the client")
+			}
+			harnessRun(t, built, t.Context(), id, "another task")
+			if len(requests) != 5 || source.calls != 5 {
+				t.Fatalf("next run: requests=%d assemblies=%d", len(requests), source.calls)
+			}
+			if strings.Contains(harnessRequestText(requests[4]), "ADMITTED-CUSTOM-GUIDANCE") {
+				t.Fatal("failed source inherited another run's contributor cache")
+			}
+		})
+	}
+}
+
+func TestHierarchyConfiguredFactoryPartialRefresh(t *testing.T) {
+	for _, mode := range []string{harnessModeCombine, harnessModeReplace} {
+		for _, faultFirst := range []bool{true, false} {
+			if mode == harnessModeReplace && !faultFirst {
+				continue // A successful higher replacement never consults the lower source.
+			}
+			t.Run(fmt.Sprintf("%s/faultFirst=%v", mode, faultFirst), func(t *testing.T) {
+				fault := &policyFaultWorkspace{Workspace: memfs.NewWorkspace("/selected-fault")}
+				other := &policyCountWorkspace{Workspace: memfs.NewWorkspace("/selected-other")}
+				for _, item := range []struct {
+					ws         *memfs.Workspace
+					name, body string
+				}{
+					{fault.Workspace, "AGENTS.md", "FAULT-ROOT"},
+					{fault.Workspace, "prior/AGENTS.md", "FAULT-PRIOR"},
+					{fault.Workspace, "good/AGENTS.md", "FAULT-GOOD"},
+					{other.Workspace, "AGENTS.md", "OTHER-ROOT"},
+					{other.Workspace, "prior/AGENTS.md", "OTHER-PRIOR"},
+					{other.Workspace, "good/AGENTS.md", "OTHER-GOOD"},
+				} {
+					harnessSeed(t, item.ws, item.name, item.body)
+				}
+				ids := []string{"fault", "other"}
+				if !faultFirst {
+					ids = []string{"other", "fault"}
+				}
+				kinds := harnessEmptyKinds()
+				kinds.Instructions = permconfig.HarnessContextKind{Sources: ids, Mode: mode}
+				cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: ids, Kinds: kinds})
+				cfg.AllowAllTools, cfg.NoSoul, cfg.NoShell = true, true, true
+				cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{
+					{ID: "fault", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+						return prompt.NewMultiAssembler(prompt.RootAssembler{Source: fault, SourceID: "fault", SourcePrefix: "."}, hcAssembler("FAULT-GLOBAL")), nil, nil
+					}},
+					{ID: "other", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+						return prompt.RootAssembler{Source: other, SourceID: "other", SourcePrefix: "."}, nil, nil
+					}},
+				}
+				for _, dir := range []string{"prior", "good", "bad"} {
+					if err := os.MkdirAll(filepath.Join(cfg.Workspace, dir), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(cfg.Workspace, dir, "file.txt"), []byte("draft"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(filepath.Join(cfg.Workspace, "AGENTS.md"), []byte("UNAUTHORIZED-EXECUTION"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				var requests []port.LLMRequest
+				var otherReads []int
+				cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
+					requests = append(requests, r)
+					otherReads = append(otherReads, other.reads)
+					if len(requests) == 2 {
+						harnessSeed(t, fault.Workspace, "AGENTS.md", "CHANGED-ROOT")
+						harnessSeed(t, fault.Workspace, "prior/AGENTS.md", "CHANGED-PRIOR")
+					}
+				})},
+					mockllm.ToolCallTurn(session.ToolCall{ID: "prior", Name: "Read", Args: json.RawMessage(`{"path":"prior/file.txt"}`)}),
+					mockllm.ToolCallTurn(
+						session.ToolCall{ID: "good", Name: "Read", Args: json.RawMessage(`{"path":"good/file.txt"}`)},
+						session.ToolCall{ID: "bad", Name: "Read", Args: json.RawMessage(`{"path":"bad/file.txt"}`)}),
+					mockllm.ToolCallTurn(session.ToolCall{ID: "again", Name: "Read", Args: json.RawMessage(`{"path":"bad/file.txt"}`)}),
+					mockllm.TextTurn("done"))
+				built, err := buildIsolated(t, t.Context(), cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer built.Close()
+				events := harnessRun(t, built, t.Context(), harnessCreate(t, built, t.Context()), "inspect")
+				if len(requests) != 4 {
+					t.Fatalf("requests=%d events=%v", len(requests), events)
+				}
+				for i, r := range requests {
+					text := harnessRequestText(r)
+					for _, marker := range []string{"FAULT-ROOT", "FAULT-GLOBAL"} {
+						if !strings.Contains(text, marker) {
+							t.Fatalf("request %d lost %s: %s", i, marker, text)
+						}
+					}
+					if i > 0 && !strings.Contains(text, "FAULT-PRIOR") || i > 1 && (!strings.Contains(text, "FAULT-GOOD") || !strings.Contains(text, "guidance unavailable")) {
+						t.Fatalf("request %d lost successful scopes or warning: %s", i, text)
+					}
+					if strings.Contains(text, "UNAUTHORIZED") || strings.Contains(text, "CHANGED-") || strings.Contains(text, "permission denied") || strings.Contains(text, "/selected-fault") {
+						t.Fatalf("request %d leaked fallback, reread, or raw error: %s", i, text)
+					}
+					if mode == harnessModeReplace && strings.Contains(text, "OTHER-") {
+						t.Fatalf("replacement consulted lower source: %s", text)
+					}
+					if mode == harnessModeCombine && (!strings.Contains(text, "OTHER-ROOT") || i > 0 && !strings.Contains(text, "OTHER-PRIOR")) {
+						t.Fatalf("request %d lost already admitted lower guidance: %s", i, text)
+					}
+				}
+				if fault.faultReads != 1 || fault.fallbackReads != 0 || faultFirst && otherReads[2] != otherReads[1] || mode == harnessModeReplace && other.reads != 0 {
+					t.Fatalf("fault reads=%d fallback=%d other reads=%v", fault.faultReads, fault.fallbackReads, otherReads)
+				}
+				if strings.Contains(harnessRequestText(requests[2]), "OTHER-GOOD") != (!faultFirst && mode == harnessModeCombine) {
+					t.Fatalf("refresh did not respect configured source order: %v", requests[2].Messages)
+				}
+				warned := false
+				for _, ev := range events {
+					if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Phase == "ProjectInstructions" {
+						warned = warned || strings.Contains(ev.Text, "unavailable")
+						if strings.Contains(ev.Text, "permission denied") || strings.Contains(ev.Text, "/selected-fault") {
+							t.Fatalf("unsafe client warning: %+v", ev)
+						}
+					}
+				}
+				if !warned {
+					t.Fatal("partial refresh did not warn the client")
+				}
+			})
+		}
+	}
+}
+
+func TestHierarchyReplacementFaultKeepsPartialSourceWithoutLowerFallback(t *testing.T) {
+	high := &policyFaultWorkspace{Workspace: memfs.NewWorkspace("/high")}
+	low := &policyCountWorkspace{Workspace: memfs.NewWorkspace("/low")}
+	for _, fixture := range []struct {
+		ws         *memfs.Workspace
+		name, body string
+	}{
+		{high.Workspace, "AGENTS.md", "ROOT-HIGH"},
+		{high.Workspace, "good/AGENTS.md", "GOOD-HIGH"},
+		{low.Workspace, "AGENTS.md", "LOW-POISON"},
+	} {
+		if err := fixture.ws.Write(t.Context(), fixture.name, []byte(fixture.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := policyInstructionAssembler{mode: harnessModeReplace, sources: []prompt.InstructionAssembler{
+		prompt.RootAssembler{Source: high, SourceID: "high", SourcePrefix: "."},
+		prompt.RootAssembler{Source: low, SourceID: "low", SourcePrefix: "."},
+	}}
+	state := &session.InstructionSnapshot{}
+	messages, rows, err := policy.Assemble(t.Context(), []string{"good", "bad"}, state, 65536)
+	if !errors.Is(err, os.ErrPermission) || len(messages) != len(rows) || len(rows) != 3 || !rows[0].HasGuidance || !rows[1].HasGuidance || rows[2].HasGuidance || !strings.Contains(fmt.Sprint(messages), "GOOD-HIGH") || strings.Contains(fmt.Sprint(messages), "LOW-POISON") || low.reads != 0 || high.fallbackReads != 0 {
+		t.Fatalf("replacement fault: messages=%v rows=%v low reads=%d fallback reads=%d err=%v", messages, rows, low.reads, high.fallbackReads, err)
+	}
+	_, _, err = policy.Assemble(t.Context(), []string{"good", "bad"}, state, 65536)
+	if err != nil || high.faultReads != 1 || low.reads != 0 {
+		t.Fatalf("cached fault caused retry or lower fallback: faults=%d lower=%d err=%v", high.faultReads, low.reads, err)
+	}
+}
+
+type policyFaultWorkspace struct {
+	*memfs.Workspace
+	faultReads, fallbackReads int
+}
+
+func (w *policyFaultWorkspace) Read(ctx context.Context, name string) ([]byte, error) {
+	if name == "bad/AGENTS.md" {
+		w.faultReads++
+		return nil, os.ErrPermission
+	}
+	if name == "bad/CLAUDE.md" {
+		w.fallbackReads++
+	}
+	return w.Workspace.Read(ctx, name)
+}
+
+type policyCountWorkspace struct {
+	*memfs.Workspace
+	reads int
+}
+
+func (w *policyCountWorkspace) Read(ctx context.Context, name string) ([]byte, error) {
+	w.reads++
+	return w.Workspace.Read(ctx, name)
 }
 
 func TestHierarchyIncompleteReplacementDisclosesSuppressedSource(t *testing.T) {

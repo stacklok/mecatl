@@ -47,6 +47,51 @@ func checkHarnessCommandAgreement(ctx context.Context, binding server.CommandSou
 	return nil
 }
 
+type partialHarnessInstructions struct {
+	messages []session.Message
+	rows     []prompt.InstructionManifest
+}
+
+func (partialHarnessInstructions) TargetScoped() bool { return true }
+func (p partialHarnessInstructions) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	return p.messages, p.rows, fs.ErrPermission
+}
+
+func TestFixedInstructionPartialOutputsStillRequireAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, tier                                         string
+		policy                                             HarnessProvenancePolicy
+		admitted, mismatch, wantMessage, wantOriginalError bool
+	}{
+		{name: "admitted project", tier: "project", policy: HarnessProvenancePolicy{Fixed: "project"}, admitted: true, wantMessage: true, wantOriginalError: true},
+		{name: "untrusted project", tier: "project", policy: HarnessProvenancePolicy{Fixed: "project"}, wantOriginalError: true},
+		{name: "fixed project remains untrusted", tier: "custom", policy: HarnessProvenancePolicy{Fixed: "project"}, wantOriginalError: true},
+		{name: "project cannot become driver", tier: "project", policy: HarnessProvenancePolicy{Fixed: "driver"}, admitted: true},
+		{name: "preserve denies unknown tier", tier: "custom", policy: HarnessProvenancePolicy{PreserveAllowed: []string{"project"}}, admitted: true},
+		{name: "preserve admits project", tier: "project", policy: HarnessProvenancePolicy{PreserveAllowed: []string{"project"}}, admitted: true, wantMessage: true, wantOriginalError: true},
+		{name: "independent driver", tier: "custom", policy: HarnessProvenancePolicy{Fixed: "driver"}, wantMessage: true, wantOriginalError: true},
+		{name: "mismatched manifest", tier: "project", policy: HarnessProvenancePolicy{Fixed: "project"}, admitted: true, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := partialHarnessInstructions{
+				messages: []session.Message{session.NewUserMessage("PARTIAL-GUIDANCE")},
+				rows:     []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: tc.tier, HasGuidance: true}},
+			}
+			if tc.mismatch {
+				inner.rows = nil
+			}
+			a := fixedInstructionAssembler{inner: inner, provenance: tc.policy, projectAdmitted: tc.admitted}
+			messages, rows, err := a.Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
+			if err == nil || errors.Is(err, fs.ErrPermission) != tc.wantOriginalError || len(messages) != len(rows) || (len(messages) == 1) != tc.wantMessage {
+				t.Fatalf("partial admission: messages=%v rows=%v err=%v", messages, rows, err)
+			}
+			if tc.wantMessage && (messages[0].Text != "PARTIAL-GUIDANCE" || tc.policy.Fixed != "" && rows[0].Provenance != tc.policy.Fixed) {
+				t.Fatalf("partial contribution changed: %v %v", messages, rows)
+			}
+		})
+	}
+}
+
 type inconsistentHarnessCommands struct {
 	server.CommandSourceBinding
 	listed []prompt.Command
@@ -196,7 +241,7 @@ func TestADR_0359_HarnessContext_Scenario4_ConfiguredChainFailureSemantics(t *te
 					found = found || strings.Contains(message.Text, "NEXT-ADMITTED-SOURCE")
 				}
 				if found != soft {
-					t.Fatalf("configured next source visible=%v want %v", found, soft)
+					t.Fatalf("next source loaded=%v; only a soft failure may continue the configured chain", found)
 				}
 				wantReads := int32(0)
 				if soft {

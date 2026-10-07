@@ -977,6 +977,9 @@ type Config struct {
 	HarnessSkillSources       []HarnessSourceRegistration[tool.SkillSource]
 	HarnessAgentDefSources    []HarnessSourceRegistration[tool.AgentDefSource]
 	harnessInstructions       prompt.InstructionAssembler
+	// defaultInstructionMapping is established only by the admitted startup source;
+	// per-session placement may subsequently revoke it.
+	defaultInstructionMapping bool
 	harnessRules              prompt.RulesSource
 	harnessSkills             tool.SkillSource
 	harnessAgentDefs          tool.AgentDefSource
@@ -3302,6 +3305,10 @@ func remoteSessionConfiguration(cfg Config, profile server.SessionProfile, works
 	return "", true, instructions, policy
 }
 
+func defaultInstructionMappingForSession(cfg Config, profile server.SessionProfile, workspace string, remote bool) bool {
+	return cfg.defaultInstructionMapping && !remote && workspace == cfg.Workspace && profile != server.ProfileNoFS
+}
+
 func sessionEngineFactoryWithTools(
 	cfg Config,
 	reg *providerRegistry,
@@ -3330,6 +3337,7 @@ func sessionEngineFactoryWithTools(
 		// build-time pin over cfg.Workspace (the server's own root — the one
 		// the shared engine was assembled for).
 		projectWorkspace, remote, sessionInstructions, sessionPolicy := remoteSessionConfiguration(cfg, profile, workspace, instructions, policy)
+		cfg.defaultInstructionMapping = defaultInstructionMappingForSession(cfg, profile, workspace, remote)
 		cfg.childPermResolver = childPermResolverFor(cfg, projectWorkspace)
 		// The NO-FS profile (issue #55): the service routes every no-fs session
 		// through this factory unconditionally (the shared engine has the FS tools
@@ -4322,6 +4330,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	if cfg.harnessInstructions == nil && cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
 		instructionSource, _ := osfs.NewWorkspace(cfg.Workspace)
 		cfg.harnessInstructions = prompt.RootAssembler{Source: instructionSource, SourceID: harnessLocalSource, SourcePrefix: "."}
+		cfg.defaultInstructionMapping = instructionSource != nil && cfg.PlacementProvider == nil && !cfg.RemoteExecution && cfg.EnvironmentForkers[session.EnvKindLocal] == nil
 	}
 
 	// agentReg (threaded from Build's single resolveAgentSeam) is shared with
@@ -7044,9 +7053,9 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 				} else {
 					instructions = childUnmappedInstructions{source: childGenerationInstructions{generationInstructions: generation}}
 				}
-			} else {
-				// Non-generation sources carry no trusted parent-to-fork layout.
-				// Do not reinterpret child-relative paths inside the selected source.
+			} else if !cfg.defaultInstructionMapping {
+				// Only the admitted startup source at this session's exact root has
+				// a verified child-relative layout outside a generation binding.
 				instructions = childUnmappedInstructions{source: instructions}
 			}
 			deps.Instructions = prompt.NewMultiAssembler(instructions, prompt.RulesAssembler{Src: cfg.harnessRules})

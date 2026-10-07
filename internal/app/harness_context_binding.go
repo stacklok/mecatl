@@ -201,12 +201,7 @@ func (r *harnessCommandResolver) bindSessionSources(ctx context.Context, scope H
 func replaceHarnessInstructions(base prompt.InstructionAssembler, cfg Config) prompt.InstructionAssembler {
 	if generation, ok := cfg.harnessInstructions.(generationInstructions); ok {
 		var sources []prompt.InstructionAssembler
-		switch source := generation.source.(type) {
-		case policyInstructionAssembler:
-			if source.mode == harnessModeCombine {
-				sources = source.sources
-			}
-		case prompt.MultiAssembler:
+		if source, ok := generation.source.(prompt.MultiAssembler); ok {
 			sources = source.Assemblers
 		}
 		if sources != nil {

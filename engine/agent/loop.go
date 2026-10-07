@@ -443,7 +443,7 @@ func (e *Engine) now() time.Time {
 // NewEngine constructs an Engine from deps, applying defaults for the optional
 // Compactor and CompactionRatio.
 func NewEngine(deps Deps) *Engine {
-	if deps.ProjectInstructionMaxBytes == 0 {
+	if deps.ProjectInstructionMaxBytes <= 0 {
 		deps.ProjectInstructionMaxBytes = 65536
 	}
 	if deps.TokenCounter == nil {
@@ -3151,25 +3151,21 @@ func (e *Engine) refreshTargetedInstructions(ctx context.Context, r *Run, sess *
 	scopes.reserved = 0
 	scopes.mu.Unlock()
 	sess.ReplaceInstructionSnapshot(snapshot)
-	if err != nil {
-		e.replaceInstructionRefreshWarning(ctx, r, prior, snapshot)
-		return
-	}
 	r.fragments, r.fragmentManifest = discovered, manifest
 	limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+	if err != nil {
+		e.replaceInstructionRefreshWarning(ctx, r, prior, snapshot, limited)
+		return
+	}
 	e.warnInstructionAssembly(r, prior, snapshot, false, limited)
 }
 
-func (e *Engine) replaceInstructionRefreshWarning(ctx context.Context, r *Run, prior, snapshot session.InstructionSnapshot) {
-	r.diag.Log(ctx, port.LevelWarn, "scoped instruction assembly failed; continuing with prior guidance")
+func (e *Engine) replaceInstructionRefreshWarning(ctx context.Context, r *Run, prior, snapshot session.InstructionSnapshot, limited bool) {
+	r.diag.Log(ctx, port.LevelWarn, "scoped instruction assembly failed; continuing with available guidance")
 	const warning = "Project instructions: additional guidance unavailable; continuing with previously loaded context."
-	if n := len(r.fragments); n > 0 && r.fragments[n-1].Text == warning {
-		r.fragments = r.fragments[:n-1]
-		r.fragmentManifest = r.fragmentManifest[:n-1]
-	}
 	r.fragments = append(r.fragments, session.NewUserMessage(warning))
 	r.fragmentManifest = append(r.fragmentManifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
-	e.warnInstructionAssembly(r, prior, snapshot, true, false)
+	e.warnInstructionAssembly(r, prior, snapshot, true, limited)
 }
 
 func boundProjectFragments(ctx context.Context, r *Run, limit int) bool {

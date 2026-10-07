@@ -42,6 +42,98 @@ func TestHierarchyErrorRetainsEarlierContributor(t *testing.T) {
 	}
 }
 
+func TestHierarchyConfiguredInstructionLimits(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+	body := strings.Repeat("x", 70000)
+	if err := ws.Write(t.Context(), "AGENTS.md", []byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		limit     int
+		truncated bool
+	}{
+		{"negative uses default", -1, true},
+		{"higher cap honored", 90000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var request port.LLMRequest
+			llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { request = req })}, mockllm.TextTurn("done"))
+			engine := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Instructions: prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}, ProjectInstructionMaxBytes: tc.limit})
+			events := drain(engine.Run(t.Context(), newSession(t, session.Limits{}), agent.EnvForWS(ws, nil), agent.RunRequest{Text: "test"}))
+			if lastResult(t, events).Stop != session.StopEndTurn || len(request.Messages) == 0 || requestHasHierarchyText(request, "[TRUNCATED:") != tc.truncated {
+				t.Fatalf("instruction limit %d: events=%v", tc.limit, typesOf(events))
+			}
+			if !tc.truncated {
+				_, actual, ok := strings.Cut(request.Messages[0].Text, "\n\n")
+				if !ok || len(actual) != len(body) {
+					t.Fatalf("higher limit lost guidance: bytes=%d", len(actual))
+				}
+			}
+		})
+	}
+}
+
+func TestHierarchySameDiscoveryKeepsGoodScopesOnLaterFault(t *testing.T) {
+	ws := &batchFaultHierarchyWorkspace{Workspace: memfs.NewWorkspace("/ws")}
+	for name, body := range map[string]string{
+		"AGENTS.md": "ROOT-GUIDANCE", "good/AGENTS.md": "GOOD-GUIDANCE",
+		"good/file.txt": "good file", "bad/file.txt": "bad file", "bad/CLAUDE.md": "POISON-FALLBACK",
+	} {
+		if err := ws.Write(t.Context(), name, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	global := projectInstructionFixture{text: "GLOBAL-GUIDANCE", provenance: prompt.InstructionProvenanceSoul}
+	var requests []port.LLMRequest
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })},
+		mockllm.ChunksTurn(mockllm.ToolCallChunk(toolCall("g", "Read", `{"path":"good/file.txt"}`)), mockllm.ToolCallChunk(toolCall("b", "Read", `{"path":"bad/file.txt"}`)), mockllm.DoneChunk(session.StopEndTurn)),
+		mockllm.ToolCallTurn(toolCall("b2", "Read", `{"path":"bad/file.txt"}`)), mockllm.TextTurn("done"))
+	engine := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, fstools.ReadTool{}), Instructions: prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws, SourceID: "selected@1", SourcePrefix: "."}, global)})
+	sess := newSession(t, session.Limits{})
+	events := drain(engine.Run(t.Context(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "read both"}))
+	if lastResult(t, events).Stop != session.StopEndTurn || len(requests) != 3 {
+		t.Fatalf("events=%v requests=%d", typesOf(events), len(requests))
+	}
+	for _, text := range []string{"ROOT-GUIDANCE", "GOOD-GUIDANCE", "GLOBAL-GUIDANCE", "selected guidance unavailable", "additional guidance unavailable"} {
+		if !requestHasHierarchyText(requests[1], text) || !requestHasHierarchyText(requests[2], text) {
+			t.Fatalf("lost %q on next request", text)
+		}
+	}
+	if requestHasHierarchyText(requests[0], "GOOD-GUIDANCE") || requestHasHierarchyText(requests[1], "POISON-FALLBACK") || ws.badReads != 1 || ws.fallbackReads != 0 {
+		t.Fatalf("premature/lower source guidance or retry: fault reads=%d fallback=%d", ws.badReads, ws.fallbackReads)
+	}
+	warnings := 0
+	for _, ev := range events {
+		if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Phase == "ProjectInstructions" {
+			if ev.Text != "Project instructions: selected guidance unavailable; ordinary tools remain available." || ev.Hook.Decision != session.HookAdvisory {
+				t.Fatalf("unsafe warning: %+v", ev)
+			}
+			warnings++
+		}
+	}
+	if warnings != 1 || toolResultError(events, "g") || toolResultError(events, "b") || toolResultError(events, "b2") {
+		t.Fatalf("warnings=%d tool result lost", warnings)
+	}
+	assertNoOrphanedToolCalls(t, sess.Conversation.Messages)
+}
+
+type batchFaultHierarchyWorkspace struct {
+	*memfs.Workspace
+	badReads, fallbackReads int
+}
+
+func (w *batchFaultHierarchyWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
+	if path == "bad/AGENTS.md" {
+		w.badReads++
+		return nil, fs.ErrPermission
+	}
+	if path == "bad/CLAUDE.md" {
+		w.fallbackReads++
+	}
+	return w.Workspace.Read(ctx, path)
+}
+
 func TestHierarchyWarningsReachParentAndRemainOutOfModelHistory(t *testing.T) {
 	ws := memfs.NewWorkspace("/ws")
 	if err := ws.Write(t.Context(), "AGENTS.md", []byte(strings.Repeat("a", 100))); err != nil {
@@ -69,6 +161,50 @@ func TestHierarchyWarningsReachParentAndRemainOutOfModelHistory(t *testing.T) {
 	}
 	if warnings != 1 || requestHasHierarchyText(parentRequests[1], "scope guidance truncated") || strings.Contains(fmt.Sprint(sess.Conversation.Messages), "scope guidance truncated") {
 		t.Fatalf("warnings=%d parent request=%v history=%v", warnings, parentRequests[1].Messages, sess.Conversation.Messages)
+	}
+}
+
+func TestHierarchyFreshChildDiscoveryAndBudgetAreIndependent(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+	for name, body := range map[string]string{
+		"AGENTS.md":         "ROOT",
+		"large/AGENTS.md":   "CHILD-LARGE-" + strings.Repeat("x", 512),
+		"sibling/AGENTS.md": "SIBLING-NEW",
+		"parent/AGENTS.md":  "PARENT-NEW",
+		"large/file.txt":    "draft", "sibling/file.txt": "draft", "parent/file.txt": "draft",
+	} {
+		if err := ws.Write(t.Context(), name, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var childRequests, parentRequests []port.LLMRequest
+	childLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { childRequests = append(childRequests, r) })},
+		mockllm.ToolCallTurn(toolCall("large", "Read", `{"path":"large/file.txt"}`)), mockllm.TextTurn("first done"),
+		mockllm.ToolCallTurn(toolCall("sibling", "Read", `{"path":"sibling/file.txt"}`)), mockllm.TextTurn("second done"))
+	instructions := prompt.RootAssembler{Source: ws, SourceID: "source", SourcePrefix: "."}
+	child := newEngine(agent.Deps{LLM: childLLM, Catalog: catalogWith(t, fstools.ReadTool{}), Instructions: instructions, ProjectInstructionMaxBytes: 128})
+	parentLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { parentRequests = append(parentRequests, r) })},
+		mockllm.ToolCallTurn(toolCall("first", "Subagent", `{"prompt":"inspect large"}`)),
+		mockllm.ToolCallTurn(toolCall("second", "Subagent", `{"prompt":"inspect sibling"}`)),
+		mockllm.ToolCallTurn(toolCall("parent", "Read", `{"path":"parent/file.txt"}`)), mockllm.TextTurn("parent done"))
+	parent := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, agent.NewSubagentTool(child), fstools.ReadTool{}), Instructions: instructions, ProjectInstructionMaxBytes: 128})
+	sess := newSession(t, session.Limits{})
+	events := drain(parent.Run(t.Context(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "delegate"}))
+	if lastResult(t, events).Stop != session.StopEndTurn || len(childRequests) != 4 || len(parentRequests) != 4 {
+		t.Fatalf("child requests=%d parent requests=%d events=%v", len(childRequests), len(parentRequests), typesOf(events))
+	}
+	if !requestHasHierarchyText(childRequests[1], "CHILD-LARGE-") || !requestHasHierarchyText(childRequests[1], "TRUNCATED") || !requestHasHierarchyText(childRequests[3], "SIBLING-NEW") || !requestHasHierarchyText(parentRequests[3], "PARENT-NEW") {
+		t.Fatalf("independent budget controls: child=%v parent=%v", childRequests, parentRequests)
+	}
+	for _, r := range append(parentRequests, childRequests[2:]...) {
+		if requestHasHierarchyText(r, "CHILD-LARGE-") || requestHasHierarchyText(r, "TRUNCATED") || requestHasHierarchyText(r, "budget exhausted") {
+			t.Fatalf("child discovery or budget leaked: %v", r.Messages)
+		}
+	}
+	for _, scope := range sess.InstructionSnapshot().Scopes {
+		if scope.Directory != "." && scope.Directory != "parent" {
+			t.Fatalf("child scope entered parent snapshot: %+v", scope)
+		}
 	}
 }
 

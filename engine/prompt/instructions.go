@@ -73,10 +73,10 @@ func (a RootAssembler) Assemble(ctx context.Context, directories []string, state
 		directories = []string{"."}
 	}
 	contentSkipped, err := a.discoverScopes(ctx, directories, state, maxContentBytes)
-	if err != nil {
-		return nil, nil, err
-	}
 	messages, rows := a.renderScopes(state)
+	if err != nil {
+		return messages, rows, err
+	}
 	if contentSkipped {
 		// Notices are request-local; never retain rejected paths in the snapshot.
 		notice := "Project instructions: further scopes omitted (content budget exhausted)."
@@ -123,30 +123,36 @@ func (a RootAssembler) discoverScopes(ctx context.Context, directories []string,
 		if state.DiscoveryExhausted {
 			break
 		}
-		for _, dir := range instructionChain(path.Join(a.SourcePrefix, target)) {
-			if knownScopes[dir] {
-				continue
-			}
-			if usedContent >= maxContentBytes {
-				contentSkipped = true
-				break
-			}
-			reserve := len(a.SourceID) + len(dir) + len("CLAUDE.md") + 1
-			if reserve > maxContentBytes-state.MetadataBytes() {
-				state.DiscoveryExhausted = true
-				break
-			}
+		chainTarget := path.Join(a.SourcePrefix, target)
+		dir, rest := ".", chainTarget
+		for {
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
-			scope, err := a.readScope(ctx, dir, maxContentBytes-usedContent)
-			if err != nil {
+			if !knownScopes[dir] {
+				if usedContent >= maxContentBytes {
+					contentSkipped = true
+					break
+				}
+				reserve := len(a.SourceID) + len(dir) + len(path.Join(dir, "CLAUDE.md")) + 1
+				if reserve > maxContentBytes-state.MetadataBytes() {
+					state.DiscoveryExhausted = true
+					break
+				}
+				scope, err := a.readScope(ctx, dir, maxContentBytes-usedContent)
 				state.Scopes = append(state.Scopes, scope)
-				return false, err
+				if err != nil {
+					return false, err
+				}
+				usedContent += len(scope.Text)
+				knownScopes[dir] = true
 			}
-			usedContent += len(scope.Text)
-			state.Scopes = append(state.Scopes, scope)
-			knownScopes[dir] = true
+			if rest == "." || rest == "" {
+				break
+			}
+			part, remaining, _ := strings.Cut(rest, "/")
+			dir = path.Join(dir, part)
+			rest = remaining
 		}
 		if state.DiscoveryExhausted {
 			break
@@ -232,17 +238,6 @@ func validInstructionDirectory(dir string) bool {
 	return dir != "" && dir != ".." && !strings.HasPrefix(dir, "../") && !strings.HasPrefix(dir, "/") && !strings.Contains(dir, "\\") && path.Clean(dir) == dir
 }
 
-func instructionChain(target string) []string {
-	chain := []string{"."}
-	if target == "." {
-		return chain
-	}
-	for _, part := range strings.Split(target, "/") {
-		chain = append(chain, path.Join(chain[len(chain)-1], part))
-	}
-	return chain
-}
-
 func manifestFor(messages []session.Message, provenance string) []InstructionManifest {
 	rows := make([]InstructionManifest, len(messages))
 	for i := range rows {
@@ -279,13 +274,14 @@ func (m MultiAssembler) Assemble(ctx context.Context, directories []string, stat
 	}
 	var messages []session.Message
 	var rows []InstructionManifest
+	var firstErr error
 	for _, a := range m.Assemblers {
 		child, manifest, err := AssembleWithManifest(ctx, a, directories, state, maxContentBytes)
-		if err != nil {
-			return messages, rows, err
-		}
 		messages = append(messages, child...)
 		rows = append(rows, manifest...)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	if state != nil {
 		remaining := maxContentBytes - state.MetadataBytes()
@@ -318,5 +314,5 @@ func (m MultiAssembler) Assemble(ctx context.Context, directories []string, stat
 		}
 		messages, rows = append(kept, notices...), append(keptRows, noticeRows...)
 	}
-	return messages, rows, nil
+	return messages, rows, firstErr
 }

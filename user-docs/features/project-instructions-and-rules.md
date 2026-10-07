@@ -61,13 +61,21 @@ same content budget. In `replace` mode the first nonempty source wins as a whole
 a higher-priority source with guidance in one sibling can suppress a lower-priority
 source's root guidance even when working in another sibling.
 
+If a later scope cannot be read, valid guidance loaded earlier in the same refresh
+remains available, alongside a content-safe warning. A configured-source failure
+stops that refresh's source chain rather than authorizing a lower-source fallback.
+In combine mode, contributions already admitted from later sources in that run
+remain available without rereading those sources.
+
 Mecatl retains automatically loaded guidance for the live session. Edits to an
 already loaded instruction file do not refresh its body during that session,
 including across messages, permission approvals, and compaction. New covered
 file operations can discover additional scopes; restart or reattachment to a
 different server process rediscovers guidance from the current admitted source.
 Automatic instruction bodies are not saved in conversation or tool results;
-explicitly reading a file still produces an ordinary saved tool result.
+explicitly reading a file still produces an ordinary saved tool result. A
+settled, guidance-free server snapshot may be released; a later covered file
+operation can still discover a newly created instruction file.
 
 The operator setting `harness_context.project_instruction_max_bytes` limits the
 combined retained instruction content to 65,536 bytes by default. For example,
@@ -80,12 +88,18 @@ the client. Tools remain available under their normal permission policy. This
 limit applies to retained guidance, not necessarily to the memory a source
 backend uses while reading a file. See the [configuration reference](/reference/configuration.md).
 
-Fresh-context children inherit the parent's admitted instruction sources and an
-independent snapshot of its covered guidance. An isolated fork preserves the
-parent's relative execution paths when mapping further file targets. If it cannot
-map those paths, it receives the parent's starting guidance and an unavailable-
-mapping notice instead of projecting nested scopes. The child's checkout does
-not become a new instruction authority.
+Fresh-context children start with an empty instruction snapshot and read current
+guidance from the parent's admitted sources. Conversation forks copy already
+loaded guidance, covered targets, and the discovery budget independently: edits
+to loaded files do not replace that guidance on the fork's first request. An
+isolated child can discover nested scopes when the server has mapped its relative
+execution paths to the admitted source (including the default same-workspace
+source). Without that mapping it receives starting guidance and a mapping notice,
+not nested scopes inferred from its checkout. Starting guidance includes admitted
+ancestors of the starting folder in a broader selected source. No-filesystem
+children retain independently admitted starting context, but have no file-based
+nested discovery. Child discovery and budget use do not change the parent or a
+sibling's snapshot. The child's checkout does not become a new instruction authority.
 
 Treat instructions as untrusted model input. Do not put credentials, bearer
 values, or secrets in them. Do not use an instruction file as a substitute for

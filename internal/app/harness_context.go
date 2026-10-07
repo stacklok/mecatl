@@ -1268,9 +1268,6 @@ func (a fixedInstructionAssembler) TargetScoped() bool {
 
 func (a fixedInstructionAssembler) Assemble(ctx context.Context, directories []string, state *session.InstructionSnapshot, maxContentBytes int) ([]session.Message, []prompt.InstructionManifest, error) {
 	messages, manifest, err := prompt.AssembleWithManifest(ctx, a.inner, directories, state, maxContentBytes)
-	if err != nil {
-		return nil, nil, err
-	}
 	if len(messages) != len(manifest) {
 		return nil, nil, fmt.Errorf("instruction manifest count mismatch")
 	}
@@ -1294,7 +1291,7 @@ func (a fixedInstructionAssembler) Assemble(ctx context.Context, directories []s
 		out = append(out, messages[i])
 		metadata = append(metadata, row)
 	}
-	return out, metadata, nil
+	return out, metadata, err
 }
 
 type policyInstructionAssembler struct {
@@ -1321,12 +1318,12 @@ func cachePolicyGlobals(source prompt.InstructionAssembler) prompt.InstructionAs
 		return prompt.MultiAssembler{Assemblers: children}
 	}
 	if source != nil && !source.TargetScoped() {
-		return &policyGlobalContributor{source: source}
+		return &policyInstructionContributor{source: source}
 	}
 	return source
 }
 
-type policyGlobalContributor struct {
+type policyInstructionContributor struct {
 	mu       sync.Mutex
 	source   prompt.InstructionAssembler
 	messages []session.Message
@@ -1334,23 +1331,36 @@ type policyGlobalContributor struct {
 	cached   bool
 }
 
-func (*policyGlobalContributor) TargetScoped() bool { return false }
-func (c *policyGlobalContributor) Assemble(ctx context.Context, directories []string, state *session.InstructionSnapshot, limit int) ([]session.Message, []prompt.InstructionManifest, error) {
+func (c *policyInstructionContributor) TargetScoped() bool {
+	return c.source != nil && c.source.TargetScoped()
+}
+func (c *policyInstructionContributor) Assemble(ctx context.Context, directories []string, state *session.InstructionSnapshot, limit int) ([]session.Message, []prompt.InstructionManifest, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.cached {
-		messages, rows, err := c.source.Assemble(ctx, directories, state, limit)
-		if err != nil {
-			return nil, nil, err
+	if !c.cached || c.TargetScoped() {
+		messages, rows, err := prompt.AssembleWithManifest(ctx, c.source, directories, state, limit)
+		if err != nil && len(messages) == 0 && len(rows) == 0 {
+			// An empty failed refresh cannot replace this run's admitted guidance.
+			return append([]session.Message(nil), c.messages...), append([]prompt.InstructionManifest(nil), c.rows...), err
 		}
-		c.messages, c.rows, c.cached = append([]session.Message(nil), messages...), append([]prompt.InstructionManifest(nil), rows...), true
+		c.messages, c.rows = append([]session.Message(nil), messages...), append([]prompt.InstructionManifest(nil), rows...)
+		c.cached = err == nil
+		return messages, rows, err
 	}
 	return append([]session.Message(nil), c.messages...), append([]prompt.InstructionManifest(nil), c.rows...), nil
 }
 
-// runSources keeps replace-mode contributors within the same run even when a
-// scoped source changes the winner later. The run's cancellation releases the
-// cache; a new run re-reads globals rather than inheriting stale guidance.
+// previous returns only contributions already admitted in this run, without
+// invoking a lower-priority source after a configured source fails.
+func (c *policyInstructionContributor) previous() ([]session.Message, []prompt.InstructionManifest) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]session.Message(nil), c.messages...), append([]prompt.InstructionManifest(nil), c.rows...)
+}
+
+// runSources retains admitted contributions within one run, including when a
+// scoped source changes the replacement winner or stops a combine refresh.
+// Cancellation releases the cache; a new run re-reads globals.
 func (a policyInstructionAssembler) runSources(ctx context.Context) []prompt.InstructionAssembler {
 	if a.cache == nil || ctx.Done() == nil {
 		return a.sources
@@ -1363,7 +1373,7 @@ func (a policyInstructionAssembler) runSources(ctx context.Context) []prompt.Ins
 	}
 	sources := make([]prompt.InstructionAssembler, len(a.sources))
 	for i, source := range a.sources {
-		sources[i] = cachePolicyGlobals(source)
+		sources[i] = &policyInstructionContributor{source: cachePolicyGlobals(source)}
 	}
 	if a.cache.runs == nil {
 		a.cache.runs = make(map[<-chan struct{}][]prompt.InstructionAssembler)
@@ -1392,11 +1402,20 @@ func (a policyInstructionAssembler) Assemble(ctx context.Context, directories []
 	sources := a.runSources(ctx)
 	for i, source := range sources {
 		messages, manifest, err := prompt.AssembleWithManifest(ctx, source, directories, state, maxContentBytes)
-		if err != nil {
-			return out, metadata, err
-		}
 		out = append(out, messages...)
 		metadata = append(metadata, manifest...)
+		if err != nil {
+			if a.mode == harnessModeCombine {
+				for _, later := range sources[i+1:] {
+					if cached, ok := later.(*policyInstructionContributor); ok {
+						messages, rows := cached.previous()
+						out = append(out, messages...)
+						metadata = append(metadata, rows...)
+					}
+				}
+			}
+			return out, metadata, err
+		}
 		if a.mode == harnessModeReplace && hasInstructionGuidance(manifest) {
 			if i+1 < len(sources) {
 				for _, row := range manifest {

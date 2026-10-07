@@ -71,7 +71,7 @@ func (g generationCommands) Expand(ctx context.Context, input string) (string, b
 type generationInstructions struct {
 	harnessGeneration
 	source prompt.InstructionAssembler
-	// filterSource retains every selected root when a combine source is split for per-run caching.
+	// filterSource retains every selected root when a multi-contributor source is split for per-run caching.
 	filterSource  prompt.InstructionAssembler
 	executionRoot string
 	inherited     map[string]string
@@ -239,13 +239,15 @@ type childUnmappedInstructions struct{ source prompt.InstructionAssembler }
 func (childUnmappedInstructions) TargetScoped() bool { return false }
 
 func (g childUnmappedInstructions) Assemble(ctx context.Context, _ []string, state *session.InstructionSnapshot, maxContentBytes int) ([]session.Message, []prompt.InstructionManifest, error) {
-	messages, rows, err := prompt.AssembleWithManifest(ctx, g.source, []string{"."}, state, maxContentBytes)
-	if err != nil {
-		return nil, nil, err
+	// Retain examined source-relative ancestors, but do not project paths visited
+	// only by the parent into an unmapped child workspace.
+	if state != nil {
+		state.Directories = []string{"."}
 	}
+	messages, rows, err := prompt.AssembleWithManifest(ctx, g.source, []string{"."}, state, maxContentBytes)
 	messages = append(messages, session.NewUserMessage("Project instructions: child workspace scope mapping unavailable; nested guidance is not automatically loaded. Selected root guidance remains available; ordinary tools remain available."))
 	rows = append(rows, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
-	return messages, rows, nil
+	return messages, rows, err
 }
 
 // childGenerationInstructions keeps the admitted parent's source generation alive.
