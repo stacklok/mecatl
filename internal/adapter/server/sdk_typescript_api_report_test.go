@@ -63,8 +63,8 @@ func TestTypeScriptRawHelperCompatibility(t *testing.T) {
 	}
 }
 
-// The behavior is exercised by the same-named Vitest. This pin keeps ac-trace
-// attached to the generated public API contract, not implementation text.
+// The behavior is exercised by the same-named Vitest. This pin checks the
+// generated public API contract, not implementation text.
 func TestSessionAffinityAndHandoff_Scenario4_TypeScriptHighLevelPropagation(t *testing.T) {
 	t.Parallel()
 	for _, declarations := range typescriptAPIReportDeclarations(t) {
