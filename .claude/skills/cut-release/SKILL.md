@@ -172,35 +172,30 @@ core, `github.com/stacklok/mecatl/engine`, is its **own Go module** with its own
 tag grammar `engine/vX.Y.Z` (distinct from the root tags). It carries a public-API
 compatibility contract (`engine/COMPATIBILITY.md`).
 
-- **The first `engine/vX.Y.Z` tag is `engine/v0.0.1`** — a deliberate "earliest, no stability
-  promise" initial cut (the lowest pre-v1 patch, signalling zero stability commitment for the very
-  first published surface). Cutting it is a deliberate maintainer decision —
-  do NOT cut it as part of a routine root release unless asked. The grammar is `engine/vX.Y.Z`,
-  **distinct** from the root `vX.Y.Z` tags; the two version lines are independent. SUBSEQUENT bumps
-  follow `engine/COMPATIBILITY.md` (pre-v1: minor = additive, patch = fixes).
+- **Engine tags are cut on their own schedule.** Cutting one is a deliberate maintainer
+  decision — do NOT cut it as part of a routine root release unless asked. The `engine/vX.Y.Z`
+  and root `vX.Y.Z` version lines are independent. Bumps follow `engine/COMPATIBILITY.md`
+  (pre-v1: minor = additive or breaking, patch = fixes only).
 
 ### Cutting an engine tag (mirrors the root flow)
 
 Run from the repo root.
 
-1. **Pick the engine version.** First cut = `engine/v0.0.1` (a deliberate "earliest, no stability
-   promise" initial cut); thereafter increment per semver, classified per `engine/COMPATIBILITY.md`
-   (pre-v1: Added = minor, Changed/Removed = minor too; patch = fixes). The latest engine tag (none
-   yet on the first cut):
+1. **Pick the engine version.** Increment the latest engine tag per `engine/COMPATIBILITY.md`
+   (pre-v1: Added = minor, Changed/Removed = minor too; patch = fixes). The latest engine tag:
    ```sh
    git tag --sort=-v:refname --list 'engine/v*' | head -1
    ```
 
 2. **Pre-flight.** Confirm `engine/CHANGELOG.md` has an `[Unreleased]` entry covering everything
-   since the last engine tag (on the **first** cut that is the whole initial surface — the existing
-   `[Unreleased]` baseline section). Then run the advisory `gorelease` check:
+   since the last engine tag. Then run the advisory `gorelease` check:
    ```sh
    task api:release-check
    ```
-   **On the FIRST cut this is a no-op / uninformative:** `gorelease` can only classify the surface
-   against a *prior* `engine/vX.Y.Z` base tag, and none exists yet — so it has nothing to compare
-   to. That is expected. The authoritative guard is the `api-compat` gate (`task api:check`), which
-   already guarantees the committed `engine/api/*.txt` snapshots match the surface being tagged.
+   It never fails: it previews the SemVer classification against the previous engine tag, so
+   compare its verdict with the version you picked. The authoritative guard is the `api-compat` gate
+   (`task api:check`), which already guarantees the committed `engine/api/*.txt` snapshots match the
+   surface being tagged.
 
 3. **Create the annotated tag** with a concise summary:
    ```sh
