@@ -20,41 +20,33 @@ const (
 	routerBackendJev = "jev"
 )
 
-// slots.go is the COMPOSITION-LAYER per-slot model resolver (ADR 0030, Phase 1+2):
+// slots.go is the COMPOSITION-LAYER per-slot model resolver:
 // the "aliases as the spine" layer plus the `models.slots` map that binds named
 // pipeline functions to aliases. It is a pure composition concern — engine/agent
-// never sees a slot or an alias, only the already-resolved concrete model id.
+// never sees a slot or an alias, only the already-resolved provider/model target.
 //
-// A SLOT is a named internal LLM call ("compaction", "ask-reviewer", "guardrail")
-// or a semantic TIER ("cheap", "fast", "reasoning"). resolveSlotModel maps a slot
-// name to a concrete model id THROUGH the existing alias machinery (lookupModelAlias),
-// so the two never drift: a slot value is itself an alias or a literal id, resolved
-// by the SAME grammar the agent-def `model:` path uses.
+// A SLOT is a named internal LLM call (e.g. "compaction", "ask-reviewer", "guardrail")
+// or a semantic TIER ("cheap", "fast", "reasoning"). Slot selectors resolve through
+// the same alias machinery as agent definitions.
 //
-// THE BYTE-IDENTICAL GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
-// absent) resolveSlotModel returns ("", false) for every slot, and each of the three
-// routed call sites keeps its EXACT pre-feature behaviour (the session model). The
+// THE UNCONFIGURED GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
+// absent) resolveSlotModel returns ("", false) for every slot, and every routed call
+// site keeps its EXACT unrouted behaviour (the session model). The
 // posture is FAIL-SOFT throughout: a typo'd slot key, an unknown/inherit alias, or
-// any other miss WARNs and degrades to today's behaviour — a broken housekeeping
+// any other miss WARNs and degrades to the session model — a broken housekeeping
 // slot must never wedge a compaction / ask-review / guardrail call.
 //
-// This slice routes exactly THREE internal lightweight calls to a slot: compaction
-// (the tier-4 summary LLM call), ask-reviewer, and guardrail. Team synthesis is
-// DEFERRED (it lacks a clean seam — the lead synthesis runs on the lead member's
-// whole engine), and the project-tier override / the subagent router (ADR 0030
-// Layer 3b and the project-merge-within-cap) are out of this slice.
+// The internal lightweight calls routed to a slot are compaction (the tier-4 summary
+// LLM call), ask-reviewer, guardrail, reflection, the semantic router's classifier,
+// and the opt-in title generator. Team synthesis has a defined slot but no consumer:
+// the lead synthesis runs on the lead member's whole engine and lacks a clean seam.
 //
-// Phase 3 (ADR 0030 Layer 3) adds the `plan` slot — wired on the MODE axis, NOT the
-// internal-call axis. Unlike the three call-slots above, `plan` does NOT route a
-// lightweight housekeeping call: it re-resolves the SESSION model when the session's
-// PermissionMode is ModePlan, re-resolved BETWEEN turns at the run-entry seam (the
-// opusplan pattern). It reuses resolveSlotModel UNCHANGED — the resolution grammar is
-// identical; only the consumer differs (the per-session engine factory in build.go,
-// keyed on the session's mode, instead of a per-call deps builder). And it defaults to
-// the `reasoning` tier, NOT `cheap`: a plan model is a STRONG-reasoning model, the one
-// place a slot's default tier diverges from cheap.
+// The `plan` slot is wired on the MODE axis, NOT the internal-call axis. Unlike the
+// call-slots above, `plan` does NOT route a lightweight housekeeping call: it
+// re-resolves the SESSION model when the session's PermissionMode is ModePlan,
+// BETWEEN turns at the run-entry seam. It defaults to the `reasoning` tier, not `cheap`.
 
-// Slot names — the three routed internal lightweight calls (Layer 2). Each is the
+// Slot names (Layer 2). Each is the
 // stable key an operator writes under `models.slots:` (or --model-slot).
 const (
 	// slotCompaction routes the CascadeCompactor's tier-4 summary LLM call.
@@ -64,15 +56,14 @@ const (
 	// slotGuardrail routes the LLM-backed guardrail content checker (issue #27).
 	slotGuardrail  = "guardrail"
 	slotReflection = "reflection"
-	// slotSynthesis is DEFINED for completeness (team synthesis is the cheap tier's
-	// natural fourth consumer) but is deliberately NOT wired this slice — the lead
+	// slotSynthesis is DEFINED and accepted as a key but has NO consumer — the lead
 	// synthesis runs on the lead member's whole engine and lacks a clean seam.
 	slotSynthesis = "synthesis"
 	// slotTitle routes the opt-in server-owned title generator. It deliberately has
 	// no default tier: title generation remains disabled until explicitly configured.
 	slotTitle = "title"
 	// slotPlan routes the SESSION model when the session's PermissionMode is ModePlan
-	// (ADR 0030 Layer 3, the opusplan pattern). It is the ONE slot wired on the MODE
+	// (the opusplan pattern). It is the ONE slot wired on the MODE
 	// axis rather than the internal-call axis: it is consumed by the per-session engine
 	// factory (sessionEngineFactory in build.go), re-resolved between turns at the
 	// run-entry seam when Session.Mode changes — NOT by a per-call deps builder. Its
@@ -80,7 +71,7 @@ const (
 	// strong-reasoning model.
 	slotPlan = "plan"
 	// slotRouter routes the CLASSIFIER call of the OPT-IN semantic Subagent model router
-	// (ADR 0031, Phase 5). Like the three internal call-slots it routes a lightweight
+	// Like the internal call-slots it routes a lightweight
 	// housekeeping call (one tiny classification turn), defaulting to the `cheap` tier —
 	// the classifier is housekeeping, NOT the routed work. The router's per-CATEGORY
 	// target models are a SEPARATE operator taxonomy (cfg.RouterCategories), not slots.
@@ -120,11 +111,10 @@ var knownSlotNames = map[string]struct{}{
 }
 
 // slotDefaultTier maps a slot to the semantic tier it falls through to when it has no
-// explicit binding. The three internal-call slots default to `cheap` (housekeeping
-// runs on the cheapest model unless the operator says otherwise — the ADR's immediate
-// token-savings win). The `plan` slot is the DELIBERATE divergence: it defaults to the
+// explicit binding. The internal-call slots default to `cheap` (housekeeping runs on
+// the cheapest model unless the operator says otherwise). The `plan` slot is the DELIBERATE divergence: it defaults to the
 // `reasoning` tier, because a plan-mode model is a STRONG-reasoning model, not a cheap
-// one (ADR 0030 Layer 3). A slot absent here has no default tier (an explicit binding
+// one. A slot absent here has no default tier (an explicit binding
 // is the only way to route it).
 var slotDefaultTier = map[string]string{
 	slotCompaction:  slotCheap,
@@ -589,14 +579,14 @@ func foldOperatorDefaultProvider(cfg Config) Config {
 	return cfg
 }
 
-// foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy (ADR 0031,
-// Phase 5) onto cfg: the routing categories, the default category, and the classifier
+// foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy
+// onto cfg: the routing categories, the default category, and the classifier
 // slot. It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), which is the
 // user-global + CLI tiers; project-tier models blocks are ignored with a WARN). It is
 // FAIL-SOFT: a category with an empty name OR an empty
 // description OR an empty model selector is WARN-dropped (a category the classifier
 // cannot name/describe, or that maps to nothing, is useless) — the rest still load.
-// ADR 0042 (superseding 0031's enable model): the TAXONOMY enables the router, so this
+// The TAXONOMY enables the router, so this
 // fold ALSO ORs the YAML `disabled:` kill-switch onto cfg.RouterDisabled (mirroring
 // foldOperatorGuardrails' Disabled handling) — the CLI kill-switch sets the same field,
 // the two combine. A no-taxonomy operator (no router: block) leaves cfg byte-identical.
@@ -623,7 +613,7 @@ func foldOperatorModelRouter(cfg Config) Config {
 		cfg.RouterJevMinimumConfidence = router.Jev.MinimumConfidence
 		cfg.RouterJevMaximumInputBytes = router.Jev.MaximumInputBytes
 	}
-	// Disabled: OR the YAML kill-switch with the CLI one (either disables) — ADR 0042,
+	// Disabled: OR the YAML kill-switch with the CLI one (either disables),
 	// mirroring foldOperatorGuardrails.
 	if router.Disabled {
 		cfg.RouterDisabled = true
@@ -691,8 +681,8 @@ func prepareJevRouter(cfg *Config) error {
 	}
 }
 
-// resolveRouterClassifierModel resolves the model the model-router CLASSIFIER runs on
-// (ADR 0031), the SINGLE source both buildModelRouterTask (the live closure, keyed on the
+// resolveRouterClassifierModel resolves the model the model-router CLASSIFIER runs on,
+// the SINGLE source both buildModelRouterTask (the live closure, keyed on the
 // session's parentModel) and logModelRouterFacts (the build-once narration, keyed on
 // cfg.Model) call — so the logged classifier model is exactly the one a session of that
 // parentModel classifies on. Precedence: an operator `classifier-slot` wins; else the
@@ -740,8 +730,8 @@ func logSlotConfigFacts(cfg Config) {
 	}
 	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotReflection, slotTitle, slotPlan, slotRouter} {
 		model, ok := resolveSlotModel(cfg, slot, cfg.Model)
-		// The three internal call-slots route a lightweight housekeeping call; the
-		// plan slot (ADR 0030 Layer 3) instead re-resolves the SESSION model in plan
+		// The internal call-slots route a lightweight housekeeping call; the
+		// plan slot instead re-resolves the SESSION model in plan
 		// mode (the opusplan pattern) — narrate it distinctly so the INFO is honest.
 		active := "model slot ACTIVE: this internal lightweight call runs on the slot model instead of the session model"
 		if slot == slotPlan {
@@ -763,11 +753,10 @@ func logSlotConfigFacts(cfg Config) {
 	}
 }
 
-// logModelRouterFacts emits the build-once Subagent-model-router fact (ADR 0031; enable
-// model per ADR 0042) EXACTLY ONCE through cfg.diag(). Per ADR 0042 the TAXONOMY is the
+// logModelRouterFacts emits the build-once Subagent-model-router fact
+// EXACTLY ONCE through cfg.diag(). The TAXONOMY is the
 // enable, so:
-//   - no taxonomy (len(RouterCategories)==0)        → SILENT (byte-identical OFF; the
-//     0031 "flag set but no taxonomy" WARN is GONE — there is no enable flag anymore).
+//   - no taxonomy (len(RouterCategories)==0) → SILENT; there is no enable flag.
 //   - taxonomy present + cfg.RouterDisabled          → a one-time WARN: the taxonomy is
 //     configured but the kill-switch (CLI --subagent-model-router=false or the YAML
 //     models.router.disabled) forces it OFF, so no routing happens.
@@ -778,7 +767,7 @@ func logSlotConfigFacts(cfg Config) {
 // emits exactly THREE lines" invariant holds, this is a Build fact not a loop line).
 func logModelRouterFacts(cfg Config) {
 	if len(cfg.RouterCategories) == 0 {
-		return // No taxonomy: byte-identical, silent (ADR 0042 — taxonomy is the enable).
+		return // No taxonomy: byte-identical, silent (taxonomy is the enable).
 	}
 	if cfg.RouterDisabled {
 		cfg.diag().Log(context.Background(), port.LevelWarn,
@@ -838,7 +827,7 @@ func boundedRouterFact(value string) string {
 }
 
 // modeNeedsEngine returns the composition predicate wired into
-// server.Config.ModeNeedsEngine (ADR 0030 Layer 3): for a given session
+// server.Config.ModeNeedsEngine: for a given session
 // PermissionMode, does that mode resolve a model DIFFERING from the shared engine's
 // model (cfg.Model)? It is true ONLY for ModePlan when the `plan` slot resolves to a
 // concrete id that differs from cfg.Model — the only case where promoting a DEFAULT-FS

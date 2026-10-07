@@ -31,5 +31,5 @@ func projectFoldHarness(t *testing.T, operatorYAML, projectYAML string, trust bo
 	return Config{Workspace: ws, TrustProject: trust, Diagnostics: diag, permResolver: res}, diag
 }
 
-// Project model folding was removed by ADR 0369; project models are discarded
+// Project model folding is disabled; project models are discarded
 // in permconfig before nested model-schema decoding.

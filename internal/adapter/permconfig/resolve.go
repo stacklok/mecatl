@@ -139,8 +139,8 @@ type Resolver struct {
 	// files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorPosture string
 
-	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar (ADR
-	// 0055), read ONCE at construction from the user-global + CLI tiers ONLY. A
+	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar,
+	// read ONCE at construction from the user-global + CLI tiers ONLY. A
 	// project-tier file's reasoning-effort: key is deliberately IGNORED (operator-
 	// tier only, for consistency with posture — loadProjectRules WARNs
 	// when it sees one). Empty when no operator-tier file carried a reasoning-effort:
@@ -375,7 +375,7 @@ func (r *Resolver) OperatorPosture() string {
 }
 
 // OperatorReasoningEffort returns the operator-tier reasoning-effort: scalar
-// (user-global + CLI only), or "" when none was configured (ADR 0055). It is the
+// (user-global + CLI only), or "" when none was configured. It is the
 // SOLE accessor the composition layer uses to read reasoning-effort from config —
 // by construction it never returns a project-tier value (a project reasoning-effort:
 // is ignored with a WARN in loadProjectRules). nil-safe. Mirrors OperatorPosture().
@@ -723,7 +723,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) []governance.Rule {
 				"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set posture in your user-global settings.yaml or via --posture)",
 				"file", src.path, "root", ws.Root())
 		}
-		// ReasoningEffort is OPERATOR-TIER ONLY (ADR 0055), for consistency with
+		// ReasoningEffort is OPERATOR-TIER ONLY, for consistency with
 		// posture: a project file's reasoning-effort: scalar is IGNORED
 		// with a loud WARN. It is a cost/quality preference, not a security control,
 		// but keeping it operator-tier-only matches the established pattern and prevents
@@ -912,7 +912,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureGuardrails(cfg.Guardrails)
 		// Operator-tier posture: same first-non-empty-keeps-CLI discipline as guardrails.
 		r.capturePosture(cfg.Posture)
-		// Operator-tier reasoning-effort (ADR 0055): same discipline as posture.
+		// Operator-tier reasoning-effort: same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
 		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
@@ -920,7 +920,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureLearning(cfg.Learning)
 		// Operator-tier steer (issue #512): same discipline as posture.
 		r.captureSteer(cfg.Steer)
-		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
+		// Operator-tier models: same first-non-nil-keeps-CLI discipline.
 		r.captureModels(cfg.Models)
 		// Operator-tier openrouter: same first-non-nil-keeps-CLI discipline (issue #480).
 		r.captureOpenRouter(cfg.OpenRouter)
@@ -958,7 +958,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureGuardrails(cfg.Guardrails)
 				// User-global posture: captured only if no higher CLI file already did.
 				r.capturePosture(cfg.Posture)
-				// User-global reasoning-effort (ADR 0055): same discipline as posture.
+				// User-global reasoning-effort: same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
 				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
@@ -1064,7 +1064,7 @@ func (r *Resolver) capturePosture(p string) {
 // on first-non-empty). It is called only from loadUserRules — the operator
 // (user-global + CLI) tiers — never from loadProjectRules, so a project file can
 // never supply reasoning-effort (operator-tier only, for consistency with
-// posture — ADR 0055). A whitespace-only value is treated as absent.
+// posture). A whitespace-only value is treated as absent.
 func (r *Resolver) captureReasoningEffort(p string) {
 	if r.operatorReasoningEffort != "" {
 		return

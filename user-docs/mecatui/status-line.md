@@ -15,7 +15,12 @@ executable. Add `status_customization` to
 embedded and connected sessions. Project files, remote servers, prompts, and
 sessions cannot change it.
 
-With no `status_customization:` entry, `mecatui` uses its shipped templates. Customization cannot remove the required keyboard help, posture, scroll and changed-file indicators, or activity cue. In a debug session, it cannot remove the `⚠ DEBUG target` cue or privacy disclosure, even if the custom header is empty.
+With no `status_customization:` entry, `mecatui` uses its shipped templates.
+The header includes the session title at every width and the connected remote
+target in its full variant. Customization cannot remove keyboard help, the
+posture, scroll, and changed-file indicators, or the activity cue. In a debug
+session, it cannot remove the `⚠ DEBUG target` cue or privacy disclosure, even
+if the custom header is empty.
 
 ## Choose a source
 

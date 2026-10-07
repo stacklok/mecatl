@@ -85,7 +85,10 @@ eligible delegated task descriptions and category names and descriptions go to
 Typesafe. Keep `backend: llm` if task text must stay in your configured LLM
 path. A classifier choice below `minimum-confidence` falls back to the child's
 ordinary model. `default-category` advises the classifier but does not force a
-choice. See the [configuration reference](/reference/configuration.md#models)
+choice. Jev accepts up to 255 categories. When the full classifier input
+exceeds `maximum-input-bytes`, Mecatl does not truncate the task or taxonomy;
+it delegates on the child's ordinary model without sending that over-limit
+request. See the [configuration reference](/reference/configuration.md#models)
 for field defaults and ranges.
 
 The `guardrail` slot also accepts a strict provider-aware object when the
@@ -125,11 +128,14 @@ delegation keeps its inherited or default model.
 With the example above, routing resolves as:
 
 ```text
-large  → heavy  → gpt-5.6-terra
+large  → heavy  → openrouter/openai/gpt-5.6-terra
 medium → coder  → gpt-5.6-luna
 small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
+
+The `large` category runs its child through `openrouter` with model ID
+`openai/gpt-5.6-terra`; the `/` inside the model ID is not a provider delimiter.
 
 For automatic routes and slots other than `title`, an unavailable target warns
 and falls back to the call's ordinary provider/model. An absent or unresolvable
@@ -196,12 +202,16 @@ for the plan-review workflow.
 
 The live delegation card shows the provider and model that actually ran and
 whether the child was routed, selected, or used as a fallback. Press **F6** and
-focus a child for the routing reason and any rejected candidate. A candidate
-is not proof that it ran. For retained evidence, use
-`mecatui debug <SESSION_ID>` and ask `InspectSession` for the `delegation`
-view; missing evidence in an older event does not prove classification occurred.
+focus a child to see the classifier backend and model, candidate and actual
+model, confidence and threshold when available, routing reason, and breaker
+state.
+A candidate is evidence of a classifier choice, not proof that its target ran.
+For retained evidence, use `mecatui debug <SESSION_ID>`, or
+`mecatui connect <ADDRESS> debug <SESSION_ID>` for a remote server, and ask
+`InspectSession` for the `delegation` view. Missing evidence in an older event
+does not prove classification occurred.
 
-### Select a delegated target explicitly
+## Select a delegated target explicitly
 
 Leave `provider` and `model` unset on Subagent, Parallel, and Team calls to
 preserve operator defaults and automatic routing. When a task needs a specific
@@ -220,11 +230,12 @@ capability, call `DiscoverModels` and pass an exact provider/model pair:
 
 An unavailable explicit category fails instead of inheriting a model.
 Parallel uses one selector for all branches; each Team member can use its own.
-The Parallel judge stays on the parent model. A read-only named specialist
-accepts a model-only override but not a provider-bearing selector. A writable
-named specialist uses its definition's resolved model; a writable generic
-Subagent can select a model. `fork` and `resume` reject selectors; resume keeps
-the original child's actual provider/model.
+The Parallel judge stays on the parent model. In a Subagent call, a read-only
+named specialist accepts a model-only override but not a provider-bearing
+selector; a direct-write named specialist uses its definition's resolved model.
+A direct-write generic Subagent can select a model. A named Team member can use
+a model-only override even when mutating. `fork` and `resume` reject selectors;
+resume keeps the original child's actual provider/model.
 
 ## Route OpenRouter models through preferred downstreams
 
