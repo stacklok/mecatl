@@ -44,6 +44,8 @@ Also for contributors:
 - [User-docs authoring contract](../user-docs/_README.md) and
   [style guide](../user-docs/_STYLE.md), for public documentation.
 
+- The [Kubernetes execution and filesystems proposal](drafts/kubernetes-execution-and-filesystems.md) describes unimplemented options for live workspace and shell access across separate Pods.
+
 ## Operators
 
 Start with [Deploy and operate Mecatl](../user-docs/operating/index.md). Use the
