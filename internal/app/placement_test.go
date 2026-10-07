@@ -110,7 +110,7 @@ func TestInvariant_selected_successor_reattaches_after_restart(t *testing.T) {
 	}
 }
 
-func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
+func TestCompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 	t.Parallel()
 
 	t.Run("selector vocabulary is closed", func(t *testing.T) {

@@ -97,7 +97,7 @@ type catalogAssets struct {
 	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
-	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a
+	// it writes the parent tree directly). It wraps a forker.Merger in a
 	// forker.SerializingMerger so concurrent merges across sessions are serialized
 	// by a single mutex (a per-session instance would not serialize cross-session).
 	// Built ONCE in Phase A like forkReaper, and only when Parallel is enabled. Nil
@@ -114,8 +114,8 @@ type catalogAssets struct {
 	// the child catalogs for read-only-discovery parity with WebFetch.
 	searchProvider tool.SearchProvider
 	// scheduleManagerFactory is the resolver for the consumer-local
-	// port.ScheduleManager the Schedule tool drives (ADR 0073). The manager is
-	// STORE-shaped (ADR 0076), resolvable from the session store BEFORE
+	// port.ScheduleManager the Schedule tool drives. The manager is
+	// STORE-shaped, resolvable from the session store BEFORE
 	// buildEngine, so buildEngine binds this factory EAGERLY onto the assets
 	// (inside buildCatalog, before the build-time assembly) — registerScheduleTool
 	// fires on the SHARED pass and every per-session assembleCatalog call reads
@@ -128,7 +128,7 @@ type catalogAssets struct {
 	// known-non-nil or untyped nil.
 	scheduleManagerFactory func() port.ScheduleManager
 	// deliveryQueue is the DURABLE per-session pending-delivery queue
-	// (fire-result-delivery, ADR 0075 decision #3). It is built once in Build
+	// (fire-result delivery). It is built once in Build
 	// (a FileDeliveryQueue under the store dir for a durable store, an
 	// InMemoryDeliveryQueue for the in-memory default) and read by both
 	// baseEngineDeps (the shared engine — the loop's Step 2a drain) and the
@@ -471,7 +471,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		// surfaced "branch id:" — the same store InspectSubagent reads and the Subagent
 		// tool persists children to (disjoint "parallel-" prefix).
 		agent.WithParallelStore(store),
-		// OPT-IN model router (ADR 0034): the per-branch model-override factory mints a
+		// OPT-IN model router: the per-branch model-override factory mints a
 		// branch engine on a router-classified model through the SAME contamination-safe
 		// per-provider path the branch child uses (window/compactor/counter re-derived).
 		// Wired unconditionally — it is consulted only when the run also wired routeTask
@@ -492,7 +492,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		cfg.diag().Log(ctx, port.LevelWarn,
 			"Parallel preserved-fork reaper missing from catalog assets; preserved winner forks will NOT be bounded (Phase A builds it under EnableParallel — hand-rolled assets?)")
 	}
-	// AUTO-MERGE (default-on, no flag — see docs/adr/0039-parallel-auto-merge.md):
+	// AUTO-MERGE (default-on, no flag):
 	// wire a forker.Merger so a SINGLE-BRANCH join=first/join=judge winner's diff is
 	// merged back into the parent workspace after the run — a delegated
 	// implementer's edits land without a manual copy/merge step. Multi-branch runs
@@ -577,7 +577,7 @@ func scheduleManagerPresent(a catalogAssets) bool {
 	return a.scheduleManagerFactory() != nil
 }
 
-// registerScheduleTool registers the model-facing Schedule tool (ADR 0073) when
+// registerScheduleTool registers the model-facing Schedule tool when
 // the assets carry a scheduleManager — the conditional-registration gate that
 // keeps the tool present exactly when the session's store backs a
 // port.ScheduleStore and ABSENT (honest, not a stub) otherwise, agreeing with
@@ -591,7 +591,7 @@ func scheduleManagerPresent(a catalogAssets) bool {
 // (a ScopeBuiltinDefault Allow in defaultRules keyed on the tool name), so it is
 // pre-approved but config-overridable, the memory-tool posture.
 func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a *catalogAssets, s catalogSession) {
-	// The factory is bound EAGERLY by buildEngine (ADR 0076 — the manager is
+	// The factory is bound EAGERLY by buildEngine (the manager is
 	// store-shaped, resolvable before any catalog assembly); a nil factory or
 	// a factory returning nil means no schedule backend → the tool stays absent.
 	if a.scheduleManagerFactory == nil {
@@ -607,7 +607,7 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
 	// No origin wiring here: the Schedule tool stamps OriginSessionID from the
-	// run context itself (fire-result-delivery, ADR 0209), so there is nothing
+	// run context itself (fire-result delivery), so there is nothing
 	// composition can forget to wrap.
 	//
 	// The READ-ONLY half (AC1.4): list/inspect live on a separate query tool so

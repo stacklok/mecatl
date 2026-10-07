@@ -21,7 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// shell_less_posture_test.go covers the ADR-0070 model-visible affordance for the
+// shell_less_posture_test.go covers the model-visible affordance for the
 // shell-less default-FS posture, truthed per-request against the LIVE
 // tool.Environment in engine/agent.buildRequest (issue #462 review): when the
 // Environment handed to Run has no CommandRunner (env.CommandRunner() == nil) and

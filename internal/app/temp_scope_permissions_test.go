@@ -18,10 +18,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestADR_0281_EngineSystemPromptContainsTempScopeContract pins the declared
+// TestEngineSystemPromptContainsTempScopeContract pins the declared
 // lifecycle affordance in the factory-built Role layer, rather than merely the
 // Shell tool inventory where a duplicated description would make this vacuous.
-func TestADR_0281_EngineSystemPromptContainsTempScopeContract(t *testing.T) {
+func TestEngineSystemPromptContainsTempScopeContract(t *testing.T) {
 	ctx := context.Background()
 	var captured prompt.Layered
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req.System })}, mockllm.TextTurn("done"))
@@ -44,10 +44,10 @@ func TestADR_0281_EngineSystemPromptContainsTempScopeContract(t *testing.T) {
 	}
 }
 
-// TestADR_0281_SystemModeIsRollbackSwitch pins that operator-selected system
+// TestSystemModeIsRollbackSwitch pins that operator-selected system
 // mode supplies the configured system directory and never allocates a managed
 // lease, regardless of a per-call managed request.
-func TestADR_0281_SystemModeIsRollbackSwitch(t *testing.T) {
+func TestSystemModeIsRollbackSwitch(t *testing.T) {
 	workspace := t.TempDir()
 	systemTemp := t.TempDir()
 	runner := buildCommandRunnerForRoot(Config{Workspace: workspace, Shell: "/bin/sh", temporaryStorage: temporaryStorageConfig{Mode: temporaryStorageSystem, SystemTempDir: systemTemp}}, workspace)

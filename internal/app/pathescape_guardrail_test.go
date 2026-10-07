@@ -14,7 +14,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_guardrail_test.go pins ADR 0080 / AC-W2-G2
+// pathescape_guardrail_test.go pins AC-W2-G2
 // (docs/acceptance/path-escape-posture.md, deferred decision
 // "Guardrail-routed escape checking"): at posture auto WITH the operator-tier
 // escape knob (guardrails.escape) configured, an out-of-root escape is routed
@@ -110,7 +110,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 	t.Run("yolo and strict never route", func(t *testing.T) {
 		t.Parallel()
 		// The route is the AUTO-only knob: yolo demotes guardrails to advisory
-		// (ADR 0062) and never spends a checker call on a decision the posture
+		// and never spends a checker call on a decision the posture
 		// already made; strict/trusted keep their own Scenario-4 escape Ask.
 		for _, posture := range []Posture{PostureYolo, PostureStrict, PostureTrusted} {
 			posture := posture
@@ -163,7 +163,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 
 	t.Run("the composition wires the route from the knob", func(t *testing.T) {
 		t.Parallel()
-		// The factory-path half (the ADR-0070 discipline): a REAL Build at auto
+		// The factory-path half (the model-visible affordance discipline): a REAL Build at auto
 		// with GuardrailsModel + the escape knob must DENY the escape when the
 		// checker scripts unsafe — deleting the knob wiring in buildEngine
 		// fails this, even though the policy-level subtests above stay green.
@@ -203,7 +203,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)
 		bcfg.GuardrailsModel = "checker-model"
-		// Isolate the escape-route assertion from ADR 0363's default inbound Read
+		// Isolate the escape-route assertion from the contextual guardrails' default inbound Read
 		// coverage: an explicit unrelated rule keeps guardrails enabled without
 		// reviewing this Read result through the ordinary tool boundary.
 		bcfg.GuardrailsRules = []GuardrailRule{{Match: "Shell", Phases: []string{"pre"}, Mode: "block"}}

@@ -242,7 +242,7 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 
 	saw := map[string]bool{}
 	for _, p := range toolEv {
-		// ADR 0079: the projection also carries message.delta / result text previews
+		// The projection also carries message.delta / result text previews
 		// with no ToolName — only tool.call / tool.result projections are
 		// tool-attributed. The ok/error outcome is attributed on the tool.RESULT
 		// projection (a tool.call preview always reads IsError=false).

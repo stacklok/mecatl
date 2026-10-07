@@ -88,7 +88,7 @@ func TestScheduleSharedCatalog_Scenario3_DefaultSessionHasTool(t *testing.T) {
 			}
 			name := callNames[ev.ToolResult.CallID]
 			if strings.Contains(ev.ToolResult.Content, "unknown tool") {
-				t.Errorf("the SHARED engine's catalog rejected %q as unknown — the build-time eager scheduleManagerFactory bind (ADR 0076) must carry it; result: %q", name, ev.ToolResult.Content)
+				t.Errorf("the SHARED engine's catalog rejected %q as unknown — the build-time eager scheduleManagerFactory bind must carry it; result: %q", name, ev.ToolResult.Content)
 				continue
 			}
 			executed[name] = true
@@ -102,7 +102,7 @@ func TestScheduleSharedCatalog_Scenario3_DefaultSessionHasTool(t *testing.T) {
 }
 
 // TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote pins
-// AC3.2 (ADR 0070, the model-visible-affordance gate): the SHARED engine's
+// AC3.2 (the model-visible-affordance gate): the SHARED engine's
 // built system prompt carries the schedulePostureNote on the Role /
 // StablePrefix layer — asserted against req.System.StablePrefix, NOT the
 // combined Render() (the tool-inventory block also rides Render, so a
@@ -144,7 +144,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 	// tool") distinguishes the Role layer from the inventory block (whose Spec
 	// description opens "Manage scheduled tasks") — assert it VERBATIM.
 	if !strings.Contains(captured.StablePrefix, schedulePostureNote) {
-		t.Errorf("the SHARED engine's StablePrefix is missing the Schedule posture note — applySchedulePosture must run on the shared engine's deps in buildEngine (ADR 0070)\ngot StablePrefix (first 600):\n%s",
+		t.Errorf("the SHARED engine's StablePrefix is missing the Schedule posture note — applySchedulePosture must run on the shared engine's deps in buildEngine\ngot StablePrefix (first 600):\n%s",
 			firstN(captured.StablePrefix, 600))
 	}
 
@@ -180,8 +180,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 	}
 }
 
-// TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired pins AC3.3 (ADR
-// 0075, superseded for origin attribution by ADR 0209): the SHARED engine's
+// TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired pins AC3.3: the SHARED engine's
 // run-context attribution + DeliveryQueue are live once the manager is bound, so a schedule created from a shared-engine session stamps
 // its OriginSessionID, and the fire's result is delivered back into that chat.
 // The whole arc rides the PRODUCTION seams — no test-fire shortcut: the
@@ -303,7 +302,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("no fenced fire-result note pending for the origin %q — deliverFireResult did not enqueue into the durable queue the shared engine drains (ADR 0075)", sess.ID)
+		t.Fatalf("no fenced fire-result note pending for the origin %q — deliverFireResult did not enqueue into the durable queue the shared engine drains", sess.ID)
 	}
 
 	// The drain is the shared engine's OWN seam: a second prompt on the origin
@@ -326,7 +325,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 		}
 	}
 	if !drained {
-		t.Fatalf("the fire-result note was not delivered into the origin chat by the shared engine's Step 2a drain — its Deps.DeliveryQueue is not live (ADR 0075)")
+		t.Fatalf("the fire-result note was not delivered into the origin chat by the shared engine's Step 2a drain — its Deps.DeliveryQueue is not live")
 	}
 	// Exactly-once: the note was marked delivered, so the queue is empty now.
 	pendingAfter, err := queue.Pending(ctx, sess.ID)
@@ -395,7 +394,7 @@ func TestScheduleSharedCatalog_Scenario3_RehydratedSessionKeepsTool(t *testing.T
 		}
 		sawResult = true
 		if strings.Contains(ev.ToolResult.Content, "unknown tool") {
-			t.Fatalf("the post-restart SHARED engine rejected the ScheduleQuery tool as unknown — the restart restore landed the session on a schedule-less shared engine (eager scheduleManagerFactory bind, ADR 0076); result: %q", ev.ToolResult.Content)
+			t.Fatalf("the post-restart SHARED engine rejected the ScheduleQuery tool as unknown — the restart restore landed the session on a schedule-less shared engine (eager scheduleManagerFactory bind); result: %q", ev.ToolResult.Content)
 		}
 		if ev.ToolResult.IsError {
 			t.Fatalf("the post-restart ScheduleQuery errored: %q", ev.ToolResult.Content)

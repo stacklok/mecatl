@@ -2,9 +2,9 @@ package app
 
 import "crypto/rand"
 
-// newPromptCacheKeySalt mints the per-process prompt_cache_key salt (ADR 0346).
+// newPromptCacheKeySalt mints the per-process prompt_cache_key salt.
 //
-// The ADR 0100 derivation has no installation-specific input, so two unrelated
+// The unsalted derivation has no installation-specific input, so two unrelated
 // installations sharing harness version, soul, agent def and tool inventory emit
 // an IDENTICAL prompt_cache_key. Salting removes that cross-principal
 // correlation while preserving byte-stability within a run.

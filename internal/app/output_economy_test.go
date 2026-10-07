@@ -8,7 +8,7 @@ import (
 )
 
 // TestPromptConfigCarriesNoOutputEconomyToneDelta proves the REMOVED output-economy
-// "terse" tone delta (ADR 0041, superseded) does NOT come back via promptConfig:
+// "terse" tone delta does NOT come back via promptConfig:
 // composition no longer carries an OutputEconomy field, so promptConfig leaves
 // Tone empty and Build falls through to the always-on defaultTone — which already
 // carries the investigation-depth / minimum-code / safety / read-before-edit /

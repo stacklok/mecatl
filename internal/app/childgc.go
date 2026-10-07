@@ -44,7 +44,7 @@ var childSessionPrefixes = []string{
 }
 
 // scheduleFireSessionPrefixes are the scheduled-task fire-session id prefixes
-// (ADR 0059 decision #7 Phase-2). A fire mints a "sched--"-prefixed top-level
+// A fire mints a "sched--"-prefixed top-level
 // session (the fire id IS the session id), and this family is swept by its OWN
 // age pass (sweepScheduleFires, ScheduleFireRetention) — NOT the main pass and
 // NOT the child pass. The prefix is a composition-owned constant (the fire path
@@ -105,7 +105,7 @@ type childGCPolicy struct {
 	// per-prefix (issue #79).
 	mainMaxTotal int
 	// scheduleFireRetention is the age threshold for the SCHEDULE-FIRE age pass
-	// (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed fire-session
+	// a "sched--"-prefixed fire-session
 	// snapshot whose ModifiedAt is older than now-scheduleFireRetention is
 	// deleted. <=0 disables it (fire sessions are never swept). It is a peer of
 	// mainRetention, partitioning the top-level sessions by family: a sched--
@@ -368,8 +368,8 @@ func (g *childGC) remove(ctx context.Context, candidate port.SessionDiscoveryMet
 // sweep can outlive its dependencies.
 func startChildGC(parent context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool, deleters ...func(context.Context, port.SessionDiscoveryMeta) error) func() {
 	noop := func() {}
-	// The sweeper has no caller: it runs as the explicit system principal
-	// (ADR 0204 decision 7), never an absent one.
+	// The sweeper has no caller: it runs as the explicit system principal,
+	// never an absent one.
 	parent = syscaller.Context(parent, syscaller.RootChildGC)
 	policy := childGCPolicy{
 		retention:             cfg.ChildRetention,

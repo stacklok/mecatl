@@ -86,7 +86,7 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 	}
 }
 
-// deliverFireResult is the composition-injected ADR-0075 fire-result delivery
+// deliverFireResult is the composition-injected fire-result delivery
 // driver: after a fire of a schedule with a non-empty OriginSessionID reaches
 // its terminal EvResult AND RecordFire has persisted the fire record, it renders
 // the fire's outcome as a fenced-untrusted harness note (renderFireDelivery),
@@ -97,7 +97,7 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 // fire's success: a delivery error WARNs and NEVER fails the fire (the fire is
 // already recorded; the result stays pull-able via ListFires).
 //
-// State-aware handling (ADR 0075 decision #3):
+// State-aware handling:
 //   - idle/completed/cancelled/failed origin: enqueue + drive StartRunContent
 //     (the note is the prompt; loadAndReopen recovers the terminal state). The
 //     enqueued note is marked delivered BEFORE the drive so the loop's Step 2a
@@ -121,7 +121,7 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 	return func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire) {
 		origin := sched.Spec.OriginSessionID
 		if origin == "" {
-			return // no delivery — the pre-ADR-0075 pull-only posture
+			return // no delivery — the pull-only posture
 		}
 		// A nil queue is the byte-identical no-delivery path and needs no owner
 		// lookup.
@@ -208,7 +208,7 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		// ~2202-2203), so a caller's immediate GetSession can see a stale,
 		// pre-persist snapshot. Draining to close guarantees the snapshot is
 		// settled. Publish each event to the origin session's live subscription
-		// (ADR 0075 decision #5) so a connected embedded mecatui renders the
+		// so a connected embedded mecatui renders the
 		// delivery card live (Wave 2); the durable log records the tail regardless.
 		for ev := range run.Events() {
 			svc.PublishSessionEvent(origin, ev)

@@ -45,7 +45,7 @@ const (
 	providerOpenAICodex = "openai-codex"
 	providerOpenRouter  = "openrouter"
 	// providerOpenRouterAnthropic is the native Anthropic Messages surface exposed
-	// by the same OpenRouter credential (ADR 0346), the sibling of
+	// by the same OpenRouter credential, the sibling of
 	// providerToolhiveAnthropic. It is deliberately a distinct provider: models
 	// listed here execute through OpenRouter's Anthropic endpoint, never the
 	// OpenAI Responses adapter used by providerOpenRouter. It exists because
@@ -224,7 +224,7 @@ type providerEntry struct {
 	// protocol is the WIRE PROTOCOL this entry's adapter speaks. Set at
 	// construction by whichever constructor built the entry — never inferred from
 	// the id, which cannot see a custom provider's api_flavor. Read by
-	// promptCachedFor and promptCacheSource (ADR 0346), because the three
+	// promptCachedFor and promptCacheSource, because the three
 	// protocols ask for a prompt cache in three different ways, and one of them
 	// has no way to ask at all.
 	protocol providerProtocol
@@ -241,7 +241,7 @@ type providerEntry struct {
 	// openai share the SAME openai.Provider adapter and only openrouter opts in.
 	lister modelLister
 	// remint RE-MINTS this entry's provider adapter with a different reasoning-
-	// effort token (ADR 0055) AND/OR a different per-session capability
+	// effort token AND/OR a different per-session capability
 	// intersection (T7), returning a fresh resilience-wrapped port.LLMProvider.
 	// It captures the construction inputs (key/baseURL/resolvers/resilience
 	// config) so the per-session engine factory can build a same-provider adapter
@@ -285,8 +285,8 @@ type providerEntry struct {
 	// distinguish a local proxy failure from a direct gateway/OIDC failure.
 	// It is meaningful only when intentDriven is true for a ToolHive provider.
 	toolhiveMode toolhiveRoutingMode
-	// defaultEffort is the OPERATOR-DEFAULT reasoning-effort token (ADR 0055,
-	// already normalised + per-provider clamped by operatorDefaultEffortFor) this
+	// defaultEffort is the OPERATOR-DEFAULT reasoning-effort token
+	// (already normalised + per-provider clamped by operatorDefaultEffortFor) this
 	// entry was built with. Stamped by buildProviderRegistry's fixup loop
 	// BEFORE the T7 re-mint so remintEntry (the shared re-mint helper, issue
 	// #262 review finding 4) can re-derive an entry's caps WITHOUT threading
@@ -318,7 +318,7 @@ type providerRegistry struct {
 	// immutable after Build and read by the picker projection as well as resolvers.
 	contextWindows map[string]map[string]int
 	// promptCached answers ModelInfo.prompt_cached for a (provider, model) pair
-	// (ADR 0346). A CLOSURE over the build's Config so the picker projection
+	// A CLOSURE over the build's Config so the picker projection
 	// reads the SAME resolution the adapters were constructed with, instead of
 	// growing a second copy of the dialect precedence. nil on a hand-built test
 	// registry, which projects false.
@@ -554,19 +554,19 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		// openrouter.Lister is a documented stateless leaf with no cache, and the
 		// ToolHive two-surface family already behaves the same way. A shared cached
 		// fetch was considered and declined: a cache that outlives a call is an
-		// outlives-a-call resource needing an ADR 0027 List 1 row, which is a real
-		// cost to pay for deduplicating one background HTTP GET.
+		// outlives-a-call resource multi-replica deployments must account for, which is a
+		// real cost to pay for deduplicating one background HTTP GET.
 		orLister := openRouterLister{inner: openrouter.NewLister(cfg.liveModelHTTPClient)}
 		entry.lister = orLister
 		entries[providerOpenRouter] = entry
 
-		// openrouter-anthropic (ADR 0346): the SAME credential also reaches
+		// openrouter-anthropic: the SAME credential also reaches
 		// OpenRouter's native Anthropic Messages surface, and Anthropic caches
-		// ONLY on an explicit ask. Routing Claude there gets the ADR 0100
+		// ONLY on an explicit ask. Routing Claude there gets the Anthropic
 		// breakpoint budget plus a TTL — neither expressible over Responses —
 		// because newAnthropicEntryFor applies conversation caching on EVERY
 		// endpoint. Registered on credential presence (no opt-in), mirroring
-		// ADR 0334's register-on-intent, so an existing OpenRouter user's Claude
+		// the ToolHive siblings' register-on-intent, so an existing OpenRouter user's Claude
 		// default starts caching on upgrade with no config change.
 		if anthropicBase := openRouterAnthropicBaseURL(baseURL); anthropicBase != "" {
 			arEntry := newAnthropicEntryFor(cfg, providerOpenRouterAnthropic, key, anthropicBase, meta, false)
@@ -646,12 +646,12 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta,
 		contextWindows: cfg.contextWindows, contextWindowOverride: cfg.ContextWindowOverride}
 	// Bind the prompt-cache projection AFTER entries exist (it looks an entry up)
-	// and over THIS build's cfg, so --no-prompt-cache and the ADR 0100 dialect
+	// and over THIS build's cfg, so --no-prompt-cache and the cache dialect
 	// precedence are read once, in one place.
 	reg.promptCached = func(providerID, modelID string) bool {
 		return promptCachedFor(reg, cfg, providerID, modelID)
 	}
-	// BUILD-ONCE posture line (ADR 0346 decision 7). Logged here, where the
+	// BUILD-ONCE posture line. Logged here, where the
 	// registry is assembled, and NEVER from the per-engine deps builders — the
 	// same rule that keeps normaliseAnthropicCacheTTL's WARN off every
 	// per-session and heal re-mint.
@@ -972,7 +972,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 			baseURL: baseURL, protocol: protocolOpenAIResponses}
 	}
 	// construct mints a resilience-wrapped openai adapter carrying the given
-	// reasoning-effort token (ADR 0055) and per-session capability intersection
+	// reasoning-effort token and per-session capability intersection
 	// (T7). It is the SINGLE construction path: the default .provider is
 	// construct(defaultEffort, defaultCaps) and the per-session re-mint is
 	// construct(sessionEffort, sessionCaps), so the two cannot drift on resilience
@@ -993,25 +993,25 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 			opts = append(opts, openai.WithReasoningEffort(effort))
 		}
 		opts = append(opts, openai.WithProviderCapabilities(caps))
-		// Prompt caching (ADR 0100): the dialect is a PURE (id, baseURL) gate,
+		// Prompt caching: the dialect is a PURE (id, baseURL) gate,
 		// never id alone — an operator can point "openai" at a non-canonical
 		// compatible endpoint (vLLM/LiteLLM via --openai-base-url) that would
 		// 400 on prompt_cache_retention or an unrecognised field. INSIDE the
 		// closure (not the outer call site) so every per-session/heal re-mint
 		// carries it, not just the initial build.
 		opts = append(opts, openai.WithCacheDialect(cacheDialectFor(id, baseURL, cfg)))
-		// Prompt-cache key salt (ADR 0346): the SAME per-process value on every
+		// Prompt-cache key salt: the SAME per-process value on every
 		// entry. Inside the closure for the same reason the dialect is — a
 		// per-session/heal re-mint must not silently drop it and start emitting
 		// the unsalted, cross-principal-stable key.
 		opts = append(opts, openai.WithCacheKeySalt(cfg.promptCacheKeySalt))
-		// Protocol-native breakpoint (ADR 0346 decision 1): armed for EVERY
+		// Protocol-native breakpoint: armed for EVERY
 		// endpoint, governed only by --no-prompt-cache. Deliberately not tied
 		// to the dialect above — an endpoint the dialect cannot classify is
 		// exactly where an explicit-ask upstream needs the ask.
 		opts = append(opts, openai.WithPromptCacheBreakpoints(!cfg.PromptCacheDisabled))
-		// Redirect refusal (ADR 0346 Scenario 5, applying ADR 0334's existing
-		// gateway decision consistently): the SDK's default client follows up to
+		// Redirect refusal (applying the gateway entries' existing
+		// decision consistently): the SDK's default client follows up to
 		// 10 redirects and re-sends the body on a 307/308. Go strips
 		// Authorization cross-domain so the key does not travel, but the system
 		// prompt, file contents and tool results do. Prepended BEFORE extra, so a
@@ -1077,7 +1077,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		if id == providerOpenCode {
 			opts = append(opts, openaichat.WithOpenCodeSessionHeader())
 		}
-		// Prompt caching (ADR 0100): dormant today (id is always providerOpenCode
+		// Prompt caching: dormant today (id is always providerOpenCode
 		// here, which never matches the OpenAI gate — see
 		// openaichatCacheDialectFor), but wired inside the closure so a future
 		// OpenAI-over-Chat-Completions entry gets it for free on every
@@ -1130,7 +1130,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 	// value, anthropicCacheTTLFor applies the shared built-in-provider default.
 	cacheTTL := anthropicCacheTTLFor(id, normaliseAnthropicCacheTTL(cfg), cfg)
 	// construct mints a resilience-wrapped anthropic adapter carrying the given
-	// reasoning-effort token (ADR 0055) and per-session capability intersection
+	// reasoning-effort token and per-session capability intersection
 	// (T7), over the SAME max-tokens + thinking resolvers. It is the SINGLE
 	// construction path: the default .provider is construct(defaultEffort,
 	// defaultCaps) and the per-session re-mint is construct(sessionEffort,
@@ -1156,7 +1156,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 				return meta.thinkingFor(id, model)
 			}),
 			anthropic.WithProviderCapabilities(caps),
-			// Prompt caching (ADR 0100): --no-prompt-cache disables the three NEW
+			// Prompt caching: --no-prompt-cache disables the three NEW
 			// conversation breakpoints (the pre-existing StablePrefix breakpoint is
 			// unaffected); --anthropic-cache-ttl (normalised once, above) stamps a
 			// uniform TTL across every marker the adapter emits. INSIDE the closure
@@ -1169,7 +1169,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		if cacheTTL != "" {
 			opts = append(opts, anthropic.WithCacheTTL(cacheTTL))
 		}
-		// Reasoning effort (ADR 0055) is INDEPENDENT of the thinking config above; both
+		// Reasoning effort is INDEPENDENT of the thinking config above; both
 		// coexist on the request. Anthropic identity-maps the neutral vocabulary.
 		if effort != "" {
 			opts = append(opts, anthropic.WithReasoningEffort(effort))
@@ -1177,7 +1177,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		if baseURL != "" {
 			opts = append(opts, anthropic.WithBaseURL(baseURL))
 		}
-		// Redirect refusal (ADR 0346 Scenario 5), the Messages-protocol sibling of
+		// Redirect refusal, the Messages-protocol sibling of
 		// newOpenAICompatEntry's client. The SDK's default client follows up to 10
 		// redirects and re-sends the body on a 307/308. Go strips Authorization
 		// cross-origin — but NOT x-api-key, the header this protocol authenticates
@@ -1289,7 +1289,7 @@ func resolveDefaultModel(cfg Config, reg *providerRegistry) (providerID, modelID
 		// (4) per-provider default model from the table (no entry => "" => endpoint default).
 		model = reg.DefaultModelFor(defID)
 	}
-	// ADR 0346 decision 3: never DEFAULT onto a protocol sibling that cannot cache
+	// Never DEFAULT onto a protocol sibling that cannot cache
 	// the default model. An explicitly configured provider still wins — the
 	// operator named it.
 	if !explicitProvider {
@@ -1302,7 +1302,7 @@ func resolveDefaultModel(cfg Config, reg *providerRegistry) (providerID, modelID
 // Anthropic-Messages entry registered from the SAME credential, for providers
 // whose two surfaces SHARE a model-id namespace.
 //
-// Only the OpenRouter pair qualifies (ADR 0346 decision 6). The ToolHive pair
+// Only the OpenRouter pair qualifies. The ToolHive pair
 // is deliberately ABSENT: measured on staging, that gateway exposes one Claude
 // Opus 4.8 as `anthropic/claude-opus-4.8` on its OpenRouter downstream,
 // `claude-opus-4-8` on its Anthropic downstream and
@@ -1316,8 +1316,7 @@ var anthropicProtocolSibling = map[string]string{
 }
 
 // preferAnthropicProtocolSibling redirects a DEFAULT provider selection to its
-// Anthropic-Messages sibling when the default model is an Anthropic-family id
-// (ADR 0346 decision 3).
+// Anthropic-Messages sibling when the default model is an Anthropic-family id.
 //
 // Why this exists: Anthropic caches only on an explicit ask, and the Responses
 // entry emits no breakpoints, so defaulting a Claude model onto it silently

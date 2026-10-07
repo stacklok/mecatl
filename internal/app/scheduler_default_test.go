@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// scheduler_default_test.go pins the ADR-0073 decision-2 posture: the
+// scheduler_default_test.go pins the default-on posture: the
 // scheduler is ON by default on any schedule-capable store, and a store with
 // no ScheduleStore (the in-memory default: mecademo, mecatequi, offline
 // tests) stays on the BYTE-IDENTICAL no-scheduling path — buildScheduler

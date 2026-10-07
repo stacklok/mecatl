@@ -406,7 +406,7 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 }
 
 // TestSubagentSeesDirtyWorkspaceEndToEnd is the model-facing proof for the dirty-aware
-// overlay (ADR 0033): a read-only Subagent dispatched over a DIRTY parent repo — one
+// overlay: a read-only Subagent dispatched over a DIRTY parent repo — one
 // uncommitted tracked modification AND one new untracked file — runs `git status` and
 // `git diff` in its worktree and the captured REAL git output reflects the operator's
 // in-progress work. Without WithDirtyOverlay the worktree is a clean HEAD checkout and

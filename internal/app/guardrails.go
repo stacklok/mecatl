@@ -60,7 +60,7 @@ func foldOperatorGuardrails(cfg Config) Config {
 		cfg.GuardrailsTaskWindow = g.TaskWindow
 	}
 	cfg.GuardrailsTaskWindow = clampReviewTaskWindow(cfg.GuardrailsTaskWindow)
-	// Escape knob (ADR 0080): YAML-only (no flag); OR-folded like Disabled.
+	// Escape knob: YAML-only (no flag); OR-folded like Disabled.
 	if g.Escape {
 		cfg.GuardrailsEscape = true
 	}
@@ -431,11 +431,11 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 }
 
 // effectiveGuardrailSpecs returns the rule specs to compile: the operator's explicit
-// rules when any are configured, else the built-in default BLOCK set (ADR 0060).
+// rules when any are configured, else the built-in default BLOCK set.
 // usedDefaults reports which, so the posture line (logGuardrailsPosture) can annotate
 // "default set" only when the defaults are in force.
 //
-// Posture-coupling (ADR 0062, sub-decision B): under posture YOLO ONLY (the
+// Posture-coupling: under posture YOLO ONLY (the
 // truly-off, gate-free tier that maps to Claude Code's bypassPermissions) ALL
 // guardrail rule modes are DEMOTED to advisory (observe-only) by demoteForPosture —
 // it never blocks or asks, it only logs + emits an EvHook. strict/trusted/AUTO keep
@@ -478,7 +478,7 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 }
 
 // demoteForPosture demotes the enforcing guardrail block mode to advisory
-// under posture YOLO ONLY (ADR 0062, sub-decision B; CC bypassPermissions parity).
+// under posture YOLO ONLY (CC bypassPermissions parity).
 // strict/trusted/auto keep the configured mode — under auto the approve-once ask IS
 // the enforcement behaviour. It is the SINGLE posture→mode coupling point so the
 // default-set and operator-rule branches cannot drift.
@@ -490,10 +490,10 @@ func demoteForPosture(cfg Config, mode string) string {
 }
 
 // guardrailsConfigured reports whether guardrails are switched on: a checker model
-// is configured — via --guardrails-model OR a bound `guardrail` model slot (ADR 0046,
-// configure = enable, the router-parity model of ADR 0042) — AND the master kill-switch
+// is configured — via --guardrails-model OR a bound `guardrail` model slot (configure =
+// enable, the same model as the subagent router) — AND the master kill-switch
 // is not set. A model with NO explicit rules is still ON — it takes the default BLOCK
-// rule set (effectiveGuardrailSpecs, ADR 0060; the model being configured is the opt-in
+// rule set (effectiveGuardrailSpecs; the model being configured is the opt-in
 // to spend). The kill-switch (--guardrails=off → GuardrailsDisabled) wins over any
 // config. Resolution precedence is unchanged: a bound slot SUPERSEDES the gate value's
 // model (see resolveGuardrailsCheckerModel).
@@ -675,7 +675,7 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 	return engineGuardrailsChecker{reviewer: reviewer}
 }
 
-// buildGuardrailsEscapeChecker builds the ADR-0080 permission escape check.
+// buildGuardrailsEscapeChecker builds the guardrail-routed permission escape check.
 // It is armed only on the main session at posture auto with the escape knob
 // and guardrails configured. Generic HookRunner requests carry no usage reporter.
 func buildGuardrailsEscapeChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider) modelhook.VerdictChecker {

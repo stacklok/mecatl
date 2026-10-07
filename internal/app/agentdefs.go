@@ -438,7 +438,7 @@ func shellScopeMissReason(cfg Config) string {
 //  5. when allowMutating is false, drop any mutating (non-read-only) tool with a
 //     DISTINCT diagnostic — EXCEPT that when allowShell is true the Shell tool alone
 //     survives. allowMutating == true (a Mutating team member, which runs in an
-//     isolated force-copy fork; AND a writable specialist Subagent (ADR 0058), which
+//     isolated force-copy fork; AND a writable specialist Subagent, which
 //     keeps Edit/Write/Shell over the real parent workspace via the MAIN runner) keeps
 //     every mutating tool (Edit/Write/Shell). allowMutating == false + allowShell == true
 //     (a read-only team member that the supervisor will isolate in a git worktree)
@@ -852,7 +852,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // base is the AVAILABLE base toolset the def's catalog is scoped over
 // (baseSubagentTools(cfg)); allowMutating, when true, KEEPS workspace-mutating tools
 // (Edit/Write/Shell) over the real workspace instead of dropping them — a Mutating team
-// member (isolated force-copy fork) and a writable specialist Subagent (ADR 0058, direct-
+// member (isolated force-copy fork) and a writable specialist Subagent (direct-
 // write against the real parent workspace via the MAIN runner) both pass true, while a
 // read-only Subagent explorer and a read-only team member pass false (Edit/Write dropped;
 // Shell kept only when allowShell is true and the member is worktree-isolated). allowShell

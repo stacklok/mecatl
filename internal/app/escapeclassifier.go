@@ -107,8 +107,8 @@ type fsPathArg struct {
 // classify reports the escapeKind of an FS-tool call. Only Read/ListDir/Write/Edit
 // carry a workspace path the escape decision applies to: Shell commands are
 // gated by the bash classifiers (SplitCommands/ReadOnlyShell), Glob/Grep route
-// patterns (not paths) and stay workspace-confined at every posture (ADR-0047
-// point 5), and every other tool has no FS path — all classify in-root so the
+// patterns (not paths) and stay workspace-confined at every posture,
+// and every other tool has no FS path — all classify in-root so the
 // later wrapping policy leaves them to the inner policy untouched. A malformed
 // or missing path arg also classifies in-root (the tool body's own arg
 // validation rejects it; the escape decision never invents a path).

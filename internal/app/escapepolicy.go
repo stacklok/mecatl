@@ -54,7 +54,7 @@ type escapePolicy struct {
 	inner   port.PermissionPolicy
 	posture Posture
 
-	// route is the ADR-0080 guardrail-routed escape checker: non-nil ONLY at
+	// route is the guardrail-routed escape checker: non-nil ONLY at
 	// posture auto WITH the operator-tier escape knob configured. nil is the
 	// byte-identical no-route posture (the ordinary posture table).
 	route *escapeGuardrailRoute
@@ -64,13 +64,13 @@ type escapePolicy struct {
 }
 
 // escapePolicyOption is the functional-option seam for the escape policy's
-// optional wiring (today: the ADR-0080 guardrail route).
+// optional wiring (today: the guardrail-routed escape check).
 type escapePolicyOption func(*escapePolicy)
 
-// withEscapeGuardrailRoute arms the ADR-0080 guardrail-routed escape checker.
+// withEscapeGuardrailRoute arms the guardrail-routed escape checker.
 // It is a NO-OP unless the posture is auto AND the checker is non-nil — the
-// route is the auto-only knob (yolo demotes guardrails to advisory per
-// ADR 0062 and never spends a checker call; strict/trusted keep their own
+// route is the auto-only knob (yolo demotes guardrails to advisory
+// and never spends a checker call; strict/trusted keep their own
 // Scenario-4 escape Ask).
 func withEscapeGuardrailRoute(checker modelhook.VerdictChecker) escapePolicyOption {
 	return func(p *escapePolicy) {
@@ -165,7 +165,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		}
 		return decision
 	case escapeEscape:
-		// ADR 0080 (auto + the operator-tier escape knob only): route the
+		// Auto + the operator-tier escape knob only: route the
 		// escape through the guardrail checker BEFORE the posture row. An
 		// unsafe verdict vetoes (Deny); a checker ERROR fails CLOSED to the
 		// write-escape Ask; a safe verdict falls through to the ordinary row.
@@ -240,9 +240,9 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 	return decision
 }
 
-// --- the ADR-0080 guardrail-routed escape checker (auto + knob only) ---
+// --- the guardrail-routed escape checker (auto + knob only) ---
 
-// escapeGuardrailRoute is the composition-level PRE-CHECK ADR 0080 pins: an
+// escapeGuardrailRoute is the composition-level escape PRE-CHECK: an
 // out-of-root escape at posture auto, when the operator-tier escape knob is
 // configured, is judged by the LLM guardrail checker BEFORE the posture row
 // decides. It reuses the SAME engine-backed modelhook.VerdictChecker
@@ -252,7 +252,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 // are all inherited, not re-implemented. The route is:
 //
 //   - auto-only (withEscapeGuardrailRoute refuses to arm it at any other
-//     posture — yolo demotes guardrails to advisory per ADR 0062 and never
+//     posture — yolo demotes guardrails to advisory and never
 //     spends a checker call; strict/trusted keep their own Scenario-4 Ask);
 //   - main-engine-only (it rides ONLY the main escape policy; a child engine
 //     never relaxes escapes at all — Scenario 5 — so there is no child route);

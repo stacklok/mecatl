@@ -13,7 +13,7 @@ import (
 const openRouterAnthropicSegment = "anthropic/"
 
 // openRouterAnthropicBaseURL derives the Anthropic Messages base from the
-// OpenRouter OpenAI base (ADR 0346, following ADR 0334's derivation rules).
+// OpenRouter OpenAI base.
 //
 // OpenRouter documents its Anthropic-protocol base as https://openrouter.ai/api
 // — note the absent /v1 — because the Anthropic SDK appends /v1/messages and
@@ -23,7 +23,7 @@ const openRouterAnthropicSegment = "anthropic/"
 //
 // Built with net/url, never string concatenation, and userinfo, query and
 // fragment are dropped so none of them can ride into a request URL or a
-// diagnostic (ADR 0334). A base that does not end in /v1 is returned sanitised
+// diagnostic. A base that does not end in /v1 is returned sanitised
 // but otherwise untouched: an operator who overrode --openrouter-base-url to a
 // non-standard shape gets their path preserved rather than silently rewritten.
 // "" in, "" out, and "" out on any parse failure — the caller treats that as
@@ -34,7 +34,7 @@ const openRouterAnthropicSegment = "anthropic/"
 // because that gateway exposes the surface at a sub-path, and OpenRouter passes
 // nothing because its Anthropic surface IS the /api root. Sharing the one
 // derivation is what keeps the sanitisation rules from drifting between two
-// call sites that must obey the same ADR 0334 contract.
+// call sites that must obey the same sanitisation contract.
 func openRouterAnthropicBaseURL(openAIBaseURL string) string {
 	return deriveGatewayBaseURL(openAIBaseURL, "", true)
 }
@@ -42,7 +42,7 @@ func openRouterAnthropicBaseURL(openAIBaseURL string) string {
 // isOpenRouterAnthropicModel reports whether an OpenRouter model id executes on
 // the Anthropic Messages surface. OpenRouter's Anthropic endpoint does not serve
 // non-Anthropic models, so this is what keeps the openrouter-anthropic entry
-// from advertising ids its endpoint would reject (ADR 0346 decision 2).
+// from advertising ids its endpoint would reject.
 func isOpenRouterAnthropicModel(id string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(id)), openRouterAnthropicSegment)
 }
@@ -55,7 +55,7 @@ func isOpenRouterAnthropicModel(id string) bool {
 //
 //   - Anthropic Messages — true. cache_control is native to the protocol and the
 //     adapter emits it on every endpoint.
-//   - OpenAI Responses — true. ADR 0346 arms the protocol-native
+//   - OpenAI Responses — true. The adapter arms the protocol-native
 //     prompt_cache_breakpoint on every endpoint, dialect or no dialect. The
 //     canonical OpenAI endpoint gates the marker on the model, but implicit
 //     caching covers the pre-breakpoint models there anyway, so the answer is
@@ -69,8 +69,8 @@ func isOpenRouterAnthropicModel(id string) bool {
 // --no-prompt-cache forces false regardless, and an unregistered provider is
 // false because nothing will run there.
 //
-// The signal no longer marks the ADR-0100-era "this endpoint emits nothing"
-// case for Responses, because ADR 0346 abolished it there. It reports only
+// The signal has no "this endpoint emits nothing" case for Responses, because
+// the breakpoint is armed on every Responses endpoint. It reports only
 // whether mecatl asks for caching at all. Whether a given upstream HONOURS the
 // ask is not statically knowable, and this must not pretend otherwise.
 func promptCachedFor(reg *providerRegistry, cfg Config, providerID string, _ string) bool {
@@ -88,8 +88,7 @@ func promptCachedFor(reg *providerRegistry, cfg Config, providerID string, _ str
 }
 
 // promptCacheSource labels WHERE a provider's resolved cache posture came from,
-// so an unexpected posture reads as a decision rather than a plausible default
-// (ADR 0346 decision 7).
+// so an unexpected posture reads as a decision rather than a plausible default.
 func promptCacheSource(reg *providerRegistry, cfg Config, providerID string) string {
 	if cfg.PromptCacheDisabled {
 		return "forced off by --no-prompt-cache"
@@ -124,7 +123,7 @@ func promptCacheSource(reg *providerRegistry, cfg Config, providerID string) str
 // promptCachePostureLine composes the build-once prompt-cache posture line as a
 // PURE helper, so it is table-testable directly (the guardrailsPostureLine
 // idiom). It names every registered provider and its resolved source in sorted
-// order, because ADR 0100's failure mode was SILENCE: a provider emitting no
+// order, because the failure mode it guards against is SILENCE: a provider emitting no
 // breakpoint for a Claude model looked exactly like a provider that was fine,
 // for as long as it took to exhaust a budget.
 //

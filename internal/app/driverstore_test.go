@@ -192,7 +192,7 @@ func TestBuildStoreDefaults(t *testing.T) {
 	})
 }
 
-// TestBuildStoreRedisURL pins the ADR-0048 Redis branch of buildSessionStore:
+// TestBuildStoreRedisURL pins the Redis branch of buildSessionStore:
 // a RedisURL yields the redisstore adapter, which doubles as its own EventLog
 // (the same Store instance, like jsonlstore). The test uses an in-process
 // miniredis so it is fully offline. A Save/Load round-trip proves the adapter
