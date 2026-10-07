@@ -302322,6 +302322,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791326240246,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bea47ca6e06a637522162ca1c20f7442737e953c",
+          "message": "feat(studio): complete chat approvals, plan review, and Escape flow (#1975)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>\nCo-authored-by: Giuseppe Scuglia <peppescg@gmail.com>\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T10:56:35+02:00",
+          "tree_id": "d84b41b6c0a5f2133b22179af9c3e7fc2c02238c",
+          "url": "https://github.com/stacklok/mecatl/commit/bea47ca6e06a637522162ca1c20f7442737e953c"
+        },
+        "date": 1791364157132,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 74,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -395726,6 +395765,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791364153784,
+  "lastUpdate": 1791364157815,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
