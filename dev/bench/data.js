@@ -306689,6 +306689,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791398655812,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4b834fd9769c5e2449e63e5d5a70cc1e814e33ca",
+          "message": "docs: copyedit public documentation (#2137)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Codex <noreply@openai.com>",
+          "timestamp": "2026-10-07T14:39:03-04:00",
+          "tree_id": "671e026e281cab8aadab36a1eefab970ff0662b5",
+          "url": "https://github.com/stacklok/mecatl/commit/4b834fd9769c5e2449e63e5d5a70cc1e814e33ca"
+        },
+        "date": 1791399378015,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3277,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 76.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -401347,6 +401386,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791399374790,
+  "lastUpdate": 1791399379055,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
