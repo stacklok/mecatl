@@ -39,7 +39,7 @@ mcp:
             mode: preregistered
             preregistered:
               id: mecatl-local
-              secret_env: MECATL_MCP_CLIENT_SECRET
+              secret_file: /run/secrets/mcp-client
           scopes: [mcp.read, mcp.write]
           request_refresh_token: true
           credentials:
@@ -124,7 +124,7 @@ func TestMcpBrokerDCRClient_Scenario1_PermConfigClosedUnion(t *testing.T) {
 	for name, body := range map[string]string{
 		"non HTTPS":                          strings.Replace(dcr, "https://auth.example/.well-known", "http://auth.example/.well-known", 1),
 		"missing discovery":                  strings.Replace(dcr, "              discovery_url: https://auth.example/.well-known/oauth-authorization-server\n", "", 1),
-		"mixed preregistered client variant": strings.Replace(dcr, "            dcr:\n", "            preregistered: {id: client, secret_env: MECATL_SECRET}\n            dcr:\n", 1),
+		"mixed preregistered client variant": strings.Replace(dcr, "            dcr:\n", "            preregistered: {id: client, secret_file: /run/secrets/other-client}\n            dcr:\n", 1),
 		"mixed CIMD client variant":          strings.Replace(dcr, "            dcr:\n", "            cimd: {document_url: https://client.example/mecatl.json}\n            dcr:\n", 1),
 		"OIDC upstream":                      strings.Replace(dcr, "mode: oauth2\n            oauth2:\n              authorization_endpoint: https://auth.example/authorize\n              token_endpoint: https://auth.example/token", "mode: oidc", 1),
 		"missing upstream":                   strings.Replace(dcr, "          upstream:\n            mode: oauth2\n            oauth2:\n              authorization_endpoint: https://auth.example/authorize\n              token_endpoint: https://auth.example/token\n", "", 1),
@@ -148,7 +148,7 @@ func TestMCPStaticProtectedToolsAreStrictTrustedDeclarations(t *testing.T) {
           issuer: https://issuer.example
           client:
             mode: preregistered
-            preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}
+            preregistered: {id: client, secret_file: /run/secrets/mcp-client}
           scopes: [read]
           credentials:
             mode: local
@@ -262,7 +262,7 @@ mcp:
           issuer: https://issuer.example
           client:
             mode: preregistered
-            preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}
+            preregistered: {id: client, secret_file: /run/secrets/mcp-client}
           scopes: [read]
           credentials:
             mode: local
@@ -279,7 +279,7 @@ mcp:
 		"cross auth variant":                 replace("        oauth:\n", "        static_bearer: {token_env: MECATL_TOKEN}\n        oauth:\n"),
 		"none with null payload":             `mcp: {servers: [{name: svc, url: https://mcp.example/mcp, auth: {mode: none, oauth: null}}]}`,
 		"unknown oauth key":                  replace("          profile:", "          profil:"),
-		"client mapping omitted":             replace("          client:\n            mode: preregistered\n            preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}\n", ""),
+		"client mapping omitted":             replace("          client:\n            mode: preregistered\n            preregistered: {id: client, secret_file: /run/secrets/mcp-client}\n", ""),
 		"dcr client":                         replace("mode: preregistered", "mode: unsupported"),
 		"cross client variant":               replace("            preregistered:", "            cimd: {document_url: https://client.example/cimd.json}\n            preregistered:"),
 		"client with null cross variant":     replace("            preregistered:", "            cimd: null\n            preregistered:"),
@@ -287,8 +287,10 @@ mcp:
 		"cross credential variant":           replace("            local:", "            environment: {credential_env: MECATL_CREDENTIAL}\n            local:"),
 		"credential with null cross variant": replace("            local:", "            environment: null\n            local:"),
 		"missing scopes":                     replace("          scopes: [read]\n", ""),
-		"invalid env reference":              replace("MECATL_CLIENT_SECRET", "CLIENT_SECRET"),
-		"secret value not reference":         replace("MECATL_CLIENT_SECRET", "actual-secret-value"),
+		"missing client secret file":         replace("/run/secrets/mcp-client", ""),
+		"relative client secret file":        replace("/run/secrets/mcp-client", "run/secrets/mcp-client"),
+		"invalid env reference":              replace("secret_file: /run/secrets/mcp-client", "secret_env: CLIENT_SECRET"),
+		"secret value not reference":         replace("secret_file: /run/secrets/mcp-client", "secret_env: actual-secret-value"),
 		"relative root":                      replace("root: /credentials", "root: credentials"),
 		"missing network":                    replace("          network: {additional_origins: [], private_origins: [], max_redirects: 0}\n", ""),
 		"redirect negative":                  replace("max_redirects: 0", "max_redirects: -1"),
@@ -299,7 +301,7 @@ mcp:
 		"authenticated external HTTP":        replace("https://mcp.example/mcp", "http://mcp.example/mcp"),
 		"issuer path":                        replace("https://issuer.example", "https://issuer.example/oauth"),
 		"noncanonical issuer":                replace("https://issuer.example", "https://ISSUER.example:443/"),
-		"CIMD replaced by unsupported shape": replace("preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}", "cimd: {document_url: http://client.example/cimd.json}"),
+		"CIMD replaced by unsupported shape": replace("preregistered: {id: client, secret_file: /run/secrets/mcp-client}", "cimd: {document_url: http://client.example/cimd.json}"),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -307,6 +309,16 @@ mcp:
 				t.Fatal("parse succeeded; want strict validation error")
 			}
 		})
+	}
+}
+
+func TestMCPPreregisteredSecretEnvStillParses(t *testing.T) {
+	body := strings.Replace(validMCPYAML, "secret_file: /run/secrets/mcp-client", "secret_env: MECATL_CLIENT_SECRET", 1)
+	if body == validMCPYAML {
+		t.Fatal("fixture has no secret_file line")
+	}
+	if _, err := parseYAML([]byte(body)); err != nil {
+		t.Fatalf("secret_env variant rejected: %v", err)
 	}
 }
 
@@ -397,7 +409,7 @@ func TestMalformedProjectMCPFailsSoftWithValueFreeWarning(t *testing.T) {
           issuer: https://issuer-canary.example
           client:
             mode: preregistered
-            preregistered: {id: client, secret_env: MECATL_SECRET_CANARY}
+            preregistered: {id: client, secret_file: /run/secrets/canary-client}
           scopes: [read]
           credentials:
             mode: environment
@@ -416,7 +428,7 @@ func TestMalformedProjectMCPFailsSoftWithValueFreeWarning(t *testing.T) {
 	if !strings.Contains(got, "project YAML invalid; skipping") {
 		t.Fatalf("missing fail-soft warning: %s", got)
 	}
-	for _, canary := range []string{"url-canary", "issuer-canary", "profile-canary", "principal-canary", "MECATL_SECRET_CANARY", "MECATL_CREDENTIAL_CANARY"} {
+	for _, canary := range []string{"url-canary", "issuer-canary", "profile-canary", "principal-canary", "/run/secrets/canary-client", "MECATL_CREDENTIAL_CANARY"} {
 		if strings.Contains(got, canary) {
 			t.Errorf("warning leaked project MCP value %q: %s", canary, got)
 		}
@@ -436,7 +448,7 @@ func TestProjectMCPIgnoredWithValueFreeWarning(t *testing.T) {
           issuer: https://issuer-canary.example
           client:
             mode: preregistered
-            preregistered: {id: client, secret_env: MECATL_SECRET_CANARY}
+            preregistered: {id: client, secret_file: /run/secrets/canary-client}
           scopes: [read]
           credentials:
             mode: environment
@@ -455,7 +467,7 @@ func TestProjectMCPIgnoredWithValueFreeWarning(t *testing.T) {
 	if !strings.Contains(got, "IGNORING a project-tier mcp") {
 		t.Fatalf("missing generic warning: %s", got)
 	}
-	for _, secret := range []string{"url-canary", "issuer-canary", "profile-canary", "principal-canary", "MECATL_SECRET_CANARY", "MECATL_CREDENTIAL_CANARY"} {
+	for _, secret := range []string{"url-canary", "issuer-canary", "profile-canary", "principal-canary", "/run/secrets/canary-client", "MECATL_CREDENTIAL_CANARY"} {
 		if strings.Contains(got, secret) {
 			t.Errorf("warning leaked project MCP value %q: %s", secret, got)
 		}

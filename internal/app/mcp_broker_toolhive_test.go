@@ -166,3 +166,22 @@ func TestBuildToolHiveAuthRedisClientFallsBackWithoutRedis(t *testing.T) {
 		t.Fatalf("buildToolHiveAuthRedisClient client = %#v, want nil", client)
 	}
 }
+
+func TestToolHiveBrokerConfigMapsClientSecretSources(t *testing.T) {
+	route := func(name string, client permconfig.MCPPreregisteredClientProfile) permconfig.MCPServerProfile {
+		return permconfig.MCPServerProfile{Name: name, URL: "https://mcp.example/" + name, Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
+			Issuer: "https://issuer.example", Scopes: []string{"read"},
+			Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &client},
+		}}}
+	}
+	config := toolHiveBrokerConfig([]permconfig.MCPServerProfile{
+		route("envroute", permconfig.MCPPreregisteredClientProfile{ID: "a", SecretEnv: "MECATL_CLIENT_SECRET"}),
+		route("fileroute", permconfig.MCPPreregisteredClientProfile{ID: "b", SecretFile: "/run/secrets/client"}),
+	}, "https://broker.example/callback", nil, nil, nil)
+	if o := config.Profiles[0].OAuth; o.ClientSecretEnv != "MECATL_CLIENT_SECRET" || o.ClientSecretFile != "" {
+		t.Fatalf("env route = %#v", o)
+	}
+	if o := config.Profiles[1].OAuth; o.ClientSecretFile != "/run/secrets/client" || o.ClientSecretEnv != "" {
+		t.Fatalf("file route = %#v", o)
+	}
+}
