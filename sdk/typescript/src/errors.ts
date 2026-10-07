@@ -87,6 +87,7 @@ export const MECATL_ERROR_CODES = [
   "watch_capacity",
   "watch_lagging",
   "watch_unsupported",
+  "workspace_enrollment_observe_timeout",
 ] as const;
 // END MECATL_ERROR_CODES
 

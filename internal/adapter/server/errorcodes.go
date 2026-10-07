@@ -116,6 +116,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrFailedStepRetryIneligible, Code: "failed_step_retry_ineligible", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Failed-step retry is not eligible"},
 	{Sentinel: errMCPAuthorizationPending, Code: "mcp_authorization_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "MCP authorization is pending"},
 	{Sentinel: ErrEnvironmentLogicalRootUnavailable, Code: "environment_logical_root_unavailable", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Repository worktree attachment unavailable"},
+	{Sentinel: ErrWorkspaceEnrollmentObserveTimeout, Code: "workspace_enrollment_observe_timeout", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Workspace enrollment observation timed out"},
 	{Sentinel: ErrFailedPrecondition, Code: "failed_precondition", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Failed precondition"},
 	{Sentinel: ErrNoActiveRun, Code: "no_active_run", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "No active run for session"},
 	{Sentinel: ErrNotAwaitingPlan, Code: "not_awaiting_plan", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Session is not awaiting a plan approval"},
