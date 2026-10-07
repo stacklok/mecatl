@@ -1047,7 +1047,7 @@ type CreateSessionRequest struct {
 	// lifetime of this session, via a per-session engine. Empty (the default) is
 	// byte-identical to today: the session takes the shared-engine path.
 	//
-	// LISTENER-SCOPED (ADR 0237 / ADR 0248): accepting an MCP endpoint plus its
+	// LISTENER-SCOPED: accepting an MCP endpoint plus its
 	// auth headers from an API caller combines a remote principal with the
 	// server's ambient outbound network authority, so it is a DEPLOYMENT policy,
 	// not an inference from the request. A deployment whose API listeners are all
@@ -1406,7 +1406,7 @@ func (*GetCompatibilityInfoRequest) Descriptor() ([]byte, []int) {
 	return file_mecatl_v1_harness_proto_rawDescGZIP(), []int{5}
 }
 
-// GetCompatibilityInfoResponse is the deployment's compatibility descriptor (ADR 0248).
+// GetCompatibilityInfoResponse is the deployment's compatibility descriptor.
 //
 // It deliberately carries TWO different vocabularies side by side, because they
 // answer different questions and conflating them is a bug:
@@ -1438,7 +1438,7 @@ type GetCompatibilityInfoResponse struct {
 	//
 	// A feature that is only reachable on some listeners is advertised only on a
 	// listener that permits it, so this set is "what this build implements AND
-	// this listener permits" (see ADR 0237 / ADR 0248).
+	// this listener permits".
 	Features []string `protobuf:"bytes,3,rep,name=features,proto3" json:"features,omitempty"`
 	// deployment is an OPTIONAL, opaque, bounded, operator-set label for this
 	// deployment. It is empty by default and is NEVER derived from hostname, pod
@@ -2064,7 +2064,7 @@ type CreateSessionResponse struct {
 	// rather than the model_id it sent (which is empty for a default session and
 	// ambiguous for passthrough). The model is FIXED per TURN; it is re-resolved
 	// BETWEEN turns when the session's permission mode changes the effective model
-	// (the plan-slot / opusplan pattern, ADR 0030 Layer 3) — re-read it from
+	// (the plan-slot / opusplan pattern) — re-read it from
 	// GetSession after a mode change. Nil/absent from an older server → the client
 	// falls back to today's behavior (no model segment in the header).
 	ResolvedModel *ResolvedModel `protobuf:"bytes,4,opt,name=resolved_model,json=resolvedModel,proto3" json:"resolved_model,omitempty"`
@@ -2206,7 +2206,7 @@ func (x *PlacementMetadata) GetRevision() string {
 // session resolved to and its context window. Composition-computed and echoed
 // verbatim (see CreateSessionResponse.resolved_model); the model is FIXED per TURN
 // and re-resolved between turns when the permission mode changes the effective
-// model (plan-slot / opusplan, ADR 0030 Layer 3). The client resolves a human
+// model (plan-slot / opusplan). The client resolves a human
 // display name from its ListModels inventory by (provider_id, model_id) — no
 // display_name is carried here.
 type ResolvedModel struct {
@@ -2742,7 +2742,7 @@ func (x *StreamSessionLiveRequest) GetSessionId() string {
 	return ""
 }
 
-// WatchSessionEventsRequest opens a durable replay-then-follow watch (ADR 0250).
+// WatchSessionEventsRequest opens a durable replay-then-follow watch.
 type WatchSessionEventsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// session_id is the id of the session to watch. An unknown id yields a watch
@@ -2758,7 +2758,7 @@ type WatchSessionEventsRequest struct {
 	// cursor gets `cursor_expired` or `cursor_malformed`, never silently wrong
 	// data.
 	Cursor string `protobuf:"bytes,2,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	// run_id, when set, narrows delivery to the events one run emitted (ADR 0249).
+	// run_id, when set, narrows delivery to the events one run emitted.
 	// Empty delivers every run's events. Gap frames are delivered either way.
 	//
 	// A cursor is SCOPED to the run_id it was issued under: resume with the same
@@ -2955,7 +2955,7 @@ func (x *ListSessionsRequest) GetCursor() string {
 	return ""
 }
 
-// Principal is the verified caller an object is attributed to (ADR 0204 — caller
+// Principal is the verified caller an object is attributed to (caller
 // identity, threaded). Identity is the (issuer, subject) PAIR, never subject alone:
 // two IdPs or realms collide on `sub`. It carries NO scopes, NO credentials and NO
 // claims map — attribution only; enforcement is the isolation track's.
@@ -3063,7 +3063,7 @@ type SessionSummary struct {
 	// created_at_unix is the creation timestamp in Unix seconds. Zero when the
 	// snapshot could not be loaded.
 	CreatedAtUnix int64 `protobuf:"varint,6,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
-	// owner is the verified caller the session is attributed to (ADR 0204), stamped
+	// owner is the verified caller the session is attributed to, stamped
 	// write-once at CreateSession from the validated token — never from the request
 	// body. UNSET for an ownerless session (a no-auth deployment, or a session
 	// persisted before the owner label existed; nothing backfills it).
@@ -5302,7 +5302,7 @@ type Session struct {
 	CreatedAtUnix int64 `protobuf:"varint,8,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
 	// resolved_model is the EFFECTIVE provider+model this session resolved to
 	// (composition-computed, echoed verbatim; FIXED per TURN, re-resolved between
-	// turns on a permission-mode change — plan-slot / opusplan, ADR 0030 Layer 3).
+	// turns on a permission-mode change — plan-slot / opusplan).
 	// Mirrors CreateSessionResponse.resolved_model so a snapshot reader (GetSession)
 	// sees the same effective model the create response carried — and is the canonical
 	// place a client re-reads the model AFTER a mode change. Nil/absent from an older
@@ -7883,7 +7883,7 @@ type Event struct {
 	// lifecycle boundary. Clients and event-source hosts must not parse text.
 	ModelRetry *ModelRetry `protobuf:"bytes,21,opt,name=model_retry,json=modelRetry,proto3" json:"model_retry,omitempty"`
 	// run_id is the opaque, server-minted identity of the run that emitted this
-	// event (ADR 0249). It is stamped by the agent loop, so every event a run
+	// event. It is stamped by the agent loop, so every event a run
 	// emits carries it on both the gRPC and HTTP/SSE surfaces.
 	//
 	// It is OPAQUE: it encodes nothing and exists only to be compared for
@@ -9667,7 +9667,7 @@ type Subagent struct {
 	Model string `protobuf:"bytes,13,opt,name=model,proto3" json:"model,omitempty"`
 	// inner_kind discriminates which inner child event kind the preview came from
 	// (message.delta / tool.call / tool.result / result); set on subagent.tool
-	// alongside text / detail (ADR 0079 bounded previews). A child's permission.ask
+	// alongside text / detail (bounded previews). A child's permission.ask
 	// is never projected. STRING passthrough, mirroring Team.inner_kind.
 	InnerKind string `protobuf:"bytes,14,opt,name=inner_kind,json=innerKind,proto3" json:"inner_kind,omitempty"`
 	// text is a BOUNDED preview of the child's message/result text (subagent.tool,
@@ -10263,7 +10263,7 @@ func (x *Team) GetCause() string {
 
 // Parallel is the BOUNDED observability projection carried by the three parallel.*
 // events (parallel.start / parallel.branch / parallel.end). Mirrors
-// session.ParallelPayload. Like Subagent it now forwards BOUNDED previews (ADR 0079)
+// session.ParallelPayload. Like Subagent it now forwards BOUNDED previews
 // on branch_tool events — text is a rune-capped preview of the branch's message
 // text, detail a rune-capped preview of a branch tool call's args or result body —
 // so a client can render a Parallel fork-join run's activity (a join strategy, a
@@ -10352,7 +10352,7 @@ type Parallel struct {
 	Model string `protobuf:"bytes,21,opt,name=model,proto3" json:"model,omitempty"`
 	// inner_kind discriminates which inner branch event kind the preview came from
 	// (message.delta / tool.call / tool.result / result); set on branch_tool
-	// alongside text / detail (ADR 0079 bounded previews). A branch's permission.ask
+	// alongside text / detail (bounded previews). A branch's permission.ask
 	// is never projected. STRING passthrough, mirroring Team.inner_kind.
 	InnerKind string `protobuf:"bytes,22,opt,name=inner_kind,json=innerKind,proto3" json:"inner_kind,omitempty"`
 	// text is a BOUNDED preview of the branch's message/result text (branch_tool,
@@ -13576,7 +13576,7 @@ type ModelInfo struct {
 	// context_limit is the model's total context window in tokens (0 when unknown).
 	ContextLimit int64 `protobuf:"varint,6,opt,name=context_limit,json=contextLimit,proto3" json:"context_limit,omitempty"`
 	// prompt_cached is true when mecatl ASKS the upstream to cache this
-	// (provider, model) pair's conversation prefix (ADR 0346). Decision 1 arms
+	// (provider, model) pair's conversation prefix. Mecatl arms
 	// the protocol-native breakpoint on EVERY Responses endpoint, so false means
 	// caching is off harness-wide (the server's --no-prompt-cache), NOT that this
 	// endpoint cannot cache. Whether an upstream HONOURS the ask is not
