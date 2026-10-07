@@ -27,7 +27,7 @@ const SchemaVersion = 1
 // wall-clock fields are advisory (machine-dependent). Token fields are zero for
 // scenarios with no model usage (e.g. the TUI scrollback render bench).
 //
-// Field normalization — the contract a Phase 3 ingester reads (group rows by
+// Field normalization — the contract the CI ingester reads (group rows by
 // (Name, GitSHA), then aggregate the same-named samples):
 //
 //   - PER-OP (divided by the benchmark's b.N): AllocsPerOp, BytesPerOp. These are
@@ -53,8 +53,8 @@ type ScenarioResult struct {
 	Name          string `json:"name"`
 	// Sample is the per-scenario-name ordinal (0,1,2…) of this row within one
 	// process run. Under `go test -count=N` a scenario emits N rows with identical
-	// Name+GitSHA; Sample is the only thing that distinguishes them, letting Phase 3
-	// group by (Name, GitSHA) and aggregate the N samples.
+	// Name+GitSHA; Sample is the only thing that distinguishes them, letting the CI
+	// ingester group by (Name, GitSHA) and aggregate the N samples.
 	Sample      int    `json:"sample"`
 	GitSHA      string `json:"git_sha"`
 	Timestamp   string `json:"timestamp"`

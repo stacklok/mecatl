@@ -41,7 +41,7 @@ func (noopHooks) Run(context.Context, governance.HookEvent) (governance.HookOutc
 
 // allowAll returns a policy that allows every tool call (the AllowAllFloorRules
 // floor with no store). Scenarios are offline and exercise the loop, not the
-// permission fold (that has its own Phase 1 microbenchmarks).
+// permission fold (that has its own microbenchmarks).
 func allowAll() *permpolicy.Policy {
 	return permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 }

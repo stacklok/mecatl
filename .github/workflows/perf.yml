@@ -1,5 +1,5 @@
-# Performance regression tracking for mecatl — the Phase 3 CI gate + trend store
-# of docs/perf-tracking.md.
+# Performance regression tracking for mecatl — the CI gate + trend store
+# described in docs/perf-tracking.md.
 #
 # WHY A DEDICATED WORKFLOW (not folded into ci.yml): the two jobs here need
 # DIFFERENT permission postures. The PR job is read-only (`contents: read`) and
