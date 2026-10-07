@@ -12,7 +12,7 @@ import (
 //
 // A PreToolUse outcome MAY set governance.HookOutcome.AskApproval together with
 // Block to REFINE a block into an askable block: an interactive engine surfaces it
-// as a permission ask rather than dead-ending the call (ADR 0062). A HookRunner is
+// as a permission ask rather than dead-ending the call. A HookRunner is
 // free to never set it (the byte-identical pre-feature terminal-block behaviour).
 type HookRunner interface {
 	// Run executes the hook(s) registered for ev.Phase and returns the outcome.
@@ -21,7 +21,7 @@ type HookRunner interface {
 
 // HookApprovalLearner is an OPTIONAL capability a HookRunner may ALSO implement to
 // be told when a HUMAN granted a durable "allow & don't ask again" verdict
-// (session.VerdictAllowAlways) on a hook-originated approval ask (ADR 0062). The
+// (session.VerdictAllowAlways) on a hook-originated approval ask. The
 // engine TYPE-ASSERTS this interface on Deps.Hooks and calls LearnHookApproval
 // ONLY at that one verdict site — so a HookRunner that does not implement it is
 // wholly unaffected (no method added to HookRunner: that would be a breaking

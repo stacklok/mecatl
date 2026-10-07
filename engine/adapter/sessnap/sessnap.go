@@ -54,7 +54,7 @@ type Snapshot struct {
 	// endpoint, credential, callback, or discovered-service state is persisted.
 	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment `json:"pending_workspace_enrollment,omitempty"`
 	StopReason                 session.StopReason                  `json:"stop_reason,omitempty"`
-	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
+	// Kind and Relationship are the validated session producer taxonomy.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
 	Relationship session.SessionRelationship `json:"relationship,omitzero"`
@@ -121,7 +121,7 @@ type Snapshot struct {
 	// carry the same persisted cause.
 	LastError string `json:"last_error,omitempty"`
 	// RunID is the opaque, host-minted identity of the run this session is
-	// currently driving or most recently drove (ADR 0249). Persisting it is what
+	// currently driving or most recently drove. Persisting it is what
 	// makes an awaiting-approval resume continue THE SAME run across a process
 	// restart: the resume path reads it back and reuses it instead of minting a
 	// new one.
@@ -131,7 +131,7 @@ type Snapshot struct {
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
 	RunID string `json:"run_id,omitempty"`
-	// Owner is the verified caller the session is attributed to (ADR 0204). A
+	// Owner is the verified caller the session is attributed to. A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
 	// byte-identical to a pre-ship one — purely additive, no format-tag bump.

@@ -36,7 +36,7 @@ func meta() eventsource.SessionMeta {
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_EventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
+func TestEventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	t.Parallel()
 	m := meta()
 	m.Authority = &session.Authority{Provenance: "derived"}
@@ -575,10 +575,10 @@ func TestFoldRoundTripsThroughSnapshot(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// TestADR_0370_Scenario3_CanonicalReconstructionOnly pins the live-only boundary:
+// TestFoldUsesCanonicalReconstructionOnly pins the live-only boundary:
 // completion-order availability projections, including a success that a later
 // cancellation replaces canonically, do not participate in event-source folding.
-func TestADR_0370_Scenario3_CanonicalReconstructionOnly(t *testing.T) {
+func TestFoldUsesCanonicalReconstructionOnly(t *testing.T) {
 	first := toolCall("first", "Read", `{"path":"first.go"}`)
 	second := toolCall("second", "Read", `{"path":"second.go"}`)
 	availableFirst := session.NewToolResult("first", "completed second")

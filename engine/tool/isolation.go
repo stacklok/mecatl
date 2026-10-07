@@ -3,7 +3,7 @@ package tool
 import "context"
 
 // EnvironmentForker is the environment-isolation seam for fork-join parallelism
-// (harness pattern 8, ADR 0211). It produces an isolated CHILD Environment (Workspace +
+// (harness pattern 8). It produces an isolated CHILD Environment (Workspace +
 // command runner bound to the child namespace + ref) derived from a base
 // Environment so a forked agent loop can read — and, when its catalog allows
 // it, WRITE — without racing on, or mutating, the shared base tree.
@@ -63,7 +63,7 @@ type EnvironmentForker interface {
 // and join=first/judge applies the winner's diff to the parent), so a
 // delegated implementer's edits actually LAND without a manual copy/merge
 // step. (The writable Subagent does NOT use this seam — mode:"read-write"
-// edits the parent tree directly during the run; see ADR 0041.)
+// edits the parent tree directly during the run.)
 //
 // It replaces the former ForkMerger (issue #462). Merge now receives the CHILD
 // and PARENT Environments (not a forkRoot string + parent Workspace): the

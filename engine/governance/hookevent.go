@@ -67,9 +67,9 @@ type HookOutcome struct {
 	//   - PostToolUse: rewrites the tool result ({"content", "is_error"}) before it
 	//     is emitted and recorded, preserving the CallID (redact/transform output).
 	// A malformed (non-JSON) payload is ignored by the loop (the original payload
-	// stands). NOTE for PreToolUse: the permission policy has already been
-	// evaluated on the ORIGINAL, pre-mutation args; the mutated args are NOT
-	// re-permission-checked, reflecting that a hook is more trusted than the model.
+	// stands). NOTE for PreToolUse: when the mutated args differ from the
+	// original, the loop re-authorizes the effective call, so permission gates
+	// see the byte-exact args that will run; an unchanged call is not re-asked.
 	// NOTE for PostToolUse: the loop emits the EFFECTIVE (rewritten) result, so the
 	// client stream and the model's recorded history agree — no hidden divergence.
 	Mutated json.RawMessage
@@ -87,6 +87,5 @@ type HookOutcome struct {
 	// false, or on any non-PreToolUse phase — is a SILENT NO-OP that fails OPEN to the
 	// ordinary outcome (a plain allow / the phase's normal handling), NEVER to a block:
 	// AskApproval only REFINES an existing PreToolUse Block, it never creates one.
-	// (ADR 0062.)
 	AskApproval bool
 }

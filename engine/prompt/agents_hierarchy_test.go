@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0376_AgentsHierarchy_Scenario1_FallbackCompatibility(t *testing.T) {
+func TestAgentsHierarchyFallbackCompatibility(t *testing.T) {
 	ws := memfs.NewWorkspace("/source")
 	for name, text := range map[string]string{"AGENTS.md": "root-only=keep; mode=old", "website/AGENTS.md": "  ", "website/CLAUDE.md": "website-only=keep; mode=middle", "website/sub/AGENTS.md": "mode=new"} {
 		if err := ws.Write(t.Context(), name, []byte(text)); err != nil {
@@ -77,7 +77,7 @@ func (w *cancelAfterMissingWorkspace) Read(_ context.Context, _ string) ([]byte,
 	return nil, fs.ErrNotExist
 }
 
-func TestADR_0376_AgentsHierarchy_Scenario4_DiscoveryCosts(t *testing.T) {
+func TestAgentsHierarchyDiscoveryCosts(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(t.Context())
 	cancelSource := &cancelAfterMissingWorkspace{Workspace: memfs.NewWorkspace("/cancel"), cancel: cancel}
 	_, _, cancelErr := (prompt.RootAssembler{Source: cancelSource, SourceID: "cancel@1", SourcePrefix: "."}).Assemble(cancelCtx, []string{"."}, &session.InstructionSnapshot{}, 256)
