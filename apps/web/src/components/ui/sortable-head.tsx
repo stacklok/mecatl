@@ -20,11 +20,9 @@ export function SortableHead({
   onSort: () => void;
 }) {
   const Icon = direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ChevronsUpDown;
+  const ariaSort = { asc: "ascending", desc: "descending" } as const;
   return (
-    <TableHead
-      aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}
-      className={className}
-    >
+    <TableHead aria-sort={direction ? ariaSort[direction] : "none"} className={className}>
       <button
         className={cn(
           "inline-flex items-center gap-1 hover:text-foreground",

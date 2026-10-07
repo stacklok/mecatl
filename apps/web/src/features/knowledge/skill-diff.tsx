@@ -26,7 +26,7 @@ export interface SkillDiffRow {
   text: string;
 }
 
-export function diffLineKind(line: string): DiffRowKind {
+function diffLineKind(line: string): DiffRowKind {
   if (line.startsWith("+") && !line.startsWith("+++")) return "addition";
   if (line.startsWith("-") && !line.startsWith("---")) return "deletion";
   if (line.startsWith("@@") || line.startsWith("+++") || line.startsWith("---")) return "metadata";

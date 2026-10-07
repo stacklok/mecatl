@@ -182,3 +182,44 @@ it("re-reads the inventory and shows the error when an action conflicts", async 
   expect(buttonLabels()).toContain("Activate"); // dialog stays open on the refreshed skill
   expect(calls.filter((call) => call === "GET /api/v1/learned-skills").length).toBeGreaterThan(1);
 });
+
+it("explains why learned skills are unavailable on a direct link", async () => {
+  await renderLearned((request) => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/api/v1/runtime")
+      return { capabilities: { learnedSkills: false, skills: true } };
+    if (pathname.endsWith("/changes")) return { complete: true, items: [] };
+    return {
+      complete: true,
+      items: [],
+      reason: "Learned skills are not enabled here.",
+      supported: false,
+    };
+  });
+  expect(document.body.textContent).toContain("Learned skills are unavailable");
+  expect(document.body.textContent).toContain("Learned skills are not enabled here.");
+});
+
+it("says when the changes ledger is truncated", async () => {
+  const change = (id: number) => ({
+    at: null,
+    fromState: "",
+    id: `c${id}`,
+    name: "deploy",
+    operation: "activate",
+    skillId: "skill-1",
+    toState: "",
+    verdict: "",
+    version: "v2",
+  });
+  await renderLearned((request) => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/api/v1/runtime")
+      return { capabilities: { learnedSkills: true, skills: true } };
+    if (pathname.endsWith("/changes"))
+      return { complete: true, items: Array.from({ length: 25 }, (_, i) => change(i)) };
+    return { complete: true, items: [learned({})], reason: "", supported: true };
+  });
+  expect(document.body.querySelectorAll("li").length).toBe(20);
+  expect(document.body.textContent).toContain("Showing the 20 most recent lifecycle changes.");
+});

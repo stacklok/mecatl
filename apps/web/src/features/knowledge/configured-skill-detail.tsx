@@ -13,6 +13,7 @@ import {
 } from "../../components/ui/dropdown-menu";
 import { pageTitleClass } from "../../lib/typography";
 import { cn } from "../../lib/utils";
+import { NO_DESCRIPTION } from "./format";
 import { humanizeSkillName } from "./humanize-skill-name";
 
 /**
@@ -76,7 +77,7 @@ export function ConfiguredSkillDetail({ name }: { name: string }) {
             <div className="space-y-3">
               <h2 className="text-base font-semibold">Summary</h2>
               <p className="text-base leading-relaxed text-muted-foreground">
-                {skill.description || "No description recorded."}
+                {skill.description || NO_DESCRIPTION}
               </p>
             </div>
             <div className="space-y-3">

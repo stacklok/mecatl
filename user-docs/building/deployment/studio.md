@@ -83,28 +83,30 @@ features enabled by the connected deployment.
 
 ### Browse and review skills
 
-Open **Skills** to see the deployment's configured skills. The **All** view is a
-table with a name and a description column, sortable by either, and a filter
-box that matches name, description, and owner. Below 500 pixels it becomes a
-list. A banner appears when the daemon reports that its Skill tool is disabled,
-because no skill is loaded in that state.
+Open **Skills** to see the deployment's configured skills in a sortable table
+with a name and a description column. On screens narrower than 500 pixels, the
+table becomes a list. A filter box matches name, description, and owner. A
+banner appears when the daemon reports its Skill tool as disabled, which means
+the agent loads no skills.
 
-Select a skill to open its page. **Summary** shows its description, **Manage**
-and **Files** sit beside it. Configured skills are read-only in Studio: the
-Edit, Disable, and Delete controls stay disabled, and you change the
-deployment's own skills directory instead. **Files** shows a note rather than a
-listing, because the daemon reports only a skill's name, description, owner,
-and version, not its files.
+Select a skill to open its page. **Summary** shows the description, and
+**Manage** and **Files** sit beside it. Studio shows configured skills as
+read-only: the Edit, Disable, and Delete controls stay disabled, so change the
+deployment's own skills directory to edit them. **Files** carries a note
+instead of a listing, because the daemon reports only a skill's name,
+description, owner, and version.
 
-The **Learned** view appears only when the deployment enables learned skills.
-It lists each agent-drafted version with its state. Select one to open the
-review dialog, which shows the diff against the version it replaces, the body,
-and the evidence count. The dialog offers only the actions the daemon currently
-allows for that version (Activate, Reject, Roll back, or Archive), and each one
-asks for confirmation first. If the skill changed since the page loaded, the
-action fails with an error, Studio re-reads the skill, and nothing is reported
-as done. **Recent changes** below the list records lifecycle events. The list
-shows the first 100 learned skills; later ones are not reachable from Studio.
+The **Learned** view appears when the deployment enables learned skills, and a
+direct link to it explains why it is unavailable otherwise. It lists each
+agent-drafted version with its state. Select one to open the review dialog,
+which shows the diff against the version it replaces, the body, and the
+evidence count. The dialog offers the actions the daemon currently allows for
+that version (Activate, Reject, Roll back, or Archive), and each one asks for
+confirmation first. If the skill changed after the page loaded, the action
+fails with an error, Studio re-reads the skill, and the dialog shows the
+current state. **Recent changes** below the list records the 20 most recent
+lifecycle events. The list itself shows the first 100 learned skills, and Studio
+shows no further ones.
 
 ### Inspect delegated activity
 
