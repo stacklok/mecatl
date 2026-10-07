@@ -108,8 +108,9 @@ OIDC, and a `ClusterIP` Service); or the conspicuous unsafe bypass
 authenticates callers, and neither substitutes for the other. Edge mode leaves an h2c
 backend whose caller bearer tokens cross the pod network in cleartext — restricting
 reachability to the gateway or mesh is the control that matters, and the chart ships no
-NetworkPolicy to do it. The full operator contract, and what the chart deliberately does
-not create, is ADR 0278.
+NetworkPolicy to do it. The chart also creates no Gateway, Route, or Certificate: the
+operator owns gateway TLS, forwards the caller's original `Authorization: Bearer` header,
+and keeps `/drain`, `/healthz`, and `/readyz` off public routes.
 
 The `oidc.*` values turn on **caller identity and
 ownership isolation** for the mecak8s agent: a real IdP authenticates each
@@ -168,7 +169,7 @@ chart also renders a `raw-driver` NetworkPolicy that permits ingress to pods
 labelled `app.kubernetes.io/component: raw-driver` only from the mecak8s agent
 pod. Tenant workloads must not use that label and must reach the
 authenticated public service instead. Until remote drivers receive caller
-claims (ADR 0213), deploy a raw driver with that label and its listener on TCP
+claims, deploy a raw driver with that label and its listener on TCP
 9090 in the same namespace; do not expose it through a Service, Ingress, or
 tenant NetworkPolicy.
 

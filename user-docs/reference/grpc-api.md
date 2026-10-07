@@ -380,7 +380,7 @@ message Event {
 
 The three delegation families (`subagent.*`, `team.*`, `parallel.*`) project a
 child loop's lifecycle without leaking its content: all three carry the same
-BOUNDED PREVIEWS (ADR 0079) — ids, tool names/counts, usage, stop, plus capped,
+bounded previews: ids, tool names/counts, usage, stop, plus capped,
 control-byte-scrubbed `text`/`detail` previews of child message text and tool
 args/results; the task board, findings ledger, dispositions, mutating cue, and
 context meter stay Team-only. Every preview is capped and a child's permission

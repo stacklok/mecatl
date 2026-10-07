@@ -49,7 +49,7 @@ for the perturbing CPU tools only with a hypothesis to confirm.
    its contents). If a perf tool's JSON result is large and you only need a subset
    of fields, filter it **in memory** with `CallMcpWithQuery` (server + tool +
    `jq_filter`) rather than narrowing the call — it runs the remote tool and
-   applies a jq filter before the result enters context (ADR 0063).
+   applies a jq filter before the result enters context.
 
 ## The MCP surface (what is actually there)
 

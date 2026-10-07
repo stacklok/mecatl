@@ -98,7 +98,7 @@ smaller reviews or proceed.
 
 In one parallel batch, read the repository's instruction and standards sources:
 `CLAUDE.md`/`AGENTS.md` (including parents), `.claude/rules/*.md`, relevant
-architecture/design/ADR indexes, `SECURITY.md`, `CONTRIBUTING.md`, and any
+architecture and design indexes, `SECURITY.md`, `CONTRIBUTING.md`, and any
 `CONTEXT.md`/`CONTEXT-MAP.md` files that exist.
 
 ## Step 3 — Detect the spec source
@@ -199,7 +199,7 @@ Classification rules:
 - **Project-specific architects** in the repo's `.claude/agents/`
   compose with `software-architect` rather than replacing it. Both
   can run on the same diff: the project-specific one carries
-  domain-loaded invariants and ADR knowledge, `software-architect`
+  domain-loaded invariants and design knowledge, `software-architect`
   carries the cross-cutting design lens.
 - **`code-duplication-reviewer`** and **`library-reuse-reviewer`
   are DEFAULT-ON for any non-trivial code diff** (any diff touching
