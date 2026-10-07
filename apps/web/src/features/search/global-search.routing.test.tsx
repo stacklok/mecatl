@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
+import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -18,23 +20,17 @@ import { GlobalSearch } from "./global-search";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-vi.mock("@mecatl-studio/contracts/generated", () => ({
-  getAuthSession: async () => ({ data: { mode: "none", status: "disabled" } }),
-}));
+const disabledSession = { mode: "none", status: "disabled" } as const;
 
-vi.mock("@mecatl-studio/contracts/query", () => {
-  const options = (key: string, data: unknown) => () => ({
-    queryFn: async () => data,
-    queryKey: [key],
-  });
-  return {
-    getAuthSessionOptions: options("auth", { mode: "none", status: "disabled" }),
-    listConfiguredSkillsOptions: options("configured-skills", { items: [], supported: true }),
-    listLearnedSkillsOptions: options("learned-skills", { items: [], supported: true }),
-    listSchedulesOptions: options("schedules", { items: [], supported: true }),
-    listSessionsOptions: options("sessions", { items: [] }),
-    listUserMemoryOptions: options("memory", { items: [], supported: true }),
-  };
+const initialApiConfig = apiClient.getConfig();
+const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+  const pathname = new URL(
+    input instanceof Request ? input.url : String(input),
+    window.location.href,
+  ).pathname;
+  if (pathname === "/api/v1/auth/session") return Response.json(disabledSession);
+  if (pathname === "/api/v1/sessions") return Response.json({ items: [] });
+  return Response.json({ items: [], supported: true });
 });
 
 let root: Root | undefined;
@@ -46,6 +42,7 @@ afterEach(async () => {
   container?.remove();
   container = undefined;
   document.body.replaceChildren();
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
 });
 
 describe("GlobalSearch routing", () => {
@@ -74,10 +71,11 @@ describe("GlobalSearch routing", () => {
       history: createMemoryHistory({ initialEntries: ["/workspace/chat"] }),
       routeTree: rootRoute.addChildren([chatRoute, shortcutsRoute]),
     });
+    apiClient.setConfig({ baseUrl: window.location.origin, fetch });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
-    client.setQueryData(["auth"], { mode: "none", status: "disabled" });
+    client.setQueryData(getAuthSessionOptions().queryKey, disabledSession);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);

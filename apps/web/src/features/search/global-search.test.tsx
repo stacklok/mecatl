@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
+import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
+import {
+  getAuthSessionOptions,
+  listSchedulesQueryKey,
+  listSessionsQueryKey,
+} from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShortcutProvider, useShortcut } from "../shortcuts/shortcut-provider";
 import { GlobalSearch } from "./global-search";
+import { renderInRouter } from "./test-support";
 
-const navigation = vi.hoisted(() => vi.fn(async () => undefined));
 type AuthSession = {
   account?: string;
   mode: "none" | "oidc" | "static";
   status: string;
 };
-const inventoryState = vi.hoisted(() => ({
+const inventoryState = {
   authCalls: 0,
-  authRequestOptions: [] as unknown[],
+  authRequests: [] as Request[],
   authPending: undefined as Promise<void> | undefined,
   authSession: {
     account: "account-a",
@@ -29,73 +36,76 @@ const inventoryState = vi.hoisted(() => ({
   inventoryCalls: [] as string[],
   failSchedules: false,
   failSessionsUnauthorized: false,
-  queryArguments: [] as unknown[],
+  inventoryRequests: [] as Request[],
   scheduleGate: undefined as Promise<void> | undefined,
   schedulePending: false,
   schedules: [] as Array<{ modelId: string; name: string; owner: string; status: string }>,
   sessions: [] as Array<{ id: string; modelId: string; state: string; title: string }>,
-}));
+};
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigation }));
-vi.mock("@mecatl-studio/contracts/generated", () => ({
-  getAuthSession: async (options?: unknown) => {
+const inventoryKeys: Record<string, string> = {
+  "/api/v1/learned-skills": "learned-skills",
+  "/api/v1/schedules": "schedules",
+  "/api/v1/sessions": "sessions",
+  "/api/v1/skills": "configured-skills",
+  "/api/v1/user-memory": "memory",
+};
+
+// happy-dom's Request drops `cache`, so record the init each request was built with.
+const cacheModes = new WeakMap<Request, RequestCache | undefined>();
+
+// The BFF boundary. A request carrying `cache: "no-store"` to the auth path is
+// the palette's own pre-open identity check; the auth query's refetches do not.
+const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+  const request = input instanceof Request ? input : new Request(input);
+  const pathname = new URL(request.url).pathname;
+  if (pathname === "/api/v1/auth/session") {
+    if (cacheModes.get(request) !== "no-store") return Response.json(inventoryState.authSession);
     inventoryState.authCalls += 1;
-    inventoryState.authRequestOptions.push(options);
+    inventoryState.authRequests.push(request);
     await inventoryState.authPending;
     if (inventoryState.failAuth) {
-      if (inventoryState.authErrorStatus) throw { status: inventoryState.authErrorStatus };
+      if (inventoryState.authErrorStatus) {
+        return Response.json(
+          { status: inventoryState.authErrorStatus },
+          { status: inventoryState.authErrorStatus },
+        );
+      }
       throw new Error("auth unavailable");
     }
-    return { data: inventoryState.authSession };
-  },
-}));
-vi.mock("@mecatl-studio/contracts/query", () => {
-  const options = (key: string, data: unknown) => () => ({
-    queryFn: async () => {
-      if (key !== "auth") inventoryState.inventoryCalls.push(key);
-      return key === "auth" ? inventoryState.authSession : data;
-    },
-    queryKey: [key],
-  });
-  return {
-    getAuthSessionOptions: options("auth", {
-      account: "account-a",
-      mode: "oidc",
-      status: "authenticated",
-    }),
-    listConfiguredSkillsOptions: options("configured-skills", { items: [], supported: true }),
-    listLearnedSkillsOptions: options("learned-skills", { items: [], supported: true }),
-    listSchedulesOptions: () => ({
-      queryFn: async () => {
-        inventoryState.inventoryCalls.push("schedules");
-        await inventoryState.scheduleGate;
-        if (inventoryState.failSchedules) throw new Error("schedule inventory failed");
-        if (inventoryState.schedulePending) await new Promise(() => {});
-        return { items: inventoryState.schedules, supported: true };
-      },
-      queryKey: ["schedules"],
-    }),
-    listSessionsOptions: (options?: unknown) => {
-      // The query text may not become a BFF request option.
-      inventoryState.queryArguments.push(options);
-      return {
-        queryFn: async () => {
-          inventoryState.calls.push("sessions");
-          inventoryState.inventoryCalls.push("sessions");
-          if (inventoryState.failSessionsUnauthorized) throw { status: 401 };
-          return { items: inventoryState.sessions };
-        },
-        queryKey: ["sessions"],
-      };
-    },
-    listUserMemoryOptions: options("memory", { items: [], supported: true }),
-  };
+    return Response.json(inventoryState.authSession);
+  }
+  const inventory = inventoryKeys[pathname];
+  if (!inventory) throw new Error(`Unexpected request: ${pathname}`);
+  inventoryState.inventoryCalls.push(inventory);
+  inventoryState.inventoryRequests.push(request);
+  if (inventory === "sessions") {
+    inventoryState.calls.push("sessions");
+    if (inventoryState.failSessionsUnauthorized) {
+      return Response.json({ status: 401 }, { status: 401 });
+    }
+    return Response.json({ items: inventoryState.sessions });
+  }
+  if (inventory === "schedules") {
+    await inventoryState.scheduleGate;
+    if (inventoryState.failSchedules)
+      return new Response("schedule inventory failed", { status: 500 });
+    if (inventoryState.schedulePending) await new Promise(() => {});
+    return Response.json({ items: inventoryState.schedules, supported: true });
+  }
+  return Response.json({ items: [], supported: true });
 });
 
+// Some tests seed a session the schema forbids, such as an authenticated one without an account.
+const seedAuth = (client: QueryClient, session: AuthSession) =>
+  client.setQueryData(getAuthSessionOptions().queryKey, session as GetAuthSessionResponse);
+const initialApiConfig = apiClient.getConfig();
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
+// Paths the real memory router started navigating to, in order.
+let navigations: string[] = [];
 
 function BackgroundShortcut({ onInvoke }: { onInvoke: () => void }) {
   useShortcut("chat.toggleList", onInvoke);
@@ -111,25 +121,25 @@ async function mount(
   },
 ) {
   inventoryState.authSession = authSession;
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  client.setQueryData(["auth"], authSession);
+  seedAuth(client, authSession);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => {
-    root?.render(
-      <StrictMode>
-        <QueryClientProvider client={client}>
-          <ShortcutProvider>
-            <BackgroundShortcut onInvoke={onBackgroundShortcut} />
-            <GlobalSearch />
-          </ShortcutProvider>
-        </QueryClientProvider>
-      </StrictMode>,
-    );
-  });
+  ({ navigations } = await renderInRouter(
+    root,
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <ShortcutProvider>
+          <BackgroundShortcut onInvoke={onBackgroundShortcut} />
+          <GlobalSearch />
+        </ShortcutProvider>
+      </QueryClientProvider>
+    </StrictMode>,
+  ));
   return client;
 }
 
@@ -161,15 +171,29 @@ async function settleNavigationFocus() {
   });
 }
 
+beforeEach(() => {
+  const BrowserRequest = Request;
+  vi.stubGlobal(
+    "Request",
+    class extends BrowserRequest {
+      constructor(input: RequestInfo | URL, init?: RequestInit) {
+        super(input, init);
+        cacheModes.set(this, init?.cache);
+      }
+    },
+  );
+});
+
 afterEach(async () => {
   await act(async () => root?.unmount());
   root = undefined;
   container?.remove();
   container = undefined;
   document.body.replaceChildren();
-  navigation.mockClear();
+  navigations = [];
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
   inventoryState.authCalls = 0;
-  inventoryState.authRequestOptions = [];
+  inventoryState.authRequests = [];
   inventoryState.authPending = undefined;
   inventoryState.authSession = {
     account: "account-a",
@@ -182,7 +206,7 @@ afterEach(async () => {
   inventoryState.inventoryCalls = [];
   inventoryState.failSchedules = false;
   inventoryState.failSessionsUnauthorized = false;
-  inventoryState.queryArguments = [];
+  inventoryState.inventoryRequests = [];
   inventoryState.scheduleGate = undefined;
   inventoryState.schedulePending = false;
   inventoryState.schedules = [];
@@ -210,7 +234,7 @@ describe("GlobalSearch", () => {
     expect(document.activeElement).toBe(input);
 
     await act(async () => keydown(input as HTMLInputElement, "?"));
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
     await act(async () => keydown(document, "b", { ctrlKey: true }));
     expect(background).not.toHaveBeenCalled();
 
@@ -224,7 +248,7 @@ describe("GlobalSearch", () => {
     expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
     await act(async () => keydown(input as HTMLInputElement, "Enter"));
     await settleNavigationFocus();
-    expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
+    expect(navigations).toEqual(["/workspace/shortcuts"]);
     await vi.waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
@@ -250,7 +274,7 @@ describe("GlobalSearch", () => {
       status: "authenticated",
     };
     await act(async () => {
-      client.setQueryData(["auth"], {
+      seedAuth(client, {
         account: "account-b",
         mode: "oidc",
         status: "authenticated",
@@ -268,7 +292,7 @@ describe("GlobalSearch", () => {
     expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Beta");
 
     await act(async () => {
-      client.setQueryData(["auth"], { mode: "oidc", status: "anonymous" });
+      seedAuth(client, { mode: "oidc", status: "anonymous" });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -290,7 +314,10 @@ describe("GlobalSearch", () => {
 
     inventoryState.authSession = { mode: "oidc", status: "authenticated" };
     await act(async () => {
-      client.setQueryData(["auth"], { mode: "oidc", status: "authenticated" });
+      seedAuth(client, {
+        mode: "oidc",
+        status: "authenticated",
+      });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -329,7 +356,7 @@ describe("GlobalSearch", () => {
       document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
     );
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(client.getQueryData(["auth"])).toEqual({
+    expect(client.getQueryData(getAuthSessionOptions().queryKey)).toEqual({
       account: "account-a",
       mode: "oidc",
       status: "authenticated",
@@ -361,12 +388,15 @@ describe("GlobalSearch", () => {
     inventoryState.authPending = undefined;
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.body.textContent).not.toContain("Private Alpha");
-    expect(client.getQueryData(["auth"])).toEqual(inventoryState.authSession);
+    expect(client.getQueryData(getAuthSessionOptions().queryKey)).toEqual(
+      inventoryState.authSession,
+    );
 
     const newTrigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
     await act(async () => newTrigger?.click());
     expect(inventoryState.authCalls).toBe(3);
-    expect(inventoryState.calls).toEqual(["sessions", "sessions"]);
+    // The inventory request follows the auth check by a few async hops of the faked fetch.
+    await vi.waitFor(() => expect(inventoryState.calls).toEqual(["sessions", "sessions"]));
     await searchFor("Private Alpha");
     expect(document.querySelector('[role="option"]')).toBeNull();
     await searchFor("Private Beta");
@@ -378,7 +408,9 @@ describe("GlobalSearch", () => {
     await act(async () =>
       document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
     );
-    expect(inventoryState.authRequestOptions).toEqual([{ cache: "no-store", throwOnError: true }]);
+    expect(inventoryState.authRequests.map((request) => cacheModes.get(request))).toEqual([
+      "no-store",
+    ]);
   });
 
   it("evicts private inventory on sign-out before the same account can reopen search", async () => {
@@ -391,12 +423,12 @@ describe("GlobalSearch", () => {
     );
     await searchFor("Private Alpha");
     expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
-    const accountSessionsKey = ["sessions", "account:account-a"];
+    const accountSessionsKey = [...listSessionsQueryKey(), "account:account-a"];
     expect(client.getQueryData(accountSessionsKey)).toBeDefined();
 
     inventoryState.authSession = { mode: "oidc", status: "anonymous" };
     await act(async () => {
-      client.setQueryData(["auth"], inventoryState.authSession);
+      seedAuth(client, inventoryState.authSession);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -412,7 +444,7 @@ describe("GlobalSearch", () => {
       status: "authenticated",
     };
     await act(async () => {
-      client.setQueryData(["auth"], inventoryState.authSession);
+      seedAuth(client, inventoryState.authSession);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(client.getQueryData(accountSessionsKey)).toBeUndefined();
@@ -495,8 +527,11 @@ describe("GlobalSearch", () => {
     );
     await searchFor("private local query");
     expect(inventoryState.calls).toEqual(["sessions"]);
-    for (const argument of inventoryState.queryArguments) {
-      expect(argument).toEqual({ cache: "no-store" });
+    expect(inventoryState.inventoryRequests).toHaveLength(5);
+    for (const request of inventoryState.inventoryRequests) {
+      // The query text may not become a BFF request option.
+      expect(cacheModes.get(request)).toBe("no-store");
+      expect(new URL(request.url).search).toBe("");
     }
   });
 
@@ -537,9 +572,9 @@ describe("GlobalSearch", () => {
       });
       expect(document.querySelector('[role="dialog"]')).toBeNull();
       expect(inventoryState.calls).toEqual(["sessions", "sessions"]);
-      expect(client.getQueryData(["sessions", "account:account-a"])).toBeUndefined();
+      expect(client.getQueryData([...listSessionsQueryKey(), "account:account-a"])).toBeUndefined();
       expect(document.body.textContent).not.toContain("Private Alpha");
-      expect(navigation).not.toHaveBeenCalled();
+      expect(navigations).toEqual([]);
 
       inventoryState.failSessionsUnauthorized = false;
       inventoryState.sessions = [
@@ -573,14 +608,14 @@ describe("GlobalSearch", () => {
       touch(option as HTMLElement, "touchmove", 40, 145);
       option?.click();
     });
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
 
     await act(async () => {
       touch(option as HTMLElement, "touchstart", 40, 100);
       option?.click();
     });
-    expect(navigation).toHaveBeenCalledOnce();
+    expect(navigations).toHaveLength(1);
     await settleNavigationFocus();
   });
 
@@ -598,7 +633,7 @@ describe("GlobalSearch", () => {
       touch(option as HTMLElement, "touchmove", 40, 145);
       touch(option as HTMLElement, "touchend", 40, 145);
     });
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
 
     await act(async () => {
       option?.dispatchEvent(
@@ -606,7 +641,7 @@ describe("GlobalSearch", () => {
       );
       option?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     });
-    expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
+    expect(navigations).toEqual(["/workspace/shortcuts"]);
     await settleNavigationFocus();
   });
 
@@ -701,7 +736,7 @@ describe("GlobalSearch", () => {
       "Loading searchable inventories",
     );
     await act(async () => keydown(input as HTMLInputElement, "Enter"));
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
     await searchFor("Private Alpha");
     expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
     await searchFor("shortcuts");
@@ -710,7 +745,9 @@ describe("GlobalSearch", () => {
     await act(async () => {
       releaseSchedule?.();
       await vi.waitFor(() =>
-        expect(client.getQueryState(["schedules", "account:account-a"])?.status).toBe("error"),
+        expect(
+          client.getQueryState([...listSchedulesQueryKey(), "account:account-a"])?.status,
+        ).toBe("error"),
       );
     });
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
@@ -763,9 +800,9 @@ describe("GlobalSearch", () => {
       keydown(input as HTMLInputElement, "Enter");
     });
     expect(input?.getAttribute("aria-activedescendant")).toBe(activeOption);
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
     await act(async () => keydown(input as HTMLInputElement, "Enter"));
-    expect(navigation).toHaveBeenCalledOnce();
+    expect(navigations).toHaveLength(1);
   });
 
   it("accepts a distinct Enter after a Space keyup commits an IME candidate", async () => {
@@ -780,7 +817,7 @@ describe("GlobalSearch", () => {
       input?.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
       keydown(input as HTMLInputElement, "Enter");
     });
-    expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
+    expect(navigations).toEqual(["/workspace/shortcuts"]);
   });
 
   it.each(["pointerdown", "touchstart"])(
@@ -801,7 +838,7 @@ describe("GlobalSearch", () => {
         input?.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
       });
       await act(async () => keydown(input as HTMLInputElement, "Enter"));
-      expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
+      expect(navigations).toEqual(["/workspace/shortcuts"]);
     },
   );
 
@@ -824,7 +861,7 @@ describe("GlobalSearch", () => {
       input?.dispatchEvent(processKey);
     });
     expect(input?.getAttribute("aria-activedescendant")).toBe(initialOption);
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
   });
 
   it("moves the active option with arrow keys and activates it only once", async () => {
@@ -838,14 +875,14 @@ describe("GlobalSearch", () => {
     expect(input?.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
     await act(async () => keydown(input as HTMLInputElement, "ArrowDown"));
     expect(input?.getAttribute("aria-activedescendant")).toBe(options[1]?.id);
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
     await act(async () => keydown(input as HTMLInputElement, "ArrowUp"));
     expect(input?.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
     await act(async () => {
       keydown(input as HTMLInputElement, "Enter");
       keydown(input as HTMLInputElement, "Enter");
     });
-    expect(navigation).toHaveBeenCalledOnce();
+    expect(navigations).toHaveLength(1);
   });
 
   it("restores focus after Escape and keeps pointer hover separate from activation", async () => {
@@ -860,7 +897,7 @@ describe("GlobalSearch", () => {
       options[1]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })),
     );
     expect(input?.getAttribute("aria-activedescendant")).toBe(options[1]?.id);
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
     await act(async () => keydown(input as HTMLInputElement, "Escape"));
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -898,7 +935,7 @@ describe("GlobalSearch", () => {
     });
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
-    expect(navigation).not.toHaveBeenCalled();
+    expect(navigations).toEqual([]);
   });
 
   it("navigates through a palette shortcut once and closes search", async () => {
@@ -911,7 +948,7 @@ describe("GlobalSearch", () => {
     document.body.append(main);
     await act(async () => keydown(document, ",", { ctrlKey: true }));
     await settleNavigationFocus();
-    expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/settings" });
+    expect(navigations).toEqual(["/workspace/settings"]);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await vi.waitFor(() => expect(document.activeElement).toBe(main));
   });
