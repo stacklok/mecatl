@@ -144,7 +144,8 @@ recovery. It never deletes user data or falls back to host execution.
 
 Repository developers can exercise the implemented Darwin path on a non-root Apple Silicon
 host running macOS 15 or newer with Hypervisor.framework. Artifact preparation uses the
-current-platform development descriptor and go-microvm runtime and firmware pinned in `environment/microvm/go.mod`.
+current-platform development descriptor and the go-microvm runtime and firmware pinned
+in `environment/microvm/go.mod`.
 The following agent run is offline and uses no provider credential or paid model.
 
 The provider-offline production-composed journey prepares the current-platform
