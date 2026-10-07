@@ -40,15 +40,14 @@ const (
 // any other miss WARNs and degrades to today's behaviour — a broken housekeeping
 // slot must never wedge a compaction / ask-review / guardrail call.
 //
-// This slice routes exactly THREE internal lightweight calls to a slot: compaction
-// (the tier-4 summary LLM call), ask-reviewer, and guardrail. Team synthesis is
-// DEFERRED (it lacks a clean seam — the lead synthesis runs on the lead member's
-// whole engine), and the project-tier override / the subagent router (and the
-// project-merge-within-cap) are out of this slice.
+// The internal lightweight calls routed to a slot are compaction (the tier-4 summary
+// LLM call), ask-reviewer, guardrail, reflection, the semantic router's classifier,
+// and the opt-in title generator. Team synthesis has a defined slot but no consumer:
+// the lead synthesis runs on the lead member's whole engine and lacks a clean seam.
 //
-// Phase 3 adds the `plan` slot — wired on the MODE axis, NOT the
-// internal-call axis. Unlike the three call-slots above, `plan` does NOT route a
-// lightweight housekeeping call: it re-resolves the SESSION model when the session's
+// The `plan` slot is wired on the MODE axis, NOT the internal-call axis. Unlike the
+// call-slots above, `plan` does NOT route a lightweight housekeeping call: it
+// re-resolves the SESSION model when the session's
 // PermissionMode is ModePlan, re-resolved BETWEEN turns at the run-entry seam (the
 // opusplan pattern). It reuses resolveSlotModel UNCHANGED — the resolution grammar is
 // identical; only the consumer differs (the per-session engine factory in build.go,
@@ -56,7 +55,7 @@ const (
 // the `reasoning` tier, NOT `cheap`: a plan model is a STRONG-reasoning model, the one
 // place a slot's default tier diverges from cheap.
 
-// Slot names — the three routed internal lightweight calls (Layer 2). Each is the
+// Slot names (Layer 2). Each is the
 // stable key an operator writes under `models.slots:` (or --model-slot).
 const (
 	// slotCompaction routes the CascadeCompactor's tier-4 summary LLM call.
@@ -82,7 +81,7 @@ const (
 	// strong-reasoning model.
 	slotPlan = "plan"
 	// slotRouter routes the CLASSIFIER call of the OPT-IN semantic Subagent model router
-	// (Phase 5). Like the three internal call-slots it routes a lightweight
+	// Like the internal call-slots it routes a lightweight
 	// housekeeping call (one tiny classification turn), defaulting to the `cheap` tier —
 	// the classifier is housekeeping, NOT the routed work. The router's per-CATEGORY
 	// target models are a SEPARATE operator taxonomy (cfg.RouterCategories), not slots.
