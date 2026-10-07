@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
 syntax = "proto3";
-
 package mecatl.broker.v1;
 option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
 
@@ -9,7 +8,7 @@ import "buf/validate/validate.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-// Stable broker-owned session identity and immutable tool catalogue.
+// Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
 service SessionService {
   rpc InspectConnectors(InspectConnectorsRequest) returns (InspectConnectorsResponse);
   rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
@@ -26,6 +25,7 @@ service SessionService {
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
 }
 
+// Occurrence metadata only; the broker makes no durable idempotency promise.
 message Attempt {
   reserved 1, 2;
   reserved "slot", "sequence";
@@ -49,17 +49,12 @@ message ConnectorStatus {
   uint32 tool_count = 3;
 }
 
-message OpenSessionRequest {
-  // Reattach to this broker-owned session; absence creates a new session.
-  optional string saved_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-}
-
+message OpenSessionRequest { optional string saved_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
 message SessionSnapshot {
   string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
   google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true];
   Catalogue catalogue = 3 [(buf.validate.field).required = true];
 }
-
 message Catalogue {
   string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
   optional string connection_ref = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
@@ -72,38 +67,13 @@ message Catalogue {
     }
   ];
 }
-
-// ToolDescriptor contains only the public frozen model-visible declaration and
-// scheduling/authorization capability markers; it never contains routing data.
-message ToolDescriptor {
-  string name = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}];
-  string description = 2 [(buf.validate.field).string.max_bytes = 65536];
-  bytes schema = 3 [(buf.validate.field).bytes = {min_len: 1, max_len: 262144}];
-  bool read_only = 4;
-  bool dispatch_serial = 5;
-  bool authorization_capable = 6;
-}
-
-message Call {
-  string id = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}];
-  string name = 2 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}];
-  bytes arguments = 3 [(buf.validate.field).bytes = {min_len: 1, max_len: 262144}];
-}
-message InvokeToolRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  Call call = 3 [(buf.validate.field).required = true];
-  Attempt attempt = 4 [(buf.validate.field).required = true];
-}
+message Call { string id = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}]; string name = 2 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}]; bytes arguments = 3 [(buf.validate.field).bytes = {min_len: 1, max_len: 262144}]; }
+message InvokeToolRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; Call call = 3 [(buf.validate.field).required = true]; Attempt attempt = 4 [(buf.validate.field).required = true]; }
 message CheckAuthorizationRequest {
   Attempt attempt = 5 [(buf.validate.field).required = true];
   string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
   string catalogue_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  oneof target {
-    option (buf.validate.oneof).required = true;
-    Call call = 3;
-    string authorization_ref = 4 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  }
+  oneof target { option (buf.validate.oneof).required = true; Call call = 3; string authorization_ref = 4 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
 }
 message FlowRef { string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true]; }
 message InvocationOutcome {
@@ -119,18 +89,6 @@ message InvocationOutcome {
     google.protobuf.Empty outcome_unknown = 4;
   }
 }
-message NonDispatch { FailureReason reason = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0]; }
-enum FailureReason {
-  FAILURE_REASON_UNSPECIFIED = 0;
-  FAILURE_REASON_CATALOGUE_CHANGED = 1;
-  FAILURE_REASON_AUTHORITY_WITHDRAWN = 2;
-  FAILURE_REASON_CAPACITY = 3;
-  FAILURE_REASON_INTERRUPTED = 4;
-  FAILURE_REASON_AUTHORIZATION_FAILED = 5;
-  FAILURE_REASON_CALL_CHANGED = 6;
-  FAILURE_REASON_EXPIRED = 7;
-}
-
 message CheckAuthorizationResponse {
   oneof outcome {
     option (buf.validate.oneof).required = true;
@@ -158,6 +116,55 @@ message CancelOutcome {
   Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
 }
 message ResumeToolRequest { Attempt attempt = 4 [(buf.validate.field).required = true]; string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string authorization_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string adopted_catalogue = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message BeginEnrollmentRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message EnrollmentStarted { string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; BrowserPrompt prompt = 2 [(buf.validate.field).required = true]; }
+message BeginEnrollmentResponse {
+  oneof outcome {
+    option (buf.validate.oneof).required = true;
+    EnrollmentStarted started = 1;
+    google.protobuf.Empty already_connected = 2;
+    Catalogue completed = 3;
+  }
+}
+message ObserveEnrollmentRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message CancelEnrollmentRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message DisconnectToolsRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; string expected_connection = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message DisconnectOutcome {
+  enum Value { UNSPECIFIED = 0; DISCONNECTED = 1; ALREADY_DISCONNECTED = 2; CONNECTION_CHANGED = 3; }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}
+message DeleteSessionRequest { string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}]; }
+message DeleteOutcome {
+  enum Value { UNSPECIFIED = 0; DELETED = 1; ALREADY_ABSENT = 2; }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}
+message NonDispatch { FailureReason reason = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0]; }
+enum FailureReason {
+  FAILURE_REASON_UNSPECIFIED = 0;
+  FAILURE_REASON_CATALOGUE_CHANGED = 1;
+  FAILURE_REASON_AUTHORITY_WITHDRAWN = 2;
+  FAILURE_REASON_CAPACITY = 3;
+  FAILURE_REASON_INTERRUPTED = 4;
+  FAILURE_REASON_AUTHORIZATION_FAILED = 5;
+  FAILURE_REASON_CALL_CHANGED = 6;
+  FAILURE_REASON_EXPIRED = 7;
+}
+
+// ToolDescriptor is a catalogue-frozen remote tool capability advertisement.
+message ToolDescriptor {
+  // Stable advertised tool name used by invocation, not a filesystem path.
+  string name = 1;
+  // Valid UTF-8 model-visible tool description from the broker peer.
+  string description = 2;
+  // UTF-8 JSON-object schema bytes; untrusted descriptor data, never executable content.
+  bytes schema = 3;
+  // Read-only scheduling capability.
+  bool read_only = 4;
+  // Run-local dispatch barrier capability even when read_only.
+  bool dispatch_serial = 5;
+  // Authorization request/abort capability.
+  bool authorization_capable = 6;
+}
 
 // ToolResult is a model-visible tool completion.
 message ToolResult {
@@ -198,59 +205,4 @@ message ResultPart {
   double priority = 12;
   // Valid UTF-8 source last-modified presentation value.
   string last_modified = 13;
-}
-
-message BeginEnrollmentRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-}
-
-message EnrollmentStarted {
-  string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  BrowserPrompt prompt = 2 [(buf.validate.field).required = true];
-}
-
-message BeginEnrollmentResponse {
-  oneof outcome {
-    option (buf.validate.oneof).required = true;
-    EnrollmentStarted started = 1;
-    google.protobuf.Empty already_connected = 2;
-    Catalogue completed = 3;
-  }
-}
-
-message ObserveEnrollmentRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-}
-message CancelEnrollmentRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-}
-
-message DisconnectToolsRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-  string expected_connection = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-}
-
-message DisconnectOutcome {
-  enum Value {
-    UNSPECIFIED = 0;
-    DISCONNECTED = 1;
-    ALREADY_DISCONNECTED = 2;
-    CONNECTION_CHANGED = 3;
-  }
-  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
-}
-
-message DeleteSessionRequest {
-  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
-}
-
-message DeleteOutcome {
-  enum Value {
-    UNSPECIFIED = 0;
-    DELETED = 1;
-    ALREADY_ABSENT = 2;
-  }
-  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
 }

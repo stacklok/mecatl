@@ -41,7 +41,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Stable broker-owned session identity and immutable tool catalogue.
+// Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
 type SessionServiceClient interface {
 	InspectConnectors(ctx context.Context, in *InspectConnectorsRequest, opts ...grpc.CallOption) (*InspectConnectorsResponse, error)
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*SessionSnapshot, error)
@@ -200,7 +200,7 @@ func (c *sessionServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 // All implementations must embed UnimplementedSessionServiceServer
 // for forward compatibility.
 //
-// Stable broker-owned session identity and immutable tool catalogue.
+// Stable broker-owned sessions; identity and execution proof are adapter metadata, not request fields.
 type SessionServiceServer interface {
 	InspectConnectors(context.Context, *InspectConnectorsRequest) (*InspectConnectorsResponse, error)
 	OpenSession(context.Context, *OpenSessionRequest) (*SessionSnapshot, error)
