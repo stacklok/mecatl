@@ -308277,6 +308277,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791403496138,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dcf1ea4a2c393c83f6cbcea20aebbf753e9cb2e9",
+          "message": "feat(mecatui): inspect Edit requests and bounded Subagent activity (#2139)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T15:54:41-07:00",
+          "tree_id": "d3049f821ef9da09003d16ac3f16c78bc7932ebf",
+          "url": "https://github.com/stacklok/mecatl/commit/dcf1ea4a2c393c83f6cbcea20aebbf753e9cb2e9"
+        },
+        "date": 1791414405451,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3280.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 82,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -403391,6 +403430,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791414402155,
+  "lastUpdate": 1791414406612,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
