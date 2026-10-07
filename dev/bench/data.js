@@ -305101,6 +305101,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791382719300,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0fda6c82fb45a264454cda021c9d7a62e0a7ff8f",
+          "message": "Implementation: visible reasoning summaries across provider protocols (#2126)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T10:10:34-07:00",
+          "tree_id": "08d99a0eb2af452bee5a473dd7680ac1281a0ffb",
+          "url": "https://github.com/stacklok/mecatl/commit/0fda6c82fb45a264454cda021c9d7a62e0a7ff8f"
+        },
+        "date": 1791393853374,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3274,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 74,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -399303,6 +399342,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791393850222,
+  "lastUpdate": 1791393854004,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
