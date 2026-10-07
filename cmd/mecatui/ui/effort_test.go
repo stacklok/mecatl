@@ -12,8 +12,8 @@ import (
 )
 
 // Tests for the /effort picker: a tiny SELECTING enum overlay that
-// FORK-RESUMES the session onto a peer at the chosen reasoning-effort tier (ADR
-// 0068) — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
+// FORK-RESUMES the session onto a peer at the chosen reasoning-effort tier
+// — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
 // Renders purely from client state (no proto in ui).
 
 // pressEffortKey routes a key through onEffortKey, asserting it was handled.
@@ -273,8 +273,8 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	}
 }
 
-// TestEffortPickFailureLeavesSourceOpen asserts the recoverable failure path (ADR
-// 0068): a failed fork does NOT close the source session — the old session is still
+// TestEffortPickFailureLeavesSourceOpen asserts the recoverable failure path:
+// a failed fork does NOT close the source session — the old session is still
 // the user's live one — and the recoverable reducer leaves the app idle with
 // enter-to-retry armed.
 func TestEffortPickFailureLeavesSourceOpen(t *testing.T) {

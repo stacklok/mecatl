@@ -69,8 +69,8 @@ type Snapshot struct {
 	// restarted process re-derive the SAME per-session engine via the factory.
 	ProviderID string `json:"provider_id,omitempty"`
 	ModelID    string `json:"model_id,omitempty"`
-	// ReasoningEffort is the session's opaque neutral reasoning-effort token (ADR
-	// 0055). omitempty keeps a pre-0055 snapshot with no key decoding to "" (unset)
+	// ReasoningEffort is the session's opaque neutral reasoning-effort token.
+	// omitempty keeps an older snapshot with no key decoding to "" (unset)
 	// — additive, no version bump. Persisting it lets a restarted process re-mint the
 	// SAME per-session engine (the same-effort adapter) via the factory.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`

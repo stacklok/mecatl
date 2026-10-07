@@ -8,8 +8,8 @@ import (
 	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
-// cacheDialectFor is the PURE (id, baseURL) -> openai.CacheDialect gate (ADR
-// 0100) for the openai (Responses) adapter, shared by the openai, openrouter,
+// cacheDialectFor is the PURE (id, baseURL) -> openai.CacheDialect gate
+// for the openai (Responses) adapter, shared by the openai, openrouter,
 // and toolhive-gateway entries (all three ride newOpenAICompatEntry). It is
 // NEVER keyed on providerID alone: an operator can point the "openai" id at a
 // non-canonical OpenAI-compatible endpoint (vLLM/LiteLLM) via

@@ -7,8 +7,8 @@ import (
 	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
-// TestCacheDialectTable pins cacheDialectFor's pure (id, baseURL) gate (ADR
-// 0100) — the composition half of the leak guard (the adapter-level
+// TestCacheDialectTable pins cacheDialectFor's pure (id, baseURL) gate
+// — the composition half of the leak guard (the adapter-level
 // TestCacheDialectOpenAINeverSendsCacheControl proves the wire is safe once a
 // dialect is chosen; this proves the RIGHT dialect is chosen). Covers both
 // base-URL-override rows from the ADR's table and a PromptCacheDisabled

@@ -113,8 +113,8 @@ type childGCPolicy struct {
 	scheduleFireRetention time.Duration
 	// scheduleFireMaxTotal is the GLOBAL count cap over schedule-fire sessions:
 	// the newest scheduleFireMaxTotal "sched--" snapshots survive, the rest are
-	// deleted oldest-first. <=0 disables it. It is the peer of mainMaxTotal (ADR
-	// 0059 decision #7 Phase-2): the age horizon bounds the tail, but a cron
+	// deleted oldest-first. <=0 disables it. It is the peer of mainMaxTotal:
+	// the age horizon bounds the tail, but a cron
 	// firing every minute at a 7d retention accumulates ~10k sessions the horizon
 	// never trims from the HEAD, so the count cap is the symmetric bound.
 	scheduleFireMaxTotal int

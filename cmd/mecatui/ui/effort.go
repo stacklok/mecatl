@@ -173,8 +173,8 @@ func (m Model) onEffortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 
 // chooseEffort handles enter on the cursor row: it builds a selection carrying the
 // CURRENT provider/model (so the model is PRESERVED — only the effort changes) plus
-// the picked effort, then fires the switchEffort FORK-RESUME handoff DIRECTLY (ADR
-// 0068) — no confirm step: the fork is non-destructive (the transcript survives on
+// the picked effort, then fires the switchEffort FORK-RESUME handoff DIRECTLY
+// — no confirm step: the fork is non-destructive (the transcript survives on
 // the peer session), so there is nothing to warn about. A cursor past the enum end
 // is a no-op (defensive).
 func (m Model) chooseEffort() (tea.Model, tea.Cmd, bool) {

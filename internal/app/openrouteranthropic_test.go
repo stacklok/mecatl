@@ -468,8 +468,8 @@ func TestAnthropicProtocolEntryRefusesRedirect(t *testing.T) {
 // Responses-protocol field — and openaichatCacheDialectFor returns None for
 // every id except the canonical OpenAI endpoint. So for opencode and for every
 // custom api_flavor: openai-chat-completions definition, mecatl sends no cache
-// ask at all. Reporting prompt_cached true there would recreate exactly the ADR
-// 0100 failure the picker signal exists to expose: a provider that silently
+// ask at all. Reporting prompt_cached true there would recreate exactly the
+// failure the picker signal exists to expose: a provider that silently
 // re-pays full input every turn, looking in the picker like one that caches.
 //
 // The posture line is asserted alongside, because a line reading

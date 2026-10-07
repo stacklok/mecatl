@@ -165,8 +165,8 @@ func TestModelReasoningSupport(t *testing.T) {
 	}
 }
 
-// TestOperatorDefaultEffortForClampsAndWarns pins the STARTUP clamp narration (ADR
-// 0055): an operator default of "max" against OpenAI clamps to "high" AND emits a
+// TestOperatorDefaultEffortForClampsAndWarns pins the STARTUP clamp narration:
+// an operator default of "max" against OpenAI clamps to "high" AND emits a
 // WARN naming both the requested and clamped-to values; against Anthropic it
 // identity-maps with NO warn; an unset default is silent.
 func TestOperatorDefaultEffortForClampsAndWarns(t *testing.T) {

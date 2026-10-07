@@ -350,8 +350,8 @@ func captureCLIModelKeys(cfg Config) cliModelKeys {
 	return keys
 }
 
-// foldOperatorModelDefault applies an operator-YAML `models.default:` to cfg.Model (ADR
-// 0030 Phase 4), the operator-YAML rung of the default precedence
+// foldOperatorModelDefault applies an operator-YAML `models.default:` to cfg.Model,
+// the operator-YAML rung of the default precedence
 //
 //	CLI --model > project-YAML default (capped) > operator-YAML default > registry default
 //

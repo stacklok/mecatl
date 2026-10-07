@@ -370,8 +370,8 @@ func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) po
 
 // carriedContextPrompt resolves the fire's prompt, optionally prepending a
 // FENCED untrusted preamble rendered from the prior fire's conversation when
-// CarryContext is set and a real (non-pending) prior session id exists (ADR
-// 0059 Phase 2). It is extracted from makeFireFunc to keep that func's
+// CarryContext is set and a real (non-pending) prior session id exists.
+// It is extracted from makeFireFunc to keep that func's
 // cyclomatic complexity under the lint cap. On prior-session-load failure (not
 // found, decode error) the fire degrades to fresh-context (WARN, never fails the
 // fire — the carried context is an enhancement, not a requirement).

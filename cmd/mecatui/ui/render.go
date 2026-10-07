@@ -1294,8 +1294,8 @@ func wrapChips(chips []string, width int) string {
 }
 
 // maxTraceMessageLen caps how many runes of a forwarded child message line show in
-// a delegation lane's expanded trace (Subagent / Team / Parallel — shared per ADR
-// 0079); the server already bounds previews, this is a belt-and-braces clamp so one
+// a delegation lane's expanded trace (Subagent / Team / Parallel — they share it);
+// the server already bounds previews, this is a belt-and-braces clamp so one
 // verbose child can't dominate the card.
 const maxTraceMessageLen = 200
 

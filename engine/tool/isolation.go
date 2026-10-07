@@ -86,8 +86,8 @@ type EnvironmentForker interface {
 //     not the fork's — the fork's content is untrusted child-authored data,
 //     but applying a diff is a parent-side operation (the same trust the
 //     parent's own Edit/Write carries). Composition decides whether to wire a
-//     merger at all — when wired, auto-merge is DEFAULT-ON (no flag; see ADR
-//     0039). The composition-injected merger is SERIALIZED process-wide (a
+//     merger at all — when wired, auto-merge is DEFAULT-ON (no flag).
+//     The composition-injected merger is SERIALIZED process-wide (a
 //     single mutex in a serializing decorator) so concurrent merges from
 //     Parallel never interleave their writes into a parent workspace.
 //   - nil merger (the default) means no auto-merge: the historical no-auto-merge
