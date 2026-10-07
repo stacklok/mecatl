@@ -302719,6 +302719,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791364157132,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b93b601378bb0f2c0762d2acab5837af2928f47e",
+          "message": "fix(studio): unify verdict ledger and guard late side-thread verdicts (#2143)",
+          "timestamp": "2026-10-07T13:47:21+02:00",
+          "tree_id": "84c3202e1ddaafecb9b64d123acee0f3a2fbab46",
+          "url": "https://github.com/stacklok/mecatl/commit/b93b601378bb0f2c0762d2acab5837af2928f47e"
+        },
+        "date": 1791374408019,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3276,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 74,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -396237,6 +396276,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791374404729,
+  "lastUpdate": 1791374408711,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
