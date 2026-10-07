@@ -276770,6 +276770,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791398651912,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4b834fd9769c5e2449e63e5d5a70cc1e814e33ca",
+          "message": "docs: copyedit public documentation (#2137)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Codex <noreply@openai.com>",
+          "timestamp": "2026-10-07T14:39:03-04:00",
+          "tree_id": "671e026e281cab8aadab36a1eefab970ff0662b5",
+          "url": "https://github.com/stacklok/mecatl/commit/4b834fd9769c5e2449e63e5d5a70cc1e814e33ca"
+        },
+        "date": 1791399373766,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -401313,6 +401347,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791399370565,
+  "lastUpdate": 1791399374790,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
