@@ -3,1085 +3,1016 @@
 **Status:** Discussion draft, not an approved contract or description of shipped behavior.
 **Scope:** Session persistence, streaming, recovery, and client projections.
 
-The [companion domain model](session-commit-history.modelith.md) captures the
-concepts, relationships, invariants, and scenarios being tested in this design
-conversation. Its [YAML source](session-commit-history.modelith.yaml) is validated
-and rendered with Modelith. This proposal owns rationale, open questions, and
-cutover scope; the model describes domain semantics, not implementation status.
-Neither document authorizes implementation. This design stands independently of
-PR #2078; that draft implementation is not its baseline.
+The [companion domain model](session-commit-history.modelith.md) names the concepts, relationships, invariants, and scenarios used in this discussion.
+Its [YAML source](session-commit-history.modelith.yaml) is validated and rendered with Modelith.
+This proposal explains the rationale, open questions, and cutover scope.
+The companion model describes domain semantics, not implementation status.
+Neither document authorizes implementation.
 
 ## Goal
 
-A client should be able to leave a session, return later, and see a trustworthy
-view of what the server knows. The model should resume from the same committed
-session state. During a live run, the client should still see tokens and tool
-activity promptly rather than waiting for every storage operation.
+A client should be able to leave a session, return later, and see a trustworthy view of what the server knows.
+The model should resume from the same committed session state.
+During a live run, the client should still see tokens and tool activity promptly rather than waiting for every storage operation.
 
-These goals need two honest kinds of information: *provisional* observations,
-which make a live session responsive, and *committed* facts, which survive
-reconnect and server restart. A provisional observation must not silently turn
-into a claim about durable state.
+These goals need two honest kinds of information: *provisional* observations, which make a live session responsive, and *committed* facts, which survive reconnect and server restart.
+A provisional observation must not silently turn into a claim about durable state.
 
-The first cutover favors small, auditable boundaries over exhaustive automatic
-recovery. It must not duplicate external actions or claim certainty without
-evidence; it can report an interrupted run, missing projection, or unknown
-outcome and require a later decision. More automatic continuation, plugin
-lifecycle policy, and richer recovery can follow without weakening those
-honest states. Correctness and a clear path forward matter more than handling
-every rare crash interval optimally on day one.
+The first cutover favors small, auditable boundaries over exhaustive automatic recovery.
+It must not duplicate external actions or claim certainty without evidence; it can report an interrupted run, missing projection, or unknown outcome and require a later decision.
+More automatic continuation, plugin lifecycle policy, and richer recovery can follow without weakening those honest states.
+Correctness and a clear path forward matter more than handling every rare crash interval optimally on day one.
 
 ## Why the current arrangement makes this difficult
 
-Today the SessionStore snapshot holds the current conversation and private
-continuation state. Compaction replaces its conversation with a shorter one.
-The separate EventLog holds activity and pre-compaction archives, but recording
-is optional and can fail without stopping a run. Client streams expose selected
-live events, including updates that may never reach the log. There is no shared
-position that joins a snapshot to a subscription. See the
-[persistence architecture](../architecture/observability.md).
+Today the `SessionStore` snapshot holds the current conversation and private continuation state.
+Compaction replaces its conversation with a shorter one.
+The separate `EventLog` holds activity and pre-compaction archives, but recording is optional and can fail without stopping a run.
 
-As a result, a newly connected client can recover the model-visible transcript
-but lose meaningful activity, such as delegation views. Starting a live feed
-before reading the snapshot requires buffering and reconciliation. Starting it
-afterward can miss changes in between. [Issue #2114](https://github.com/stacklok/mecatl/issues/2114)
-tracks the fidelity of the restored client view.
+Client streams expose selected live events, including updates that may never reach the log.
+There is no shared position that joins a snapshot to a subscription.
+See the [persistence architecture](../architecture/observability.md).
+
+As a result, a newly connected client can recover the model-visible transcript but lose meaningful activity, such as delegation views.
+Starting a live feed before reading the snapshot requires buffering and reconciliation.
+Starting it afterward can miss changes in between.
+[Issue #2114](https://github.com/stacklok/mecatl/issues/2114) tracks the fidelity of the restored client view.
 
 ## Proposed model
 
-Treat each session as an ordered history of *committed state changes*. A
-commit includes the information needed to rebuild continuation state, even
-when some of that information is private. The stored continuation checkpoint
-is computed from that history and identifies the last commit it includes.
-The client snapshot is a separate authorized view assembled at a committed
-position; neither view is an independent source of truth. Conversation,
-usage, and other durable session facts derive from committed changes. Summary
-fields are derived wherever possible; checkpoints may materialize them at a
-known position, not become an independent authority. A compaction commit
-describes the resulting conversation; the full pre-compaction committed
-history remains retained alongside it for the lifetime of the session.
-Compaction reduces model context, not stored history. Full session history
-means all admitted model-visible content and private continuation facts, not
-unbounded external artifacts that were never part of the agent's context.
+A `Session` has one authoritative, ordered `CommittedHistory` of state changes.
+Each commit includes the information needed to rebuild continuation state, including private facts.
+Conversation, usage, and other durable session facts derive from these commits.
 
-A client receives an authorized display projection, never the private
-commit record. Individual payloads must remain display-safe even when the
-client loads the full available history. Provider replay data, pending
-authorization internals, and other private state stay server-side. A client
-snapshot reports a committed position C. A subscription after C delivers
-the later committed changes visible to that client, in order, with no gap
-between snapshot and subscription.
-If the position has expired, the client reloads a new snapshot rather than
-pretending it has caught up. Server-owned access checks apply to the snapshot
-and to every subscription, including after reconnect.
+Two derived views serve different readers:
 
-The store assigns commit positions in a session's history. A monotonic counter
-is useful for ordering, and an incarnation or writer epoch can distinguish
-replaced histories or takeovers. Timestamps can help diagnose a conflict;
-they do not fence a stale writer. The authoritative store must reject commits
-from a writer that has lost ownership. The exact ID format is not settled here.
+- A `ContinuationCheckpoint` materializes private continuation state and identifies the last commit it includes.
+- A `ClientProjection` presents an authorized display view at a committed position.
+
+Neither view is an independent source of truth.
+Summary fields are derived wherever possible; a checkpoint may cache them at its known position.
+
+Compaction reduces model context, not stored history.
+A compaction commit describes the resulting conversation, while the full earlier `CommittedHistory` remains retained for the session's lifetime.
+Full history includes all admitted model-visible content and private continuation facts.
+It does not include unbounded external artifacts that never entered the agent's context.
+
+### Authorized views and commit positions
+
+A `Client` receives a display-safe `ClientProjection`, never private commit records.
+Provider replay data, pending authorization internals, and other private state stay server-side, even when the client loads the full available history.
+
+A client snapshot reports C as its committed position.
+A subscription after C delivers later authorized committed changes in order, with no gap between snapshot and subscription.
+If C has expired, the client reloads a snapshot rather than claiming to have caught up.
+Server-owned access checks apply to the snapshot and every subscription, including after reconnect.
+
+The store assigns positions in a session's history.
+A monotonic counter is useful for ordering; an incarnation or writer epoch can distinguish replaced histories or takeovers.
+Timestamps help diagnose conflicts but cannot fence stale writers.
+The authoritative store must reject commits from a writer that has lost ownership.
+The exact ID format remains open.
 
 ## Persistence layer
 
-The server writes private, versioned session records through a commit boundary
-that assigns one session-wide position and rejects stale writers. The same
-commit records provide the current continuation state and the retained
-history; no second best-effort event log is required to decide what is true.
-An adapter can divide records across files, tables, or run partitions, but
-must offer one ordered view for a session. Storage errors and ambiguous
-commits remain explicit outcomes for the caller. The records cover session
-creation and controls, run boundaries, completed model turns, tool intents
-and outcomes, and compaction replacements. They carry private continuation
-material where needed; their types are not the public event taxonomy.
-Every session writer, including title generation, approvals, compaction, and
-scheduler work, uses this boundary. A backend-enforced head check or fencing
-rule orders competing replicas; an in-process mutex alone does not.
+The server writes private, versioned records through a commit boundary that assigns one session-wide position and rejects stale writers.
+`CommittedHistory` supplies both continuation state and retained history; no second best-effort event log decides what is true.
+An adapter may partition records across files, tables, or runs, but exposes one ordered view per `Session`.
+Storage errors and ambiguous commits remain explicit caller outcomes.
+
+Records cover session creation and controls, run boundaries, completed model turns, tool intents and outcomes, and compaction replacements.
+They include private continuation material where needed; record types are distinct from public event types.
+Every writer, including title generation, approvals, compaction, and scheduler work, uses this boundary.
+Backend head checks or fencing order competing replicas; an in-process mutex alone cannot.
 
 ### Core records and extensions
 
-Keep the storage and client contracts extensible without making every tool's
-lifecycle a core event type. The core envelope owns session commit order,
-record identity, root ownership epoch, run and tool-call correlation,
-continuation gates, bounded payload admission, and explicit private-versus-
-client-safe projection. An extension record carries a stable namespaced type
-and schema version inside that envelope; storage preserves its validated
-bytes without understanding the extension's domain semantics. A registered
-server-side interpreter supplies any continuation reducer and approved client
-projection. Extension registration also supplies a versioned private-state
-reducer, checkpoint codec, and (when it can outlive a turn) recovery, pause,
-resume, and cleanup capabilities. State that affects continuation must be
-reconstructible from committed extension records; an extension checkpoint is
-a derived acceleration structure at P, never another writable authority.
-Subagent, Parallel, and Team are specializations of a generic long-running
-tool invocation with optional child-session links; their roster, join, rounds,
-tasks, findings, and progress types need not be permanent core storage
-concepts. A background operation has its own durable identity linked to
-its initiating tool call and run, but scoped to the session: the call may
-commit one immediate started-result while later operation progress and
-completion retain their own identities. The envelope must be able to
-represent work that spans runs without pretending today's run-scoped
-background children already do so. Its trusted extension declares how
-run end, explicit cancellation, shutdown, owner loss, and restart affect
-that operation; core records the resulting obligations without embedding
-the extension's private lifecycle. While any background operation remains
-active, its writes and execution stay under the root session claim even
-without a foreground run. A run ending is not proof the session is unloaded.
-The scheduler remains an orthogonal producer of sessions, not an event
-interpreter baked into session recovery. The initial cutover uses this
-versioned extension path for the built-in Subagent, Parallel, and Team
-families, with registered in-process handlers wired by host composition.
-Session-scoped operation identity leaves room for work that spans runs, but
-cross-run background execution and its completion-driven wakeups remain a later
-capability, not part of the first cutover. The extension path
-does not merely reserve an unused escape hatch or require a dynamic
-plugin loader. Only trusted installed handlers may emit their registered
-type/version or declare optionality, obligations, and safe points. Client
-input, model output, and tool-result text are data, never extension
-registration or authority. Built-ins can be compiled into the initial
-server distribution without coupling engine core to host adapters. A future
-networked extension transport is a separate authenticated/fenced design, not
-part of this cutover. Tests must exercise known, unknown optional, and
-missing continuation-critical extension types.
+Keep tool-specific lifecycles in versioned `Extension` records rather than making each one a core event type.
+The core envelope owns:
 
-The client API identifies approved extension items by stable type and version,
-not by exposing private storage records or arbitrary opaque bytes. Unknown
-extension payloads cannot bypass fencing, pairing, authorization, size
-limits, or parent-child disclosure merely because storage accepts them.
-Persisted extension types required for continuation must have a compatible
-interpreter or the session fails closed; display-only unknown types can be
-represented as explicitly unavailable history rather than silently omitted.
-Persist enough portable safety metadata alongside each extension transition:
-type and version, continuation-critical classification, active obligation
-and child links, and whether the extension has reported a durable park point.
-Those markers are committed with the transition, not independently cached
-claims of safety. A missing or incompatible plugin cannot infer quiescence
-from opaque bytes or silently start dependent work. When future graceful handoff is enabled, the host tells active extensions
-to stop admitting work and seek a quiescent point. An extension may park or
-cancel according to its registered policy and report its committed safe
-position; the root marker is valid only after every active child and
-extension reports one. On definitive lease loss, notification lets the
-extension stop or diagnose its work, but cannot override core fencing or
-authorize another write. The core still checks permissions and tool-call/
-result pairing. Exact registration, compatibility, and wire encoding belong in the interface contract; no runtime plugin loader
-is required in the first cutover. Unknown continuation-critical state blocks
-execution but not core-only management such as safe status inspection or
-logical deletion. No external resource cleanup is inferred from an unloaded
-extension; future paired resources need a separate ownership and cleanup
-contract rather than an unrequested plugin-management framework now.
+- Session commit order, record identity, and root ownership epoch.
+- Run and tool-call correlation, continuation gates, and bounded payload admission.
+- The distinction between private records and client-safe projections.
 
-For a distributed deployment, provisionally put the authoritative,
-renewable ownership claim, writer epoch, and expiry in the same transactional
-backend as the session history. A replica can query the claim without taking
-ownership: owner identity, epoch, expiry, and owner-reported `loading`, `ready`,
-or `draining` state are published together. An explicit release reports
-unowned/unloaded; an expired claim makes the last loaded report stale, not
-proof that the former pod or an external call stopped. A failed status read
-reports unknown rather than unowned. Acquire the claim before loading, report
-ready only after loading, and report released/unloaded only after local
-execution has stopped and local tree state has been unloaded (with a durable
-handoff marker for an active tree).
-Acquire and renew on a coarse cadence; each commit atomically checks the
-expected head, writer epoch, **and unexpired claim** against the backend's
-ownership time. A matching epoch after expiry is not permission to append.
-If an owner reacquires a lapsed claim before anyone else does, atomically
-advance the epoch; this is a new fenced acquisition, not a retroactive
-extension of authority. It may reuse
-its loaded engine after verifying the durable head and reconciling uncertain
-in-flight transitions; a full rebuild is not intrinsically required. This
-rare shortcut must not let a pre-expiry stale append inherit the new claim.
-This must not require a Kubernetes API call for every token, event, or state
-commit. Backends without
-a shared transactional write boundary must fail the distributed contract
-rather than silently fall back to a best-effort check. A local JSON/JSONL
-adapter may declare an explicitly single-process operating mode with
-filesystem-appropriate head checks and write serialization instead of a
-cross-host lease. Keep local interprocess protection where available (for
-example a stable per-session flock); do not silently drop the existing local
-writer guard. Such a mode cannot be configured as a shared multi-replica
-store. The adapter owns its failure/partial-write detection and declares
-what an accepted append survives, without weakening the committed cursor or
-read/replay checks.
+An `Extension` record carries a stable namespaced type and schema version inside that envelope.
+Storage preserves its validated bytes without interpreting its domain semantics.
+A registered server-side interpreter supplies any required continuation reducer and approved client projection.
+Registration also supplies a versioned private-state reducer and checkpoint codec, plus recovery, pause, resume, and cleanup capabilities when work can outlive a turn.
 
-A deployment may retain the per-session Kubernetes Lease solely as an
-advisory operational mirror and watch signal, or disable it to avoid two
-apparent ownership sources. The backend claim is always the sole authority
-for writer admission and session owner/status queries; a conflicting or stale
-Kubernetes holder cannot authorize work, block a valid backend owner, or
-become a public owner answer. Failure to publish the advisory mirror is a
-diagnostic, not a second session-write gate. Lease watches can report renewals,
-releases, and takeovers; a separate Pod watch can provide earlier evidence of
-pod loss. A crashed pod stops renewing, but expiry itself emits no Lease
-update: a watcher must also track the deadline or use another signal. A
-storage backend may supply an equivalent wakeup, but not all do. Neither
-Kubernetes watches nor storage notifications grant ownership, prove an old
-external call stopped, or replace backend expiry and atomic fencing checks.
-Notifications can be delayed or missed; recovery needs a bounded rescan. In
-the first design, a watched Pod failure can wake a worker to inspect state
-and schedule takeover at claim expiry, but cannot advance the backend epoch
-before expiry. A future accelerated takeover needs its own verified-death
-and fencing contract.
+Continuation-relevant extension state must be reconstructible from committed records.
+An extension checkpoint is a derived acceleration structure at P, never another writable authority.
 
-An active delegation tree has one ownership domain, rooted at its parent
-session. The owner drives its children on the same replica under the tree's
-claim; independently transferring child ownership across replicas is outside
-this design. Separately cooperating peer sessions would need their own
-coordination contract. The owning replica can publish whether the tree is
-loaded, draining, or released, but a last-reported loaded state can outlive a
-crashed pod; the claim and its expiry determine whether takeover is allowed.
-Ownership follows active work, not client connection count: with no
-executing run or session-scoped background operation, the host may unload
-the tree and release the claim, perhaps after a bounded idle period. A durable
-pending HiL ask does not by itself require an engine or lease held in RAM for
-hours; an authorized verdict later acquires a claim and rehydrates that
-exact ask. Independent runnable background work keeps the root claim active
-even while another member waits for approval. Read-only clients can remain
-attached to committed history without pinning the owner.
+#### Operation identity and lifecycle
 
-The persistence interface commits and reads records, returning an accepted
-position. Read-only adapters can inspect committed history and checkpoints
-without acquiring a writer claim or starting a run; learning and analytics
-may use that capability under their own authorized access policy and bounded
-reads. The application exposes a read-only storage capability; deployments
-should give these consumers read-only backend credentials where supported.
-Credential layout is not a new requirement on every storage backend. Read
-access does not imply a public API for private records, permission to mutate,
-or permission to activate the session. The storage port does not serialize
-protobuf or publish to clients. An application-level session coordinator owns the transition: it requests the
-commit, then projects an authorized update and may wake connected readers.
-Committed subscribers resume from the durable history, including across
-replicas. A lost notification can delay delivery but cannot erase a commit or
-leave a gap; followers must be able to catch up without the original writer.
-A commit whose outcome is ambiguous must be resolved against storage before
-claiming an acknowledgement or publishing it as confirmed. Each state
-transition has a stable identity recorded in history. A mutation first
-acquires the tree's claim and loads committed state; the owner serializes
-admission and resolves repeated action identities from that state. The
-backend atomically checks the expected head and writer epoch on append, so a
-stale writer cannot commit. After an ambiguous append, the owner checks
-history for its identity before retrying. A derived lookup cache is optional,
-not a separate authoritative index of every client ID. Repeating an accepted
-transition with the same identity and content returns its original decision
-while its receipt is available; conflicting reuse is rejected. These checks
-make commit retries safe without pretending that an external tool executes
-exactly once. Per-session learned permission grants are also derived from
-committed private approval decisions and their originating tool facts on
-load, not from an optional activity log. An inherited approval fact on a fork
-does not become an active rule unless the fork's explicit inheritance decision
-creates one under current authority.
+`Subagent`, `Parallel`, and `Team` specialize a generic long-running tool invocation with optional child-session links.
+Their rosters, joins, rounds, tasks, findings, and progress need not become permanent core storage concepts.
 
-Client mutations need stable action identity across retries. A prompt or
-steer can carry a bounded, opaque client-minted ID; approvals and cancellation
-may use their exact ask or run identity when that is sufficient. Bind the
-identity to the authorized session, operation, and decision rather than
-mistaking it for a server-assigned commit position or subscription cursor.
-The owning replica reloads enough committed decisions to resolve a retry
-after takeover; a cache may accelerate this but cannot authorize new work.
-For a steer, retain its deduplication decision for the targeted run's entire
-lifetime, however long that run lasts; after it ends, a late retry with that
-`expected_run_id` returns any still-available receipt or fails stale rather
-than promoting the text into a second run.
-This does not require an all-actions, whole-session receipt map. Session
-creation is a special case because there is no destination session
-to load. Fresh creates and forks carry a client creation ID; a durable
-create-or-return decision resolves it to the same destination or rejects
-conflicting content. The storage interface for session enumeration and
-listing also owns this logical creation/receipt capability. Listing alone
-cannot enforce uniqueness against two concurrent replicas. The tool's
-invocation identity and its intent/result commit identities remain distinct.
-Checking or retrying a storage commit never reruns the tool. An external
-tool may support its own idempotency key, but the session protocol cannot
-assume every side effect does. Exact ID formats, receipt lifetime, and
-conflict responses belong in the interface contract. Provisional streaming
-is a separate application path with no durability claim.
+An `Operation` has a durable session-scoped identity linked to its initiating tool call and `Run`.
+The call may commit an immediate started-result; later operation progress and completion retain their own identities.
+This lets the envelope represent work that spans runs without implying that today's run-scoped background children do so.
 
-A checkpoint is a derived acceleration structure, not a competing authority.
-It may lag the committed head. To load at committed position C, read a
-checkpoint at P (where P is at or before C) and apply every committed record
-in (P, C] in order. The assembled state, including summary facts, must reflect
-C before it is returned to the engine or client; a stored checkpoint still
-reports P, not C. Checkpoints can be published independently of appends;
-a crash during checkpoint publication must not create or erase a committed
-change. Replay must detect missing or incompatible records and fail explicitly
-rather than silently present partial state. A previously acknowledged commit
-or writer epoch disappearing from the authoritative history is a storage
-contract failure, not a lagging checkpoint. Stop session writes, loads, and
-confirmed client projections; never repair it by writing a local in-memory
-copy back over the log or reusing an old position. Recovery of lost committed
-history needs a separate explicit operator procedure. Rebuilding from retained
-history must
-yield the same continuation state and historical facts. Checkpointing reduces
-replay cost; it does not authorize discarding earlier log records. The first
-design does not trim committed history. A later trimming decision would trade
-away information and must define exactly which history becomes unavailable to
-clients, audit readers, and forks, as well as how old cursors fail.
+The trusted `Extension` declares how run end, explicit cancellation, shutdown, owner loss, and restart affect its `Operation`.
+Core records the resulting obligations without embedding the extension's private lifecycle.
+Active background execution and writes remain under the root `OwnershipClaim`, even without a foreground `Run`.
+A run ending does not prove the session is unloaded.
+The scheduler independently produces sessions; it is not an event interpreter within session recovery.
+
+#### Initial extension support and trust
+
+The first cutover uses registered in-process handlers for the built-in `Subagent`, `Parallel`, and `Team` families, wired by host composition.
+It ships this extension path rather than reserving an unused mechanism.
+It requires no dynamic plugin loader and keeps engine core independent of host adapters.
+
+Session-scoped `Operation` identity leaves room for cross-run work.
+Cross-run background execution and completion-driven wakeups remain later capabilities, outside the first cutover.
+A future networked extension transport needs a separate authenticated and fenced design.
+
+Only trusted installed handlers may emit their registered type/version or declare optionality, obligations, and safe points.
+Client input, model output, and tool-result text are data, never registration or authority.
+Tests must exercise known, unknown optional, and missing continuation-critical extension types.
+
+#### Compatibility and portable safety metadata
+
+The client API identifies approved extension items by stable type and version without exposing private records or arbitrary opaque bytes.
+Storage acceptance does not let unknown payloads bypass fencing, pairing, authorization, size limits, or parent-child disclosure rules.
+
+Continuation-critical extension types require a compatible interpreter; otherwise execution fails closed.
+Unknown display-only types can appear as explicitly unavailable history instead of being silently omitted.
+Core-only management, such as safe status inspection and logical deletion, remains possible when continuation-critical state is unsupported.
+
+Commit portable safety metadata with each extension transition:
+
+- Type, version, and continuation-critical classification.
+- Active obligations and child links.
+- Whether the extension has reported a durable park point.
+
+These markers are committed facts, not independent cached claims of safety.
+A missing or incompatible handler cannot infer quiescence from opaque bytes or silently start dependent work.
+
+For future graceful handoff, the host tells active extensions to stop admitting work and seek a quiescent point.
+An extension parks or cancels under its registered policy and reports its committed safe position.
+The root marker is valid only after every active child and extension reports one.
+
+Definitive lease-loss notification lets an extension stop or diagnose work, but cannot override fencing or authorize a write.
+Core still checks permissions and tool-call/result pairing.
+Exact registration, compatibility, and wire encoding remain interface questions.
+
+An unloaded extension is not evidence that external resources were cleaned up.
+Future paired resources need a separate ownership and cleanup contract, not a plugin-management framework added implicitly here.
+
+### Ownership and writer fencing
+
+For distributed deployments, provisionally keep the renewable `OwnershipClaim`, writer epoch, and expiry in the same transactional backend as `CommittedHistory`.
+A replica can query the `OwnershipClaim` without taking ownership.
+The backend publishes owner identity, epoch, expiry, and owner-reported `loading`, `ready`, or `draining` state together.
+An explicit release reports unowned/unloaded.
+An expired claim makes the last loaded report stale; it does not prove the former pod or an external call stopped.
+A failed status read reports unknown rather than unowned.
+
+The owner acquires the claim before loading and reports ready only after loading.
+It reports released/unloaded only after local execution stops and local tree state is unloaded, with a durable handoff marker for an active tree.
+
+Acquire and renew on a coarse cadence.
+Each commit atomically checks the expected head, writer epoch, **and unexpired claim** against the backend's ownership time.
+A matching epoch after expiry is not permission to append.
+
+If an owner reacquires a lapsed claim before anyone else, it atomically advances the epoch.
+This is a new fenced acquisition, not a retroactive extension of authority.
+The owner may reuse its loaded engine after verifying the durable head and reconciling uncertain in-flight transitions; a full rebuild is not inherently required.
+A pre-expiry stale append must not inherit the new claim.
+
+These checks must not require a Kubernetes API call for every token, event, or commit.
+Backends without a shared transactional write boundary fail the distributed contract rather than falling back to best-effort checks.
+
+#### Single-process local storage
+
+A local JSON/JSONL adapter may declare an explicitly single-process mode with filesystem-appropriate head checks and write serialization instead of a cross-host lease.
+Keep available interprocess protection, such as a stable per-session `flock`; do not drop the existing local writer guard.
+This mode cannot serve as a shared multi-replica store.
+
+The adapter detects failures and partial writes and declares what an accepted append survives.
+Its operating mode must preserve the committed-cursor and read/replay checks.
+
+#### Advisory Kubernetes signals
+
+A deployment may retain the per-session Kubernetes Lease solely as an advisory mirror and watch signal, or disable it to avoid two apparent ownership sources.
+The backend claim is always the sole authority for writer admission and session owner/status queries; a conflicting or stale Kubernetes holder cannot authorize work, block a valid backend owner, or become a public owner answer.
+Failure to publish the advisory mirror is a diagnostic, not a second session-write gate.
+
+Lease watches can report renewals, releases, and takeovers; a separate Pod watch can provide earlier evidence of pod loss.
+A crashed pod stops renewing, but expiry itself emits no Lease update: a watcher must also track the deadline or use another signal.
+A storage backend may supply an equivalent wakeup, but not all do.
+Neither Kubernetes watches nor storage notifications grant ownership, prove an old external call stopped, or replace backend expiry and atomic fencing checks.
+Notifications can be delayed or missed; recovery needs a bounded rescan.
+
+In the first design, a watched Pod failure can wake a worker to inspect state and schedule takeover at claim expiry, but cannot advance the backend epoch before expiry.
+A future accelerated takeover needs its own verified-death and fencing contract.
+
+#### Delegation-tree ownership
+
+An active delegation tree has one ownership domain, rooted at its parent `Session`.
+The owner drives its children on the same replica under the tree's `OwnershipClaim`; independently transferring child ownership across replicas is outside this design.
+Separately cooperating peer sessions need their own coordination contract.
+
+The owning replica can report the tree as loaded, draining, or released.
+A last-reported loaded state can outlive a crashed pod; the claim and its expiry determine whether takeover is allowed.
+
+Ownership follows active work, not client connection count.
+With no executing `Run` or session-scoped background `Operation`, the host may unload the tree and release the claim, perhaps after a bounded idle period.
+A durable pending `PermissionAsk` does not require an engine or lease held in RAM for hours.
+An authorized verdict later acquires a claim and rehydrates that exact ask.
+Independent runnable background work keeps the root claim active while another member waits for approval.
+Read-only clients can remain attached to committed history without pinning the owner.
+
+### Storage access and commit coordination
+
+The persistence interface commits and reads records, returning an accepted position.
+Read-only adapters can inspect committed history and checkpoints without acquiring a writer claim or starting a run; learning and analytics may use that capability under their own authorized access policy and bounded reads.
+The application exposes a read-only storage capability; deployments should give these consumers read-only backend credentials where supported.
+Credential layout is not a new requirement on every storage backend.
+Read access does not imply a public API for private records, permission to mutate, or permission to activate the session.
+
+The storage port does not serialize protobuf or publish to clients.
+An application-level session coordinator owns the transition: it requests the commit, then projects an authorized update and may wake connected readers.
+Committed subscribers resume from the durable history, including across replicas.
+A lost notification can delay delivery but cannot erase a commit or leave a gap; followers must be able to catch up without the original writer.
+A commit whose outcome is ambiguous must be resolved against storage before claiming an acknowledgement or publishing it as confirmed.
+
+Each state transition has a stable identity recorded in history.
+A mutation first acquires the tree's claim and loads committed state; the owner serializes admission and resolves repeated action identities from that state.
+The backend atomically checks the expected head and writer epoch on append, so a stale writer cannot commit.
+After an ambiguous append, the owner checks history for its identity before retrying.
+A derived lookup cache is optional, not a separate authoritative index of every client ID.
+Repeating an accepted transition with the same identity and content returns its original decision while its receipt is available; conflicting reuse is rejected.
+These checks make commit retries safe without pretending that an external tool executes exactly once.
+
+Per-session learned permission grants are also derived from committed private approval decisions and their originating tool facts on load, not from an optional activity log.
+An inherited approval fact on a fork does not become an active rule unless the fork's explicit inheritance decision creates one under current authority.
+
+### Retry identity and receipts
+
+Client mutations need stable action identity across retries.
+A prompt or steer can carry a bounded, opaque client-minted ID; approvals and cancellation may use their exact ask or run identity when that is sufficient.
+Bind the identity to the authorized session, operation, and decision rather than mistaking it for a server-assigned commit position or subscription cursor.
+The owning replica reloads enough committed decisions to resolve a retry after takeover; a cache may accelerate this but cannot authorize new work.
+
+Retain a steer's deduplication decision for its targeted `Run`'s entire lifetime, however long the run lasts.
+After the run ends, a late retry naming that `expected_run_id` returns an available receipt or fails stale.
+It never promotes the same text into a second run.
+This does not require a whole-session receipt map for every action.
+
+Session creation is a special case because there is no destination session to load.
+Fresh creates and forks carry a client creation ID; a durable create-or-return decision resolves it to the same destination or rejects conflicting content.
+The storage interface for session enumeration and listing also owns this logical creation/receipt capability.
+Listing alone cannot enforce uniqueness against two concurrent replicas.
+
+The tool's invocation identity and its intent/result commit identities remain distinct.
+Checking or retrying a storage commit never reruns the tool.
+An external tool may support its own idempotency key, but the session protocol cannot assume every side effect does.
+Exact ID formats, receipt lifetime, and conflict responses belong in the interface contract.
+Provisional streaming is a separate application path with no durability claim.
+
+### Checkpoints, replay, and missing history
+
+A `ContinuationCheckpoint` accelerates loading but may lag the committed head.
+To load at position C, read a checkpoint at P, where P is at or before C, and apply every record in (P, C] in order.
+The assembled state, including summary facts, must reflect C before the engine or client receives it.
+The stored checkpoint still reports P, not C.
+
+Checkpoints can be published independently of appends.
+A crash during checkpoint publication must not create or erase a committed change.
+Replay detects missing or incompatible records and fails explicitly rather than presenting partial state.
+
+A previously acknowledged commit or writer epoch disappearing is a storage contract failure, not a lagging checkpoint.
+Stop session writes, loads, and confirmed client projections.
+Never repair the loss by writing local memory over history or reusing an old position.
+Recovery of lost committed history needs a separate explicit operator procedure.
+
+Rebuilding from retained history must yield the same continuation state and historical facts.
+Checkpointing reduces replay cost; it does not authorize discarding earlier records.
+The first design does not trim `CommittedHistory`.
+A later trimming decision must specify which facts become unavailable to clients, audit readers, and forks, and how old cursors fail.
 
 ### Session snapshots and historical runs
 
-Keep the session summary small: identity, current metadata, derived summary
-facts, the committed head, and at most a reference or index into committed
-history and its continuation checkpoint. It does not embed a transcript or
-maintain another authoritative copy of conversation. The separately stored
-checkpoint materializes private continuation state at its own position P;
-the summary may point to it but must not report P as the committed head C.
-One possible physical organization is run snapshots with stable run IDs,
-but the logical shape and physical layout need not be identical.
+Keep the `Session` summary small: identity, current metadata, derived summary facts, committed head, and at most a reference or index into history and its `ContinuationCheckpoint`.
+It contains no transcript or second authoritative conversation copy.
 
-The engine loads current continuation state by applying committed records
-since the checkpoint; it need not load the full pre-compaction conversation.
+The separately stored checkpoint materializes private state at its own position P, which may lag the head.
+The summary may point to it, but must not substitute checkpoint position P for the committed head.
+Run snapshots with stable run IDs are one possible storage layout; the logical model need not match that layout.
+
+The engine loads current continuation state by applying committed records since the checkpoint; it need not load the full pre-compaction conversation.
 Older history remains retained.
 
-Run boundaries alone do not bound size. A single run can contain many turns and
-large tool results, while compaction can happen within a run and metadata
-changes can happen outside one. Run snapshots therefore need bounded detail
-pages or references, and session-level facts still need their own home. The
-existing [API surface](../architecture/api-surface.md) distinguishes
-run-scoped controls from session-scoped reads; neither run identity nor
-session identity is a substitute for the session-wide commit position.
+Run boundaries alone do not bound size.
+A single run can contain many turns and large tool results, while compaction can happen within a run and metadata changes can happen outside one.
+Run snapshots therefore need bounded detail pages or references, and session-level facts still need their own home.
+The existing [API surface](../architecture/api-surface.md) distinguishes run-scoped controls from session-scoped reads; neither run identity nor session identity is a substitute for the session-wide commit position.
 
-A compaction generation could later label which model-continuation checkpoint
-is current and which retained display history predates it. A future client
-could defer loading older generations, reporting what remains available
-without claiming its partial view is the entire transcript. The current
-model context, pending work, and unknown tool outcomes must be recoverable
-without loading old display history. A generation marks a history boundary;
-it does not replace commit ordering or authorize deletion of retained history.
+A compaction generation could later label which model-continuation checkpoint is current and which retained display history predates it.
+A future client could defer loading older generations, reporting what remains available without claiming its partial view is the entire transcript.
+The current model context, pending work, and unknown tool outcomes must be recoverable without loading old display history.
+A generation marks a history boundary; it does not replace commit ordering or authorize deletion of retained history.
 
-The session catalog supports bounded, paged, authorized listing and exact
-creation/status lookup without activating sessions. Its display-safe entry
-projects existing trusted `SessionKind` and kind-specific
-`SessionRelationship`: scheduled fires show their existing schedule relation
-and fire-session identity; main sessions, delegated children, and other kinds
-are not all human-initiated. Do not add a second generic origin field now;
-future external triggers and schedule-group queries can extend the catalog
-contract later. Derived display metadata in the catalog may lag an accepted
-session-history commit: each projection identifies the position it reflects,
-and a missed update must converge through replay or reconciliation rather
-than remain stale forever. The session's committed history, not a stale list
-entry, answers authoritative reads. Creation identity and ready/failed
-publication, logical deletion, and the writer claim remain strict decisions,
-not best-effort catalog decoration. Before acknowledging deletion, durably
-suppress the entry and fence further writes; every list, exact lookup, and
-history read must honor that tombstone even if derived display metadata lags.
-If the adapter cannot prove the deletion gate for a catalog read, fail the
-read rather than expose a stale title. The exact atomic or ordered storage
-primitive belongs in the interface contract. Catalog-change notifications are
-best-effort refresh hints, not a second durable history: clients resync with
-bounded catalog queries after missed updates or reconnect, without requiring
-the storage layer to provide a watch. Keep user-level settings and state a
-separate future design.
+### Session catalog
+
+The catalog supports bounded, paged, authorized listing and exact creation/status lookup without activating sessions.
+Its display-safe entries project existing trusted `SessionKind` and kind-specific `SessionRelationship` values.
+Scheduled fires show their schedule relation and fire-session identity.
+Main sessions, delegated children, and other kinds are not all human-initiated.
+Do not add a second generic origin field now; future external triggers and schedule-group queries can extend the catalog later.
+
+Derived catalog metadata may lag a committed change.
+Each projection identifies the position it reflects, and missed updates converge through replay or reconciliation.
+`CommittedHistory`, not a stale list entry, answers authoritative session reads.
+
+Creation identity, ready/failed publication, logical deletion, and writer claims remain strict decisions.
+Before acknowledging deletion, durably suppress the entry and fence further writes.
+Every list, exact lookup, and history read honors the tombstone even if display metadata lags.
+If an adapter cannot prove the deletion gate for a catalog read, it fails that read rather than exposing a stale title.
+The exact atomic or ordered storage primitive remains an interface question.
+
+Catalog notifications are best-effort refresh hints, not a second durable history.
+Clients resync through bounded queries after missed updates or reconnect; storage need not provide a watch.
+User-level settings and state remain a separate future design.
 
 ### Forks and retained history
 
-The initial cutover preserves head forking: an authorized, inactive main
-session forks at its latest eligible committed continuation boundary, yielding
-a new idle session. Because the history is now canonical, the fork also
-receives its retained historical prefix through that boundary, including
-pre-compaction facts; it must not manufacture a "since last compaction"
-cutoff. Selecting an older completed main-run boundary, including while the
-source has since resumed work, is a future historical-boundary fork. At that
-point the fork rebuilds the model-visible continuation and display-history
-prefix as they stood at the selected position, not from today's snapshot.
-The fork has a new identity and records the source session and exact position
-as lineage. Source activity after the boundary remains in the source; forking
-neither pauses nor takes ownership of its active delegation tree. The fork
-remains self-contained after source deletion, even if the initial storage
-implementation copies the full selected prefix. An adapter may optimize that
-physical copy later only if the fork's retention and readability no longer
-depend on the source.
+The initial cutover preserves head forking: an authorized, inactive main `Session` forks at its latest eligible committed continuation boundary into a new idle session.
+The fork receives the entire retained prefix through that boundary, including pre-compaction facts.
+It must not manufacture a "since last compaction" cutoff.
 
-At admission, pin source position C and capture its metadata and fork policy
-under a short source-side boundary. The accepted creation reserves a new
-session ID and returns promptly with that ID and **creating** status; it does
-not hold a client request open for the entire copy. The entry is visible in
-authorized session listings, and exact creation-ID/status lookup reports
-`creating`, `ready`, or `failed` (or a non-disclosing `deleted` for an exact
-lookup after deletion). Retrying the same ID returns the same creation
-decision. The copy is server-owned work after admission, not tied to
-the initiating client's connection; a disconnect cannot silently cancel it.
-While immutable history through C is copied, the source may continue new
-runs. A creating entry exposes only safe metadata and its status; it cannot be activated, forked, or read as complete history.
-Deleting the creating destination fences its copy and transitions it to a
-terminal deleted outcome; a late creator cannot publish it as ready. Cleanup
-of staged bytes may follow asynchronously. Publication does not require a
-transaction over the full source and destination histories. After the copy,
-a short conditional catalog decision orders each fork against source
-deletion; neither new source runs nor other fork copies wait on this copy.
-The source execution claim is not held through copy or reacquired merely to
-finalize it. Deletion may proceed during any number of staged forks: it wins
-against those not yet finalized, which fail and clean up if the source can no
-longer be read. A fork whose final decision won first is independent, even
-if its ready status becomes visible after the source's deletion response.
-A fork request has a stable
-client creation identity and an idempotently recoverable result. A crashed
-creator may leave the catalog entry **creating** temporarily. A slower
-reconciler makes every ready publication conditional on the destination
-still being `creating`, even if the source-side fork decision already won.
-Destination deletion wins over every later publication or cleanup retry; a
-completed source-side decision is not permission to resurrect a deleted
-destination.
-Otherwise the reconciler completes publication for a finalized fork, or
-waits until the creator can no longer finish before marking an incomplete
-attempt **failed**. It does not mistake a slow live copy for a dead one or
-silently publish partial history. Retrying the same creation ID after a
-terminal failure returns that failure; a new attempt needs a new ID. A later
-reconciler could finish abandoned copies instead, but must preserve the same
-stable outcome contract. Cleanup of incomplete staging is separate from its
-visible creation outcome. The exact fencing, status, and cleanup mechanism
-belongs in the interface contract.
+Forking at an older completed main-run boundary is future work, including when the source has resumed execution.
+Such a fork rebuilds continuation and display history as they stood at the selected position, not from today's snapshot.
 
-All fork/clone paths cross one explicit transformation boundary before
-creating the new session. It selects inherited historical and continuation
-facts, strips source execution state and effective authority by default, and
-marks inherited provenance; adapters must not bypass it by cloning a raw
-storage namespace. Some record payloads may remain byte-identical after
-validation, but this is a semantic fork, not a replay of source ownership,
-approvals, or other controls as new commands. A fork inherits conversation,
-not execution: no pending asks, queued steers, live delegated work, scheduled
-timers, or future background tasks transfer to it. If work eventually spans
-run boundaries, the fork must exclude its runnable state and represent any
-relevant historical fact without treating a reference as permission to
-restart it. The source's workspace and external artifacts are not rolled
-back to the selected point; placement and current authorization still need
-validation for the new session. Historical rewind is a conversation fork,
-not an external-world snapshot. Exact eligibility and inherited fields
-belong in the interface contract. The fork copies the approved parent-side
-delegation projections in that prefix, not the underlying child sessions.
-A deeper child-transcript read from the fork reports unavailable; the
-source parent's access to a live child is not inherited. Deep cloning or
-point-in-time child references are separate future choices.
+The fork has a new identity and records its source `Session` and exact position as lineage.
+Later source activity stays in the source; a fork neither pauses nor takes ownership of its active delegation tree.
+The fork remains self-contained after source deletion.
+An adapter may optimize the initial full-prefix copy only if retention and readability remain independent of the source.
 
-The server API owns fork inheritance semantics. By default the fork resolves
-its mode and other operational settings from the installation's ordinary
-new-session defaults and the verified caller; it does not silently copy the
-source mode or session-learned permission grants (a deliberate change from
-today's source-mode copy). Explicit per-setting overrides and an
-"inherit compatible settings" preset let a caller explore two paths without
-bulk approval prompts. If the caller opts into carrying learned grants, the
-server re-derives eligible rules from authoritative private source approval
-and tool facts, checks caller and placement compatibility under current
-policy, and commits new fork-local authority decisions. Historical inherited
-approval events remain facts, never active grants by themselves. A Deny or
-configured Ask still wins at execution; ineligible grants are omitted rather
-than triggering an approval ceremony during fork creation. No inheritance
-option transfers pending asks, tool work, timers, or session ownership.
-Bindings may offer ergonomic presets, but cannot implement authority cloning
-independently of the server. Exact options and what an omitted grant reports
-belong in the interface contract.
+#### Asynchronous creation
+
+At admission, pin source position C and capture its metadata and fork policy under a short source-side boundary.
+The accepted creation reserves a new session ID and returns promptly with that ID and **creating** status; it does not hold a client request open for the entire copy.
+The entry is visible in authorized session listings, and exact creation-ID/status lookup reports `creating`, `ready`, or `failed` (or a non-disclosing `deleted` for an exact lookup after deletion).
+Retrying the same ID returns the same creation decision.
+
+The copy is server-owned work after admission, not tied to the initiating client's connection; a disconnect cannot silently cancel it.
+While immutable history through C is copied, the source may continue new runs.
+A creating entry exposes only safe metadata and its status; it cannot be activated, forked, or read as complete history.
+
+#### Ordering copy publication against deletion
+
+Deleting the creating destination fences its copy and transitions it to a terminal deleted outcome; a late creator cannot publish it as ready.
+Cleanup of staged bytes may follow asynchronously.
+
+Publication does not require a transaction over the full source and destination histories.
+After copying, a short conditional catalog decision orders the fork against source deletion.
+New source runs and other fork copies do not wait on this copy.
+The source execution claim is neither held through the copy nor reacquired merely to finalize it.
+
+Source deletion can proceed while forks are staged.
+It wins against forks not yet finalized; those attempts fail and clean up if the source can no longer be read.
+A fork whose final decision won first is independent, even if its ready status appears after the source deletion response.
+
+#### Recovering an orphaned creation
+
+A fork request has a stable client creation identity and an idempotently recoverable result.
+A crashed creator may leave the catalog entry **creating** temporarily.
+A slower reconciler makes every ready publication conditional on the destination still being `creating`, even if the source-side fork decision already won.
+Destination deletion wins over every later publication or cleanup retry; a completed source-side decision is not permission to resurrect a deleted destination.
+
+Otherwise the reconciler completes publication for a finalized fork.
+For an incomplete attempt, it waits until the creator can no longer finish before marking it **failed**.
+It must distinguish a slow live copy from a dead one and never publish partial history.
+
+Retrying the same creation ID after a terminal failure returns that failure; a new attempt needs a new ID.
+A later reconciler could finish abandoned copies instead, but must preserve the same stable outcome contract.
+Cleanup of incomplete staging is separate from its visible creation outcome.
+The exact fencing, status, and cleanup mechanism belongs in the interface contract.
+
+#### Fork transformation and inherited history
+
+All fork/clone paths cross one explicit transformation boundary before creating the new `Session`.
+It selects inherited historical and continuation facts, strips source execution state and effective authority by default, and marks inherited provenance.
+Adapters must not bypass it by cloning a raw storage namespace.
+
+Some payloads may remain byte-identical after validation.
+This is still a semantic fork, not a replay of source ownership, approvals, or controls as new commands.
+A fork inherits conversation, not execution: no pending asks, steers, live delegated work, scheduled timers, or future background tasks transfer.
+If work eventually spans runs, exclude its runnable state and retain relevant historical facts without treating references as permission to restart it.
+
+The source workspace and external artifacts are not rolled back to the selected point.
+Placement and current authorization still need validation for the new session.
+Historical rewind is a conversation fork, not an external-world snapshot.
+Exact eligibility and inherited fields remain interface questions.
+
+The fork copies approved parent-side delegation projections in the prefix, not child sessions.
+A deeper child-transcript read from the fork reports unavailable; it does not inherit the source parent's access to a live child.
+Deep cloning and point-in-time child references remain future choices.
+
+#### Operational settings and permission grants
+
+The server API owns fork inheritance semantics.
+By default, a fork resolves its mode and operational settings from the installation's new-session defaults and verified caller.
+It does not copy the source mode or session-learned grants implicitly, unlike today's source-mode copy.
+Per-setting overrides and an "inherit compatible settings" preset let callers explore two paths without bulk approval prompts.
+
+If the caller opts into learned grants, the server re-derives eligible rules from authoritative private source approval and tool facts.
+It checks caller and placement compatibility under current policy, then commits new fork-local authority decisions.
+Inherited historical approvals remain facts, not active grants.
+A Deny or configured Ask still wins at execution.
+Ineligible grants are omitted rather than triggering an approval ceremony during creation.
+
+No option transfers pending asks, tool work, timers, or ownership.
+Client bindings may offer convenient presets but cannot clone authority independently of the server.
+Exact options and reporting of omitted grants remain interface questions.
 
 ### Future same-session rewind
 
-A rewind is a new committed branch-selection fact in the same session, not
-a new session or deletion of later commits. It selects an earlier **clean run
-boundary** for model continuation; an eligible boundary follows a fully
-settled run (including a failed or user-cancelled run with valid call/result
-pairing), not an arbitrary message or mid-run steer. The current delegation
-tree must also be settled, with no pending approval or live child work that
-would be stranded. The client offers only eligible boundaries. The next
-model request sees the selected conversation path; rewind does not restore
-earlier session permissions, unspend reported usage, rewind files or other
-external state, or restart scheduled timers and background work. External
-side effects on an abandoned path may still have occurred. The session-wide
-commit order and positions remain linear and append-only, with one active
-continuation path. Abandoned paths remain retained and inspectable, for
-example as collapsed branches in the client; their tips stay identifiable
-so future reactivation can be designed without reconstructing deleted data.
-Rewind controls and branch projection are advanced work, not part of the
-initial committed-history delivery.
+A rewind commits a new branch selection within the same `Session`.
+It neither creates another session nor deletes later commits.
+Eligible continuation points are **clean run boundaries** after fully settled runs, including failed or user-cancelled runs with valid call/result pairing.
+An arbitrary message or mid-run steer is not eligible.
+The current delegation tree must also be settled, with no pending approval or live child work to strand.
+The client offers only eligible boundaries.
+
+The next model request sees the selected conversation path.
+Rewind does not restore old permissions, unspend reported usage, roll back files or external state, or restart timers and background work.
+External side effects on an abandoned path may still have occurred.
+
+Commit order and positions remain linear and append-only, with one active continuation path.
+Abandoned paths stay retained and inspectable, for example as collapsed client branches.
+Their tips remain identifiable so a future reactivation design need not reconstruct deleted data.
+Rewind controls and branch projection are outside the initial committed-history delivery.
 
 ## Client API
 
-The server projects committed records into authorized, display-safe session
-facts and timeline items. The API does not expose persistence records or
-require clients to understand their storage layout. Its snapshot, history
-pages, and committed subscription share the same session-wide position,
-while provisional updates advertise their weaker status separately. In
-conceptual terms, the read API returns a session summary, a stable paged
-history at its position, and an after-position committed subscription. A
-provisional channel supplies low-latency observations and cumulative
-commit acknowledgements. The provisional and committed channels may share
-a transport; their status and cursor semantics remain distinct. These are
-API responsibilities, not a commitment to particular RPC names or physical
-tables. Inspecting the summary, paged history, or committed subscription is
-a read-only operation: it does not claim ownership, load an engine, or start
-execution. Distinguish **observe** from **interactive attach** at the client
-boundary. An authorized interactive attach may acquire the tree claim and
-load continuation before driving eligible work, even without a new prompt;
-it does not change the session's permission mode or confer write authority
-by itself. An approval or other authorized mutation may also enter the same
-activation funnel without a separate attach round trip. A client connection
-or committed subscription alone does not pin an owner; a provisional stream
-is available only while there is live owned work and may end when work parks
-or completes. A historical read cannot activate execution as a side effect.
-The exact API spelling is deferred.
+The server returns authorized, display-safe session facts and timeline items as a `ClientProjection`.
+Clients need not understand private records or their storage layout.
+The snapshot, history pages, and committed subscription share one session-wide position.
+Provisional updates advertise their weaker status separately.
 
-The initial client reload loads the complete authorized display history
-across bounded pages; one unbounded response is not required. Every page
-belongs to one immutable view at committed position C. Page tokens identify
-where to continue in that view, not where to resume live events, and are bound
-to the authorized session and view. Only a successful final page attests
-that the authorized history through C is complete. If a page expires, fails,
-or no longer matches that view, the client discards the incomplete load and
-starts a fresh snapshot. A material authorization change invalidates the
-previously authorized view and its page tokens; access is checked again on
-later page and subscription reads, not conferred by possession of a token.
-Initial policy may be coarse; finer caller-specific filtering can follow
-without making old tokens permanent grants. A disconnection by itself does
-not revoke access. A silent cutoff must not look complete.
+Conceptually, the read API provides:
 
-Once the pages are complete, the client follows committed changes after C.
-Changes committed while it loads must remain resumable from C; otherwise the
-server reports an expired position and the client reloads. Page the parts
-that grow, including run inventories and conversation/detail records. A
-single large tool result or media item needs bounded content reads or an
-explicit size failure rather than an oversized page. A later client can
-load older pages on demand without changing this read contract.
+- A session summary and stable paged history at its position.
+- A committed subscription after that position.
+- A provisional channel for low-latency observations and cumulative commit acknowledgements.
 
-Bound the canonical session payload before it reaches either the model or the
-history commit. Reject oversized submitted media before accepting the input;
-for an oversized tool output, apply an explicit limited-result contract and
-commit exactly the representation the model receives, with a truncation or
-external-reference indicator. Never send full output to the model and save
-only a shorter version as if it were the same result. A future file-spillover
-adapter may keep large artifacts outside session history: the history retains
-the tool command and parameters that produced them, the admitted excerpt
-seen by the model, and any authorized reference needed to fetch more. It does
-not claim the entire spilled artifact is retained by the session log. Such an
-artifact has its own storage, access, and lifetime contract; spillover is not
-implemented by this proposal.
+Provisional and committed channels may share a transport, but retain distinct status and cursor semantics.
+These responsibilities do not specify RPC names or physical tables.
+
+### Observation and activation
+
+**Observe** is read-only: inspecting summaries, paged history, or committed subscriptions does not claim ownership, load an engine, or start execution.
+An authorized **interactive attach** may acquire the tree's `OwnershipClaim` and load continuation to drive eligible work, even without a new prompt.
+Attach does not change permission mode or confer write authority by itself.
+An approval or other authorized mutation can enter this same activation path without a separate attach round trip.
+
+A connection or committed subscription alone does not pin an owner.
+A provisional stream exists only while there is live owned work and may end when work parks or completes.
+Historical reads never activate execution as a side effect.
+Exact API spelling remains open.
+
+### Complete history through a pinned position
+
+Initial reload loads the complete authorized display history through bounded pages, not one unbounded response.
+Each page belongs to one immutable view pinned at C for the load.
+Page tokens identify where to continue within that view, not where to resume live events, and are bound to the authorized session and view.
+Only a successful final page attests that authorized history through C is complete.
+
+If a page expires, fails, or no longer matches the view, discard the incomplete load and start a fresh snapshot.
+A material authorization change invalidates the view and its tokens.
+Later page and subscription reads recheck access; a token is not a grant.
+Initial policy may be coarse, with finer caller-specific filtering later.
+A disconnection alone does not revoke access, and a silent cutoff must not appear complete.
+
+After loading all pages, subscribe after C to follow committed changes.
+Changes committed during loading must remain resumable from C; otherwise the server reports expiration and the client reloads.
+Page growing collections, including run inventories and conversation/detail records.
+A large individual tool result or media item needs bounded content reads or an explicit size failure, not an oversized page.
+A later client can load older pages on demand under this same contract.
+
+### Payload admission and external artifacts
+
+Bound canonical session payloads before they reach the model or `CommittedHistory`.
+Reject oversized submitted media before accepting input.
+For oversized tool output, apply an explicit limited-result contract and commit exactly what the model receives, with a truncation or external-reference indicator.
+Never give the model full output while retaining a shorter version as though it were the same result.
+
+A future spillover adapter may keep large artifacts outside history.
+History would retain the producing command and parameters, the admitted excerpt seen by the model, and any authorized retrieval reference.
+It would not claim to retain the entire artifact.
+External artifacts need their own storage, access, and lifetime contract; spillover is outside this proposal.
 
 ### Multiple interactive clients
 
-Multiple authorized clients may attach to the same server-owned run and its
-live feed. There is no exclusive controller. Every action is authorized
-independently, and the owner orders conflicting actions against committed
-session state. Reading history grants neither control rights nor execution
-activation. Disconnecting a client does not transfer control or cancel the run.
-This differs from the current prompt-started `Converse` stream described in the
-[API surface](../architecture/api-surface.md), whose relay cancels on disconnect.
+Multiple authorized `Client` callers may attach to the same server-owned `Run` and live feed.
+There is no exclusive controller.
+Every action is authorized independently, and the owner orders conflicting actions against committed session state.
+Reading history grants neither control rights nor execution activation.
 
-Run admission is shared by every producer, including user prompts and future
-extension-triggered work. Only one eligible run starts. A competing prompt
-receives an explicit conflict identifying the active run; the server neither
-queues it silently nor interprets it as a steer. A client may choose to hide
-that race by issuing a separately authorized, exact-run steer. The named run
-may have ended by then, so that steer can also fail stale. Admission failure
-must not erase an already committed background completion.
+Disconnecting a client does not transfer control or cancel the run.
+This differs from the current prompt-started `Converse` stream described in the [API surface](../architecture/api-surface.md), whose relay cancels on disconnect.
+
+Every producer shares run admission, including user prompts and future extension-triggered work.
+Only one eligible `Run` starts.
+A competing prompt receives a conflict identifying the active run; the server neither queues it silently nor reinterprets it as a steer.
+
+A client may hide that race by issuing a separately authorized, exact-run steer.
+That steer can fail stale if the named run has ended.
+Admission failure must not erase a committed background completion.
 
 ### Source-scoped steers
 
-A steer is replaceable pending input, not an accumulating instruction queue.
-There is one shared user-steer slot per session and one independent slot per
-registered extension. The extension itself is the initial coalescing key;
-there are no extension-defined subkeys. All slots have the same set, replace,
-retract, and revision-specific consumption semantics. Updating one slot never
-changes another. An extension may act through the same authorized session-action
-semantics as a client, but controls only its own extension slot and receives no
-implicit permission to answer asks or bypass execution gates.
+A `SteerSlot` holds one source's replaceable pending input, not an accumulating instruction queue.
+Each `Session` has one shared user slot and one independent slot per registered `Extension`.
+The extension itself is the initial coalescing key; there are no extension-defined subkeys.
+All slots support the same set, replace, retract, and revision-specific consumption semantics.
+Updating one slot never changes another.
 
-An unqualified steer requests eligible execution: it becomes pending input for
-an active or awaiting run, or requests a new run when idle. An exact-run steer
-can only target that run and never promotes to another. This preserves the
-existing distinction between `Service.Steer` promotion and strict `SteerRun`
-controls. Admission and the terminal race must not lose an accepted steer;
-recovery and cancellation dispositions are described below.
+An `Extension` uses the same authorized session-action semantics as a client but controls only its own slot.
+Submitting a steer grants no implicit permission to answer asks or bypass execution gates.
 
-At the next safe model-input boundary, deliver all pending source slots
-**together**, in a deterministic order. This does not interrupt an in-flight
-model request or bypass an awaiting approval. Commit the admitted input and
-consumption of each delivered revision before sending it to the model. A
-replacement admitted after that delivery decision remains pending for a later
-boundary; consuming an older revision cannot clear it. The exact ordering
-algorithm and framing belong in the interface design.
+An unqualified steer requests eligible execution: pending input for an active or awaiting `Run`, or a new run when idle.
+An exact-run steer targets only the named run and never promotes to another.
+This preserves the existing distinction between `Service.Steer` promotion and strict `SteerRun` controls.
+Admission and the terminal race must not lose accepted input; recovery and cancellation dispositions are described below.
 
-The server stamps each item's provenance so the model can distinguish user
-input from a named extension, tool, or harness source. Text cannot declare its
-own trusted source or become an authority-bearing instruction by claiming to
-come from the harness. Non-user notification content uses the appropriate
-untrusted-data framing; source attribution does not elevate it to system-prompt
-or permission authority.
+#### Delivery and provenance
 
-An extension steer contains a small, size-capped hint: enough operation identity,
-status, and context for the agent to choose a retrieval tool. Full results belong
-in the extension's canonical committed state, and the agent calls an authorized
-tool to retrieve results and explore further. Because each extension has only
-one pending slot, its replacement hint must cover outstanding work, for example
-by pointing to a tool that lists ready results. Coalescing the hint must not
-remove operation outcomes. Cross-run background work and completion-triggered
-runs use these semantics when that later capability is introduced; defining
-them here does not expand the first cutover.
+Deliver all pending slots **together** at the next safe model-input boundary, in deterministic order.
+Delivery neither interrupts an in-flight request nor bypasses an awaiting approval.
+Commit the admitted input and consumption of each delivered `SteerRevision` before sending it to the model.
+
+A replacement admitted after the delivery decision remains pending for a later boundary.
+Consuming an older revision cannot clear it.
+The ordering algorithm and framing remain interface questions.
+
+The server stamps provenance so the model can distinguish user input from a named extension, tool, or harness source.
+Text cannot claim its own trusted source or gain instruction authority by claiming to come from the harness.
+Non-user notifications use appropriate untrusted-data framing; attribution does not elevate them to system-prompt or permission authority.
+
+#### Small hints, retrievable results
+
+An extension steer contains a size-capped hint with enough `Operation` identity, status, and context to choose a retrieval tool.
+Full results stay in the extension's canonical committed state.
+The agent calls an authorized tool to retrieve them and explore further.
+
+Each extension has only one pending slot, so a replacement hint must cover outstanding work, for example by pointing to a tool that lists ready results.
+Coalescing a hint must not erase operation outcomes.
+Future cross-run background work and completion-triggered runs use these semantics; they remain outside the first cutover.
 
 ### Shared pending controls, not client drafts
 
-All interactive clients operate on the same user-steer slot. Submitted pending
-content, its revision, and its disposition are committed server state, reflected
-through authorized reload and subscription projections rather than only an echo
-to the submitting connection. A user can submit on one client and inspect,
-modify, or retract the pending steer on another. Updates and retractions name
-the expected slot revision: a stale client receives a conflict rather than
-silently overwriting another client's edit. The exact conflict payload and
-receipt lifetime remain interface questions.
+All interactive clients share the user `SteerSlot`.
+Submitted pending content, revision, and disposition are committed server state.
+Authorized reload and subscription projections reflect that state to every client, not just the submitting connection.
+A user can submit on one client and inspect, modify, or retract the pending steer on another.
 
-Unsent composer text, focus, filters, and other presentation state stay
-client-local. Draft persistence and synchronization are outside this design.
-Retracting the user steer does not retract an extension steer, or vice versa.
+Updates and retractions name the expected slot revision.
+A stale client receives a conflict rather than overwriting another client's edit.
+Conflict payloads and receipt lifetimes remain interface questions.
 
-Pending approval asks and committed resolutions are likewise reflected to all
-authorized clients. The first valid, authorized **committed** resolution of an
-exact ask wins. A later conflicting response receives an already-resolved
-outcome with the authoritative decision; it cannot reverse authorization that
-may already have allowed execution. A retry of the winning action resolves
-through its existing action identity. Unsubmitted approval responses remain
-client-local, and no client connection reserves an exclusive responder role.
+Unsent composer text, focus, filters, and other presentation state stay client-local.
+Draft persistence and synchronization are outside this design.
+Retracting the user slot never retracts an extension slot, or vice versa.
+
+#### Shared approval resolution
+
+Authorized clients also see pending `PermissionAsk` records and committed resolutions.
+The first valid, authorized **committed** resolution of an exact ask wins.
+Later conflicting answers receive the authoritative already-resolved decision.
+They cannot reverse authorization that may already have allowed execution.
+
+A retry of the winning action resolves through its existing action identity.
+Unsubmitted responses stay client-local, and a connection reserves no exclusive responder role.
 
 ### One client timeline
 
-Expose the authorized display history as one session-ordered timeline, not a
-collection the client must merge run by run. Every committed timeline item has
-an order in the session history. Items associated with a run carry its stable
-run ID for grouping; session-wide changes also have a place in that same
-order. Run snapshots may organize storage, but the public read contract hides
-that partitioning. The current session metadata and model-continuation
-checkpoint remain distinct from the display timeline.
+Expose the authorized `ClientProjection` as one session-ordered timeline, not separate run histories for the client to merge.
+Each committed item has a place in `CommittedHistory` order.
+Run-associated items carry stable run IDs for grouping; session-wide changes share that order.
 
-Prefer the same client-safe item schema for paged historical items and
-committed subscription updates. Then the client can apply one projection
-path to both, preserving identity, order, and revision across reload. This
-is a shared *client projection*, not a proposal to expose private log records.
-Provisional streaming uses its own status and correlation identity until a
-commit establishes an authoritative item and position. Aggregate facts,
-such as current usage and permission mode, may still be served as snapshot
-fields so a client need not infer current authority by scanning old activity.
-The exact payload families and how they reconcile with provisional updates
-belong in the later interface contract.
+Run snapshots may organize storage, but the public read contract hides that partitioning.
+Current metadata and the `ContinuationCheckpoint` remain separate from the display timeline.
+
+Prefer one client-safe item schema for historical pages and committed updates.
+Clients can then preserve identity, order, and revision through one projection path across reload.
+This shares display projection, not private log records.
+
+Provisional streaming uses separate status and correlation identity until commitment establishes an authoritative item and position.
+Aggregate usage and permission mode may still appear as snapshot fields, avoiding the need to infer current authority from old activity.
+Payload families and provisional reconciliation remain interface questions.
 
 ### What reload restores
 
-Treat a durable, client-visible session fact as recoverable by a new client
-process. That includes the conversation and completed human-visible reasoning
-summaries (separate from provider-private replay material), tool calls and
-committed outcomes, delegation inventories and bounded activity, changed-file
-facts, and confirmed session metadata and reported usage. Large details
-use bounded reads; privacy and authorization still govern what the client
-may receive. [Issue #2114](https://github.com/stacklok/mecatl/issues/2114)
-will inventory each item and name any exception rather than letting a
-best-effort feed silently determine what survives. Reasoning-specific
-representation belongs with [issue #2079](https://github.com/stacklok/mecatl/issues/2079).
+A new client process must recover durable, client-visible session facts:
 
-A parent's committed history retains the full **admitted** Subagent tool
-request and canonical final result, including the prompt and response that
-today's `/toolcalls` detail shows. Size enforcement happens before the
-request is dispatched or before the result is committed and shown to the
-model; a display preview must never masquerade as the complete canonical
-result. Fork and reload use those same parent-owned facts, not duplicate
-full-prompt/full-result copies in `SubagentPayload`. The parent timeline also
-retains stable call and child links, concrete model, status, reported usage,
-and selected bounded child tool-call/result activity so Subagents, Parallel,
-and Teams views survive a fresh client load. The current `SubagentPayload`
-start/tool/end taxonomy is a useful starting shape, not a promise that its
-short `Goal` contains the full prompt or that its rune-capped `Text`/`Detail`
-previews are secret-redacted. Parallel and Teams retain their approved
-inventories, winner facts, bounded activity, tasks, and findings. These are
-parent-visible facts, not a copy of
-each child's conversation; loading the parent must restore them without
-depending on an optional child fetch. Keep the child's full transcript and
-private continuation state in its own session. A parent-scoped request for
-deeper child detail resolves the child from a verified relationship and
-passes a policy seam for the caller, parent, child, and requested detail.
-Possessing a child ID or being allowed to read the parent is not a blanket
-grant to the child's content.
-The same policy must govern a live view and a view restored after reload;
-a reconnect cannot widen or narrow access merely because one client's
-in-memory fleet was lost. Recheck authority for every detail read, including
-reads after a reconnect. If the policy denies access or the child cannot be
-read, preserve the parent summary and report detail unavailable rather than
-inventing a complete child history. Which policy grants deeper content and
-how much of it to expose remain open interface decisions.
+- Conversation and completed human-visible reasoning summaries, separate from provider-private replay material.
+- Tool calls and committed outcomes.
+- Delegation inventories and bounded activity.
+- Changed-file facts, confirmed metadata, and reported usage.
 
-Presentation state such as focus, filters, scroll position, and spinners is
-client-local. Token deltas and transient progress are provisional and may be
-lost. Retain provider-reported usage as committed facts tied to stable
-physical-attempt and run identities, including reported usage from failed or
-retried attempts that produce no completed turn. A completed model turn also
-carries its own outcome and attribution; commit retries must not count the
-same attempt twice. Per-turn, per-run, and cumulative session **reported
-usage** are derived from recorded facts rather than maintained as independent
-authorities; a checkpoint may cache the sums at its position. A new client
-can reload the confirmed reported usage and attributed detail without
-reconstructing them from a transient stream. Usage reporting is best effort:
-a provider may not report it, and a process may die before committing it.
-Neither the API nor client should label the sum as guaranteed total spend or
-complete consumption. Missing usage is unknown, not an actual reported zero.
-When a fork copies usage facts, preserve each physical attempt's original
-session and attempt identity as inherited provenance. New attempts on the
-fork have fresh identities; its own reported usage begins at zero. Derived
-cross-session accounting counts inherited attempts once by origin, including
-through fork-of-fork lineage. The UI treatment of inherited versus new usage
-and any future `/usage` command remain separate design decisions.
+Large details use bounded reads under the same privacy and authorization rules.
+[Issue #2114](https://github.com/stacklok/mecatl/issues/2114) inventories each item and names exceptions; a best-effort feed must not decide what survives.
+Reasoning representation belongs with [issue #2079](https://github.com/stacklok/mecatl/issues/2079).
 
-Session history owns usage from work executed as part of its runs, not every
-auxiliary operation that happens to inspect it. Reflection and other work
-without a session writer need a separate durable state/accounting owner in a
-future design, with purpose/type and provenance adequate for a joined usage
-view. Do not mutate the source session solely to attribute independent work;
-the exact auxiliary accounting contract is outside this proposal.
+#### Parent-owned delegation facts
+
+The parent's `CommittedHistory` retains the full **admitted** `Subagent` request and canonical final result, including the prompt and response shown in today's `/toolcalls` detail.
+Enforce size limits before dispatching the request or committing and showing the result to the model.
+A display preview must never masquerade as the complete canonical result.
+Fork and reload use these parent-owned facts without duplicate full-prompt/full-result copies in `SubagentPayload`.
+
+The parent timeline also retains stable call and child links, concrete model, status, reported usage, and selected bounded child tool-call/result activity.
+These facts restore `Subagent`, `Parallel`, and `Team` views on a fresh load.
+The current `SubagentPayload` start/tool/end taxonomy is a useful starting point.
+The `Goal` field does not promise the full prompt, and its rune-capped `Text`/`Detail` previews are not promised to be secret-redacted.
+`Parallel` and `Team` retain approved inventories, winner facts, bounded activity, tasks, and findings.
+
+Parent-visible facts must reload without an optional child fetch.
+The child's full transcript and private continuation stay in its own `Session`.
+
+#### Deeper child access
+
+A parent-scoped detail request resolves the child from a verified relationship and checks policy for the caller, parent, child, and requested detail.
+Possession of a child ID or access to the parent is not blanket access to the child.
+Live views and reloaded views use the same policy.
+Losing a client's in-memory fleet on reconnect must neither widen nor narrow access.
+
+Recheck authority on every detail read, including after reconnect.
+If policy denies access or the child cannot be read, preserve the parent summary and report detail unavailable.
+Do not invent a complete child history.
+The policy for deeper content and its disclosure limits remain interface questions.
+
+#### Reported usage and inherited attribution
+
+Presentation state, including focus, filters, scroll position, and spinners, remains client-local.
+Token deltas and transient progress are provisional and may be lost.
+Retain provider-reported usage as committed facts tied to stable physical-attempt and run identities.
+This includes reported usage from failed or retried attempts with no completed turn.
+A completed model turn carries its own outcome and attribution, and commit retries must not count an attempt twice.
+
+Per-turn, per-run, and cumulative session **reported usage** derive from recorded facts.
+A checkpoint may cache sums at its position, but they are not independent authorities.
+Clients reload confirmed usage and attribution without reconstructing them from transient streams.
+
+Reporting is best effort: a provider may omit usage, or a process may die before committing it.
+The API and UI must not describe the sum as guaranteed total spend or complete consumption.
+Missing usage is unknown, not reported zero.
+
+Forks preserve each copied physical attempt's original session and attempt identity as inherited provenance.
+New fork attempts have fresh identities; the fork's own reported usage begins at zero.
+Cross-session accounting counts inherited attempts once by origin, including through fork-of-fork lineage.
+UI treatment of inherited versus new usage and a future `/usage` command remain separate decisions.
+
+Session history owns usage from work executed as part of its runs, not every auxiliary operation that happens to inspect it.
+Reflection and other work without a session writer need a separate durable state/accounting owner in a future design, with purpose/type and provenance adequate for a joined usage view.
+Do not mutate the source session solely to attribute independent work; the exact auxiliary accounting contract is outside this proposal.
 
 ### Delegation detail budget
 
-"Bounded" has three independent meanings: which child fields may be disclosed
-to a parent, how large each preview may be, and how much activity the parent's
-current view retains per child or member. The live UI currently keeps twelve
-trace entries per lane and forwarded text previews are capped at 200 runes,
-but consecutive text deltas can coalesce into one growing entry. Neither
-limit by itself caps total retained bytes, and control-character scrubbing
-is not secret redaction. The new server projection needs an explicit field
-allowlist, per-field and aggregate byte limits, and an honest truncated
-indicator, enforced before it persists or serves a parent-visible detail.
+"Bounded" has three distinct meanings:
 
-Retain every *approved* parent-visible committed item in the parent history;
-the compact current view may show only the latest bounded window. Older
-approved items remain available through the paged timeline. For the initial
-projection, retain only child message and tool snippets already forwarded to
-the parent today, subject to explicit per-field and aggregate byte caps; do
-not add new child content fields. They may contain sensitive text: making
-them mandatory, long-lived history increases retention, and no secret
-redaction is promised. The same approved projection governs live and reload;
-a short live prefix does not license copying any other child-private content.
+- Which child fields may be disclosed to a parent.
+- How large each preview may be.
+- How much activity the parent's current view retains per child or member.
+
+The live UI keeps twelve trace entries per lane, and forwarded text previews are capped at 200 runes.
+Consecutive text deltas can coalesce into one growing entry, so neither limit alone caps retained bytes.
+Control-character scrubbing is not secret redaction.
+The server projection needs a field allowlist, per-field and aggregate byte limits, and an honest truncation indicator before persisting or serving parent-visible detail.
+
+#### Retained history versus the current window
+
+Retain every *approved* parent-visible committed item in parent history; the compact current view may show only the latest bounded window.
+Older approved items remain available through the paged timeline.
+For the initial projection, retain only child message and tool snippets already forwarded to the parent today, subject to explicit per-field and aggregate byte caps; do not add new child content fields.
+They may contain sensitive text: making them mandatory, long-lived history increases retention, and no secret redaction is promised.
+The same approved projection governs live and reload; a short live prefix does not license copying any other child-private content.
 The exact existing-field mapping and budgets belong in the interface review.
-A reusable redaction subsystem, if wanted across product surfaces, is a
-separate future design, not an implicit feature of this proposal.
+A reusable redaction subsystem, if wanted across product surfaces, is a separate future design, not an implicit feature of this proposal.
 
-Fold provisional child message deltas in memory and commit approved parent
-activity only at stable child message/turn, tool intent/result, and terminal
-boundaries; the live typing animation need not survive reload. Normally the
-child commits a settled fact and then the parent commits its bounded
-projection before that child advances. A crash between these separate
-histories can leave the parent missing a settled child item. Recovery uses
-the child's committed facts for execution safety but does not reconstruct or
-backfill missing parent snippets. A read-only parent reload needs no child
-fetch: without a committed terminal parent projection, it shows the child as
-**unresolved / activity unverified**, not as complete, even if the child has
-in fact finished. Recovery later inspects the child's committed state and
-appends a parent-side activity-gap marker with stable child identity and
-bounded evidence before settling the parent view. Reload and forks retain
-the gap rather than silently presenting a complete child trace. A
-projection gap is not itself an unknown tool outcome; those follow the
-child's intent/result evidence. If the child committed a terminal result but
-the parent tool result is missing, recovery may commit a known parent result
-only from exact durable result bytes or a versioned deterministic derivation
-that reproduces them. A status such as "child completed" or a bounded display
-summary is insufficient. If that evidence is absent, close the parent's call
-with an honest unknown-outcome result; do not rerun the child merely to fill
-the gap. The first cutover need not build a general recovery synthesizer.
+#### Cross-history projection gaps
 
-Leave the disclosure decision at the child-to-parent projection boundary,
-before any parent commit or live publish. That leaves room for a future
-opaque subagent: its private activity would stay in the child session, while
-only explicitly approved parent-visible facts and the tool's intended result
-cross to the parent. A read-time filter cannot make content already stored
-in a parent's retained history private retroactively. This proposal adds no
-opaque mode or new configuration; it preserves the boundary where such a
-policy could be applied later.
+Fold provisional child message deltas in memory.
+Commit approved parent activity only at stable child message/turn, tool intent/result, and terminal boundaries; the live typing animation need not survive reload.
+Normally the child commits a settled fact, then the parent commits its bounded projection before that child advances.
+
+A crash between the two commits can leave parent history missing a settled child item.
+Recovery uses child facts for execution safety but never reconstructs or backfills missing parent snippets.
+Read-only parent reload needs no child fetch.
+Without a committed terminal parent projection, it shows **unresolved / activity unverified**, even if the child has finished.
+
+Recovery later inspects committed child state and appends a parent-side activity-gap marker with stable child identity and bounded evidence before settling the parent view.
+Reload and forks retain that gap rather than presenting a complete trace.
+A projection gap is not an unknown tool outcome; tool certainty follows the child's intent/result evidence.
+
+If a child committed its terminal result but the parent tool result is missing, recovery may commit a known parent result only from exact durable result bytes or a versioned deterministic derivation that reproduces them.
+"Child completed" status or a bounded display summary is insufficient.
+Without that evidence, close the parent call with an unknown-outcome result; never rerun the child merely to fill the gap.
+The first cutover need not build a general recovery synthesizer.
+
+#### Disclosure before publication
+
+Leave the disclosure decision at the child-to-parent projection boundary, before any parent commit or live publish.
+That leaves room for a future opaque subagent: its private activity would stay in the child session, while only explicitly approved parent-visible facts and the tool's intended result cross to the parent.
+A read-time filter cannot make content already stored in a parent's retained history private retroactively.
+This proposal adds no opaque mode or new configuration; it preserves the boundary where such a policy could be applied later.
 
 ### Live delivery and acknowledgement
 
-A run sends provisional model text and reasoning summaries as they arrive; it
-does not write one record per token. The client may lose an entire uncommitted
-model response on reload if the server failed before committing it, even if
-the client saw the response live. The server commits the completed assistant
-turn when it has an accepted result. Tool progress and early result
-previews can also be provisional; tool dispatch and outcome follow the
-separate durable boundaries below.
-Provisional updates have correlation identities so the client can amend or
-discard them; they are not resume cursors. After storage accepts a change, the
-server advances a cumulative acknowledgement such as **"persisted through
-C"**. Only a committed position is a durable subscription cursor. If a
-provisional update differs from the committed result, the client reconciles
-to the committed projection. Ownership changes end the old live stream,
-including one forwarded through a non-owner; there is no transparent
-cross-replica stream migration. The client reconnects through any entry
-replica from its last committed position, reloading a snapshot if that cursor
-is invalid, and reconciles or discards provisional output. A clean handoff
-may report a typed reconnect outcome; a crash may only break the transport.
-Neither case proves the run stopped. If the connection drops before an
-acknowledgement, the client reloads from committed state; it does not assume
-the provisional text survived.
+A `Run` streams provisional model text and reasoning summaries as they arrive, without a record per token.
+If the server fails before committing a model response, reload may lose that entire response even when the client saw it live.
+The server commits the completed assistant turn when it has an accepted result.
+Tool progress and early result previews can also be provisional; dispatch and outcomes have separate durable boundaries below.
 
-An acknowledgement means the authoritative storage adapter accepted the
-record under its declared durability contract, so a mecatl process restart
-can recover it; it never means only that the process queued a write or sent
-bytes to the client. How storage-node failures affect an accepted record is a
-backend deployment guarantee, not one blanket promise of this protocol. An
-adapter must not report a volatile write as committed without disclosing that
-contract. Provisional delivery must never confer a permission grant or present a tool
-outcome as certain when the server cannot substantiate it. The split between
-provisional and committed output preserves low-latency streaming without
-making the live feed the source of truth.
+Provisional updates have correlation identities for amendment or discard, not resume cursors.
+After storage accepts a change, the server advances a cumulative acknowledgement such as **"persisted through C"**.
+Only a committed position is a durable subscription cursor.
+If provisional output differs from the committed result, the client reconciles to the `ClientProjection`.
+
+#### Reconnecting after owner changes
+
+An ownership change ends the old live stream, including one forwarded through a non-owner.
+There is no transparent cross-replica stream migration.
+Reconnect through any entry replica from the last committed position, reloading a snapshot if that cursor is invalid.
+Reconcile or discard provisional output.
+
+A clean handoff may report a typed reconnect outcome; a crash may only break the transport.
+Neither proves the `Run` stopped.
+If the connection drops before acknowledgement, reload committed state rather than assuming provisional text survived.
+
+#### What acknowledgement guarantees
+
+An acknowledgement means the authoritative adapter accepted the record under its declared durability contract, allowing recovery after a mecatl process restart.
+Queueing a write in memory or sending bytes to the client is not commitment.
+Storage-node failure guarantees depend on the backend deployment, not one blanket protocol promise.
+An adapter cannot report volatile writes as committed without disclosing that contract.
+
+Provisional delivery never grants permission or establishes a certain tool outcome without evidence.
+This distinction preserves low-latency streaming while keeping `CommittedHistory` authoritative.
 
 ## Recovery and execution safety
 
 ### Distributed recovery and evidence
 
-A committed run-start record with no committed completion proves only that the
-outcome is **unresolved**. A lost client connection does not prove the run
-stopped: another server may still own and drive it. The protocol should
-separate transport connection state from server-confirmed run state and report
-what the server can establish: a current owner, a fenced former owner, or
-ownership that cannot yet be determined. A client may present these facts
-compactly, but it must not manufacture a completed or failed run from a
-missing event.
+A committed run-start record without completion establishes only an **unresolved** outcome.
+A lost connection does not prove the run stopped; another server may own and drive it.
+Report transport state separately from server-confirmed run state:
 
-Once the server establishes that no writer can continue the old run, it can
-commit an interrupted-run marker. This explains why previously streamed
-model text is absent from the recovered conversation. Even after fencing a
-writer, an already-started external tool may still have had a side effect;
-its outcome remains unknown until verified. If ownership or storage is
-unavailable, the protocol reports uncertainty rather than claiming the run
-has ended. Committed positions, writer identities, and bounded recovery
-status must remain meaningful when the client reconnects to a different
-replica. A backend response showing a newer writer epoch is definitive for
-that old writer: the server stops starting work and cancels its local run.
-Its host may recheck a Kubernetes Lease to diagnose or reconcile ownership,
-but that check cannot authorize another old-epoch append; a fresh owner must
-acquire the current backend epoch and reload committed state. This remains
-server-side coordination, not a Kubernetes dependency in the engine core.
+- A current owner.
+- A fenced former owner.
+- Ownership that cannot yet be determined.
 
-A failed or timed-out claim renewal is uncertainty, not permission to start
-another tool. Already-started calls may settle, but their outcomes become
-confirmed only through an epoch-checked commit. A narrow speculative exception
-can dispatch one next LLM request if its exact input and continuation were
-already committed while ownership was valid; its streamed output remains
-provisional and cannot trigger a tool, a second model request, or confirmed
-usage until its result is committed under a valid epoch and expected head. If
-takeover wins, discard that response. This may incur duplicate provider cost;
-it is not a generally read-only operation. No new model request can be built
-from uncommitted state. If an ordinary append succeeds with the current epoch,
-that operation has confirmed its own write authority; if storage cannot
-confirm it, do not advance dependent work. Once renewal confirms the same
-epoch, the owner reads the committed head, reconciles any in-flight outcomes,
-and resumes in place. A newer epoch is a hard stop. Even an apparently read-only tool currently requires a committed intent
-before dispatch and a committed result before model continuation. A future
-exception for demonstrably side-effect-free reads would need an explicit
-purity and privacy contract; tool names or declared read-only classification
-alone cannot authorize speculative calls across an uncertain fence.
+The client may present these facts compactly, but cannot infer completion or failure from a missing event.
 
-Crash takeover and agent continuation are separate decisions. In the first
-cutover, a crashed active run is **interrupted**, not resumed under the same
-run identity. After fencing the former writer, recovery commits the evidence
-needed to repair tool pairing: requested calls with no intent were not
-started, and intent without an established result has unknown outcome. No
-tool is automatically retried. A later authorized interactive attach may
-start a new run from the committed conversation. If only an uncommitted LLM
-response was lost—no tool intent, pending steer, or approval requiring a
-decision—the server issues a new model attempt from the last committed
-input on that attach, independent of which client UI initiated it. The provisional response seen before the crash can be
-discarded and replaced; the new response may differ, and the old attempt's
-usage may be unknown. Read-only inspection never triggers it. Pending
-steers and uncertain tool outcomes require explicit post-crash recovery
-decisions before new dependent work; no-client automatic agent continuation
-is deferred. A durably awaiting exact approval is preserved for an
-explicit verdict rather than converted into an interrupted run. Generic
-orphan settlement applies to every session kind, including scheduled fires
-and delegated children; it neither restarts them nor knows schedule retry
-policy. The scheduler independently reconciles its due claims and fire
-records from the settled session state, without a competing direct session
-settlement path. An unobserved crashed scheduled fire does not replay on
-client activation; later due fires proceed. Existing opted-in one-shot retry
-remains a schedule policy, not a general same-run crash-resume promise.
+Once the server establishes that no writer can continue the old `Run`, it can commit an interrupted-run marker.
+That marker explains why streamed model text is absent from recovered conversation.
+Even after fencing, a started external tool may have had side effects; its outcome remains unknown until verified.
+If ownership or storage is unavailable, report uncertainty rather than claiming the run ended.
+Positions, writer identities, and bounded recovery status must remain meaningful across replica reconnects.
 
-A later same-run crash-resume feature may store a per-root-session
-continuation policy initialized from a deployment-wide default. Delegation
-would follow the root's policy; changing the default would not rewrite
-existing sessions. Its conservative default is to park the recovered tree,
-while an opt-in could let the agent continue with an explicit unknown-outcome
-result in model-visible context. A separate authorized resume would continue
-the same run after fencing and reconciliation, never rerun the uncertain
-tool. This policy, toggle, and same-run resume action do **not** ship in the
-first cutover. Who may change a session's policy and when remain later
-decisions; do not create a client toggle now.
+A newer backend writer epoch definitively fences the old writer: stop starting work and cancel the local run.
+The host may inspect a Kubernetes Lease for diagnosis, but it cannot authorize an old-epoch append.
+A fresh owner acquires the current backend epoch and reloads committed state.
+This coordination stays server-side, without a Kubernetes dependency in engine core.
 
-A steer is durably accepted into its source slot with a stable action identity
-and slot revision before the server acknowledges it. Accepted content,
-replacement, retraction, and consumption survive a crash or handoff; acceptance
-does not mean input has reached the model. During ordinary execution, the
-owner commits the pending revisions' insertion at the next eligible input
-boundary (after any required approval verdict) before the model sees them. All
-clients reconcile their pending controls against that committed insertion,
-not an ephemeral inbox echo. In the first cutover, a crash that interrupts a
-run leaves unconsumed steers pending for an explicit post-crash recovery action:
-the authorized caller chooses a new follow-up run with that input or retracts
-it. The server does not silently promote it, discard it, or require the client
-to resubmit accepted text. A later same-run resume could instead consume it at
-the resumed run's eligible boundary. Retried steer and recovery commands use
-stable identities so the same input is not inserted twice. Durable pending
-steers deliberately differ from today's restart-lost in-memory inbox.
+#### Renewal uncertainty and limited speculation
 
-The terminal race is resolved by the server, not by making the client wait
-for a turn to finish before sending. A steer accepted while a run is active
-can be consumed by that run if it continues; if the run becomes terminal
-before consuming it, the server must make an explicit durable decision about
-its fate. For an unqualified steer on a normally completed run, the intended
-behavior is to promote accepted pending input to one follow-up run rather than
-return it for client resubmission. Exact-run steers cannot authorize promotion;
-their accepted, unconsumed terminal disposition still needs an explicit durable
-decision. An interrupted first-phase run leaves pending input for explicit
-post-crash disposition; a future same-run crash-parked run is not terminal and
-cannot authorize promotion. A server may reject a steer before accepting it,
-but once it has acknowledged durable acceptance, returning its text in a terminal response
-cannot transfer responsibility back to the client. The choice of recipient
-run or durable pending state must be ordered at the committed session head
-and replayable by message identity; retries never create a second follow-up.
-An explicit user cancellation of the targeted run also cancels its pending,
-undelivered user steer. Commit the run's cancellation and that steer disposition
-together so a crash cannot leave accepted user input that later starts a run
-contrary to the cancellation. The effect of run cancellation on independent
-extension slots and future background operations remains an open question;
-retracting the user slot alone never affects them. A steer already inserted
-into committed
-conversation cannot be retroactively cancelled. A terminal response may
-include the discarded input as a convenience note, but delivery of that note
-is not guaranteed and is not the cancellation record. An internal shutdown
-or lease-loss cancellation is not user intent and must preserve pending
-steers for fenced crash recovery. If a crash occurs without an accepted user
-cancellation, pending steers remain durable for the first-phase explicit
-follow-up-or-cancel decision; a later same-run resume could consume them.
-A cancellation addressed to an old run cannot cancel a follow-up run already
-created by a terminal-race promotion. The broader multi-client cancellation
-targeting contract remains to be settled below. If the run reaches a committed failed
-terminal outcome before consuming an accepted steer, leave that steer durably
-pending rather than automatically promoting it. The caller can inspect the
-failure and explicitly choose to start a follow-up run with the pending input
-or cancel it; a failed run is not implicitly resumed. This disposition also
-survives reconnect and does not ask the client to resubmit accepted text.
-No-client autonomous takeover and agent continuation remain later
-capabilities; in the first cutover an unobserved interrupted run waits for
-an authorized client activation or recovery decision.
+A failed or timed-out claim renewal is uncertainty, not permission to start another tool.
+Started calls may settle, but only an epoch-checked commit confirms their outcomes.
 
-When a mutation or provisional stream lands on a non-owner replica, that
-replica consults the authoritative ownership claim and forwards it over an
-authenticated internal transport to the current owner. The receiving owner
-rechecks the caller's authority, tree identity, and current epoch; ingress
-affinity metadata is not an authorization grant. Forwarding is bounded to one
-hop, with no forwarding loop or private pod address exposed to clients.
-On handoff or a stale owner hint, the entry replica refreshes ownership;
-an ambiguous mutation keeps its stable request identity so a retry resolves
-against the original decision. If ownership or routing cannot be established,
-the client receives a retryable unavailable outcome rather than an invented
-success. The client retains its committed cursor and queued request across
-reconnect. Session affinity may reduce forwarding but is not required for
-correctness. Any authorized replica can serve durable snapshot and committed
-catch-up reads from the shared history. An owner-aware gateway could later
-avoid the forwarding hop; it is not required in this design.
+One narrow exception permits a next LLM request whose exact input and continuation were committed while ownership was valid.
+Its streamed output stays provisional until the result commits under a valid epoch and expected head.
+Before that commit, it cannot trigger a tool, a second model request, or confirmed usage.
+Discard the response if takeover wins.
+This exception may duplicate provider cost; it is not a generally read-only operation.
+Never build a new model request from uncommitted state.
+
+A successful ordinary append with the current epoch confirms that operation's write authority.
+If storage cannot confirm the append, stop dependent work.
+After renewal confirms the same epoch, the owner reads the head, reconciles in-flight outcomes, and resumes in place.
+A newer epoch is a hard stop.
+
+Even apparently read-only tools require committed intent before dispatch and committed results before continuation.
+A future side-effect-free read exception needs an explicit purity and privacy contract.
+Tool names or declared read-only classification alone cannot justify speculative calls across an uncertain fence.
+
+#### First-cutover crash settlement
+
+Crash takeover and agent continuation are separate decisions.
+A crashed active `Run` is **interrupted**, not resumed under the same run identity in the first cutover.
+After fencing the former writer, recovery commits evidence to repair tool pairing.
+Requested calls with no intent were not started; intent without an established result has unknown outcome.
+No tool is automatically retried.
+
+A later authorized interactive attach may start a new `Run` from committed conversation.
+If only an uncommitted LLM response was lost, the server issues a new model attempt from the last committed input on that attach, regardless of the initiating UI.
+This is allowed only when no tool intent, pending steer, or approval requires a decision.
+The new response may replace the discarded provisional response and differ from it; the old attempt's usage may be unknown.
+Read-only inspection never triggers the request.
+
+Pending steers and uncertain tools need explicit post-crash recovery decisions before new dependent work.
+No-client automatic agent continuation is deferred.
+A durably awaiting exact `PermissionAsk` remains resolvable by explicit verdict rather than becoming an interrupted run.
+
+Generic orphan settlement covers every session kind, including scheduled fires and delegated children.
+It neither restarts them nor knows schedule retry policy.
+The scheduler separately reconciles due claims and fire records from settled session state, without a competing direct session settlement path.
+An unobserved crashed fire does not replay on client activation; later due fires proceed.
+Opted-in one-shot retry remains schedule policy, not a general same-run crash-resume guarantee.
+
+#### Later same-run continuation policy
+
+A later same-run crash-resume feature may store a per-root-session continuation policy initialized from a deployment-wide default.
+Delegation would follow the root's policy; changing the default would not rewrite existing sessions.
+Its conservative default is to park the recovered tree, while an opt-in could let the agent continue with an explicit unknown-outcome result in model-visible context.
+A separate authorized resume would continue the same run after fencing and reconciliation, never rerun the uncertain tool.
+This policy, toggle, and same-run resume action do **not** ship in the first cutover.
+Who may change a session's policy and when remain later decisions; do not create a client toggle now.
+
+### Durable steer recovery
+
+Before acknowledging a steer, commit its admission to the source `SteerSlot`, including stable action identity and `SteerRevision`.
+Content, replacement, retraction, and consumption survive crash or handoff.
+Acceptance does not mean the model has received the input.
+
+In ordinary execution, commit pending revisions' insertion at the next eligible input boundary, after any required approval verdict.
+Clients reconcile pending controls against that committed insertion rather than an inbox echo.
+
+In the first cutover, an interrupted run leaves unconsumed steers pending for explicit recovery.
+The authorized caller chooses a new follow-up run with the input or retracts it.
+The server neither silently promotes nor discards accepted text, nor requires resubmission.
+A later same-run resume could consume it at the resumed run's eligible boundary.
+Stable identities prevent retried steer and recovery commands from inserting input twice.
+This durability differs from today's restart-lost in-memory inbox.
+
+#### Terminal-race disposition
+
+The server resolves the terminal race; clients need not wait for a turn to finish before sending.
+An active `Run` may consume an accepted steer if it continues.
+If it ends first, the server commits an explicit disposition:
+
+- For an unqualified steer on normal completion, promote pending input to one follow-up run rather than asking for resubmission.
+- An exact-run steer never authorizes promotion; its unconsumed terminal disposition remains to be decided.
+- An interrupted first-phase run leaves input pending for explicit recovery.
+- A future same-run crash-parked run is not terminal and cannot authorize promotion.
+
+The server may reject a steer before accepting it.
+After acknowledging durable acceptance, it cannot return responsibility to the client merely by echoing text in a terminal response.
+Order the recipient-run or pending-state decision at the committed session head and make it replayable by message identity.
+Retries never create a second follow-up.
+
+#### User cancellation and failed runs
+
+Explicit user cancellation of the targeted `Run` also cancels its pending, undelivered user steer.
+Commit both dispositions together so a crash cannot leave input that starts a run contrary to cancellation.
+A steer already inserted into committed conversation cannot be cancelled retroactively.
+
+Run cancellation's effect on independent extension slots and future background work remains open.
+Retracting the user slot alone never affects them.
+A terminal response may include discarded input as a convenience, but that note is neither guaranteed delivery nor the cancellation record.
+
+Internal shutdown or lease-loss cancellation is not user intent.
+Preserve pending steers for fenced crash recovery.
+Without accepted user cancellation, a crash leaves them pending for the first-phase explicit follow-up-or-cancel decision; later same-run resume could consume them.
+
+A cancellation naming an old run cannot cancel a follow-up already created by terminal-race promotion.
+The broader multi-client cancellation targeting contract remains open below.
+
+If a run commits a failed terminal outcome before consuming a steer, keep the input pending rather than promoting it automatically.
+The caller can inspect the failure and choose a follow-up with that input or cancel it.
+A failed run is not implicitly resumed.
+The disposition survives reconnect without requiring resubmission.
+
+No-client autonomous takeover and continuation remain later capabilities.
+An unobserved interrupted run waits for authorized client activation or recovery in the first cutover.
+
+### Routing to the owning replica
+
+A non-owner receiving a mutation or provisional-stream request consults the authoritative `OwnershipClaim` and forwards over authenticated internal transport.
+The owner rechecks caller authority, tree identity, and current epoch; ingress affinity metadata grants no authority.
+Forward at most one hop, without loops or exposing private pod addresses.
+
+On handoff or a stale owner hint, refresh ownership.
+An ambiguous mutation retains its request identity so a retry resolves against the original decision.
+If ownership or routing cannot be established, return retryable unavailability rather than invented success.
+The client keeps its committed cursor and queued request across reconnect.
+
+Affinity can reduce forwarding but is not required for correctness.
+Any authorized replica can serve durable snapshots and committed catch-up reads from shared history.
+An owner-aware gateway could later avoid forwarding; it is not required here.
 
 ### Compatible-replica active-tree handoff (later phase)
 
-The initial committed-history cutover does not promise turn-boundary pause
-and seamless cross-replica continuation of an active delegation tree. That
-capability does not ship today. The first phase must still preserve or
-explicitly replace today's bounded cancellation and join-before-release,
-durable pending root-ask rehydration after takeover, refusal of work before
-the ownership boundary, and crash-orphan repair with valid tool-call/result
-pairing. It must not describe a cancelled run or a new client-started run as
-continuation of the old active tree. The following is the future handoff
-contract the history must accommodate, not a first-phase delivery claim.
+The first cutover does not promise turn-boundary pause or seamless cross-replica continuation of an active delegation tree.
+That capability is not implemented today.
+It must still preserve or explicitly replace these existing guarantees:
 
-Drain is a committed pause, not the end of a run. The owner marks the entire
-delegation tree as draining and admits no new model or tool calls in any member.
-Each member finishes its active calls, commits their outcomes and continuation,
-then parks at a turn boundary without starting the next call. A pending
-human-in-the-loop approval is already a parkable continuation: its exact ask
-and decision state survive handoff without waiting for the human. The parent
-retains the delegation tool call and its child links as pending across the
-handoff; parking a child is not a tool result. A delegated tool must support
-this coordinated pause instead of tying its logical call lifetime to one pod.
-An approval that arrives during drain can be accepted against its exact pending
-ask and committed with its decision identity, but cannot start dependent work
-on the draining owner. The successor consumes that committed decision on
-resume; a retry with the same identity returns the original decision. Once
-the owner has closed approval admission for final handoff, it returns a typed
-reconnect response without accepting the verdict. The client keeps the same
-request identity and queued verdict, reconnects, and retries through any
-entry replica rather than inventing a new approval. The entry replica
-forwards to the successor once it has acquired ownership; until then, a
-bounded retry may report temporary unavailability. An ambiguous acceptance
-is resolved from the committed history before either replica claims the
-verdict was accepted or asks the client to make a new one.
+- Bounded cancellation and join-before-release.
+- Durable pending root-ask rehydration after takeover.
+- Refusal of work before the ownership boundary.
+- Crash-orphan repair with valid tool-call/result pairing.
 
-Only after all descendants are parked and no LLM or external tool call is in
-flight does the owner commit a root handoff marker containing the parent's
-parked continuation and naming each descendant's exact committed parked
-position, then unload local tree state and release its exact claim. Child
-histories may be stored independently and committed before the root marker; no multi-history
-transaction is required. The marker is the publication boundary: a successor
-loads and verifies every named position before resuming any member. A missing
-or incompatible child position fails closed, never as a partial handoff.
-A crash before the marker leaves an incomplete drain for fenced recovery; a
-crash after the marker but before release leaves a complete handoff for
-successor takeover after claim expiry. Approval admission closes before the
-marker, so its recorded positions cannot omit an accepted verdict. The
-handoff is durably discoverable by healthy replicas, not dependent on a
-client opening the session. Once autonomous takeover is enabled, a background
-successor worker claims an eligible tree with a new epoch, loads its complete
-parked state, and resumes any runnable member, including a background child
-while its parent awaits human approval or a member with a committed verdict.
-An undecided ask parks only its dependent continuation; it does not block
-independent runnable members. If no member can run, the tree remains unowned
-and unloaded until an authorized client explicitly activates it. Inspecting
-its committed history alone never claims it.
-Competing workers cannot both drive the tree:
-claim acquisition and every subsequent child or parent commit are fenced by
-the same ownership domain. Missed wakeups cannot strand a released runnable
-tree once autonomous takeover is enabled: a bounded scan or equivalent durable
-discovery finds it. If that worker is deferred from an initial phase, the
-handoff remains durably parked but is not an unattended rolling-upgrade
-continuation; that limitation must be explicit rather than promising self-start.
-A partially parked tree is not a completed handoff. Child history commits
-must be fenced by the tree's ownership claim even when stored under separate
-child IDs. The exact marker encoding and recovery checks belong in the later
-interface contract; independently releasing child claims is not a substitute.
-Drain is per root session and its delegation tree: a slow tree does not hold
-back complete handoffs of other sessions. At the shutdown deadline, cancel
-and join any remaining in-flight calls where possible. If that tree cannot
-establish all outcomes and commit the root marker before shutdown, do not
-release it as a graceful handoff. Its claim expires and a successor applies
-crash-style recovery, including unknown external outcomes; other completed
-trees retain their graceful markers and immediate releases.
+A cancelled run or new client-started run is not continuation of the old tree.
+The following future contract describes what history must accommodate, not what the first phase delivers.
+
+#### Parking the tree and closing approval admission
+
+Drain is a committed pause, not the end of a `Run`.
+The owner marks the whole tree draining and admits no new model or tool calls in any member.
+Each member finishes active calls, commits outcomes and continuation, then parks at a turn boundary.
+
+A pending `PermissionAsk` is already a parkable continuation.
+Its exact ask and decision state survive handoff without waiting for the human.
+The parent retains its delegation call and child links as pending; parking a child is not a tool result.
+Delegated tools must support coordinated pause rather than tying logical call lifetime to one pod.
+
+During drain, an approval may commit against its exact ask and decision identity, but cannot start dependent work on the draining owner.
+The successor consumes the decision on resume; same-identity retries return the original decision.
+
+After closing approval admission for final handoff, the owner returns a typed reconnect response without accepting new verdicts.
+The client keeps its request identity and queued verdict, reconnects through any entry replica, and retries.
+The entry forwards to the successor after acquisition; bounded retries may report temporary unavailability until then.
+Resolve ambiguous acceptance from history before claiming success or asking for a new verdict.
+
+#### Publishing a complete handoff
+
+The owner commits a root marker only after every descendant is parked and no LLM or external tool call is in flight.
+The marker contains the parent's parked continuation and names each descendant's exact committed parked position.
+The owner then unloads local tree state and releases its exact `OwnershipClaim`.
+
+Child histories may commit independently before the marker; no multi-history transaction is required.
+The marker is the publication boundary.
+A successor loads and verifies every named position before resuming any member; missing or incompatible positions fail closed, never as a partial handoff.
+Approval admission closes before the marker so recorded positions cannot omit an accepted verdict.
+
+A crash before the marker leaves an incomplete drain for fenced recovery.
+A crash after the marker but before release leaves a complete handoff for takeover after claim expiry.
+The handoff is durably discoverable by healthy replicas without a client opening the session.
+
+#### Later autonomous takeover
+
+Once autonomous takeover is enabled, a background successor claims an eligible tree with a new epoch and loads its complete parked state.
+It resumes any runnable member, including a background child whose parent awaits approval or a member with a committed verdict.
+An undecided ask parks only dependent continuation, not independent runnable members.
+
+If no member can run, the tree remains unowned and unloaded until authorized client activation.
+Reading history alone never claims it.
+Claim acquisition and every parent or child commit share one fenced ownership domain, so competing workers cannot both drive the tree.
+Child histories use that claim even when stored under separate child IDs; independently releasing child claims is not a substitute.
+
+With autonomous takeover enabled, bounded scans or equivalent durable discovery prevent missed wakeups from stranding a released runnable tree.
+Without that worker, the tree remains durably parked but cannot promise unattended rolling-upgrade continuation.
+A partially parked tree is not a completed handoff.
+Exact marker encoding and recovery checks remain later interface questions.
+
+#### Shutdown deadlines
+
+Drain is per root `Session` and tree; a slow tree does not delay other complete handoffs.
+At the deadline, cancel and join remaining in-flight calls where possible.
+If a tree cannot establish all outcomes and commit its marker before shutdown, do not release it as a graceful handoff.
+Its claim expires, and a successor uses crash-style recovery with unknown external outcomes.
+Other completed trees keep their graceful markers and immediate releases.
 
 ### Tool calls and uncertain outcomes
 
-Commit the completed assistant turn with its requested tool-call identities
-before dispatching any of them. For each call independently, commit its
-authorized intent and private continuation state immediately before dispatch.
-The model's tool-call batch is not a storage or execution transaction:
-permitted independent calls may overlap under the harness's existing
-read-parallel/mutate-serial discipline. A client-safe projection may show an
-admitted call in flight. Commit each result under its original call identity
-when established. A requested call with **no** committed intent is definitely
-not dispatched by this protocol; a committed intent with no committed result
-means that call **might have started**. A pending durable ask remains pending,
-not a not-started result while it is still actionable.
+Commit the completed assistant turn and requested tool-call identities before dispatching any call.
+For each call, commit its authorized intent and private continuation immediately before dispatch.
+The model's batch is not a storage or execution transaction.
+Permitted independent calls may overlap under the existing read-parallel/mutate-serial discipline.
 
-An interrupted call is not automatically retried. Once recovery has fenced
-the former writer and checked for a committed result, it closes an orphaned
-requested call with a harness-authored **not-started** result if no intent
-was committed, or a distinct **unknown-outcome** result if intent was
-committed but its outcome cannot be established. Each uses the original
-call identity and completes model-visible call/result pairing. Not-started
-asserts the dispatch gate prevented execution; unknown outcome does not claim
-the tool failed or had no effect, and the external operation might still be
-running. The agent can inspect the situation and decide how to proceed: verify external
-state, retry an idempotent operation, or ask for help. Any follow-up remains
-subject to normal permissions and tool boundaries. Until recovery commits
-that result, the session cannot feed an invented result to the model or start
-new dependent work. Correlation prevents duplicate client cards; it does not
-make an external side effect exactly once. We still need to decide which
-tool-start phases and post-crash recovery facts are meaningful across
-implementations.
+A client-safe projection may show an admitted call in flight.
+Commit each established result under its original call identity.
+The durable evidence distinguishes three states:
+
+| Evidence | What the server can establish |
+| --- | --- |
+| Requested call, no committed intent | The protocol did not dispatch it. |
+| Committed intent, no committed result | The call might have started. |
+| Actionable durable ask | Approval is still pending; do not close the call as not-started. |
+
+After fencing the former writer and checking for a committed result, recovery closes an orphaned requested call with a harness-authored result:
+
+- **Not-started** if no intent was committed: the dispatch gate prevented execution.
+- **Unknown-outcome** if intent committed but the outcome cannot be established: the tool may have had effects and may still be running.
+
+Both retain the original call identity and complete model-visible call/result pairing.
+Unknown outcome asserts neither failure nor absence of effects.
+Recovery never automatically retries the tool.
+The agent can then verify external state, retry an idempotent operation, or ask for help, under normal permissions and tool boundaries.
+Until recovery commits the result, the session cannot feed an invented outcome to the model or start dependent work.
+
+Correlation prevents duplicate client cards; it does not make external effects exactly once.
+Which tool-start phases and post-crash facts are meaningful across implementations remains open.
 
 ### Execution gates
 
-The following boundaries distinguish fast observation from permission to
-advance the session. "Committed" means the authoritative store has accepted
-the record, including its ownership check; an in-process queue is not enough.
+The following boundaries distinguish fast observation from permission to advance the session.
+"Committed" means the authoritative store has accepted the record, including its ownership check; an in-process queue is not enough.
 
 | Action | Required before proceeding | What can be provisional |
 | --- | --- | --- |
@@ -1092,116 +1023,94 @@ the record, including its ownership check; an in-process queue is not enough.
 | Use compacted history or changed session controls | Commit the replacement conversation or control decision before using it for another model request or presenting it as confirmed. | Show that the operation is pending. |
 
 A failed result write after dispatch cannot undo a tool's external side effect.
-The server must stop dependent work and expose the unresolved call until it
-can establish a durable outcome. If an append reports an ambiguous failure,
-the server must verify the committed position and call identity before deciding
-whether to retry; repeating a tool call is never a storage retry.
+The server must stop dependent work and expose the unresolved call until it can establish a durable outcome.
+If an append reports an ambiguous failure, the server must verify the committed position and call identity before deciding whether to retry; repeating a tool call is never a storage retry.
 
 ## Boundaries and costs
 
-This is a deliberate breaking change to persistence and the client protocol,
-not an in-place schema version bump. Use a distinct storage namespace for
-committed histories and a versioned format/capability marker within it. New
-adapters accept only that format and reject legacy snapshots or activity logs
-before reconstructing a session. A legacy session or mixed namespace is not
-an empty new session and must not be rewritten by a new writer; namespace
-separation does not excuse treating a known legacy session ID as absent. The
-exact namespace, marker, and collision detection belong in the interface
-contract. Existing bytes remain untouched; except for fail-closed legacy
-presence detection, the new server and client do not read, expose, continue,
-or migrate old sessions. The initial rollout is a teardown and upgrade, not
-a mixed-version rolling upgrade: stop the old service before admitting new
-traffic. Keep the same public endpoint, but explicitly negotiate or check
-the incompatible API version before any session read, subscription, or
-mutation. A new client against an old server and an old client against a new
-server fail clearly; neither silently falls back to the other's snapshot,
-feed, or storage format. The exact wire mechanism belongs in the interface
-contract. Graceful handoff among compatible new replicas is a later runtime
-behavior, not a promise that old runs migrate through this cutover. The old
-service uses a bounded drain before teardown; remaining legacy runs may be
-interrupted and cannot be resumed by the new server. Any already-started
-external side effect remains subject to the old protocol's uncertainty, not
-retroactively protected by the new history. This is an explicit cutover cost,
-not a reason to mutate or delete the legacy namespace. A future offline
-export/import would be a separate decision, not a condition
-for the first release. This proposal does not authorize deleting old data.
-This clean break deliberately ends legacy-session continuation compatibility.
-The authoritative committed subscription replaces the best-effort activity
-watch as the source of client reload truth. Historical
-activity may remain a separate diagnostic view, but it cannot attest session
-completeness.
+### Breaking storage and protocol cutover
 
-Logical deletion is an irreversible session transition, independent of when
-the adapter physically purges bytes. It fences further activation and writes,
-prevents reuse of the deleted identity, and denies new reads of that session's
-history even if retained records still exist. Deleting a root also logically
-disables its delegated children by default: no direct child read or resume
-may bypass the root's deletion, including during partial cleanup. A root
-deletion boundary can make the whole tree inaccessible before individual
-child histories are physically removed; do not require an atomic purge across
-all child stores. The storage adapter declares its retention and purge timing,
-which may be stricter. The public catalog and history reads scrub a deleted
-session completely: no title, prompt, source hint, or descriptive metadata.
-A non-enumerable minimal creation-ID/session-ID tombstone may remain solely to
-reject late creation retries and reuse of the deleted identity; an exact
-creation-ID lookup reports deleted without returning substantive session
-data. Creation IDs must be bounded opaque values, not user-authored labels.
-The tombstone does not imply the adapter has physically purged all prior
-records; retained bytes remain inaccessible through the logical API until
-the adapter's declared purge. A future explicit detach action could preserve a child
-before root deletion, but is not part of this proposal. Forks are
-independent peer sessions with lineage, not children owned by the source:
-deleting the source neither disables nor deletes an existing fork. Other
-separately created peer sessions are likewise unaffected.
+This deliberately breaks persistence and the client protocol rather than bumping the existing schema in place.
+Use a distinct namespace for `CommittedHistory` with a versioned format/capability marker.
+New adapters accept only that format and reject legacy snapshots or activity logs before reconstructing a `Session`.
 
-A committed history is more expensive than a best-effort activity log. Storage
-failure must stop claims of durability, while already-started external work
-may remain uncertain. Checkpoints, storage growth, and access control must
-work for long sessions without exposing private records or allowing a cursor
-to skip required history. Forks, child sessions, and multiple server replicas
-also need ownership and lineage rules. Subpackages should follow these
-contracts once defined; relocating the TUI model by itself would not resolve
-the persistence gap.
+A legacy session or mixed namespace is not an empty new session.
+New writers must not rewrite it or treat a known legacy session ID as absent merely because namespaces differ.
+Exact namespace, marker, and collision detection remain interface questions.
 
-An adapter may eventually batch or buffer writes while preserving these
-acknowledgement and ordering guarantees. The initial design assumes no such
-relaxation: acknowledging an in-memory buffer as "persisted" would mislead a
-client after a crash. Any later buffering proposal must define its durable
-boundary, backpressure, failure handling, and cross-replica recovery separately.
+Legacy bytes remain untouched.
+Apart from fail-closed presence detection, the new server and client do not read, expose, continue, or migrate old sessions.
+This proposal does not authorize deleting old data.
+A future offline export/import is a separate decision, not a first-release condition.
 
-This borrows ActiveGraph's [commit-before-projection
-rule](https://docs.activegraph.ai/concepts/events/index.md) and [stale-writer
-rejection](https://docs.activegraph.ai/guides/operating-in-production/index.md),
-not its graph ontology or runtime. This draft and its companion model retain
-the unresolved design questions while the discussion continues.
+#### Service upgrade and client compatibility
+
+Stop the old service before admitting new traffic: the initial rollout is teardown and upgrade, not mixed-version rolling deployment.
+Keep the public endpoint, but check or negotiate the incompatible API version before any session read, subscription, or mutation.
+Old/new client-server mismatches fail clearly without fallback to the other's snapshot, feed, or format.
+Exact wire negotiation remains an interface question.
+
+The old service uses bounded drain before teardown.
+Remaining legacy runs may be interrupted and cannot resume on the new server.
+Started external effects remain subject to the old protocol's uncertainty; the new history cannot protect them retroactively.
+This cutover cost does not justify mutating or deleting legacy storage.
+Graceful handoff between compatible new replicas is later runtime behavior, not migration of old runs through the cutover.
+
+The clean break ends legacy-session continuation compatibility.
+The committed subscription replaces best-effort activity watching as client reload authority.
+Historical activity may remain a diagnostic view, but cannot attest session completeness.
+
+### Logical deletion and retained bytes
+
+Logical deletion is irreversible, independently of physical purge timing.
+It fences activation and writes, prevents identity reuse, and denies new history reads even while records remain stored.
+Deleting a root `Session` also logically disables delegated children by default.
+No direct child read or resume bypasses that deletion, including during partial cleanup.
+
+A root deletion boundary can make the entire tree inaccessible before physical child cleanup.
+No atomic purge across child stores is required.
+The adapter declares retention and purge timing, which may be stricter.
+
+Catalog and history reads expose no deleted-session title, prompt, source hint, or descriptive metadata.
+Only a minimal, non-enumerable creation-ID/session-ID tombstone may remain to reject late creation retries and identity reuse.
+Exact creation-ID lookup reports deleted without substantive data.
+Creation IDs are bounded opaque values, not user-authored labels.
+
+A tombstone does not prove physical purge.
+Retained bytes remain inaccessible through the logical API until the adapter's declared purge.
+A future explicit detach could preserve a child before root deletion; it is outside this proposal.
+
+Forks are independent peer sessions with lineage, not source-owned children.
+Deleting a source neither disables nor deletes its existing forks or other separately created peers.
+
+### Storage costs and later buffering
+
+`CommittedHistory` costs more than a best-effort activity log.
+Storage failure must stop claims of durability, while already-started external work may remain uncertain.
+Checkpoints, storage growth, and access control must work for long sessions without exposing private records or allowing a cursor to skip required history.
+Forks, child sessions, and multiple server replicas also need ownership and lineage rules.
+Subpackages should follow these contracts once defined; relocating the TUI model by itself would not resolve the persistence gap.
+
+An adapter may eventually batch or buffer writes while preserving these acknowledgement and ordering guarantees.
+The initial design assumes no such relaxation: acknowledging an in-memory buffer as "persisted" would mislead a client after a crash.
+Any later buffering proposal must define its durable boundary, backpressure, failure handling, and cross-replica recovery separately.
+
+This borrows ActiveGraph's [commit-before-projection rule](https://docs.activegraph.ai/concepts/events/index.md) and [stale-writer rejection](https://docs.activegraph.ai/guides/operating-in-production/index.md), not its graph ontology or runtime.
+This draft and its companion model retain the unresolved design questions while the discussion continues.
 
 ## Questions to resolve before interface review
 
-1. The detailed shared-control contract: exact-run cancellation targeting for
-   multiple clients, cancellation's interaction with extension slots and later
-   background work, and the disposition of an accepted exact-run steer when
-   its run ends before consumption. Shared attachment, prompt conflict,
-   per-source coalescing, all-together delivery, and first-committed approval
-   resolution are settled directions above. Ordering algorithm, provenance
-   encoding, slot-revision conflict responses, and notification byte caps
-   remain interface details.
-2. The exact #2114 display-fidelity matrix, #2079 reasoning representation,
-   and per-field/aggregate budgets for retained client and delegation detail.
-   Which client-safe items must commit before progress and which rare
-   cross-history gaps are explicitly surfaced?
-3. Exact namespace/marker and legacy collision detection, backend-neutral
-   claim and append interfaces, local torn-record diagnosis, and client API
-   versions, history pages, authorization-view invalidation, and live cursors.
-4. Action-identity format, scope, receipt lifetime, conflict/stale responses,
-   and the catalog's atomic creation, deletion, and conditional fork decisions.
-5. Storage layout and scale: checkpoint/replay bounds, large content reads,
-   catalog pagination and reconciliation, and provider-specific durability
-   declarations. A run boundary alone does not bound history size.
-6. Extension registration and version compatibility, mandatory versus
-   display-only state, and the exact generic operation/child-link contract.
-   Later work may add active-tree handoff, autonomous run resume, historical
-   forks, same-session rewind, and networked extensions; their hooks must not
-   be mistaken for first-cutover behavior.
+1. The detailed shared-control contract: exact-run cancellation targeting for multiple clients, cancellation's interaction with extension slots and later background work, and the disposition of an accepted exact-run steer when its run ends before consumption.
+   Shared attachment, prompt conflict, per-source coalescing, all-together delivery, and first-committed approval resolution are settled directions above.
+   Ordering algorithm, provenance encoding, slot-revision conflict responses, and notification byte caps remain interface details.
+2. The exact #2114 display-fidelity matrix, #2079 reasoning representation, and per-field/aggregate budgets for retained client and delegation detail.
+   Which client-safe items must commit before progress and which rare cross-history gaps are explicitly surfaced?
+3. Exact namespace/marker and legacy collision detection, backend-neutral claim and append interfaces, local torn-record diagnosis, and client API versions, history pages, authorization-view invalidation, and live cursors.
+4. Action-identity format, scope, receipt lifetime, conflict/stale responses, and the catalog's atomic creation, deletion, and conditional fork decisions.
+5. Storage layout and scale: checkpoint/replay bounds, large content reads, catalog pagination and reconciliation, and provider-specific durability declarations.
+   A run boundary alone does not bound history size.
+6. Extension registration and version compatibility, mandatory versus display-only state, and the exact generic operation/child-link contract.
+   Later work may add active-tree handoff, autonomous run resume, historical forks, same-session rewind, and networked extensions; their hooks must not be mistaken for first-cutover behavior.
 
 ## Related information
 
