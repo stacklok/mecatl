@@ -303513,6 +303513,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791376920539,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8048811afd9335e27ebe58df6f8cf841cb399656",
+          "message": "docs: fix docs that contradict the code (salvaged from #2107) (#2144)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T08:49:43-04:00",
+          "tree_id": "4929ee0cd8b5a23f90c4efe97f191d68eacc8d68",
+          "url": "https://github.com/stacklok/mecatl/commit/8048811afd9335e27ebe58df6f8cf841cb399656"
+        },
+        "date": 1791378117991,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3285.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 85,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -397259,6 +397298,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791378113461,
+  "lastUpdate": 1791378119262,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
