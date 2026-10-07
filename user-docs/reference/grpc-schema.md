@@ -2369,6 +2369,7 @@ Which fields are set depends on the event kind:
 | `detail` | `string` |  |  | detail is a BOUNDED preview of a branch tool call&#39;s args (tool.call) or a tool result&#39;s body (tool.result) — control-byte scrubbed and rune-capped upstream, never the raw, unbounded args/result body (branch_tool). |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this branch was NOT routed by the semantic model router (branch_start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;aborted&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the branch prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no branch content crosses). Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on branch_start. Historical events and deployments without a router omit it. |
+| `child_tool_call_id` | `string` |  |  | Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise. |
 
 
 
@@ -3387,6 +3388,7 @@ Which fields are set depends on the event kind:
 | `cause` | `string` |  |  | cause is the child run&#39;s FAILURE DETAIL (subagent.end only, and only when stop is &#34;error&#34; — empty otherwise): the harness/provider error the loop recorded on the terminal result. METADATA about how the delegation failed — a transport/loop error string, never child-authored model output — so it is context-isolation safe (gauntlet #7: no child content crosses). Clamped at the emit site. Mirrors session.SubagentPayload.Cause. |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this delegation was NOT routed by the semantic model router (subagent.start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;pinned-model&#34;, &#34;agent-def-pinned-model&#34;, &#34;resume&#34;, &#34;fork&#34;, &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;breaker-open&#34;, &#34;aborted&#34;, &#34;empty-model&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the task prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the emit site. Mirrors session.SubagentPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on subagent.start. Historical events and deployments without a router omit it. |
+| `child_tool_call_id` | `string` |  |  | Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise. |
 
 
 
@@ -3428,6 +3430,7 @@ Which fields are set depends on the event kind:
 | `dispositions` | `TeamMemberDisposition` | repeated |  | dispositions is the per-member TERMINAL disposition snapshot, set ONLY on team.end (parallel to the terminal tasks/findings snapshots). Lets a client render a stopped member distinctly from a clean &#34;done&#34; instead of recomputing it. Closed-enum supervisor verdicts only, never member content. |
 | `member_session_id` | `string` |  |  | member_session_id is the member&#39;s child SESSION id (&#34;team-&lt;teamID&gt;-&lt;member&gt;&#34;) on member-tagged (team.member) events — the CancelChild handle, carried explicitly so a client never derives ids from the (internal) id grammar. (17 is taken by dispositions.) |
 | `cause` | `string` |  |  | cause is the member run&#39;s per-round FAILURE DETAIL (team.member, result inner kind only) when that round ended in StopError — the harness/provider error string, never member-authored output (gauntlet #7, same footing as stop). LINE-ORIENTED: whitespace-collapsed and rune-clamped at the emit site so a client renders it as-is. Empty on every other team.member inner kind and on team.end (the terminal disposition stays the closed-enum reason). Mirrors Subagent.cause (field 17). |
+| `child_tool_call_id` | `string` |  |  | Exact member tool.call/tool.result ID, scoped by member_session_id; empty otherwise. |
 
 
 

@@ -22,6 +22,7 @@ func TestTeamPayloadHasReviewedContentFields(t *testing.T) {
 		"InnerKind":         "projected event kind",
 		"Text":              "bounded member message/result preview",
 		"ToolName":          "member tool name only",
+		"ChildToolCallID":   "exact member tool.call/tool.result ID scoped by member lane; empty otherwise",
 		"Detail":            "bounded member tool args/result preview",
 		"IsError":           "tool-result error flag",
 		"Rounds":            "terminal round count",
