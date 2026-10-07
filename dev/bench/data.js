@@ -304704,6 +304704,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791380114897,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a3f30b84f740aebcdba7a2defed2c97b83d9aa15",
+          "message": "docs(proto): drop ADR references from public Harness and Schedule comments (#2153)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T10:06:57-04:00",
+          "tree_id": "9883433fe9d6cd5c0d843d9cdf4ecca8d3fd4ebd",
+          "url": "https://github.com/stacklok/mecatl/commit/a3f30b84f740aebcdba7a2defed2c97b83d9aa15"
+        },
+        "date": 1791382719300,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3270,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 71,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -398792,6 +398831,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791382715337,
+  "lastUpdate": 1791382720041,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
