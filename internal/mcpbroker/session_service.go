@@ -15,18 +15,7 @@ import (
 // It does not expose owner assertions, creation correlation, execution tickets, or credentials.
 // It is separate from Service and Attachment; those donor contracts remain broker-internal.
 type SessionService interface {
-	InspectConnectors(context.Context, SessionRef, CatalogueRef) (ConnectorInventory, error)
 	OpenSession(context.Context, *session.BrokerSessionRef) (SessionSnapshot, error)
-	CheckAuthorization(context.Context, SessionRef, CatalogueRef, *Call, AuthorizationRef, BrokerAttempt) (AuthorizationCheck, error)
-	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call, BrokerAttempt) (InvocationOutcome, error)
-	BeginAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (BrowserPrompt, error)
-	ObserveAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (FlowStatus, error)
-	CancelAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef, BrokerAttempt) (CancelResult, error)
-	ResumeTool(context.Context, session.BrokerSessionRef, AuthorizationRef, session.BrokerCatalogueRef, BrokerAttempt) (InvocationOutcome, error)
-	BeginEnrollment(context.Context, session.BrokerSessionRef) (BeginEnrollmentOutcome, error)
-	ObserveEnrollment(context.Context, session.BrokerSessionRef, EnrollmentRef) (FlowStatus, error)
-	CancelEnrollment(context.Context, session.BrokerSessionRef, EnrollmentRef) (CancelResult, error)
-	DisconnectTools(context.Context, session.BrokerSessionRef, ConnectionRef) (DisconnectResult, error)
 	DeleteSession(context.Context, session.BrokerSessionRef) (DeleteResult, error)
 }
 

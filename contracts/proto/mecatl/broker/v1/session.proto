@@ -1,0 +1,63 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+syntax = "proto3";
+
+package mecatl.broker.v1;
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// Stable broker-owned session identity and immutable tool catalogue.
+service SessionService {
+  rpc OpenSession(OpenSessionRequest) returns (SessionSnapshot);
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
+}
+
+message OpenSessionRequest {
+  // Reattach to this broker-owned session; absence creates a new session.
+  optional string saved_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+
+message SessionSnapshot {
+  string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true];
+  Catalogue catalogue = 3 [(buf.validate.field).required = true];
+}
+
+message Catalogue {
+  string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  repeated ToolDescriptor tools = 2 [
+    (buf.validate.field).repeated.max_items = 1024,
+    (buf.validate.field).cel = {
+      id: "catalogue.descriptor_bounds",
+      message: "tool names must be 1..256 bytes and schemas 1..262144 bytes",
+      expression: "this.all(t, size(bytes(t.name)) >= 1 && size(bytes(t.name)) <= 256 && size(t.schema) >= 1 && size(t.schema) <= 262144)"
+    }
+  ];
+  optional string connection_ref = 3 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+
+// ToolDescriptor contains only the public frozen model-visible declaration and
+// scheduling/authorization capability markers; it never contains routing data.
+message ToolDescriptor {
+  string name = 1 [(buf.validate.field).string = {min_bytes: 1, max_bytes: 256}];
+  string description = 2 [(buf.validate.field).string.max_bytes = 65536];
+  bytes schema = 3 [(buf.validate.field).bytes = {min_len: 1, max_len: 262144}];
+  bool read_only = 4;
+  bool dispatch_serial = 5;
+  bool authorization_capable = 6;
+}
+
+message DeleteSessionRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+
+message DeleteOutcome {
+  enum Value {
+    UNSPECIFIED = 0;
+    DELETED = 1;
+    ALREADY_ABSENT = 2;
+  }
+  Value outcome = 1 [(buf.validate.field).enum.defined_only = true, (buf.validate.field).enum.not_in = 0];
+}

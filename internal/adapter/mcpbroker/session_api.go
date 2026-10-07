@@ -107,6 +107,8 @@ type apiReceipt struct {
 	outcome c.InvocationOutcome
 }
 
+var _ c.SessionService = (*SessionAPI)(nil)
+
 // NewSessionAPI requires verified owner context and an independently verified
 // workload resolver and single-node Redis options (including through wrappers).
 func NewSessionAPI(p *Process, r redis.UniversalClient, workload func(context.Context) *session.Principal) (*SessionAPI, error) {
@@ -266,4 +268,129 @@ func (st *apiState) completeDisconnect() {
 	st.recoveryRecord = nil
 	st.enrollment = nil
 	st.parked = make(map[c.AuthorizationRef]*apiParked)
+}
+
+func (s *SessionAPI) emptyCatalogue(st *apiState) error {
+	cat, err := c.NewCatalogue(st.record.Catalogue, c.ConnectionRef(st.record.Connection), nil)
+	if err != nil {
+		return err
+	}
+	st.catalogue = cat
+	return nil
+}
+
+func (s *SessionAPI) OpenSession(ctx context.Context, saved *c.SessionRef) (c.SessionSnapshot, error) {
+	if saved != nil {
+		ctx, release, err := s.operation(ctx, *saved, apiControl{})
+		if err != nil {
+			return c.SessionSnapshot{}, err
+		}
+		defer release()
+		st, err := s.metadataState(ctx, *saved)
+		if err != nil {
+			return c.SessionSnapshot{}, err
+		}
+		if st.record.Connected || st.record.Withdrawing || st.record.Connection != "" {
+			return c.SessionSnapshot{}, c.ErrStateUnavailable
+		}
+		if st.catalogue == nil {
+			if err := s.emptyCatalogue(st); err != nil {
+				return c.SessionSnapshot{}, c.ErrStateUnavailable
+			}
+		}
+		return c.SessionSnapshot{Ref: st.record.Ref, ExpiresAt: st.record.ExpiresAt, Catalogue: st.catalogue}, nil
+	}
+
+	owner, workload, err := s.partitions(ctx)
+	if err != nil {
+		return c.SessionSnapshot{}, err
+	}
+	ref := c.SessionRef(apiRef())
+	record := apiRecord{
+		Ref: ref, Owner: owner, Workload: workload, Profile: s.profile(),
+		Incarnation: session.NewIncarnationID(), Catalogue: c.CatalogueRef(apiRef()),
+		ExpiresAt: s.now().Add(30 * 24 * time.Hour),
+	}
+	st := newAPIState(record)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return c.SessionSnapshot{}, c.ErrStateUnavailable
+	}
+	if len(s.states) >= 32 {
+		s.mu.Unlock()
+		return c.SessionSnapshot{}, c.ErrCapacity
+	}
+	if s.states[ref] != nil {
+		s.mu.Unlock()
+		return c.SessionSnapshot{}, c.ErrStateUnavailable
+	}
+	s.states[ref] = st
+	s.mu.Unlock()
+
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.SessionSnapshot{}, err
+	}
+	defer release()
+	if err = s.emptyCatalogue(st); err == nil {
+		err = s.saveRecord(ctx, st, st.record)
+	}
+	if err != nil {
+		return c.SessionSnapshot{}, err
+	}
+	s.mu.Lock()
+	st.loaded = true
+	s.mu.Unlock()
+	return c.SessionSnapshot{Ref: st.record.Ref, ExpiresAt: st.record.ExpiresAt, Catalogue: st.catalogue}, nil
+}
+
+func (s *SessionAPI) DeleteSession(ctx context.Context, ref c.SessionRef) (c.DeleteResult, error) {
+	ctx, release, err := s.operation(ctx, ref, apiControl{delete: true})
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		st = ctx.Value(apiOperationKey{}).(*apiOperation).state
+		if st.pendingWrite != nil || !errors.Is(s.redis.Get(ctx, sessionAPIPrefix+string(ref)).Err(), redis.Nil) {
+			return 0, err
+		}
+		if st.loaded {
+			if _, err = s.process.DeleteSession(ctx, session.SessionID(ref)); err != nil {
+				return 0, err
+			}
+			if st.attachment != nil {
+				if _, err = st.attachment.Close(ctx); err != nil {
+					return 0, err
+				}
+			}
+		}
+		s.mu.Lock()
+		st.deleted = true
+		s.mu.Unlock()
+		return c.AlreadyAbsent, nil
+	}
+	if err = s.controlGeneration(ctx, st); err != nil {
+		return 0, err
+	}
+	if _, err = s.process.DeleteSession(ctx, session.SessionID(ref)); err != nil {
+		return 0, err
+	}
+	if st.attachment != nil {
+		if _, err = st.attachment.Close(ctx); err != nil {
+			return 0, err
+		}
+	}
+	if !s.validOperation(ctx) || st.pendingWrite != nil {
+		return 0, c.ErrStateUnavailable
+	}
+	if err = s.redis.Del(ctx, sessionAPIPrefix+string(ref)).Err(); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	st.deleted = true
+	s.mu.Unlock()
+	return c.Deleted, nil
 }
