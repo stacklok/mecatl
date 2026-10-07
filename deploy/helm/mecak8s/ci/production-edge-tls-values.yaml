@@ -4,7 +4,8 @@
 # The gateway forwards the original Authorization bearer; only the gateway or mesh
 # may reach this plaintext h2c backend.
 image:
-  tag: v0.0.0
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  tag: ""
 defaultProvider: openrouter
 model: anthropic/claude-sonnet-4-6
 extraEnv:

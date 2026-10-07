@@ -1,0 +1,12 @@
+{{- if include "mecak8s.brokerSelected" . }}
+{{- include "mecak8s.validateBroker" . -}}
+{{- include "mecak8s.validateBrokerCredentialStore" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecak8s.brokerFullname" . }}-config
+  labels: {{- include "mecak8s.brokerLabels" . | nindent 4 }}
+data:
+  broker.json: |
+{{ include "mecak8s.brokerConfig" . | indent 4 }}
+{{- end }}
