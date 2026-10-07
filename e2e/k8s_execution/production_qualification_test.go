@@ -39,8 +39,17 @@ func requireProduction(t *testing.T) (string, string, context.Context, context.C
 
 func productionClient(t *testing.T, ctx context.Context, state, kubeconfig string) (*executionclient.Client, *forward) {
 	t.Helper()
+	return productionClientAs(t, ctx, state, kubeconfig, "mecak8s")
+}
+
+// productionClientAs connects with the named fixture client identity. Intents are
+// client-scoped, so a test that must hold a synthetic intent open uses an identity
+// other than mecak8s: the deployed mecak8s reconciler confirms its client's
+// pending deletes whose binding has no durable session.
+func productionClientAs(t *testing.T, ctx context.Context, state, kubeconfig, identity string) (*executionclient.Client, *forward) {
+	t.Helper()
 	f := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
-	tlsConfig := loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
+	tlsConfig := loadTLS(t, filepath.Join(state, "pki"), identity, "mecatl-execution.execution-qualification.svc.cluster.local")
 	client, err := executionclient.New(f.addr, tlsConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -1207,7 +1216,7 @@ func retireSyntheticEnvironment(t *testing.T, ctx context.Context, client *execu
 func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
+	client, _ := productionClientAs(t, ctx, state, kubeconfig, "qualification")
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "pending-delete")
 	request := executionenv.ReferenceRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, OperationID: "pending-delete-outage"}
 	if err := client.PrepareReferenceDelete(ctx, request); err != nil {
@@ -1218,7 +1227,7 @@ func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=240s")
-	client, _ = productionClient(t, ctx, state, kubeconfig)
+	client, _ = productionClientAs(t, ctx, state, kubeconfig, "qualification")
 	intents, err := client.ListReferenceIntents(ctx, owner)
 	if err != nil {
 		t.Fatal(err)
