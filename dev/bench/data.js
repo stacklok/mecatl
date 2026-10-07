@@ -275338,6 +275338,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791382714115,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0fda6c82fb45a264454cda021c9d7a62e0a7ff8f",
+          "message": "Implementation: visible reasoning summaries across provider protocols (#2126)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T10:10:34-07:00",
+          "tree_id": "08d99a0eb2af452bee5a473dd7680ac1281a0ffb",
+          "url": "https://github.com/stacklok/mecatl/commit/0fda6c82fb45a264454cda021c9d7a62e0a7ff8f"
+        },
+        "date": 1791393849480,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -399269,6 +399303,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791393846059,
+  "lastUpdate": 1791393850222,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
