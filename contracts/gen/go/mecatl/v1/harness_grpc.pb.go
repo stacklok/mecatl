@@ -136,7 +136,7 @@ type HarnessServiceClient interface {
 	// otherwise rides CreateSessionResponse only).
 	//
 	// DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
-	// BUILD is this?" and ADR 0245 draws an explicit privacy boundary around it:
+	// BUILD is this?" and sits behind an explicit privacy boundary:
 	// its response must never carry capabilities, configuration, or auth details.
 	// This one is exactly those things — negotiation input, not identity — so
 	// folding the two would either breach that boundary or overload one message
@@ -146,7 +146,7 @@ type HarnessServiceClient interface {
 	// A server that does not implement this RPC (UNIMPLEMENTED) is below the
 	// SDK compatibility floor; a client fails loudly rather than inferring a
 	// legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
-	// UNIMPLEMENTED stay distinguishable. See ADR 0248.
+	// UNIMPLEMENTED stay distinguishable.
 	GetCompatibilityInfo(ctx context.Context, in *GetCompatibilityInfoRequest, opts ...grpc.CallOption) (*GetCompatibilityInfoResponse, error)
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error)
@@ -271,9 +271,8 @@ type HarnessServiceClient interface {
 	// ServerCapabilities bit for this feature: the capability is RPC-discoverable
 	// (UNIMPLEMENTED vs. an empty stream degrade honestly).
 	StreamSessionEvents(ctx context.Context, in *StreamSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
-	// StreamSessionLive is the LIVE per-session event stream (ADR 0075
-	// fire-result-delivery Scenario 6 / Wave 3): a server-streaming RPC backed by
-	// the in-process per-session subscription registry (Service.Subscribe /
+	// StreamSessionLive is the LIVE per-session event stream: a server-streaming
+	// RPC backed by the in-process per-session subscription registry (Service.Subscribe /
 	// PublishSessionEvent, List 1 row 35). It is the UNIFIED transport for BOTH
 	// embedded and remote clients — the embedded mecatui dials its in-process
 	// server over a real gRPC UNIX socket, so the in-process Subscribe registry is
@@ -306,7 +305,7 @@ type HarnessServiceClient interface {
 	StreamSessionLive(ctx context.Context, in *StreamSessionLiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 	// WatchSessionEvents is the DURABLE replay-then-follow stream: one operation
 	// that replays a session's durable event log from a position, transitions to
-	// live, and keeps following as the run appends (issue #821, ADR 0250).
+	// live, and keeps following as the run appends (issue #821).
 	//
 	// It exists because neither existing read path can do this. StreamSessionEvents
 	// is a complete, ordered replay with NO position and NO follow — it reads the
@@ -337,9 +336,8 @@ type HarnessServiceClient interface {
 	// WITHOUT waiting for the next event to arrive — on an idle session that event
 	// may never come. `gap` marks a position where a durable append is KNOWN to
 	// have failed; it too carries no `event`, because a gap is a fact about
-	// DELIVERY rather than something that happened in the run (ADR 0250 decision
-	// 5 — this is why neither `session.Event` nor the `Event` message gains a gap
-	// field).
+	// DELIVERY rather than something that happened in the run (this is why
+	// neither `session.Event` nor the `Event` message gains a gap field).
 	//
 	// RELAY DISCIPLINE mirrors StreamSessionEvents, NOT the live wire: this is the
 	// READ-BACK of the durable log, so it relays ALL events including the three
@@ -347,7 +345,7 @@ type HarnessServiceClient interface {
 	// replaying a session wants the verdicts and prompts, as they ARE the
 	// transcript. They are metadata-only/redacted by construction.
 	//
-	// `run_id` optionally narrows delivery to ONE run (ADR 0249). Gap frames are
+	// `run_id` optionally narrows delivery to ONE run. Gap frames are
 	// delivered regardless of the filter: a failed append leaves nothing to
 	// attribute to a run, so suppressing it would hide a real gap.
 	//
@@ -1372,7 +1370,7 @@ type HarnessServiceServer interface {
 	// otherwise rides CreateSessionResponse only).
 	//
 	// DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
-	// BUILD is this?" and ADR 0245 draws an explicit privacy boundary around it:
+	// BUILD is this?" and sits behind an explicit privacy boundary:
 	// its response must never carry capabilities, configuration, or auth details.
 	// This one is exactly those things — negotiation input, not identity — so
 	// folding the two would either breach that boundary or overload one message
@@ -1382,7 +1380,7 @@ type HarnessServiceServer interface {
 	// A server that does not implement this RPC (UNIMPLEMENTED) is below the
 	// SDK compatibility floor; a client fails loudly rather than inferring a
 	// legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
-	// UNIMPLEMENTED stay distinguishable. See ADR 0248.
+	// UNIMPLEMENTED stay distinguishable.
 	GetCompatibilityInfo(context.Context, *GetCompatibilityInfoRequest) (*GetCompatibilityInfoResponse, error)
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error)
@@ -1507,9 +1505,8 @@ type HarnessServiceServer interface {
 	// ServerCapabilities bit for this feature: the capability is RPC-discoverable
 	// (UNIMPLEMENTED vs. an empty stream degrade honestly).
 	StreamSessionEvents(*StreamSessionEventsRequest, grpc.ServerStreamingServer[Event]) error
-	// StreamSessionLive is the LIVE per-session event stream (ADR 0075
-	// fire-result-delivery Scenario 6 / Wave 3): a server-streaming RPC backed by
-	// the in-process per-session subscription registry (Service.Subscribe /
+	// StreamSessionLive is the LIVE per-session event stream: a server-streaming
+	// RPC backed by the in-process per-session subscription registry (Service.Subscribe /
 	// PublishSessionEvent, List 1 row 35). It is the UNIFIED transport for BOTH
 	// embedded and remote clients — the embedded mecatui dials its in-process
 	// server over a real gRPC UNIX socket, so the in-process Subscribe registry is
@@ -1542,7 +1539,7 @@ type HarnessServiceServer interface {
 	StreamSessionLive(*StreamSessionLiveRequest, grpc.ServerStreamingServer[Event]) error
 	// WatchSessionEvents is the DURABLE replay-then-follow stream: one operation
 	// that replays a session's durable event log from a position, transitions to
-	// live, and keeps following as the run appends (issue #821, ADR 0250).
+	// live, and keeps following as the run appends (issue #821).
 	//
 	// It exists because neither existing read path can do this. StreamSessionEvents
 	// is a complete, ordered replay with NO position and NO follow — it reads the
@@ -1573,9 +1570,8 @@ type HarnessServiceServer interface {
 	// WITHOUT waiting for the next event to arrive — on an idle session that event
 	// may never come. `gap` marks a position where a durable append is KNOWN to
 	// have failed; it too carries no `event`, because a gap is a fact about
-	// DELIVERY rather than something that happened in the run (ADR 0250 decision
-	// 5 — this is why neither `session.Event` nor the `Event` message gains a gap
-	// field).
+	// DELIVERY rather than something that happened in the run (this is why
+	// neither `session.Event` nor the `Event` message gains a gap field).
 	//
 	// RELAY DISCIPLINE mirrors StreamSessionEvents, NOT the live wire: this is the
 	// READ-BACK of the durable log, so it relays ALL events including the three
@@ -1583,7 +1579,7 @@ type HarnessServiceServer interface {
 	// replaying a session wants the verdicts and prompts, as they ARE the
 	// transcript. They are metadata-only/redacted by construction.
 	//
-	// `run_id` optionally narrows delivery to ONE run (ADR 0249). Gap frames are
+	// `run_id` optionally narrows delivery to ONE run. Gap frames are
 	// delivered regardless of the filter: a failed append leaves nothing to
 	// attribute to a run, so suppressing it would hide a real gap.
 	//
