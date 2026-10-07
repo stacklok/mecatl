@@ -358,23 +358,22 @@ safe.
 
 ### Approve / deny a pending ask
 
-Run controls address one exact run. Every event a run emits carries that run's
-`run_id`; pass it as `expected_run_id`. Check for the `prompt_free_controls`
+Run controls target a specific run. Each run event includes its `run_id`;
+pass that value as the required `expected_run_id`. Check for the `prompt_free_controls`
 feature before using the `controls/*` routes.
 
 When the stream emits a `permission.ask` with an `ask.ask_id`, resolve it on a
 **second** connection while the SSE stream is still open:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/resolve-ask \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/resolve-ask \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run_id-from-the-event>","ask_id":"<ask_id-from-the-event>","verdict":"allow_once"}'
-{"run_id":"<run_id>","ask_id":"<ask_id>"}
+       -d '{"expected_run_id":"<RUN_ID>","ask_id":"<ASK_ID>","verdict":"allow_once"}'
+{"run_id":"<RUN_ID>","ask_id":"<ASK_ID>"}
 ```
 
-`verdict` is `allow_once`, `allow_always`, or `deny`. On a deny, the model
-receives the denial reason and adapts. A contextual guardrail ask also needs the
-`review_id` and `guardrail_kind` it was presented with. If the named run has
+`verdict` is `allow_once`, `allow_always`, or `deny`. For a contextual
+guardrail ask, also pass the `review_id` and `guardrail_kind` from the ask. If the named run has
 finished or been replaced, the server returns `409` with the problem code
 `stale_run_control`.
 
@@ -412,10 +411,10 @@ headless/cross-process composition of resume + continuation into one stream.
 ### Cancel a run
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/cancel \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/cancel \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run-id>"}'
-{"run_id":"<run-id>"}
+       -d '{"expected_run_id":"<RUN_ID>"}'
+{"run_id":"<RUN_ID>"}
 ```
 
 The run terminates with a `result` whose `stop` is `cancelled`. If the named run
@@ -430,37 +429,39 @@ clients use the `steer` and `steer_cancel` arms on the bidirectional `Converse`
 stream. ACP does not support steer.
 
 Check for both the runtime `steer` capability and the `http_steer` compatibility
-feature before using the HTTP routes. The feature prevents clients from probing
-older servers by 404.
+feature before using the HTTP routes. These advertised values identify whether
+the server supports HTTP steering.
 
 Send text, multimodal parts, or both, addressed to the run by its `run_id`:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/steer \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/steer \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run-id>","text":"Use the existing parser","message_id":"client-42"}'
-{"outcome":"accepted","run_id":"<run-id>","message_id":"client-42"}
+       -d '{"expected_run_id":"<RUN_ID>","text":"Use the existing parser","message_id":"client-42"}'
+{"outcome":"accepted","run_id":"<RUN_ID>","message_id":"client-42"}
 ```
 
 The `parts` array uses the same `{kind, mime_type, data?, url?}` content blocks
-as an HTTP prompt. The selected provider must support every supplied media kind.
+as an HTTP prompt. A message can contain at most 16 parts, with at most 10 MiB per inline part
+and 20 MiB of inline media in total. The selected provider must support every
+supplied media kind.
 `message_id` is an optional client correlation value. It must be no longer than
 64 Unicode code points. A pending bundle can accept multiple steers: the first
 returns `accepted`, and later fragments return `appended`. The eventual `steer`
 event echoes the latest message ID as a watermark for the committed bundle.
 
-A steer never moves to another run. If the named run is absent, has finished,
-has been replaced, or reaches its end before the steer can be committed, the
-server returns `409` with the problem code `stale_run_control`. To continue
-after that, send a new prompt.
+A steer applies only to the named run. If that run is absent, has finished,
+has been replaced, or ends before the steer can be committed, the server
+returns `409` with the problem code `stale_run_control`. Send a new prompt
+to continue.
 
 Retract a pending bundle before it reaches a turn boundary:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/cancel-steer \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/cancel-steer \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run-id>","message_id":"cancel-42"}'
-{"outcome":"retracted","run_id":"<run-id>","message_id":"cancel-42"}
+       -d '{"expected_run_id":"<RUN_ID>","message_id":"cancel-42"}'
+{"outcome":"retracted","run_id":"<RUN_ID>","message_id":"cancel-42"}
 ```
 
 When no bundle can be retracted, the outcome is `none_pending`. A cancel-steer

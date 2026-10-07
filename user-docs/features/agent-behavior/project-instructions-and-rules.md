@@ -25,9 +25,10 @@ when the workspace has an effective project-trust decision.
 
 ## Instruction files
 
-Place repository-wide instructions in `AGENTS.md` or `CLAUDE.md` at the
-workspace root or an applicable parent directory. Keep them focused on facts the
-model needs for work in that tree:
+Place repository-wide instructions in `AGENTS.md` or `CLAUDE.md` at the root of
+the selected instruction source. Add instruction files in subdirectories for
+conventions that apply to those trees. Keep each file focused on facts the model
+needs for work there:
 
 ```markdown
 # Project instructions
@@ -37,74 +38,101 @@ model needs for work in that tree:
 - Do not edit generated files by hand.
 ```
 
-The first request includes guidance from the selected, admitted source root through
-its starting folder, ordered from root to leaf. More specific instructions apply
-to files beneath their directory; guidance from a sibling directory does not apply.
-For example, a default local source selected in `website/` starts at `website/`:
-it does not infer a Git root or load `../AGENTS.md`. If the operator selects a
-broader source rooted at the repository, its root guidance also applies to work
-in `website/`.
+Treat instructions as untrusted model input. Keep credentials, bearer values,
+and other secrets out of them. Use operator configuration, hooks, and permission
+policies to enforce requirements; instruction files guide the model.
 
-After a successful built-in Read, Edit, Write, Copy, Move, or Remove on a file in
-another directory, Mecatl discovers that directory's chain for the **next** model
-request. A first-touch write, or another tool call in the same batch, can finish
-before the new guidance is visible. Shell, custom tools, MCP tools, ListDir, Glob,
-and Grep do not activate nested instructions. Mentioning a path in chat does not
-load its guidance.
+### Starting and nested guidance
 
-In each directory, nonblank `AGENTS.md` wins; missing or blank `AGENTS.md` falls
-back to `CLAUDE.md`. A read fault does not authorize fallback to another file or
-host source. Scope labels refer to execution-relative directories: selected
-source ancestors above the execution root apply across the execution tree (`"."`),
-while `"nested"` applies only beneath that execution folder. Encountered siblings
-remain independent. When sources are combined, their contributions share the
-same content budget. In `replace` mode the first nonempty source wins as a whole:
-a higher-priority source with guidance in one sibling can suppress a lower-priority
-source's root guidance even when working in another sibling.
+The first model request includes guidance from the selected, admitted source
+root through the starting folder, ordered from root to leaf. More specific
+instructions apply to files beneath their directory. Sibling directories have
+independent guidance.
 
-If a later scope cannot be read, valid guidance loaded earlier in the same refresh
-remains available, alongside a content-safe warning. A configured-source failure
-stops that refresh's source chain rather than authorizing a lower-source fallback.
-In combine mode, contributions already admitted from later sources in that run
-remain available without rereading those sources.
+For example, the default local source selected in `website/` starts at
+`website/`. It does not infer a Git root or load `../AGENTS.md`. To include
+repository-wide guidance, the operator must select a broader source rooted at
+the repository.
 
-Mecatl retains automatically loaded guidance for the live session. Edits to an
-already loaded instruction file do not refresh its body during that session,
-including across messages, permission approvals, and compaction. New covered
-file operations can discover additional scopes; restart or reattachment to a
-different server process rediscovers guidance from the current admitted source.
-Automatic instruction bodies are not saved in conversation or tool results;
-explicitly reading a file still produces an ordinary saved tool result. A
-settled, guidance-free server snapshot may be released; a later covered file
-operation can still discover a newly created instruction file.
+After a successful built-in Read, Edit, Write, Copy, Move, or Remove on a file
+in another directory, Mecatl discovers that directory's instruction chain for
+the **next** model request. A first write to that directory, or another tool
+call in the same batch, can finish before the model sees the guidance. Shell,
+custom tools, MCP tools, ListDir, Glob, and Grep do not activate nested
+instructions. Mentioning a path in chat does not load its guidance.
 
-The operator setting `harness_context.project_instruction_max_bytes` limits the
-combined retained instruction content to 65,536 bytes by default. For example,
-set `project_instruction_max_bytes: 131072` under `harness_context` in the
-operator settings to allow more guidance. The value must be a positive integer;
-omitting it uses the default. A separate, equally sized metadata budget bounds
-retained scope and directory records. When the budget is reached, Mecatl labels
-partial or omitted guidance in model context and sends content-safe warnings to
-the client. Tools remain available under their normal permission policy. This
-limit applies to retained guidance, not necessarily to the memory a source
-backend uses while reading a file. See the [configuration reference](/reference/configuration.md).
+Scope labels use directories relative to the execution root. Instructions from
+selected source ancestors above that root apply across the execution tree and
+carry the label `"."`. The label `"nested"` applies only beneath that execution
+folder. Guidance discovered in sibling directories stays independent.
+
+### File precedence and source failures
+
+In each directory, a nonblank `AGENTS.md` takes precedence. A missing or blank
+`AGENTS.md` falls back to `CLAUDE.md`; a read error does not trigger fallback to
+another file or host source.
+
+Combined sources share the same instruction-content budget. In `replace` mode,
+the first nonempty source wins as a whole. For example, a higher-priority source
+with guidance in one sibling can suppress a lower-priority source's root
+guidance even when the agent works in another sibling.
+
+If Mecatl cannot read a later scope, valid guidance loaded earlier in the same
+refresh remains available, along with a warning that does not expose instruction
+content. A configured-source failure stops that refresh's source chain without
+falling back to a lower-priority source. In combine mode, contributions already
+admitted from later sources during that run remain available without rereading
+those sources.
+
+### Session lifetime and content limits
+
+Mecatl retains automatically loaded guidance for the live session. Editing a
+loaded instruction file does not refresh its body, even across messages,
+permission approvals, and compaction. Further file operations can discover
+additional directories. Restarting or reattaching to a different server process
+rediscovers guidance from the current admitted source.
+
+Automatically loaded instruction bodies are not saved in the conversation or
+tool results. Explicitly reading an instruction file produces an ordinary saved
+tool result. The server can release a settled instruction snapshot that contains
+no guidance; a later file operation can still discover a newly created
+instruction file.
+
+The operator setting `harness_context.project_instruction_max_bytes` limits
+combined retained instruction content to 65,536 bytes by default. To allow more
+content, set a positive integer under `harness_context` in operator settings:
+
+```yaml
+harness_context:
+  project_instruction_max_bytes: 131072
+```
+
+Omitting the setting uses the default. A separate metadata budget of the same
+size limits retained scope and directory records. When a budget is reached,
+Mecatl labels partial or omitted guidance in model context and sends warnings
+to the client without exposing instruction content. Tools remain available
+under their normal permission policy. The content limit bounds retained
+guidance; a source backend can use more memory while reading a file. See the
+[configuration reference](/reference/configuration.md).
+
+### Guidance in child agents
 
 Fresh-context children start with an empty instruction snapshot and read current
-guidance from the parent's admitted sources. Conversation forks copy already
-loaded guidance, covered targets, and the discovery budget independently: edits
-to loaded files do not replace that guidance on the fork's first request. An
-isolated child can discover nested scopes when the server has mapped its relative
-execution paths to the admitted source (including the default same-workspace
-source). Without that mapping it receives starting guidance and a mapping notice,
-not nested scopes inferred from its checkout. Starting guidance includes admitted
-ancestors of the starting folder in a broader selected source. No-filesystem
-children retain independently admitted starting context, but have no file-based
-nested discovery. Child discovery and budget use do not change the parent or a
-sibling's snapshot. The child's checkout does not become a new instruction authority.
+guidance from the parent's admitted sources. Conversation forks instead copy
+loaded guidance, covered targets, and the discovery budget independently. Edits
+to loaded files do not replace that guidance on the fork's first request.
 
-Treat instructions as untrusted model input. Do not put credentials, bearer
-values, or secrets in them. Do not use an instruction file as a substitute for
-operator configuration, a hook, or a permission policy.
+An isolated child can discover nested instructions when the server maps its
+relative execution paths to the admitted source, including the default
+same-workspace source. Without that mapping, the child receives starting
+guidance and a mapping notice. It does not infer nested guidance from its
+checkout. Starting guidance includes admitted ancestors of the starting folder
+when the selected source covers a broader tree.
+
+Children without a filesystem retain independently admitted starting context
+and have no file-based nested discovery. Each child's discovery and budget use
+are independent of the parent and siblings. A child's checkout does not become
+a new instruction authority.
 
 ## Project rules
 

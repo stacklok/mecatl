@@ -81,10 +81,9 @@ removed before a command runs.
 ## Persistence and reattachment
 
 The environment identity is persisted with a session snapshot. When a session
-resumes, Mecatl reattaches that exact identity through the deployment's
-placement provider. If the provider can't reattach it, or returns a different
-environment, the run fails with an error instead of falling back to a local
-workspace.
+resumes, Mecatl reattaches that exact identity through the deployment's placement
+provider. If the provider cannot reattach it or returns a different environment,
+the run fails instead of falling back to a local workspace.
 
 ## Native Kubernetes lifecycle and retention
 

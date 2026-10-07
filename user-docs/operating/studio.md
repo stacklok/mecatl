@@ -174,25 +174,35 @@ can be sent after the current run ends.
 
 ### Review tool calls and plans
 
-When a tool needs permission, its card shows the tool name, reason, and arguments.
-Edit and Write cards show a bounded line diff when the arguments support one;
-**Raw arguments** remains available for inspection. Choose **Allow once**,
-**Always allow**, or **Deny**. A card without arguments allows only **Deny**.
-If Studio cannot confirm a verdict, refresh activity before deciding again.
+When a tool needs permission, review its name, reason, and arguments in the
+approval card. Edit and Write cards show a line diff with display limits when
+the arguments support one. Open **Raw arguments** to inspect the arguments,
+then choose **Allow once**, **Always allow**, or **Deny**. If the arguments are
+unavailable, only **Deny** is enabled.
 
-A **Plan review** card shows the proposed plan and any note. Choose **Approve &
-run**, **Auto-accept edits**, or **Iterate**. Iterate rejects this plan and keeps
-the chat in plan mode. If the exact plan control is unavailable, Studio explains
-why and leaves the review read-only.
+A **Plan review** card shows the proposed plan and any accompanying note. Choose
+**Approve & run**, **Auto-accept edits**, or **Iterate**. **Iterate** rejects the
+plan and keeps the chat in plan mode. The connected server must support exact
+plan review for these controls to be available. Otherwise, Studio explains why
+the review is read-only. If Studio cannot confirm a tool or plan decision,
+select **Refresh activity** before deciding again.
 
-Escape handles one chat layer per press. An open dialog or menu closes first and
-returns focus to its trigger. Otherwise, Escape clears a text selection, denies
-a pending tool ask or iterates a plan review, closes a side panel, or stops the
-live run, in that order. With no higher layer and an unsent draft, press Escape,
-release it, then press again within half a second to clear the draft. The visible
-hint confirms the available action. Enter or Space on a focused verdict button
-selects that verdict without sending the draft. The
-**Keyboard shortcuts** page lists the same behavior.
+Each press of Escape handles one action. An open dialog or menu closes first
+and returns focus to its trigger. Otherwise, Escape acts in this order:
+
+1. Clear a text selection.
+1. Deny a pending tool request or select **Iterate** for a plan review, when the
+   review controls are available.
+1. Close a side panel.
+1. Stop the active run.
+
+Escape stops at a pending review even when its controls are unavailable.
+
+If none of these actions applies and you have an unsent draft, press Escape,
+release it, then press it again within half a second to clear the draft. The
+visible hint shows the available action. Pressing Enter or Space on a focused
+approval button selects that decision without sending your draft. The
+**Keyboard shortcuts** page lists these bindings.
 
 ### Review external authorization
 

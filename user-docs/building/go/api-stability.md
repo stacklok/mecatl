@@ -36,7 +36,7 @@ these packages is part of the contract.
 |-|-|
 |`engine/adapter/*`|Reference adapters, test doubles, and conformance suites. Their interfaces in `engine/port` and `engine/tool` are guarded, but adapter implementations can change in a minor release.|
 |`engine/arch`|Test-support only: the layering proofs and the `arch.CorePackages` list.|
-|Root module (`internal/`, `cmd/`, `contracts/`, `perf/`)|Outside the engine module boundary (ADR 0036). No external compatibility promise applies.|
+|Root module (`internal/`, `cmd/`, `contracts/`, `perf/`)|Outside the engine module boundary. No external compatibility promise applies.|
 
 You can use reference adapters such as `mockllm` and `memfs` in tests, but treat
 them as conveniences rather than stable dependencies. Build production
