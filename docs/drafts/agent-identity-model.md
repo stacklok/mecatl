@@ -1,7 +1,3 @@
-Status: exploring\
-Owner: Juan Antonio Osorio\
-Last updated: 2026-10-07
-
 # Agent identity: mecatl as its own SPIFFE trust domain
 
 *Status: strawman / working draft. Speculative scoping, not a design record under

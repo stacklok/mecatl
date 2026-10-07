@@ -2,7 +2,7 @@
 
 These pages explain how Mecatl works today, for people building a mental model of the
 code. They describe current behavior only; designs that aren't built yet are in
-[proposals](proposals/README.md). For where to change what, read the `AGENTS.md` file
+[drafts](drafts/README.md). For where to change what, read the `AGENTS.md` file
 in the directory you're working in.
 
 ## Contributors

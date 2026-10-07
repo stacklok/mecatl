@@ -1,7 +1,3 @@
-Status: exploring\
-Owner: Juan Antonio Osorio\
-Last updated: 2026-10-07
-
 # Contextual guardrail private-capacity evidence
 
 Date: 2026-09-15

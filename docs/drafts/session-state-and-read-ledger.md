@@ -1,7 +1,3 @@
-Status: exploring\
-Owner: Jeremy Drouillard\
-Last updated: 2026-10-07
-
 # Session-owned extensible state and the read-before-write ledger
 
 *Status: strawman / working draft. This is a concrete architecture proposal, not a

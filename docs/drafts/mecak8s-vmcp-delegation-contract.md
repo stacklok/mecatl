@@ -1,7 +1,3 @@
-Status: exploring\
-Owner: Jakub Hrozek\
-Last updated: 2026-10-07
-
 > **Fixture note (post-A2).** This report records the A2 qualification, which ran
 > against a **Dex** fixture and proved the SELF-ISSUED exchange path -- the subject
 > token was minted by the same embedded AS that performed the exchange. The fixture

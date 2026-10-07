@@ -12,10 +12,6 @@ Every AGENTS.md needs a sibling CLAUDE.md symlink to it, and every
 `task <name>` an AGENTS.md mentions must exist. The removed ADR and
 acceptance-plan directories must stay removed.
 
-Every docs/proposals/*.md except README.md starts with a Status, Owner, and
-Last updated header. Status: implemented fails: the implementing PR folds the
-proposal into the current docs and deletes it.
-
 Usage: instruction-files.py [--root DIR] [--tasks-file FILE]
 --tasks-file lists one valid task name per line instead of asking `task`.
 """
@@ -38,12 +34,6 @@ DESCRIPTION_MAX_CHARS = 1024
 # The ADR / acceptance-plan process was removed; these paths must not return.
 REMOVED_DIRS = ("docs/adr/", "docs/acceptance/", "docs/superpowers/", ".claude/plans/")
 REMOVED_HINT = "put plan or design notes in the PR description or an issue; current behavior belongs in docs/ or user-docs/"
-
-PROPOSALS_DIR = "docs/proposals/"
-PROPOSAL_FIELDS = ("Status", "Owner", "Last updated")
-PROPOSAL_STATUSES = ("exploring", "accepted", "implemented")
-PROPOSAL_HEADER_LINE = re.compile(r"^(Status|Owner|Last updated):\s*(.*?)\s*\\?\s*$")
-ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 TASK_REF = re.compile(r"(?:^|\s)task ([a-z0-9][a-z0-9:_.-]*[a-z0-9])")
 FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.S | re.M)
@@ -94,34 +84,6 @@ def frontmatter_description(path: Path) -> str | None:
     return None
 
 
-def proposal_header(path: Path) -> dict[str, str]:
-    """Return the leading `Field: value` lines, up to the first other line."""
-    header = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        match = PROPOSAL_HEADER_LINE.match(line)
-        if not match:
-            break
-        header[match.group(1)] = match.group(2)
-    return header
-
-
-def proposal_errors(rel: Path, header: dict[str, str]) -> list[str]:
-    missing = [field for field in PROPOSAL_FIELDS if not header.get(field)]
-    if missing:
-        return [f"{rel}: proposal header lacks {', '.join(missing)}; start the file with "
-                "Status:, Owner:, and Last updated: lines"]
-    errors = []
-    status = header["Status"]
-    if status not in PROPOSAL_STATUSES:
-        errors.append(f"{rel}: Status {status!r} must be one of {', '.join(PROPOSAL_STATUSES)}")
-    elif status == "implemented":
-        errors.append(f"{rel}: Status: implemented; move what is now true into docs/ or "
-                      "user-docs/ and delete the proposal")
-    if not ISO_DATE.match(header["Last updated"]):
-        errors.append(f"{rel}: Last updated {header['Last updated']!r} must be YYYY-MM-DD")
-    return errors
-
-
 def task_names(root: Path, tasks_file: Path | None) -> set[str]:
     if tasks_file:
         return {l.strip() for l in tasks_file.read_text().splitlines() if l.strip()}
@@ -166,9 +128,6 @@ def check(root: Path, tasks_file: Path | None) -> list[str]:
     for rel in sorted(files):
         if rel.as_posix().startswith(REMOVED_DIRS):
             errors.append(f"{rel}: this directory was removed; {REMOVED_HINT}")
-        if (rel.as_posix().startswith(PROPOSALS_DIR) and rel.suffix == ".md"
-                and rel.name != "README.md"):
-            errors.extend(proposal_errors(rel, proposal_header(root / rel)))
         parts = rel.parts
         if parts[:2] == (".claude", "rules") and rel.suffix == ".md":
             lines = line_count(root / rel)

@@ -82,9 +82,8 @@ for that area from [`docs/READING.md`](docs/READING.md).
 - Stage explicit paths, never `git add -A`. End commits with `Co-Authored-By`.
   Humans alone merge PRs.
 - Generated files change only via `task generate`, never by hand.
-- `docs/proposals/` holds designs, not current behavior; don't rely on it for how
-  Mecatl works. When implementing one, update the current docs and delete the
-  proposal. Small designs stay in the PR or issue description.
+- `docs/drafts/` holds proposals and work records, not current behavior; don't rely
+  on it for how Mecatl works.
 - Markdown changes run `task docs`. User-facing changes update the owning
   `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
   Changing behavior a `docs/` chapter describes updates that chapter.

@@ -116,12 +116,12 @@ current architecture. We are working toward:
 - **Strong identity.** We want external systems to receive a verifiable
   delegation chain showing which user, agent, and subagent acted with which
   authority. The proposed design makes Mecatl its own SPIFFE trust domain and
-  encodes that chain in JWTs. See the [agent identity model](https://github.com/stacklok/mecatl/blob/main/docs/proposals/agent-identity-model.md)
+  encodes that chain in JWTs. See the [agent identity model](https://github.com/stacklok/mecatl/blob/main/docs/drafts/agent-identity-model.md)
   working draft.
 - **More tools.** We want a richer ecosystem beyond MCP, including tools that
   can call each other directly with narrowly scoped resources instead of
   copying large inputs through the harness and agent context. [Scoped Resource
-  Grants](https://github.com/stacklok/mecatl/blob/main/docs/proposals/scoped-resource-grants.md)
+  Grants](https://github.com/stacklok/mecatl/blob/main/docs/drafts/scoped-resource-grants.md)
   proposes short-lived, attenuable grants and direct tool-to-service data paths;
   it is also a working draft.
 - **Cryptographic context attestation.** We want packaged agent context to be

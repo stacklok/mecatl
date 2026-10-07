@@ -56,7 +56,7 @@ rather than keeping a second set of row offsets.
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
 and pointer mapping. Follow the [`surface` contract](../cmd/mecatui/ui/surface.go)
-and its [migration guidance](proposals/surface-migration-plan.md) when adding or
+and its [migration guidance](drafts/surface-migration-plan.md) when adding or
 converting an overlay. A closed surface must not receive late results or leak
 keyboard and wheel events into the conversation.
 

@@ -239,7 +239,7 @@ Topics:
 Elsewhere: [`tui.md`](tui.md) (mecatui contributor standards),
 [`perf-tracking.md`](perf-tracking.md) and
 [`perf-measurement-survey.md`](perf-measurement-survey.md) (performance), and
-[proposals](proposals/README.md) (designs not built yet).
+[drafts](drafts/README.md) (proposals, not current behavior).
 
 ## Related
 
