@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,7 +131,8 @@ func TestHelpCardWidthIsTerminalBounded(t *testing.T) {
 		{terminal: 40, want: 40},
 		{terminal: 69, want: 69},
 		{terminal: 100, want: 80},
-		{terminal: 200, want: 160},
+		{terminal: 160, want: 128},
+		{terminal: 200, want: 128},
 	} {
 		t.Run(fmt.Sprintf("%d columns", tc.terminal), func(t *testing.T) {
 			if got := helpBodyWidth(th, tc.terminal) + frame; got != tc.want {
@@ -188,14 +191,14 @@ func TestHelpWrapsNarrowBodyAndNavigatesWrappedRows(t *testing.T) {
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.helpScroll != 1 {
-		t.Fatalf("down should advance one wrapped row, got offset %d", m.helpScroll)
+	if m.helpViewport.Offset() != 1 {
+		t.Fatalf("down should advance one wrapped row, got offset %d", m.helpViewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if want := maxScrollOffset(total, window); m.helpScroll != want {
-		t.Fatalf("end offset = %d, want %d", m.helpScroll, want)
+	if want := maxScrollOffset(total, window); m.helpViewport.Offset() != want {
+		t.Fatalf("end offset = %d, want %d", m.helpViewport.Offset(), want)
 	}
-	view := m.helpViewport.View(helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings())))
+	view := m.helpViewport.View(strings.Split(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()), "\n"))
 	if view.Below != 0 {
 		t.Fatalf("end should reveal the final wrapped row, with %d rows still below", view.Below)
 	}
@@ -284,33 +287,33 @@ func TestHelpScrollNavigationAndReset(t *testing.T) {
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.helpScroll != 1 {
-		t.Fatalf("down moved help scroll to %d, want 1", m.helpScroll)
+	if m.helpViewport.Offset() != 1 {
+		t.Fatalf("down moved help scroll to %d, want 1", m.helpViewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.helpScroll != clampScroll(1+window, total, window) {
-		t.Fatalf("pgdown moved help scroll to %d, want page movement", m.helpScroll)
+	if m.helpViewport.Offset() != clampScroll(1+window, total, window) {
+		t.Fatalf("pgdown moved help scroll to %d, want page movement", m.helpViewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.helpScroll != 1 {
-		t.Fatalf("pgup moved help scroll to %d, want 1", m.helpScroll)
+	if m.helpViewport.Offset() != 1 {
+		t.Fatalf("pgup moved help scroll to %d, want 1", m.helpViewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if want := maxScrollOffset(total, window); m.helpScroll != want {
-		t.Fatalf("end moved help scroll to %d, want %d", m.helpScroll, want)
+	if want := maxScrollOffset(total, window); m.helpViewport.Offset() != want {
+		t.Fatalf("end moved help scroll to %d, want %d", m.helpViewport.Offset(), want)
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if m.helpScroll != 0 {
-		t.Fatalf("home moved help scroll to %d, want 0", m.helpScroll)
+	if m.helpViewport.Offset() != 0 {
+		t.Fatalf("home moved help scroll to %d, want 0", m.helpViewport.Offset())
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd}, qmark())
-	if m.showHelp || m.helpScroll != 0 {
-		t.Fatalf("closing help should reset offset: open=%t offset=%d", m.showHelp, m.helpScroll)
+	if m.showHelp || m.helpViewport.Offset() != 0 {
+		t.Fatalf("closing help should reset offset: open=%t offset=%d", m.showHelp, m.helpViewport.Offset())
 	}
 	m = applyAll(m, qmark())
-	if !m.showHelp || m.helpScroll != 0 {
-		t.Fatalf("opening help should reset offset: open=%t offset=%d", m.showHelp, m.helpScroll)
+	if !m.showHelp || m.helpViewport.Offset() != 0 {
+		t.Fatalf("opening help should reset offset: open=%t offset=%d", m.showHelp, m.helpViewport.Offset())
 	}
 }
 
@@ -331,21 +334,24 @@ func TestHelpRenderingIsHeightBoundedAndShowsScrollGuidance(t *testing.T) {
 		t.Fatalf("help body is %d lines, exceeds offered viewport height %d", got, limit)
 	}
 
-	initial := strings.Join(strings.Fields(strings.ReplaceAll(stripANSIstr(m.renderBody()), "┃", "")), "")
-	for _, want := range []string{"lines", "of", "ctrl+f1or?close", "ctrl+f2/ctrl+f3scroll", "ctrl+f4/ctrl+f5page", "ctrl+f6", "ctrl+f7jump"} {
+	initial := compactHelpText(m.renderBody())
+	for _, want := range []string{"ctrl+f1or?close", "ctrl+f2/ctrl+f3scroll", "ctrl+f4/ctrl+f5page", "ctrl+f6", "ctrl+f7jump"} {
 		if !strings.Contains(initial, want) {
 			t.Fatalf("initial clipped help should show %q:\n%s", want, initial)
 		}
+	}
+	if start, _, total := helpIndicatorRange(t, initial); start != 1 || total <= 1 {
+		t.Fatalf("initial indicator should start at row 1 of a longer body, got start=%d total=%d:\n%s", start, total, initial)
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF7, Mod: tea.ModCtrl})
 	body := stripANSIstr(m.renderBody())
 	total, window := m.helpScrollGeometry()
-	if m.helpScroll != maxScrollOffset(total, window) {
-		t.Fatalf("end scroll offset = %d, want %d", m.helpScroll, maxScrollOffset(total, window))
+	if m.helpViewport.Offset() != maxScrollOffset(total, window) {
+		t.Fatalf("end scroll offset = %d, want %d", m.helpViewport.Offset(), maxScrollOffset(total, window))
 	}
-	if !strings.Contains(body, "lines ") || !strings.Contains(body, " of ") {
-		t.Fatalf("end-scrolled help should show a line-range indicator:\n%s", body)
+	if start, end, rows := helpIndicatorRange(t, compactHelpText(body)); start <= 1 || end != rows {
+		t.Fatalf("end-scrolled indicator should move past row 1 and finish on the last row, got %d–%d of %d:\n%s", start, end, rows, body)
 	}
 	if !strings.Contains(body, "ctrl+f1 or ? close") {
 		t.Fatalf("end-scrolled help should retain the live close hint:\n%s", body)
@@ -375,60 +381,54 @@ func TestHelpNavigationRespectsKeyOverrides(t *testing.T) {
 	press := func(ch rune) { m = applyAll(m, tea.KeyPressMsg{Code: ch, Text: string(ch)}) }
 
 	press('j')
-	if m.helpScroll != 1 {
-		t.Fatalf("overridden Down moved help scroll to %d, want 1", m.helpScroll)
+	if m.helpViewport.Offset() != 1 {
+		t.Fatalf("overridden Down moved help scroll to %d, want 1", m.helpViewport.Offset())
 	}
 	press('d')
-	if want := clampScroll(1+window, total, window); m.helpScroll != want {
-		t.Fatalf("overridden ScrollD moved help scroll to %d, want %d", m.helpScroll, want)
+	if want := clampScroll(1+window, total, window); m.helpViewport.Offset() != want {
+		t.Fatalf("overridden ScrollD moved help scroll to %d, want %d", m.helpViewport.Offset(), want)
 	}
 	press('u')
-	if m.helpScroll != 1 {
-		t.Fatalf("overridden ScrollU moved help scroll to %d, want 1", m.helpScroll)
+	if m.helpViewport.Offset() != 1 {
+		t.Fatalf("overridden ScrollU moved help scroll to %d, want 1", m.helpViewport.Offset())
 	}
 	press('t')
-	if m.helpScroll != 0 {
-		t.Fatalf("overridden ScrollTop moved help scroll to %d, want 0", m.helpScroll)
+	if m.helpViewport.Offset() != 0 {
+		t.Fatalf("overridden ScrollTop moved help scroll to %d, want 0", m.helpViewport.Offset())
 	}
 	press('b')
-	if m.helpScroll != maxScroll {
-		t.Fatalf("overridden ScrollBottom moved help scroll to %d, want %d", m.helpScroll, maxScroll)
+	if m.helpViewport.Offset() != maxScroll {
+		t.Fatalf("overridden ScrollBottom moved help scroll to %d, want %d", m.helpViewport.Offset(), maxScroll)
 	}
 	press('k')
-	if m.helpScroll != maxScroll-1 {
-		t.Fatalf("overridden Up moved help scroll to %d, want %d", m.helpScroll, maxScroll-1)
+	if m.helpViewport.Offset() != maxScroll-1 {
+		t.Fatalf("overridden Up moved help scroll to %d, want %d", m.helpViewport.Offset(), maxScroll-1)
 	}
 	press('c')
-	if m.showHelp || m.helpScroll != 0 {
-		t.Fatalf("overridden Close should close and reset help: open=%t offset=%d", m.showHelp, m.helpScroll)
+	if m.showHelp || m.helpViewport.Offset() != 0 {
+		t.Fatalf("overridden Close should close and reset help: open=%t offset=%d", m.showHelp, m.helpViewport.Offset())
 	}
 }
 
 func TestHelpScrollClampsAfterResizeWithoutFollowingEnd(t *testing.T) {
 	m := helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24}, tea.KeyPressMsg{Code: tea.KeyEnd})
-	before := m.helpScroll
+	before := m.helpViewport.Offset()
 
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 32})
 	total, window := m.helpScrollGeometry()
 	want := clampScroll(before, total, window)
-	if m.helpScroll != want {
-		t.Fatalf("resize left stale offset %d, want clamped %d", m.helpScroll, want)
-	}
-
-	m.helpScroll = before // Exercise navigation's defensive clamp independently.
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if want > 0 && m.helpScroll != want-1 {
-		t.Fatalf("relative navigation began at %d, want clamped offset %d then up", m.helpScroll, want)
+	if m.helpViewport.Offset() != want {
+		t.Fatalf("resize left stale offset %d, want clamped %d", m.helpViewport.Offset(), want)
 	}
 
 	m = helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 32}, tea.KeyPressMsg{Code: tea.KeyEnd})
-	before = m.helpScroll
+	before = m.helpViewport.Offset()
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
 	total, window = m.helpScrollGeometry()
-	if m.helpScroll != before || m.helpScroll == maxScrollOffset(total, window) {
-		t.Fatalf("smaller viewport should retain the prior offset, not follow End: got=%d before=%d end=%d", m.helpScroll, before, maxScrollOffset(total, window))
+	if m.helpViewport.Offset() != before || m.helpViewport.Offset() == maxScrollOffset(total, window) {
+		t.Fatalf("smaller viewport should retain the prior offset, not follow End: got=%d before=%d end=%d", m.helpViewport.Offset(), before, maxScrollOffset(total, window))
 	}
 }
 
@@ -457,4 +457,128 @@ func footerHelpLine(t *testing.T, caps client.Capabilities) string {
 	m := zeroStateModel(t, caps)
 	lines := strings.Split(stripANSIstr(m.renderFooter()), "\n")
 	return lines[len(lines)-1]
+}
+
+var helpIndicatorPattern = regexp.MustCompile(`lines(\d+)–(\d+)of(\d+)`)
+
+// compactHelpText strips ANSI, card borders, and all whitespace so a wrapped
+// indicator can be matched regardless of where it breaks.
+func compactHelpText(body string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(stripANSIstr(body), "┃", "")), "")
+}
+
+// helpIndicatorRange parses "lines S–E of N" from compactHelpText output.
+func helpIndicatorRange(t *testing.T, compact string) (start, end, total int) {
+	t.Helper()
+	match := helpIndicatorPattern.FindStringSubmatch(compact)
+	if match == nil {
+		t.Fatalf("no line-range indicator in:\n%s", compact)
+	}
+	start, _ = strconv.Atoi(match[1])
+	end, _ = strconv.Atoi(match[2])
+	total, _ = strconv.Atoi(match[3])
+	return start, end, total
+}
+
+// TestHelpStaysWithinOfferedHeightAcrossNarrowShortGeometry sweeps the geometry
+// where the wrapped indicator competes with the body for rows. Every frame must
+// fit the offered height at the top, middle, and end offsets.
+func TestHelpStaysWithinOfferedHeightAcrossNarrowShortGeometry(t *testing.T) {
+	m := helpModel(t, allOnCaps())
+	th, hk := m.deps.Theme, m.helpKeyMarkings()
+	lines := strings.Split(helpBody(th, m.caps, hk), "\n")
+	for _, width := range []int{8, 12, 20, 26, 33, 40, 45, 69} {
+		for _, height := range []int{1, 3, 5, 6, 8, 10, 12, 14, 24} {
+			viewport := new(bounded.Viewport)
+			for _, position := range []string{"top", "middle", "end"} {
+				total := helpViewportView(th, lines, width, height, viewport, hk).total
+				switch position {
+				case "top":
+					viewport.Reset()
+				case "middle":
+					viewport.SetOffset(total/2, total)
+				case "end":
+					viewport.Move(bounded.End, total)
+				}
+				out := renderHelpOverlay(th, m.caps, width, height, viewport, hk)
+				if got := lipgloss.Height(out); got > height {
+					t.Fatalf("width=%d height=%d at %s: help is %d rows, exceeds offered height", width, height, position, got)
+				}
+			}
+		}
+	}
+}
+
+func TestHelpCompactFallbackAndBareCard(t *testing.T) {
+	m := helpModel(t, allOnCaps())
+	th, hk := m.deps.Theme, m.helpKeyMarkings()
+	chrome := lipgloss.Height(th.Style("askCard").Render(""))
+
+	for _, height := range []int{1, chrome} {
+		out := renderHelpOverlay(th, m.caps, 100, height, new(bounded.Viewport), hk)
+		if lipgloss.Height(out) != 1 || strings.Contains(stripANSIstr(out), "┏") {
+			t.Fatalf("height %d should render one unframed row, got:\n%s", height, out)
+		}
+	}
+
+	// A body window starved by the wrapped indicator takes the same fallback
+	// instead of overflowing the card.
+	starved := renderHelpOverlay(th, m.caps, 20, chrome+3, new(bounded.Viewport), hk)
+	if lipgloss.Height(starved) != 1 {
+		t.Fatalf("a starved body window should fall back to one row, got %d rows:\n%s", lipgloss.Height(starved), starved)
+	}
+
+	for _, size := range [][2]int{{100, 0}, {0, 0}, {0, 24}} {
+		out := stripANSIstr(renderHelpOverlay(th, m.caps, size[0], size[1], new(bounded.Viewport), hk))
+		if size[1] <= 0 && !strings.Contains(out, "┏") {
+			t.Fatalf("nonpositive geometry %v should keep the bare card, got:\n%s", size, out)
+		}
+	}
+}
+
+func TestHelpShowsNoIndicatorWhenContentFits(t *testing.T) {
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 100, Height: 1000})
+	if total, window := m.helpScrollGeometry(); total > window {
+		t.Fatalf("precondition: tall Help should not overflow (total=%d window=%d)", total, window)
+	}
+	if body := compactHelpText(m.renderBody()); helpIndicatorPattern.MatchString(body) {
+		t.Fatalf("non-overflowing Help should not show a line-range indicator:\n%s", body)
+	}
+}
+
+// TestHelpSwallowsNonWheelMouseWhileOpen pins that clicks, motion, and releases
+// are consumed by the visible overlay, like the wheel, and cannot reach the hidden
+// prompt or conversation.
+func TestHelpSwallowsNonWheelMouseWhileOpen(t *testing.T) {
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.prompt.Rewrite("hidden draft")
+	m.prompt.SelectAll()
+	input, ok := inputRegionRect(m)
+	if !ok {
+		t.Fatal("precondition: prompt region should be known at this size")
+	}
+	beforeOffset, beforeYOffset := m.helpViewport.Offset(), m.vp.YOffset()
+	beforeValue, beforeFocused, beforeSelection := m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
+
+	for name, msg := range map[string]tea.Msg{
+		"left click in the prompt": tea.MouseClickMsg{Button: tea.MouseLeft, X: input.x0 + 1, Y: input.y0},
+		"left click in the card":   tea.MouseClickMsg{Button: tea.MouseLeft, X: 50, Y: 8},
+		"right click":              tea.MouseClickMsg{Button: tea.MouseRight, X: 50, Y: 8},
+		"middle click":             tea.MouseClickMsg{Button: tea.MouseMiddle, X: 50, Y: 8},
+		"motion":                   tea.MouseMotionMsg{Button: tea.MouseLeft, X: 40, Y: 8},
+		"release":                  tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 40, Y: 8},
+	} {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+		switch {
+		case !m.showHelp:
+			t.Fatalf("%s closed help", name)
+		case m.helpViewport.Offset() != beforeOffset:
+			t.Fatalf("%s moved help offset to %d, want %d", name, m.helpViewport.Offset(), beforeOffset)
+		case m.vp.YOffset() != beforeYOffset || m.sel.active:
+			t.Fatalf("%s reached the hidden conversation", name)
+		case m.prompt.Value() != beforeValue || m.prompt.Focused() != beforeFocused || m.prompt.HasSelection() != beforeSelection:
+			t.Fatalf("%s reached the hidden prompt", name)
+		}
+	}
 }

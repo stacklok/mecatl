@@ -40,72 +40,89 @@ type helpRow struct {
 // widening just shifts the action column right uniformly.
 const helpKeyWidth = 22
 
-// helpMinCardWidth keeps the Help overlay stable and readable once the terminal
-// is large enough, while helpCardWidthFraction prevents it occupying the entire
-// conversation on wider terminals.
+// helpMinCardWidth keeps the Help overlay readable once the terminal is large
+// enough, helpCardWidthFraction keeps it from filling wide terminals, and
+// helpMaxCardWidth is the shared 128-cell cap for normal list and inspector cards
+// (docs/tui.md, "Layout and navigation").
 const (
 	helpMinCardWidth      = 69
 	helpCardWidthFraction = 80
+	helpMaxCardWidth      = 128
 )
 
 // renderHelpOverlay draws the "?" keys-&-features overlay centred over the
 // conversation region. Its root-owned viewport wraps the live help lines to the
 // card's inner width before windowing them.
 func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, viewport *bounded.Viewport, hk helpKeys) string {
-	lines := helpRenderedLines(helpBody(th, caps, hk))
+	lines := strings.Split(helpBody(th, caps, hk), "\n")
 	if height <= 0 {
 		return centerCard(th, strings.Join(lines, "\n"), width, height)
 	}
-	view, total, window := helpViewportView(th, lines, width, height, viewport, hk)
-	if len(view.Rows) == 0 {
+	frame := helpViewportView(th, lines, width, height, viewport, hk)
+	if len(frame.view.Rows) == 0 {
 		return ""
 	}
-	if height <= lipgloss.Height(th.Style("askCard").Render("")) {
-		return view.Rows[0]
+	if frame.compact {
+		// A card with its chrome and scroll indicator cannot fit this viewport. Keep
+		// the overlay usable as one scrollable row rather than overflowing the
+		// conversation region.
+		return frame.view.Rows[0]
 	}
-	body := strings.Join(view.Rows, "\n")
-	if total > window {
-		for _, indicator := range helpIndicatorRows(hk, view.Above, view.Above+len(view.Rows), total, helpBodyWidth(th, width)) {
+	body := strings.Join(frame.view.Rows, "\n")
+	if frame.total > frame.window {
+		for _, indicator := range helpIndicatorRows(hk, frame.view.Above, frame.view.Above+len(frame.view.Rows), frame.total, helpBodyWidth(th, width)) {
 			body += "\n" + th.Style("muted").Render(indicator)
 		}
 	}
-	return centerHelpCard(th, body, width, height)
-}
-
-func centerHelpCard(th theme.Theme, body string, width, height int) string {
 	card := th.Style("askCard").Width(helpCardWidth(width)).Render(body)
-	if width <= 0 || height <= 0 {
+	if width <= 0 {
 		return card
 	}
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
 }
 
+// helpFrame is one frame's viewport projection plus the wrapped-row total and the
+// body window it was configured with. compact means the normal card cannot fit.
+type helpFrame struct {
+	view          bounded.ViewportView
+	total, window int
+	compact       bool
+}
+
 // helpViewportView configures the caller-owned help viewport for one frame. It
-// first measures wrapped content with every available body row, then reserves a
-// final row for Help's own navigation indicator only when the content overflows.
-func helpViewportView(th theme.Theme, lines []string, width, height int, viewport *bounded.Viewport, hk helpKeys) (bounded.ViewportView, int, int) {
+// measures the wrapped content with every available body row on a throwaway
+// viewport, then reserves rows for Help's own navigation indicator (sized for its
+// widest possible digits) only when the content overflows. When no body row would
+// remain, it falls back to a single-row window.
+func helpViewportView(th theme.Theme, lines []string, width, height int, viewport *bounded.Viewport, hk helpKeys) helpFrame {
 	bodyWidth := helpBodyWidth(th, width)
-	cardHeight := lipgloss.Height(th.Style("askCard").Render(""))
-	bodyHeight := max(1, height-cardHeight)
-	measure := *viewport
-	measure.SetGeometry(bodyWidth, bodyHeight, 0, bounded.Wrap)
-	measured := measure.View(lines)
-	total := measured.Above + len(measured.Rows) + measured.Below
-	window := bodyHeight
-	if total > window {
-		window = max(1, bodyHeight-len(helpIndicatorRows(hk, 0, 0, total, bodyWidth)))
+	bodyHeight := height - lipgloss.Height(th.Style("askCard").Render(""))
+	window := 1
+	compact := bodyHeight < 1
+	if !compact {
+		var measure bounded.Viewport
+		measure.SetGeometry(bodyWidth, bodyHeight, 0, bounded.Wrap)
+		measured := measure.View(lines)
+		total := measured.Above + len(measured.Rows) + measured.Below
+		window = bodyHeight
+		if total > window {
+			window = bodyHeight - len(helpIndicatorRows(hk, total-1, total, total, bodyWidth))
+			compact = window < 1
+		}
+	}
+	if compact {
+		window = 1
 	}
 	viewport.SetGeometry(bodyWidth, window, 0, bounded.Wrap)
 	view := viewport.View(lines)
-	total = view.Above + len(view.Rows) + view.Below
-	return view, total, window
+	return helpFrame{view: view, total: view.Above + len(view.Rows) + view.Below, window: window, compact: compact}
 }
 
 func helpCardWidth(width int) int {
 	if width <= 0 {
 		return helpMinCardWidth
 	}
-	return min(width, max(helpMinCardWidth, width*helpCardWidthFraction/100))
+	return min(width, helpMaxCardWidth, max(helpMinCardWidth, width*helpCardWidthFraction/100))
 }
 
 func helpBodyWidth(th theme.Theme, width int) int {
@@ -113,15 +130,7 @@ func helpBodyWidth(th theme.Theme, width int) int {
 }
 
 func helpIndicatorRows(hk helpKeys, start, end, total, width int) []string {
-	if width <= 0 {
-		return nil
-	}
 	return strings.Split(ansi.Hardwrap(helpScrollIndicator(hk, start, end, total), width, true), "\n")
-}
-
-// helpRenderedLines splits the independently styled help body into source lines.
-func helpRenderedLines(body string) []string {
-	return strings.Split(body, "\n")
 }
 
 // helpScrollIndicator keeps the navigation affordances in every clipped frame,
@@ -150,7 +159,8 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.paste, action: "paste a clipboard image, or paste text when image attachments are unavailable"},
 		{key: hk.clearPrompt, action: "clear the current draft"},
 		{key: "esc, release, esc", action: "clear the current idle draft within 500ms; the first press makes no visible change"},
-		{key: "", action: "also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support"},
+		{key: "", action: "also clears attachments, large pasted text, and pending media"},
+		{key: "", action: "requires a terminal with enhanced key-event support"},
 		{key: "", action: "fixed shortcut; repeats do not count, and other views handle esc first"},
 		{key: "", action: "use the remappable Clear prompt action (" + hk.clearPrompt + ") on any terminal"},
 		{key: hk.cancel, action: "cancel the current run"},

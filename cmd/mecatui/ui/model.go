@@ -713,10 +713,9 @@ type Model struct {
 	// lets the picker label the current model "picked this session" (vs a launch-time
 	// workspace/global default). Zero until a restart-now pick. Display-only.
 	pickedThisSession client.ModelSelection
-	showHelp          bool             // the "?" keys-&-features overlay is open (caps-driven; see help.go)
-	helpScroll        int              // first visible wrapped help-body row while the overlay is open
-	helpViewport      bounded.Viewport // root-owned wrapped help-body viewport
-	stream            *client.Stream   // current run's stream
+	showHelp          bool              // the "?" keys-&-features overlay is open (caps-driven; see help.go)
+	helpViewport      *bounded.Viewport // root-owned wrapped help-body viewport; its offset is the only scroll state
+	stream            *client.Stream    // current run's stream
 	cancelRun         context.CancelFunc
 
 	// quitArmed is true after a first ctrl+c on an empty prompt: a second ctrl+c
@@ -1089,6 +1088,7 @@ func New(deps Deps) Model {
 		keys:             keys,
 		rend:             rend,
 		hits:             &hitRegions{},
+		helpViewport:     new(bounded.Viewport),
 		metrics:          &renderedSurfaceMetrics{},
 		phase:            phaseConnecting,
 		prompt:           prompt,

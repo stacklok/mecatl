@@ -2043,7 +2043,11 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
-	m.clampHelpScroll()
+	if m.showHelp {
+		// Re-apply geometry so a retained offset is clamped to the new layout
+		// without pinning an earlier End position to the new bottom.
+		m.helpScrollGeometry()
+	}
 	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
@@ -2366,59 +2370,55 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 // phase routing, so navigation never reaches the conversation and every other key
 // remains swallowed.
 func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	total, _ := m.helpScrollGeometry()
 	switch {
 	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
 		m.showHelp = false
-		m.helpScroll = 0
 		m.helpViewport.Reset()
 		_ = m.prompt.Focus()
 	case key.Matches(msg, m.keys.ScrollD):
-		m.helpViewport.Move(bounded.PageDown, total)
+		m.moveHelp(bounded.PageDown)
 	case key.Matches(msg, m.keys.ScrollU):
-		m.helpViewport.Move(bounded.PageUp, total)
+		m.moveHelp(bounded.PageUp)
 	case key.Matches(msg, m.keys.Down):
-		m.helpViewport.Move(bounded.LineDown, total)
+		m.moveHelp(bounded.LineDown)
 	case key.Matches(msg, m.keys.Up):
-		m.helpViewport.Move(bounded.LineUp, total)
+		m.moveHelp(bounded.LineUp)
 	case key.Matches(msg, m.keys.ScrollBottom):
-		m.helpViewport.Move(bounded.End, total)
+		m.moveHelp(bounded.End)
 	case key.Matches(msg, m.keys.ScrollTop):
-		m.helpViewport.Move(bounded.Top, total)
+		m.moveHelp(bounded.Top)
 	}
-	m.helpScroll = m.helpViewport.Offset()
 	return m, nil
 }
 
-// onHelpWheel keeps physical scrolling owned by the visible Help overlay.
-// It configures Help's wrapped viewport before every move so wheel events are
-// consumed at endpoints and in compact or non-overflow geometry.
+// onHelpWheel keeps physical scrolling owned by the visible Help overlay. The
+// event is consumed at endpoints and in compact or non-overflow geometry because
+// moveHelp always runs against the current layout.
 func (m Model) onHelpWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	total, _ := m.helpScrollGeometry()
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		m.helpViewport.Move(bounded.LineUp, total)
+		m.moveHelp(bounded.LineUp)
 	case tea.MouseWheelDown:
-		m.helpViewport.Move(bounded.LineDown, total)
+		m.moveHelp(bounded.LineDown)
 	}
-	m.helpScroll = m.helpViewport.Offset()
 	return m, nil
 }
 
-// helpScrollGeometry derives the same wrapped rows and window used by
-// renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
-func (m *Model) helpScrollGeometry() (total, window int) {
-	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
-	_, total, window = helpViewportView(m.deps.Theme, lines, m.width, m.vp.Height(), &m.helpViewport, m.helpKeyMarkings())
-	m.helpScroll = m.helpViewport.Offset()
-	return total, window
+// moveHelp applies one movement to Help's viewport after re-applying the current
+// geometry, so the move clamps against the same rows renderHelpOverlay draws.
+func (m *Model) moveHelp(move bounded.Move) {
+	total, _ := m.helpScrollGeometry()
+	m.helpViewport.Move(move, total)
 }
 
-// clampHelpScroll keeps a retained offset valid after a relayout changes the
-// viewport geometry. It deliberately preserves a still-valid offset rather than
-// pinning an earlier End selection to the new bottom.
-func (m *Model) clampHelpScroll() {
-	m.helpScrollGeometry()
+// helpScrollGeometry configures the pointer-owned Help viewport for the current
+// layout and returns the wrapped row total and body window. It mutates the
+// viewport (geometry and offset clamp) on purpose: render, keys, wheel and resize
+// all go through helpViewportView, so they cannot disagree about the rows.
+func (m *Model) helpScrollGeometry() (total, window int) {
+	lines := strings.Split(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()), "\n")
+	frame := helpViewportView(m.deps.Theme, lines, m.width, m.vp.Height(), m.helpViewport, m.helpKeyMarkings())
+	return frame.total, frame.window
 }
 
 // selection owner is active.
@@ -3346,11 +3346,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
 		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
 		// in onKey; blur the input while it is up.
-		m.showHelp = true
-		m.helpScroll = 0
-		m.helpViewport.Reset()
-		m.prompt.Blur()
-		return m, nil
+		return m.runHelp()
 	case key.Matches(msg, m.keys.MCPPanel):
 		return m.runMCP()
 	case key.Matches(msg, m.keys.Resources):

@@ -444,7 +444,6 @@ func (m Model) runCompact() (tea.Model, tea.Cmd) {
 // sets (see onIdleKey). It blurs the textarea so the overlay owns the keyboard.
 func (m Model) runHelp() (tea.Model, tea.Cmd) {
 	m.showHelp = true
-	m.helpScroll = 0
 	m.helpViewport.Reset()
 	m.prompt.Blur()
 	return m, nil
