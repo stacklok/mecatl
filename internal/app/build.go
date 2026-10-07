@@ -8326,7 +8326,11 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
 				model = selectedModel
-				if selectedProvider := strings.TrimSpace(selected.Target.Provider); selectedProvider != "" && selectedProvider != childProviderID {
+				selectedProvider := strings.TrimSpace(selected.Target.Provider)
+				if selectedProvider == "" {
+					selectedProvider = strings.TrimSpace(selected.ActualProvider)
+				}
+				if selectedProvider != "" && selectedProvider != childProviderID {
 					entry, ok := provReg.Lookup(selectedProvider)
 					if !ok {
 						_ = generationClose()
@@ -8509,7 +8513,11 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			// keeps the member's own model.
 			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
 				model = selectedModel
-				if selectedProvider := strings.TrimSpace(selected.Target.Provider); selectedProvider != "" && selectedProvider != childProviderID {
+				selectedProvider := strings.TrimSpace(selected.Target.Provider)
+				if selectedProvider == "" {
+					selectedProvider = strings.TrimSpace(selected.ActualProvider)
+				}
+				if selectedProvider != "" && selectedProvider != childProviderID {
 					entry, ok := provReg.Lookup(selectedProvider)
 					if !ok {
 						_ = generationClose()

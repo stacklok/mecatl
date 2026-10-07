@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // team_parallel_router_test.go covers the composition half of issue #100:
@@ -294,6 +295,132 @@ func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
 			t.Fatalf("selected specialist builds=%d calls=%d, want one composed engine retained for three calls", builds, lead.Calls())
 		}
 	})
+}
+
+func TestTeamBareModelSelectorUsesContextualProvider(t *testing.T) {
+	for _, selector := range []string{"selected-contextual-model", "contextual"} {
+		t.Run(selector, func(t *testing.T) {
+			testTeamBareModelSelectorUsesContextualProvider(t, false, selector)
+		})
+	}
+}
+
+func TestNoFSTeamBareModelSelectorUsesContextualProvider(t *testing.T) {
+	for _, selector := range []string{"selected-contextual-model", "contextual"} {
+		t.Run(selector, func(t *testing.T) {
+			testTeamBareModelSelectorUsesContextualProvider(t, true, selector)
+		})
+	}
+}
+
+func testTeamBareModelSelectorUsesContextualProvider(t *testing.T, noFS bool, selector string) {
+	t.Helper()
+	const (
+		parentProvider = providerOpenAI
+		parentModel    = "parent-model"
+		childProvider  = providerOpenRouter
+		childDefault   = "child-default"
+		selectedModel  = "selected-contextual-model"
+	)
+
+	var (
+		mu            sync.Mutex
+		parentModels  []string
+		childRequests int
+	)
+	teamArgs, err := json.Marshal(map[string]any{"goal": "inspect", "members": []map[string]string{{"name": "lead", "role": "review", "model": selector}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		mu.Lock()
+		parentModels = append(parentModels, req.Model)
+		mu.Unlock()
+	})},
+		mockllm.ToolCallTurn(session.NewToolCall("team", "Team", teamArgs)),
+		mockllm.TextTurn("member work"),
+		mockllm.TextTurn("member synthesis"),
+		mockllm.TextTurn("parent done"),
+	)
+	child := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+		mu.Lock()
+		childRequests++
+		mu.Unlock()
+	})})
+
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:             t.TempDir(),
+		MemoryDir:             t.TempDir(),
+		NoSoul:                true,
+		Model:                 parentModel,
+		DefaultProvider:       parentProvider,
+		SubagentModel:         childDefault,
+		ModelAliasTargets:     ModelAliases{childDefault: {ProviderID: childProvider, Model: "child-default-model"}, "contextual": {Model: selectedModel}},
+		EnableTeams:           true,
+		AllowAllTools:         true,
+		ContextWindowOverride: 128000,
+		envDetector: fakeEnv(map[string]string{
+			"OPENAI_API_KEY":     "test-key",
+			"OPENROUTER_API_KEY": "test-key",
+		}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			switch id {
+			case parentProvider:
+				return parent
+			case childProvider:
+				return child
+			default:
+				return mockllm.New()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	var sess *session.Session
+	if noFS {
+		sess, err = built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, defaultLimits(), server.ProviderSelector{}, server.ProfileNoFS)
+	} else {
+		sess, err = built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	}
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "delegate")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	events := runEvents(run)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if childRequests != 0 {
+		t.Fatalf("global child-default provider %q received %d requests, want zero", childProvider, childRequests)
+	}
+	foundSelected := false
+	for _, model := range parentModels {
+		if model == selectedModel {
+			foundSelected = true
+			break
+		}
+	}
+	if !foundSelected {
+		t.Fatalf("contextual provider %q models = %v, want selected member model %q", parentProvider, parentModels, selectedModel)
+	}
+	for _, ev := range events {
+		if ev.Type != session.EvTeamStart || ev.Team == nil || len(ev.Team.Roster) != 1 {
+			continue
+		}
+		member := ev.Team.Roster[0]
+		if member.Provider != parentProvider || member.Model != selectedModel {
+			t.Fatalf("member evidence = provider %q model %q, want %q/%q", member.Provider, member.Model, parentProvider, selectedModel)
+		}
+		return
+	}
+	t.Fatal("missing team member evidence")
 }
 
 // ---- routingProvider: a deterministic content-routing port.LLMProvider for the e2e ------
