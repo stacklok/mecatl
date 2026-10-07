@@ -32,8 +32,9 @@ go run ./cmd/mecademo    # offline session smoke test
 ## Module layout
 
 The root is one Go module; `engine/` is its own. Root `go test ./...` does not cross
-the module boundary; `task test` does. Focused engine test:
-`cd engine && go test ./<pkg>/ -run <Test>`.
+the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
+[`internal/`](internal/AGENTS.md), and [`website/`](website/AGENTS.md) have their own
+`AGENTS.md`.
 
 ## Implementation boundaries
 
@@ -42,33 +43,24 @@ the module boundary; `task test` does. Focused engine test:
   tests may use reference `engine/adapter/*`, never host `internal`. Wiring lives in
   `internal/app` and `cmd` mains. Keep depguard, DAG, and standalone-module guards and
   their existing narrow exceptions.
-- `FileSystem`, `Workspace`, and `Environment` belong to `engine/tool`, not
-  `engine/port` (import cycle). `governance` stays session-free. Mutate `Session` only
-  through its aggregate methods, and keep tool-call/result pairing valid.
-- `LLMRequest` stays provider-neutral and provider replay stateless. Re-derive
-  provider- or model-dependent dependencies through factories, not clone-and-swap.
 - File writes preserve read-before-edit, exact matching, uniqueness, and CAS;
   new-file writes are create-only. Dispatch stays read-parallel/mutate-serial;
   direct-write children mutate the parent and run behind the barrier.
 - Permissions are deny-dominant; configured Ask is never bypassed by posture. Keep
   shell checks substitution-aware and project trust root-aware: posture alone does
   not trust a headless checkout.
-- Default secret scrubbing stays on. Explicit operator grants reach built-in main
-  runners and direct-write children, not hardened children or internal Git; harness
-  credentials stay protected. Never inspect or disclose credential values. Scrubbing
-  is not an OS sandbox.
-- Placement is server-owned: exact `EnvironmentRef{Kind, ID, Revision}`, fail-closed
-  reattachment, no public paths or cwd-based inference. No-FS children stay
-  file-less. Skills expose logical assets, not extra workspace or execution roots.
+- Default secret scrubbing stays on. Never inspect or disclose credential values.
+  Scrubbing is not an OS sandbox.
+- No-FS children stay file-less. Skills expose logical assets, not extra workspace or
+  execution roots.
 - Fence untrusted content with the canonical governance fences and keep child
   isolation. MCP is streaming-HTTP only; never spawn stdio MCP servers. Post-tool
   hooks cannot undo execution: enforce incoming-result checks by rewriting the
   effective payload, keeping recorded, streamed, and model-visible content equal and
   repairing UTF-8. Keep secret-shaped headers byte-exact and out of projections.
 - Use injected `port.Diagnostics`, not default or package-level slog, in `engine/`
-  and `internal/`. Diagnostics, audit, and durable events have distinct contracts.
-  Stamp event actors from verified caller context, not ownership; logs can contain
-  user data.
+  and `internal/`. Diagnostics, audit, and durable events have distinct contracts;
+  logs can contain user data.
 - A model-dependent affordance needs a model-visible instruction and a test proving
   it reaches the right system-prompt layer through the real factory. Do not pin
   arbitrary documentation prose in tests.
@@ -89,8 +81,6 @@ the module boundary; `task test` does. Focused engine test:
 - Stage explicit paths, never `git add -A`. End commits with `Co-Authored-By`.
   Humans alone merge PRs.
 - Generated files change only via `task generate`, never by hand.
-- Engine exported API changes need `task api:update`, the API snapshots, and a
-  classified `engine/CHANGELOG.md` entry.
 - Markdown changes run `task docs`. User-facing changes update the owning
   `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
 
