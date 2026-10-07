@@ -117,6 +117,14 @@ func (s *lifecycleService) BeginEnrollment(_ context.Context, ref c.SessionRef) 
 	return c.BeginEnrollmentOutcome{Kind: c.EnrollmentAlreadyConnected}, nil
 }
 
+func (s *lifecycleService) ObserveEnrollment(context.Context, c.SessionRef, c.EnrollmentRef) (c.FlowStatus, error) {
+	return c.FlowStatus{Kind: c.FlowPending}, nil
+}
+
+func (s *lifecycleService) CancelEnrollment(context.Context, c.SessionRef, c.EnrollmentRef) (c.CancelResult, error) {
+	return c.Cancelled, nil
+}
+
 func (s *lifecycleService) DisconnectTools(_ context.Context, ref c.SessionRef, _ c.ConnectionRef) (c.DisconnectResult, error) {
 	if ref != s.ref {
 		return 0, c.ErrStateUnavailable
@@ -171,8 +179,17 @@ func TestSessionClientLifecycleAndInvocationDescriptor(t *testing.T) {
 	if err != nil || begun.Kind != c.EnrollmentAlreadyConnected {
 		t.Fatalf("begin enrollment = %+v, %v", begun, err)
 	}
-	if _, err := client.BeginEnrollment(t.Context(), opened.Ref); status.Code(err) != codes.Internal {
-		t.Fatalf("V2 published protected started arm: %v", err)
+	started, err := client.BeginEnrollment(t.Context(), opened.Ref)
+	if err != nil || started.Kind != c.EnrollmentStartedKind || started.Started == nil || !started.Started.Prompt.Valid() {
+		t.Fatalf("V5 started arm: %+v, %v", started, err)
+	}
+	flow, err := client.ObserveEnrollment(t.Context(), opened.Ref, started.Started.Ref)
+	if err != nil || flow.Kind != c.FlowPending {
+		t.Fatalf("enrollment flow: %+v, %v", flow, err)
+	}
+	cancelled, err := client.CancelEnrollment(t.Context(), opened.Ref, started.Started.Ref)
+	if err != nil || cancelled != c.Cancelled {
+		t.Fatalf("enrollment cancellation: %v, %v", cancelled, err)
 	}
 	connection := c.ConnectionRef(base64.RawURLEncoding.EncodeToString(bytes32(4)))
 	disconnected, err := client.DisconnectTools(t.Context(), opened.Ref, connection)
@@ -247,10 +264,10 @@ func TestSessionClientLifecycleAndInvocationDescriptor(t *testing.T) {
 	}
 }
 
-func TestSessionProtoV4SchemaSnapshot(t *testing.T) {
+func TestSessionProtoV5SchemaSnapshot(t *testing.T) {
 	file := p.File_mecatl_broker_v1_session_proto
 	service := file.Services().ByName("SessionService")
-	if service == nil || service.Methods().Len() != 10 || service.Methods().ByName("InvokeTool") == nil || service.Methods().ByName("CheckAuthorization") == nil || service.Methods().ByName("BeginAuthorization") == nil || service.Methods().ByName("ObserveAuthorization") == nil || service.Methods().ByName("CancelAuthorization") == nil || service.Methods().ByName("ResumeTool") == nil || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
+	if service == nil || service.Methods().Len() != 12 || service.Methods().ByName("ObserveEnrollment") == nil || service.Methods().ByName("CancelEnrollment") == nil || service.Methods().ByName("InvokeTool") == nil || service.Methods().ByName("CheckAuthorization") == nil || service.Methods().ByName("BeginAuthorization") == nil || service.Methods().ByName("ObserveAuthorization") == nil || service.Methods().ByName("CancelAuthorization") == nil || service.Methods().ByName("ResumeTool") == nil || service.Methods().ByName("OpenSession") == nil || service.Methods().ByName("BeginEnrollment") == nil || service.Methods().ByName("DisconnectTools") == nil || service.Methods().ByName("DeleteSession") == nil {
 		t.Fatalf("unexpected V4 service methods: %v", service)
 	}
 	fields := func(message protoreflect.Name, want map[protoreflect.Name]protoreflect.FieldNumber) {
@@ -288,10 +305,10 @@ func TestSessionProtoV4SchemaSnapshot(t *testing.T) {
 	fields("Catalogue", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "tools": 2, "connection_ref": 3})
 	fields("ToolDescriptor", map[protoreflect.Name]protoreflect.FieldNumber{"name": 1, "description": 2, "schema": 3, "read_only": 4, "dispatch_serial": 5, "authorization_capable": 6})
 	fields("BeginEnrollmentRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1})
-	fields("BeginEnrollmentResponse", map[protoreflect.Name]protoreflect.FieldNumber{"already_connected": 2, "completed": 3})
-	if !file.Messages().ByName("BeginEnrollmentResponse").ReservedRanges().Has(1) {
-		t.Fatal("started arm field 1 must remain reserved for V5")
-	}
+	fields("EnrollmentStarted", map[protoreflect.Name]protoreflect.FieldNumber{"ref": 1, "prompt": 2})
+	fields("BeginEnrollmentResponse", map[protoreflect.Name]protoreflect.FieldNumber{"started": 1, "already_connected": 2, "completed": 3})
+	fields("ObserveEnrollmentRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "enrollment_ref": 2})
+	fields("CancelEnrollmentRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "enrollment_ref": 2})
 	fields("DisconnectToolsRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1, "expected_connection": 2})
 	fields("DisconnectOutcome", map[protoreflect.Name]protoreflect.FieldNumber{"outcome": 1})
 	fields("DeleteSessionRequest", map[protoreflect.Name]protoreflect.FieldNumber{"session_ref": 1})
@@ -466,7 +483,7 @@ func TestSessionRPCNativeAnonymous(t *testing.T) {
 		t.Fatal(err)
 	}
 	enrolled, err := client.BeginEnrollment(t.Context(), opened.Ref)
-	if err != nil || enrolled.Kind != c.EnrollmentCompletedKind || len(enrolled.Catalogue.Tools()) != 1 {
+	if err != nil || enrolled.Kind != c.EnrollmentCompletedKind || len(enrolled.Catalogue.Tools()) != 2 {
 		t.Fatalf("enrollment: %#v %v", enrolled, err)
 	}
 	call := session.ToolCall{ID: "one", Name: enrolled.Catalogue.Tools()[0].Spec().Name, Args: []byte(`{}`)}

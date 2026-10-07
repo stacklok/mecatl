@@ -2,7 +2,6 @@ package mcpbroker
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,7 +100,7 @@ func TestSessionAPIAnonymousEnrollmentAndDisconnect(t *testing.T) {
 		t.Fatalf("OpenSession discovered tools: requests=(%d,%d), tools=%d", firstRequests.Load(), secondRequests.Load(), len(opened.Catalogue.Tools()))
 	}
 	begun, err := api.BeginEnrollment(owner, opened.Ref)
-	if err != nil || begun.Kind != c.EnrollmentCompletedKind || len(begun.Catalogue.Tools()) != 2 {
+	if err != nil || begun.Kind != c.EnrollmentCompletedKind || len(begun.Catalogue.Tools()) != 3 || find(begun.Catalogue, "CallMcpWithQuery") == nil {
 		t.Fatalf("anonymous enrollment = %+v, %v", begun, err)
 	}
 	if firstRequests.Load() == 0 || secondRequests.Load() == 0 {
@@ -135,6 +134,57 @@ func TestSessionAPIAnonymousEnrollmentAndDisconnect(t *testing.T) {
 	result, err = api.DisconnectTools(owner, opened.Ref, renewed.Catalogue.Connection())
 	if err != nil || result != c.Disconnected {
 		t.Fatalf("new disconnect = %v, %v", result, err)
+	}
+}
+
+func TestSessionAPIStableLifetimeOutlivesNativeCustody(t *testing.T) {
+	f := newContinuityProofFixture(t, time.Now().Add(time.Minute))
+	client := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: f.mini.Addr()})
+	defer client.Close()
+	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://owner.test", Subject: "owner"})
+	api, err := NewSessionAPI(f.process, client, func(context.Context) *session.Principal {
+		return &session.Principal{Issuer: "https://workload.test", Subject: "client"}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer api.Close()
+	opened, err := api.OpenSession(owner, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := api.states[opened.Ref]
+	guard := c.ContinuityGuard{SessionID: session.SessionID(opened.Ref), SessionIncarnation: st.record.Incarnation, OwnerPartition: st.record.Owner, WorkloadPartition: st.record.Workload, ProfileDigest: f.process.profileDigest, Providers: f.process.providers}
+	staged, err := f.process.custody.Stage(owner, custodyRequest{Guard: custodyGuardFromContract(guard), AttemptDeadline: time.Now().Add(time.Minute)}, "verified-tsid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.record.Custody = &c.StagedCredentialCustody{RecoveryReference: string(staged.Recovery), ExpiresAt: staged.ExpiresAt, ProfileDigest: guard.ProfileDigest, Providers: guard.Providers}
+	st.record.Account = sessionAPIProofAccount(t, f)
+	st.record.Connected = true
+	st.record.Connection = apiRef()
+	if err = saveAPIRecord(t, api, owner, st); err != nil {
+		t.Fatal(err)
+	}
+	delete(api.states, opened.Ref)
+	recovered, err := api.OpenSession(owner, &opened.Ref)
+	if err != nil || len(recovered.Catalogue.Tools()) != 2 || find(recovered.Catalogue, "CallMcpWithQuery") == nil {
+		t.Fatalf("native custody recovery: %#v %v", recovered, err)
+	}
+	if !api.states[opened.Ref].record.Custody.ExpiresAt.Equal(staged.ExpiresAt) || !recovered.ExpiresAt.After(staged.ExpiresAt) {
+		t.Fatal("recovery renewed custody or shortened session to custody")
+	}
+	later := staged.ExpiresAt.Add(time.Second)
+	api.now = func() time.Time { return later }
+	f.clock.Set(later)
+	f.process.custody.clock = f.clock
+	disconnected, err := api.OpenSession(owner, &opened.Ref)
+	if err != nil || disconnected.Ref != opened.Ref || len(disconnected.Catalogue.Tools()) != 0 {
+		t.Fatalf("expired custody: %#v %v", disconnected, err)
+	}
+	started, err := api.BeginEnrollment(owner, opened.Ref)
+	if err != nil || started.Kind != c.EnrollmentStartedKind || !started.Started.Prompt.Valid() {
+		t.Fatalf("explicit reenrollment: %#v %v", started, err)
 	}
 }
 
@@ -178,14 +228,5 @@ func TestSessionAPIAnonymousEnrollmentRequiresEveryBackend(t *testing.T) {
 	reopened, err := api.OpenSession(owner, &opened.Ref)
 	if err != nil || reopened.Catalogue.Ref() != opened.Catalogue.Ref() || len(reopened.Catalogue.Tools()) != 0 || reopened.Catalogue.Connection() != "" {
 		t.Fatalf("failed enrollment changed catalogue: %+v, %v", reopened, err)
-	}
-}
-
-func TestSessionAPIProtectedBeginFailsBeforeStateAccess(t *testing.T) {
-	api := &SessionAPI{process: &Process{construction: toolHiveConstruction{
-		protectedBackends: []string{"protected"}, anonymous: []ToolHiveProfile{{Name: "public"}},
-	}}}
-	if _, err := api.BeginEnrollment(t.Context(), c.SessionRef(apiRef())); !errors.Is(err, c.ErrStateUnavailable) {
-		t.Fatalf("protected BeginEnrollment = %v; want pre-operation rejection", err)
 	}
 }

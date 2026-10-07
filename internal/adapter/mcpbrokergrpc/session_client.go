@@ -262,6 +262,10 @@ func (s *SessionClient) BeginAuthorization(ctx context.Context, ref c.SessionRef
 	if err != nil {
 		return c.BrowserPrompt{}, err
 	}
+	return decodeSessionPrompt(response)
+}
+
+func decodeSessionPrompt(response *p.BrowserPrompt) (c.BrowserPrompt, error) {
 	if !cleanSessionWire(response) || response.ExpiresAt == nil || !response.ExpiresAt.IsValid() {
 		return c.BrowserPrompt{}, errSessionWire
 	}
@@ -282,6 +286,10 @@ func (s *SessionClient) ObserveAuthorization(ctx context.Context, ref c.SessionR
 	if err != nil {
 		return c.FlowStatus{}, err
 	}
+	return s.flow(ref, response)
+}
+
+func (s *SessionClient) flow(ref c.SessionRef, response *p.FlowStatus) (c.FlowStatus, error) {
 	if !cleanSessionWire(response) {
 		return c.FlowStatus{}, errSessionWire
 	}
@@ -337,6 +345,13 @@ func (s *SessionClient) CancelAuthorization(ctx context.Context, ref c.SessionRe
 	if err != nil {
 		return 0, err
 	}
+	return decodeSessionCancel(response, nil)
+}
+
+func decodeSessionCancel(response *p.CancelOutcome, err error) (c.CancelResult, error) {
+	if err != nil {
+		return 0, err
+	}
 	if !cleanSessionWire(response) {
 		return 0, errSessionWire
 	}
@@ -385,6 +400,16 @@ func (s *SessionClient) BeginEnrollment(ctx context.Context, ref c.SessionRef) (
 	}
 	var outcome c.BeginEnrollmentOutcome
 	switch arm := response.Outcome.(type) {
+	case *p.BeginEnrollmentResponse_Started:
+		if arm.Started == nil || !validSessionRef(arm.Started.Ref) {
+			return outcome, errSessionWire
+		}
+		prompt, err := decodeSessionPrompt(arm.Started.Prompt)
+		if err != nil {
+			return outcome, err
+		}
+		outcome.Kind = c.EnrollmentStartedKind
+		outcome.Started = &c.EnrollmentStarted{Ref: c.EnrollmentRef(arm.Started.Ref), Prompt: prompt}
 	case *p.BeginEnrollmentResponse_AlreadyConnected:
 		if arm.AlreadyConnected == nil {
 			return outcome, errSessionWire
@@ -403,6 +428,28 @@ func (s *SessionClient) BeginEnrollment(ctx context.Context, ref c.SessionRef) (
 		return c.BeginEnrollmentOutcome{}, errSessionWire
 	}
 	return outcome, nil
+}
+
+func (s *SessionClient) ObserveEnrollment(ctx context.Context, ref c.SessionRef, enrollment c.EnrollmentRef) (c.FlowStatus, error) {
+	if !validSessionRef(string(ref)) || !validSessionRef(string(enrollment)) {
+		return c.FlowStatus{}, errSessionWire
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.rpcDeadline)
+	defer cancel()
+	response, err := s.rpc.ObserveEnrollment(ctx, &p.ObserveEnrollmentRequest{SessionRef: string(ref), EnrollmentRef: string(enrollment)}, grpc.MaxRetryRPCBufferSize(0))
+	if err != nil {
+		return c.FlowStatus{}, err
+	}
+	return s.flow(ref, response)
+}
+
+func (s *SessionClient) CancelEnrollment(ctx context.Context, ref c.SessionRef, enrollment c.EnrollmentRef) (c.CancelResult, error) {
+	if !validSessionRef(string(ref)) || !validSessionRef(string(enrollment)) {
+		return 0, errSessionWire
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.rpcDeadline)
+	defer cancel()
+	return decodeSessionCancel(s.rpc.CancelEnrollment(ctx, &p.CancelEnrollmentRequest{SessionRef: string(ref), EnrollmentRef: string(enrollment)}, grpc.MaxRetryRPCBufferSize(0)))
 }
 
 func (s *SessionClient) DisconnectTools(ctx context.Context, ref c.SessionRef, connection c.ConnectionRef) (c.DisconnectResult, error) {

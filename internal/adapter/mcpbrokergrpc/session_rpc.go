@@ -195,6 +195,10 @@ func (s *SessionRPC) BeginAuthorization(ctx context.Context, request *p.BeginAut
 	if err != nil {
 		return nil, sessionError(err)
 	}
+	return sessionPrompt(prompt)
+}
+
+func sessionPrompt(prompt c.BrowserPrompt) (*p.BrowserPrompt, error) {
 	if !prompt.Valid() || !prompt.ExpiresAt.After(time.Now()) {
 		return nil, status.Error(codes.Internal, "invalid browser prompt")
 	}
@@ -293,6 +297,12 @@ func (s *SessionRPC) BeginEnrollment(ctx context.Context, request *p.BeginEnroll
 		return nil, status.Error(codes.Internal, "invalid enrollment outcome")
 	}
 	switch outcome.Kind {
+	case c.EnrollmentStartedKind:
+		prompt, err := sessionPrompt(outcome.Started.Prompt)
+		if err != nil {
+			return nil, err
+		}
+		return &p.BeginEnrollmentResponse{Outcome: &p.BeginEnrollmentResponse_Started{Started: &p.EnrollmentStarted{Ref: string(outcome.Started.Ref), Prompt: prompt}}}, nil
 	case c.EnrollmentCompletedKind:
 		catalogue, err := sessionCatalogue(outcome.Catalogue)
 		if err != nil {
@@ -304,6 +314,31 @@ func (s *SessionRPC) BeginEnrollment(ctx context.Context, request *p.BeginEnroll
 	default:
 		return nil, status.Error(codes.Internal, "enrollment outcome unavailable")
 	}
+}
+
+func (s *SessionRPC) ObserveEnrollment(ctx context.Context, request *p.ObserveEnrollmentRequest) (*p.FlowStatus, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.EnrollmentRef) {
+		return nil, invalidRequest("invalid enrollment reference")
+	}
+	flow, err := s.service.ObserveEnrollment(ctx, c.SessionRef(request.SessionRef), c.EnrollmentRef(request.EnrollmentRef))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	return flowStatusToWire(flow)
+}
+
+func (s *SessionRPC) CancelEnrollment(ctx context.Context, request *p.CancelEnrollmentRequest) (*p.CancelOutcome, error) {
+	if request == nil || !validSessionRef(request.SessionRef) || !validSessionRef(request.EnrollmentRef) {
+		return nil, invalidRequest("invalid enrollment reference")
+	}
+	outcome, err := s.service.CancelEnrollment(ctx, c.SessionRef(request.SessionRef), c.EnrollmentRef(request.EnrollmentRef))
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	if !outcome.Valid() {
+		return nil, status.Error(codes.Internal, "invalid cancel outcome")
+	}
+	return &p.CancelOutcome{Outcome: p.CancelOutcome_Value(outcome)}, nil
 }
 
 func (s *SessionRPC) DisconnectTools(ctx context.Context, request *p.DisconnectToolsRequest) (*p.DisconnectOutcome, error) {

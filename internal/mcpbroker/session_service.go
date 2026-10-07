@@ -23,6 +23,8 @@ type SessionService interface {
 	CancelAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef, BrokerAttempt) (CancelResult, error)
 	ResumeTool(context.Context, session.BrokerSessionRef, AuthorizationRef, session.BrokerCatalogueRef, BrokerAttempt) (InvocationOutcome, error)
 	BeginEnrollment(context.Context, session.BrokerSessionRef) (BeginEnrollmentOutcome, error)
+	ObserveEnrollment(context.Context, session.BrokerSessionRef, EnrollmentRef) (FlowStatus, error)
+	CancelEnrollment(context.Context, session.BrokerSessionRef, EnrollmentRef) (CancelResult, error)
 	DisconnectTools(context.Context, session.BrokerSessionRef, ConnectionRef) (DisconnectResult, error)
 	DeleteSession(context.Context, session.BrokerSessionRef) (DeleteResult, error)
 }

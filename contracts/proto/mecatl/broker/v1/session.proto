@@ -19,6 +19,8 @@ service SessionService {
   rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelOutcome);
   rpc ResumeTool(ResumeToolRequest) returns (InvocationOutcome);
   rpc BeginEnrollment(BeginEnrollmentRequest) returns (BeginEnrollmentResponse);
+  rpc ObserveEnrollment(ObserveEnrollmentRequest) returns (FlowStatus);
+  rpc CancelEnrollment(CancelEnrollmentRequest) returns (CancelOutcome);
   rpc DisconnectTools(DisconnectToolsRequest) returns (DisconnectOutcome);
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteOutcome);
 }
@@ -184,14 +186,27 @@ message BeginEnrollmentRequest {
   string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
 }
 
+message EnrollmentStarted {
+  string ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  BrowserPrompt prompt = 2 [(buf.validate.field).required = true];
+}
+
 message BeginEnrollmentResponse {
-  reserved 1;
-  reserved "started";
   oneof outcome {
     option (buf.validate.oneof).required = true;
+    EnrollmentStarted started = 1;
     google.protobuf.Empty already_connected = 2;
     Catalogue completed = 3;
   }
+}
+
+message ObserveEnrollmentRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+}
+message CancelEnrollmentRequest {
+  string session_ref = 1 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
+  string enrollment_ref = 2 [(buf.validate.field).string = {len: 43, pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}];
 }
 
 message DisconnectToolsRequest {

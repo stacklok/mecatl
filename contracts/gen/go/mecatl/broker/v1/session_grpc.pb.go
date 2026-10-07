@@ -30,6 +30,8 @@ const (
 	SessionService_CancelAuthorization_FullMethodName  = "/mecatl.broker.v1.SessionService/CancelAuthorization"
 	SessionService_ResumeTool_FullMethodName           = "/mecatl.broker.v1.SessionService/ResumeTool"
 	SessionService_BeginEnrollment_FullMethodName      = "/mecatl.broker.v1.SessionService/BeginEnrollment"
+	SessionService_ObserveEnrollment_FullMethodName    = "/mecatl.broker.v1.SessionService/ObserveEnrollment"
+	SessionService_CancelEnrollment_FullMethodName     = "/mecatl.broker.v1.SessionService/CancelEnrollment"
 	SessionService_DisconnectTools_FullMethodName      = "/mecatl.broker.v1.SessionService/DisconnectTools"
 	SessionService_DeleteSession_FullMethodName        = "/mecatl.broker.v1.SessionService/DeleteSession"
 )
@@ -48,6 +50,8 @@ type SessionServiceClient interface {
 	CancelAuthorization(ctx context.Context, in *CancelAuthorizationRequest, opts ...grpc.CallOption) (*CancelOutcome, error)
 	ResumeTool(ctx context.Context, in *ResumeToolRequest, opts ...grpc.CallOption) (*InvocationOutcome, error)
 	BeginEnrollment(ctx context.Context, in *BeginEnrollmentRequest, opts ...grpc.CallOption) (*BeginEnrollmentResponse, error)
+	ObserveEnrollment(ctx context.Context, in *ObserveEnrollmentRequest, opts ...grpc.CallOption) (*FlowStatus, error)
+	CancelEnrollment(ctx context.Context, in *CancelEnrollmentRequest, opts ...grpc.CallOption) (*CancelOutcome, error)
 	DisconnectTools(ctx context.Context, in *DisconnectToolsRequest, opts ...grpc.CallOption) (*DisconnectOutcome, error)
 	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteOutcome, error)
 }
@@ -140,6 +144,26 @@ func (c *sessionServiceClient) BeginEnrollment(ctx context.Context, in *BeginEnr
 	return out, nil
 }
 
+func (c *sessionServiceClient) ObserveEnrollment(ctx context.Context, in *ObserveEnrollmentRequest, opts ...grpc.CallOption) (*FlowStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlowStatus)
+	err := c.cc.Invoke(ctx, SessionService_ObserveEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) CancelEnrollment(ctx context.Context, in *CancelEnrollmentRequest, opts ...grpc.CallOption) (*CancelOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelOutcome)
+	err := c.cc.Invoke(ctx, SessionService_CancelEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *sessionServiceClient) DisconnectTools(ctx context.Context, in *DisconnectToolsRequest, opts ...grpc.CallOption) (*DisconnectOutcome, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DisconnectOutcome)
@@ -174,6 +198,8 @@ type SessionServiceServer interface {
 	CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelOutcome, error)
 	ResumeTool(context.Context, *ResumeToolRequest) (*InvocationOutcome, error)
 	BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error)
+	ObserveEnrollment(context.Context, *ObserveEnrollmentRequest) (*FlowStatus, error)
+	CancelEnrollment(context.Context, *CancelEnrollmentRequest) (*CancelOutcome, error)
 	DisconnectTools(context.Context, *DisconnectToolsRequest) (*DisconnectOutcome, error)
 	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteOutcome, error)
 	mustEmbedUnimplementedSessionServiceServer()
@@ -209,6 +235,12 @@ func (UnimplementedSessionServiceServer) ResumeTool(context.Context, *ResumeTool
 }
 func (UnimplementedSessionServiceServer) BeginEnrollment(context.Context, *BeginEnrollmentRequest) (*BeginEnrollmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BeginEnrollment not implemented")
+}
+func (UnimplementedSessionServiceServer) ObserveEnrollment(context.Context, *ObserveEnrollmentRequest) (*FlowStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ObserveEnrollment not implemented")
+}
+func (UnimplementedSessionServiceServer) CancelEnrollment(context.Context, *CancelEnrollmentRequest) (*CancelOutcome, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelEnrollment not implemented")
 }
 func (UnimplementedSessionServiceServer) DisconnectTools(context.Context, *DisconnectToolsRequest) (*DisconnectOutcome, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DisconnectTools not implemented")
@@ -381,6 +413,42 @@ func _SessionService_BeginEnrollment_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionService_ObserveEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ObserveEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).ObserveEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_ObserveEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).ObserveEnrollment(ctx, req.(*ObserveEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_CancelEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).CancelEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_CancelEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).CancelEnrollment(ctx, req.(*CancelEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SessionService_DisconnectTools_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DisconnectToolsRequest)
 	if err := dec(in); err != nil {
@@ -455,6 +523,14 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BeginEnrollment",
 			Handler:    _SessionService_BeginEnrollment_Handler,
+		},
+		{
+			MethodName: "ObserveEnrollment",
+			Handler:    _SessionService_ObserveEnrollment_Handler,
+		},
+		{
+			MethodName: "CancelEnrollment",
+			Handler:    _SessionService_CancelEnrollment_Handler,
 		},
 		{
 			MethodName: "DisconnectTools",
