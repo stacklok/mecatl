@@ -164,7 +164,8 @@ All three server roots share `app.Build` and `server.Service`; they differ aroun
 **`mecated`** is the general-purpose daemon: listeners, TLS and authentication,
 Prometheus and OpenTelemetry, and administrative subcommands. It defaults to interactive
 approval and the strict posture. Session store and event log are each in memory, local,
-or a remote driver; leasing is off unless the operator selects a lease backend.
+or a remote driver. A local store directory always gets a file-lock session lease;
+otherwise leasing is off unless the operator selects a lease backend.
 `mecated config validate` checks operator settings offline with the runtime parser. See
 [run mecated](../../user-docs/building/deployment/mecated.md).
 

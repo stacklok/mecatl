@@ -48,7 +48,8 @@ stateDiagram-v2
   running --> awaiting: PauseForApproval
   awaiting --> running: ResumeWith
   running --> authorizing: PauseForAuthorization
-  authorizing --> running: Claim / Abort / InterruptAuthorization
+  authorizing --> running: ClaimAuthorization / Abort / InterruptAuthorization
+  running --> authorizing: RestoreAuthorizationClaim
   running --> completed: Complete / Stop
   running --> cancelled: Cancel
   running --> failed: Fail
@@ -67,7 +68,8 @@ through its own methods.
 Each terminal state has exactly one seam back to `idle`. `Abandon` covers a snapshot
 left `running` by a process that exited mid-turn. All four share one reset that clears
 the stop reason, pending ask, and counters but keeps main token usage, so a run budget
-stays cumulative across reopen and restart. The server's `repairTerminalState` applies
+stays cumulative across reopen and restart. `Abandon` then keeps a pending exact
+retry, so a crash after durable preparation returns to idle-but-pending. The server's `repairTerminalState` applies
 the seam for each terminal state; only the run-entry path abandons a `running`
 session, after it holds the session lock. Non-error stops such as `no_progress`,
 `budget`, and `plan_approved` end in `completed`, so they stay reopenable.
@@ -109,7 +111,8 @@ model-visible content. Resource links are never fetched automatically; the
 `Event` carries its type, sequence number, turn, and only the payload for its kind.
 The loop emits to `port.EventSink`; the server relay forwards events to clients and
 appends them to the durable `port.EventLog`. Some types, such as `approval` and
-`user_prompt`, are log-only and never reach clients. The `subagent.*`, `team.*`, and
+`compaction.archive`, are log-only and never reach clients; a `user_prompt` reaches
+clients only when it carries a scheduled-task delivery note. The `subagent.*`, `team.*`, and
 `parallel.*` families project child runs as bounded, redacted previews. Child
 transcripts never enter the parent conversation; only the delegation tool's result does.
 

@@ -178,7 +178,7 @@ The spinner bench measures frames between content flushes, not streaming frames.
 Profile-guided optimization (PGO) lets the Go compiler optimize from a CPU profile.
 The build applies a `default.pgo` found beside a `main` package under the default
 `-pgo=auto`. The one reserved slot is `cmd/mecated/default.pgo`, since the server is
-the only long-running binary worth profiling, and it is deliberately empty. Nothing
+the only long-running binary worth profiling, and no file is committed there. Nothing
 in the Taskfile or workflows passes `-pgo=off`, so a profile dropped there applies
 to every later build, including release images.
 

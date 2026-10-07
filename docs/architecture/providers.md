@@ -1,5 +1,7 @@
 # Providers and model routing
 
+> Part of the [Mecatl architecture guide](../architecture.md).
+
 How Mecatl talks to model providers, binds a session to a provider and model, and
 picks models through aliases, slots, and the semantic model router. Provider retries
 and circuit breaking are in [observability](observability.md).
@@ -147,6 +149,7 @@ slot's default tier (`cheap`, `fast`, or `reasoning`), else nothing.
 | `reflection` | the learning reflection call | `cheap` |
 | `router` | the semantic router's classifier | `cheap` |
 | `title` | server-side session titles | none (opt-in) |
+| `synthesis` | reserved; accepted in settings but no call reads it yet | `cheap` |
 | `plan` | the session model while in plan mode | `reasoning` |
 
 Slot resolution is fail-soft: an unknown slot key or an unresolvable selector logs
@@ -174,8 +177,8 @@ composition builds the child through the same per-provider factory.
 
 Two classifier backends exist. The `llm` backend runs one tool-less turn on the
 `router` slot model; the task text is fenced as untrusted, and the reply must be a
-single JSON object naming an offered category. The `jev` backend asks the Typesafe
-Jev service the same question with bounded input, time, and concurrency. Both return
+single JSON object naming an offered category. The `jev` backend asks Typesafe
+System One the same question with bounded input, time, and concurrency. Both return
 the engine-owned `ModelRouteResult`.
 
 The router is never load-bearing. A classifier error, timeout, cancellation,
