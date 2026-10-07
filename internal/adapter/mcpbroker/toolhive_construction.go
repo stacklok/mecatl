@@ -36,6 +36,8 @@ type ToolHiveConfig struct {
 	CallbackURL string
 	// Profiles declares the ordered upstream MCP backends and their authentication mode.
 	Profiles []ToolHiveProfile
+	// DeferAnonymousDiscovery is the opt-in session API PoC path: Open publishes no tools.
+	DeferAnonymousDiscovery bool
 	// ReservedToolNames contains model-visible names supplied by the surrounding
 	// core/global catalogue. Broker discovery rejects collisions before it creates
 	// an attachment.

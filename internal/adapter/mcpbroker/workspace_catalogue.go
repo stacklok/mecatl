@@ -267,7 +267,7 @@ func (a *Attachment) RefreshGrantedAuthorizationCatalogue(ctx context.Context, a
 // brokerCredential is opaque and is passed only through ToolHive's incoming
 // identity middleware.
 func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, reservedToolNames []string) (contract.WorkspaceCatalogue, error) {
-	frozen, _, err := a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, reservedToolNames, true)
+	frozen, _, err := a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, reservedToolNames, true, false)
 	return frozen, err
 }
 
@@ -275,7 +275,7 @@ func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contr
 // uses publish=false so the catalogue remains private until its logical commit.
 //
 //nolint:gocyclo // every early-return guards a distinct precondition (closed, stale ref, process authority, publish race); splitting would scatter the single freeze/publish invariant
-func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, reservedToolNames []string, publish bool) (contract.WorkspaceCatalogue, *attachmentCatalogue, error) {
+func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, reservedToolNames []string, publish, refresh bool) (contract.WorkspaceCatalogue, *attachmentCatalogue, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -284,7 +284,7 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 		a.mu.Unlock()
 		return nil, nil, contract.ErrAttachmentClosed
 	}
-	if a.catalogue != nil && a.catalogue.frozen != nil {
+	if a.catalogue != nil && a.catalogue.frozen != nil && !refresh {
 		if a.catalogue.frozen.Ref() == ref {
 			frozen, catalogue := a.catalogue.frozen, a.catalogue
 			a.mu.Unlock()
@@ -317,7 +317,7 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
 		}
-		return a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, reservedToolNames, publish)
+		return a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, reservedToolNames, publish, refresh)
 	}
 	done := make(chan struct{})
 	a.freezing = done
@@ -331,6 +331,13 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 	}()
 
 	a.mu.Unlock()
+	if process.deferAnonymousDiscovery {
+		var err error
+		anonymous, err = discoverCompleteAnonymous(ctx, process.construction.anonymous, reservedToolNames, process.diag)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	stagedRoutes, verifiedTSID, err := stageAuthenticatedRoutes(ctx, a, process, brokerCredential, backends, base, reservedToolNames)
 	if err != nil {
 		reason := diagnosticReasonDiscoveryFailed
@@ -498,7 +505,7 @@ func stageAuthenticatedRoutes(ctx context.Context, _ *Attachment, process *Proce
 		seen[name] = struct{}{}
 	}
 	for _, route := range base.routes {
-		if route.oauth == nil {
+		if route.oauth == nil && !route.broker {
 			seen[route.spec.Name] = struct{}{}
 		}
 	}

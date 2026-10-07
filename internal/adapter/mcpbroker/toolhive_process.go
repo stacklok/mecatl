@@ -3,8 +3,10 @@ package mcpbroker
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -70,22 +72,23 @@ type Process struct {
 	Handlers     HandlerBundle
 	CallbackPath string
 
-	ctx               context.Context
-	cancel            context.CancelFunc
-	lifecycleMu       sync.Mutex
-	continuityMu      sync.Mutex
-	recoveredAttempts map[string]*recoveredAttempt
-	closed            bool
-	construction      toolHiveConstruction
-	discovery         *authenticatedDiscovery
-	protectedTarget   *oauthRoute
-	protectedStorage  *protectedToolHiveStorage
-	custody           *credentialCustody
-	authStorage       storage.Storage
-	authKeyProvider   keys.KeyProvider
-	issuer            string
-	profileDigest     [32]byte
-	providers         []string
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	lifecycleMu             sync.Mutex
+	continuityMu            sync.Mutex
+	recoveredAttempts       map[string]*recoveredAttempt
+	closed                  bool
+	construction            toolHiveConstruction
+	deferAnonymousDiscovery bool
+	discovery               *authenticatedDiscovery
+	protectedTarget         *oauthRoute
+	protectedStorage        *protectedToolHiveStorage
+	custody                 *credentialCustody
+	authStorage             storage.Storage
+	authKeyProvider         keys.KeyProvider
+	issuer                  string
+	profileDigest           [32]byte
+	providers               []string
 	// reservedToolNames is the immutable model-visible name set outside this Process's
 	// broker catalogue (core/global tools), captured once at construction so a
 	// later workspace-enrollment freeze can reuse it without re-deriving it.
@@ -113,6 +116,42 @@ var _ contract.Service = (*Process)(nil)
 var _ contract.BindingSessionDeleter = (*Process)(nil)
 var _ contract.ExpectedBindingAttacher = (*Process)(nil)
 var _ contract.CredentialContinuityService = (*Process)(nil)
+
+// nativeAccount binds every configured provider's donor-validated identity, not
+// the random token-session ID. No token or browser credential is projected.
+func (p *Process) nativeAccount(ctx context.Context, tsid string) ([32]byte, error) {
+	if p.custody == nil || tsid == "" {
+		return [32]byte{}, contract.ErrContinuityUnavailable
+	}
+	identities := make([][]string, 0, len(p.providers))
+	for _, provider := range p.providers {
+		row, err := p.custody.rows.GetUpstreamTokens(ctx, tsid, provider)
+		if err != nil && !errors.Is(err, storage.ErrExpired) || row == nil || row.UserID == "" || row.UpstreamSubject == "" || row.ClientID == "" {
+			return [32]byte{}, contract.ErrContinuityUnavailable
+		}
+		identities = append(identities, []string{provider, row.UserID, row.UpstreamSubject, row.ClientID})
+	}
+	b, _ := json.Marshal(identities)
+	return sha256.Sum256(b), nil
+}
+
+// nativeGrantReady uses the donor's read/refresh lifecycle only; it never calls
+// an upstream MCP tool. A remote revocation of a still-valid token is unknowable.
+func (p *Process) nativeGrantReady(ctx context.Context, tsid string) (bool, error) {
+	if p.custody == nil || tsid == "" {
+		return false, contract.ErrContinuityUnavailable
+	}
+	for _, provider := range p.providers {
+		_, err := p.custody.tokens.GetValidTokens(ctx, tsid, provider)
+		if err != nil {
+			if errors.Is(err, upstreamtoken.ErrSessionNotFound) || errors.Is(err, upstreamtoken.ErrNoRefreshToken) || errors.Is(err, upstreamtoken.ErrRefreshFailed) {
+				return false, nil
+			}
+			return false, contract.ErrContinuityUnavailable
+		}
+	}
+	return true, nil
+}
 
 // AttachSession delegates to the underlying Runtime.
 func (p *Process) AttachSession(ctx context.Context, id session.SessionID) (contract.Attachment, contract.AttachOutcome, error) {
@@ -521,9 +560,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			}
 		}
 	}
-	routes, err := discoverAnonymous(ctx, construction.anonymous, config.ReservedToolNames)
-	if err != nil {
-		return nil, err
+	var routes []route
+	if !config.DeferAnonymousDiscovery {
+		routes, err = discoverAnonymous(ctx, construction.anonymous, config.ReservedToolNames)
+		if err != nil {
+			return nil, err
+		}
 	}
 	protectedTarget, err := newToolHiveProtectedTarget(issuer, config.CallbackURL, len(construction.upstreams) != 0)
 	if err != nil {
@@ -577,7 +619,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		_ = runtime.Close()
 		return nil, errors.New("mcpbroker: protected continuity profile unavailable")
 	}
-	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget, reservedToolNames: append([]string(nil), config.ReservedToolNames...), profileDigest: profileDigest, providers: providers, issuer: issuer, diag: diag}
+	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, deferAnonymousDiscovery: config.DeferAnonymousDiscovery, protectedTarget: protectedTarget, reservedToolNames: append([]string(nil), config.ReservedToolNames...), profileDigest: profileDigest, providers: providers, issuer: issuer, diag: diag}
 	runtime.process = process
 	process.resources = append(process.resources, ownedResource{name: "process-context", close: func() error { cancel(); return nil }})
 	rollback := func(cause error) (*Process, error) {
@@ -752,6 +794,35 @@ func newToolHiveAuthServer(
 		return nil, nil, err
 	}
 	return embedded, embedded.KeyProvider(), nil
+}
+
+func discoverCompleteAnonymous(ctx context.Context, profiles []ToolHiveProfile, reserved []string, diag port.Diagnostics) ([]route, error) {
+	var routes []route
+	seen := make(map[string]struct{}, len(reserved))
+	for _, name := range reserved {
+		seen[name] = struct{}{}
+	}
+	for _, profile := range profiles {
+		server, err := mcpadapter.ConnectComplete(ctx, mcpadapter.ServerConfig{Name: profile.Name, URL: profile.URL}, diag)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range server.Tools() {
+			spec := t.Spec()
+			r, err := validateAuthenticatedRoute(profile.Name, ToolDefinition{Backend: profile.Name, Name: spec.Name, Description: spec.Description, Schema: spec.Schema, ReadOnly: t.ReadOnly()}, seen)
+			if err != nil {
+				_ = server.Close()
+				return nil, err
+			}
+			seen[spec.Name] = struct{}{}
+			routes = append(routes, r)
+		}
+		if err := server.Close(); err != nil {
+			return nil, err
+		}
+	}
+	sortRoutes(routes)
+	return routes, nil
 }
 
 func discoverAnonymous(ctx context.Context, profiles []ToolHiveProfile, reservedToolNames []string) ([]route, error) {

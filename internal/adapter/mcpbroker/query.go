@@ -24,7 +24,11 @@ type callMcpWithQueryArgs struct {
 // attachmentQueryTool performs both the native broker call and the jq projection
 // while its attachment operation remains live. The unfiltered response therefore
 // never leaves the attachment as a model-facing ToolResult.
-type attachmentQueryTool struct{ attachment *Attachment }
+type attachmentQueryTool struct {
+	attachment        *Attachment
+	targetTool        func(context.Context, session.ToolCall, string) (tool.Tool, error)
+	uncertaintyErrors bool
+}
 
 var _ tool.AuthorizationRequester = (*attachmentQueryTool)(nil)
 
@@ -71,6 +75,9 @@ func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, str
 }
 
 func (t *attachmentQueryTool) native(ctx context.Context, call session.ToolCall, filter string) (tool.Tool, error) {
+	if t.targetTool != nil {
+		return t.targetTool(ctx, call, filter)
+	}
 	route, ok := t.attachment.lookupRoute(call.Name)
 	if !ok {
 		t.attachment.runtime.logRouteUnavailable(ctx, t.attachment.logical.ref.SessionID(), diagnosticRouteSurfaceQuery)
@@ -124,6 +131,11 @@ func queryFailureReason(err error) string {
 	}
 }
 
+type queryExecutionUncertain struct{ cause error }
+
+func (e *queryExecutionUncertain) Error() string { return "query execution outcome is unknown" }
+func (e *queryExecutionUncertain) Unwrap() error { return e.cause }
+
 func (t *attachmentQueryTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return session.ToolResult{}, err
@@ -140,7 +152,11 @@ func (t *attachmentQueryTool) Execute(ctx context.Context, call session.ToolCall
 	if err != nil {
 		t.attachment.runtime.logQueryFailure(ctx, queryFailureReason(err))
 		// The protected route claims before transport; never retry an uncertain call.
-		return session.NewToolError(call.ID, "CallMcpWithQuery: target may have succeeded; automatic replay refused after a query transport or projection failure"), nil
+		result := session.NewToolError(call.ID, "CallMcpWithQuery: target may have succeeded; automatic replay refused after a query transport or projection failure")
+		if t.uncertaintyErrors {
+			return result, &queryExecutionUncertain{cause: err}
+		}
+		return result, nil
 	}
 	result.CallID = call.ID
 	return result, nil
