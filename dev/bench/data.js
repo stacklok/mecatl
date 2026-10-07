@@ -272832,6 +272832,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791326236888,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bea47ca6e06a637522162ca1c20f7442737e953c",
+          "message": "feat(studio): complete chat approvals, plan review, and Escape flow (#1975)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>\nCo-authored-by: Giuseppe Scuglia <peppescg@gmail.com>\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T10:56:35+02:00",
+          "tree_id": "d84b41b6c0a5f2133b22179af9c3e7fc2c02238c",
+          "url": "https://github.com/stacklok/mecatl/commit/bea47ca6e06a637522162ca1c20f7442737e953c"
+        },
+        "date": 1791364152702,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -395692,6 +395726,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791364149533,
+  "lastUpdate": 1791364153784,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
