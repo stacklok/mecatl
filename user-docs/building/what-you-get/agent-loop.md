@@ -130,7 +130,8 @@ An abandoned request fails closed. Mecatl registers the request before emitting
 the event, so an early verdict is not lost.
 
 gRPC clients send `ResumeApproval` on the `Converse` stream. HTTP clients use
-`POST /v1/sessions/{id}/approve`.
+`POST /v1/sessions/{id}/controls/resolve-ask` with the run's `run_id`; see the
+[HTTP and SSE reference](/reference/http-sse-api.md#approve--deny-a-pending-ask).
 
 ## Context limits and compaction
 

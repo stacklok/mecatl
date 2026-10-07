@@ -105,15 +105,17 @@ children retain the exact parent content backend and runner through any stricter
 child-authority Workspace view; storage is never reconstructed from `Root()`. Redisstore provides an optional
 durable ledger as one validated hash per session, borrowing the Store lifecycle; both
 canonical session-deletion scripts remove it atomically with the other sidecars, and
-`DeleteReadLedger` remains an idempotent ledger-only reset. It is not wired as the
-production default. See ADR 0298.
+`DeleteReadLedger` remains an idempotent ledger-only reset. It is off by default;
+`mecak8s --redis-read-ledger` (Helm `redis.readLedger.enabled`) opts in. See ADR 0298.
 Restarting the process loses in-memory overrides; a restarted session
 re-derives its Environment through the same rehydration path (no-fs profile,
-ACP adapter reconnect). As of ADR 0214, `EnvironmentRef` is a DURABLE snapshot
-field: a non-in-tree ref persists and reattaches a live `Environment` at run
-entry through `server.Config.EnvironmentResolver` (the in-tree Kinds never reach
-it; a nil/mismatch/nil-Workspace result fails loudly). A legacy zero ref is
-stamped from the first resolved live Environment on the next save.
+ACP adapter reconnect). `EnvironmentRef` is a durable snapshot field. At run
+entry the server reattaches the exact persisted ref through the required
+`server.Config.PlacementProvider`, which must also implement
+`server.PlacementReattacher`; a provider without that capability fails closed and
+`Bind` is never used as a fallback (`internal/adapter/server/placement.go`). An
+invalid or zero ref is rejected (`ErrInvalidPlacementSelection`), and a binding
+whose ref differs from the request is discarded.
 
 `CreateFile` and the compare-plus-mutation in `ReplaceFile` are atomic for
 concurrent calls through the same live Workspace/backend handle. ACP's
@@ -146,12 +148,8 @@ whose `Workspace`, separately selected `ReadLedger`, and bound `CommandRunner` a
 `tool.Environment` carries identity (`session.EnvironmentRef`) plus those three
 capabilities; the forker/merger are `tool.EnvironmentForker`/
 `tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
-governance remains outside. `EnvironmentRef` is an in-process identity in phase 2
-— snapshot persistence and remote transport are deferred to phase 3. ADR 0214
-implements the phase-3 persistence/reattachment half: `EnvironmentRef` is a durable
-snapshot field, and `server.Config.EnvironmentResolver` reattaches a live
-`Environment` for a non-in-tree Kind (the `internal/adapter/remoteenv` reference
-fake proves the contract). The
+governance remains outside. `EnvironmentRef` is a durable snapshot field, and the
+placement provider's `Reattach` restores a live `Environment` for it (see above). The
 version-aware file-mutation foundation is ADR 0208.
 
 The production microVM adapter places execution in one repository-scoped VM generation
