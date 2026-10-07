@@ -28,6 +28,7 @@ import {
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
 import { type ChatService, createMecatlChatService } from "./mecatl/chat.js";
+import { createMecatlInspectionService } from "./mecatl/inspection.js";
 import {
   createMecatlKnowledgeService,
   type KnowledgeCapabilities,
@@ -39,6 +40,7 @@ import { createMecatlSettingsService, type SettingsService } from "./mecatl/sett
 import { createMecatlStorageService, type StorageService } from "./mecatl/storage.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerInspectionRoutes } from "./routes/inspection.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
@@ -137,6 +139,17 @@ export function createApp(dependencies: AppDependencies = {}) {
     sameOriginPresentation(security),
   );
   app.use("/api/v1/*", requestBodyLimit());
+  // Inspection responses are private even when auth or readiness rejects the
+  // request before the route handler runs.
+  app.use("/api/v1/*", async (context, next) => {
+    if (
+      context.req.method === "GET" &&
+      (context.req.path === "/api/v1/soul" ||
+        /^\/api\/v1\/sessions\/[^/]+\/worktrees$/u.test(context.req.path))
+    )
+      context.header("Cache-Control", "private, no-store");
+    return next();
+  });
 
   registerAuthRoutes(app, authentication, runtime);
 
@@ -248,6 +261,20 @@ export function createApp(dependencies: AppDependencies = {}) {
       return undefined;
     }
   };
+  registerInspectionRoutes(
+    app,
+    runtime === undefined ? undefined : createMecatlInspectionService(runtime.client),
+    () => {
+      const snapshot = snapshotOrUndefined();
+      return snapshot === undefined
+        ? undefined
+        : {
+            connection: snapshot.connection,
+            soul: snapshot.capabilities.soul,
+            worktrees: snapshot.capabilities.worktrees,
+          };
+    },
+  );
   const settings =
     dependencies.settings ??
     (runtime === undefined
