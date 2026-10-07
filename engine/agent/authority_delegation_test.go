@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +151,18 @@ func assertDerivedAuthority(t *testing.T, child *session.Session, parent session
 	got, bound := child.BoundAuthority()
 	if !bound || got.CapabilitySet.RemainingDelegationDepth != parent.CapabilitySet.RemainingDelegationDepth-1 || !parent.CapabilitySet.Contains(got.CapabilitySet) {
 		t.Fatalf("child authority = %+v bound=%t, parent=%+v", got, bound, parent)
+	}
+	scope := []string{}
+	for _, name := range got.CapabilitySet.Tools {
+		if parent.BrokerToolScope == nil || slices.Contains(*parent.BrokerToolScope, name) {
+			scope = append(scope, name)
+		}
+	}
+	if got.BrokerToolScope == nil || !slices.Equal(*got.BrokerToolScope, scope) {
+		t.Fatalf("child broker scope not attenuated through real delegation seam: %+v", got)
+	}
+	if _, ok := child.BrokerAccess(); ok {
+		t.Fatal("delegated child inherited parent broker state")
 	}
 	for _, name := range absent {
 		if got.CapabilitySet.AllowsTool(name) {

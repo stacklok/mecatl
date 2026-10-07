@@ -211,11 +211,17 @@ type Authority struct {
 	CapabilitySet      governance.CapabilitySet `json:"capability_set"`
 	Provenance         string                   `json:"provenance"`
 	DefinitionIdentity string                   `json:"definition_identity,omitempty"`
+	// Nil permits fresh-root discovery; a carried scope is finite, even when empty.
+	BrokerToolScope *[]string `json:"broker_tool_scope,omitempty"`
 }
 
 // Clone returns an independent copy of a.
 func (a Authority) Clone() Authority {
 	a.CapabilitySet.Tools = append([]string(nil), a.CapabilitySet.Tools...)
+	if a.BrokerToolScope != nil {
+		scope := append([]string{}, (*a.BrokerToolScope)...)
+		a.BrokerToolScope = &scope
+	}
 	return a
 }
 
@@ -237,7 +243,8 @@ func validAuthorityLabel(label string) bool {
 // typed, so malformed serialized capability data fails during snapshot decoding
 // before this method can bind the aggregate.
 func (a Authority) Valid() bool {
-	return validAuthorityLabel(a.Provenance) && (a.DefinitionIdentity == "" || validAuthorityLabel(a.DefinitionIdentity))
+	return validAuthorityLabel(a.Provenance) && (a.DefinitionIdentity == "" || validAuthorityLabel(a.DefinitionIdentity)) &&
+		(a.BrokerToolScope == nil || validAuthorityNames(*a.BrokerToolScope))
 }
 
 var (
@@ -306,27 +313,27 @@ func (s *Session) GrantToolAuthority(names []string) error {
 		return errors.New("session: tool authority is not bound")
 	}
 
-	seen := make(map[string]struct{}, len(s.Authority.CapabilitySet.Tools)+len(names))
-	for _, name := range s.Authority.CapabilitySet.Tools {
-		seen[name] = struct{}{}
+	if len(names) == 0 {
+		return nil
 	}
-	additions := make([]string, 0, len(names))
 	for _, name := range names {
-		if _, ok := seen[name]; ok {
-			continue
-		}
 		if !validToolAuthorityName(name) {
 			return errors.New("session: invalid tool authority name")
 		}
-		seen[name] = struct{}{}
-		additions = append(additions, name)
 	}
-	if len(additions) == 0 {
-		return nil
+	authority := s.Authority.Clone()
+	authority.CapabilitySet.Tools = unionToolNames(authority.CapabilitySet.Tools, names)
+	if authority.BrokerToolScope != nil {
+		scope := unionToolNames(*authority.BrokerToolScope, names)
+		authority.BrokerToolScope = &scope
 	}
-	tools := make([]string, 0, len(s.Authority.CapabilitySet.Tools)+len(additions))
-	tools = append(tools, s.Authority.CapabilitySet.Tools...)
-	tools = append(tools, additions...)
-	s.Authority.CapabilitySet.Tools = tools
+	if access, ok := s.BrokerAccess(); ok {
+		access.IndependentTools = unionToolNames(access.IndependentTools, names)
+		if err := s.validateBrokerAccess(access, authority); err != nil {
+			return err
+		}
+		s.brokerAccess = &access
+	}
+	s.Authority = authority
 	return nil
 }

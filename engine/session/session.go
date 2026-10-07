@@ -432,6 +432,9 @@ type Session struct {
 	// provider credentials. It is independent from ExternalBinding, which remains
 	// the sole opaque comparator for broker process-local authority.
 	brokerCredentialCustody *BrokerCredentialCustody
+	brokerAccess            *BrokerAccess
+	brokerAttemptCompleted  BrokerAttempt
+	brokerAttemptRestored   bool
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
 	// failureMetadata retains the typed terminal facts needed to decide failed-step
@@ -554,6 +557,7 @@ func (s *Session) RecordToolResults(results []ToolResult) error {
 	}
 	for _, r := range results {
 		s.Conversation.Append(NewToolMessage(r))
+		s.recordBrokerAttemptPair(r.CallID)
 		s.Counters.ToolCalls++
 		if r.IsError {
 			s.Counters.ConsecutiveFailures++
