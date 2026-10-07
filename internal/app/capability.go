@@ -61,14 +61,14 @@ func modelCapability(reg *providerRegistry, providerID, modelID string) port.Pro
 }
 
 // modelReasoningSupport reports whether the (provider, model) is known to support
-// reasoning-effort, and whether that fact is KNOWN at all (ADR 0055 capability
-// gate). It mirrors modelCapability's precedence: (1) LIVE-FIRST — a live meta
-// entry's Reasoning bit is authoritative when present; (2) CATALOG floor — the
-// embedded catalog's SupportsReasoning; (3) UNKNOWN — neither source describes the
-// model (a passthrough/uncatalogued model), so known=false and the caller
-// FAILS-OPEN (sends effort anyway; the provider 400s honestly if it really cannot
-// — the same unknown=capable posture the thinking path takes). The mock provider
-// is treated as known-incapable so an offline test never sends effort to it.
+// reasoning-effort, and whether that fact is known (ADR 0055's gate as narrowed
+// by ADR 0376). A live entry's Reasoning bit is authoritative only when its
+// support is known: Anthropic listings preserve omitted thinking as unknown
+// even when a model row exists. When no live row exists, the embedded catalog
+// supplies a floor; a model with no evidence also fails open, forwarding a configured effort so
+// the provider can reject it. The public inventory's boolean reasoning flag
+// cannot express unknown and does not control this gate. The mock provider is
+// known-incapable so offline tests never send effort to it.
 func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (supported, known bool) {
 	if providerID == providerMock {
 		return false, true
@@ -76,13 +76,13 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	// (1) Live-first.
 	if reg != nil && reg.meta != nil {
 		if entry, ok := reg.meta.lookup(providerID, modelID); ok {
-			return entry.Reasoning, true
+			return entry.Reasoning, !entry.reasoningUnknown
 		}
 	}
-	// Preserve the configured default's existing inventory-floor presence without
-	// storing that floor as a live observation.
+	// Preserve the configured default's presence floor for non-Messages protocols.
+	// Anthropic's missing live row is not an explicit unsupported declaration.
 	if reg != nil && modelID != "" {
-		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID {
+		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID && entry.protocol != protocolAnthropicMessages {
 			return false, true
 		}
 	}

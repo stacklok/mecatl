@@ -35,6 +35,10 @@
   packed reasoning entry records how many calls preceded it and the adapter
   rebuilds the sequence — the stateless-replay rule is to pass prior output items
   back untouched.
+- Every Responses request asks for `reasoning.summary: "auto"`, including when
+  effort is unset. OpenAI, OpenRouter, and configured compatible endpoints use
+  this shared adapter. An endpoint that rejects the option returns its provider
+  error; the adapter does not retry without it.
 - `Store: false` plus `Include: [reasoning.encrypted_content]` so reasoning
   survives across turns statelessly. A turn may carry SEVERAL reasoning items,
   each with `encrypted_content` bound to its own `rs_…` item id, so the adapter
@@ -138,7 +142,18 @@ per-sub-agent-provider switching all treat it as data. Its wire-divergences (the
 REQUIRED `max_tokens`, the model-class-dependent extended-thinking config which is ON
 and model-aware, and the `(thinking,signature[],redacted)` reasoning-replay list packed
 into the opaque `Message.Reasoning` STRING) are absorbed at adapter-construction, not in
-the DTO. `UseMock` short-circuits to a single synthetic
+the DTO. Anthropic model listings preserve the difference between missing thinking
+metadata and explicit unsupported metadata. Explicitly reported adaptive or manual
+support selects the corresponding mode; an explicit unsupported result omits
+Mecatl's thinking field. When metadata is missing, the Messages adapter uses
+model-ID fallback: Claude 5 Opus, Sonnet, Fable, and Mythos use adaptive thinking with
+summarized display, including exact `anthropic/claude-...` OpenRouter IDs. Older
+thinking-capable models retain their manual-budget mode, and incapable models
+omit thinking. A configured reasoning effort remains on the request when the
+listing omits thinking support; an explicit unsupported declaration drops that
+effort. The public inventory's boolean reasoning flag stays false for unknown
+support and is not the effort gate. A failed listing or missing exact model entry
+retains the catalog floor and this request fallback. `UseMock` short-circuits to a single synthetic
 `mock` entry (offline). The zero-keys case is the named, actionable `errNoProvider`.
 
 ### Operator-defined OIDC providers

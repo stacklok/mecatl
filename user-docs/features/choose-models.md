@@ -473,6 +473,12 @@ mapping belongs in the
 [configuration reference](/reference/configuration.md#reasoning-effort), not in
 the selection workflow.
 
+OpenAI Responses providers request display summaries automatically, regardless
+of your effort setting. A model can complete without producing a summary. If a
+compatible endpoint rejects the summary request, Mecatl reports the provider
+error rather than retrying with a different request. Anthropic Messages and
+Chat Completions have their own request behavior.
+
 ## API journey
 
 API clients can either omit provider/model fields and use the server defaults,
@@ -526,6 +532,12 @@ including:
 - image-input support;
 - reasoning support; and
 - context limit when known.
+
+The reasoning flag is boolean: `false` can mean that an Anthropic-compatible
+model listing did not report thinking support, not that the model explicitly
+rejects it. Mecatl keeps a configured reasoning effort when support is unknown;
+an explicit unsupported declaration suppresses it. A compatible endpoint can
+still reject the request, in which case Mecatl reports the provider error.
 
 They do not expose API keys or provider-private credentials. The inventory is
 server-specific and depends on the providers and credentials configured at startup.

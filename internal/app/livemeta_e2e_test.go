@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/provider/anthropic"
 )
 
@@ -91,6 +92,56 @@ func TestAnthropicLiveResolverPicksUpCeiling(t *testing.T) {
 	}
 	if got := reg.meta.contextWindowFor(providerAnthropic, "claude-opus-4-8"); got != 1_000_000 {
 		t.Errorf("live contextWindowFor(opus) = %d, want 1000000", got)
+	}
+}
+
+// TestADR_0016_MissingThinkingCapabilityUsesModelFallback proves incomplete
+// custom Anthropic discovery remains unknown so the request adapter can use its
+// model-prefix floor rather than treating omitted metadata as unsupported.
+func TestADR_0016_MissingThinkingCapabilityUsesModelFallback(t *testing.T) {
+	for _, capabilities := range []string{
+		``,
+		`"capabilities":{}`,
+		`"capabilities":{"thinking":{}}`,
+		`"capabilities":{"thinking":{"supported":true}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"enabled":{}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":false}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":false},"enabled":{"supported":false}}}}`,
+	} {
+		t.Run(capabilities, func(t *testing.T) {
+			body := `{"data":[{"id":"claude-opus-4-8","type":"model","display_name":"Claude Opus 4.8","created_at":"2026-01-01T00:00:00Z","max_input_tokens":1000000,"max_tokens":128000` + func() string {
+				if capabilities == "" {
+					return ""
+				}
+				return "," + capabilities
+			}() + `}],"has_more":false}`
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+			})}
+			cfg := Config{
+				ProviderDefinitions: permconfig.ProviderDefinitions{"gateway": {
+					ID: "gateway", BaseURL: "https://gateway.example", DefaultModel: "claude-opus-4-8", APIFlavor: "anthropic-messages", Auth: permconfig.ProviderAuth{Method: "api_key"},
+				}},
+				CustomProviderAPIKeys: map[string]string{"gateway": "test-key"},
+				liveModelHTTPClient:   client,
+			}
+			reg, err := buildProviderRegistry(isolateConfig(t, cfg), fakeEnv(nil))
+			if err != nil {
+				t.Fatalf("buildProviderRegistry: %v", err)
+			}
+			discoverAllModels(t, reg)
+			_, _, known := reg.meta.thinkingFor("gateway", "claude-opus-4-8")
+			if known {
+				t.Fatal("missing thinking capability metadata became known unsupported; want prefix fallback")
+			}
+			fragment := ""
+			if capabilities != "" {
+				fragment = "," + capabilities
+			}
+			exerciseAnthropicThinkingComposition(t, "claude-opus-4-8", fragment, "adaptive", "high", false)
+		})
 	}
 }
 
