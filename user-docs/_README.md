@@ -10,7 +10,9 @@ Before drafting or substantively editing a page, use the repository's
 [style guide](_STYLE.md). It is the
 canonical source for prose, voice, terminology, and formatting. This file
 remains canonical for information architecture, content ownership, links, and
-verification.
+verification. Coding agents should also use the repository's
+[`tech-writer` skill](../.claude/skills/tech-writer/SKILL.md) for Diataxis mode
+guidance and write-time anti-patterns.
 
 ## Find the right place
 
