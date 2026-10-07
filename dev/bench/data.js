@@ -276054,6 +276054,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791394544153,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9657d99c8934acc2c3910127487c465c37f4faed",
+          "message": "feat(studio): skills inventory, detail page, and learned-skill review (#2154)\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T19:33:39+02:00",
+          "tree_id": "39bf07f159b36a723c42155d50720ee859cfcd0f",
+          "url": "https://github.com/stacklok/mecatl/commit/9657d99c8934acc2c3910127487c465c37f4faed"
+        },
+        "date": 1791395271623,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -400291,6 +400325,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791395268427,
+  "lastUpdate": 1791395272335,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
