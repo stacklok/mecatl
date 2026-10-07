@@ -1,223 +1,130 @@
-# The ports (`engine/port`)
+# The ports
 
-> Part of the [mecatl architecture guide](../architecture.md).
+A port is an interface the agent loop or the server consumes and an adapter
+implements. Ports live in [`engine/port`](../../engine/port), which imports only the
+standard library and the domain packages (`session`, `tool`, `prompt`, `governance`).
+The loop receives its ports by injection through `agent.Deps`, so the same loop runs
+against a real provider and disk in production and against in-memory fakes in tests.
 
-**What this covers:** the port interfaces the loop consumes (`LLMProvider`, `SessionStore`, `PermissionPolicy`, `HookRunner`, `EventSink`, `EventLog`, `ToolCallRecorder`, `Diagnostics`, `Clock`, `SessionLease`), the `LLMRequest`/`Chunk` stream types, and the `tool.Workspace`/`FileSystem`/`ReadLedger`/`CommandRunner` seam (which lives in `engine/tool` to break a port↔tool cycle).
+## Why the ports stay narrow
 
-**Prerequisites:** [the domain model](domain-model.md) — the value objects the ports carry.
+`engine/` is a separately published module, and its ports are its public extension
+points. Two rules follow.
 
-**Follow-on:** [the agent loop](agent-loop.md) — the loop that consumes these ports.
+First, ports stay provider-neutral. `port.LLMRequest` carries exactly four fields
+(system prompt, messages, tool specs, and an opaque model string), and
+`llm_neutral_test.go` fails if a field is added. Provider-specific options, such as a
+thinking budget or a base URL, belong on the adapter's constructor because the loop
+must never branch on provider.
 
-Small interfaces, `context.Context` first. Each has a fake adapter so the loop
-runs with no network and no disk.
+Second, adding a method to a published interface breaks every implementer. New
+behavior arrives as a separate optional interface that the consumer discovers by type
+assertion, for example `HookApprovalLearner`, `RunAwareToolCallRecorder`,
+`PrunableStore`, `SessionCreator`, and `CursorEventLog`. When a capability is missing,
+the feature is either skipped or reported as unsupported. A decorator must forward the
+optional interfaces and capability signals of what it wraps; an `LLMProvider`
+decorator, for example, must forward `Capabilities`. See
+[`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) for the stability rules.
 
-| Port | Responsibility | Signature (verbatim) |
-|---|---|---|
-| `LLMProvider` (`llm.go`) | provider-agnostic model call; streams neutral chunks | `Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)` · `Capabilities() ProviderCapabilities` (multimodal-input flags; decorators must forward the inner provider's) |
-| `SessionStore` (`store.go`) | persist/retrieve session state | `Save(ctx context.Context, s *session.Session) error` · `Load(ctx context.Context, id session.SessionID) (*session.Session, error)` — a store may additionally implement the optional `PrunableStore` (`List`/`Delete`) for retention ([observability & persistence](observability.md)). `Load` carries a documented **event-sourced reconstruction contract** (the `store.go` doc-comment + `engine/COMPATIBILITY.md` "Session reconstruction contract"): a host whose system of record is an append-only event log may implement `Load` by FOLDING its `EventLog` (plus out-of-band creation metadata, `engine/adapter/eventsource.SessionMeta`) into a `*session.Session` via `engine/adapter/eventsource.Fold`, the reference implementation. The one residual gap is REPLAY FIDELITY — the opaque assistant-replay fields (`Message.Reasoning`, `Message.ProviderPhase`, `ToolCall.ItemID`) are not on the event stream, so a pure fold is byte-identical-replay faithful only for non-reasoning (plain-chat) providers (#115, ADR 0038) |
-| `HookRunner` (`hookrunner.go`) | run a lifecycle hook → outcome (`hookexec` maps an external process exit code; `modelhook` maps a quarantined checker model's verdict — block/sanitize/advisory) | `Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)` |
-| `PermissionPolicy` (`permission.go`) | deny→ask→allow across merged scopes; returns auxiliary model usage from evaluation with the decision | `Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) PermissionResult` (`PermissionResult{Decision governance.PermissionDecision, Usage session.AuxiliaryUsage}`; ws is the READ-ONLY discovery root for file-based permission config, issue #13; nil = no project config) · `Learn(sessionID session.SessionID, c session.ToolCall)` (the allow-**always** verdict; lowest scope, never overrides a deny or plan mode) |
-| `EventSink` (`log.go`) | relay loop events to the API stream (mirrors live) | `Emit(ctx context.Context, ev session.Event)` |
-| `EventLog` (`eventlog.go`) | DURABLE per-session event timeline, distinct from `EventSink` — a later consumer reads it back (cloud-native Phase 3). The loop NEVER calls it; persistence lives at the relay. It also records the log-only `EvUserPrompt` so user-role turns reconstruct under the event-sourced fold | `Append(ctx, id, ev) error` (must be durable before returning nil; at-most-once, no dedup) · `Read(ctx, id) iter.Seq2[session.Event, error]` (append order, streamable) |
-| `ToolCallRecorder` (`log.go`) | structured per-tool AUDIT (distinct from `Diagnostics`) | `ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration)` |
-| `PermissionStore` (`permission.go`) | persist/replay per-session learned allow-always verdicts | `Save`/`Load` of learned rules (powers the verdict-replay consumer, [observability & persistence](observability.md)) |
-| `Diagnostics` (`diagnostics.go`) | injected operational-logging seam (NO global slog in `engine/` or `internal/`) | `Log(ctx, level Level, msg string, args ...any)` · `With(args ...any) Diagnostics` |
-| `Clock` (`clock.go`) | abstract wall clock | `Now() time.Time` — the engine core is now FULLY clock-injectable: every core wall-clock read flows through this port (`Engine.now()` for the loop), enforced by the AST guard `engine/arch/clock_test.go` that forbids `time.Now`/`Since`/`Until` in `CorePackages`, so an embedding host can drive the engine deterministically (#116) |
-| `SessionLease` (`lease.go`) | OPTIONAL cross-process single-writer seam (multi-replica readiness, cloud-native Phase 4) — discovered by type assertion like `PrunableStore`, nil otherwise (byte-identical no-lease default); the loop never imports it | `Acquire(ctx, id, owner) (Lease, error)` · `Renew(ctx, l) (Lease, error)` · `Release(ctx, l) error` (`ErrLeaseHeld` = a live competitor, `ErrLeaseUnsupported` = backend can't lease) |
+## The main ports
 
-`SessionStore` may additionally implement `PrunableStore` (`List`/`Delete`) for child-session retention ([observability & persistence](observability.md)). The interfaces above are the ones the loop consumes directly; several also have **optional capability seams** (`PrunableStore`, `ScheduleStore`, the `PermissionStore`/`EventLog`/`SessionLease` siblings) discovered by type assertion and nil-safe when absent, so the count of *required* ports stays small and a backend wires only what it needs. The loop consumes every port through injection only.
+| Port | What it abstracts |
+| --- | --- |
+| `LLMProvider` | One streaming model call returning provider-neutral `Chunk`s, plus the input modalities the provider accepts. |
+| `SessionStore` | Saving and loading a session. Not-found wraps `ErrSessionNotFound`. |
+| `PermissionPolicy` | Deny, then ask, then allow evaluation of a tool call, and learning an "allow always" verdict. |
+| `AuthorityEvaluator` | Authorizing a tool call against the session's carried capability set; it can only narrow that set. |
+| `HookRunner` | Running a lifecycle hook and returning its outcome. |
+| `EventSink` | Relaying live events to the API stream. |
+| `EventLog` | The durable, append-only event timeline per session. |
+| `ToolCallRecorder` | Per-tool-call audit records. |
+| `Diagnostics` | Operational logging, injected instead of a global logger. |
+| `Clock` | The wall clock. |
+| `SessionLease` | Optional cross-process single-writer exclusion for one session. |
+| `SessionLiveness` | Keeping engine-owned child sessions marked live for their whole lifecycle. |
+| `ScheduleStore` | The registry of scheduled tasks, with an atomic, at-most-once `Claim` per fire. |
+| `DeliveryQueue` | Durable delivery of scheduled-task results into the session that created the schedule. |
 
-The model-call request and stream types (`llm.go`):
+Some contracts matter beyond their signatures:
 
-```go
-type LLMRequest struct {
-    System   prompt.Layered    // stable prefix + volatile suffix
-    Messages []session.Message
-    Tools    []tool.ToolSpec
-    Model    string
-}
+- `PermissionPolicy` is implemented by `engine/adapter/permpolicy`, which wraps the
+  session-free `governance.Evaluator`. Governance cannot import `session`, so the
+  session-typed adapter sits outside it. `PermissionStore` holds learned rules.
+- `SessionStore.Load` may rebuild a session by folding an event log;
+  `engine/adapter/eventsource.Fold` is the reference. A fold restores the structure but
+  not the opaque provider replay fields, so it replays byte-for-byte only for
+  providers that do not use them.
+- The loop emits events but never calls `EventLog` or `SessionLease`: the server
+  relay persists events, and the server run-entry path holds the lease. The schedule
+  tools reach `ScheduleStore` only through the server's `ScheduleManager`.
+- `EventSink` receives an already-cancelled context for terminal events, so a sink
+  must not drop events because the context is done.
+- `Diagnostics` is separate from audit and events; an unset sink is `NopDiagnostics`.
+- Every wall-clock read in core packages goes through `Clock`, enforced by
+  `engine/arch/clock_test.go`, so a host can drive the engine deterministically.
 
-type ChunkKind int
-const (
-    ChunkText ChunkKind = iota
-    ChunkReasoning     // display-only reasoning summary delta
-    ChunkReasoningItem // opaque reasoning REPLAY blob → Message.Reasoning
-    ChunkToolCall
-    ChunkUsage
-    ChunkDone
-    ChunkPhase         // opaque phase marker → Message.ProviderPhase (issue #46)
-)
+## The tool contract
 
-type Chunk struct {
-    Kind     ChunkKind
-    Text     string             // text / reasoning summary / replay blob / phase marker, per Kind
-    ToolCall *session.ToolCall  // on ChunkToolCall
-    Usage    *session.Usage     // on ChunkUsage
-    Stop     session.StopReason // on ChunkDone
-}
-```
+`tool.Tool` has three methods. `Spec` returns the name, description, and JSON schema
+the model sees. `ReadOnly` decides scheduling: read-only calls in one turn may run in
+parallel, while mutating calls run one at a time. `Execute` receives the call and a
+`tool.Environment`. A tool-level failure returns a result with `IsError` set, which
+the model sees and can recover from; a Go error means the harness itself failed.
 
-The `ChunkReasoning` (display summary) vs `ChunkReasoningItem` (replay blob)
-split is deliberate and provider-neutral — Anthropic's thinking delta maps to
-the former, its `(thinking,signature)` replay token to the latter; they must
-never be conflated. `ChunkPhase` follows the same opaque-replay discipline.
+`tool.Catalog` is the name-to-tool registry and projects it per permission mode: plan
+mode exposes only read-only tools. Optional marker interfaces adjust that projection:
+`PlanOnly` tools appear only in plan mode, `Disclosable` tools advertise a short spec
+until the model loads the full one, and `DispatchSerial` makes a read-only call run
+alone.
 
-### The tool contract and the FS seam (`engine/tool`)
+## Environment, Workspace, and the read ledger
 
-```go
-type Tool interface {
-    Spec() ToolSpec
-    ReadOnly() bool
-    Execute(ctx context.Context, in session.ToolCall, env Environment) (session.ToolResult, error)
-}
-```
+`FileSystem`, `Workspace`, and `Environment` live in `engine/tool`, not `engine/port`.
+The port package already imports `tool`, because `LLMRequest` carries `tool.ToolSpec`
+values. `Tool.Execute` takes an `Environment`, so defining these types in `port` would
+make the two packages import each other.
 
-`ToolSpec{Name, Description, Schema json.RawMessage}` is what the model sees;
-descriptions are documentation (gauntlet #10). `Catalog` (`catalog.go`) is a
-name→Tool registry with `Register`/`MustRegister`/`Lookup`/`Tools`. Its
-`Specs(mode)` and `Available(mode)` apply **plan-mode filtering at the catalog
-level**: in `ModePlan` only `ReadOnly()` tools are exposed, ordered by name.
+A `tool.Environment` is an immutable bundle for one namespace: an `EnvironmentRef`, a
+required `Workspace`, a required `ReadLedger`, and an optional `CommandRunner`. It
+carries no policy, hooks, or MCP, so it is not a service locator. A fork gets a new
+`Environment` from an `EnvironmentForker`, always with a fresh ledger.
 
-`FileSystem`, `Workspace`, `ReadLedger`, and `Environment` live here (not in `port`) to break
-the `port↔tool` cycle. `Tool.Execute` takes a `tool.Environment` (ADR 0211) — an
-immutable capability bundle carrying a content-only `Workspace` (`env.Workspace()`),
-a separately selected non-null `ReadLedger` (`env.ReadLedger()`), an optional bound
-`CommandRunner` (`env.CommandRunner()`; nil when the namespace has no shell), and a
-backend identity ref (`env.Ref()`). File-system tools obtain the Workspace and ledger;
-the Shell tool obtains the runner and surfaces `ErrNoShell` when it is nil.
-`Workspace` scopes all paths to one root, rejects escapes, exposes the read/search
-surface, and carries the versioned content-mutation protocol from
-ADR 0208. It exposes no ledger operation.
-`ReadVersion` returns content plus an opaque `FileVersion`; the narrow persistence
-codec rejects an invalid zero version while preserving valid empty opaque tokens.
-Agent-facing Read records the exact version in `env.ReadLedger()` under the I/O-free
-lexical `LedgerKey`. Lookup distinguishes a found token, ordinary absence, and an
-unavailable/corrupt backend. Edit and existing-file Write fail closed on lookup errors,
-compare found evidence with a current version-bearing read, then finish with conditional
-`ReplaceFile`; new-file Write uses create-only `CreateFile`. Public `Workspace` has no
-unconditional Write capability. A successful create/replace records its returned version;
-if that record fails, the tool reports the successful content mutation and that no new
-evidence was persisted. Existing evidence retains only its ordinary exact-version meaning.
-Default Environment composition supplies a fresh `engine/adapter/memledger`; durable
-selection does not change the content backend. Every child receives a fresh ledger:
-isolated children pair it with the fork Workspace, while direct-write/base-sharing
-children retain the exact parent content backend and runner through any stricter
-child-authority Workspace view; storage is never reconstructed from `Root()`. Redisstore provides an optional
-durable ledger as one validated hash per session, borrowing the Store lifecycle; both
-canonical session-deletion scripts remove it atomically with the other sidecars, and
-`DeleteReadLedger` remains an idempotent ledger-only reset. It is off by default;
-`mecak8s --redis-read-ledger` (Helm `redis.readLedger.enabled`) opts in. See ADR 0298.
-Restarting the process loses in-memory overrides; a restarted session
-re-derives its Environment through the same rehydration path (no-fs profile,
-ACP adapter reconnect). `EnvironmentRef` is a durable snapshot field. At run
-entry the server reattaches the exact persisted ref through the required
-`server.Config.PlacementProvider`, which must also implement
-`server.PlacementReattacher`; a provider without that capability fails closed and
-`Bind` is never used as a fallback (`internal/adapter/server/placement.go`). An
-invalid or zero ref is rejected (`ErrInvalidPlacementSelection`), and a binding
-whose ref differs from the request is discarded.
+`Workspace` is rooted and rejects path escapes. Agent-facing reads return content
+plus an opaque `FileVersion`. Writes are either create-only `CreateFile` or
+conditional `ReplaceFile`, which fails when the file changed since the caller's read.
+There is no unconditional write, and a zero version never matches. These operations
+are atomic for calls through the same backend; `osfs` also locks across instances in
+one process. A process that writes outside the Workspace, such as a shell command, can
+still race a replace, so this is best-effort compare-and-swap, not kernel locking.
 
-`CreateFile` and the compare-plus-mutation in `ReplaceFile` are atomic for
-concurrent calls through the same live Workspace/backend handle. ACP's
-instance-local mutex satisfies that base contract. osfs deliberately provides a
-stronger process-wide guarantee: it canonicalizes the physical target (or the
-physical parent plus basename for a missing create), so symlink aliases share a
-lock stripe across Workspace instances, and performs create through confined
-`O_CREATE|O_EXCL`. Arbitrary POSIX writers that bypass the Workspace seam do not
-participate, so local osfs is not kernel-level atomic replacement. ACP removes
-the exact confined requested path from structured editor errors, then accepts only
-anchored normalized absence shapes; generic and structured non-absence failures
-fail closed. A future remote backend must
-provide true backend CAS.
+`ReadLedger` stores the read-before-edit evidence separately from file content. A
+lookup reports found, absent, or unavailable, and Edit and Write fail closed when the
+ledger is unavailable.
 
-**Command execution is a separate seam, bound to one namespace at construction.**
-`tool.CommandRunner` (`Run(ctx, command) (CommandResult, error)`) is the only
-chokepoint for shell execution; the agent loop never references it, and only the
-Shell tool depends on it. A runner is BOUND to a single namespace at construction
-(no per-call `workdir` — the command's cwd always matches the `Workspace` the tool
-executes against). That makes Shell — and therefore *all* command
-execution — optional in the catalog: `NewShellTool()` is registered only
-when a runner is configured, and `tools.Register`
-deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
-`CommandRunner` (output-capped, context-bounded, process-group-killed on
-cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
-shell-less deployment simply omits Shell, and an OS sandbox would wrap this seam.
-ADR 0211 implements the
-runtime seam: a coding agent runs in an execution environment (`tool.Environment`)
-whose `Workspace`, separately selected `ReadLedger`, and bound `CommandRunner` address one namespace and evidence scope. The
-`tool.Environment` carries identity (`session.EnvironmentRef`) plus those three
-capabilities; the forker/merger are `tool.EnvironmentForker`/
-`tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
-governance remains outside. `EnvironmentRef` is a durable snapshot field, and the
-placement provider's `Reattach` restores a live `Environment` for it (see above). The
-version-aware file-mutation foundation is ADR 0208.
+`CommandRunner` is bound to one namespace at construction, so a command's working
+directory always matches the Workspace. Only the Shell tool uses it, and a nil runner
+yields `ErrNoShell`. Shell must register as `tool.ShellToolName` because the permission
+evaluator applies its compound-command checks to that name only.
 
-The production microVM adapter places execution in one repository-scoped VM generation
-per authenticated local operator and canonical Git common directory. Sessions and isolated
-children attach as distinct logical `EnvironmentRef`/worktree pairs inside that generation;
-direct-write children reuse the parent attachment. Closing an attachment unregisters and
-closes only its process-local data-plane handles and worktree lifecycle. It does not stop the
-repository VM, remove the private rootfs or declared caches, or affect sibling attachments.
+## Reference adapters and conformance suites
 
-The built-in hosted topology defaults to unrestricted guest IPv4 egress. The guest IPv6
-stack remains enabled, but go-microvm hosted networking does not route external IPv6, so
-external IPv6 is explicitly unsupported rather than presented as dual-stack connectivity.
-Operators may select deny-all or hostname/port/protocol allowlisting as a tightening: that
-mode filters IPv4, disables guest IPv6, and aborts readiness if either enforcement step fails.
-Guest policy contains guest processes only; host-side LLM providers, WebFetch, WebSearch,
-MCP, hooks, OCI discovery, and telemetry remain outside it.
+`engine/adapter` holds offline reference adapters: `mockllm` replays scripted model
+turns, `memfs` is an in-memory Workspace with a programmable command runner,
+`memstore` is the in-memory default `SessionStore`, and `memledger`, `memlease`, and
+`memschedulestore` cover their ports. `nofs` is the workspace for sessions with no
+filesystem: reads find nothing and writes fail loudly.
 
-The daemon persists one flock-serialized singleton registry record and private rootfs per
-repository key, plus private durable metadata for each logical attachment. Live VM,
-hosted-network, listener, capability-issuer, guest-registration, Workspace, and runner
-handles remain process-local. Exact reattachment is therefore supported only while all of
-those dependencies remain live in the current daemon. After daemon restart, readiness and
-resolve fail promptly while preserving the singleton record, rootfs, and worktrees; the MVP
-never silently provisions a replacement or destroys an uncertain resource. Durable
-attachment metadata still supports bounded status and exact logical deletion after restart.
+Each port with several implementations has a shared conformance suite, such as
+`storeconformance`, `fsconformance`, `eventlogconformance`, `leaseconformance`,
+`ledgerconformance`, and `scheduleconformance`. The in-memory reference and the
+production adapters (for example `osfs`, `jsonlstore`, `redisstore`, and
+`k8slease`) run the same suite. That shared suite is why tests use the reference
+adapters instead of hand-written mocks: they are offline and deterministic, and they
+behave like production because both pass the same contract.
 
-`tool.MemoryStore` and `tool.EnvironmentForker` live alongside it for the same
-layering reason (the tools that need them depend on the interface, not a
-`port`).
+## Related
 
-**The Shell tool itself is the agent loop's own** (`engine/agent/bashtool.go`,
-`agent.NewShellTool`), not the fstools adapter's: the foreground half is
-byte-identical to the fstools body, and `background: true` detaches the command
-as a run-scoped background job on the parent run's child registry — an
-agent-package type fstools cannot import. It registers under the literal name
-`"Shell"` (`tool.ShellToolName`) because the permission evaluator special-cases
-that name (the compound-command split, the plan-mode read-only gate, rule
-learning) — a second tool name would silently bypass the bash gate, so any shell
-affordance must register under the gated name or extend the gate. A background
-call returns immediately with a `bashcmd-<callID>` job id and runs detached in
-the REAL workspace (no isolation — its effects may interleave with the model's
-own edits, and the description says so); the read-only **`ShellStatus`** tool
-(`engine/agent/bashstatus.go`, registered iff Shell is, so Shell-enabled child catalogs include `ShellStatus`)
-is the sole status/collect/cancel channel — no args → the run's job roster (ids
-+ state + stop only), `job_id` → the command + retained output tail (live) or
-the exactly-once collected result (done), `wait_ms` (≤120s) parks, `cancel`
-signals the job's context. Permissions are identical to foreground Shell (the
-start is the ask; nothing re-asks mid-run), and a job still live at run end is
-cancelled and joined by the same drain the background subagents use — a job is
-RUN-scoped, never session-scoped. Streaming the job's output is the OPTIONAL
-`tool.CommandStreamer` capability (`RunStreaming(ctx, command, out
-io.Writer) (exitCode int, err error)` — the osfs runner implements it over the
-same spawn/wait tail as `Run`; a runner without it declines background calls
-honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail
-ring (`engine/agent/tailbuffer.go`), so `ShellStatus` shows the RECENT output a
-head-capped capture would have lost. See
-ADR 0201 and
-[subagents & teams](subagents-and-teams.md) for the registry family mechanics.
-
-## Prerequisites
-
-- [The domain model — what the ports carry](domain-model.md)
-
-## Follow-on reading
-
-- [The agent loop — the ports' consumer](agent-loop.md)
-- [Providers — the LLMProvider port's adapters](providers.md)
-
----
-
-[← Architecture guide](../architecture.md)
+- [The domain model](domain-model.md)
+- [The agent loop](agent-loop.md)
+- [Providers](providers.md)
+- [Extension points (public docs)](../../user-docs/building/extension-points/index.md)
