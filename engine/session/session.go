@@ -433,6 +433,7 @@ type Session struct {
 	// the sole opaque comparator for broker process-local authority.
 	brokerCredentialCustody *BrokerCredentialCustody
 	brokerAccess            *BrokerAccess
+	brokerPrepared          *BrokerHostAttempt
 	brokerAttemptCompleted  BrokerAttempt
 	brokerAttemptRestored   bool
 	// stop holds the terminal stop reason once the session has stopped.

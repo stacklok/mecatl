@@ -23,6 +23,8 @@
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
     method func (*Session).CompleteWorkspaceEnrollmentWithBinding(pending PendingWorkspaceEnrollment, binding ExternalBinding, exactTools []string) error
     method func (*Session).CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending PendingWorkspaceEnrollment, ref BrokerSessionRef, catalogue BrokerCatalogueRef, connection BrokerConnectionRef, expires time.Time, names []string) error
+    method func (*Session).ContinueBrokerInvocation(call ToolCall) (BrokerAttempt, error)
+    method func (*Session).DispatchBrokerInvocation(attempt BrokerAttempt) error
     method func (*Session).Fail() error
     method func (*Session).FailedStepRetryPending() (RetryMetadata, bool)
     method func (*Session).FailureMetadata() RetryMetadata
@@ -35,14 +37,17 @@
     method func (*Session).LastError() string
     method func (*Session).LatestContextOccupancy() (ContextOccupancy, bool)
     method func (*Session).LimitTripped() (StopReason, bool)
+    method func (*Session).ParkBrokerInvocation(attempt BrokerAttempt) error
     method func (*Session).PauseForApproval(ask PendingAsk) error
     method func (*Session).PauseForAuthorization(pending PendingAuthorization) error
     method func (*Session).PendingAsk() (PendingAsk, bool)
     method func (*Session).PendingAuthorization() (PendingAuthorization, bool)
     method func (*Session).PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool)
+    method func (*Session).PrepareBrokerInvocation(ref BrokerSessionRef, catalogue BrokerCatalogueRef, call ToolCall, now time.Time) (BrokerAttempt, error)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
     method func (*Session).RecordAuxiliaryUsage(usage AuxiliaryUsage)
+    method func (*Session).RecordBrokerInvocationResult(attempt BrokerAttempt, id ToolCallID) error
     method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
     method func (*Session).RecordHarnessPrompt(text string) error
     method func (*Session).RecordLastError(cause string) error
@@ -140,6 +145,9 @@ const BlockImage BlockKind = "image"
 const BlockResourceLink BlockKind = "resource_link"
 const BlockStructuredContent BlockKind = "structured"
 const BlockText BlockKind = "text"
+const BrokerAttemptCompleted BrokerAttemptDisposition = "completed"
+const BrokerAttemptNotDispatched BrokerAttemptDisposition = "not_dispatched"
+const BrokerAttemptUnknown BrokerAttemptDisposition = "unknown"
 const BrokerRecoveryReferenceBytes untyped int = 43
 const CompactionSummaryMarker untyped string = "[conversation compacted]"
 const EnvKindLocal EnvironmentKind = "local"
@@ -310,6 +318,7 @@ const VerdictStringAllowAlways untyped string = "allow_always"
 const VerdictStringAllowOnce untyped string = "allow_once"
 const VerdictStringDeny untyped string = "deny"
 func ActivityOf(messages []Message) ActivityState
+func BrokerCallDigest(call ToolCall) [32]byte
 func CanonicalNetworkAttempt(in NetworkAttemptPayload, id SessionID, runSerial int64, turn int) (NetworkAttemptPayload, bool)
 func ClampTitle(s string) string
 func CloneMessages(msgs []Message) []Message
@@ -381,8 +390,9 @@ type AuthorizationResolution struct{}
 type AuthorizationStatus string
 type AuxiliaryUsage struct{Buckets map[UsageKind]TokenUsage}
 type BlockKind string
-type BrokerAccess struct{Session BrokerSessionRef "json:\"session\""; Connection BrokerConnectionRef "json:\"connection,omitempty\""; Catalogue BrokerCatalogueRef "json:\"catalogue\""; ExpiresAt time.Time "json:\"expires_at\""; Withdrawn bool "json:\"withdrawn,omitempty\""; IndependentTools []string "json:\"independent_tools\""; BrokerTools []string "json:\"broker_tools\""; Current *BrokerHostAttempt "json:\"current,omitempty\""}
+type BrokerAccess struct{Session BrokerSessionRef "json:\"session\""; Connection BrokerConnectionRef "json:\"connection,omitempty\""; Catalogue BrokerCatalogueRef "json:\"catalogue\""; ExpiresAt time.Time "json:\"expires_at\""; Withdrawn bool "json:\"withdrawn,omitempty\""; Attempted []ToolCallID "json:\"attempted,omitempty\""; Pending ToolCallID "json:\"pending,omitempty\""; IndependentTools []string "json:\"independent_tools\""; BrokerTools []string "json:\"broker_tools\""; Current *BrokerHostAttempt "json:\"current,omitempty\""}
 type BrokerAttempt struct{ID string "json:\"id\""}
+type BrokerAttemptDisposition string
 type BrokerCatalogueRef string
 type BrokerConnectionRef string
 type BrokerCredentialCustody struct{}

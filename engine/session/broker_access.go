@@ -15,6 +15,8 @@ type BrokerAccess struct {
 	Catalogue        BrokerCatalogueRef  `json:"catalogue"`
 	ExpiresAt        time.Time           `json:"expires_at"`
 	Withdrawn        bool                `json:"withdrawn,omitempty"`
+	Attempted        []ToolCallID        `json:"attempted,omitempty"`
+	Pending          ToolCallID          `json:"pending,omitempty"`
 	IndependentTools []string            `json:"independent_tools"`
 	BrokerTools      []string            `json:"broker_tools"`
 	Current          *BrokerHostAttempt  `json:"current,omitempty"`
@@ -35,6 +37,7 @@ func (s *Session) BrokerAccess() (BrokerAccess, bool) {
 		current := *a.Current
 		a.Current = &current
 	}
+	a.Attempted = slices.Clone(a.Attempted)
 	a.IndependentTools = slices.Clone(a.IndependentTools)
 	a.BrokerTools = slices.Clone(a.BrokerTools)
 	return a, true
@@ -49,10 +52,12 @@ func (s *Session) RestoreBrokerAccess(a BrokerAccess) error {
 		current := *a.Current
 		a.Current = &current
 	}
+	a.Attempted = slices.Clone(a.Attempted)
 	a.IndependentTools = slices.Clone(a.IndependentTools)
 	a.BrokerTools = slices.Clone(a.BrokerTools)
 	s.brokerAccess = &a
 	s.brokerAttemptCompleted = BrokerAttempt{}
+	s.brokerPrepared = nil
 	s.brokerAttemptRestored = a.Current != nil
 	return nil
 }
@@ -77,8 +82,11 @@ func (s *Session) validateBrokerAccess(a BrokerAccess, authority Authority) erro
 			return errors.New("session: broker authority projection mismatch")
 		}
 	}
-	if !validBrokerReference(string(a.Session)) || !validBrokerReference(string(a.Catalogue)) || (a.Connection != "" && !validBrokerReference(string(a.Connection))) || (len(a.BrokerTools) > 0 && a.Connection == "") || a.ExpiresAt.IsZero() || s.ExternalBinding != "" || s.brokerCredentialCustody != nil || !s.authorityBound {
+	if !validBrokerReference(string(a.Session)) || !validBrokerReference(string(a.Catalogue)) || (a.Connection != "" && !validBrokerReference(string(a.Connection))) || (len(a.BrokerTools) > 0 && a.Connection == "") || a.ExpiresAt.IsZero() || len(a.Attempted) > 64 || s.ExternalBinding != "" || s.brokerCredentialCustody != nil || !s.authorityBound {
 		return errors.New("session: invalid broker access")
+	}
+	if len(a.Attempted) != 0 || a.Pending != "" {
+		return errors.New("session: obsolete broker attempt state; create a new session")
 	}
 	if err := validateBrokerHostAttempt(a); err != nil {
 		return err

@@ -86,6 +86,8 @@ type dispatchPark struct {
 	call          session.ToolCall
 	deferred      []session.ToolCall
 	requester     tool.AuthorizationRequester
+	attempt       session.BrokerAttempt
+	zeroDispatch  bool
 	fatal         error
 }
 
@@ -104,6 +106,7 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 	}
 
 	i := 0
+	recorded := 0
 	for i < len(calls) {
 		c := calls[i]
 		t, known := e.lookupTool(r, c.Name)
@@ -118,13 +121,19 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 		if !readBatchable(t, known, c) {
 			res, park, cancelled := e.runOne(ctx, r, sess, env, turnIdx, c, t, known, enqueue)
 			if cancelled {
-				return completedDispatchResults(calls[:i], results), nil, true
+				return completedDispatchResults(calls[recorded:i], results), nil, true
 			}
 			if park != nil {
 				park.deferred = append([]session.ToolCall(nil), calls[i+1:]...)
-				return orderedDispatchResults(calls[:i], results), park, false
+				return orderedDispatchResults(calls[recorded:i], results), park, false
 			}
 			results[c.ID] = res
+			if _, broker := t.(tool.DurableBrokerInvocation); broker {
+				if err := e.recordBrokerResults(ctx, sess, orderedDispatchResults(calls[recorded:i+1], results)); err != nil {
+					return nil, &dispatchPark{call: c, fatal: err}, false
+				}
+				recorded = i + 1
+			}
 			i++
 			continue
 		}
@@ -153,17 +162,13 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 				e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
 				results[remaining.ID] = result
 			}
-			return completedDispatchResults(calls, results), nil, true
+			return completedDispatchResults(calls[recorded:], results), nil, true
 		}
 		i = j
 	}
 
 	// Re-assemble in original call order.
-	ordered := make([]session.ToolResult, len(calls))
-	for k, c := range calls {
-		ordered[k] = results[c.ID]
-	}
-	return ordered, nil, false
+	return orderedDispatchResults(calls[recorded:], results), nil, false
 }
 
 func completedDispatchResults(calls []session.ToolCall, results map[session.ToolCallID]session.ToolResult) []session.ToolResult {
@@ -1075,11 +1080,20 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 
 // postPreToolUse owns the authorization gate after ordinary permission and
 // PreToolUse have admitted the exact effective call.
-func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, *dispatchPark, bool) {
+func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (result session.ToolResult, park *dispatchPark, cancelled bool) {
 	if auth == nil || !auth.authorityStillValid(sess, c, env) {
 		res := session.NewToolError(c.ID, "tool was not executed: authority binding changed after admission")
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
+	}
+	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
+		var err error
+		ctx, err = e.prepareBrokerAttempt(ctx, sess, c, broker)
+		if err != nil {
+			res := session.NewToolError(c.ID, err.Error())
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+			return res, nil, false
+		}
 	}
 	if requester, ok := t.(tool.AuthorizationRequester); ok {
 		if !r.req.CanPresentAuthorization || e.deps.Role != "" {
@@ -1106,11 +1120,11 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 			}, false
 		}
 		if required {
-			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester}, false
+			attempt, _ := tool.BrokerInvocationFromContext(ctx)
+			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester, attempt: attempt}, false
 		}
 	}
-	res, cancelled := e.execute(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
-	return res, nil, cancelled
+	return e.execute(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
 }
 
 // surfaceAsk is the shared SPINE both ask sites (authorize's policy ask and
@@ -1688,6 +1702,7 @@ func planApprovedTargetForVerdict(v session.ApprovalVerdict) session.PermissionM
 // annotates (the tool already ran; a block neither undoes nor suppresses the
 // result).
 type executionRecord struct {
+	park           *dispatchPark
 	result         session.ToolResult
 	queued         time.Duration
 	duration       time.Duration
@@ -1709,16 +1724,20 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	var res session.ToolResult
 	var dur time.Duration
 	var auxiliaryUsage session.AuxiliaryUsage
+	var park *dispatchPark
 	if auth == nil || !auth.authorityStillValid(sess, c, env) {
 		res = session.NewToolError(c.ID, "tool was not executed: authority binding changed after admission")
 	} else if _, ok := t.(*tool.Search); ok {
 		if authority, bound := sess.BoundAuthority(); bound {
 			res = authorityToolSearch(c, e.deps.Catalog, authority.CapabilitySet)
 		} else {
-			res, dur, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+			res, dur, park, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
 		}
 	} else {
-		res, dur, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+		res, dur, park, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+	}
+	if park != nil {
+		return executionRecord{park: park}
 	}
 	res, postEvents := e.postHook(ctx, sess, turnIdx, c, res)
 	res = session.RepairToolResult(res)
@@ -1758,8 +1777,11 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 	}
 }
 
-func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, bool) {
+func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, *dispatchPark, bool) {
 	record := e.executePrivate(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
+	if record.park != nil {
+		return session.ToolResult{}, record.park, false
+	}
 	r.recordCompleteAuxiliaryUsageWhileActive(sess, record.auxiliaryUsage)
 	r.drainPendingAuxiliaryUsage(sess)
 	result, cancelled, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
@@ -1767,7 +1789,7 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 		r.noteInstructionTargets(env.Workspace().Root(), c)
 	}
 	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil, originalReleased, true)
-	return result, cancelled
+	return result, nil, cancelled
 }
 
 const callMcpWithQueryToolName = "CallMcpWithQuery"
@@ -2014,7 +2036,7 @@ func (r *Run) reportAuxiliaryUsage(usage session.AuxiliaryUsage) {
 // concurrent, read-parallel) tool goroutine — consistent with the existing
 // dispatch emits, which e.emit serialises. Tools that do not implement the seam
 // take the ordinary Execute path unchanged.
-func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, start time.Time) (session.ToolResult, time.Duration, session.AuxiliaryUsage) {
+func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, start time.Time) (session.ToolResult, time.Duration, *dispatchPark, session.AuxiliaryUsage) {
 	var (
 		res            session.ToolResult
 		err            error
@@ -2029,6 +2051,20 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	emit := func(ev session.Event) {
 		ev.Turn = turnIdx
 		r.children.safeEmit(ev)
+	}
+	if _, ok := t.(tool.DurableBrokerInvocation); ok {
+		attempt, framed := tool.BrokerInvocationFromContext(ctx)
+		if !framed {
+			err = errors.New("broker invocation requires prepared attempt")
+		} else {
+			err = sess.DispatchBrokerInvocation(attempt)
+			if err == nil {
+				err = e.saveRequired(ctx, sess)
+			}
+		}
+		if err != nil {
+			return session.NewToolError(c.ID, err.Error()), 0, nil, session.AuxiliaryUsage{}
+		}
 	}
 	switch ct := t.(type) {
 	case childCapableTool:
@@ -2046,6 +2082,27 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	default:
 		res, err = t.Execute(ctx, c, env)
 	}
+	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
+		attempt, _ := tool.BrokerInvocationFromContext(ctx)
+		var required *tool.BrokerAuthorizationRequired
+		if errors.As(err, &required) {
+			if requester, ok := t.(tool.AuthorizationRequester); ok {
+				return session.ToolResult{}, 0, &dispatchPark{authorization: required.Authorization, call: c, requester: requester, attempt: attempt, zeroDispatch: true}, auxiliaryUsage
+			}
+		}
+		switch broker.BrokerInvocationDisposition(err) {
+		case session.BrokerAttemptCompleted:
+			if err == nil && res.CallID == c.ID {
+				err = sess.RecordBrokerInvocationResult(attempt, c.ID)
+			} else {
+				err = errors.New("broker completion did not match exact call")
+			}
+		case session.BrokerAttemptNotDispatched:
+			// Pair the immediate verified refusal with a tool error. A lost
+			// response is never reconstructed or used to authorize a resend.
+			err = errors.Join(err, sess.RecordBrokerInvocationResult(attempt, c.ID))
+		}
+	}
 	if err != nil {
 		res = session.NewToolError(c.ID, fmt.Sprintf("tool %q failed: %v", c.Name, err))
 	}
@@ -2053,7 +2110,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	if e.deps.Clock != nil {
 		dur = e.deps.Clock.Now().Sub(start)
 	}
-	return res, dur, auxiliaryUsage
+	return res, dur, nil, auxiliaryUsage
 }
 
 // parentCaps builds the parent-capability bundle threaded into a subagent-spawning

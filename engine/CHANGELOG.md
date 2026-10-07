@@ -22,6 +22,24 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   calculation used by instruction discovery and pending target reservations.
   Added (minor).
 
+- **Broker invocation context metadata** — adds `tool.WithBrokerInvocation` and
+  `tool.BrokerInvocationFromContext` for opaque occurrence IDs. Framing conveys
+  neither authorization nor retry authority. Nonexecuting preflight stays outside
+  the durable uncertainty boundary.
+
+- **Host-owned broker uncertainty** — adds `NewBrokerAttempt` for random occurrence
+  IDs and `BrokerAccess.Current` for the sole durable may-execute marker. Prepare
+  is process-local; dispatch must be saved before sending once. A verified current
+  result clears the marker only with its paired result. Restored uncertainty
+  never authorizes resend; legacy unresolved slot snapshots fail closed.
+
+- **Scratch broker-session host adoption** — adds `session.BrokerSessionRef`,
+  `BrokerCatalogueRef`, `BrokerAccess`, and aggregate methods for durable exact
+  catalogue adoption, withdrawal and non-replay invocation fences. Adds
+  `tool.DurableBrokerInvocation` for save-before-dispatch integration. Native
+  credential custody remains outside this opt-in host state. Added (minor);
+  scratch-only Spike, not a release contract.
+
 - **Live tool-result availability** — adds `session.EvToolResultAvailable` for
   safe display payloads ahead of the canonical `tool.result`. Added (minor).
 
