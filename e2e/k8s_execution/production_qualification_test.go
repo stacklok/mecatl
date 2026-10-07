@@ -725,6 +725,20 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	if first.SpecSchema != 2 || first.StatusSchema != 2 || first.PodUID == "" || first.PVCUID == "" {
 		t.Fatal("schema-v2 exact runtime identities were not persisted")
 	}
+	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", `{"spec":{"schemaVersion":2}}`)
+	for _, tc := range []struct {
+		name, patch, want string
+	}{
+		{"old", `{"spec":{"schemaVersion":1}}`, "Unsupported value"},
+		{"omitted", `{"spec":{"schemaVersion":null}}`, "Required value"},
+	} {
+		t.Run("schema-version-"+tc.name, func(t *testing.T) {
+			out, err := command(ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", tc.patch).CombinedOutput()
+			if err == nil || !bytes.Contains(out, []byte("schemaVersion")) || !bytes.Contains(out, []byte(tc.want)) {
+				t.Fatalf("server dry-run schema rejection err=%v output=%s, want schemaVersion %q", err, out, tc.want)
+			}
+		})
+	}
 
 	type acquireResult struct {
 		claim executionenv.RunClaim
@@ -1272,109 +1286,6 @@ func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	if err := client.DeleteRetiredEnvironment(ctx, attached.Environment, owner, retired.PVCUID, "delete-pending-delete"); err != nil {
 		t.Fatal(err)
 	}
-}
-
-type legacyMigrationFixture struct {
-	Environment     executionenv.EnvironmentRef `json:"environment"`
-	Owner           executionenv.Owner          `json:"owner"`
-	Binding         string                      `json:"binding"`
-	PodUID          string                      `json:"pod_uid"`
-	PVCUID          string                      `json:"pvc_uid"`
-	Malformed       executionenv.EnvironmentRef `json:"malformed_environment"`
-	MalformedPodUID string                      `json:"malformed_pod_uid"`
-	MalformedPVCUID string                      `json:"malformed_pvc_uid"`
-	Insecure        executionenv.EnvironmentRef `json:"insecure_environment"`
-	InsecurePodUID  string                      `json:"insecure_pod_uid"`
-	InsecurePVCUID  string                      `json:"insecure_pvc_uid"`
-}
-
-func runKindExecutionProductionCompatiblePrototypeMigration(t *testing.T) {
-	state, kubeconfig, ctx, cancel := requireProduction(t)
-	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
-	var fixture legacyMigrationFixture
-	raw, err := os.ReadFile(filepath.Join(state, "legacy-migration.json"))
-	if err != nil || json.Unmarshal(raw, &fixture) != nil {
-		t.Fatalf("load pre-upgrade legacy API fixture: %v", err)
-	}
-	if fixture.Environment.ID == "" || fixture.Environment.Revision == "" || fixture.PodUID == "" || fixture.PVCUID == "" || fixture.Binding == "" {
-		t.Fatal("pre-upgrade legacy API fixture identities are incomplete")
-	}
-
-	var stored map[string]any
-	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "executionenvironment", fixture.Environment.ID, "-n", namespace, "-o", "json"), &stored); err != nil {
-		t.Fatal(err)
-	}
-	status, _ := stored["status"].(map[string]any)
-	references, _ := status["references"].([]any)
-	if len(references) != 1 || references[0] != fixture.Binding {
-		t.Fatalf("legacy string references were not persisted through the real API upgrade: %#v", references)
-	}
-	before := readExecutionStatus(t, ctx, kubeconfig, fixture.Environment.ID)
-	if before.SpecSchema != 1 || before.StatusSchema != 1 || before.PodUID != fixture.PodUID || before.PVCUID != fixture.PVCUID {
-		t.Fatal("pre-upgrade fixture did not preserve schema-1 exact runtime identity")
-	}
-	if _, err := client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: fixture.Environment, Owner: fixture.Owner, BindingID: fixture.Binding}, Purpose: executionenv.PurposeSession}); err == nil {
-		t.Fatal("prototype schema attached before explicit migration")
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, "foreign-pod-uid", before.PVCUID, "migration-wrong-uid"); err == nil {
-		t.Fatal("migration adopted a foreign Pod UID")
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, "", before.PVCUID, "migration-missing-uid"); err == nil {
-		t.Fatal("migration accepted a missing runtime UID")
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 2, before.PodUID, before.PVCUID, "migration-unknown-version"); err == nil {
-		t.Fatal("migration accepted an unrecognized source schema")
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Malformed, fixture.Owner, 1, fixture.MalformedPodUID, fixture.MalformedPVCUID, "migration-malformed-shape"); err == nil || !isRemoteCode(err, executionenv.CodeConflict) {
-		t.Fatalf("migration accepted a legacy reference shape outside the recognized prototype: %v", err)
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Insecure, fixture.Owner, 1, fixture.InsecurePodUID, fixture.InsecurePVCUID, "migration-insecure-runtime"); err == nil || !isRemoteCode(err, executionenv.CodeConflict) {
-		t.Fatalf("migration accepted an insecure legacy executor: %v", err)
-	}
-	if got := readExecutionStatus(t, ctx, kubeconfig, fixture.Insecure.ID); got.SpecSchema != 1 || got.StatusSchema != 1 {
-		t.Fatal("rejected insecure legacy executor was rewritten")
-	}
-	// Normalize the deliberately rejected test-owned object through the API so it
-	// cannot poison later client-scoped reference reconciliation in this retained cluster.
-	normalized := fmt.Sprintf(`[{"bindingID":"legacy-malformed-binding","state":"Published","operationID":"migration-fixture-normalize","createdAt":%q}]`, time.Now().UTC().Format(time.RFC3339Nano))
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+fixture.Malformed.ID, "-n", namespace, "--subresource=status", "--type=merge", "-p", `{"status":{"references":`+normalized+`}}`)
-	insecureNormalized := fmt.Sprintf(`[{"bindingID":"legacy-insecure-binding","state":"Published","operationID":"migration-insecure-fixture-normalize","createdAt":%q}]`, time.Now().UTC().Format(time.RFC3339Nano))
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+fixture.Insecure.ID, "-n", namespace, "--subresource=status", "--type=merge", "-p", `{"status":{"references":`+insecureNormalized+`}}`)
-	if err := client.MigrateEnvironment(ctx, fixture.Malformed, fixture.Owner, 1, fixture.MalformedPodUID, fixture.MalformedPVCUID, "migration-normalized-shape"); err != nil {
-		t.Fatalf("normalize rejected migration fixture: %v", err)
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, before.PodUID, before.PVCUID, "migration-compatible-v1"); err != nil {
-		t.Fatalf("migrate compatible prototype: %v", err)
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, before.PodUID, before.PVCUID, "migration-compatible-v1"); err != nil {
-		t.Fatalf("exact migration replay: %v", err)
-	}
-	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 0, before.PodUID, before.PVCUID, "migration-compatible-v1"); !isRemoteCode(err, executionenv.CodeConflict) {
-		t.Fatal("migration receipt accepted changed source schema:", remoteErrorCode(err))
-	}
-	if got := kubeValue(t, ctx, kubeconfig, "get", "executionenvironment", fixture.Environment.ID, "-n", namespace, "-o", "jsonpath={.status.lastMigrationFromSchema}"); got != "1" {
-		t.Fatal("API server pruned the exact migration receipt")
-	}
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+fixture.Environment.ID, "-n", namespace, "--subresource=status", "--type=merge", "--dry-run=server", "-p", `{"status":{"lastMigrationFromSchema":0}}`)
-	invalid := command(ctx, kubeconfig, "patch", "executionenvironment/"+fixture.Environment.ID, "-n", namespace, "--subresource=status", "--type=merge", "--dry-run=server", "-p", `{"status":{"lastMigrationFromSchema":2}}`)
-	if out, err := invalid.CombinedOutput(); err == nil || !bytes.Contains(out, []byte("lastMigrationFromSchema")) || !bytes.Contains(out, []byte("Unsupported value")) {
-		t.Fatal("API server did not reject an unsupported migration receipt schema")
-	}
-	after := waitExecutionStatus(t, ctx, kubeconfig, fixture.Environment.ID, func(s executionStatus) bool { return s.Ready && s.SpecSchema == 2 && s.StatusSchema == 2 })
-	if after.PodUID != before.PodUID || after.PVCUID != before.PVCUID || after.Epoch != before.Epoch+1 {
-		t.Fatal("migration changed runtime identity or failed to advance only the fence epoch")
-	}
-	if got := executionReferences(t, ctx, kubeconfig, fixture.Environment.ID); got[fixture.Binding] != string(executionenv.ReferencePublished) {
-		t.Fatal("migration did not convert the persisted legacy string reference")
-	}
-	reattached := waitReady(t, ctx, client, fixture.Owner, fixture.Binding, fixture.Environment)
-	verify, verifyRelease := acquireRun(t, ctx, client, fixture.Owner, fixture.Binding, reattached, "migration-verify")
-	got, err := client.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "migration-sentinel"})
-	if err != nil || string(got.Data) != "prototype-data\n" {
-		t.Fatal("migration lost prototype workspace data")
-	}
-	verifyRelease()
 }
 
 func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {

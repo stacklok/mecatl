@@ -111,10 +111,10 @@ For a compatible provider upgrade:
      --wait --timeout=4m $HELM_APPLY_MODE
    ```
 
-4. Complete any supported, explicit environment-schema migration while client
-   traffic remains quiesced. Verify readiness, exact environment/PVC UIDs, data,
-   and network confinement before resuming traffic. Unknown schema versions and
-   mixed-version provider operation are unsupported.
+4. Verify readiness, exact environment/PVC UIDs, data, and network confinement
+   before resuming traffic. Only execution-environment schema version 2 is
+   supported; old objects are not automatically upgraded, reset, or deleted.
+   Mixed-version provider operation is unsupported.
 
 ### Uninstall and reinstall with retained state
 
@@ -187,7 +187,7 @@ reviewed manifest with a higher `generation`, verify provider readiness, then
 resume client traffic.
 
 Every administrative request still requires the original exact owner and
-revision plus the operation's epoch, UID, schema, or generation preconditions.
+revision plus the operation's epoch, UID, or generation preconditions.
 The scope names creators, not owners; it can include a creator whose login has
 been removed. After maintenance, remove its scope entry and increase
 `generation` again. Subsequent requests, including receipt retries on
@@ -276,19 +276,6 @@ grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
   -import-path contracts/proto -proto "$PROTO" \
   -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedGrantGeneration":"<GRANT_GENERATION>","operationId":"revoke-<STABLE_UUID>"}' \
   "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment
-```
-
-### Migrate an environment schema
-
-Migration requires proto presence for `expectedSchemaVersion`. Supply exactly
-`0` or `1`, plus the exact observable Pod and PVC UIDs. Omission, an unknown
-version, or missing proof is refused without changing the resource.
-
-```sh
-grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
-  -import-path contracts/proto -proto "$PROTO" \
-  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedSchemaVersion":1,"expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"migrate-<STABLE_UUID>"}' \
-  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/MigrateEnvironment
 ```
 
 Foreground command cancellation is cooperative and bounded. The helper attempts

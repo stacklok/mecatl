@@ -111,7 +111,6 @@ func (*fakeBackend) FindReferenceIntent(context.Context, executionenv.Environmen
 
 type adminFakeBackend struct {
 	*fakeBackend
-	migratedSchema int64
 	deleteErr      error
 	deletedRequest adminLifecycleRequest
 }
@@ -124,10 +123,6 @@ func (*adminFakeBackend) RecoverEnvironment(context.Context, adminLifecycleReque
 func (b *adminFakeBackend) DeleteRetiredEnvironment(_ context.Context, req adminLifecycleRequest) error {
 	b.deletedRequest = req
 	return b.deleteErr
-}
-func (b *adminFakeBackend) MigrateEnvironment(_ context.Context, req adminLifecycleRequest) error {
-	b.migratedSchema = req.ExpectedSchema
-	return nil
 }
 func (*adminFakeBackend) RevokeEnvironment(context.Context, adminLifecycleRequest, uint64) (uint64, error) {
 	return 2, nil
@@ -207,27 +202,6 @@ func TestListReferenceIntentsProjectsAttestedOwner(t *testing.T) {
 	}
 	if len(out.GetIntents()) != 1 || out.GetIntents()[0].GetOwner().GetIssuer() != owner.GetIssuer() || out.GetIntents()[0].GetOwner().GetSubject() != owner.GetSubject() {
 		t.Fatal("owner-scoped reference intent omitted its attested owner")
-	}
-}
-
-func TestMigrateEnvironmentRequiresExpectedSchemaPresence(t *testing.T) {
-	backend := &adminFakeBackend{fakeBackend: newFakeBackend()}
-	id := "spiffe://cluster/ns/admin"
-	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{id: {Administrator: true}}}, backend)
-	ctx := authenticatedContext(id)
-	base := &executionv1.MigrateEnvironmentRequest{Environment: &executionv1.EnvironmentRef{Id: "env", Revision: "rev"}, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, ExpectedPodUid: "pod", ExpectedPvcUid: "pvc", OperationId: "migrate"}
-	if _, err := h.MigrateEnvironment(ctx, base); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("omitted schema code=%v", status.Code(err))
-	}
-	zero := uint32(0)
-	base.ExpectedSchemaVersion = &zero
-	if _, err := h.MigrateEnvironment(ctx, base); err != nil || backend.migratedSchema != 0 {
-		t.Fatalf("explicit zero rejected: schema=%d err=%v", backend.migratedSchema, err)
-	}
-	unknown := uint32(2)
-	base.ExpectedSchemaVersion = &unknown
-	if _, err := h.MigrateEnvironment(ctx, base); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("unknown schema code=%v", status.Code(err))
 	}
 }
 

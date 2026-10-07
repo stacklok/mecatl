@@ -30,7 +30,7 @@ func referenceRecords(o *unstructured.Unstructured) ([]referenceRecord, error) {
 	for _, item := range raw {
 		m, ok := item.(map[string]any)
 		if !ok {
-			return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "legacy environment references require explicit migration"}
+			return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment references are invalid"}
 		}
 		created, parseErr := time.Parse(time.RFC3339Nano, text(m, "createdAt"))
 		r := referenceRecord{BindingID: text(m, "bindingID"), State: executionenv.ReferenceState(text(m, "state")), OperationID: text(m, operationIDField), SourceBindingID: text(m, "sourceBindingID"), CreatedAt: created}
