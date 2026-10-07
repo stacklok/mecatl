@@ -16,6 +16,13 @@ func TestDisabledExecutionStartupDoesNotContactExecutionOrKubernetes(t *testing.
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	settingsDir := filepath.Join(home, "config", "mecatl")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.yaml"), []byte("mcp:\n  mode: global\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var requests atomic.Int32
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)

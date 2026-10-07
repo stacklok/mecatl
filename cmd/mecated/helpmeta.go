@@ -251,6 +251,10 @@ var flagMetaByFlag = map[string]flagMeta{
 	"mcp-prompts":              {group: groupMCP, common: false, acp: acpInclude},
 	"toolhive":                 {group: groupMCP, common: false, acp: acpInclude},
 	"toolhive-group":           {group: groupMCP, common: false, acp: acpInclude},
+	"mcp-broker-address":      {group: groupMCP, common: false, acp: acpExclude},
+	"mcp-broker-server-name":  {group: groupMCP, common: false, acp: acpExclude},
+	"mcp-broker-tls-ca":       {group: groupMCP, common: false, acp: acpExclude},
+	"mcp-broker-token-file":   {group: groupMCP, common: false, acp: acpExclude},
 
 	// ── Slash commands (both) ─────────────────────────────────────────────
 	"commands-dir":    {group: groupCommands, common: false, acp: acpInclude},

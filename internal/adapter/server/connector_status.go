@@ -39,16 +39,20 @@ func (s *Service) ListSessionMcpConnectors(ctx context.Context, id session.Sessi
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return brokercontract.ConnectorInventory{}, ErrNotFound
 	}
-	if s.cfg.MCPConnectorInspector == nil || sess.ExternalBinding == "" {
-		return brokercontract.ConnectorInventory{}, errConnectorUnavailable
+	if err := rejectRetiredBrokerSession(sess); err != nil {
+		return brokercontract.ConnectorInventory{}, err
 	}
-	unlockBroker := s.brokerMu.lock(id)
-	defer unlockBroker()
-	result, err := s.cfg.MCPConnectorInspector.InspectConnectors(ctx, id, sess.ExternalBinding)
-	if err != nil {
-		return brokercontract.ConnectorInventory{}, ErrInternal
+	if access, ok := sess.BrokerAccess(); ok {
+		if s.cfg.SessionBroker == nil {
+			return brokercontract.ConnectorInventory{}, errConnectorUnavailable
+		}
+		result, err := s.cfg.SessionBroker.InspectConnectors(ctx, access.Session, access.Catalogue)
+		if err != nil {
+			return brokercontract.ConnectorInventory{}, errConnectorUnavailable
+		}
+		return result, nil
 	}
-	return result, nil
+	return brokercontract.ConnectorInventory{}, errConnectorUnavailable
 }
 
 // ListSessionMcpConnectors implements the owner-scoped broker inventory RPC.
@@ -74,6 +78,6 @@ func toProtoConnectorInventory(in brokercontract.ConnectorInventory) *mecatlv1.L
 // Request-dependent capability truth stays separate from context-free engine facts.
 func (s *Service) capabilitiesFor(ctx context.Context) *mecatlv1.ServerCapabilities {
 	out := s.capabilities()
-	out.McpConnectorStatus = s.cfg.MCPConnectorInspector != nil && s.cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) != nil
+	out.McpConnectorStatus = s.cfg.SessionBroker != nil && s.cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) != nil
 	return out
 }

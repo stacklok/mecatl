@@ -151,13 +151,12 @@ func TestMCPAuthorityRootDefaultsAndExplicitSelection(t *testing.T) {
 }
 
 func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
-	route := permconfig.MCPServerProfile{Name: "public", URL: "https://public.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}}
-	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Servers: []permconfig.MCPServerProfile{route}}, DefaultMode: mcpauthority.Global, BrokerSupported: true})
+	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker"}, DefaultMode: mcpauthority.Global, BrokerSupported: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	broker, ok := got.Broker()
-	if !ok || len(broker.Routes) != 1 {
+	if !ok || len(broker.Routes) != 0 {
 		t.Fatalf("broker payload = %#v, %t", broker, ok)
 	}
 	if _, _, ok := got.Global(); ok {
@@ -173,7 +172,7 @@ func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
 	}
 }
 
-func TestADR_0298_BrokerAuthorityAdmitsMultipleOAuthProfilesInOrder(t *testing.T) {
+func TestBrokerPathRetirement_HostRejectsBrokerOwnedProfiles(t *testing.T) {
 	first := brokerOAuthRoute()
 	first.Name = "github"
 	second := brokerOAuthRoute()
@@ -185,12 +184,13 @@ func TestADR_0298_BrokerAuthorityAdmitsMultipleOAuthProfilesInOrder(t *testing.T
 	}
 
 	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true})
-	if err != nil {
-		t.Fatalf("ResolveMCPAuthority: %v", err)
+	if !errors.Is(err, ErrMCPProfileInvalid) || got != nil {
+		t.Fatalf("broker-owned profiles admitted: %v", err)
 	}
-	broker, ok := got.Broker()
-	if !ok || len(broker.Routes) != 2 || broker.Routes[0].Name != "github" || broker.Routes[1].Name != "calendar" {
-		t.Fatalf("broker routes = %#v, selected %t", broker.Routes, ok)
+	for _, value := range []string{first.Name, second.Name, section.Broker.CallbackURL} {
+		if strings.Contains(err.Error(), value) {
+			t.Fatal("broker rejection disclosed a configuration value")
+		}
 	}
 }
 
@@ -201,9 +201,9 @@ func TestMCPAuthorityBrokerCallbackRules(t *testing.T) {
 		ok                           bool
 	}{
 		{name: "required", ok: false},
-		{name: "https", callback: "https://agent.example/callback", wantCallback: "https://agent.example/callback", ok: true},
-		{name: "pathless root", callback: "https://agent.example", wantCallback: "https://agent.example/", ok: true},
-		{name: "slash root", callback: "https://agent.example/", wantCallback: "https://agent.example/", ok: true},
+		{name: "https", callback: "https://agent.example/callback", wantCallback: "https://agent.example/callback", ok: false},
+		{name: "pathless root", callback: "https://agent.example", wantCallback: "https://agent.example/", ok: false},
+		{name: "slash root", callback: "https://agent.example/", wantCallback: "https://agent.example/", ok: false},
 		{name: "http", callback: "http://agent.example/callback", ok: false},
 		{name: "userinfo", callback: "https://user@agent.example/callback", ok: false},
 		{name: "query", callback: "https://agent.example/callback?code=x", ok: false},
@@ -267,8 +267,8 @@ func TestMCPAuthorityPreservesGlobalProfileResolution(t *testing.T) {
 func TestMCPAuthorityModeSpecificOAuth(t *testing.T) {
 	broker := brokerOAuthRoute()
 	section := &permconfig.MCPSection{Mode: "broker", Broker: permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback"}, Servers: []permconfig.MCPServerProfile{broker}}
-	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true}); err != nil {
-		t.Fatal(err)
+	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {
+		t.Fatal("host admitted broker-owned profile")
 	}
 	section.Servers[0].Auth.OAuth.Profile = "global-only"
 	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {
@@ -277,8 +277,8 @@ func TestMCPAuthorityModeSpecificOAuth(t *testing.T) {
 	section.Servers[0] = brokerOAuthRoute()
 	section.Servers[0].Auth.OAuth.Upstream = &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token"}}
 	section.Servers[0].Auth.OAuth.Issuer = ""
-	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true}); err != nil {
-		t.Fatalf("broker OAuth2: %v", err)
+	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {
+		t.Fatal("host admitted broker-owned OAuth2 profile")
 	}
 	section.Servers[0].Auth.OAuth.Network.AdditionalOrigins = []string{"https://extra.example"}
 	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {

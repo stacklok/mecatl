@@ -31,7 +31,7 @@ export type RPCStreamingShape = "unary" | "server_streaming" | "bidi_streaming";
 export type RPCRouteFamily = (typeof RPC_ROUTE_FAMILIES)[number];
 export type HTTPMethod = "DELETE" | "GET" | "POST" | "PUT";
 export type HTTPRequestBody = "json" | "none" | "optional-json";
-export type HTTPResponseKind = "json" | "sse";
+export type HTTPResponseKind = "json" | "none" | "sse";
 
 type RPCDescriptor = DescMethodUnary | DescMethodServerStreaming | DescMethodBiDiStreaming;
 
@@ -203,6 +203,14 @@ export const HTTP_ONLY_CONTROLS = {
     [],
     "json",
     "json",
+  ),
+  disconnectWorkspaceServices: http(
+    "POST",
+    "/v1/sessions/{id}/workspace-enrollment/disconnect",
+    ["id=session_id"],
+    [],
+    "none",
+    "none",
   ),
   prompt: http("POST", "/v1/sessions/{id}/prompt", ["id=session_id"], [], "json", "sse"),
   retry: http("POST", "/v1/sessions/{id}/retry", ["id=session_id"], [], "none", "sse"),

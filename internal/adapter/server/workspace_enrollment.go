@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -17,7 +16,6 @@ type WorkspaceEnrollmentProjection struct {
 	URL    string
 }
 
-// ConnectWorkspaceServices begins or observes the one pre-prompt enrollment bundle.
 func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.SessionID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -27,96 +25,16 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	return s.connectWorkspaceServicesLocked(ctx, id)
 }
 
-// connectWorkspaceServicesLocked is ConnectWorkspaceServices' body. The caller
-// must already hold runEntryMu for id and have acquired the session lease.
-// RetryWorkspaceEnrollment composes this with cancelWorkspaceEnrollmentLocked
-// under ONE lock/lease acquisition so a prompt can never enter between the
-// cancellation and the replacement begin.
 func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session.SessionID) (WorkspaceEnrollmentProjection, error) {
-	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
-	if err != nil {
-		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
-			return s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentFailed)
-		}
+	if _, err := s.GetSession(ctx, id); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
-	defer func() { release() }()
-
-	pending, exists := sess.PendingWorkspaceEnrollment()
-	if !exists {
-		if len(sess.Conversation.Messages) != 0 {
-			if err := enroller.ResetWorkspaceEnrollment(ctx); err != nil {
-				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: reset workspace enrollment", ErrFailedPrecondition)
-			}
-			s.withdrawBrokerEngine(id)
-		}
-		presentation, beginErr := enroller.BeginWorkspaceEnrollment(ctx)
-		if beginErr != nil || !presentation.Valid() {
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
-		}
-		pending = pendingEnrollment(presentation.Ref)
-		if err := sess.BeginWorkspaceEnrollment(pending); err != nil {
-			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
-		}
-		if err := s.saveSession(ctx, sess); err != nil {
-			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
-		}
-		return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
+	if s.cfg.SessionBroker == nil {
+		return WorkspaceEnrollmentProjection{}, ErrFailedPrecondition
 	}
-
-	expectedRef := enrollmentRef(pending)
-	result, err := enroller.ObserveWorkspaceEnrollment(ctx, expectedRef)
-	if err != nil || !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: observe workspace enrollment", ErrFailedPrecondition)
-	}
-	if result.Status != brokercontract.WorkspaceEnrollmentConnected {
-		return s.recordObservedWorkspaceEnrollment(ctx, sess, pending, result)
-	}
-
-	// The authenticated result is the single snapshot for both executable wrappers
-	// and durable authority. Never re-read Attachment.Tools during this rebuild: a
-	// remote attachment may advance between observation and engine construction.
-	// Read the names from the catalogue's own frozen ToolNames(), never by
-	// re-calling Spec() per tool: the catalogue is the one authoritative source.
-	exactTools := result.Catalogue.Tools()
-	toolNames := result.Catalogue.ToolNames()
-	release()
-	release = func() {}
-	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
-		s.withdrawBrokerEngine(sess.ID)
-		return WorkspaceEnrollmentProjection{}, err
-	}
-	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
-		s.withdrawBrokerEngine(sess.ID)
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
-	}
-	if err := s.saveSession(ctx, sess); err != nil {
-		s.withdrawBrokerEngine(sess.ID)
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
-	}
-	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
+	return s.connectSessionBrokerLocked(ctx, id)
 }
 
-func (s *Service) recordObservedWorkspaceEnrollment(ctx context.Context, sess *session.Session, pending session.PendingWorkspaceEnrollment, result brokercontract.WorkspaceEnrollmentResult) (WorkspaceEnrollmentProjection, error) {
-	if result.Status != brokercontract.WorkspaceEnrollmentPending {
-		if err := sess.AbortWorkspaceEnrollment(pending.ID); err != nil {
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear terminal workspace enrollment", ErrFailedPrecondition)
-		}
-		if err := s.saveSession(ctx, sess); err != nil {
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist terminal workspace enrollment", ErrInternal)
-		}
-	}
-	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
-}
-
-// RetryWorkspaceEnrollment cancels one exact bundle before beginning a
-// replacement, holding runEntryMu continuously across both so no prompt can
-// enter between the cancellation and the replacement begin (a single
-// acquire-then-release pair per call, rather than composing the two public
-// methods, each of which independently acquires and releases the lock).
 func (s *Service) RetryWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -129,7 +47,6 @@ func (s *Service) RetryWorkspaceEnrollment(ctx context.Context, id session.Sessi
 	return s.connectWorkspaceServicesLocked(ctx, id)
 }
 
-// CancelWorkspaceEnrollment cancels one exact bundle and clears its prompt gate.
 func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -139,55 +56,16 @@ func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	return s.cancelWorkspaceEnrollmentLocked(ctx, id, enrollmentID)
 }
 
-// cancelWorkspaceEnrollmentLocked is the shared cancel body for
-// RetryWorkspaceEnrollment and CancelWorkspaceEnrollment. The caller must
-// already hold runEntryMu for id and have acquired the session lease.
 func (s *Service) cancelWorkspaceEnrollmentLocked(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
-	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
-	if err != nil {
-		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
-			pending, ok := sess.PendingWorkspaceEnrollment()
-			if !ok || pending.ID != enrollmentID {
-				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: stale workspace enrollment", ErrFailedPrecondition)
-			}
-			return s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentFailed)
-		}
+	if _, err := s.GetSession(ctx, id); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
-	defer func() { release() }()
-	pending, ok := sess.PendingWorkspaceEnrollment()
-	if !ok || pending.ID != enrollmentID {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: stale workspace enrollment", ErrFailedPrecondition)
+	if s.cfg.SessionBroker == nil {
+		return WorkspaceEnrollmentProjection{}, ErrFailedPrecondition
 	}
-	expectedRef := enrollmentRef(pending)
-	result, err := enroller.CancelWorkspaceEnrollment(ctx, expectedRef)
-	if err != nil {
-		if errors.Is(err, brokercontract.ErrAuthorizationNotFound) {
-			// The broker's transaction is already gone (a prior terminal Observe
-			// already tore it down): there is nothing left to cancel, but the
-			// aggregate's own pending record must still be cleared, or this
-			// session stays wedged behind a cancel that can never succeed on the
-			// broker side again.
-			return s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentCancelled)
-		}
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: cancel workspace enrollment", ErrFailedPrecondition)
-	}
-	if !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: cancel workspace enrollment", ErrFailedPrecondition)
-	}
-	if err := sess.AbortWorkspaceEnrollment(enrollmentID); err != nil {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear workspace enrollment", ErrFailedPrecondition)
-	}
-	if err := s.saveSession(ctx, sess); err != nil {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment cancellation", ErrInternal)
-	}
-	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
+	return s.cancelSessionBrokerEnrollmentLocked(ctx, id, enrollmentID)
 }
 
-// settleTerminalWorkspaceEnrollment clears the aggregate's pending record for
-// any terminal outcome the broker can no longer confirm (its own transaction
-// is already gone) or that the caller has already determined — never leaving
-// PendingWorkspaceEnrollment set with nothing left able to resolve it.
 func (s *Service) settleTerminalWorkspaceEnrollment(ctx context.Context, sess *session.Session, status brokercontract.WorkspaceEnrollmentStatus) (WorkspaceEnrollmentProjection, error) {
 	pending, ok := sess.PendingWorkspaceEnrollment()
 	if !ok {
@@ -202,53 +80,6 @@ func (s *Service) settleTerminalWorkspaceEnrollment(ctx context.Context, sess *s
 	return WorkspaceEnrollmentProjection{Ref: enrollmentRef(pending), Status: status}, nil
 }
 
-func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.SessionID) (*session.Session, brokercontract.WorkspaceEnrollmentAttachment, func(), error) {
-	sess, err := s.cfg.Store.Load(ctx, id)
-	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
-		return nil, nil, nil, ErrNotFound
-	}
-	if sess.State == session.StateCompleted {
-		if err := sess.Reopen(); err != nil {
-			return sess, nil, nil, fmt.Errorf("%w: reopen workspace enrollment session", ErrFailedPrecondition)
-		}
-		if err := s.saveSession(ctx, sess); err != nil {
-			return sess, nil, nil, fmt.Errorf("%w: persist workspace enrollment reopen", ErrInternal)
-		}
-	}
-	if s.cfg.MCPBroker == nil || sess.State != session.StateIdle || sess.Conversation == nil {
-		return nil, nil, nil, fmt.Errorf("%w: workspace enrollment requires an idle session", ErrFailedPrecondition)
-	}
-	if _, live := s.LookupRun(id); live {
-		return nil, nil, nil, fmt.Errorf("%w: session has an active run", ErrFailedPrecondition)
-	}
-	brokerUnlock := s.brokerMu.lock(id)
-	local, err := s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
-	if err != nil {
-		if !errors.Is(err, ErrBrokerBindingMismatch) {
-			brokerUnlock()
-			return sess, nil, nil, err
-		}
-		// This seam is reached only from an explicit refresh (ADR 0335 Scenario
-		// 2): a binding lost to broker-process restart can never match again, so
-		// adopt a fresh live attachment rather than strand the session behind it.
-		// Ordinary run rehydration never calls rebind — a restored session with a
-		// mismatched binding simply builds its engine without broker tools.
-		if local, err = s.rebindBrokerAttachment(ctx, sess); err != nil {
-			brokerUnlock()
-			return sess, nil, nil, err
-		}
-	}
-	enroller, ok := local.attachment.(brokercontract.WorkspaceEnrollmentAttachment)
-	if !ok {
-		brokerUnlock()
-		return nil, nil, nil, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
-	}
-	return sess, enroller, brokerUnlock, nil
-}
-
-// withdrawBrokerEngine removes only the broker-bearing session engine. It is
-// deliberately narrower than closeSessionLocal: the logical broker attachment,
-// session placement, and unrelated session state remain available for retry.
 func (s *Service) withdrawBrokerEngine(id session.SessionID) {
 	s.mu.Lock()
 	engine, ok := s.sessionEngines[id]
@@ -259,21 +90,6 @@ func (s *Service) withdrawBrokerEngine(id session.SessionID) {
 			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "broker session engine withdrawal failed")
 		}
 	}
-}
-func cancelWorkspaceEnrollmentDetached(ctx context.Context, enroller brokercontract.WorkspaceEnrollmentAttachment, ref brokercontract.WorkspaceEnrollmentRef) {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
-	defer cancel()
-	_, _ = enroller.CancelWorkspaceEnrollment(cleanupCtx, ref)
-}
-
-func sameWorkspaceEnrollmentRef(left, right brokercontract.WorkspaceEnrollmentRef) bool {
-	return left.ID == right.ID &&
-		left.RequiredServices == right.RequiredServices &&
-		left.ExpiresAt.Equal(right.ExpiresAt)
-}
-
-func pendingEnrollment(ref brokercontract.WorkspaceEnrollmentRef) session.PendingWorkspaceEnrollment {
-	return session.PendingWorkspaceEnrollment{ID: ref.ID, RequiredServices: ref.RequiredServices, ExpiresAt: ref.ExpiresAt}
 }
 
 func enrollmentRef(pending session.PendingWorkspaceEnrollment) brokercontract.WorkspaceEnrollmentRef {

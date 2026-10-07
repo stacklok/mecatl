@@ -8,7 +8,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -195,7 +193,6 @@ func TestBuildTLSConfigRejectsUnsafeStaticClientCAWithoutPathDisclosure(t *testi
 }
 
 func TestBrokerControlsRequireVerifiedCallerIdentity(t *testing.T) {
-	handlers := mcpbroker.HandlerBundle{Callback: http.NotFoundHandler()}
 	for _, tc := range []struct {
 		name    string
 		cfg     config
@@ -208,14 +205,8 @@ func TestBrokerControlsRequireVerifiedCallerIdentity(t *testing.T) {
 		{name: "verified mTLS", tlsCfg: &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateBrokerControlOwnership(
-				"0.0.0.0:8081",
-				brokerControlVerifiedIdentity(tc.cfg, tc.tlsCfg),
-				false,
-				handlers,
-			)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("validateBrokerControlOwnership() error = %v, want error = %t", err, tc.wantErr)
+			if brokerControlVerifiedIdentity(tc.cfg, tc.tlsCfg) == tc.wantErr {
+				t.Fatalf("verified caller identity = %v, want %v", !tc.wantErr, tc.wantErr)
 			}
 		})
 	}

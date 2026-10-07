@@ -61,18 +61,22 @@ var (
 // excluded: the broker is present but is a different incarnation, which is a
 // hard precondition failure the caller must see, not a soft interruption.
 func brokerStateLost(err error) bool {
-	return errors.Is(err, brokercontract.ErrStateUnavailable) && !errors.Is(err, ErrBrokerBindingMismatch)
+	return errors.Is(err, brokercontract.ErrStateUnavailable)
 }
 
 type authorizationExpiry struct {
-	timer   AuthorizationTimer
-	retries int
+	timer           AuthorizationTimer
+	retries         int
+	authorizationID string
 }
 
 // MCPAuthorizationPresentation returns a live browser URL only after owner
 // authorization and an authoritative lock/lease protected reload.
 func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (string, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // before caller-selected lock
+		if errors.Is(err, ErrFailedPrecondition) {
+			return "", err
+		}
 		return "", errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
@@ -111,6 +115,9 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
 	recheckStart := time.Now()
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
+		if errors.Is(err, ErrFailedPrecondition) {
+			return MCPAuthorizationResult{}, err
+		}
 		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
 	lockWaitStart := time.Now()
@@ -183,6 +190,9 @@ func errString(err error) string {
 // CancelMCPAuthorization precisely cancels and resolves one pending control.
 func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
+		if errors.Is(err, ErrFailedPrecondition) {
+			return MCPAuthorizationResult{}, err
+		}
 		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
@@ -251,6 +261,9 @@ func (s *Service) applyAuthorizationStatusLocked(ctx context.Context, sess *sess
 func (s *Service) loadMatchingAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (*session.Session, session.PendingAuthorization, error) {
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrFailedPrecondition) {
+			return nil, session.PendingAuthorization{}, err
+		}
 		return nil, session.PendingAuthorization{}, errAuthorizationSessionUnavailable
 	}
 	pending, ok := sess.PendingAuthorization()
@@ -294,7 +307,13 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 	return s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
 }
 
-func reconcileAuthorizationCancellation(ctx context.Context, attachment brokercontract.Attachment, authorization session.ExternalAuthorization, outcome brokercontract.CancelOutcome, freshStatus session.AuthorizationStatus) (session.AuthorizationStatus, error) {
+type authorizationControl interface {
+	PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error)
+	AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error)
+	CancelAuthorization(context.Context, session.ExternalAuthorization) (brokercontract.CancelOutcome, error)
+}
+
+func reconcileAuthorizationCancellation(ctx context.Context, attachment authorizationControl, authorization session.ExternalAuthorization, outcome brokercontract.CancelOutcome, freshStatus session.AuthorizationStatus) (session.AuthorizationStatus, error) {
 	switch outcome {
 	case brokercontract.CancelCancelled:
 		return freshStatus, nil
@@ -314,23 +333,20 @@ func reconcileAuthorizationCancellation(ctx context.Context, attachment brokerco
 	}
 }
 
-// authorizationAttachment returns a committed exact-binding attachment while
-// holding brokerMu until release. Callers must release before engine rebuilding.
-func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Session) (brokercontract.Attachment, func(), error) {
-	unlock := s.brokerMu.lock(sess.ID)
-	local, err := s.openBrokerAttachment(ctx, sess.ID, sess.ExternalBinding, true)
-	if err != nil {
-		unlock()
+// authorizationAttachment returns only remote session authorization controls.
+func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Session) (authorizationControl, func(), error) {
+	if err := rejectRetiredBrokerSession(sess); err != nil {
 		return nil, func() {}, err
 	}
-	committed := false
-	if err := s.commitBrokerAttachment(ctx, sess.ID, local); err != nil {
-		s.finalizeBrokerAttachment(local, &committed)
-		unlock()
-		return nil, func() {}, err
+	a, ok := sess.BrokerAccess()
+	if s.cfg.SessionBroker == nil || !ok || a.Withdrawn {
+		return nil, func() {}, ErrFailedPrecondition
 	}
-	committed = true
-	return local.attachment, unlock, nil
+	pending, exists := sess.PendingAuthorization()
+	if !exists || a.Current != nil || pending.Authorization.Binding != session.AuthorizationBinding(a.Session) {
+		return nil, func() {}, ErrFailedPrecondition
+	}
+	return &sessionAuthorizationControl{host: s, ref: brokercontract.SessionRef(a.Session), sess: sess, attempt: session.NewBrokerAttempt()}, func() {}, nil
 }
 
 func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *session.Session) (MCPAuthorizationResult, error) {
@@ -362,19 +378,11 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	// parked session engine still owns its pre-authorization catalog. Publish the
 	// declared-only authenticated snapshot and rebuild from that exact snapshot
 	// before resuming the parked call.
-	attachment, release, err := s.authorizationAttachment(ctx, sess)
-	if err != nil {
-		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
-			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation attachment: %v; restore claim: %v", ErrInternal, err, restoreErr)
-		}
-		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation attachment", ErrInternal)
-	}
-	exactTools, refreshErr := attachment.RefreshGrantedAuthorizationCatalogue(ctx, claimed.Authorization)
-	if refreshErr == nil {
-		exactTools = withAttachmentQueryTool(attachment, exactTools)
-	}
-	release()
+	exactTools, refreshErr := s.sessionBrokerResumeTools(ctx, sess, claimed)
 	if refreshErr != nil {
+		if errors.Is(refreshErr, errBrokerAuthoritySave) {
+			return MCPAuthorizationResult{}, refreshErr
+		}
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: refresh granted authorization catalogue: %v; restore claim: %v", ErrInternal, refreshErr, restoreErr)
 		}
@@ -615,6 +623,9 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 	// leaves pending fully intact for a retry — see ensureAuthorizationRequiredLogged.
 	if err := s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending); err != nil {
 		return MCPAuthorizationResult{}, err
+	}
+	if a, ok := sess.BrokerAccess(); ok && a.Current != nil {
+		return MCPAuthorizationResult{}, ErrFailedPrecondition
 	}
 	results, err := sess.AbortAuthorization(reason)
 	if err != nil {
@@ -960,7 +971,7 @@ func (s *Service) scheduleAuthorizationExpiry(id session.SessionID, pending sess
 	if delay < 0 {
 		delay = 0
 	}
-	entry := &authorizationExpiry{}
+	entry := &authorizationExpiry{authorizationID: pending.Authorization.ID}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -1094,14 +1105,11 @@ func (s *Service) invalidateLocalAuthorization(ctx context.Context, id session.S
 	if !ok {
 		return
 	}
-	unlock := s.brokerMu.lock(id)
-	s.mu.Lock()
-	attachment := s.brokerAttachments[id]
-	s.mu.Unlock()
-	if attachment != nil {
-		_, _ = attachment.CancelAuthorization(ctx, pending.Authorization)
+	control, release, err := s.authorizationAttachment(ctx, sess)
+	if err == nil {
+		defer release()
+		_, _ = control.CancelAuthorization(ctx, pending.Authorization)
 	}
-	unlock()
 }
 
 // interruptRestoredAuthorizationLocked repairs authorizing state whose exact
@@ -1177,10 +1185,10 @@ func (s *Service) prepareAuthorizationClose() {
 	s.mu.Lock()
 	s.closed = true
 	ids := make(map[session.SessionID]struct{})
-	for id := range s.brokerAttachments {
+	for id := range s.authorizationExpiry {
 		ids[id] = struct{}{}
 	}
-	for id := range s.authorizationExpiry {
+	for id := range s.sessionEngines {
 		ids[id] = struct{}{}
 	}
 	for id := range s.heldLeases {
@@ -1253,6 +1261,9 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 			"session", string(id), "err", attachErr.Error())
 		return attachErr
 	}
+	if a, ok := sess.BrokerAccess(); ok && a.Current != nil {
+		return ErrFailedPrecondition
+	}
 	results, err := sess.InterruptAuthorization()
 	if err != nil {
 		return err
@@ -1261,6 +1272,7 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 		return err
 	}
 	if err := s.saveSession(context.WithoutCancel(ctx), sess); err != nil {
+		s.withdrawBrokerEngine(id)
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist external authorization settlement failed",
 			"session", string(id), "err", err.Error())
 		return err

@@ -18,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 )
 
 // fakeMetricsCollector is a minimal httptest server that accepts the OTLP/HTTP
@@ -247,7 +248,9 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 		t.Fatal("scrape-only (--metrics-addr) must build a Registry")
 	}
 
-	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, obs))
+	ac := appConfig(cfg, port.NopDiagnostics{}, obs)
+	ac.MCPAuthorityDefault = mcpauthority.Global
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}
@@ -272,7 +275,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serve(ctx, cfg, built.Service, obs)
 	}()
 
 	// Wait for /metrics to respond, then assert it carries a mecatl series.
@@ -362,7 +365,9 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 		t.Fatal("OTLP-push ON path must build a Metrics handle")
 	}
 
-	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, obs))
+	ac := appConfig(cfg, port.NopDiagnostics{}, obs)
+	ac.MCPAuthorityDefault = mcpauthority.Global
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}
@@ -392,7 +397,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serve(ctx, cfg, built.Service, obs)
 	}()
 	cancel()
 	select {

@@ -99,7 +99,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 					providerConstructor: func(Config, string, string, string) port.LLMProvider { return provider },
 				})
 				if err != nil {
-					t.Fatal(err)
+					t.Fatalf("ListLearnedSkills: %v diagnostics=%v", err, diag.capturedStrings())
 				}
 				defer built.Close()
 				ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "matrix", GrantType: session.GrantTypeUser})

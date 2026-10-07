@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -54,6 +55,52 @@ func TestDiagnosticsPostureFactoryPaths(t *testing.T) {
 		if strings.Contains(systems[i+1].StablePrefix, diagnosticsPostureNote) {
 			t.Fatalf("%s StablePrefix advertises the main-only diagnostics affordance", name)
 		}
+	}
+}
+
+func TestSingletonBrokerRemediation_Scenario1_BrokerRecoveryInstructionUsesRealFactories(t *testing.T) {
+	ctx := context.Background()
+	var systems []prompt.Layered
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		systems = append(systems, req.System)
+	})}, mockllm.TextTurn("ok"), mockllm.TextTurn("ok"), mockllm.TextTurn("ok"))
+	cfg := Config{Model: "gpt-5", MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{})}
+	reg := regForTest(provider, providerOpenAI, cfg.Model)
+	policy := permpolicy.NewPolicy(defaultRules(), nil)
+	store := memstore.New()
+
+	mainDeps := baseEngineDeps(cfg, reg, provider, store, policy, nil, nil, prompt.RootAssembler{})
+	mainDeps.Catalog = tool.NewCatalog()
+	drivePrompt(t, agent.NewEngine(mainDeps), "broker-shared")
+
+	factory := sessionEngineFactory(cfg, reg, provider, store, policy, nil, nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+	perSession, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("per-session factory: %v", err)
+	}
+	defer func() { _ = perSession.Close() }()
+	drivePrompt(t, perSession.Engine, "broker-per-session")
+
+	disabled := cfg
+	disabled.MCPAuthority = nil
+	disabledFactory := sessionEngineFactory(disabled, reg, provider, store, policy, nil, nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+	disabledSession, err := disabledFactory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("disabled factory: %v", err)
+	}
+	defer func() { _ = disabledSession.Close() }()
+	drivePrompt(t, disabledSession.Engine, "broker-disabled")
+
+	if len(systems) != 3 {
+		t.Fatalf("captured systems = %d, want 3", len(systems))
+	}
+	for i, name := range []string{"shared main", "per-session"} {
+		if !strings.Contains(systems[i].StablePrefix, mcpBrokerPostureNote) || !strings.Contains(systems[i].StablePrefix, "do not automatically invoke it again") {
+			t.Fatalf("%s StablePrefix omits broker unknown-outcome recovery contract", name)
+		}
+	}
+	if strings.Contains(systems[2].StablePrefix, mcpBrokerPostureNote) {
+		t.Fatal("broker-disabled StablePrefix advertises broker recovery guidance")
 	}
 }
 

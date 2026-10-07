@@ -86,7 +86,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"SetModelsRefresher":                    {SessionMutationComposition, "installs a process-wide callback and touches no durable session family"},
 	"SetSessionEnvironment":                 {SessionMutationComposition, "registers only a process-local environment override and touches no durable session family"},
 	"CloseSession":                          {SessionMutationLeaseProven, "tears down process-local session ownership and releases its lease without changing durable session bytes"},
-	"closeSessionLocal":                     {SessionMutationLeaseProven, "shared teardown body for CloseSession and the delete paths, which already hold brokerMu for the id before calling it; also reached directly from closeSessionAuthorized when lostOwnership[id] is already set, since a fresh reaffirm/settle is impossible there and touches no durable session bytes either way"},
+	"closeSessionLocal":                     {SessionMutationLeaseProven, "shared teardown body for CloseSession and the delete paths, which already hold engineBuildMu for the id before calling it; also reached directly from closeSessionAuthorized when lostOwnership[id] is already set, since a fresh reaffirm/settle is impossible there and touches no durable session bytes either way"},
 	"continueGrantedAuthorizationLocked":    {SessionMutationLeaseProven, "called only from RecheckMCPAuthorization/resolveAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
 	"interruptRestoredAuthorizationLocked":  {SessionMutationLeaseProven, "called only from startRunContent after runEntryMu.lock and the real acquireLease have both succeeded"},
 	"repairAuthorizationRegistration":       {SessionMutationLeaseProven, "recovery path invoked only after the caller's runEntryMu + session lease acquisition, to settle a continuation that failed to register"},
@@ -95,13 +95,16 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"settleAuthorizationLocked":             {SessionMutationLeaseProven, "called only from closeSessionAuthorized after runEntryMu.lock and the real acquireLease have both succeeded"},
 	"appendAuthorizationResolution":         {SessionMutationLeaseProven, "no-continuation EventLog fallback invoked only from the same lease-proven authorization-resolution callers"},
 	"ensureAuthorizationRequiredLogged":     {SessionMutationLeaseProven, "called only from resolveAuthorizationLocked/settleAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
+	"DisconnectWorkspaceServices":           {SessionMutationLeaseOwned, "authorizes the idle session under runEntryMu and acquires its mutation lease before save and exact withdrawal"},
+	"adoptSessionBrokerCatalogue":           {SessionMutationLeaseProven, "called from leased restore, enrollment or exact authorization continuation before advertising"},
+	"sessionBrokerEnrollmentTarget":         {SessionMutationLeaseProven, "called only by leased enrollment controls; reopens the aggregate before their durable save"},
+	"connectSessionBrokerLocked":            {SessionMutationLeaseProven, "called only by connectWorkspaceServicesLocked under run-entry lock and lease"},
+	"publishSessionBrokerEnrollment":        {SessionMutationLeaseProven, "called only by the leased enrollment control; saves before engine registration"},
 	"ConnectWorkspaceServices":              {SessionMutationLeaseOwned, "runs under runEntryMu with the idle-only, no-active-run precondition and acquires the session mutation lease before persisting"},
-	"workspaceEnrollmentTarget":             {SessionMutationLeaseProven, "called only by workspace enrollment controls after run-entry and session lease acquisition; completed-session reopen and snapshot save use that proof"},
 	"cancelWorkspaceEnrollmentLocked":       {SessionMutationLeaseProven, "shared cancel body for RetryWorkspaceEnrollment/CancelWorkspaceEnrollment, called only after the caller has acquired runEntryMu and the session lease"},
 	"connectWorkspaceServicesLocked":        {SessionMutationLeaseProven, "shared begin/observe body for ConnectWorkspaceServices/RetryWorkspaceEnrollment, called only after the caller has acquired runEntryMu and the session lease"},
 	"restoreAuthorizationClaim":             {SessionMutationLeaseProven, "compensating restore invoked only from the same lease-proven authorization-continuation callers after a failed claim-persist"},
 	"settleTerminalWorkspaceEnrollment":     {SessionMutationLeaseOwned, "invoked only from connectWorkspaceServicesLocked/cancelWorkspaceEnrollmentLocked, both gated the same as the enrollment target lookup"},
-	"rebindBrokerAttachment":                {SessionMutationLeaseProven, "invoked only from workspaceEnrollmentTarget, whose connectWorkspaceServicesLocked/cancelWorkspaceEnrollmentLocked callers already hold runEntryMu, the acquired session lease, and brokerMu for the id"},
 }
 
 func validateSessionMutationNames(table map[string]SessionMutationEntry, boundaries []string) []error {

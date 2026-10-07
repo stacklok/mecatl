@@ -28,8 +28,12 @@ func brokerConnectorWireProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
-	svc, _ := connectorService(t, connectorOwner())
-	svc.cfg.MCPConnectorInspector = process.Runtime
+	svc, spy := connectorService(t, connectorOwner())
+	inventory, err := process.Runtime.InspectConnectors(t.Context(), "unavailable-session", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spy.inventory = &inventory
 	// No matching broker incarnation: configured names remain visible, but no
 	// stale success or private binding may be projected from the stored session.
 	ctx := session.WithPrincipal(t.Context(), connectorOwner())
@@ -69,7 +73,7 @@ func brokerConnectorWireProjection(t *testing.T) {
 		t.Fatal("wire projections differ")
 	}
 	// The mechanical proto boundary still repairs a custom producer's bytes.
-	inventory, err := svc.ListSessionMcpConnectors(ctx, "connector-session")
+	inventory, err = svc.ListSessionMcpConnectors(ctx, "connector-session")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,8 +46,6 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/daemonconfig"
-	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -92,6 +90,7 @@ const defaultMetricsAddr = "127.0.0.1:9090"
 // addresses, TLS, auth, rate limiting, metrics, tracing) is serve-time state
 // owned by this binary.
 type config struct {
+	sessionBroker   sessionBrokerFlags
 	logLevel        slog.Level
 	logLevelWarning string
 	grpcAddr        string
@@ -1007,7 +1006,7 @@ func run(mode commandMode, remaining []string) error {
 		return err
 	}
 	defer built.Close()
-	if err := validateBrokerHosting(cfg, built.MCPBroker != nil); err != nil {
+	if err := validateBrokerHosting(cfg, cfg.sessionBroker.enabled); err != nil {
 		return err
 	}
 
@@ -1316,7 +1315,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// opt-in so an omitted mode and an empty MCP configuration retain the
 		// existing global/no-broker behavior.
 		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
-		MCPAuthorityDefault:               mcpauthority.Global,
+		MCPAuthorityDefault:               cfg.sessionBroker.authorityDefault(),
+		SessionBrokerFactory:              cfg.sessionBroker.factory(),
 		MCPBrokerSupported:                true,
 		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
 		NativeEndpointCredentialLoader:    nativeEndpointLoader,
@@ -1692,6 +1692,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
 	fs.SetOutput(out)
 	var cfg config
+	registerSessionBrokerFlags(fs, &cfg.sessionBroker)
 	cfg.microVMGuestEgress = microvmmanager.NewGuestEgressSelection()
 
 	cwd, _ := os.Getwd()
@@ -1916,6 +1917,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		return fs, config{}, err
 	}
 
+	if err := cfg.sessionBroker.validate(); err != nil {
+		return fs, config{}, err
+	}
 	// Resolve the shared level after parsing so invalid values remain a
 	// non-fatal startup condition and can be warned about by the root logger.
 	cfg.logLevel, cfg.logLevelWarning = logLevelFlags.Resolve()
@@ -2149,31 +2153,16 @@ func brokerControlAPIAuthenticated(cfg config, tlsCfg *tls.Config) bool {
 		tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert
 }
 
-// mountBrokerHandlers adds the broker's public OAuth protocol surface only
-// after the complete mecated mux exists. On non-loopback listeners the separate
-// session-scoped control API must be authenticated; this does not claim its
-// bearer/OIDC middleware authenticates browser or provider callbacks.
-func mountBrokerHandlers(mux *http.ServeMux, addr string, controlAPIAuthenticated bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
-	if handlers.Empty() {
-		return nil
-	}
-	if !controlAPIAuthenticated && !cliconfig.IsLoopbackAddr(addr) {
-		return errors.New("non-loopback MCP broker requires an authenticated authorization-control API; OAuth protocol routes remain public")
-	}
-	slog.Warn("vMCP broker mode is single-process/single-replica; a live session lease rejects non-holders without routing")
-	return handlers.Mount(mux, callbackPath)
-}
-
 // serve retains the established test and non-broker seam.
 func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
-	return serveWithBroker(ctx, cfg, svc, reg, recorder, slowTurns, false, mcpbroker.HandlerBundle{}, "")
+	return serveWithBroker(ctx, cfg, svc, reg, recorder, slowTurns, cfg.sessionBroker.enabled)
 }
 
 // serveBuilt is the command-root handoff from app.Build to the network server.
 // Keeping the broker-selected bit separate from the HTTP bundle lets startup
 // reject an unreachable broker even when a custom broker has no handlers.
 func serveBuilt(ctx context.Context, cfg config, built *app.Built, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
-	return serveWithBroker(ctx, cfg, built.Service, reg, recorder, slowTurns, built.MCPBroker != nil, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+	return serve(ctx, cfg, built.Service, reg, recorder, slowTurns)
 }
 
 func validateBrokerHosting(cfg config, brokerSelected bool) error {
@@ -2195,13 +2184,18 @@ func validateBrokerHosting(cfg config, brokerSelected bool) error {
 // liveness/readiness probes are mounted OUTSIDE the auth/rate-limit layer so
 // orchestrators can probe without credentials. The gRPC health service shares
 // the server-wide interceptors and therefore requires credentials when auth is on.
-func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer, brokerSelected bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer, brokerSelected bool) error {
 	if err := validateBrokerHosting(cfg, brokerSelected); err != nil {
 		return err
 	}
 	tlsCfg, auth, corsPolicy, err := buildEdge(ctx, cfg)
 	if err != nil {
 		return err
+	}
+	if cfg.sessionBroker.enabled && !brokerControlAPIAuthenticated(cfg, tlsCfg) &&
+		(!cliconfig.IsLoopbackAddr(cfg.httpAddr) || cfg.grpcUnixSocket == "" && !cliconfig.IsLoopbackAddr(cfg.grpcAddr)) {
+		auth.Close()
+		return errors.New("non-loopback broker-session host requires authenticated control APIs")
 	}
 	// The caller-identity validator owns a background JWKS refresh that only its
 	// own Close() stops — cancelling ctx does not. No-op when identity is off.
@@ -2240,12 +2234,6 @@ func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *
 		httpMux := http.NewServeMux()
 		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
 		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc, protectedResourceProfile(cfg.oidc)))
-		// Mount last on the actual, fully-populated mux. HandlerBundle.Mount
-		// preflights every route before registration, so a callback or fixed-route
-		// collision fails startup without a partial broker surface.
-		if err := mountBrokerHandlers(httpMux, cfg.httpAddr, brokerControlAPIAuthenticated(cfg, tlsCfg), brokerHandlers, brokerCallbackPath); err != nil {
-			return fmt.Errorf("mount MCP broker handlers: %w", err)
-		}
 		httpSrv = &http.Server{
 			Addr:              cfg.httpAddr,
 			Handler:           httpMux,

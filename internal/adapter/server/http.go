@@ -78,6 +78,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"GET /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation", h.mcpAuthorizationPresentation},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck", h.recheckMCPAuthorization},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel", h.cancelMCPAuthorization},
+		{"POST /v1/sessions/{id}/workspace-enrollment/disconnect", h.disconnectWorkspaceServices},
 		{"POST /v1/sessions/{id}/workspace-enrollment/connect", h.connectWorkspaceServices},
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry", h.retryWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel", h.cancelWorkspaceEnrollment},
@@ -732,6 +733,23 @@ func usageToJSON(usage session.Usage) usageJSON {
 // comfortably covers the 20 MiB decoded cap (~27 MiB base64) with headroom while
 // still bounding the read.
 const maxPromptBodyBytes = 32 << 20 // 32 MiB
+
+func (h *HTTPHandler) disconnectWorkspaceServices(w http.ResponseWriter, r *http.Request) {
+	if !controlRequestBodyEmpty(r) {
+		writeError(w, http.StatusBadRequest, "workspace enrollment controls do not accept a request body")
+		return
+	}
+	id := session.SessionID(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session ID is required")
+		return
+	}
+	if err := h.svc.DisconnectWorkspaceServices(r.Context(), id); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (h *HTTPHandler) connectWorkspaceServices(w http.ResponseWriter, r *http.Request) {
 	if !controlRequestBodyEmpty(r) {
