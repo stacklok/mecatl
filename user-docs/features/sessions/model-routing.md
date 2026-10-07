@@ -12,9 +12,10 @@ IDs readable names, slots bind internal calls, and task categories select a
 model for eligible delegated work. Start with a working provider and session
 model in [Choose models and providers](./choose-models.md).
 
-These settings belong to the operator-global configuration. The session provider
-remains fixed; every selected model must be usable through the provider that
-will run it.
+These settings belong to the operator-global configuration. Session history
+remains bound to its persisted provider; a provider-aware alias can select a
+complete provider/model pair for a new session or for an eligible delegated or
+auxiliary call.
 
 ## Configure aliases, slots, and task routing
 
@@ -27,7 +28,9 @@ models:
   default: gpt-5.6-terra
   aliases:
     planner: gpt-5.6-sol
-    heavy: gpt-5.6-terra
+    heavy:
+      provider: openrouter
+      model: openai/gpt-5.6-terra
     coder: gpt-5.6-luna
     quick: gemini-3.5-flash
     image: gpt-5.6-terra
@@ -60,6 +63,31 @@ models:
         model: image
 ```
 
+A scalar alias uses `models.default_provider` (or `--default-provider`) when
+configured; otherwise it uses the current provider. An object alias carries its
+provider/model pair, even when used as `models.default` for a new session. A
+bare literal Subagent model uses the parent's provider. Model IDs are opaque
+and are not live-probed at startup.
+
+For a temporary CLI alias with a provider, use matching flags rather than
+splitting the model ID on `/`:
+
+```sh
+mecated serve --model-alias heavy=openai/gpt-5.6-terra \
+  --model-alias-provider heavy=openrouter
+```
+
+The CLI model replaces the whole lower-tier alias target; its provider does not
+silently inherit from a YAML alias.
+
+The router example uses Jev. Set `TYPESAFE_API_KEY` in the server process:
+eligible delegated task descriptions and category names and descriptions go to
+Typesafe. Keep `backend: llm` if task text must stay in your configured LLM
+path. A classifier choice below `minimum-confidence` falls back to the child's
+ordinary model. `default-category` advises the classifier but does not force a
+choice. See the [configuration reference](/reference/configuration.md#models)
+for field defaults and ranges.
+
 The `guardrail` slot also accepts a strict provider-aware object when the
 checker must use a different configured provider:
 
@@ -78,11 +106,11 @@ default provider. Project-tier objects are ignored with a warning.
 
 ### How bindings resolve
 
-Aliases map readable names to concrete provider-specific model IDs. Slots select
+Aliases map readable names to model IDs or provider/model pairs. Slots select
 models for internal calls, while router categories choose models for eligible
-delegated tasks. These bindings leave the session's base model unchanged. Use
-`compaction`, `ask-reviewer`, `guardrail`, and `router` for internal calls;
-`plan` selects the model for plan-mode turns.
+delegated tasks. These bindings leave the existing session's provider and base
+model unchanged. Use `compaction`, `ask-reviewer`, `guardrail`, and `router` for
+internal calls; `plan` selects the model for plan-mode turns.
 
 Those internal-call slots fall back to the `cheap` tier when they have no binding of
 their own. Binding only `cheap` therefore also binds `guardrail`, which turns on
@@ -103,26 +131,18 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-For slots and routes other than `title`, an invalid alias, slot, or route target
-warns and falls back to the session model. The `title` slot disables generation
-when its binding is absent or unresolvable, without making a provider call.
-Explicit per-call models, model-pinned named agents, fork or resume choices, and
-other higher-precedence selectors are not overridden by the router. A named
-definition with no `model:` is routable; `model: inherit` is an explicit pin.
-Writable named routing keeps the specialist's direct-write scope, while explicit
-`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies
-are operator decisions; project model settings are ignored unless the operator
-explicitly allows the relevant model set on a trusted project via
-`models.allowlist`.
+For automatic routes and slots other than `title`, an unavailable target warns
+and falls back to the call's ordinary provider/model. An absent or unresolvable
+`title` slot disables generation without making a provider call. An explicit
+per-call selector instead fails if its target is unavailable. The router does
+not override a pinned named agent, `fork`, or `resume`. A named definition
+without `model:` is routable; `model: inherit` is an explicit pin. Routing
+preserves a specialist's scoped tools and writable posture.
 
-An allowlisted model is not scoped to a particular use: a trusted project can
-bind any allowlisted model to any slot, including the `guardrail` and
-`ask-reviewer` safety checkers, not just the session default. Do not allowlist a
-model you would be unwilling to see used as a safety checker.
-
-This configuration belongs in the operator-global settings file, not a
-checked-in project file. See the
-[configuration reference](/reference/configuration.md#models) for the complete
+Put model policy in operator settings, not a project file. Mecatl ignores every
+project-tier `models:` block, including for trusted projects. The legacy
+operator `models.allowlist` key remains parseable but has no effect and warns.
+See the [configuration reference](/reference/configuration.md#models) for the
 field schema and defaults.
 
 ### Session titles and auxiliary usage
@@ -141,30 +161,10 @@ spend limit.
 
 ### Configure the task classifier
 
-The first configuration example selects the Jev classifier backend. Set
-`TYPESAFE_API_KEY` in the server process environment. When Jev is active, Mecatl
-sends each eligible delegated task description and the configured category names
-and descriptions to Typesafe. Keep the default `backend: llm` if delegated task
-text must remain inside your configured LLM path.
-
-Jev uses model `jev-1.13.0` by default. `minimum-confidence: 0` accepts every
-valid choice; a higher value from `0` through `1` makes a lower-confidence
-choice fall back to the inherited model. The optional `base-url` must use HTTPS,
-except for loopback HTTP development endpoints. Jev routing accepts up to 255
-categories. `maximum-input-bytes` defaults to 16384 and accepts an integer from
-1 through 65536. Mecatl measures the complete rendered request text against this
-limit and never permits more than 64 KiB. It does not truncate an over-limit
-task, instructions, or taxonomy. Router observability uses the same
-backend-neutral outcomes for both classifiers: `classifier-error`,
-`bad-verdict`, `unknown-category`, `low-confidence`, `input-over-limit`,
-`capacity-timeout`, `cancelled`, and `timeout`. In particular, a deadline is
-reported as `timeout`; `cancelled` means caller cancellation. All remain
-fail-soft and count toward the existing three-miss per-run breaker.
-`default-category: medium` is an advisory instruction for either backend when no
-category clearly fits. It does not force a fallback category. A named model on a
-delegation or agent definition is deterministic and takes precedence over
-category routing; categories are advisory classification for otherwise unpinned
-work.
+Jev confidence is a classifier score, not measured accuracy. Calibrate a
+nonzero threshold against representative tasks rather than assuming a
+universal setting. Automatic classification failures fall back to the child's
+ordinary model.
 
 ## Use a planning model in plan mode
 
@@ -181,54 +181,50 @@ models:
     plan: planner
 ```
 
-When the session enters plan mode, its next turn uses the `plan` model. When you
-approve the plan and Mecatl continues in default or accept-edits mode, it uses
-the session default again. Mecatl rebuilds the session engine at the mode
-change, so the provider stays fixed. Configure both model IDs for the same
-provider.
+Plan mode uses the `plan` target on the session's persisted provider. After
+approval, subsequent turns use the session default again. A session stays
+provider-bound because its history can contain provider-private replay data.
+If a provider-aware `plan` alias names another provider, Mecatl warns and uses
+the session's ordinary provider/model while keeping plan permissions.
 
 If `plan` is unset, Mecatl uses the `reasoning` slot when it is configured;
 otherwise plan mode uses the session default model. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md#plan-mode)
 for the plan-review workflow.
 
-## Diagnose a delegated model decision
+## Check which delegated model ran
 
-Start with the model line on the live delegation card. A successful decision
-keeps the compact `routed: <category> → <model>` form. A fallback names the
-model that actually ran and can add the rejected candidate and its confidence
-comparison:
+The live delegation card shows the provider and model that actually ran and
+whether the child was routed, selected, or used as a fallback. Press **F6** and
+focus a child for the routing reason and any rejected candidate. A candidate
+is not proof that it ran. For retained evidence, use
+`mecatui debug <SESSION_ID>` and ask `InspectSession` for the `delegation`
+view; missing evidence in an older event does not prove classification occurred.
 
-```text
-model: gpt-6-astra · fallback: low-confidence
-candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50
+### Select a delegated target explicitly
+
+Leave `provider` and `model` unset on Subagent, Parallel, and Team calls to
+preserve operator defaults and automatic routing. When a task needs a specific
+capability, call `DiscoverModels` and pass an exact provider/model pair:
+
+```json
+{"prompt":"Review this design","provider":"anthropic","model":"claude-opus-4-1"}
 ```
 
-The candidate is evidence about the classifier result. It is not the model that
-ran. The `model:` value remains the actual model after a fallback.
+`DiscoverModels` also lists enabled router categories under the virtual
+`model-router` provider. Choose an exact category to bypass classification:
 
-Press **F6** and focus the child, Parallel branch, or team member for the
-complete decision. The detail identifies the configured backend and classifier,
-candidate, actual model, final reason, threshold, miss count, and breaker state.
-A zero Jev threshold appears as disabled. LLM routing has no native confidence
-score, so its detail shows confidence as unavailable instead of `0.00`. Pin,
-fork, resume, and breaker skips show the actual model and why the classifier was
-not called.
+```json
+{"prompt":"Review this design","provider":"model-router","model":"large"}
+```
 
-The live view explains the current run. To inspect retained evidence after the
-run, start a target-bound debugger with `mecatui debug <SESSION_ID>` or
-`mecatui connect <ADDRESS> debug <SESSION_ID>`, then ask it to use
-`InspectSession` with the `delegation` view. The debugger reads the stored
-Subagent, Parallel, and Team start events. If an older or incompletely persisted
-event has no routing decision, the evidence remains absent. Do not infer that a
-classifier ran from the displayed model or classifier configuration.
-
-Effective configuration tells you which backend, classifier, taxonomy,
-threshold, and category mappings the server can use. Runtime evidence tells you
-what happened for one delegation. Jev confidence is a backend-native score, not
-measured accuracy. Calibrate a nonzero threshold against a representative
-labeled workload from your own tasks. Mecatl does not provide a router
-evaluation command or a universal recommended threshold.
+An unavailable explicit category fails instead of inheriting a model.
+Parallel uses one selector for all branches; each Team member can use its own.
+The Parallel judge stays on the parent model. A read-only named specialist
+accepts a model-only override but not a provider-bearing selector. A writable
+named specialist uses its definition's resolved model; a writable generic
+Subagent can select a model. `fork` and `resume` reject selectors; resume keeps
+the original child's actual provider/model.
 
 ## Route OpenRouter models through preferred downstreams
 

@@ -62,7 +62,7 @@ Shell.
 |`max_run_tokens`|Tighten the child's cumulative token limit. Values below 25,000 are raised to that floor.|
 |`timeout_ms`|Set a wall-clock deadline.|
 |`output_schema`|Require a JSON result through `SubmitResult`. Invalid submissions receive up to two correction attempts.|
-|`fork`|Copy the parent conversation into the child. This cannot be combined with `model`, `agent`, or `resume`.|
+|`fork`|Copy the parent conversation into the child. This cannot be combined with `provider`, `model`, `agent`, or `resume`.|
 |`resume`|Continue a previous child in a fresh workspace while preserving its conversation and cumulative token use.|
 |`background`|Return the child ID immediately and collect the result with `SubagentStatus`.|
 

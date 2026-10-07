@@ -185,7 +185,9 @@ This matters for cost. Anthropic caches a prompt only when the caller asks, and
 cache reads bill at a tenth of uncached input, so a long session on an unasked
 path pays the full price every turn. Mecatl therefore prefers
 `openrouter-anthropic` when the default model is an Anthropic model. An explicit
-`--default-provider` or an operator `models.default_provider` still wins.
+`--default-provider` or `models.default_provider` overrides this preference,
+unless a provider-aware `models.default` alias selects its own provider/model
+pair.
 
 `openrouter-anthropic` lists Anthropic models only, because OpenRouter's
 Anthropic endpoint does not serve other vendors' models.
@@ -206,8 +208,8 @@ for cache controls and their retention limits.
 
 Use [Model routing](./model-routing.md) to configure aliases, internal-call
 slots, plan-mode models, delegated task categories, and OpenRouter downstream
-choices. Those bindings complement session selection: they do not change the
-provider and base model of an existing session.
+choices. Provider-aware aliases can also choose a complete pair for a new
+session; existing session history stays on its persisted provider.
 
 ### Run one shot with mecatequi
 
@@ -327,8 +329,11 @@ stale; it does not guarantee current model access or context limits.
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
 inspect this same resolved inventory. Start without `provider_id` when the
 provider is unknown. The first unfiltered result includes every selectable
-provider ID and its model count, plus the first bounded model page. You can then
-search across all providers or add an exact provider filter. A query is a set of
+provider ID and its model count, plus the first bounded model page and enabled
+delegation categories under the virtual `model-router` provider. Each category
+row uses its exact name as `model_id` and a bounded description, without
+disclosing the configured target. You can then search across providers or add
+an exact provider filter. A query is a set of
 case-lowered literal terms; every term must occur in the provider ID, model ID,
 or display name of a result. Punctuation has no special query syntax.
 
@@ -339,7 +344,8 @@ entries and 32 KiB. When `next_cursor` is present, call the tool again with only
 that value as `cursor`. A changed inventory invalidates the cursor, so restart
 without it. The tool does not probe or refresh providers, accept endpoints or
 credentials, select or route a model, or change the current session. It remains
-available in no-filesystem sessions.
+available in no-filesystem sessions. Router-category rows are delegation-only:
+they do not appear in `ListModels`, `/models`, or root-session creation.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued
