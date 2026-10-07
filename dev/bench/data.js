@@ -277486,6 +277486,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791400472689,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6de1345dd9d03103715ca6c32d112b39a2af2605",
+          "message": "fix(release): scan microVM and host binaries with sbom-action file: (#2180)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T21:10:53+02:00",
+          "tree_id": "b67c8bc8c4adc9b28a8f183a9b81872cda4be110",
+          "url": "https://github.com/stacklok/mecatl/commit/6de1345dd9d03103715ca6c32d112b39a2af2605"
+        },
+        "date": 1791401166188,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -402335,6 +402369,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791401162470,
+  "lastUpdate": 1791401167179,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
