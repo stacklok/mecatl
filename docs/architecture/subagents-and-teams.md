@@ -53,7 +53,9 @@ the default child gets Read, Grep, Glob, and `Shell` in a throwaway git worktree
 parent `.git` (full history). The forker mirrors uncommitted changes into it so the child sees
 what the operator sees; if that fails, the worktree resets to clean `HEAD` and the child is told.
 Because `.git` is shared, the shell runs with an environment that `internal/adapter/gitenv` scrubs
-of config-driven code execution (hooks, pager, fsmonitor, external diff). An untrusted workspace
+of config-driven code execution (hooks, pager, fsmonitor, external diff). The forker's own
+`git worktree add` runs under the same scrub, so the base repository's `post-checkout`
+hook doesn't fire at fork time. An untrusted workspace
 gets no worktree shell, because creating the worktree runs a checkout a hostile repository could
 abuse. A failed fork is a tool error, never a fallback to the shared tree. Without a shell, the
 child reads the parent tree through a confined view without the main session's out-of-root reads.

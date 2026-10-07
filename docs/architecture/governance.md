@@ -177,6 +177,10 @@ is denied and the result withheld. If the checker errors or times out, `onChecke
 applies: fail closed by default, or warn, with per-rule overrides. Guardrails are
 operator-tier only; a project cannot add, weaken, or disable them.
 
+Checker model usage is charged to the reviewed session, including a worker session,
+under the `guardrail` usage kind. Usage that arrives after the owning run has ended
+is dropped, not recorded.
+
 ## Related
 
 - [The agent loop](agent-loop.md)
