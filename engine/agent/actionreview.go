@@ -316,6 +316,8 @@ type actionReview struct {
 	prepareErr        error
 }
 
+const readToolName = "Read"
+
 func (e *Engine) establishReviewPrincipal(r *Run) {
 	if e.deps.Role != "" {
 		return
@@ -401,7 +403,7 @@ func (e *Engine) authorizeReviewEvidenceRead(ctx context.Context, r *Run, sess *
 	available := false
 	if e.deps.Catalog != nil {
 		for _, candidate := range e.deps.Catalog.Available(sess.Mode) {
-			if candidate.Spec().Name == "Read" {
+			if candidate.Spec().Name == readToolName {
 				available = true
 				break
 			}

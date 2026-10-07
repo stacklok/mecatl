@@ -35,8 +35,10 @@ func (t manifestTool) Advertised() tool.ToolSpec {
 
 type customManifestInstructions struct{ secret string }
 
-func (a customManifestInstructions) Assemble(context.Context) ([]session.Message, error) {
-	return []session.Message{session.NewUserMessage("custom secret " + a.secret)}, nil
+func (customManifestInstructions) TargetScoped() bool { return false }
+
+func (a customManifestInstructions) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	return []session.Message{session.NewUserMessage("custom secret " + a.secret)}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceCustom}}, nil
 }
 
 type manifestSink struct {
@@ -196,7 +198,7 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 		t.Fatalf("prompt metadata = %+v", manifest.Prompt)
 	}
 	last := manifest.Prompt[len(manifest.Prompt)-1]
-	if last.Kind != prompt.InstructionProvenanceCustom || last.Provenance != prompt.InstructionProvenanceUnknown {
+	if last.Kind != prompt.InstructionKindTurn0 || last.Provenance != prompt.InstructionProvenanceCustom {
 		t.Fatalf("custom instruction metadata = %+v", last)
 	}
 	fragmentBytes, err := json.Marshal(observed.Messages[0])

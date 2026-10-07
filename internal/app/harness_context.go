@@ -58,7 +58,9 @@ type HarnessSourceRegistration[T any] struct {
 	Provenance HarnessProvenancePolicy
 	// UsesExecutionWorkspace declares this source's workspace dependency; it neither enables it nor grants authority.
 	UsesExecutionWorkspace bool
-	Bind                   func(context.Context, HarnessSourceScope) (T, func() error, error)
+	// repositoryBinding marks the built-in repository workspace source; never inferred from ID.
+	repositoryBinding bool
+	Bind              func(context.Context, HarnessSourceScope) (T, func() error, error)
 }
 
 const (
@@ -724,6 +726,8 @@ type commandBindingEntry struct {
 	profile   string
 	binding   server.CommandSourceBinding
 	cleanup   []func() error
+	revision  uint64
+	id        session.SessionID
 	refs      int
 	retired   bool
 }
@@ -1050,6 +1054,7 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 			publish = false
 		}
 		if publish {
+			entry.revision = reservation.revision
 			delete(r.creating, id)
 			close(reservation.done)
 			r.entries[id] = entry
@@ -1149,7 +1154,7 @@ func (r *harnessCommandResolver) buildEntry(ctx context.Context, scope HarnessSo
 			}
 		}
 	}
-	entry := &commandBindingEntry{principal: principal.Clone(), profile: profile, cleanup: cleanups, refs: 1}
+	entry := &commandBindingEntry{principal: principal.Clone(), profile: profile, cleanup: cleanups, id: scope.SessionID, refs: 1}
 	entry.binding = &resolvedCommandBinding{context: scopeConfig, policy: r.policy, sources: sources, generation: harnessGeneration{resolver: r, entry: entry}}
 	return entry, nil
 }
@@ -1250,17 +1255,19 @@ func (staticCommandResolver) Activate(context.Context, session.SessionID, *sessi
 func (staticCommandResolver) Retire(session.SessionID) {}
 
 type fixedInstructionAssembler struct {
-	inner           prompt.InstructionAssembler
-	provenance      HarnessProvenancePolicy
-	projectAdmitted bool
+	id                HarnessSourceID
+	inner             prompt.InstructionAssembler
+	provenance        HarnessProvenancePolicy
+	projectAdmitted   bool
+	repositoryBinding bool
 }
 
-func (a fixedInstructionAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
-	messages, _, err := a.AssembleWithManifest(ctx)
-	return messages, err
+func (a fixedInstructionAssembler) TargetScoped() bool {
+	return a.inner != nil && a.inner.TargetScoped()
 }
-func (a fixedInstructionAssembler) AssembleWithManifest(ctx context.Context) ([]session.Message, []prompt.InstructionManifest, error) {
-	messages, manifest, err := prompt.AssembleWithManifest(ctx, a.inner)
+
+func (a fixedInstructionAssembler) Assemble(ctx context.Context, directories []string, state *session.InstructionSnapshot, maxContentBytes int) ([]session.Message, []prompt.InstructionManifest, error) {
+	messages, manifest, err := prompt.AssembleWithManifest(ctx, a.inner, directories, state, maxContentBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1293,27 +1300,126 @@ func (a fixedInstructionAssembler) AssembleWithManifest(ctx context.Context) ([]
 type policyInstructionAssembler struct {
 	mode    string
 	sources []prompt.InstructionAssembler
+	cache   *policyInstructionRunCache
 }
 
-func (a policyInstructionAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
-	messages, _, err := a.AssembleWithManifest(ctx)
-	return messages, err
+type policyInstructionRunCache struct {
+	mu   sync.Mutex
+	runs map[<-chan struct{}][]prompt.InstructionAssembler
 }
-func (a policyInstructionAssembler) AssembleWithManifest(ctx context.Context) ([]session.Message, []prompt.InstructionManifest, error) {
-	var out []session.Message
-	var metadata []prompt.InstructionManifest
-	for _, source := range a.sources {
-		messages, manifest, err := prompt.AssembleWithManifest(ctx, source)
+
+func cachePolicyGlobals(source prompt.InstructionAssembler) prompt.InstructionAssembler {
+	switch a := source.(type) {
+	case fixedInstructionAssembler:
+		a.inner = cachePolicyGlobals(a.inner)
+		return a
+	case prompt.MultiAssembler:
+		children := make([]prompt.InstructionAssembler, len(a.Assemblers))
+		for i, child := range a.Assemblers {
+			children[i] = cachePolicyGlobals(child)
+		}
+		return prompt.MultiAssembler{Assemblers: children}
+	}
+	if source != nil && !source.TargetScoped() {
+		return &policyGlobalContributor{source: source}
+	}
+	return source
+}
+
+type policyGlobalContributor struct {
+	mu       sync.Mutex
+	source   prompt.InstructionAssembler
+	messages []session.Message
+	rows     []prompt.InstructionManifest
+	cached   bool
+}
+
+func (*policyGlobalContributor) TargetScoped() bool { return false }
+func (c *policyGlobalContributor) Assemble(ctx context.Context, directories []string, state *session.InstructionSnapshot, limit int) ([]session.Message, []prompt.InstructionManifest, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.cached {
+		messages, rows, err := c.source.Assemble(ctx, directories, state, limit)
 		if err != nil {
 			return nil, nil, err
 		}
+		c.messages, c.rows, c.cached = append([]session.Message(nil), messages...), append([]prompt.InstructionManifest(nil), rows...), true
+	}
+	return append([]session.Message(nil), c.messages...), append([]prompt.InstructionManifest(nil), c.rows...), nil
+}
+
+// runSources keeps replace-mode contributors within the same run even when a
+// scoped source changes the winner later. The run's cancellation releases the
+// cache; a new run re-reads globals rather than inheriting stale guidance.
+func (a policyInstructionAssembler) runSources(ctx context.Context) []prompt.InstructionAssembler {
+	if a.cache == nil || ctx.Done() == nil {
+		return a.sources
+	}
+	key := ctx.Done()
+	a.cache.mu.Lock()
+	defer a.cache.mu.Unlock()
+	if sources, ok := a.cache.runs[key]; ok {
+		return sources
+	}
+	sources := make([]prompt.InstructionAssembler, len(a.sources))
+	for i, source := range a.sources {
+		sources[i] = cachePolicyGlobals(source)
+	}
+	if a.cache.runs == nil {
+		a.cache.runs = make(map[<-chan struct{}][]prompt.InstructionAssembler)
+	}
+	a.cache.runs[key] = sources
+	context.AfterFunc(ctx, func() {
+		a.cache.mu.Lock()
+		delete(a.cache.runs, key)
+		a.cache.mu.Unlock()
+	})
+	return sources
+}
+
+func (a policyInstructionAssembler) TargetScoped() bool {
+	for _, source := range a.sources {
+		if source != nil && source.TargetScoped() {
+			return true
+		}
+	}
+	return false
+}
+
+func (a policyInstructionAssembler) Assemble(ctx context.Context, directories []string, state *session.InstructionSnapshot, maxContentBytes int) ([]session.Message, []prompt.InstructionManifest, error) {
+	var out []session.Message
+	var metadata []prompt.InstructionManifest
+	sources := a.runSources(ctx)
+	for i, source := range sources {
+		messages, manifest, err := prompt.AssembleWithManifest(ctx, source, directories, state, maxContentBytes)
+		if err != nil {
+			return out, metadata, err
+		}
 		out = append(out, messages...)
 		metadata = append(metadata, manifest...)
-		if a.mode == harnessModeReplace && len(messages) != 0 {
+		if a.mode == harnessModeReplace && hasInstructionGuidance(manifest) {
+			if i+1 < len(sources) {
+				for _, row := range manifest {
+					if row.Partial || row.Omitted {
+						out = append(out, session.NewUserMessage("Project instructions: replacement guidance incomplete; lower-priority sources were not loaded."))
+						metadata = append(metadata, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+						break
+					}
+				}
+			}
 			break
 		}
 	}
 	return out, metadata, nil
+}
+
+func hasInstructionGuidance(rows []prompt.InstructionManifest) bool {
+	for _, row := range rows {
+		if row.HasGuidance {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveProcessHarnessInstructions(ctx context.Context, cfg *Config) error {
@@ -1340,31 +1446,20 @@ func resolveProcessHarnessInstructions(ctx context.Context, cfg *Config) error {
 		if _, excluded := policy.exclude[""][id]; excluded {
 			continue
 		}
-		reg := regs[id]
-		if reg.Provenance.Fixed == harnessProjectTier && !projectIngestionAdmitted(*cfg) {
-			continue
-		}
-		if reg.Scope == HarnessSourceScopePrincipal && cfg.harnessScope == nil {
-			continue
-		}
-		assembler, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.UsesExecutionWorkspace))
-		if bindErr != nil || assembler == nil {
-			if cleanup != nil {
-				_ = cleanup()
-			}
+		bound, cleanup, skip, bindErr := bindProcessHarnessInstructionSource(ctx, *cfg, regs[id], policy.mode)
+		if bindErr != nil {
 			closeHarnessCleanups(cleanups)
-			if bindErr == nil {
-				bindErr = fmt.Errorf("source returned nil assembler")
-			}
 			return fmt.Errorf("bind instruction source %q: %w", id, bindErr)
+		}
+		if skip {
+			continue
 		}
 		if cleanup != nil {
 			cleanups = append(cleanups, cleanup)
 		}
-		assembler = fixedInstructionAssembler{inner: assembler, provenance: reg.Provenance, projectAdmitted: projectIngestionAdmitted(*cfg)}
-		sources = append(sources, assembler)
+		sources = append(sources, bound...)
 	}
-	cfg.harnessInstructions = policyInstructionAssembler{mode: policy.mode, sources: sources}
+	cfg.harnessInstructions = policyInstructionAssembler{mode: policy.mode, sources: sources, cache: &policyInstructionRunCache{}}
 	previousClose := cfg.harnessContextClose
 	cfg.harnessContextClose = func() {
 		closeHarnessCleanups(cleanups)
@@ -1373,6 +1468,43 @@ func resolveProcessHarnessInstructions(ctx context.Context, cfg *Config) error {
 		}
 	}
 	return nil
+}
+
+func bindProcessHarnessInstructionSource(ctx context.Context, cfg Config, reg HarnessSourceRegistration[prompt.InstructionAssembler], mode string) ([]prompt.InstructionAssembler, func() error, bool, error) {
+	if reg.Provenance.Fixed == harnessProjectTier && !projectIngestionAdmitted(cfg) {
+		return nil, nil, true, nil
+	}
+	if reg.Scope == HarnessSourceScopePrincipal && cfg.harnessScope == nil {
+		return nil, nil, true, nil
+	}
+	assembler, cleanup, err := reg.Bind(ctx, harnessBindingScope(cfg, reg.UsesExecutionWorkspace))
+	if err != nil || assembler == nil {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+		if err == nil {
+			err = fmt.Errorf("source returned nil assembler")
+		}
+		return nil, nil, false, err
+	}
+	fixed := fixedInstructionAssembler{id: reg.ID, inner: assembler, provenance: reg.Provenance, projectAdmitted: projectIngestionAdmitted(cfg), repositoryBinding: reg.repositoryBinding}
+	if mode != harnessModeCombine {
+		return []prompt.InstructionAssembler{fixed}, cleanup, false, nil
+	}
+	if multi, ok := assembler.(*prompt.MultiAssembler); ok && multi != nil {
+		assembler = *multi
+	}
+	multi, ok := assembler.(prompt.MultiAssembler)
+	if !ok {
+		return []prompt.InstructionAssembler{fixed}, cleanup, false, nil
+	}
+	sources := make([]prompt.InstructionAssembler, 0, len(multi.Assemblers))
+	for _, child := range multi.Assemblers {
+		leaf := fixed
+		leaf.inner = child
+		sources = append(sources, leaf)
+	}
+	return sources, cleanup, false, nil
 }
 
 func buildConfiguredCommandResolver(ctx context.Context, cfg Config, mcpProvider mcp.Provider) (server.CommandSourceResolver, error) {

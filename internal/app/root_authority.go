@@ -26,13 +26,13 @@ const (
 )
 
 func authorityEvaluatorPostureLine(adapter string) string {
-	return fmt.Sprintf("authority evaluator posture: adapter=%s enforcement=%t", adapter, adapter == "local" || adapter == "cedar")
+	return fmt.Sprintf("authority evaluator posture: adapter=%s enforcement=%t", adapter, adapter == harnessLocalSource || adapter == "cedar")
 }
 
 func selectAuthorityEvaluator(mode, cedarPolicyPath string) (port.AuthorityEvaluator, string, error) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "local":
-		return localauthority.New(), "local", nil
+	case "", harnessLocalSource:
+		return localauthority.New(), harnessLocalSource, nil
 	case "noop":
 		return noopauthority.New(), "noop", nil
 	case "cedar":

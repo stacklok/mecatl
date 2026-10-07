@@ -251,6 +251,10 @@
 #       # instructions and replace mode. Duplicate or structurally no-op declarations fail
 #       # startup.
 #       overrides: []
+#   # ProjectInstructionMaxBytes bounds retained project instruction content in bytes
+#   # across selected sources; omitted uses 65536. A separate equal-sized budget bounds
+#   # discovered directory and scope metadata. Must be positive when set.
+#   project_instruction_max_bytes: 65536
 #|
 #| Example:
 #|   enabled_sources: [local]

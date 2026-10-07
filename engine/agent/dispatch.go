@@ -540,6 +540,9 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 		// release or synthetic withholding decision. Clean results were published
 		// on completion and must not be published twice.
 		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !p.available, originalReleased, false)
+		if !result.IsError && !cancelled && r.instructionScopes != nil {
+			r.noteInstructionTargets(env.Workspace().Root(), p.call)
+		}
 		out[p.call.ID] = result
 	}
 	return cancelled
@@ -1760,6 +1763,9 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 	r.recordCompleteAuxiliaryUsageWhileActive(sess, record.auxiliaryUsage)
 	r.drainPendingAuxiliaryUsage(sess)
 	result, cancelled, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
+	if !cancelled && !record.result.IsError && !result.IsError && r.instructionScopes != nil {
+		r.noteInstructionTargets(env.Workspace().Root(), c)
+	}
 	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil, originalReleased, true)
 	return result, cancelled
 }
@@ -1870,7 +1876,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 func authorityResources(call session.ToolCall, env tool.Environment) ([]*port.AuthorityResource, error) {
 	var paths []string
 	switch call.Name {
-	case "Read", "ListDir", "Edit", "Write", "Remove":
+	case readToolName, "ListDir", "Edit", "Write", "Remove":
 		path, err := authorityPathNamed(call.Args, "path")
 		if err != nil {
 			return nil, err
@@ -2094,6 +2100,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 		caps.forkHistory = func() []session.Message {
 			return session.ForkSnapshot(sess.Conversation)
 		}
+		caps.forkSession = sess
 		// The parent session's owner (ADR 0204 decision 4) rides down so every
 		// child session it spawns is attributed to the SAME principal. Read off
 		// the aggregate, never off the ambient context — see parentCaps.owner.

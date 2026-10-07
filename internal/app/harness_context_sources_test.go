@@ -696,7 +696,7 @@ func TestADR_0359_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testi
 			t.Fatal("snapshot drift")
 		}
 		a := prompt.RulesAssembler{Src: frozenHarnessRules{err: errors.New("backend failed")}}
-		messages, err := a.Assemble(t.Context())
+		messages, _, err := a.Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
 		if err != nil || len(messages) != 0 {
 			t.Fatal("existing rule fail-soft semantics changed")
 		}

@@ -7,44 +7,34 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/prompt"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
-// TestRootAssemblerMatchesDiscoverInstructions verifies the default assembler
-// reproduces DiscoverInstructions byte-for-byte (P3 default-preserves-behaviour).
 func TestRootAssemblerMatchesDiscoverInstructions(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
-	if err := ws.Write(context.Background(), "AGENTS.md", []byte("be terse")); err != nil {
-		t.Fatalf("seed: %v", err)
+	if err := ws.Write(t.Context(), "AGENTS.md", []byte("be terse")); err != nil {
+		t.Fatal(err)
 	}
-
-	want, err := prompt.DiscoverInstructions(context.Background(), ws)
+	want, _, err := prompt.DiscoverInstructions(t.Context(), ws, ".")
 	if err != nil {
-		t.Fatalf("DiscoverInstructions: %v", err)
+		t.Fatal(err)
 	}
-	got, err := prompt.RootAssembler{Source: ws}.Assemble(context.Background())
-	if err != nil {
-		t.Fatalf("Assemble: %v", err)
-	}
-	if len(got) != len(want) {
-		t.Fatalf("len(Assemble)=%d, len(Discover)=%d", len(got), len(want))
+	got, _, err := (prompt.RootAssembler{Source: ws, SourceID: "proj", SourcePrefix: "."}).Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
+	if err != nil || len(got) != len(want) {
+		t.Fatalf("got=%v want=%v err=%v", got, want, err)
 	}
 	for i := range want {
-		if got[i].Text != want[i].Text || got[i].Role != want[i].Role {
-			t.Fatalf("message[%d]: Assemble=%+v want %+v", i, got[i], want[i])
+		if got[i].Role != want[i].Role || got[i].Text != want[i].Text {
+			t.Fatalf("got=%v want=%v", got, want)
 		}
 	}
 }
 
-// TestRootAssemblerEmptyWorkspace verifies no instructions and no error when no
-// instruction files are present.
 func TestRootAssemblerEmptyWorkspace(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
-	got, err := prompt.RootAssembler{Source: ws}.Assemble(context.Background())
-	if err != nil {
-		t.Fatalf("Assemble: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("got %d messages, want 0", len(got))
+	got, _, err := (prompt.RootAssembler{Source: ws, SourceID: "proj", SourcePrefix: "."}).Assemble(t.Context(), nil, &session.InstructionSnapshot{}, 65536)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got=%v err=%v", got, err)
 	}
 }
 
@@ -53,21 +43,16 @@ func TestAssembleWithManifestPreservesMessagesAndReportsBuiltInProvenance(t *tes
 	if err := ws.Write(context.Background(), "AGENTS.md", []byte("byte-stable instructions")); err != nil {
 		t.Fatal(err)
 	}
-	assembler := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws})
-	want, err := assembler.Assemble(context.Background())
+	a := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws, SourceID: "proj", SourcePrefix: "."})
+	want, _, err := a.Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, manifest, err := prompt.AssembleWithManifest(context.Background(), assembler)
-	if err != nil {
-		t.Fatal(err)
+	got, manifest, err := prompt.AssembleWithManifest(t.Context(), a, []string{"."}, &session.InstructionSnapshot{}, 65536)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got=%v want=%v err=%v", got, want, err)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("manifest assembly changed messages: got %+v want %+v", got, want)
-	}
-	if len(manifest) != 1 || manifest[0] != (prompt.InstructionManifest{
-		Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject,
-	}) {
-		t.Fatalf("manifest = %+v", manifest)
+	if len(manifest) != 1 || manifest[0].SourceID != "proj" || !manifest[0].HasGuidance {
+		t.Fatalf("manifest=%+v", manifest)
 	}
 }

@@ -36,9 +36,56 @@ model needs for work in that tree:
 - Do not edit generated files by hand.
 ```
 
-Mecatl combines the instruction files that apply to the workspace. A more local
-file can refine guidance for its subtree. Instructions do not grant permission:
-a tool call still follows the configured allow, ask, and deny rules.
+The first request includes guidance from the selected, admitted source root through
+its starting folder, ordered from root to leaf. More specific instructions apply
+to files beneath their directory; guidance from a sibling directory does not apply.
+For example, a default local source selected in `website/` starts at `website/`:
+it does not infer a Git root or load `../AGENTS.md`. If the operator selects a
+broader source rooted at the repository, its root guidance also applies to work
+in `website/`.
+
+After a successful built-in Read, Edit, Write, Copy, Move, or Remove on a file in
+another directory, Mecatl discovers that directory's chain for the **next** model
+request. A first-touch write, or another tool call in the same batch, can finish
+before the new guidance is visible. Shell, custom tools, MCP tools, ListDir, Glob,
+and Grep do not activate nested instructions. Mentioning a path in chat does not
+load its guidance.
+
+In each directory, nonblank `AGENTS.md` wins; missing or blank `AGENTS.md` falls
+back to `CLAUDE.md`. A read fault does not authorize fallback to another file or
+host source. Scope labels refer to execution-relative directories: selected
+source ancestors above the execution root apply across the execution tree (`"."`),
+while `"nested"` applies only beneath that execution folder. Encountered siblings
+remain independent. When sources are combined, their contributions share the
+same content budget. In `replace` mode the first nonempty source wins as a whole:
+a higher-priority source with guidance in one sibling can suppress a lower-priority
+source's root guidance even when working in another sibling.
+
+Mecatl retains automatically loaded guidance for the live session. Edits to an
+already loaded instruction file do not refresh its body during that session,
+including across messages, permission approvals, and compaction. New covered
+file operations can discover additional scopes; restart or reattachment to a
+different server process rediscovers guidance from the current admitted source.
+Automatic instruction bodies are not saved in conversation or tool results;
+explicitly reading a file still produces an ordinary saved tool result.
+
+The operator setting `harness_context.project_instruction_max_bytes` limits the
+combined retained instruction content to 65,536 bytes by default. For example,
+set `project_instruction_max_bytes: 131072` under `harness_context` in the
+operator settings to allow more guidance. The value must be a positive integer;
+omitting it uses the default. A separate, equally sized metadata budget bounds
+retained scope and directory records. When the budget is reached, Mecatl labels
+partial or omitted guidance in model context and sends content-safe warnings to
+the client. Tools remain available under their normal permission policy. This
+limit applies to retained guidance, not necessarily to the memory a source
+backend uses while reading a file. See the [configuration reference](/reference/configuration.md).
+
+Fresh-context children inherit the parent's admitted instruction sources and an
+independent snapshot of its covered guidance. An isolated fork preserves the
+parent's relative execution paths when mapping further file targets. If it cannot
+map those paths, it receives the parent's starting guidance and an unavailable-
+mapping notice instead of projecting nested scopes. The child's checkout does
+not become a new instruction authority.
 
 Treat instructions as untrusted model input. Do not put credentials, bearer
 values, or secrets in them. Do not use an instruction file as a substitute for

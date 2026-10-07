@@ -376,7 +376,33 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 				if len(*firstRequests) != 3 {
 					t.Fatalf("A requests = %d, want initial plus post-reader tool and completion", len(*firstRequests))
 				}
-				assertRequestMarkers(t, (*firstRequests)[1], []string{"FRESH-A-INSTRUCTION", "FRESH-A-COMMAND"}, []string{"SOURCE-B", "COMMAND-B"})
+				// Already examined guidance stays with A's live session; command
+				// expansion still reads A's current source after the peer closes.
+				for _, request := range (*firstRequests)[1:] {
+					assertRequestMarkers(t, request, []string{"SOURCE-A", "FRESH-A-COMMAND"}, []string{"FRESH-A-INSTRUCTION", "SOURCE-B", "COMMAND-B"})
+				}
+
+				// Reopening must load current guidance from A's exact placement,
+				// not its old live snapshot or the host checkout now containing B.
+				first.Close()
+				reopened, _, reopenedRequests := fixture.build(ctx, t, fixture.repository, storeDir,
+					mockllm.ToolCallTurn(session.ToolCall{ID: "read-reopened-a", Name: "Read", Args: []byte(`{"path":"tracked.txt"}`)}),
+					mockllm.TextTurn("a-reopened"))
+				t.Cleanup(reopened.Close)
+				assertRunEvents(t, harnessRun(t, reopened, ctx, one.ID, "/which"), "read-reopened-a", "     1\tHOST-A\n")
+				resumed, err := reopened.Service.GetSession(ctx, one.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if resumed.EnvironmentRef != one.EnvironmentRef {
+					t.Fatalf("reopened placement = %+v, want %+v", resumed.EnvironmentRef, one.EnvironmentRef)
+				}
+				if len(*reopenedRequests) != 2 {
+					t.Fatalf("reopened A requests = %d, want tool and completion", len(*reopenedRequests))
+				}
+				for _, request := range *reopenedRequests {
+					assertRequestMarkers(t, request, []string{"FRESH-A-INSTRUCTION", "FRESH-A-COMMAND"}, []string{"SOURCE-A", "SOURCE-B", "COMMAND-B"})
+				}
 				return
 			}
 

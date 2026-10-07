@@ -197,7 +197,7 @@ func TestMicroVMIndependentContextIgnoresGuestAndSurvivesUnavailableExecution(t 
 		if scope.AcquireExecutionWorkspace != nil {
 			t.Error("independent source received acquisition")
 		}
-		return prompt.RootAssembler{Source: source}, nil, nil
+		return prompt.RootAssembler{Source: source, SourceID: "independent", SourcePrefix: "."}, nil, nil
 	}}}
 	cfg.HarnessCommandSources = []HarnessSourceRegistration[server.CommandSourceBinding]{{ID: "independent", Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
 		return prompt.NewDirCommandExpander(source), nil, nil
@@ -640,10 +640,11 @@ func TestMicroVMSelectedContextFreshnessAndReadEvidence(t *testing.T) {
 	if !strings.Contains(first, "FALLBACK-INSTRUCTION") || !strings.Contains(first, "FIRST-COMMAND") {
 		t.Fatal("whitespace fallback or expansion missing")
 	}
-	if !strings.Contains(second, "SECOND-INSTRUCTION") || strings.Contains(second, "FALLBACK-INSTRUCTION") || !strings.Contains(second, "SECOND-COMMAND") {
-		t.Fatal("instructions or commands did not refresh")
+	if !strings.Contains(second, "FALLBACK-INSTRUCTION") || strings.Contains(second, "SECOND-INSTRUCTION") || !strings.Contains(second, "SECOND-COMMAND") {
+		t.Fatal("examined instructions were not retained or commands did not refresh")
 	}
-	// A genuine read error must not turn into CLAUDE fallback or optional absence.
+	// A changed file at an already examined scope is not re-read during the live
+	// session, even if it later becomes unreadable.
 	path := filepath.Join(daemon.root, "logical-1", "AGENTS.md")
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -653,7 +654,7 @@ func TestMicroVMSelectedContextFreshnessAndReadEvidence(t *testing.T) {
 	}
 	before := len(requests)
 	harnessRun(t, built, t.Context(), sess.ID, "read fault")
-	if len(requests) != before+1 || strings.Contains(harnessRequestText(requests[before]), "FALLBACK-INSTRUCTION") || !strings.Contains(strings.Join(diag.capturedStrings(), "\n"), "instruction-fragment assembly failed") {
-		t.Fatalf("source read error did not preserve diagnosed fail-soft assembly: before=%d after=%d diagnostics=%q", before, len(requests), diag.capturedStrings())
+	if len(requests) != before+1 || !strings.Contains(harnessRequestText(requests[before]), "FALLBACK-INSTRUCTION") || strings.Contains(strings.Join(diag.capturedStrings(), "\n"), "instruction-fragment assembly failed") {
+		t.Fatalf("examined guidance was reread after backend changed: before=%d after=%d diagnostics=%q", before, len(requests), diag.capturedStrings())
 	}
 }

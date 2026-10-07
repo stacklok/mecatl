@@ -58,27 +58,33 @@ type MemoryIndexAssembler struct {
 // Compile-time assertion that MemoryIndexAssembler satisfies the interface.
 var _ InstructionAssembler = MemoryIndexAssembler{}
 
-// Assemble renders the capped tier-0 index into one user-role message. The
-// workspace is unused (memory is project-scoped at the adapter, not workspace
-// files). It fails soft on a nil source or a source error.
-func (a MemoryIndexAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+// TargetScoped reports that the memory index does not depend on a selected workspace target.
+func (MemoryIndexAssembler) TargetScoped() bool { return false }
+
+// Assemble renders the capped tier-0 index into one user-role message.
+func (a MemoryIndexAssembler) Assemble(ctx context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []InstructionManifest, error) {
+	messages := a.assembleIndex(ctx)
+	return messages, manifestFor(messages, InstructionProvenanceMemory), nil
+}
+
+func (a MemoryIndexAssembler) assembleIndex(ctx context.Context) []session.Message {
 	if a.Src == nil {
-		return nil, nil
+		return nil
 	}
 	entries, err := a.Src.Index(ctx)
 	if err != nil {
 		// Best-effort context: never fail a run on a memory fault.
-		return nil, nil
+		return nil
 	}
 	if len(entries) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	text := renderMemoryIndex(entries, a.maxEntries(), a.maxBytes())
 	if text == "" {
-		return nil, nil
+		return nil
 	}
-	return []session.Message{session.NewUserMessage(text)}, nil
+	return []session.Message{session.NewUserMessage(text)}
 }
 
 func (a MemoryIndexAssembler) maxEntries() int {

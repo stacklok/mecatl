@@ -30,7 +30,7 @@ func registerHarnessCompatibility(cfg *Config) {
 		if err != nil {
 			return nil, nil, err
 		}
-		return prompt.RootAssembler{Source: source}, nil, nil
+		return prompt.RootAssembler{Source: source, SourceID: harnessLocalSource, SourcePrefix: "."}, nil, nil
 	}})
 	commandTier := harnessProjectTier
 	if cfg.CommandsDir != "" {

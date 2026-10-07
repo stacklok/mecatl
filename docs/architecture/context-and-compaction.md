@@ -93,8 +93,29 @@ record is client-memory-only; it neither persists a draft nor automatically repl
   resolved window. Only `Session.Conversation` is compactible. System instructions,
   ephemeral fragments, and tool definitions remain in the request, so they are
   irreducible overhead and can by themselves keep the estimate above the trigger.
-  After a successful pass the loop rebuilds only the message suffix; the system and
-  tool layers remain byte-for-byte unchanged.
+  Project instructions are request-local fragments assembled from the session's
+  admitted instruction sources. At the first request, Mecatl discovers the selected
+  root-to-starting-folder chain; successful covered file operations add directory
+  chains for the next request. Loaded bodies remain stable across messages,
+  approvals, and compaction, even if their files change. Only newly encountered
+  scopes are read. The session aggregate holds an owned copy of the snapshot;
+  compaction affects persisted conversation, not this private guidance. Neither
+  automatic fragments nor the snapshot are written to session storage.
+
+  The Service attaches process-local snapshots to authorized, leased sessions by
+  session incarnation and publishes updates after admitted runs. This cache is
+  bounded by the configured session-engine capacity, discarded on close, ownership
+  loss, or shutdown, and not shared across processes. Settled sessions with no
+  retained project text release their attachment and may discover instruction
+  files on later turns. A successor process lazily
+  rediscovers guidance from its currently admitted source instead of restoring
+  old bodies from storage. Children inherit admitted sources and a separate
+  snapshot; isolated forks retain execution-relative paths for subsequent scope
+  discovery. An unmappable child retains only starting guidance with a notice.
+  See [project instructions and rules](../../user-docs/features/project-instructions-and-rules.md)
+  for reader-facing scope and budget behavior. After a successful pass the loop
+  rebuilds only the message suffix; the system and tool layers remain byte-for-byte
+  unchanged.
 - **`Compactor`** (`engine/agent/compaction.go`) compresses persisted conversation
   history once the trigger is crossed. The default `HeuristicCompactor` is
   single-summary: it preserves the goal + touched file paths, truncates large tool

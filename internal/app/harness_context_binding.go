@@ -199,13 +199,37 @@ func (r *harnessCommandResolver) bindSessionSources(ctx context.Context, scope H
 }
 
 func replaceHarnessInstructions(base prompt.InstructionAssembler, cfg Config) prompt.InstructionAssembler {
+	if generation, ok := cfg.harnessInstructions.(generationInstructions); ok {
+		var sources []prompt.InstructionAssembler
+		switch source := generation.source.(type) {
+		case policyInstructionAssembler:
+			if source.mode == harnessModeCombine {
+				sources = source.sources
+			}
+		case prompt.MultiAssembler:
+			sources = source.Assemblers
+		}
+		if sources != nil {
+			children := make([]prompt.InstructionAssembler, len(sources))
+			for i, child := range sources {
+				leaf := generation
+				leaf.source = child
+				leaf.filterSource = generation.source
+				children[i] = leaf
+			}
+			cfg.harnessInstructions = prompt.NewMultiAssembler(children...)
+		}
+	}
+	if multi, ok := base.(*prompt.MultiAssembler); ok {
+		base = *multi
+	}
 	if multi, ok := base.(prompt.MultiAssembler); ok {
 		children := make([]prompt.InstructionAssembler, 0, len(multi.Assemblers))
 		for _, child := range multi.Assemblers {
 			switch child.(type) {
-			case policyInstructionAssembler, prompt.RootAssembler:
+			case policyInstructionAssembler, prompt.RootAssembler, *prompt.RootAssembler:
 				children = append(children, cfg.harnessInstructions)
-			case prompt.RulesAssembler:
+			case prompt.RulesAssembler, *prompt.RulesAssembler:
 				children = append(children, prompt.RulesAssembler{Src: cfg.harnessRules})
 			default:
 				children = append(children, child)

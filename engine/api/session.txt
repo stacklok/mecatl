@@ -21,6 +21,7 @@
     method func (*Session).FailureMetadata() RetryMetadata
     method func (*Session).GrantToolAuthority(names []string) error
     method func (*Session).Incarnation() IncarnationID
+    method func (*Session).InstructionSnapshot() InstructionSnapshot
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)
     method func (*Session).LastError() string
@@ -53,6 +54,7 @@
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ReplaceHistoryAtBoundary(messages []Message) error
+    method func (*Session).ReplaceInstructionSnapshot(snapshot InstructionSnapshot)
     method func (*Session).RestoreAuthorizationClaim(pending PendingAuthorization) error
     method func (*Session).RestoreFailedStepRetryPending(metadata RetryMetadata) error
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
@@ -84,6 +86,7 @@
     method func (EnvironmentRef).Valid() bool
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
+    method func (InstructionSnapshot).MetadataBytes() int
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAuthorization).Clone() PendingAuthorization
     method func (RetryDisposition).Valid() bool
@@ -370,6 +373,8 @@ type GuardrailReviewPayload struct{ReviewID string; Job string; Assessment strin
 type HookDecision string
 type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID; Guardrail *GuardrailReviewPayload}
 type IncarnationID string
+type InstructionScope struct{SourceID string; Directory string; File string; Text string; Partial bool; Omitted bool; Examined bool; Unavailable bool}
+type InstructionSnapshot struct{Directories []string; Scopes []InstructionScope; DiscoveryExhausted bool}
 type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
 type MediaKind string
 type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; ReasoningItemID string; Parts []Content; UserPromptProvenance UserPromptProvenance}

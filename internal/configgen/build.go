@@ -130,6 +130,9 @@ func harnessContextSubtree(docs Docs) *Subtree {
 		}
 	}
 	for _, field := range fields {
+		if field.Key == "project_instruction_max_bytes" {
+			field.ExampleValue = "65536"
+		}
 		if field.Key != "kinds" {
 			continue
 		}

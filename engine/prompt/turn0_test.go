@@ -36,7 +36,7 @@ func TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput(t *testing.T) {
 
 	render := func(a prompt.InstructionAssembler) string {
 		t.Helper()
-		msgs, err := a.Assemble(ctx)
+		msgs, _, err := a.Assemble(ctx, []string{"."}, nil, 65536)
 		if err != nil {
 			t.Fatalf("Assemble: %v", err)
 		}
@@ -56,8 +56,8 @@ func TestIsInjectedTurn0FragmentRecognisesRealAssemblerOutput(t *testing.T) {
 		name string
 		text string
 	}{
-		{"project-instructions (AGENTS.md)", render(prompt.RootAssembler{Source: agentsWS})},
-		{"project-instructions (CLAUDE.md)", render(prompt.RootAssembler{Source: claudeWS})},
+		{"project-instructions (AGENTS.md)", render(prompt.RootAssembler{Source: agentsWS, SourceID: "agents", SourcePrefix: "."})},
+		{"project-instructions (CLAUDE.md)", render(prompt.RootAssembler{Source: claudeWS, SourceID: "claude", SourcePrefix: "."})},
 		{"rules", render(prompt.RulesAssembler{Src: scriptedRules{rules: []prompt.Rule{{Name: "r1", Body: "body\n", Origin: prompt.RuleOriginProject}}}})},
 		{"soul", render(prompt.SoulAssembler{Src: scriptedSoul{body: "terse engineer"}})},
 		{"memory-index", render(prompt.MemoryIndexAssembler{Src: scriptedIndex{entries: entries}})},

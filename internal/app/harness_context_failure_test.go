@@ -165,7 +165,7 @@ func TestADR_0359_HarnessContext_Scenario4_ConfiguredChainFailureSemantics(t *te
 				if shared {
 					cfg.PlacementProvider = harnessVirtualPlacement(source)
 				}
-				first := prompt.InstructionAssembler(prompt.RootAssembler{Source: &harnessInstructionReads{Workspace: source, fault: fs.ErrPermission}})
+				first := prompt.InstructionAssembler(prompt.RootAssembler{Source: &harnessInstructionReads{Workspace: source, fault: fs.ErrPermission}, SourceID: "fault", SourcePrefix: "."})
 				firstTier := "project"
 				if soft {
 					first = prompt.RulesAssembler{Src: frozenHarnessRules{err: fs.ErrPermission}}
@@ -176,7 +176,7 @@ func TestADR_0359_HarnessContext_Scenario4_ConfiguredChainFailureSemantics(t *te
 						return first, nil, nil
 					}},
 					{ID: "next", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
-						return prompt.RootAssembler{Source: reader}, nil, nil
+						return prompt.RootAssembler{Source: reader, SourceID: "next", SourcePrefix: "."}, nil, nil
 					}},
 				}
 				var requests []port.LLMRequest

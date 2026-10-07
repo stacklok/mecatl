@@ -18,6 +18,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -67,6 +70,11 @@ func createSessionAs(ctx context.Context, addr, bearer string) (int, string) {
 
 // promptAs drives a prompt through the authenticated edge, draining the SSE body
 // so the run reaches terminal and its events are appended before we assert.
+const (
+	maxPromptSSEDrainBytes          = 1 << 20
+	maxPromptFailureDiagnosticBytes = 8192
+)
+
 func promptAs(ctx context.Context, addr, sessionID, bearer, text string) int {
 	ginkgo.GinkgoHelper()
 	body, _ := json.Marshal(map[string]any{"text": text})
@@ -80,8 +88,100 @@ func promptAs(ctx context.Context, addr, sessionID, bearer, text string) int {
 	resp, err := http.DefaultClient.Do(req)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "POST prompt")
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	drainPromptResponse(resp, bearer, ginkgo.GinkgoWriter)
 	return resp.StatusCode
+}
+
+func drainPromptResponse(resp *http.Response, bearer string, diagnostics io.Writer) {
+	if resp.StatusCode/100 == 5 {
+		writePromptFailureDiagnostic(diagnostics, resp.StatusCode, resp.Body, bearer)
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxPromptSSEDrainBytes))
+}
+
+func writePromptFailureDiagnostic(diagnostics io.Writer, statusCode int, body io.Reader, bearer string) {
+	raw, _ := io.ReadAll(io.LimitReader(body, maxPromptFailureDiagnosticBytes))
+	var problem struct {
+		Code   string `json:"code"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(raw, &problem); err != nil {
+		fmt.Fprintf(diagnostics, "POST prompt returned HTTP %d; response was not an RFC 9457 problem document\n", statusCode)
+		return
+	}
+	fmt.Fprintf(diagnostics, "POST prompt returned HTTP %d: code=%q title=%q detail=%q\n", statusCode,
+		boundedRedacted(problem.Code, bearer, maxPromptFailureDiagnosticBytes),
+		boundedRedacted(problem.Title, bearer, maxPromptFailureDiagnosticBytes),
+		boundedRedacted(problem.Detail, bearer, maxPromptFailureDiagnosticBytes))
+}
+
+func TestPromptResponseDiagnosticsAndSSEDrain(t *testing.T) {
+	t.Run("reports redacted RFC 9457 server failures", func(t *testing.T) {
+		const bearer = "known-bearer-token"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"code":"prompt_failed","title":"Prompt failed","detail":"upstream rejected known-bearer-token"}`)
+		}))
+		defer srv.Close()
+
+		resp, err := http.Get(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var diagnostics bytes.Buffer
+		drainPromptResponse(resp, bearer, &diagnostics)
+		got := diagnostics.String()
+		if !strings.Contains(got, `code="prompt_failed" title="Prompt failed" detail="upstream rejected [REDACTED]"`) {
+			t.Fatalf("diagnostic = %q", got)
+		}
+		if strings.Contains(got, bearer) {
+			t.Fatalf("diagnostic leaked bearer: %q", got)
+		}
+	})
+
+	t.Run("drains successful SSE", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: started\n\n")
+			w.(http.Flusher).Flush()
+			<-release
+			_, _ = io.WriteString(w, "data: complete\n\n")
+		}))
+		defer srv.Close()
+		defer func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		}()
+
+		resp, err := http.Get(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var diagnostics bytes.Buffer
+		drained := make(chan struct{})
+		go func() {
+			drainPromptResponse(resp, "", &diagnostics)
+			close(drained)
+		}()
+		close(release)
+		select {
+		case <-drained:
+		case <-time.After(time.Second):
+			t.Fatal("successful SSE body was not drained")
+		}
+		if got := diagnostics.String(); got != "" {
+			t.Fatalf("success diagnostics = %q", got)
+		}
+	})
 }
 
 // sessionOwner reads the owner off the LIST row over plain HTTP.

@@ -24,8 +24,10 @@ import (
 
 type nativeContextInstructions string
 
-func (s nativeContextInstructions) Assemble(context.Context) ([]session.Message, error) {
-	return []session.Message{session.NewUserMessage(string(s))}, nil
+func (nativeContextInstructions) TargetScoped() bool { return false }
+
+func (s nativeContextInstructions) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	return []session.Message{session.NewUserMessage(string(s))}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, HasGuidance: true}}, nil
 }
 
 type contextPublicationBackend struct {

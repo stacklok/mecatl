@@ -297,7 +297,8 @@ var (
 // through public setters.
 type Session struct {
 	// ID identifies this session.
-	ID SessionID
+	ID                  SessionID
+	instructionSnapshot InstructionSnapshot
 	// State is the current lifecycle state.
 	State State
 	// Mode is the permission posture.
