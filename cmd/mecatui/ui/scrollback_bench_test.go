@@ -1,7 +1,7 @@
 package ui
 
 // Offline performance benchmark for the mecatui scrollback render path
-// (perf-tracking.md Phase 2, "tui-scrollback"): it targets the per-frame string
+// (perf-tracking.md "tui-scrollback"): it targets the per-frame string
 // JOIN of all blocks in renderConversation — the profile-confirmed O(scrollback)
 // hotspot (~91% of per-frame allocations was strings.Builder.WriteString copying
 // every cached block string into a fresh Builder each frame; vp.SetContent's line

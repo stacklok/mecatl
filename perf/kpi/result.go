@@ -1,5 +1,5 @@
 // Package kpi is the stdlib-only KPI-capture support for the offline performance
-// scenario harness (perf-tracking.md Phase 2). It owns the per-scenario metric
+// scenario harness (perf-tracking.md "The benchmark harness"). It owns the per-scenario metric
 // shape (ScenarioResult), the allocation/RSS/wall-clock capture bracket
 // (Capture), the linux /proc-based RSS sampler, and a settle-then-count
 // goroutine probe.
