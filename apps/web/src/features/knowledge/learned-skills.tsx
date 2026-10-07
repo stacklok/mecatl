@@ -10,7 +10,7 @@ import {
   listLearnedSkillsQueryKey,
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,6 +52,36 @@ type LearnedSkillAction = "activate" | "archive" | "reject" | "rollback";
  */
 const LEDGER_LIMIT = 20;
 
+/**
+ * DECISION: the publish-failure notice lives in a tiny module-level store, not component state.
+ * Reason: closing the dialog navigates from `/workspace/skills/learned/$item` to
+ * `/workspace/skills`, two routes, so the list remounts and component state would drop the
+ * warning at the moment it matters. Rejected: a search parameter, which would put message text
+ * in the URL.
+ */
+let publicationNotice: string | undefined;
+const noticeListeners = new Set<() => void>();
+
+function setPublicationNotice(next?: string) {
+  publicationNotice = next;
+  for (const listener of noticeListeners) listener();
+}
+
+function usePublicationNotice() {
+  return useSyncExternalStore(
+    (listener) => {
+      noticeListeners.add(listener);
+      return () => noticeListeners.delete(listener);
+    },
+    () => publicationNotice,
+  );
+}
+
+/** Test seam: the store outlives a component, so tests reset it between cases. */
+export function resetPublicationNotice() {
+  setPublicationNotice(undefined);
+}
+
 export function LearnedSkills({
   onSelect,
   selectedId,
@@ -64,7 +94,7 @@ export function LearnedSkills({
   const changes = useQuery(listLearnedSkillChangesOptions());
   const mutation = useMutation(actOnLearnedSkillMutation());
   const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
+  const notice = usePublicationNotice();
   const [pendingAction, setPendingAction] = useState<LearnedSkillAction>();
   const selected = query.data?.items.find((skill) => skill.id === selectedId);
 
@@ -77,7 +107,7 @@ export function LearnedSkills({
 
   async function act(skill: LearnedSkill, action: LearnedSkillAction) {
     setError(undefined);
-    setNotice(undefined);
+    setPublicationNotice(undefined);
     try {
       const result = await mutation.mutateAsync({
         body: {
@@ -92,7 +122,7 @@ export function LearnedSkills({
       // The daemon records the action and then publishes it into the live catalog; the two can
       // diverge, and a recorded-but-unpublished skill must not read as success.
       if (result.publicationError)
-        setNotice(
+        setPublicationNotice(
           `Recorded, but publishing into the live inventory failed: ${result.publicationError}`,
         );
       onSelect(undefined);
@@ -113,9 +143,15 @@ export function LearnedSkills({
   return (
     <div className="space-y-5">
       {notice && (
-        <p className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="alert">
-          {notice}
-        </p>
+        <div
+          className="flex items-start justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"
+          role="alert"
+        >
+          <p>{notice}</p>
+          <Button onClick={() => setPublicationNotice(undefined)} size="sm" variant="ghost">
+            Dismiss
+          </Button>
+        </div>
       )}
       {query.data.items.length === 0 ? (
         <StateCard

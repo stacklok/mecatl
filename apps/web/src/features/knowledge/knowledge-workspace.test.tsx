@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { KnowledgeWorkspace } from "./knowledge-workspace";
+import { resetPublicationNotice } from "./learned-skills";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, params }: { children: React.ReactNode; params?: { item: string } }) => (
@@ -17,6 +18,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root | undefined;
 
 afterEach(async () => {
+  resetPublicationNotice();
   await act(async () => root?.unmount());
   root = undefined;
   document.body.replaceChildren();
@@ -248,7 +250,28 @@ it("warns when an action was recorded but publishing it failed", async () => {
   await click("Activate");
   await click("Confirm");
   await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
-  expect(document.body.querySelector("[role=alert]")?.textContent).toContain(
+  // Closing the dialog changes route, which remounts the list; the warning must survive that.
+  await act(async () => root?.unmount());
+  const remounted = document.createElement("div");
+  document.body.append(remounted);
+  root = createRoot(remounted);
+  await act(async () =>
+    root?.render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <KnowledgeWorkspace onItemChange={() => {}} onViewChange={() => {}} view="learned" />
+      </QueryClientProvider>,
+    ),
+  );
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+  expect(remounted.querySelector("[role=alert]")?.textContent).toContain(
     "Recorded, but publishing into the live inventory failed: catalog unavailable",
   );
+  await act(async () => {
+    [...remounted.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "Dismiss")
+      ?.click();
+  });
+  expect(remounted.querySelector("[role=alert]")).toBeNull();
 });
