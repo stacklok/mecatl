@@ -27,13 +27,13 @@ glossary:
 entities:
   Session:
     definition: >
-      The central aggregate and unit of work: a stateful conversation between a
-      principal and a model, with an `Environment` binding, usage accounting, and
-      limits. A `Session` is a state machine (idle, running, awaiting, completed,
+      The central aggregate: a stateful conversation between a principal and a
+      model, with an `Environment` binding, usage accounting, and limits. A
+      `Session` is a state machine (idle, running, awaiting, completed,
       cancelled, failed) and is bound to one `Provider`. Its effective `Model`
       is fixed for each `Turn`; a `PermissionMode` change can re-resolve the model
       between turns within that provider. It survives process restarts when
-      backed by a store.
+      backed by a store, preserving its incarnation identity across restoration.
     relationships:
       - entity: Conversation
         cardinality: "1:1"
@@ -110,6 +110,11 @@ entities:
         statement: >
           A `Session` in a terminal state (completed, cancelled, or failed) is
           returned to idle before any new `Run` reuses it.
+      - id: session-incarnation-persists
+        statement: >
+          A `Session` has one incarnation identity for the lifetime of its ID.
+          Restoration preserves it; a new `Session` reusing the ID gets a new
+          incarnation.
       - id: session-usage-survives-restart
         statement: >
           Cumulative token usage is preserved across reopen, interrupt, recover,
@@ -157,11 +162,11 @@ entities:
 
   Run:
     definition: >
-      A single drive of a `Session` from a starting state to a terminal one —
-      one invocation of the agent loop. A `Run` sequences `Turns`, emits a stream
-      of `Events`, and ends with a stop reason (end-of-turn, budget, no-progress,
-      cancelled, error). It is the execution, not the state: the `Session` it
-      drives outlives it.
+      One unit of work driven through a `Session` by the agent loop. It sequences
+      `Turns` and emits `Events`. It can pause awaiting approval or external
+      authorization and continue with the same logical run identity, even if a
+      new in-process loop handle drives the continuation. The `Session` outlives
+      the `Run` and can host later runs.
     relationships:
       - entity: Session
         cardinality: "n:1"
@@ -178,8 +183,8 @@ entities:
     invariants:
       - id: run-one-terminal-stop
         statement: >
-          A `Run` drives its `Session` to exactly one terminal state and reports
-          exactly one stop reason.
+          A paused `Run` has no terminal stop. Its continuation retains the same
+          run identity; on completion it reports one terminal stop reason.
       - id: run-no-replay-after-first-chunk
         statement: >
           Once a `Turn` has streamed its first chunk, the `Run` never retries or
@@ -865,9 +870,10 @@ entities:
       `Session` from its snapshot plus the `EventLog`.
     relationships:
       - entity: Run
-        cardinality: "1:n"
+        cardinality: "n:n"
         ownership: referenced
         role: executes
+        note: A paused run can continue in another process with the same run identity.
       - entity: SessionLease
         cardinality: "1:n"
         ownership: referenced
@@ -1110,10 +1116,10 @@ scenarios:
     actors: [Operator, Client]
     steps:
       - "A `Session` is parked on a `PermissionAsk` when the process dies; the `EventLog` holds every `Event` up to that point."
-      - "`Operator` restarts the harness; a new `Process` recovers the `Session` to idle before reuse, preserving cumulative usage."
-      - "`Client` approves the pending ask; the `Run` re-enters the loop at the ask and the pending `ToolCall` executes exactly once."
+      - "`Operator` restarts the harness; a new `Process` restores the awaiting `Session`, preserving its incarnation, run identity and cumulative usage."
+      - "`Client` approves the pending ask; the same logical `Run` continues at the ask and the pending `ToolCall` executes exactly once."
     invariants_touched:
-      [session-recover-before-reuse, event-log-records-terminal-tail, ask-suspends-run-until-resolved, session-usage-survives-restart, rehydrate-tool-exactly-once]
+      [session-incarnation-persists, run-one-terminal-stop, event-log-records-terminal-tail, ask-suspends-run-until-resolved, session-usage-survives-restart, rehydrate-tool-exactly-once]
 
   - name: A rehydrated session does not re-ask a previously granted tool
     actors: [Operator, Client]

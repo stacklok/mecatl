@@ -23,6 +23,13 @@ state; mutation flows through methods such as `BeginTurn`, `RecordAssistant`,
 `RecordToolResults`, `RecordUserPrompt`, `ReplaceHistory`, `PauseForApproval`,
 `ResumeWith`, `Complete`, `Stop`, `Cancel`, `Fail`.
 
+`SessionID` addresses the conversation; `session.IncarnationID` identifies this
+lifetime of that ID. Restoration preserves the incarnation, while a newly created
+session with a reused ID gets a new one. A host-supplied `RunID` identifies one
+unit of work: fresh work gets a new ID, while approval or external-authorization
+continuation retains the pending run's ID across restart. Engine callers may omit
+`RunID`; it is a correlation label, not an authorization grant.
+
 States (`session.State`): `idle`, `running`, `awaiting`, `completed`, `failed`,
 `cancelled`. The last three are terminal (`State.IsTerminal()`).
 

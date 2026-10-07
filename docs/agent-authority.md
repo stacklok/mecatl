@@ -1,176 +1,145 @@
 # Agent authority: user journey and trust boundaries
 
-This page describes the **intended design**, not a delivery claim. The [implementation companion](agent-authority-implementation.md) records implementation evidence, unresolved choices and remaining work.
+This page records the intended design of the agent identity work in mecatl, how credentials flow in the system and what the trust model is.
 
 ## 1. User journey
 
-Alice asks `code-reviewer` to read PR 42 in `acme/payments`. Mecatl identifies the acting agent; an external broker verifies the presented evidence and applies its own policy to that exact operation before selecting credentials or dispatching. Permission to read PR 42 must not authorize merging PR 43.
+Alice asks `code-reviewer` to read PR 42 in `acme/payments`. Mecatl validates her login token and reports the verified user and acting reviewer instance to the workload-authenticated broker. The broker checks the instance credential and applies its own policy to the run and exact operation before dispatch. It trusts Mecatl’s report that Alice authenticated; it does not revalidate her login token or infer that she approved this particular action.
 
-The operator can inspect which user and agent were associated with the request, why the broker allowed or denied it, and its observed outcome—including an unknown outcome—without reconstructing the decision solely from Mecatl's logs. The record must survive broker restart and show which checks the broker performed itself and which identity claims it accepted from Mecatl.
-
-**Mecatl identifies the user and agent; the broker applies its own policy to their request.** For Alice’s request, the broker relies on authenticated Mecatl to report that Alice’s login token was validated and that `code-reviewer` is acting for her. The broker checks the credentials and request against its own policy before allowing the operation. It does not revalidate Alice’s login token or treat her authenticated identity as proof that she approved this particular action.
+Binding the user, agent instance, run, and operation provides the substrate for broker authorization decisions and future audit records. Reading PR 42 does not authorize merging PR 43; an audit record must distinguish the broker’s checks from Mecatl’s assertions and capture the observed outcome.
 
 ## 2. Identity and trust model
 
-These terms build on the [domain model](architecture/domain-model.md), not a second set of core entities.
-
 ### User identity and persisted ownership
 
-Alice's identity is the `(Issuer, Subject)` pair represented by `session.Principal`, not her display name or email. Mecatl validates her login access token's signature, trusted issuer, intended audience and expiry. It records the principal as the session owner at creation; children and forks inherit it. Ownership enforcement prevents another caller from taking over her session.
+Mecatl identifies Alice by the issuer and subject of her validated login token, represented by `session.Principal`. Mecatl saves that principal as the session owner; children and forks inherit it.
 
-When Alice requests an operation, Mecatl sends the broker a record of her current authentication, tied to that invocation. The broker checks that the record came from an authenticated Mecatl workload, is recent enough, and identifies the same user—by issuer and subject—as the session’s saved owner. A session owned by Alice cannot be used with Bob’s authentication record.
+For each new human-initiated request, Mecatl validates the caller's login token signature, trusted issuer, intended audience and expiry, then checks that its issuer and subject match the saved session owner. It reports the verified user to the workload-authenticated broker for run admission; the broker checks that the report came from trusted Mecatl and matches the owner. Once a run is admitted, expiry of Alice's original login token does not end it.
 
-The saved owner tells the broker whose session this is; it does not show that Alice is still authenticated or that the operation is allowed. Those require separate checks.
+### Agent definitions and execution lifetimes
 
-Here, *owner* and *subject* refer to the same user in different contexts: Alice owns the session and is the subject of the user token. The logical-agent credential has its own subject, identifying `code-reviewer` rather than Alice.
+- **Agent definition:** `code-reviewer` is a selected `AgentDef`; this design also gives the default main and unnamed child the built-in identities `system/main` and `system/explorer`. Broker policy would distinguish the verified source supplying `code-reviewer`, not rely on `project/code-reviewer` alone. Changing its content does not change that source identity; a task prompt cannot create a new definition.
+- **Session:** The [domain model](architecture/domain-model.md) defines the `Session` aggregate. In this design, Alice and Bob have separate conversations and owners even if both select `system/main`.
+- **Session incarnation:** the durable identity this design uses to distinguish their agent instances, even if an internal caller later reuses a session ID. Restoration keeps the incarnation.
+- **Agent instance:** the proposed logical identity of a selected definition in one session incarnation, not a process or a run. Alice can select `code-reviewer` for her main instance or invoke it as a distinct child; a peer fork/clear creates another instance.
+- **Run:** Alice's PR 42 task is one run of the reviewer instance. Continuing it after an approval pause keeps its run identity; giving the same instance a new task starts another run. The existing `RunID` correlates execution but does not authorize it: broker admission for each run is part of this design.
+- **Workload:** the Mecatl service authenticating to the broker (`mecak8s` in this flow). Its identity names neither Alice nor one of the agent instances it hosts.
 
-### Logical agent, instance and workload
+### Instance subject and creation ancestry
 
-- **Logical agent / actor:** the agent performing the work. A named agent such as `code-reviewer` gets its identity from its resolved `AgentDef`, whether it runs as the main session or as a delegated specialist. A main session without a selected definition uses `system/main`. Neither identity represents Alice or the `mecak8s` worker.
-- **Execution:** a particular run of that agent in a session. Two sessions can run the same agent with different permissions. Delegation depth distinguishes the main execution at depth zero from agents working beneath it; it does not change their logical identity. Forking or clearing a session does not, by itself, make it a delegated child.
-- **Mecatl workload:** the `mecak8s` worker that authenticates to the broker. Agents running inside the same worker share that workload identity.
-
-Effective authority and environment are context, not additional identities. Child authority is tighten-only: a definition containing write tools cannot restore writes denied to its parent. `tool.Environment` supplies a workspace and optional bound command runner, durably identified by `EnvironmentRef{Kind, ID, Revision}`. Running in Alice’s workspace does not, by itself, authorize the agent to use her GitHub account.
-
-Authentication happens twice: `mecak8s` authenticates to the broker, then the broker authenticates to ToolHive’s token endpoint. Neither identifies `code-reviewer`—its identity comes from a separate agent credential. ToolHive checks that credential and whether the broker is allowed to present it. Each logical agent does not need its own OAuth client registration.
-
-### Logical-agent naming and constrained issuance
-
-An agent keeps the same identity when its prompt or allowed tools change. Its identity depends on where its definition comes from (such as the project or user configuration) and its exact name. For a project-defined `code-reviewer`, the credential's subject looks like this (`<digest>` represents the full computed hash):
+In this proposed design, a short-lived JWT-SVID carries the agent instance's SPIFFE ID. Each creation hop names a source category (`system`, `explicit`, `project`, `user` or `driver`), definition name and persisted session incarnation:
 
 ```text
-spiffe://agents.example.com/mecatl/agent-definition/v1/project/code-reviewer--<digest>
+spiffe://<trust-domain>/mecatl/agent/<category>/<name>/inst/<incarnation>[/child/<category>/<name>/inst/<incarnation> ...]
 ```
 
-The trust domain is an identity namespace, not a broker address. Tiers—`project`, `user`, `managed`, `driver`, `system`—distinguish sources, not privilege levels. The slug is readable but not unique: `code reviewer` and `code-reviewer` can share it. The deterministic digest of tier and exact name distinguishes them. Editing tools or prompt leaves the identity unchanged; renaming or changing tier does not.
-
-Agent identity, delegation depth and permissions describe different things. If Alice starts `code-reviewer` as her main session, it has the same logical identity as `code-reviewer` invoked as a specialist from the same definition. The specialist’s permissions are additionally restricted by its parent. Neither execution may borrow permissions from the other.
-
-The default main agent uses `system/main` without requiring an agent-definition file. Its credential subject has this shape:
+These illustrative subjects show Alice's main instance, its reviewer child, and a peer fork or clear of the main:
 
 ```text
-spiffe://agents.example.com/mecatl/agent-definition/v1/system/main--<digest>
+# Alice's main instance
+spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u
+
+# Reviewer child created by that main instance
+spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u/child/project/code-reviewer/inst/inc_gh56irfcpnupjqgfdw7dhzzw4m
+
+# Alice forks or clears her main instance
+spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_45bvtrrrpkekb6336hwe6bvape
 ```
 
-Here the digest is computed from `system` and `main`, not the user or session ID. Alice’s and Bob’s default main sessions therefore share this logical-agent identity, but not their user identity, authority, broker attachments or provider credentials. If Alice instead starts a main session using the project-defined `code-reviewer`, its subject is the `project/code-reviewer` identity shown above—not `system/main`. Selecting a named definition changes which agent runs, not the rule that every operation must satisfy the session’s authority and broker policy.
+`project/code-reviewer` illustrates a wider problem: a category and name do not necessarily identify the source that supplied a definition. The payments and website projects, for example, could each supply `code-reviewer`. Before applying a definition-specific policy, the broker needs a verified record of which source supplied this instance's definition. How the issuer verifies and preserves that record, including across repository moves or renames, remains to be designed. If the record is unavailable, the broker must not guess from the path.
 
-Two runs of `code-reviewer` can have different permissions. The broker checks the tools allowed by the credential attached to this call; it must not add tools allowed in another run. That tool list does not describe which files the agent can access, whether it may edit the parent workspace, or the chain of delegations that led to the call.
+The reviewer subject adds `/child/project/code-reviewer/inst/` to Alice's main subject: her main created that instance. The forked main ends in `/system/main/inst/inc_45bvtrrrpkekb6336hwe6bvape` without `/child/`: fork or clear creates another root instance. A team member started directly through the API is also a root.
 
-The combined broker has two responsibilities: its issuer signs only permitted agent identities and tool ceilings requested by an authenticated harness; its invocation component verifies presented credentials and enforces operation policy. The harness also verifies the returned credential's signature, expiry, audience, identity and tool list against its request. Public keys permit verification, not signing. These credentials use SPIFFE names and JWT-SVIDs without requiring SPIRE.
+### Credential format and source provenance
+
+Use literal, nonempty SPIFFE-safe definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. Incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots. Apply any issuance limit to the **whole URI**, including child hops, without truncating it. [SPIFFE-ID §2.3](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md#23-maximum-spiffe-id-length) requires support through 2048 bytes and advises against generating longer IDs; a Mecatl cap and compatible name/depth bounds remain undecided. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
+
+Resume requires the instance's original definition source and revision; if either is unavailable, it cannot silently select another. Fork or clear starts a new instance using the current revision from the same source. Keep private source locations out of readable JWTs. How source records, revision snapshots, and optional claims are represented remains open.
 
 ### What signatures and identity do not prove
 
-A signature proves who issued a credential and that its contents have not changed.
-It does not independently prove which agent inside Mecatl made the call. A compromised shared harness can attach `deployer`'s credential to `code-reviewer`'s call, within the credentials it can obtain or use. Keeping the signing key outside Mecatl limits forgery, not that substitution. Separate instance IDs or keys in the same compromised process provide no process isolation; a different SPIFFE name does not change this boundary.
-
-**Identity never grants authority or proves consent.** The broker applies applicable authorization to the verified user, workload, logical agent and actual operation, not Mecatl's permission verdict. A separate signer or broker-audience claim does not turn trusted harness attestation into independent human proof. This design builds on authorization checks, not a new approval UI, opaque user-evidence platform, standing-grant store or mandate system.
+A signed agent JWT-SVID proves its issuer signed an instance identity, not which agent inside a shared Mecatl process used it. If that process is compromised, it can present `deployer`'s credential on `code-reviewer`'s call when it has access to that credential. Different SPIFFE names or keys held in the same process do not isolate the agents. The [interactive flow](#5-interactive-execution-flow) covers the broker's separate run and call checks.
 
 ## 3. Credential roles and lifetimes
 
-The logical-agent identity is stable, but its credentials expire and are renewed. A short-lived agent credential can be reused across calls and runs while its audience, permitted presenter and any issuance restrictions still apply. It identifies the agent; it is not a one-use permission for a particular call. The same agent identity does not make credentials with different restrictions interchangeable.
+An instance JWT-SVID can be renewed or reused across that instance's runs; the broker admits each run separately.
 
-Delegated access is scoped to a run: one execution started by a user request, not the whole conversation session. The run's authorization binds the user, acting agent, permitted resources and limits. A run can require several access tokens—for different resources or because an earlier token expired—but each must remain within that authorization. Changing the acting agent, including delegation to a specialist, requires an authorized actor transition rather than reusing a token that names another agent.
+Delegated access belongs to the acting instance's admitted run, not its conversation session or a parent run. One run may need several access tokens for different resources or after expiry, but each stays within its authorization. A specialist uses its own run and identity, never a token naming its parent.
 
-The broker checks the run binding and current authority before each operation, as well as admitting the exact call. Creating a fresh token at run start is not enough to prevent its use in another run. Ending or cancelling the run stops new admission and renewal under that run. An already-issued bearer can still be accepted until expiry by a recipient that does not check run status; short lifetimes limit that exposure but do not provide immediate revocation. Renewing agent, ToolHive or provider credentials does not extend the run's authority or replace required fresh user evidence.
+An admitted parent can start a child without Alice logging in again. The child's separate run derives its user and authority from the active parent and the child's definition ceiling; a saved owner or instance credential alone cannot open it. If Alice's run `R42` starts reviewer run `C1`, `R42` is `C1`'s parent and root run, distinct from instance ancestry in the SPIFFE ID. `C1` cannot outlive the applicable parent and root authority.
+
+A token minted at run start cannot authorize another run. Completing or cancelling a run stops new admissions and delegated-access issuance or renewal for it and dependent children, although an operation already dispatched may finish. A recipient without live run-status checks may still accept an issued bearer until expiry. Renewing agent, ToolHive or provider credentials neither extends run authority nor authenticates another initiating request.
+
+An approval wait or provider-enrollment pause leaves the run unfinished; continuation rechecks its original authorization and pending operation. Client disconnect follows the run's actual lifecycle, not automatic cancellation or indefinite authority. After restart, only a durable record of the unfinished run and its original authorization permits continuation; a saved owner, instance credential, connection or attachment alone cannot revive it. An ended child invoked again keeps its instance but needs a new run. Never blindly replay an operation whose outcome is unknown.
+
+A run may have narrower resource/action limits than its definition ceiling. These broker limits govern protected external calls, not local file access or direct writes to a parent workspace; Mecatl's permission and environment controls still govern those. Pinning a definition revision across resume does not pin old operator grants. A model-proposed goal or broad definition tool list is not a trusted task grant; mission-bound authorization is a possible later approach, not a selected approval or policy-generation mechanism. Broker policy changes must not automatically widen an already admitted run. Explicit restrictions or withdrawal can constrain subsequent operations, while an expansion requires an authorized change. Policy lookup, token-carried limits, online evaluation and subset algorithms remain separate authorization-design choices; a signed SVID does not decide among them.
 
 ## 4. Identity progression
 
-At every stage the harness (`mecak8s`) is a client of one
-logical broker deployment; the model does not authenticate or request credentials.
-A–D concern **only Mecatl → broker**, not the separate broker OAuth client → ToolHive relationship in the interactive flow.
+At every stage, `mecak8s` is a client of one broker deployment; the model neither requests credentials nor authenticates. A is a workload-only checkpoint. B adds agent-instance identity, while C and D change how the same harness authenticates its workload. These are alternatives, not a required sequence; agent JWT-SVIDs do not require SPIRE. The separate broker-to-ToolHive OAuth flow appears in [the interactive sequence](#5-interactive-execution-flow).
 
-### A — workload-only Kubernetes ServiceAccount authentication
+| Stage | Workload authentication to the broker | Agent-instance credential |
+|---|---|---|
+| **A** | Projected Kubernetes ServiceAccount (SA) bearer over TLS | None |
+| **B** | Projected SA bearer over TLS | Broker-issued instance JWT-SVID |
+| **C** | SPIRE workload JWT-SVID from the Workload API over TLS | Broker-issued instance JWT-SVID |
+| **D** | SPIRE workload X.509-SVID and key from the Workload API over mTLS | Broker-issued instance JWT-SVID |
 
-Kubernetes projects a short-lived ServiceAccount (SA) bearer token with the broker as audience. Over trusted TLS, the broker validates the configured Kubernetes issuer, audience and SA subject allowlist. It owns provider credentials and invokes ToolHive itself.
+In A, the broker validates the configured Kubernetes issuer, audience and SA allowlist, then invokes ToolHive with credentials it holds. `code-reviewer` and `deployer` in one harness have the same workload identity; a self-declared agent name cannot distinguish them for policy.
 
-```mermaid
-flowchart LR
-    P["Kubernetes"] -->|Projected SA token| H["Harness: mecak8s"]
-    subgraph B["Combined broker"]
-        R["MCP authorization and execution"]
-        T["Embedded ToolHive"]
-        R -->|Broker-owned invocation| T
-    end
-    H -->|TLS + SA bearer + call| R
-```
+### Example flow: ServiceAccount plus agent-instance JWT-SVID
 
-`code-reviewer` and `deployer` inside the same harness present the same SA identity. This restricts which harness may connect, but cannot distinguish those agents for policy. A self-declared agent name is not a substitute for B's credential.
-
-### B — SA-authenticated logical-agent credential
-
-B adds a harness-attested, short-lived agent credential. The broker authenticates the SA, constrains which agent identities and tools it may request, and returns a signed credential. On invocation it checks both workload and agent credentials, exact-call admission and its own policy before using provider credentials.
+B adds a short-lived credential for the acting instance. The broker authenticates the SA; its issuer must check the resolved definition and creation ancestry against trusted inputs rather than sign a model-supplied name. How it obtains those trusted inputs remains open. The diagram separates obtaining that credential, admitting a run and admitting one exact call:
 
 ```mermaid
-flowchart LR
-    P["Kubernetes"] -->|Projected SA token| H["Harness: mecak8s"]
-    subgraph B["Combined broker"]
-        I["Logical-agent issuer"]
-        R["MCP authorization and execution"]
-        T["Embedded ToolHive"]
-        R -->|Broker-owned invocation| T
+sequenceDiagram
+    participant K as Kubernetes
+    participant H as mecak8s
+    box Combined broker
+        participant I as Agent-instance issuer
+        participant R as Run and call admission
+        participant T as Embedded ToolHive
     end
-    H -->|TLS + SA bearer + agent request| I
-    I -->|Broker-issued agent credential| H
-    H -->|TLS + SA bearer + agent credential + call| R
+    K->>H: 1. Project short-lived SA token for broker audience
+    opt No suitable instance JWT-SVID
+        H->>I: 2. SA bearer + resolved instance, definition and ancestry
+        I-->>H: Signed instance JWT-SVID
+    end
+    H->>R: 3. SA bearer + instance JWT-SVID + initiating user and run
+    R->>R: Verify workload, instance, user and run limits
+    opt Run admitted
+        R-->>H: Admitted run reference
+        H->>R: 4. SA bearer + instance JWT-SVID + run reference + exact call
+        R->>R: Verify workload, instance, active run, target, arguments and policy
+        opt Exact call admitted
+            R->>T: Invoke admitted operation
+        end
+    end
 ```
 
-Operator configuration supplies accepted Kubernetes issuers, audiences and SAs, issuance limits and trusted public signing keys. Verification endpoints, CA trust and server names are never selected by a token. These are responsibilities within one broker deployment, not separate services or trust domains. Bearer credentials remain presentable by whoever possesses them; the other admission checks still apply.
+Operator configuration fixes accepted Kubernetes issuers, audiences and SAs, issuance limits and trusted public signing keys. Verification endpoints, CA trust and server names are never selected by a token. A stolen SA token or workload JWT-SVID remains a bearer credential until expiry; workload proof does not replace per-run and per-call admission.
 
-### C — SPIRE JWT-SVID workload authentication
+In C, `mecak8s` obtains a platform JWT-SVID for the broker's audience through the SPIFFE Workload API and presents it on issuance and invocation requests. The broker checks signature, audience, expiry and allowed workload SPIFFE ID. Platform credential renewal and trust-bundle refresh are separate from the broker issuer's key rotation; platform identity neither replaces agent-instance issuance nor creates federation.
 
-C replaces B's SA token with a platform JWT-SVID for the broker's audience, obtained through the SPIFFE Workload API and presented on issuance and invocation requests.
-The broker verifies signature, audience, expiry and allowed workload SPIFFE ID.
-
-```mermaid
-flowchart LR
-    P["Platform SPIRE"] -->|Platform JWT-SVID via Workload API| H["Harness: mecak8s"]
-    subgraph B["Combined broker"]
-        I["Logical-agent issuer"]
-        R["MCP authorization and execution"]
-        T["Embedded ToolHive"]
-        R -->|Broker-owned invocation| T
-    end
-    H -->|TLS + platform JWT-SVID + agent request| I
-    I -->|Broker-issued agent credential| H
-    H -->|TLS + platform JWT-SVID + agent credential + call| R
-```
-
-Agent issuance and exact-call checks remain as in B. Platform identity does not replace the broker's logical-agent signing keys or create federation. Platform credential renewal and trust-bundle refresh are distinct from logical-agent key rotation. This is still bearer authentication: a stolen JWT-SVID is replayable until expiry.
-
-### D — SPIRE X.509-SVID mutual TLS
-
-D replaces bearer workload authentication with proof of a workload private key in the TLS handshake. The harness obtains its certificate and key through the Workload API; the broker verifies platform trust and permits only configured workload IDs.
-
-```mermaid
-flowchart LR
-    P["Platform SPIRE"] -->|X.509-SVID and key via Workload API| H["Harness: mecak8s"]
-    subgraph B["Combined broker"]
-        I["Logical-agent issuer"]
-        R["MCP authorization and execution"]
-        T["Embedded ToolHive"]
-        R -->|Broker-owned invocation| T
-    end
-    H -->|Workload mTLS + agent request| I
-    I -->|Broker-issued agent credential| H
-    H -->|Workload mTLS + agent credential + call| R
-```
-
-Both broker endpoints must verify mTLS identity. A TLS-terminating ingress requires explicitly trusted identity propagation; an ordinary forwarded header is not proof.
-Certificate rotation, bundle refresh and connection renewal must preserve that check, with no silent bearer fallback. D authenticates the harness, not its agents, and does not automatically bind an OAuth access token to the certificate. Neither C nor D proves user consent or isolates agents sharing a harness.
+In D, `mecak8s` obtains an X.509-SVID and key through the Workload API and proves possession during mTLS to both broker endpoints. The broker checks platform trust and permitted workload IDs. A TLS-terminating ingress needs explicitly trusted identity propagation; a forwarded header alone is insufficient. Rotation, bundle refresh and connection renewal must preserve mTLS checks without bearer fallback. Workload mTLS does not bind an OAuth access token to its certificate or prove user consent or isolation among agents in one harness.
 
 ## 5. Interactive execution flow
 
-The flow separates provider setup from admission of each exact operation. It uses an OAuth-protected upstream requiring its native provider credential, rather than a backend that directly accepts the delegated token. Operation and scope names are illustrative, not wire names.
+The flow separates occasional provider enrollment and run admission from independently checked calls in an admitted run. It uses an OAuth-protected upstream requiring its native provider credential, rather than a backend that directly accepts the delegated token. Operation and scope names are illustrative, not wire names.
 
-The exchange reuses the broker's existing ToolHive authorization-code access token as RFC 8693 `subject_token`, the logical-agent credential as `actor_token`, and **separate broker OAuth client authentication**. The subject token is the ToolHive access token the broker already obtained through the user’s browser authorization flow. ToolHive validates it during exchange to establish the user identity. This reuses the broker’s existing token storage and refresh mechanism rather than introducing another credential to represent the user.
+The broker starts as a **modulith**: a constrained interface for issuing agent-instance JWT-SVIDs, ToolHive authserver and vMCP contracts, and credential-custody interfaces sit behind Mecatl-specific operations for run admission and exact-call dispatch. Those operations compose reusable interfaces while preserving authorization and custody checks; they expose neither raw signing nor credential retrieval. Mecatl-specific session, definition-source and engine adaptation stays at the integration edge. The modules are not separate security boundaries.
 
-The broker must establish which ToolHive user and connected provider account Alice is allowed to use. Her Mecatl login and GitHub account can have different identifiers; matching names or identifiers alone do not establish that they belong together. The browser authorization flow protects the sign-in transaction, but does not by itself prove that the account connected in the browser belongs to the user making the Mecatl request.
+A broker attachment refers to broker-owned session and connection state under the authenticated workload; it is neither an agent instance nor a run grant. The preferred design holds admitted run context alongside it and checks both on authenticated calls. Existing reference machinery may be reused, but no API, persistence format or signed run assertion is selected.
 
-Each interactive operation still requires Alice to be authenticated to Mecatl, the broker to check Mecatl’s current authentication report for that request, and policy to permit the operation. Being able to refresh a stored token keeps the connection usable; it does not authorize the next action.
+Before invoking a connected provider account, the broker must establish that Alice may use it. Her Mecatl and GitHub identifiers need not match; the browser flow's state/PKCE and account-continuity checks do not establish that initial permission. How to authorize the caller to use the connected ToolHive user and provider account remains open, including separately governed account sharing.
+
+Enrollment uses two OAuth clients and two authorization codes. ToolHive redeems the provider code and stores the native grant; the broker separately redeems a ToolHive AS code with its confidential-client authentication and PKCE. The broker consumes its callback state, while ToolHive AS checks the registered client, PKCE and eligible grant. Instances need no separate OAuth client registration.
+
+The broker retains the ToolHive user access/refresh grant. A continuity record can link to ToolHive's token session but is not the provider-token store. The inspected [B2 foundation](agent-authority-implementation.md#b2-enrollment-and-account-continuity-to-reuse) has these OAuth/custody boundaries; the instance actor exchange, caller/account permission and admitted run remain intended integrations.
 
 ### Execution sequence
 
-The sequence shows one call within a run. Agent issuance and delegated-token exchange occur only when a suitable valid credential is unavailable; the run and exact-call checks apply to every invocation.
+The sequence shows Alice starting reviewer run `R42` and one PR 42 read. The run label is illustrative, not a specified broker-reference format. Agent credential issuance, enrollment and exchange occur only when needed; the operation check applies on every invocation.
 
 ```mermaid
 sequenceDiagram
@@ -178,87 +147,102 @@ sequenceDiagram
     participant H as Mecatl trusted API and dispatch
     box Combined broker
         participant I as Logical-agent issuer
-        participant B as Identity verification and call admission
-        participant A as Embedded ToolHive AS
-        participant V as Protected vMCP / custody
+        participant B as Run and exact-call admission / broker OAuth client
+        participant A as ToolHive AS / upstream OAuth client
+        participant C as ToolHive upstream token storage / reader
+        participant V as Protected vMCP
     end
-    participant P as Upstream provider
+    participant P as GitHub provider
 
-    Note over U,P: Establish user identity and provider connection
-    U->>H: Current login access token
-    H->>H: Verify authentication and persist owner, not bearer
-    H->>B: Workload authentication + fresh bound user evidence
-    B->>B: Verify trusted attester, freshness and owner match
-    opt Provider connection required
-        U->>A: Browser enrollment, state/PKCE and registered callback
-        A->>P: Authorize provider connection and redeem code
-        P-->>V: Provider access/refresh credentials
-        A-->>B: ToolHive auth-code access/refresh tokens
+    Note over U,P: Admit Alice's reviewer run R42
+    U->>H: Start R42: read acme/payments PR 42, login bearer
+    H->>H: Verify login and owner, then resolve reviewer instance and authority
+    opt No suitable valid instance JWT-SVID
+        H->>I: Workload authentication + instance, definition, ancestry, issuance limits
+        I-->>H: Broker-issued, short-lived instance JWT-SVID
+        H->>H: Verify issuer, audience, expiry, instance and restrictions
     end
-    B->>B: Require authorized Mecatl / canonical user / connection association
+    H->>B: Authenticated workload + attested initiating user + attachment + instance SVID + R42
+    B->>B: Verify owner, presenter, run limits and connection if present
+    B-->>H: Admitted run binding for R42 (format to be designed)
 
-    Note over U,P: Authorize and execute one exact operation
-    U->>H: Read PR 42 as code-reviewer, with current authentication
-    H->>H: Resolve agent and narrowed authority, then apply permissions/hooks
-    opt No suitable valid agent credential
-        H->>I: Workload authentication + resolved agent identity and issuance restrictions
-        I-->>H: Short-lived reusable logical-agent credential
+    opt Provider connection needed
+        B-->>H: R42 waits for authorized connection
+        H-->>U: Broker enrollment link
+        U->>A: Browser authorize broker OAuth client (broker state/PKCE)
+        A-->>U: Redirect to provider authorization (ToolHive client)
+        U->>P: Approve provider connection
+        P-->>U: Provider redirect with upstream code
+        U->>A: ToolHive upstream callback with provider state and code
+        A->>A: Verify upstream OAuth transaction
+        A->>P: Redeem provider code as ToolHive upstream client
+        P-->>A: Native provider access/refresh tokens
+        A->>C: Store native grant in upstream-token storage
+        A-->>U: ToolHive authorization code redirect
+        U->>B: Broker callback with ToolHive code and broker state
+        B->>B: Claim one-time state and retrieve retained PKCE verifier
+        B->>A: Redeem ToolHive code with client authentication + verifier
+        A->>A: Validate broker client and PKCE challenge
+        A-->>B: ToolHive user access/refresh grant into broker logical-session custody
+        B->>B: Verify caller/account association and R42 before continuing
     end
-    H->>H: Verify agent credential and its restrictions for this execution
-    H->>B: Workload + agent credential + run binding + exact call + fresh user evidence
-    B->>B: Verify identities, active run and exact call, then apply Cedar
-    Note over B,V: Denial stops before invocation credential selection or dispatch
-    opt No suitable valid delegated token for this run and resource
-        B->>B: Obtain current ToolHive subject token from guarded custody/refresh
-        B->>A: subject_token + actor_token + broker client auth + eligible resource/scopes
-        A->>A: Validate subject, distinct actor/presenter and authorized association
-        A->>A: Bound access/lifetime and resolve authorized local credential link
-        A-->>B: Delegated token: sub=user, act.sub=agent, client_id=broker client
-        B->>B: Bind delegated token to the authorized run
+
+    Note over U,P: Independently admit one exact operation within R42
+    H->>H: Apply local permissions/hooks to registered PR 42 read
+    H->>B: Workload + instance SVID + R42 binding + call ID/occurrence + PR 42 arguments
+    B->>B: Verify active R42, instance, target, arguments and policy
+    alt Denied
+        B-->>H: Denial with no invocation credential or dispatch
+        H-->>U: Refusal
+    else Admitted exact call
+        opt No suitable valid delegated token for R42 and resource
+            B->>B: Obtain current ToolHive user subject_token from custody/refresh
+            B->>A: subject_token + instance actor_token + broker OAuth client authentication
+            A->>A: Validate user, actor issuer/audience, presenter and bounded access
+            A-->>B: Delegated token: sub=user, act.sub=instance, client_id=broker client
+            B->>B: Bind delegated-token use to R42
+        end
+        B->>V: Delegated token + independently admitted PR 42 read
+        V->>V: Validate token and operation policy, then resolve authorized connection
+        V->>C: Resolve valid upstream grant for authorized token session and target
+        C-->>V: Native provider credential via ToolHive token reader
+        V->>P: Read PR 42 with upstream-injected provider credential
+        P-->>V: PR 42 result
+        V-->>B: Result
+        B-->>H: Sanitized result and observed outcome
+        H-->>U: Answer without credentials in model history
     end
-    B->>V: Delegated token + independently admitted exact operation
-    V->>V: Validate token and operation policy, then load authorized connection
-    V->>P: Exact operation with native provider access credential
-    P-->>V: Operation result
-    V-->>B: Result
-    B-->>H: Sanitized result
-    H-->>U: Answer without credentials in model history
+    Note over H,B: Another R42 call repeats exact-call admission. Login expiry alone does not end R42
 ```
 
-Before checking the operation, the broker resolves the session’s attachment and verifies that it belongs to the authenticated user and Mecatl workload. The attachment binding also identifies the broker incarnation, so a reference from an earlier broker instance cannot silently select new state. Exact-call admission is tied to this attachment.
+The sequence shows one run. For a child run, authenticated Mecatl reports the child instance and parent/root-run links without resending Alice's login bearer. The broker verifies those links and checks the active parent's initiating user and applicable authority against the child's definition ceiling before admitting the child's own run.
 
-Before allowing a call, the broker checks that the verified user matches the session owner, validates the workload and logical-agent credentials, and confirms that the workload is allowed to present that agent’s credential. It checks the requested tool against the credential’s allowed tools, then evaluates the registered target, resource, scopes or authorization details, and exact arguments.
+For each call, the broker authenticates the workload and validates the instance JWT-SVID's signature, issuer, audience, expiry and permitted presenter. It checks that the attachment matches the admitted user, authenticated workload and current Mecatl session incarnation, and that the SVID names that incarnation. The attachment's separate broker incarnation prevents an old reference from selecting new broker state. Neither an attachment nor a run reference grants authority by possession.
 
-Admission applies only to that specific call. It is bound to the broker attachment and incarnation, call ID, argument digest, invocation occurrence and expiry. The broker checks those bindings, validates the registered target and applies Cedar policy before dispatch.
+The broker resolves the issuer-verified definition source before selecting policy; missing or stale records fail closed. It checks the caller's connection permission and applies the definition ceiling and active run's limits to the registered target, resource, scopes or authorization details, and exact arguments. Admission binds one occurrence to the attachment, broker incarnation, run, call ID, argument digest and expiry. A credential's tool list is only a restriction, not the whole policy; ToolHive's Cedar checks remain a reuse candidate, not a selected policy platform.
 
-If the call is paused while the user connects a provider account, the broker repeats admission checks after the browser callback. Permission to connect the account does not replace permission to perform the operation.
+After enrollment, continuation of the pending run rechecks the PR read before dispatch; connecting an account does not approve that operation.
 
-During token exchange, ToolHive authenticates the broker as an OAuth client. It separately checks the logical-agent credential’s issuer, signature, audience and expiry, and confirms that the broker is allowed to present it. A credential issued for admission at the broker is not automatically valid at ToolHive’s authorization server: its audience must explicitly cover that use.
+At exchange, the broker uses its existing ToolHive authorization-code access token as RFC 8693 `subject_token`, the instance JWT-SVID as `actor_token`, and its own OAuth client authentication. ToolHive AS validates the user token, actor issuer, signature, audience, expiry and permitted presenter. A credential valid for broker admission needs an explicit ToolHive AS audience; no additional user-evidence credential is introduced.
 
-ToolHive issues a delegated token identifying the user in `sub`, the logical agent in `act.sub` and the broker’s OAuth client in `client_id`. The token’s audience is the protected MCP endpoint that will receive it, not necessarily the upstream provider, such as GitHub.
-
-These claims identify the parties and intended recipient; they do not specify or validate the exact tool arguments. The broker must still enforce its separate admission checks for the specific call.
+ToolHive issues a delegated token with the user in `sub`, the acting instance in `act.sub`, the broker OAuth client in `client_id`, and the protected MCP endpoint as audience, not GitHub. These claims identify parties and recipient, not permission for particular tool arguments; the broker still admits the exact call.
 
 The protected resource validates issuer, audience, expiry and bounded access,
 applies operation policy and resolves only the authorized user/tenant/target's provider connection. `tsid` is a ToolHive-local credential link, outside SPIFFE's identity responsibility. It must come from validated subject and authoritative connection state, never an arbitrary external claim or caller-selected storage key.
 
 ## 6. Credential custody and safety boundaries
 
-- **Human login bearers terminate at Mecatl's edge.** They are transient, never saved for downstream or scheduled use. Fresh harness-attested evidence is not the bearer, a stored owner, an attachment or an authorization grant.
+- **Human login bearers terminate at Mecatl's edge.** They are transient, never saved for downstream or scheduled use. Harness-attested authentication at run admission is not the bearer, a stored owner, an attachment or an authorization grant for arbitrary operations.
 - **Agent credentials enter trusted Mecatl memory, not model content.** Client code verifies and attaches them without exposing them in arguments, results, conversation history, logs or environment variables. Model-hidden is not process-safe and does not guarantee secure memory erasure.
 - **Signing authority stays with the broker issuer.** Mecatl receives signed credentials and public verification keys, never the private signing key. Issuance and invocation may be modules in one process: separate boxes do not protect against broker, host or key-storage compromise. Key rotation and verifier cache expiry bound trust in old keys.
 - **Provider credentials stay in broker/ToolHive custody.** ToolHive retains,
   refreshes and injects native access credentials for the authorized connection;
-  the broker holds its own ToolHive access/refresh tokens. Results contain neither
+  the broker holds its own ToolHive access/refresh tokens. Neither Mecatl nor
+  the model receives the native provider grant. Results contain neither
   secrets nor reusable signed requests. This does not relocate all harness
   credentials, including LLM-provider credentials. The broker runs no model-driven
   agent loop or general-purpose shell.
-- **Refresh is not fresh human authentication.** A provider connection can outlive
-  a login token without granting the next operation. Credential recovery is not
-  canonical-user identity continuity. After restart, revalidate connection state,
-  reacquire transient credentials and require fresh evidence; cached tokens and
-  persisted ownership are not authority. Self-contained bearers retain a residual
-  lifetime unless execution performs live checks or introspection.
+- **Refresh is not a new run grant.** A provider connection can outlive a login token without authorizing another request. Credential recovery alone does not establish canonical-user identity or the authorized caller/connection association. After restart, revalidate connection continuity and durable unfinished-run binding before continuing an admitted run; missing or indeterminate bindings fail closed. An ended run needs new admission. Expiry of the original login bearer alone does not end unfinished, recoverable work. Self-contained bearers retain a residual lifetime unless recipients check live run status or introspect.
 - **Targets and credentials are server-resolved.** Model-chosen URLs, headers,
   issuers, audiences, scopes or credential selectors cannot redirect authority.
   Missing, malformed, stale, revoked or indeterminate evidence or authorization
@@ -267,10 +251,12 @@ applies operation policy and resolves only the authorized user/tenant/target's p
   operation; enrollment/callback traffic is accounted separately.
 - **Children only narrow authority.** A malicious PR comment cannot obtain merge
   authority by requesting `deployer` beneath a read-only reviewer. A separately
-  authorized top-level deployer may merge if every ceiling permits. A worktree or
-  signature over a model-supplied name is not enforcement. Execution isolation must
-  prevent alternate credential/network bypasses; scrubbed environments and local
-  workspaces are not OS confinement, and shell logs are not exhaustive effect records.
+  authorized top-level deployer may merge if every ceiling permits. A signature
+  over a model-supplied name is not enforcement. Native Kubernetes execution
+  separates Shell commands into executor Pods while the agent loop remains in
+  the harness. Its configured execution and network controls must prevent
+  protected-route bypasses; local worktrees and environment scrubbing alone do
+  not provide the same boundary. Shell logs are not exhaustive effect records.
 
 Unattended execution requires independent authority; restoring a schedule's owner
 or keeping provider offline credentials is insufficient. Interactive authentication
@@ -280,7 +266,49 @@ A possibly dispatched operation with no recorded completion has an **unknown
 outcome**, not proof that nothing happened. Never retry it automatically. Credential
 recovery or a signed pre-dispatch record cannot establish whether a merge reached
 the provider. Provider idempotency/status evidence can support reconciliation, but
-arbitrary effects have no general exactly-once guarantee. Broker records must retain
-identity provenance, exact operation, decision, dispatch and observed outcome without
-secrets, correlated with harness session/run/tool-call records; knowing those
-identifiers grants no authority.
+arbitrary effects have no general exactly-once guarantee. Broker audit inputs must join the initiating user and authorized provider connection to the authenticated workload, acting instance's readable category/name and issuer-verified definition-source association and selected revision, executing run and parent/root-run links, exact tool invocation, decision, dispatch and observed outcome, without credentials. Creation ancestry in the SPIFFE path is distinct from the run and call identifiers. Reuse ToolHive/broker audit facilities where applicable; field mapping, delivery and retention belong to that integration work, not a new audit format here. The record must survive broker restart and distinguish broker-verified checks, harness assertions and provider-reported results. Knowing a correlation identifier grants no authority.
+
+## 7. Future work required to establish the separation
+
+The architecture separates the harness from signing, credential custody, and
+external authorization. The following work must establish those boundaries in
+implementation; SPIFFE identities alone do not complete it. Detailed mechanisms
+and qualification belong in the [implementation companion](agent-authority-implementation.md).
+
+1. **Qualify protected-route mediation in the execution environment.** Build on
+   the existing native Kubernetes execution boundary, rather than invent another
+   sandbox. Verify executor Pod mounts, ServiceAccount configuration, runtime
+   restrictions, and effective network policy in the selected deployment. Test
+   alternate MCP, native CLI, and direct provider routes for usable credentials
+   or privileged interfaces that could bypass broker checks. Record the different
+   guarantees of local execution; worktrees and environment scrubbing alone do
+   not provide the Kubernetes execution boundary. State which protected operations
+   the deployment actually mediates. This is integration and qualification work,
+   not a claim that Kubernetes execution is absent or that every cluster is safe.
+
+2. **Constrain issuance using trusted inputs.** Define how the issuer
+   verifies each resolved definition's admitted source, its instance and
+   creation ancestry, and which issuance limits a harness may request. The
+   broker must validate those bindings rather than sign arbitrary
+   harness-supplied names or ceilings. Qualify rejection of substituted
+   definitions and unauthorized parent/child associations. Admission of a
+   definition from a source must not automatically grant external access;
+   exact grant and policy mechanisms belong to the separate authorization design.
+
+3. **Bound shared-harness credential substitution.** Determine which instance
+   credentials and run references a compromised harness can obtain or reuse, and
+   qualify the limits enforced outside that process. Separate identifiers or keys
+   in one process do not independently identify the executing agent. Document the
+   residual substitution risk; if stronger per-agent guarantees are required,
+   design and qualify a stronger execution boundary rather than claiming that a
+   signed SVID supplies it. No per-agent workload topology is selected here.
+
+4. **Integrate authorized caller/account and executing-run associations.** Build
+   on the broker's enrollment and account-continuity machinery to establish which
+   initiating caller may use a connection for a particular agent instance's run.
+   Preserve and validate that association through credential renewal and supported
+   recovery, including parent/root execution links and run termination. Neither
+   successful enrollment nor possession of an SVID establishes that association
+   alone. The [B2 integration work](agent-authority-implementation.md#calleraccount-association-and-exchange-on-b2)
+   records the inspected foundation and remaining checks without selecting a new
+   user-evidence credential or account-linking platform.
