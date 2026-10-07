@@ -4,6 +4,7 @@ import { ArrowUp, LoaderCircle, Mic, MicOff, Paperclip, SlidersHorizontal, X } f
 import {
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -85,13 +86,17 @@ export interface DraftChatConfiguration {
 }
 
 interface ChatComposerProps {
+  accessory?: ReactNode;
+  ariaLabel?: string;
   configuration?: DraftChatConfiguration;
   disabled?: boolean;
   imageAttachmentsSupported?: boolean;
+  leadingControls?: ReactNode;
   models?: ComposerModelOption[];
   onConfigurationChange?: (configuration: DraftChatConfiguration) => void;
   onPreviewImage?: (image: ImageAttachment) => void;
   onSeedConsumed?: () => void;
+  placeholder?: string;
   onSend: (
     prompt: string,
     action: ComposerEnterAction,
@@ -116,13 +121,17 @@ export interface SeedConfirmationContext {
 export type ComposerEnterAction = "send" | "queue" | "steer" | "newline";
 
 export function ChatComposer({
+  accessory,
+  ariaLabel = "Message Mecatl",
   configuration,
   disabled = false,
   imageAttachmentsSupported = false,
+  leadingControls,
   models = [],
   onConfigurationChange,
   onPreviewImage,
   onSeedConsumed,
+  placeholder: placeholderOverride,
   onSend,
   safetyLevel = "managed",
   seedCanConfirm = true,
@@ -284,8 +293,9 @@ export function ChatComposer({
       onSubmit={handleSubmit}
     >
       <div className="rounded-2xl border bg-card p-2 shadow-[0_8px_30px_rgb(0_0_0/0.06)] focus-within:ring-2 focus-within:ring-ring/40">
+        {accessory}
         <Textarea
-          aria-label="Message Mecatl"
+          aria-label={ariaLabel}
           className="max-h-48 min-h-16 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
           disabled={busy}
           onChange={(event) => setPrompt(event.target.value)}
@@ -305,7 +315,8 @@ export function ChatComposer({
           }}
           onKeyDown={handleKeyDown}
           placeholder={
-            busy
+            placeholderOverride ??
+            (busy
               ? "Mecatl is working…"
               : working
                 ? workingBehavior === "steer"
@@ -313,7 +324,7 @@ export function ChatComposer({
                   : "Queue a message…"
                 : configuration
                   ? "Start a new chat…"
-                  : "Send a message…"
+                  : "Send a message…")
           }
           ref={textarea}
           value={prompt}
@@ -431,6 +442,7 @@ export function ChatComposer({
 
         <div className="flex items-center justify-between gap-3 px-1 pb-1 pt-2">
           <div className="flex min-w-0 items-center gap-2">
+            {leadingControls}
             {onPreviewImage && imageAttachmentsSupported && (
               <>
                 <input

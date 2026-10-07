@@ -28,13 +28,30 @@ type Context = {
   >;
   decisions?: Array<{ text: string; decision: string }>;
   discussion: Entry[];
+  references?: Array<{ name: string; content: string }>;
 };
 export type WriterTransport = {
   observe: (body: Context, signal: AbortSignal) => Promise<ObserveWriterResponse>;
   discuss: (
-    body: Context & { message: string },
+    body: Context & {
+      message: string;
+      passage?: { from: number; to: number; text: string };
+      previousCandidate?: string;
+    },
     signal: AbortSignal,
   ) => Promise<DiscussWriterResponse>;
+};
+
+export type WriterProposal = {
+  kind: "revision" | "start";
+  from: number;
+  to: number;
+  before: string;
+  candidate: string;
+  revision: number;
+  briefGeneration: number;
+  sourceGeneration: number;
+  originId?: string;
 };
 
 function similar(a: string, b: string): boolean {
@@ -108,10 +125,15 @@ export class WriterCore {
       ? this.document.content === this.checkpoint.content
         ? `Checked${this.lastChecked.silent ? " · no new observations" : ""}`
         : "Earlier draft checked · keep writing or read this now"
-      : "Start writing to receive occasional observations";
+      : "";
   }
   private selectionGeneration = 0;
   busy: "observe" | "discuss" | undefined;
+  references: Array<{ name: string; content: string }> = [];
+  private sourceGeneration = 0;
+  private referenceLoading = false;
+  proposal?: WriterProposal;
+  proposalError = "";
   error = "";
   private timer?: ReturnType<typeof setTimeout>;
   private controller?: AbortController;
@@ -142,6 +164,11 @@ export class WriterCore {
     if (this.disposed || content === this.document.content) return;
     if (!this.firstUnsentEdit) this.firstUnsentEdit = Date.now();
     this.document = { revision: this.document.revision + 1, content };
+    if (this.busy === "discuss") this.controller?.abort();
+    if (this.proposal) {
+      this.proposal = undefined;
+      this.proposalError = "Draft changed. Request a fresh preview.";
+    }
     this.automaticEligible = true;
     this.lastEdit = Date.now();
     this.schedule();
@@ -152,12 +179,43 @@ export class WriterCore {
     if (brief.length > 2_000 || brief === this.brief) return false;
     this.brief = brief;
     this.briefGeneration++;
+    if (this.proposal) {
+      this.proposal = undefined;
+      this.proposalError = "Brief changed. Request a fresh preview.";
+    }
+    if (this.busy === "discuss") this.controller?.abort();
     this.automaticEligible = false;
     // Old-brief results cannot advance the checkpoint or surface as current.
     if (this.busy === "observe") this.controller?.abort();
     this.schedule();
     this.notify();
     return true;
+  }
+
+  setReferenceLoading(loading: boolean) {
+    this.referenceLoading = loading;
+    if (loading) {
+      this.sourceGeneration++;
+      this.controller?.abort();
+      if (this.proposal) {
+        this.proposal = undefined;
+        this.proposalError = "References changed. Request a fresh preview.";
+      }
+    }
+    this.schedule();
+    this.notify();
+  }
+
+  setReferences(references: Array<{ name: string; content: string }>) {
+    this.sourceGeneration++;
+    this.references = references.map((item) => ({ ...item }));
+    if (this.proposal) {
+      this.proposal = undefined;
+      this.proposalError = "References changed. Request a fresh preview.";
+    }
+    this.controller?.abort();
+    this.schedule();
+    this.notify();
   }
 
   snapshot(): WriterSnapshot {
@@ -176,6 +234,11 @@ export class WriterCore {
   restore(snapshot: WriterSnapshot) {
     this.generation++;
     this.controller?.abort();
+    this.proposal = undefined;
+    this.references = [];
+    this.referenceLoading = false;
+    this.sourceGeneration++;
+    this.proposalError = "";
     this.document = { ...snapshot.document };
     this.brief = snapshot.brief;
     this.briefGeneration++;
@@ -194,15 +257,33 @@ export class WriterCore {
     this.notify();
   }
 
-  private context(): Context {
+  openDocument(content: string) {
+    this.restore({
+      document: { revision: this.document.revision + 1, content },
+      brief: "",
+      observations: [],
+      generalDiscussion: [],
+    });
+    this.selectionGeneration++;
+    this.selectedId = undefined;
+    this.lastChecked = undefined;
+    this.error = "";
+    this.nextAutomaticAt = 0;
+    this.notify();
+  }
+
+  private context(selectedId = this.selectedId): Context {
     const recent = this.observations.slice(-12);
-    const selected = this.observations.find((item) => item.id === this.selectedId);
+    const selected = this.observations.find((item) => item.id === selectedId);
     if (selected && !recent.includes(selected)) recent.splice(0, 1, selected);
     const decisions = this.observations
       .filter((item): item is Observation & { decision: string } => !!item.decision)
       .map(({ text, decision }) => ({ text, decision }));
     return {
       document: { ...this.document },
+      ...(this.references.length
+        ? { references: this.references.map((item) => ({ ...item })) }
+        : {}),
       ...(this.model ? { model: this.model } : {}),
       ...(this.brief ? { brief: this.brief } : {}),
       ...(this.checkedBriefGeneration === this.briefGeneration
@@ -213,15 +294,17 @@ export class WriterCore {
         status: item.status,
         text: item.text,
         ...(item.decision ? { decision: item.decision } : {}),
-        ...(item.id === this.selectedId ? { selected: true } : {}),
+        ...(item.id === selectedId ? { selected: true } : {}),
       })),
       ...(decisions.length ? { decisions } : {}),
-      discussion: this.discussion.slice(-12),
+      discussion: selected?.discussion.slice(-12) ?? this.generalDiscussion.slice(-12),
     };
   }
 
   setModel(model?: { id: string; providerId: string }) {
+    this.proposal = undefined;
     this.model = model;
+    this.controller?.abort();
     this.notify();
   }
 
@@ -230,6 +313,7 @@ export class WriterCore {
     this.timer = undefined;
     if (
       this.disposed ||
+      this.referenceLoading ||
       !this.available ||
       this.paused ||
       !this.automaticEligible ||
@@ -260,7 +344,13 @@ export class WriterCore {
   }
 
   async readNow(): Promise<void> {
-    if (this.disposed || !this.available || this.document.content.length > 100_000) return;
+    if (
+      this.disposed ||
+      this.referenceLoading ||
+      !this.available ||
+      this.document.content.length > 100_000
+    )
+      return;
     clearTimeout(this.timer);
     const generation = ++this.generation;
     this.controller?.abort();
@@ -270,11 +360,18 @@ export class WriterCore {
   }
 
   private async observe(explicit: boolean) {
-    if (this.busy || !this.available || this.disposed || (!explicit && (this.paused || this.error)))
+    if (
+      this.busy ||
+      this.referenceLoading ||
+      !this.available ||
+      this.disposed ||
+      (!explicit && (this.paused || this.error))
+    )
       return;
     const context = this.context();
     const generation = this.generation;
     const briefGeneration = this.briefGeneration;
+    const sourceGeneration = this.sourceGeneration;
     const controller = new AbortController();
     this.controller = controller;
     this.busy = "observe";
@@ -290,7 +387,8 @@ export class WriterCore {
           this.disposed ||
           controller.signal.aborted ||
           generation !== this.generation ||
-          briefGeneration !== this.briefGeneration
+          briefGeneration !== this.briefGeneration ||
+          sourceGeneration !== this.sourceGeneration
         )
           return;
         this.checkpoint = context.document;
@@ -326,22 +424,92 @@ export class WriterCore {
         )
           this.error = "Analysis failed. Retry when ready.";
       } finally {
-        this.busy = undefined;
-        this.controller = undefined;
-        this.inFlight = undefined;
-        this.schedule();
-        this.notify();
+        if (this.controller === controller) {
+          this.busy = undefined;
+          this.controller = undefined;
+          this.inFlight = undefined;
+          this.schedule();
+          this.notify();
+        }
       }
     })();
     this.inFlight = task;
     await task;
   }
 
-  async discuss(message: string): Promise<boolean> {
-    if (this.disposed || !this.available || this.busy === "discuss") return false;
+  updateCandidate(candidate: string) {
+    if (!this.proposal || candidate.length > 4_000) return false;
+    if (candidate !== this.proposal.candidate && this.busy === "discuss") {
+      this.generation++;
+      this.controller?.abort();
+    }
+    this.proposal = { ...this.proposal, candidate };
+    this.notify();
+    return true;
+  }
+
+  discardProposal() {
+    if (this.busy === "discuss" && this.proposal) {
+      this.generation++;
+      this.controller?.abort();
+    }
+    this.proposal = undefined;
+    this.proposalError = "";
+    this.notify();
+  }
+
+  applyProposal(apply: (from: number, to: number, candidate: string) => boolean): boolean {
+    const proposal = this.proposal;
+    if (
+      !proposal ||
+      !this.available ||
+      this.busy ||
+      proposal.revision !== this.document.revision ||
+      proposal.briefGeneration !== this.briefGeneration ||
+      proposal.sourceGeneration !== this.sourceGeneration ||
+      this.document.content.slice(proposal.from, proposal.to) !== proposal.before ||
+      (proposal.kind === "start" && this.document.content !== "") ||
+      !proposal.candidate.trim()
+    ) {
+      this.proposal = undefined;
+      this.proposalError = "Draft changed. Request a fresh preview.";
+      this.notify();
+      return false;
+    }
+    if (!apply(proposal.from, proposal.to, proposal.candidate)) return false;
+    this.proposal = undefined;
+    this.proposalError = "";
+    this.notify();
+    return true;
+  }
+
+  async discuss(message: string, range?: { from: number; to: number }): Promise<boolean> {
+    if (this.disposed || this.referenceLoading || !this.available || this.busy === "discuss")
+      return false;
     const selectedId = this.selectedId;
     const selectionGeneration = this.selectionGeneration;
-    if (!message.trim() || message.length > 2000 || this.document.content.length > 100_000) {
+    const source = { ...this.document };
+    const briefGeneration = this.briefGeneration;
+    const sourceGeneration = this.sourceGeneration;
+    const selected = this.observations.find((item) => item.id === selectedId);
+    const anchors = selected?.quotes ?? (selected?.quote ? [selected.quote] : []);
+    const anchor =
+      anchors.length === 1 &&
+      (!selected?.quote || !selected.quotes || selected.quote === selected.quotes[0])
+        ? locateQuote(source.content, anchors[0] ?? "")
+        : undefined;
+    const target = range ?? anchor;
+    const passage =
+      target &&
+      target.from >= 0 &&
+      target.to > target.from &&
+      target.to <= source.content.length &&
+      target.to - target.from <= 4_000 &&
+      Number.isSafeInteger(target.from) &&
+      Number.isSafeInteger(target.to)
+        ? { ...target, text: source.content.slice(target.from, target.to) }
+        : undefined;
+    if (!message.trim() || message.length > 2000 || source.content.length > 100_000) {
       this.error = !message.trim()
         ? "Enter a message before sending."
         : message.length > 2000
@@ -358,33 +526,81 @@ export class WriterCore {
       this.disposed ||
       !this.available ||
       generation !== this.generation ||
-      selectionGeneration !== this.selectionGeneration
+      selectionGeneration !== this.selectionGeneration ||
+      source.revision !== this.document.revision ||
+      briefGeneration !== this.briefGeneration ||
+      sourceGeneration !== this.sourceGeneration
     )
       return false;
-    const context = this.context();
+    const context = this.context(selectedId);
+    const currentProposal = this.proposal;
+    const previous =
+      currentProposal &&
+      currentProposal.originId === selectedId &&
+      currentProposal.revision === source.revision &&
+      currentProposal.sourceGeneration === sourceGeneration
+        ? currentProposal
+        : undefined;
+    const previousCandidate =
+      previous && (!range || (previous.from === range.from && previous.to === range.to))
+        ? previous.candidate
+        : undefined;
+    const effectivePassage = range
+      ? passage
+      : previous && previous.kind === "revision"
+        ? { from: previous.from, to: previous.to, text: previous.before }
+        : passage;
     const controller = new AbortController();
     this.controller = controller;
     this.busy = "discuss";
     this.error = "";
     this.notify();
     try {
-      const response = await this.transport.discuss({ ...context, message }, controller.signal);
+      const response = await this.transport.discuss(
+        {
+          ...context,
+          message,
+          ...(effectivePassage ? { passage: effectivePassage } : {}),
+          ...(previousCandidate ? { previousCandidate } : {}),
+        },
+        controller.signal,
+      );
       if (
         this.disposed ||
         controller.signal.aborted ||
         !this.available ||
         generation !== this.generation ||
-        selectionGeneration !== this.selectionGeneration
+        selectionGeneration !== this.selectionGeneration ||
+        source.revision !== this.document.revision ||
+        briefGeneration !== this.briefGeneration ||
+        sourceGeneration !== this.sourceGeneration
       )
         return false;
       const entries = [
-        ...this.discussion,
+        ...(selected?.discussion ?? this.generalDiscussion),
         { role: "user" as const, text: message },
         { role: "assistant" as const, text: response.text },
       ];
-      const selected = this.observations.find((item) => item.id === selectedId);
       if (selected) selected.discussion = entries;
       else this.generalDiscussion = entries;
+      if (response.mode === "proposal") {
+        if (source.content && !effectivePassage) {
+          this.error = "Select one exact passage in the editor before requesting a revision.";
+        } else {
+          this.proposal = {
+            kind: source.content ? "revision" : "start",
+            from: effectivePassage?.from ?? 0,
+            to: effectivePassage?.to ?? 0,
+            before: effectivePassage?.text ?? "",
+            candidate: response.candidate,
+            revision: source.revision,
+            briefGeneration,
+            sourceGeneration,
+            ...(selectedId ? { originId: selectedId } : {}),
+          };
+          this.proposalError = "";
+        }
+      }
       return true;
     } catch {
       if (
@@ -396,10 +612,12 @@ export class WriterCore {
         this.error = "Discussion failed. Try sending again.";
       return false;
     } finally {
-      this.busy = undefined;
-      this.controller = undefined;
-      this.schedule();
-      this.notify();
+      if (this.controller === controller) {
+        this.busy = undefined;
+        this.controller = undefined;
+        this.schedule();
+        this.notify();
+      }
     }
   }
 
@@ -420,7 +638,11 @@ export class WriterCore {
   }
 
   confirmDecision(id: string, decision: string) {
-    if (decision.length > 500) return false;
+    if (decision.length > 500) {
+      this.error = "Decision exceeds 500 characters.";
+      this.notify();
+      return false;
+    }
     const item = this.observations.find((observation) => observation.id === id);
     if (!item) return false;
     if (
@@ -433,7 +655,7 @@ export class WriterCore {
       return false;
     }
     item.decision = decision.trim() || undefined;
-    if (this.error.startsWith("Decision limit reached")) this.error = "";
+    if (this.error.startsWith("Decision")) this.error = "";
     this.notify();
     return true;
   }

@@ -20,7 +20,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(10_000);
   observe = vi.fn<WriterTransport["observe"]>().mockResolvedValue({ status: "silent" });
-  discuss = vi.fn<WriterTransport["discuss"]>().mockResolvedValue({ text: "Think about it." });
+  discuss = vi
+    .fn<WriterTransport["discuss"]>()
+    .mockResolvedValue({ mode: "reply", text: "Think about it." });
   core = new WriterCore({ observe, discuss }, () => {});
 });
 afterEach(() => {
@@ -29,6 +31,191 @@ afterEach(() => {
 });
 
 describe("WriterCore", () => {
+  it("discusses or proposes in the same thread, refines and applies only by explicit transaction", async () => {
+    core.setPaused(true);
+    core.edit("Same. Same.");
+    expect(await core.discuss("What does this mean?", { from: 6, to: 10 })).toBe(true);
+    expect(core.proposal).toBeUndefined();
+    expect(discuss.mock.lastCall?.[0].passage).toEqual({ from: 6, to: 10, text: "Same" });
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Clearer", candidate: "Revised" });
+    expect(await core.discuss("Rewrite this passage", { from: 6, to: 10 })).toBe(true);
+    expect(core.document.content).toBe("Same. Same.");
+    expect(core.proposal).toMatchObject({ kind: "revision", before: "Same" });
+    expect(core.updateCandidate("Edited")).toBe(true);
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Refined", candidate: "Better" });
+    expect(await core.discuss("Please refine the candidate")).toBe(true);
+    expect(discuss.mock.lastCall?.[0].previousCandidate).toBe("Edited");
+    expect(core.proposal?.candidate).toBe("Better");
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Other target", candidate: "Changed" });
+    expect(await core.discuss("Revise the first occurrence instead", { from: 0, to: 4 })).toBe(
+      true,
+    );
+    expect(discuss.mock.lastCall?.[0].passage).toEqual({ from: 0, to: 4, text: "Same" });
+    expect(discuss.mock.lastCall?.[0]).not.toHaveProperty("previousCandidate");
+    expect(core.proposal?.from).toBe(0);
+    core.discardProposal();
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Refined", candidate: "Better" });
+    await core.discuss("Rewrite second again", { from: 6, to: 10 });
+    expect(
+      core.applyProposal((from, to, text) => {
+        core.edit(
+          `${core.document.content.slice(0, from)}${text}${core.document.content.slice(to)}`,
+        );
+        return true;
+      }),
+    ).toBe(true);
+    expect(core.document.content).toBe("Same. Better.");
+    expect(core.observations).toEqual([]);
+  });
+
+  it("keeps an edited candidate after a pending refinement and keeps it on a normal reply", async () => {
+    core.setPaused(true);
+    core.edit("Original");
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Preview", candidate: "Initial" });
+    expect(await core.discuss("Rewrite", { from: 0, to: 8 })).toBe(true);
+    const held = deferred<Awaited<ReturnType<WriterTransport["discuss"]>>>();
+    discuss.mockReturnValueOnce(held.promise);
+    const refining = core.discuss("Refine this candidate");
+    expect(discuss.mock.lastCall?.[0].previousCandidate).toBe("Initial");
+    expect(core.updateCandidate("My own edit")).toBe(true);
+    expect(discuss.mock.lastCall?.[1].aborted).toBe(true);
+    held.resolve({ mode: "proposal", text: "Late", candidate: "Stale" });
+    expect(await refining).toBe(false);
+    expect(core.proposal?.candidate).toBe("My own edit");
+    expect(core.discussion).toEqual([
+      { role: "user", text: "Rewrite" },
+      { role: "assistant", text: "Preview" },
+    ]);
+    expect(await core.discuss("Why is this better?")).toBe(true);
+    expect(discuss.mock.lastCall?.[0].previousCandidate).toBe("My own edit");
+    expect(core.proposal?.candidate).toBe("My own edit");
+    expect(core.discussion.at(-1)).toEqual({ role: "assistant", text: "Think about it." });
+    expect(core.applyProposal(() => true)).toBe(true);
+    expect(core.proposal).toBeUndefined();
+  });
+
+  it("cancels replies and observations on reference changes and discards in-flight refinements", async () => {
+    core.setPaused(true);
+    core.edit("Draft passage");
+    core.setReferences([{ name: "source.txt", content: "One" }]);
+    const held = deferred<Awaited<ReturnType<WriterTransport["discuss"]>>>();
+    discuss.mockReturnValueOnce(held.promise);
+    const pending = core.discuss("Please revise", { from: 0, to: 5 });
+    core.setReferences([]);
+    expect(discuss.mock.lastCall?.[1].aborted).toBe(true);
+    held.resolve({ mode: "proposal", text: "Late", candidate: "Not safe" });
+    expect(await pending).toBe(false);
+    expect(core.proposal).toBeUndefined();
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Preview", candidate: "Fresh" });
+    await core.discuss("Revise", { from: 0, to: 5 });
+    const refining = deferred<Awaited<ReturnType<WriterTransport["discuss"]>>>();
+    discuss.mockReturnValueOnce(refining.promise);
+    const request = core.discuss("Refine");
+    core.discardProposal();
+    refining.resolve({ mode: "proposal", text: "Late", candidate: "Unsafe" });
+    expect(await request).toBe(false);
+    expect(core.proposal).toBeUndefined();
+    const observation = deferred<Awaited<ReturnType<WriterTransport["observe"]>>>();
+    observe.mockReturnValueOnce(observation.promise);
+    const checking = core.readNow();
+    core.setReferences([{ name: "another.txt", content: "New" }]);
+    observation.resolve({ status: "observe", text: "Old reference" });
+    await checking;
+    expect(core.observations).toHaveLength(0);
+    expect(core.checkpoint.content).toBe("");
+    core.setPaused(false);
+    core.setReferenceLoading(true);
+    expect(await core.discuss("While loading")).toBe(false);
+    await tick(45_000);
+    expect(observe).toHaveBeenCalledOnce();
+    core.setReferenceLoading(false);
+    await tick(1_500);
+    expect(observe).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses an old observation's precise unique quote and originating thread even when another thread is selected", async () => {
+    core.restore({
+      document: { revision: 1, content: "Passage" },
+      brief: "",
+      generalDiscussion: [],
+      observations: Array.from({ length: 15 }, (_, index) => ({
+        id: `id-${index}`,
+        revision: 1,
+        text: `Thought ${index}`,
+        status: "open" as const,
+        timestamp: index,
+        ...(index === 0 ? { quote: "Passage" } : {}),
+        discussion: [{ role: "user" as const, text: `Thread ${index}` }],
+      })),
+    });
+    core.select("id-14");
+    core.select("id-0");
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Reason", candidate: "Better" });
+    expect(await core.discuss("Please revise this observation's passage")).toBe(true);
+    expect(discuss.mock.lastCall?.[0].observations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: "Thought 0", selected: true })]),
+    );
+    expect(discuss.mock.lastCall?.[0].discussion).toEqual([{ role: "user", text: "Thread 0" }]);
+    expect(discuss.mock.lastCall?.[0].passage).toEqual({ from: 0, to: 7, text: "Passage" });
+    expect(core.proposal?.originId).toBe("id-0");
+    core.select("id-14");
+    expect(core.proposal?.originId).toBe("id-0");
+    expect(core.observations[0]?.status).toBe("open");
+  });
+
+  it("does not guess an ambiguous quote and permits manual selection", async () => {
+    core.restore({
+      document: { revision: 1, content: "Same Same" },
+      brief: "",
+      generalDiscussion: [],
+      observations: [
+        {
+          id: "a",
+          revision: 1,
+          text: "Why?",
+          quote: "Same",
+          status: "open",
+          timestamp: 1,
+          discussion: [],
+        },
+      ],
+    });
+    core.select("a");
+    expect(await core.discuss("Could you rewrite this?")).toBe(true);
+    expect(discuss.mock.lastCall?.[0]).not.toHaveProperty("passage");
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Better", candidate: "New" });
+    await core.discuss("Please revise", { from: 5, to: 9 });
+    expect(core.proposal?.before).toBe("Same");
+  });
+
+  it("starts from an empty document and rejects stale doc, brief and reference-backed results", async () => {
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Outline", candidate: "# Outline" });
+    expect(await core.discuss("Outline my idea")).toBe(true);
+    expect(core.proposal?.kind).toBe("start");
+    expect(core.document.content).toBe("");
+    core.discardProposal();
+    const held = deferred<Awaited<ReturnType<WriterTransport["discuss"]>>>();
+    discuss.mockReturnValueOnce(held.promise);
+    const pending = core.discuss("Organize my notes");
+    core.edit("Author started typing");
+    held.resolve({ mode: "proposal", text: "Late", candidate: "Late" });
+    expect(await pending).toBe(false);
+    expect(core.proposal).toBeUndefined();
+    core.setPaused(true);
+    discuss.mockResolvedValueOnce({ mode: "proposal", text: "Preview", candidate: "New" });
+    await core.discuss("Revise", { from: 0, to: 6 });
+    core.setBrief("Audience changed");
+    expect(core.proposal).toBeUndefined();
+    core.setReferences([{ name: "notes.txt", content: "Evidence" }]);
+    await core.discuss("Discuss evidence");
+    expect(discuss.mock.lastCall?.[0].references).toEqual([
+      { name: "notes.txt", content: "Evidence" },
+    ]);
+    expect(core.snapshot()).not.toHaveProperty("references");
+    core.setReferences([]);
+    expect(core.references).toEqual([]);
+  });
+
   it.each(["pause", "dispose"] as const)("suppresses late observation after %s", async (action) => {
     const held = deferred<Awaited<ReturnType<WriterTransport["observe"]>>>();
     const changed = vi.fn();
@@ -73,7 +260,7 @@ describe("WriterCore", () => {
       core.select(undefined);
       core.select("thread");
       observation.resolve({ status: "observe", text: "Canceled analysis" });
-      reply.resolve({ text: "Late reply" });
+      reply.resolve({ mode: "reply", text: "Late reply" });
       await reading;
       expect(await pending).toBe(false);
       expect(core.discussion).toEqual([]);
@@ -176,6 +363,7 @@ describe("WriterCore", () => {
   });
 
   it("describes freshness without exposing internal revisions", async () => {
+    expect(core.status).toBe("");
     core.edit("A meaningful draft for analysis.");
     expect(core.status).toBe("Waiting for a pause in typing");
     await tick(1500);
@@ -183,6 +371,10 @@ describe("WriterCore", () => {
     core.edit("A newer draft for analysis.");
     core.setPaused(true);
     expect(core.status).toBe("Automatic checks paused · earlier draft checked");
+    core.setPaused(false);
+    observe.mockRejectedValueOnce(new Error("transient"));
+    await core.readNow();
+    expect(core.status).toBe("Analysis needs manual retry");
   });
 
   it("applies an author brief only to future checks; old-brief in-flight results cannot become current", async () => {
@@ -268,7 +460,7 @@ describe("WriterCore", () => {
     const pending = core.discuss("Again?");
     core.select(undefined);
     core.setAvailable(false);
-    reply.resolve({ text: "late" });
+    reply.resolve({ mode: "reply", text: "late" });
     expect(await pending).toBe(false);
   });
 
@@ -323,6 +515,10 @@ describe("WriterCore", () => {
     expect(observe.mock.lastCall?.[0].decisions).toEqual([
       { text: "Thought 0?", decision: "Keep the first assumption" },
     ]);
+    await core.discuss("Continue the older decision");
+    expect(discuss.mock.lastCall?.[0].decisions).toEqual([
+      { text: "Thought 0?", decision: "Keep the first assumption" },
+    ]);
     expect(core.confirmDecision("id-0", "")).toBe(true);
     await core.readNow();
     expect(observe.mock.lastCall?.[0]).not.toHaveProperty("decisions");
@@ -334,8 +530,26 @@ describe("WriterCore", () => {
     expect(core.confirmDecision("id-0", "Updated decision")).toBe(true);
     expect(core.confirmDecision("id-0", "")).toBe(true);
     expect(core.confirmDecision("id-100", "Another decision")).toBe(true);
+    expect(core.confirmDecision("id-100", "x".repeat(501))).toBe(false);
+    expect(core.error).toBe("Decision exceeds 500 characters.");
+    expect(core.observations[100]?.decision).toBe("Another decision");
+    expect(core.confirmDecision("id-1", "Corrected oldest decision")).toBe(true);
+    expect(core.confirmDecision("id-100", "Corrected decision")).toBe(true);
+    expect(core.error).toBe("");
     await core.readNow();
-    expect(observe.mock.lastCall?.[0].decisions).toHaveLength(100);
+    expect(observe.mock.lastCall?.[0].observations).not.toContainEqual(
+      expect.objectContaining({ text: "Thought 0?" }),
+    );
+    expect(observe.mock.lastCall?.[0].decisions).toEqual([
+      { text: "Thought 1?", decision: "Corrected oldest decision" },
+      ...Array.from({ length: 98 }, (_, index) => ({
+        text: `Thought ${index + 2}?`,
+        decision: `Decision ${index + 2}`,
+      })),
+      { text: "Thought 100?", decision: "Corrected decision" },
+    ]);
+    await core.discuss("Check corrected history");
+    expect(discuss.mock.lastCall?.[0].decisions).toEqual(observe.mock.lastCall?.[0].decisions);
   });
 
   it("retries a failed explicit read while automatic observation remains paused", async () => {

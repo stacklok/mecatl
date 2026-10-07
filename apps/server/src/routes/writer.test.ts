@@ -11,7 +11,10 @@ const input: ObserveWriterRequest = {
   observations: [{ revision: 1, status: "open", text: "What changed?" }],
   discussion: [{ role: "user", text: "I wonder" }],
 };
-
+const writer = () => ({
+  observe: vi.fn(async () => ({ status: "silent" as const })),
+  discuss: vi.fn(async () => ({ mode: "reply" as const, text: "Think about it." })),
+});
 const post = (app: ReturnType<typeof createApp>, path: string, body: unknown) =>
   app.request(path, {
     method: "POST",
@@ -20,57 +23,69 @@ const post = (app: ReturnType<typeof createApp>, path: string, body: unknown) =>
   });
 
 describe("Writer routes", () => {
-  it("defaults off: no runtime feature, API 404 before service, direct SPA path 404", async () => {
-    const writer = { observe: vi.fn(), discuss: vi.fn() };
-    const app = createApp({ runtime: fakeRuntime(), writer, webDist: "nonexistent-static-assets" });
-    const runtime = await app.request("/api/v1/runtime");
-    expect(await runtime.json()).not.toHaveProperty("experimentalWriter");
-    expect((await post(app, "/api/v1/writer/observe", input)).status).toBe(404);
-    expect((await post(app, "/api/v1/writer/discuss", { ...input, message: "Hi" })).status).toBe(
-      404,
+  it("defaults off and removes obsolete endpoints", async () => {
+    const service = writer();
+    const app = createApp({
+      runtime: fakeRuntime(),
+      writer: service,
+      webDist: "nonexistent-static-assets",
+    });
+    expect(await (await app.request("/api/v1/runtime")).json()).not.toHaveProperty(
+      "experimentalWriter",
     );
+    for (const path of ["observe", "discuss", "propose", "start"])
+      expect((await post(app, `/api/v1/writer/${path}`, { ...input, message: "Hi" })).status).toBe(
+        404,
+      );
     expect((await app.request("/workspace/writer")).status).toBe(404);
-    expect(writer.observe).not.toHaveBeenCalled();
+    expect(service.observe).not.toHaveBeenCalled();
   });
 
-  it("validates revisions, history bounds, content bounds, and request CSRF before invoking service", async () => {
-    const writer = {
-      observe: vi.fn(async () => ({ status: "silent" as const })),
-      discuss: vi.fn(async () => ({ text: "Yes" })),
+  it("validates quoted references, exact passage and CSRF before forwarding to service", async () => {
+    const service = writer();
+    const app = createApp({ experimentalWriter: true, writer: service, runtime: fakeRuntime() });
+    expect(await (await app.request("/api/v1/runtime")).json()).toHaveProperty(
+      "experimentalWriter",
+      true,
+    );
+    const good = {
+      ...input,
+      message: "Consider rewriting this",
+      passage: { from: 2, to: 5, text: "new" },
+      references: [{ name: "notes.md", content: "Evidence" }],
     };
-    const app = createApp({ experimentalWriter: true, writer, runtime: fakeRuntime() });
-    const runtime = await app.request("/api/v1/runtime");
-    expect(await runtime.json()).toHaveProperty("experimentalWriter", true);
+    expect((await post(app, "/api/v1/writer/discuss", good)).status).toBe(200);
+    expect(service.discuss).toHaveBeenCalledWith(good, expect.any(AbortSignal));
     for (const bad of [
-      { ...input, document: { ...input.document, content: "a".repeat(100_001) } },
-      { ...input, checkpoint: { content: "not the same", revision: 2 } },
-      { ...input, checkpoint: { content: "next", revision: 3 } },
-      { ...input, observations: Array(13).fill(input.observations[0]) },
-      { ...input, decisions: Array(101).fill({ text: "Why?", decision: "No" }) },
-      { ...input, decisions: [{ text: "Why?", decision: "" }] },
-      { ...input, decisions: [{ text: "x".repeat(1001), decision: "No" }] },
-      { ...input, discussion: Array(13).fill(input.discussion[0]) },
-      { ...input, brief: "x".repeat(2_001) },
-      { ...input, observations: [{ ...input.observations[0], decision: "x".repeat(501) }] },
-      { ...input, model: { id: "", providerId: "provider" } },
-      { ...input, model: { id: "model", providerId: "" } },
-    ]) {
-      expect((await post(app, "/api/v1/writer/observe", bad)).status).toBe(400);
-    }
-    expect((await post(app, "/api/v1/writer/discuss", { ...input, message: "" })).status).toBe(400);
+      { ...good, passage: { from: 0, to: 2, text: "wrong" } },
+      { ...good, message: "" },
+      { ...good, references: Array(4).fill({ name: "a.txt", content: "x" }) },
+      { ...good, references: [{ name: "../secret", content: "x" }] },
+      { ...good, references: [{ name: "a.txt", content: "a".repeat(8_001) }] },
+      { ...good, references: [{ name: "a.txt", content: "\u0000" }] },
+      { ...good, references: [{ name: "a.txt", content: "\ud800" }] },
+      { ...good, references: Array(3).fill({ name: "a.txt", content: "a".repeat(8_000) }) },
+      { ...good, document: { content: "x".repeat(100_001), revision: 2 } },
+      { ...good, observations: Array(13).fill(input.observations[0]) },
+    ])
+      expect((await post(app, "/api/v1/writer/discuss", bad)).status).toBe(400);
     expect(
-      (await app.request("/api/v1/writer/observe", { method: "POST", body: JSON.stringify(input) }))
+      (await app.request("/api/v1/writer/discuss", { method: "POST", body: JSON.stringify(good) }))
         .status,
     ).toBe(403);
-    expect(writer.observe).not.toHaveBeenCalled();
-    expect(writer.discuss).not.toHaveBeenCalled();
+    expect(service.discuss).toHaveBeenCalledOnce();
   });
 
-  it("requires an authenticated principal before evaluating", async () => {
-    const writer = { observe: vi.fn(), discuss: vi.fn() };
-    const app = createApp({
+  it("requires authentication and hides upstream errors", async () => {
+    const service = writer();
+    const app = createApp({ experimentalWriter: true, writer: service });
+    service.discuss.mockRejectedValueOnce(new Error("private reference"));
+    const failed = await post(app, "/api/v1/writer/discuss", { ...input, message: "Hello" });
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private reference");
+    const auth = createApp({
       experimentalWriter: true,
-      writer,
+      writer: service,
       authentication: {
         clear: () => undefined,
         completeLogin: async () => {
@@ -85,37 +100,8 @@ describe("Writer routes", () => {
         startLogin: async () => "https://issuer.example.com/authorize",
       },
     });
-    expect((await post(app, "/api/v1/writer/observe", input)).status).toBe(401);
-    expect(writer.observe).not.toHaveBeenCalled();
-  });
-
-  it("forwards validated input to both operations and gives safe failures", async () => {
-    const writer = {
-      observe: vi.fn(async () => ({ status: "observe" as const, text: "Why now?" })),
-      discuss: vi.fn(async () => ({ text: "Try another approach." })),
-    };
-    const app = createApp({ experimentalWriter: true, writer });
-    const observation = await post(app, "/api/v1/writer/observe", {
-      ...input,
-      model: { id: "model", providerId: "provider" },
-    });
-    expect(await observation.json()).toEqual({ status: "observe", text: "Why now?" });
-    expect(writer.observe).toHaveBeenCalledWith(
-      { ...input, model: { id: "model", providerId: "provider" } },
-      expect.any(AbortSignal),
+    expect((await post(auth, "/api/v1/writer/discuss", { ...input, message: "Hi" })).status).toBe(
+      401,
     );
-    const discussion = {
-      ...input,
-      model: { id: "model", providerId: "provider" },
-      message: "What next?",
-    };
-    expect(await (await post(app, "/api/v1/writer/discuss", discussion)).json()).toEqual({
-      text: "Try another approach.",
-    });
-    expect(writer.discuss).toHaveBeenCalledWith(discussion, expect.any(AbortSignal));
-    writer.observe.mockRejectedValueOnce(new Error("private document leaked upstream"));
-    const failed = await post(app, "/api/v1/writer/observe", input);
-    expect(failed.status).toBe(503);
-    expect(await failed.text()).not.toContain("private document");
   });
 });

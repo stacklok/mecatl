@@ -58,7 +58,9 @@ async function mount(flag?: boolean, errored = false) {
   );
   await waitFor(() =>
     expect(
-      screen.getByText(flag && !errored ? "No open observations." : "Writer is unavailable."),
+      screen.getByText(
+        flag && !errored ? "Observations will appear here as you write." : "Writer is unavailable.",
+      ),
     ).toBeTruthy(),
   );
 }

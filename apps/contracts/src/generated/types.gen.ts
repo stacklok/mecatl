@@ -3357,6 +3357,10 @@ export type ObserveWriterData = {
             content: string;
             revision: number;
         };
+        references?: Array<{
+            name: string;
+            content: string;
+        }>;
         model?: {
             id: string;
             providerId: string;
@@ -3437,6 +3441,10 @@ export type DiscussWriterData = {
             content: string;
             revision: number;
         };
+        references?: Array<{
+            name: string;
+            content: string;
+        }>;
         model?: {
             id: string;
             providerId: string;
@@ -3462,6 +3470,12 @@ export type DiscussWriterData = {
             text: string;
         }>;
         message: string;
+        passage?: {
+            from: number;
+            to: number;
+            text: string;
+        };
+        previousCandidate?: string;
     };
     path?: never;
     query?: never;
@@ -3500,7 +3514,12 @@ export type DiscussWriterResponses = {
      * Completed Writer response.
      */
     200: {
+        mode: 'reply';
         text: string;
+    } | {
+        mode: 'proposal';
+        text: string;
+        candidate: string;
     };
 };
 

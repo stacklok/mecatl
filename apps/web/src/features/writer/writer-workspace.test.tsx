@@ -13,8 +13,9 @@ import {
   getRuntimeOptions,
   getRuntimeSettingsOptions,
 } from "@mecatl-studio/contracts/query";
+import { getCM } from "@replit/codemirror-vim";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -37,6 +38,13 @@ let answer:
   status: "observe",
   text: "What evidence supports this assumption?",
 };
+let discussionAnswer:
+  | { mode: "reply"; text: string }
+  | { mode: "proposal"; text: string; candidate: string } = {
+  mode: "reply",
+  text: "Keep the author's own wording.",
+};
+let discussionResponse: (() => Promise<Response>) | undefined;
 let runtimeFailure = false;
 let discussionFailure = false;
 let runtimeRequests = 0;
@@ -58,7 +66,7 @@ const fetchBff = async (request: Request) => {
   if (path === "/api/v1/writer/observe") return Response.json(answer);
   if (path === "/api/v1/writer/discuss") {
     if (discussionFailure) return Response.json({ error: "unavailable" }, { status: 503 });
-    return Response.json({ text: "Keep the author's own wording." });
+    return discussionResponse ? discussionResponse() : Response.json(discussionAnswer);
   }
   throw new Error(`Unexpected ${path}`);
 };
@@ -116,7 +124,578 @@ afterEach(() => {
   clearUserScopedStorage();
   Reflect.deleteProperty(navigator, "locks");
   answer = { status: "observe", text: "What evidence supports this assumption?" };
+  discussionAnswer = { mode: "reply", text: "Keep the author's own wording." };
+  discussionResponse = undefined;
   vi.unstubAllGlobals();
+});
+
+async function includeSelectedPassage() {
+  await userEvent.click(screen.getByRole("button", { name: "Add context" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: "Use selected passage" }));
+}
+
+async function sendWriter(message: string) {
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), message);
+  await userEvent.keyboard("{Enter}");
+}
+
+async function chooseDocument(file: File) {
+  fireEvent.change(screen.getByLabelText("Choose document to open"), { target: { files: [file] } });
+  await act(async () => Promise.resolve());
+}
+
+it("opens a fresh document without requesting analysis, resets editor history and all prior context", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() =>
+    view.dispatch({ changes: { from: 0, insert: "Old draft" }, selection: { anchor: 0, head: 3 } }),
+  );
+  await includeSelectedPassage();
+  fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
+    target: { value: "Old brief" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
+  fireEvent.change(screen.getByLabelText("Attach reference files"), {
+    target: { files: [new File(["private"], "private.txt")] },
+  });
+  await screen.findByRole("button", { name: "Remove private.txt" });
+  await sendWriter("Old discussion");
+  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  await chooseDocument(new File(["# New draft"], "new.md", { type: "text/markdown" }));
+  expect(view.state.doc.toString()).toBe("# New draft");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("# New draft");
+  expect(screen.queryByText("Old brief")).toBeNull();
+  expect(screen.queryByText("Old discussion")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Remove private.txt" })).toBeNull();
+  expect(screen.queryByLabelText("Remove selected passage")).toBeNull();
+  expect(requests).toHaveLength(1);
+  await sendWriter("New discussion");
+  const next = requests.at(-1)?.body;
+  expect(next).toMatchObject({ document: { content: "# New draft" }, discussion: [] });
+  expect(JSON.stringify(next)).not.toContain("Old");
+  expect(next).not.toHaveProperty("references");
+  act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: "!" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("# New draft");
+});
+
+it("keeps Vim mode across a document boundary and rejects edits made during confirmation", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => view.dispatch({ changes: { from: 0, insert: "Old" } }));
+  await userEvent.click(screen.getByRole("button", { name: "Document key bindings" }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "Vim" }));
+  vi.stubGlobal(
+    "confirm",
+    vi.fn(() => {
+      act(() => view.dispatch({ changes: { from: 3, insert: "!" } }));
+      return true;
+    }),
+  );
+  await chooseDocument(new File(["New"], "new.txt"));
+  expect(view.state.doc.toString()).toBe("Old!");
+  expect(screen.getByRole("alert").textContent).toContain("Draft changed");
+  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  await chooseDocument(new File(["New"], "new.txt"));
+  expect(view.state.doc.toString()).toBe("New");
+  expect(view.state.selection.main.anchor).toBe(0);
+  expect(getCM(view)?.state.vim).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("New");
+});
+
+it("validates before confirmation and preserves the draft on errors, cancellation and stale reads", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => view.dispatch({ changes: { from: 0, insert: "Keep me" } }));
+  const confirm = vi.fn().mockReturnValue(false);
+  vi.stubGlobal("confirm", confirm);
+  await chooseDocument(new File([new Uint8Array([0xff])], "bad.md"));
+  expect(screen.getByRole("alert").textContent).toContain("valid UTF-8");
+  expect(confirm).not.toHaveBeenCalled();
+  await chooseDocument(new File(["new"], "good.txt"));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(view.state.doc.toString()).toBe("Keep me");
+  let release!: (bytes: ArrayBuffer) => void;
+  const slow = new File(["new"], "slow.md");
+  vi.spyOn(slow, "arrayBuffer").mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("Choose document to open"), { target: { files: [slow] } });
+  act(() => view.dispatch({ changes: { from: 7, insert: "!" } }));
+  await act(async () => {
+    release(new TextEncoder().encode("new").buffer);
+    await Promise.resolve();
+  });
+  expect(view.state.doc.toString()).toBe("Keep me!");
+  expect(screen.getByRole("alert").textContent).toContain("Draft changed");
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(requests).toHaveLength(0);
+});
+
+it("rejects invalid files through Open document without confirming or changing existing context", async () => {
+  mount(true);
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  const view = writerView();
+  act(() => view.dispatch({ changes: { from: 0, insert: "Keep the draft." } }));
+  fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
+    target: { value: "Keep brief" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
+  fireEvent.change(screen.getByLabelText("Attach reference files"), {
+    target: { files: [new File(["Keep reference"], "keep.txt")] },
+  });
+  await screen.findByRole("button", { name: "Remove keep.txt" });
+  await sendWriter("Keep discussion");
+  await screen.findByText("Keep the author's own wording.");
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("What evidence supports this assumption?");
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Decision for this draft/ }), {
+    target: { value: "Keep decision" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save decision" }));
+  const confirm = vi.fn();
+  vi.stubGlobal("confirm", confirm);
+  const before = requests.length;
+  const rejected = [
+    [new File(["new"], "wrong.pdf", { type: "text/plain" }), /Choose/],
+    [new File(["new\u0085"], "controls.txt"), /control/],
+    [new File(["é".repeat(200_001)], "large.md"), /bytes/],
+    [new File(["a".repeat(100_001)], "long.txt"), /characters/],
+  ] as const;
+  for (const [file, reason] of rejected) {
+    await chooseDocument(file);
+    expect(screen.getByRole("alert").textContent).toMatch(reason);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(before);
+    expect(view.state.doc.toString()).toBe("Keep the draft.");
+    expect(screen.getByText("Keep brief")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove keep.txt" })).toBeTruthy();
+    expect(screen.getAllByText("What evidence supports this assumption?").length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      screen.getByRole<HTMLInputElement>("textbox", { name: /Decision for this draft/ }).value,
+    ).toBe("Keep decision");
+    fireEvent.click(screen.getByRole("button", { name: "← Back to conversation" }));
+    expect(screen.getByText("Keep discussion")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  }
+  confirm.mockReturnValue(true);
+  await chooseDocument(new File(["\ufeff"], "empty.md"));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(view.state.doc.toString()).toBe("");
+  expect(requests).toHaveLength(before);
+});
+
+it("isolates overlapping document reads and pending references across an import", async () => {
+  const mounted = mount(true);
+  const view = writerView();
+  let release!: (bytes: ArrayBuffer) => void;
+  const slow = new File(["first"], "first.md");
+  vi.spyOn(slow, "arrayBuffer").mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("Choose document to open"), { target: { files: [slow] } });
+  await chooseDocument(new File(["second"], "second.md"));
+  await act(async () => {
+    release(new TextEncoder().encode("first").buffer);
+    await Promise.resolve();
+  });
+  expect(view.state.doc.toString()).toBe("second");
+  let releaseReference!: (bytes: ArrayBuffer) => void;
+  const reference = new File(["old reference"], "old.txt");
+  vi.spyOn(reference, "arrayBuffer").mockReturnValue(
+    new Promise((resolve) => {
+      releaseReference = resolve;
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("Attach reference files"), {
+    target: { files: [reference] },
+  });
+  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  await chooseDocument(new File(["third"], "third.md"));
+  await act(async () => {
+    releaseReference(new TextEncoder().encode("old reference").buffer);
+    await Promise.resolve();
+  });
+  expect(screen.queryByRole("button", { name: "Remove old.txt" })).toBeNull();
+  mounted.unmount();
+  expect(requests).toHaveLength(0);
+});
+
+it("drops an unfinished document read after account switch", async () => {
+  const tab = mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  let release!: (bytes: ArrayBuffer) => void;
+  const slow = new File(["Alice's draft"], "alice.md");
+  vi.spyOn(slow, "arrayBuffer").mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("Choose document to open"), { target: { files: [slow] } });
+  const session: GetAuthSessionResponse = {
+    mode: "oidc",
+    status: "authenticated",
+    account: "bob",
+  };
+  act(() => tab.query.setQueryData(getAuthSessionOptions().queryKey, session));
+  await waitFor(() => expect(window.localStorage.getItem("studio.account")).toBe("bob"));
+  await screen.findByRole("textbox", { name: "Writer document" });
+  await act(async () => {
+    release(new TextEncoder().encode("Alice's draft").buffer);
+    await Promise.resolve();
+  });
+  expect(writerView().state.doc.toString()).toBe("");
+  expect(requests).toHaveLength(0);
+});
+
+it.each(["observe", "discuss"] as const)(
+  "keeps an unsettled old %s request behind the import barrier",
+  async (kind) => {
+    let finish!: (result: Response) => void;
+    if (kind === "discuss") {
+      discussionResponse = () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        });
+    }
+    mount(true);
+    if (kind === "observe") {
+      const original = globalThis.fetch;
+      vi.stubGlobal("fetch", (request: Request) => {
+        if (new URL(request.url).pathname.endsWith("/writer/observe"))
+          return original(request).then(
+            () =>
+              new Promise<Response>((resolve) => {
+                finish = resolve;
+              }),
+          );
+        return original(request);
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+    } else {
+      await sendWriter("Old question");
+    }
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(requests).toHaveLength(1);
+    await chooseDocument(new File(["Fresh draft."], "fresh.txt"));
+    expect(writerView().state.doc.toString()).toBe("Fresh draft.");
+    expect(requests).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Read this now" })).toHaveProperty("disabled", true);
+    if (kind === "observe") await sendWriter("Fresh question");
+    expect(requests).toHaveLength(1);
+    await act(async () => {
+      finish(
+        kind === "observe"
+          ? Response.json({ status: "observe", text: "Old observation" })
+          : Response.json({ mode: "reply", text: "Old answer" }),
+      );
+    });
+    expect(screen.queryByText("Old observation")).toBeNull();
+    expect(screen.queryByText("Old answer")).toBeNull();
+    expect(screen.queryByText("Old question")).toBeNull();
+    if (kind === "discuss") {
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Read this now" })).toHaveProperty(
+          "disabled",
+          false,
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+    }
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]?.body.document.content).toBe("Fresh draft.");
+    expect(JSON.stringify(requests[1]?.body)).not.toContain("Old");
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    expect(requests).toHaveLength(2);
+  },
+);
+
+it("previews only from conversation, rejects stale replies and brief changes", async () => {
+  let finish!: (result: Response) => void;
+  discussionResponse = () =>
+    new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() =>
+    view.dispatch({ changes: { from: 0, insert: "First" }, selection: { anchor: 0, head: 5 } }),
+  );
+  await includeSelectedPassage();
+  await sendWriter("Please rewrite the selected passage");
+  await waitFor(() =>
+    expect(requests.filter((item) => item.path.endsWith("/discuss"))).toHaveLength(1),
+  );
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  act(() => view.dispatch({ changes: { from: 5, insert: " changed" } }));
+  finish(Response.json({ mode: "proposal", text: "Better", candidate: "New" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull());
+  discussionResponse = undefined;
+  discussionAnswer = { mode: "proposal", text: "Better", candidate: "New" };
+  act(() => view.dispatch({ selection: { anchor: 0, head: 5 } }));
+  await includeSelectedPassage();
+  await sendWriter("Please rewrite this");
+  await screen.findByRole("region", { name: "Writer preview" });
+  fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
+    target: { value: "Audience: editors" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  expect(view.state.doc.toString()).toBe("First changed");
+});
+
+it("discusses a selected passage without mutation, refines and applies in one undoable transaction", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() =>
+    view.dispatch({
+      changes: { from: 0, insert: "Same. Same." },
+      selection: { anchor: 6, head: 10 },
+    }),
+  );
+  await includeSelectedPassage();
+  await sendWriter("What is unclear here?");
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  discussionAnswer = { mode: "proposal", text: "Clearer", candidate: "Better" };
+  await sendWriter("Please revise this passage");
+  await screen.findByRole("region", { name: "Writer preview" });
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).toMatchObject({
+    passage: { from: 6, to: 10, text: "Same" },
+  });
+  expect(view.state.doc.toString()).toBe("Same. Same.");
+  fireEvent.change(screen.getByRole("textbox", { name: "After (editable)" }), {
+    target: { value: "Edited" },
+  });
+  discussionAnswer = { mode: "proposal", text: "Refined", candidate: "Final" };
+  await sendWriter("Refine the candidate");
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLTextAreaElement>("textbox", { name: "After (editable)" }).value,
+    ).toBe("Final"),
+  );
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).toMatchObject({
+    previousCandidate: "Edited",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  expect(view.state.doc.toString()).toBe("Same. Final.");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("Same. Same.");
+  fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+  expect(view.state.doc.toString()).toBe("Same. Final.");
+});
+
+it("keeps an author's preview edits when a late refinement arrives, and permits a later reply", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() =>
+    view.dispatch({ changes: { from: 0, insert: "Original" }, selection: { anchor: 0, head: 8 } }),
+  );
+  discussionAnswer = { mode: "proposal", text: "Preview", candidate: "Initial" };
+  await includeSelectedPassage();
+  await sendWriter("Rewrite this passage");
+  await screen.findByRole("region", { name: "Writer preview" });
+  let finish!: (value: Response) => void;
+  discussionResponse = () =>
+    new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  await sendWriter("Refine the candidate");
+  await waitFor(() =>
+    expect(requests.filter((item) => item.path.endsWith("/discuss"))).toHaveLength(2),
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "After (editable)" }), {
+    target: { value: "Author revision" },
+  });
+  finish(Response.json({ mode: "proposal", text: "Late", candidate: "Stale" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLTextAreaElement>("textbox", { name: "After (editable)" }).value,
+    ).toBe("Author revision"),
+  );
+  expect(screen.queryByText("Late")).toBeNull();
+  discussionResponse = undefined;
+  discussionAnswer = { mode: "reply", text: "Consider the evidence." };
+  await sendWriter("What evidence would help?");
+  await screen.findByText("Consider the evidence.");
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "After (editable)" }).value).toBe(
+    "Author revision",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  expect(view.state.doc.toString()).toBe("Author revision");
+});
+
+it("offers empty-document starting points through general conversation only", async () => {
+  mount(true);
+  const view = writerView();
+  discussionAnswer = {
+    mode: "proposal",
+    text: "An outline",
+    candidate: "# Outline\n\n[Evidence needed]",
+  };
+  await sendWriter("Outline this idea, retaining unsupported evidence as questions");
+  await screen.findByRole("region", { name: "Writer preview" });
+  expect(requests.find((item) => item.path.endsWith("/discuss"))?.body).toMatchObject({
+    document: { content: "" },
+  });
+  expect(view.state.doc.toString()).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(view.state.doc.toString()).toBe("");
+  await sendWriter("Make a rough draft from this idea");
+  await screen.findByRole("region", { name: "Writer preview" });
+  fireEvent.click(screen.getByRole("button", { name: "Use this starting point" }));
+  expect(view.state.doc.toString()).toBe("# Outline\n\n[Evidence needed]");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("");
+});
+
+it("attaches only explicit bounded snapshots, sends exact references on a later request, and invalidates a sourced preview on removal", async () => {
+  mount(true);
+  const picker = screen.getByLabelText("Attach reference files");
+  fireEvent.change(picker, {
+    target: { files: [new File(["<unsafe> & data"], "notes.md", { type: "text/markdown" })] },
+  });
+  await screen.findByRole("button", { name: "Remove notes.md" });
+  expect(requests).toHaveLength(0);
+  discussionAnswer = { mode: "proposal", text: "Outline", candidate: "# Draft" };
+  await sendWriter("Outline from attached notes");
+  await screen.findByRole("region", { name: "Writer preview" });
+  expect(requests.find((entry) => entry.path.endsWith("/discuss"))?.body.references).toEqual([
+    { name: "notes.md", content: "<unsafe> & data" },
+  ]);
+  expect(screen.getByText("notes.md")).toBeTruthy();
+  expect(screen.queryByText("<unsafe> & data")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Remove notes.md" }));
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  await sendWriter("Another question");
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).not.toHaveProperty(
+    "references",
+  );
+  fireEvent.change(picker, {
+    target: { files: [new File([new Uint8Array([0xff])], "binary.txt", { type: "text/plain" })] },
+  });
+  expect(await screen.findByText(/Reference must be valid UTF-8 text/)).toBeTruthy();
+});
+
+it.each(["reference read", "discussion response"] as const)(
+  "keeps %s from a previous verified account out of the new workspace",
+  async (pending) => {
+    const tab = mount(true, false, { account: "alice" });
+    await screen.findByRole("textbox", { name: "Writer document" });
+    fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+    const picker = screen.getByLabelText("Attach reference files");
+    const priorContent = "Alice private evidence";
+    let finishRead: ((value: ArrayBuffer) => void) | undefined;
+    let finishDiscussion: ((value: Response) => void) | undefined;
+    if (pending === "reference read") {
+      const slow = new File([priorContent], "alice.txt", { type: "text/plain" });
+      vi.spyOn(slow, "arrayBuffer").mockReturnValue(
+        new Promise((resolve) => {
+          finishRead = resolve;
+        }),
+      );
+      fireEvent.change(picker, { target: { files: [slow] } });
+      expect(
+        (screen.getByRole("button", { name: "Read this now" }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    } else {
+      fireEvent.change(picker, {
+        target: { files: [new File([priorContent], "alice.txt", { type: "text/plain" })] },
+      });
+      await screen.findByRole("button", { name: "Remove alice.txt" });
+      discussionResponse = () =>
+        new Promise<Response>((resolve) => {
+          finishDiscussion = resolve;
+        });
+      await sendWriter("Outline from my notes");
+      await waitFor(() => expect(finishDiscussion).toBeTypeOf("function"));
+      expect(requests.findLast((item) => item.path.endsWith("/discuss"))?.body.references).toEqual([
+        { name: "alice.txt", content: priorContent },
+      ]);
+    }
+    act(() => {
+      const session: GetAuthSessionResponse = {
+        mode: "oidc",
+        status: "authenticated",
+        account: "bob",
+      };
+      tab.query.setQueryData(getAuthSessionOptions().queryKey, session);
+    });
+    await waitFor(() => expect(window.localStorage.getItem("studio.account")).toBe("bob"));
+    await screen.findByRole("textbox", { name: "Writer document" });
+    const sentBeforeRelease = requests.length;
+    await act(async () => {
+      finishRead?.(new TextEncoder().encode(priorContent).buffer);
+      finishDiscussion?.(
+        Response.json({ mode: "proposal", text: priorContent, candidate: priorContent }),
+      );
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("button", { name: "Remove alice.txt" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+    expect(document.body.textContent).not.toContain(priorContent);
+    expect(requests).toHaveLength(sentBeforeRelease);
+    expect(writerView().state.doc.toString()).toBe("");
+    await sendWriter("What evidence is available?");
+    const next = requests.findLast((item) => item.path.endsWith("/discuss"));
+    expect(next?.body).not.toHaveProperty("references");
+    expect(JSON.stringify(next?.body)).not.toContain(priorContent);
+    tab.query.clear();
+  },
+);
+
+it("drops reads in progress after removal or unmount without sending content", async () => {
+  const mounted = mount(true);
+  const picker = screen.getByLabelText("Attach reference files");
+  fireEvent.change(picker, {
+    target: { files: [new File(["kept"], "kept.txt", { type: "text/plain" })] },
+  });
+  await screen.findByRole("button", { name: "Remove kept.txt" });
+  let finish!: (value: ArrayBuffer) => void;
+  const slow = new File(["secret"], "slow.txt", { type: "text/plain" });
+  vi.spyOn(slow, "arrayBuffer").mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  fireEvent.change(picker, { target: { files: [slow] } });
+  expect(
+    (screen.getByRole("button", { name: "Read this now" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Remove kept.txt" }));
+  finish(new TextEncoder().encode("secret").buffer);
+  await act(async () => Promise.resolve());
+  expect(screen.queryByRole("button", { name: "Remove slow.txt" })).toBeNull();
+  expect(requests).toHaveLength(0);
+  const slowUnmount = new File(["secret"], "unmount.txt", { type: "text/plain" });
+  let finishUnmount!: (value: ArrayBuffer) => void;
+  vi.spyOn(slowUnmount, "arrayBuffer").mockReturnValue(
+    new Promise((resolve) => {
+      finishUnmount = resolve;
+    }),
+  );
+  fireEvent.change(picker, { target: { files: [slowUnmount] } });
+  mounted.unmount();
+  finishUnmount(new TextEncoder().encode("secret").buffer);
+  await act(async () => Promise.resolve());
+  expect(requests).toHaveLength(0);
 });
 
 it("shows an empty Markdown surface with theme-aware styles and formats selected text as one undoable edit", () => {
@@ -124,7 +703,7 @@ it("shows an empty Markdown surface with theme-aware styles and formats selected
   const editor = screen.getByRole("textbox", { name: "Writer document" });
   const view = EditorView.findFromDOM(editor as HTMLElement);
   if (!view) throw new Error("CodeMirror did not mount");
-  expect(screen.getByText("Start writing in Markdown…")).toBeTruthy();
+  expect(screen.getByText("What would you like to write?")).toBeTruthy();
   expect(editor.closest(".cm-editor")?.parentElement?.className).toContain("bg-background");
   const styles = [...document.querySelectorAll("style")]
     .map((style) => style.textContent)
@@ -173,6 +752,127 @@ it("offers visible brief and automatic-feedback controls", () => {
   expect(document.activeElement).toBe(addBrief);
   fireEvent.click(addBrief);
   expect(screen.getByRole("textbox", { name: /Writing brief/ })).toBeTruthy();
+});
+
+it("keeps the Writer composer concise and supports keyboard context and thread navigation", async () => {
+  mount(true);
+  expect(screen.queryByRole("button", { name: "Ask Writer" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: /general discussion/i })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Document" })).toBeTruthy();
+  const conversation = screen.getByRole("complementary", { name: "Writer conversation" });
+  expect(within(conversation).getByRole("heading", { name: "Writer" })).toBeTruthy();
+  expect(screen.queryByText("Start writing to receive occasional observations")).toBeNull();
+  expect(screen.queryByText("Start with a question or an outline.")).toBeNull();
+  expect(screen.getAllByText("Observations will appear here as you write.")).toHaveLength(1);
+  expect(screen.getByRole("textbox", { name: "Ask Writer" }).getAttribute("placeholder")).toBe(
+    "Ask a question or describe a change…",
+  );
+
+  const view = writerView();
+  act(() =>
+    view.dispatch({
+      changes: { from: 0, insert: "Selected passage" },
+      selection: { anchor: 0 },
+    }),
+  );
+  const context = screen.getByRole("button", { name: "Add context" });
+  context.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(screen.getByText(/File contents are sent with Writer requests/)).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "Attach reference files" })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "Use selected passage" })).toBeNull();
+  await userEvent.keyboard("{Escape}");
+
+  act(() => view.dispatch({ selection: { anchor: 0, head: 8 } }));
+  await userEvent.click(context);
+  expect(screen.getByRole("menuitem", { name: "Use selected passage" })).toBeTruthy();
+  await userEvent.click(screen.getByRole("menuitem", { name: "Use selected passage" }));
+  expect(screen.getByText("Passage: Selected")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Remove selected passage" }));
+  expect(screen.queryByText("Passage: Selected")).toBeNull();
+
+  act(() => view.dispatch({ selection: { anchor: 8 } }));
+  await userEvent.click(context);
+  expect(screen.queryByRole("menuitem", { name: "Use selected passage" })).toBeNull();
+  await userEvent.keyboard("{Escape}");
+
+  answer = { status: "observe", text: "Thread context" };
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("Thread context");
+  await userEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  const requestCount = requests.length;
+  await userEvent.click(screen.getByRole("button", { name: "← Back to conversation" }));
+  expect(requests).toHaveLength(requestCount);
+  expect(screen.queryByRole("button", { name: "← Back to conversation" })).toBeNull();
+});
+
+it("switches document key bindings in place without losing selection, history, or reference snapshots", async () => {
+  mount(true);
+  const view = writerView();
+  expect(getCM(view)).toBeNull();
+  await userEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() =>
+    view.dispatch({ changes: { from: 0, insert: "Draft" }, selection: { anchor: 5, head: 0 } }),
+  );
+  const picker = screen.getByLabelText("Attach reference files");
+  fireEvent.change(picker, {
+    target: { files: [new File(["Evidence"], "evidence.md", { type: "text/markdown" })] },
+  });
+  await screen.findByRole("button", { name: "Remove evidence.md" });
+  const requestCount = requests.length;
+  const settings = screen.getByRole("button", { name: "Document key bindings" });
+  await userEvent.click(settings);
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "Vim" }));
+  expect(writerView()).toBe(view);
+  expect(getCM(view)?.state.vim).toBeTruthy();
+  expect(view.state.doc.toString()).toBe("Draft");
+  expect(view.state.selection.main).toMatchObject({ anchor: 5, head: 0 });
+  expect(requests).toHaveLength(requestCount);
+  expect(screen.getByRole("button", { name: "Remove evidence.md" })).toBeTruthy();
+  act(() =>
+    view.dispatch({
+      selection: EditorSelection.create([EditorSelection.range(0, 1), EditorSelection.range(3, 4)]),
+    }),
+  );
+  expect(view.state.selection.ranges).toHaveLength(2);
+  await userEvent.click(settings);
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "Standard" }));
+  expect(getCM(view)).toBeNull();
+  expect(view.state.selection.ranges.map(({ from, to }) => ({ from, to }))).toEqual([
+    { from: 0, to: 1 },
+    { from: 3, to: 4 },
+  ]);
+  expect(screen.queryByRole("status", { name: /Document Vim mode/ })).toBeNull();
+  expect(requests).toHaveLength(requestCount);
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await waitFor(() => expect(requests).toHaveLength(requestCount + 1));
+  expect(requests.at(-1)?.body).toMatchObject({
+    document: { content: "Draft", revision: 1 },
+    references: [{ name: "evidence.md", content: "Evidence" }],
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(view.state.doc.toString()).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+  expect(view.state.doc.toString()).toBe("Draft");
+});
+
+it("captures reversed contiguous Vim selections but never captures a visual block", async () => {
+  mount(true);
+  const view = writerView();
+  act(() => view.dispatch({ changes: { from: 0, insert: "first line\nsecond line" } }));
+  const settings = screen.getByRole("button", { name: "Document key bindings" });
+  await userEvent.click(settings);
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "Vim" }));
+  const cm = getCM(view);
+  if (!cm?.state.vim) throw new Error("Vim adapter not mounted");
+  act(() => view.dispatch({ selection: { anchor: 10, head: 0 } }));
+  await includeSelectedPassage();
+  expect(screen.getByText("Passage: first line")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Remove selected passage" }));
+  cm.state.vim.visualBlock = true;
+  await userEvent.click(screen.getByRole("button", { name: "Add context" }));
+  expect(screen.queryByRole("menuitem", { name: "Use selected passage" })).toBeNull();
+  expect(screen.getByText(/Select one contiguous passage/)).toBeTruthy();
 });
 
 it.each([
@@ -264,7 +964,7 @@ it("uses the selected inventory model for observation and discussion", async () 
   await screen.findByText("What evidence supports this assumption?", {}, { timeout: 3500 });
   expect(requests[0]?.body.model).toEqual({ id: "one", providerId: "provider" });
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
-  await userEvent.type(screen.getByRole("textbox", { name: "Message Mecatl" }), "Why?");
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), "Why?");
   await userEvent.keyboard("{Enter}");
   await waitFor(() =>
     expect(requests[1]?.body.model).toEqual({ id: "one", providerId: "provider" }),
@@ -336,9 +1036,9 @@ it("sends author edits via the generated SDK, never inserts model text, and supp
   expect(editor.textContent).toBe("Opening");
   fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
-  expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Message Mecatl" }));
+  expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Ask Writer" }));
   act(() => view.dispatch({ changes: { from: 7, insert: " updated" }, userEvent: "input.type" }));
-  await userEvent.type(screen.getByRole("textbox", { name: /message|prompt/i }), "How?");
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), "How?");
   await userEvent.keyboard("{Enter}");
   await waitFor(() => expect(requests.some(({ path }) => path.endsWith("/discuss"))).toBe(true));
   expect(requests.find(({ path }) => path.endsWith("/discuss"))?.body).toMatchObject({
@@ -375,7 +1075,7 @@ it("dismisses an observation without changing the document", async () => {
   );
   await screen.findByText("What evidence supports this assumption?", {}, { timeout: 3500 });
   fireEvent.click(screen.getByRole("button", { name: "Not relevant" }));
-  expect(screen.getByText("No open observations.")).toBeTruthy();
+  expect(screen.getByText("Observations will appear here as you write.")).toBeTruthy();
   expect(editor.textContent).toBe("Draft");
 });
 
@@ -388,7 +1088,7 @@ it("recovers observation after a failed discussion is dismissed without losing t
   await screen.findByText("What evidence supports this assumption?", {}, { timeout: 3500 });
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
   discussionFailure = true;
-  await userEvent.type(screen.getByRole("textbox", { name: "Message Mecatl" }), "Why?");
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), "Why?");
   await userEvent.keyboard("{Enter}");
   await screen.findByText(/Discussion failed/);
   fireEvent.click(screen.getByRole("button", { name: "Not relevant" }));
@@ -418,7 +1118,7 @@ it("uses a brief, explicit pause/read, revisitable decisions, and cautious quote
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Costs are unknown." } }));
   fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
-  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
   await screen.findByText("Why the expense?");
   expect(requests[0]?.body).toMatchObject({ brief: "Audience: operators" });
   act(() => view.dispatch({ selection: { anchor: 4 } }));
@@ -426,21 +1126,147 @@ it("uses a brief, explicit pause/read, revisitable decisions, and cautious quote
   expect(view.state.selection.main.anchor).toBe(4);
   expect(editor.querySelector(".cm-writer-passage")?.textContent).toBe("Costs");
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
-  fireEvent.change(screen.getByRole("textbox", { name: /Author decision/ }), {
-    target: { value: "Costs outside scope" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
+  const decision = screen.getByRole("textbox", { name: /Decision for this draft/ });
+  await userEvent.type(decision, "Costs outside scope");
+  await userEvent.keyboard("{Enter}");
+  expect(screen.getByText("Decision saved.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Addressed" }));
   expect(screen.getByText("History · 1 closed threads").closest("details")?.open).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: /Ask Writer · general/ }));
+  fireEvent.click(screen.getByRole("button", { name: "← Back to conversation" }));
   fireEvent.click(screen.getByText("History · 1 closed threads"));
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
-  expect((screen.getByRole("textbox", { name: /Author decision/ }) as HTMLInputElement).value).toBe(
-    "Costs outside scope",
+  const closedDecision = screen.getByRole<HTMLInputElement>("textbox", {
+    name: "Decision for this draft",
+  });
+  expect(closedDecision.value).toBe("Costs outside scope");
+  await userEvent.clear(closedDecision);
+  await userEvent.type(closedDecision, "Saved with the button");
+  fireEvent.click(screen.getByRole("button", { name: "Save decision" }));
+  expect(screen.getByText("Decision saved.")).toBeTruthy();
+  expect(closedDecision.value).toBe("Saved with the button");
+  await userEvent.clear(closedDecision);
+  await userEvent.type(closedDecision, "Keep costs for the next draft");
+  await userEvent.keyboard("{Enter}");
+  expect(screen.getByText("Decision saved.")).toBeTruthy();
+  expect(closedDecision.value).toBe("Keep costs for the next draft");
+  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await waitFor(() =>
+    expect(requests.at(-1)?.body).toMatchObject({
+      observations: [
+        expect.objectContaining({
+          status: "addressed",
+          decision: "Keep costs for the next draft",
+        }),
+      ],
+    }),
   );
+  expect(screen.getByText("Addressed")).toBeTruthy();
+  expect(view.state.doc.toString()).toBe("Costs are unknown.");
+  fireEvent.click(screen.getByRole("button", { name: "Clear decision" }));
+  expect(screen.getByText("Decision cleared.")).toBeTruthy();
+  expect(
+    (screen.getByRole("textbox", { name: /Decision for this draft/ }) as HTMLInputElement).value,
+  ).toBe("");
+  expect(screen.getByText("Addressed")).toBeTruthy();
   act(() => view.dispatch({ changes: { from: 0, to: 5, insert: "Price" } }));
   fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
   expect(screen.getByText(/Earlier draft \/ changed/)).toBeTruthy();
+});
+
+it("keeps unsaved decisions with their selected threads through unrelated renders", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => view.dispatch({ changes: { from: 0, insert: "Draft" } }));
+  answer = { status: "observe", text: "First concern" };
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  const first = await screen.findByText("First concern");
+  answer = { status: "observe", text: "Second concern" };
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  const second = await screen.findByText("Second concern");
+  const firstArticle = first.closest("article");
+  const secondArticle = second.closest("article");
+  if (!firstArticle || !secondArticle) throw new Error("Expected Writer observations");
+
+  fireEvent.click(within(firstArticle).getByRole("button", { name: "Open thread" }));
+  const decision = screen.getByRole<HTMLInputElement>("textbox", {
+    name: "Decision for this draft",
+  });
+  await userEvent.type(decision, "First draft decision");
+  act(() => view.dispatch({ changes: { from: 5, insert: " update" } }));
+  expect(decision.value).toBe("First draft decision");
+
+  fireEvent.click(within(secondArticle).getByRole("button", { name: "Open thread" }));
+  const secondDecision = screen.getByRole<HTMLInputElement>("textbox", {
+    name: "Decision for this draft",
+  });
+  expect(secondDecision.value).toBe("");
+  await userEvent.type(secondDecision, "Second draft decision");
+  fireEvent.click(within(firstArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("First draft decision");
+  fireEvent.click(within(secondArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("Second draft decision");
+
+  let releaseObservation!: () => void;
+  const observationGate = new Promise<void>((resolve) => {
+    releaseObservation = resolve;
+  });
+  const originalFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", async (request: Request) => {
+    if (new URL(request.url).pathname.endsWith("/writer/observe")) await observationGate;
+    return originalFetch(request);
+  });
+  const observationCount = requests.length;
+  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("Analyzing…");
+  fireEvent.click(within(firstArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("First draft decision");
+  fireEvent.click(within(secondArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("Second draft decision");
+  fireEvent.click(within(firstArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("First draft decision");
+  releaseObservation();
+  await waitFor(() => expect(requests.length).toBeGreaterThan(observationCount));
+  await waitFor(() => expect(screen.queryByText("Analyzing…")).toBeNull());
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("First draft decision");
+  fireEvent.click(within(secondArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("Second draft decision");
+
+  let releaseDiscussion!: () => void;
+  const discussionGate = new Promise<void>((resolve) => {
+    releaseDiscussion = resolve;
+  });
+  discussionResponse = async () => {
+    await discussionGate;
+    return Response.json(discussionAnswer);
+  };
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), "Review drafts");
+  await userEvent.keyboard("{Enter}");
+  await screen.findByText("Discussing…");
+  releaseDiscussion();
+  await screen.findByText("Keep the author's own wording.");
+  fireEvent.click(within(firstArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("First draft decision");
+  fireEvent.click(within(secondArticle).getByRole("button", { name: "Open thread" }));
+  expect(
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Decision for this draft" }).value,
+  ).toBe("Second draft decision");
 });
 
 it("reveals reversed passages in a mounted editor, requesting scroll only on click without changing selection or undo", async () => {
@@ -489,11 +1315,8 @@ it("keeps Ask Writer available while an automatic observation is running", async
   if (!view) throw new Error("CodeMirror did not mount");
   act(() => view.dispatch({ changes: { from: 0, insert: "Draft during analysis" } }));
   await screen.findByText("Analyzing…", {}, { timeout: 3500 });
-  expect(screen.getByRole("textbox", { name: "Message Mecatl" })).not.toHaveProperty(
-    "disabled",
-    true,
-  );
-  await userEvent.type(screen.getByRole("textbox", { name: "Message Mecatl" }), "Why?");
+  expect(screen.getByRole("textbox", { name: "Ask Writer" })).not.toHaveProperty("disabled", true);
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), "Why?");
   await userEvent.keyboard("{Enter}");
   release();
   await waitFor(() => expect(requests.some(({ path }) => path.endsWith("/discuss"))).toBe(true));
@@ -523,6 +1346,218 @@ function writerView() {
   return view;
 }
 
+it("recovers adopted text but never previews or attached content", async () => {
+  installLocks();
+  const first = mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+  await screen.findByText("Saved in this browser");
+  fireEvent.change(screen.getByLabelText("Attach reference files"), {
+    target: { files: [new File(["private notes"], "notes.txt", { type: "text/plain" })] },
+  });
+  await screen.findByRole("button", { name: "Remove notes.txt" });
+  discussionAnswer = {
+    mode: "proposal",
+    text: "Outline",
+    candidate: "# Outline\n\n[Evidence needed]",
+  };
+  await sendWriter("Outline this idea");
+  await screen.findByRole("region", { name: "Writer preview" });
+  expect(window.localStorage.getItem("studio.writer.recovery")).not.toContain("private notes");
+  expect(window.localStorage.getItem("studio.writer.recovery")).not.toContain("Evidence needed");
+  fireEvent.click(screen.getByRole("button", { name: "Use this starting point" }));
+  await waitFor(() =>
+    expect(window.localStorage.getItem("studio.writer.recovery")).toContain("Evidence needed"),
+  );
+  first.unmount();
+  first.query.clear();
+  mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  expect(writerView().state.doc.toString()).toBe("# Outline\n\n[Evidence needed]");
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Remove notes.txt" })).toBeNull();
+});
+
+it("sends the clicked observation's bounded thread without changing either observation", async () => {
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => view.dispatch({ changes: { from: 0, insert: "B passage." } }));
+
+  answer = { status: "observe", text: "B concern", quote: "B passage" };
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("B concern");
+  const bArticle = screen.getByText("B concern").closest("article");
+  if (!bArticle) throw new Error("Expected B observation");
+  fireEvent.click(within(bArticle).getByRole("button", { name: "Open thread" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Ask Writer" }), "B discussion");
+  await userEvent.keyboard("{Enter}");
+  await screen.findByText("Keep the author's own wording.");
+
+  for (let index = 1; index <= 14; index++) {
+    answer = { status: "observe", text: `Concern ${index}` };
+    await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+    await screen.findByText(`Concern ${index}`);
+  }
+  const openThreads = screen.getAllByRole("button", { name: "Open thread" });
+  const lastThread = openThreads.at(-1);
+  if (!lastThread) throw new Error("Expected latest observation thread");
+  fireEvent.click(lastThread);
+  fireEvent.click(within(bArticle).getByRole("button", { name: "Open thread" }));
+  discussionAnswer = { mode: "proposal", text: "Clearer", candidate: "Better" };
+  await sendWriter("Revise B");
+  await screen.findByRole("region", { name: "Writer preview" });
+
+  const proposal = requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body;
+  expect(proposal?.observations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ text: "B concern", selected: true, status: "open" }),
+    ]),
+  );
+  expect(proposal?.discussion).toEqual([
+    { role: "user", text: "B discussion" },
+    { role: "assistant", text: "Keep the author's own wording." },
+  ]);
+  expect(proposal?.observations).toHaveLength(12);
+  expect(within(bArticle).getByText("Open")).toBeTruthy();
+  expect(within(bArticle).getByRole("button", { name: "Addressed" })).toBeTruthy();
+});
+
+it("refuses multi-quote observation anchors until the author explicitly selects one passage", async () => {
+  answer = {
+    status: "observe",
+    text: "These passages need comparison.",
+    quote: "First",
+    quotes: ["First", "Later"],
+  };
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => view.dispatch({ changes: { from: 0, insert: "First passage. Later passage." } }));
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("These passages need comparison.");
+  const article = screen.getByText("These passages need comparison.").closest("article");
+  if (!article) throw new Error("Expected multi-quote observation");
+  fireEvent.click(within(article).getByRole("button", { name: "Open thread" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Decision for this draft/ }), {
+    target: { value: "Keep both passages" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save decision" }));
+  discussionAnswer = { mode: "reply", text: "Please select one passage in the editor." };
+  await sendWriter("Can you help revise this?");
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).not.toHaveProperty(
+    "passage",
+  );
+  expect(view.state.doc.toString()).toBe("First passage. Later passage.");
+  expect(within(article).getByText("Open")).toBeTruthy();
+  expect(
+    (screen.getByRole("textbox", { name: /Decision for this draft/ }) as HTMLInputElement).value,
+  ).toBe("Keep both passages");
+  const from = view.state.doc.toString().indexOf("Later");
+  act(() => view.dispatch({ selection: { anchor: from, head: from + "Later".length } }));
+  await includeSelectedPassage();
+  discussionAnswer = { mode: "proposal", text: "Better", candidate: "Revised" };
+  await sendWriter("Please revise the selected passage");
+  await screen.findByRole("region", { name: "Writer preview" });
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).toMatchObject({
+    passage: { from, to: from + "Later".length, text: "Later" },
+  });
+});
+
+it("refuses ambiguous observation anchors without changing status or decisions", async () => {
+  answer = { status: "observe", text: "Clarify this?", quote: "Same" };
+  mount(true);
+  const view = writerView();
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => view.dispatch({ changes: { from: 0, insert: "Same. Same." } }));
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await screen.findByText("Clarify this?");
+  fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
+  await sendWriter("Revise?");
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).not.toHaveProperty(
+    "passage",
+  );
+  expect(screen.queryByRole("region", { name: "Writer preview" })).toBeNull();
+  expect(view.state.doc.toString()).toBe("Same. Same.");
+  act(() => view.dispatch({ changes: { from: 6, to: 11, insert: "Other" } }));
+  discussionAnswer = { mode: "proposal", text: "Clearer", candidate: "Better" };
+  await sendWriter("Revise now?");
+  await screen.findByRole("region", { name: "Writer preview" });
+  expect(requests.findLast((entry) => entry.path.endsWith("/discuss"))?.body).toMatchObject({
+    passage: { from: 0, to: 4, text: "Same" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  expect(view.state.doc.toString()).toBe("Better. Other");
+  expect(screen.getAllByText("Clarify this?").length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Addressed" })).toBeTruthy();
+});
+
+it("saves only the imported document after opt-in and restores it without old context", async () => {
+  installLocks();
+  const first = mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  fireEvent.click(screen.getByRole("switch", { name: "Automatic feedback" }));
+  act(() => writerView().dispatch({ changes: { from: 0, insert: "Old draft" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Add brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Writing brief/ }), {
+    target: { value: "Old brief" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+  await screen.findByText("Saved in this browser");
+  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  await chooseDocument(new File(["New draft"], "new.md"));
+  await waitFor(() =>
+    expect(
+      JSON.parse(window.localStorage.getItem("studio.writer.recovery") ?? "{}").snapshot?.document
+        .content,
+    ).toBe("New draft"),
+  );
+  const saved = window.localStorage.getItem("studio.writer.recovery") ?? "";
+  expect(saved).not.toContain("Old draft");
+  expect(saved).not.toContain("Old brief");
+  first.unmount();
+  first.query.clear();
+  mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  expect(writerView().state.doc.toString()).toBe("New draft");
+  expect(screen.queryByText("Old brief")).toBeNull();
+});
+
+it("serializes a pending old-document save with an imported document", async () => {
+  let release!: () => void;
+  installLocks(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  const first = mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  const view = writerView();
+  act(() => view.dispatch({ changes: { from: 0, insert: "Old draft" } }));
+  fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
+  await screen.findByText("Saving…");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  await chooseDocument(new File(["New draft"], "new.md"));
+  expect(view.state.doc.toString()).toBe("New draft");
+  expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
+  await act(async () => release());
+  await waitFor(() =>
+    expect(
+      JSON.parse(window.localStorage.getItem("studio.writer.recovery") ?? "{}").snapshot?.document
+        .content,
+    ).toBe("New draft"),
+  );
+  await screen.findByText("Saved in this browser");
+  first.unmount();
+  first.query.clear();
+  mount(true, false, { account: "alice" });
+  await screen.findByRole("textbox", { name: "Writer document" });
+  expect(writerView().state.doc.toString()).toBe("New draft");
+});
+
 it("keeps a local draft only after opt-in, restores it, and forgets only on confirmation", async () => {
   installLocks();
   const first = mount(true, false, { account: "alice" });
@@ -537,25 +1572,25 @@ it("keeps a local draft only after opt-in, restores it, and forgets only on conf
     target: { value: "Restored audience" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Apply brief" }));
-  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
   await screen.findByText("What evidence supports this assumption?");
   await userEvent.type(
-    screen.getByRole("textbox", { name: "Message Mecatl" }),
+    screen.getByRole("textbox", { name: "Ask Writer" }),
     "General saved question",
   );
   await userEvent.keyboard("{Enter}");
   await screen.findByText("Keep the author's own wording.");
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
   await userEvent.type(
-    screen.getByRole("textbox", { name: "Message Mecatl" }),
+    screen.getByRole("textbox", { name: "Ask Writer" }),
     "Thread saved question",
   );
   await userEvent.keyboard("{Enter}");
   await screen.findByText("Keep the author's own wording.");
-  fireEvent.change(screen.getByRole("textbox", { name: /Author decision/ }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /Decision for this draft/ }), {
     target: { value: "Confirmed author intent" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save decision" }));
   expect(window.localStorage.getItem("studio.writer.recovery")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Save locally (opt in)" }));
   await screen.findByText("Saved in this browser");
@@ -568,10 +1603,10 @@ it("keeps a local draft only after opt-in, restores it, and forgets only on conf
   expect(screen.getByText("General saved question")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Open thread" }));
   expect(screen.getByText("Thread saved question")).toBeTruthy();
-  expect((screen.getByRole("textbox", { name: /Author decision/ }) as HTMLInputElement).value).toBe(
-    "Confirmed author intent",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  expect(
+    (screen.getByRole("textbox", { name: /Decision for this draft/ }) as HTMLInputElement).value,
+  ).toBe("Confirmed author intent");
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
   await waitFor(() =>
     expect(requests.filter(({ path }) => path.endsWith("/observe"))).toHaveLength(2),
   );
@@ -588,7 +1623,7 @@ it("keeps a local draft only after opt-in, restores it, and forgets only on conf
     ],
   });
   await userEvent.type(
-    screen.getByRole("textbox", { name: "Message Mecatl" }),
+    screen.getByRole("textbox", { name: "Ask Writer" }),
     "Continue restored thread",
   );
   await userEvent.keyboard("{Enter}");
@@ -598,7 +1633,7 @@ it("keeps a local draft only after opt-in, restores it, and forgets only on conf
     decisions: [{ decision: "Confirmed author intent" }],
     discussion: [{ text: "Thread saved question" }, { role: "assistant" }],
   });
-  fireEvent.click(screen.getByRole("button", { name: /Ask Writer · general/ }));
+  fireEvent.click(screen.getByRole("button", { name: "← Back to conversation" }));
   expect(screen.getByText("General saved question")).toBeTruthy();
   const confirm = vi.fn().mockReturnValue(false);
   vi.stubGlobal("confirm", confirm);
@@ -802,7 +1837,7 @@ it("does not highlight or scroll an ambiguous duplicate quote in the mounted edi
       selection: { anchor: 3 },
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Read this now" }));
+  await userEvent.click(screen.getByRole("button", { name: "Read this now" }));
   await screen.findByText("Which cost?");
   const scroll = vi.spyOn(EditorView, "scrollIntoView");
   fireEvent.click(screen.getByRole("button", { name: "Reveal passage" }));
@@ -830,6 +1865,6 @@ it("keeps silent analysis invisible", async () => {
     }),
   );
   await waitFor(() => expect(requests).toHaveLength(1), { timeout: 3500 });
-  expect(screen.getByText("No open observations.")).toBeTruthy();
+  expect(screen.getByText("Observations will appear here as you write.")).toBeTruthy();
   expect(editor.textContent).toContain("Draft");
 });

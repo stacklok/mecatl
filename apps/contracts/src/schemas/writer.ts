@@ -26,9 +26,59 @@ const discussionEntrySchema = z.strictObject({
   text: z.string().min(1).max(2_000),
 });
 
+const referenceSchema = z.strictObject({
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .refine(
+      (name) =>
+        name.trim().length > 0 &&
+        [...name].every((char) => {
+          const code = char.codePointAt(0) ?? 0;
+          return (
+            code > 31 &&
+            code !== 127 &&
+            (code < 0xd800 || code > 0xdfff) &&
+            char !== "/" &&
+            char !== "\\"
+          );
+        }),
+    ),
+  content: z.string().min(1).max(8_000),
+});
+const referencesSchema = z
+  .array(referenceSchema)
+  .max(3)
+  .refine(
+    (files) =>
+      files.reduce((sum, file) => sum + new TextEncoder().encode(file.content).length, 0) <=
+        16_000 &&
+      files.every(
+        (file) =>
+          new TextEncoder().encode(file.content).length <= 8_000 &&
+          [...file.content].every((character) => {
+            const code = character.codePointAt(0) ?? 0;
+            return (
+              (code >= 32 || code === 9 || code === 10 || code === 13) &&
+              code !== 127 &&
+              (code < 0xd800 || code > 0xdfff)
+            );
+          }),
+      ),
+    { message: "References must be bounded UTF-8 text." },
+  );
+
+const passageSchema = z.strictObject({
+  from: z.number().int().nonnegative().safe(),
+  to: z.number().int().positive().safe(),
+  text: z.string().min(1).max(4_000),
+});
+
 const writerContextSchema = z
   .strictObject({
     document: documentSchema,
+    references: referencesSchema.optional(),
     model: sessionModelSelectionSchema.optional(),
     checkpoint: documentSchema.optional(),
     brief: z.string().trim().max(2_000).optional(),
@@ -50,9 +100,19 @@ const writerContextSchema = z
   );
 
 export const observeWriterRequestSchema = writerContextSchema;
-export const discussWriterRequestSchema = writerContextSchema.safeExtend({
-  message: z.string().trim().min(1).max(2_000),
-});
+export const discussWriterRequestSchema = writerContextSchema
+  .safeExtend({
+    message: z.string().trim().min(1).max(2_000),
+    passage: passageSchema.optional(),
+    previousCandidate: z.string().min(1).max(4_000).optional(),
+  })
+  .refine(
+    ({ document, passage }) =>
+      !passage ||
+      (passage.from < passage.to &&
+        document.content.slice(passage.from, passage.to) === passage.text),
+    { message: "Passage must match the document range." },
+  );
 
 export const observeWriterResponseSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("silent") }),
@@ -64,9 +124,18 @@ export const observeWriterResponseSchema = z.discriminatedUnion("status", [
     reason: z.string().max(500).optional(),
   }),
 ]);
-export const discussWriterResponseSchema = z.strictObject({
-  text: z.string().trim().min(1).max(2_000),
-});
+export const discussWriterResponseSchema = z.discriminatedUnion("mode", [
+  z.strictObject({ mode: z.literal("reply"), text: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({
+    mode: z.literal("proposal"),
+    text: z.string().trim().min(1).max(2_000),
+    candidate: z
+      .string()
+      .min(1)
+      .max(4_000)
+      .refine((text) => !!text.trim()),
+  }),
+]);
 
 export type ObserveWriterRequest = z.infer<typeof observeWriterRequestSchema>;
 export type DiscussWriterRequest = z.infer<typeof discussWriterRequestSchema>;

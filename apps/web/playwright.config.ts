@@ -42,7 +42,7 @@ export default defineConfig({
     },
     {
       name: "firefox-writer",
-      grep: /repeated Enter/,
+      grep: /repeated Enter|Writer Vim/,
       testMatch: "writer.spec.ts",
       use: { browserName: "firefox", viewport: { width: 1280, height: 800 } },
     },
