@@ -12,6 +12,43 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+func TestBrokerSessionKindCheckOfflineFixture(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Fatal("jq is required for the passive Kind fixture")
+	}
+	dir := t.TempDir()
+	kubectl := `#!/bin/sh
+printf '%s\n' "$*" >> "$CHECK_LOG"
+case "$*" in
+  *broker-config*) printf '%s\n' '{"data":{"broker.json":"{\"session_api\":{\"mode\":\"OWNERLESS\",\"deployment\":\"kind-poc-a\"},\"transport\":{\"rpc_deadline\":\"10s\",\"execute_deadline\":\"120s\"},\"protected_storage\":{\"redis\":{\"address\":\"redis.example.com:6379\"}}}"}}' ;;
+  *get\ configmap*) printf '%s\n' '{"data":{"settings.yaml":"mcp:\n  mode: broker"}}' ;;
+esac
+`
+	if err := os.WriteFile(dir+"/kubectl", []byte(kubectl), 0700); err != nil {
+		t.Fatal(err)
+	}
+	log := dir + "/calls"
+	cmd := exec.Command("sh", "broker-session-check.sh", "fixture-kubeconfig", "kind-test", "fixture", "poc")
+	cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "CHECK_LOG=" + log}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("offline Kind check: %v\n%s", err, output)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range strings.Split(strings.TrimSpace(string(calls)), "\n") {
+		if !strings.HasPrefix(call, "--kubeconfig=fixture-kubeconfig --context=kind-test --namespace=fixture ") {
+			t.Fatal("Kind command lost explicit context")
+		}
+		for _, mutation := range []string{" apply ", " delete ", " rollout restart ", " secret "} {
+			if strings.Contains(call, mutation) {
+				t.Fatal("passive Kind check mutated resources or inspected credentials")
+			}
+		}
+	}
+}
+
 const fixtureTask = "Taskfile.yml"
 
 // TestMecak8sKindFixture_Scenario1_ToolHiveFreeSetup pins the standalone
@@ -53,6 +90,31 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("dedicated fixture lifecycle missing %q", want)
+		}
+	}
+}
+
+// TestMecak8sKindFixture_Scenario1_DocumentationBoundaries pins that the
+// local operator fixture is neither the production chart nor e2e/k8s, and
+// makes no production isolation claim.
+func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
+	body, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	baseDocs, _, _ := strings.Cut(text, "\n## Optional Keycloak login journey")
+	for _, want := range []string{
+		"operator-run", "deploy/helm/mecak8s/", "e2e/k8s/", "default-deny ingress NetworkPolicy",
+		"127.0.0.1", "NodePort", "extraPortMappings",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("fixture documentation missing boundary %q", want)
+		}
+	}
+	for _, forbidden := range []string{"production network isolation", "ToolHive", "vMCP"} {
+		if strings.Contains(baseDocs, forbidden) {
+			t.Fatalf("ToolHive-free fixture documentation contains %q", forbidden)
 		}
 	}
 }
@@ -433,13 +495,19 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 }
 
 // TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn pins the identity layer's
-// independent lifecycle: the base cannot transitively install identity assets,
-// while the opt-in setup applies them only after the base is ready.
+// independent lifecycle: the base provisions broker TLS but cannot transitively
+// install optional caller-identity assets; opt-in setup applies those afterward.
 func TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn(t *testing.T) {
 	base := fixtureTaskClosure(t, "kind-setup")
-	for _, forbidden := range []string{"cert-manager", "certificate-apply", "keycloak", "oidc", "tls", "values-kind-keycloak.yaml"} {
+	for _, forbidden := range []string{"cert-manager", "certificate-apply", "keycloak", "oidc", "fixture-tls.yaml", "create secret tls mecak8s-tls", "tls.enabled=true", "values-kind-keycloak.yaml"} {
 		if strings.Contains(strings.ToLower(base), forbidden) {
 			t.Fatalf("base setup transitively depends on optional identity asset %q", forbidden)
+		}
+	}
+
+	for _, want := range []string{"task: broker-tls-apply", "broker-tls-apply:", "create secret tls mecabroker-tls", "create secret generic mecabroker-ca"} {
+		if !strings.Contains(base, want) {
+			t.Fatalf("base setup missing mandatory broker TLS provisioning %q", want)
 		}
 	}
 

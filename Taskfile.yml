@@ -227,6 +227,62 @@ tasks:
         silent: true
       - ko build --push --bare ./cmd/mecak8s
 
+  ko:build:broker:
+    desc: Build the mecabroker image locally with ko (no push; tagged under ko.local)
+    env:
+      KO_DOCKER_REPO: ko.local
+      VERSION: "{{.BUILD_ID}}"
+    cmds:
+      - ko build --local --bare ./cmd/mecabroker
+
+  kind:load:broker:
+    desc: Build and load the local mecabroker image into the mecatl-dev Kind cluster with a digest reference
+    vars:
+      KIND_CLUSTER: '{{.KIND_CLUSTER | default "mecatl-dev"}}'
+      IMAGE: ko.local/mecabroker:dev
+      ARCHIVE: .scratch/mecabroker-kind/mecabroker.tar
+    preconditions:
+      - sh: command -v ko >/dev/null 2>&1
+        msg: "ko is not installed (https://ko.build/install/)"
+      - sh: command -v kind >/dev/null 2>&1
+        msg: "kind is not installed (https://kind.sigs.k8s.io/docs/user/quick-start/#installation)"
+      - sh: command -v docker >/dev/null 2>&1
+        msg: "docker is required for the broker Kind fixture"
+      - sh: kind get clusters | grep -qx '{{.KIND_CLUSTER}}'
+        msg: "Kind cluster '{{.KIND_CLUSTER}}' was not found; set KIND_CLUSTER or create it first"
+    cmds:
+      - mkdir -p .scratch/mecabroker-kind
+      - cmd: |
+          set -eu
+          image="$(KO_DOCKER_REPO=ko.local VERSION="{{.BUILD_ID}}" ko build --local --bare --tags dev ./cmd/mecabroker)"
+          docker tag "$image" '{{.IMAGE}}'
+      - docker save '{{.IMAGE}}' -o '{{.ARCHIVE}}'
+      - kind load image-archive '{{.ARCHIVE}}' --name '{{.KIND_CLUSTER}}'
+      - cmd: |
+          set -eu
+          node="$(kind get nodes --name '{{.KIND_CLUSTER}}' | head -n 1)"
+          digest="$(docker exec "$node" ctr -n k8s.io images ls | awk '$1 == "{{.IMAGE}}" {print $3; exit}')"
+          case "$digest" in
+            sha256:[0-9a-f][0-9a-f]*) ;;
+            *) echo "could not determine the imported broker image digest" >&2; exit 1 ;;
+          esac
+          docker exec "$node" ctr -n k8s.io images tag '{{.IMAGE}}' "ko.local/mecabroker@$digest"
+          echo "Use --set image.repository=ko.local/mecabroker --set image.digest=$digest"
+        silent: true
+      - rm -f '{{.ARCHIVE}}'
+
+  ko:publish:broker:
+    desc: Build and push the mecabroker image with ko (honours KO_DOCKER_REPO)
+    env:
+      VERSION: "{{.BUILD_ID}}"
+    cmds:
+      - cmd: |
+          if [ -z "${KO_DOCKER_REPO:-}" ]; then
+            echo "KO_DOCKER_REPO is required (for example ghcr.io/stacklok/mecatl/mecabroker)"; exit 1
+          fi
+        silent: true
+      - ko build --push --bare ./cmd/mecabroker
+
   ko:build:mecatui:
     desc: Build the mecatui image locally with ko (issue #302; no push; tagged under ko.local)
     env:
