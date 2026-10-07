@@ -223,3 +223,32 @@ it("says when the changes ledger is truncated", async () => {
   expect(document.body.querySelectorAll("li").length).toBe(20);
   expect(document.body.textContent).toContain("Showing the 20 most recent lifecycle changes.");
 });
+
+it("warns when an action was recorded but publishing it failed", async () => {
+  await renderLearned((request) => {
+    const { pathname } = new URL(request.url);
+    if (request.method === "POST")
+      return {
+        ...learned({ activate: true }),
+        publicationError: "catalog unavailable",
+        publicationStatus: "failed",
+        state: "active",
+      };
+    if (pathname.endsWith("/changes")) return { complete: true, items: [] };
+    if (pathname === "/api/v1/runtime")
+      return { capabilities: { learnedSkills: true, skills: true } };
+    return { complete: true, items: [learned({ activate: true })], reason: "", supported: true };
+  });
+  const click = async (label: string) =>
+    act(async () => {
+      [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+        .find((b) => b.textContent === label)
+        ?.click();
+    });
+  await click("Activate");
+  await click("Confirm");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+  expect(document.body.querySelector("[role=alert]")?.textContent).toContain(
+    "Recorded, but publishing into the live inventory failed: catalog unavailable",
+  );
+});

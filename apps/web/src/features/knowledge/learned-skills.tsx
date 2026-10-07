@@ -64,6 +64,7 @@ export function LearnedSkills({
   const changes = useQuery(listLearnedSkillChangesOptions());
   const mutation = useMutation(actOnLearnedSkillMutation());
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
   const [pendingAction, setPendingAction] = useState<LearnedSkillAction>();
   const selected = query.data?.items.find((skill) => skill.id === selectedId);
 
@@ -76,8 +77,9 @@ export function LearnedSkills({
 
   async function act(skill: LearnedSkill, action: LearnedSkillAction) {
     setError(undefined);
+    setNotice(undefined);
     try {
-      await mutation.mutateAsync({
+      const result = await mutation.mutateAsync({
         body: {
           action,
           expectedRevision: skill.revision,
@@ -87,6 +89,12 @@ export function LearnedSkills({
         },
         path: { skillId: skill.id },
       });
+      // The daemon records the action and then publishes it into the live catalog; the two can
+      // diverge, and a recorded-but-unpublished skill must not read as success.
+      if (result.publicationError)
+        setNotice(
+          `Recorded, but publishing into the live inventory failed: ${result.publicationError}`,
+        );
       onSelect(undefined);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -104,6 +112,11 @@ export function LearnedSkills({
   const ledger = allChanges.slice(0, LEDGER_LIMIT);
   return (
     <div className="space-y-5">
+      {notice && (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="alert">
+          {notice}
+        </p>
+      )}
       {query.data.items.length === 0 ? (
         <StateCard
           icon="sparkles"

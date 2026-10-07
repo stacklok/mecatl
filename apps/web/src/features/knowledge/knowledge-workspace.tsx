@@ -31,6 +31,10 @@ export function KnowledgeWorkspace({
   const runtime = useQuery(getRuntimeOptions());
   // Hide the Learned pill once the daemon says it has no learned-skill inventory, unless the
   // URL already points there: that view then explains why it is unavailable.
+  // Known gap (#2168): `learnedSkills` only says the lifecycle API exists. It stays true with
+  // `learning.mode: off`, so this view can be empty forever with nothing saying why. Once the
+  // daemon reports the effective learning status, use it here and in the empty state of
+  // `learned-skills.tsx`.
   const learnedHidden = runtime.data?.capabilities.learnedSkills === false && view !== "learned";
   const activeView = view;
   return (

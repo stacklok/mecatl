@@ -7559,7 +7559,7 @@
         },
         "responses": {
           "200": {
-            "description": "The updated learned skill.",
+            "description": "The updated learned skill and whether publishing it into the live catalog succeeded.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7622,6 +7622,12 @@
                     },
                     "version": {
                       "type": "string"
+                    },
+                    "publicationError": {
+                      "type": "string"
+                    },
+                    "publicationStatus": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -7636,7 +7642,9 @@
                     "state",
                     "supersedes",
                     "updatedAt",
-                    "version"
+                    "version",
+                    "publicationError",
+                    "publicationStatus"
                   ]
                 }
               }
