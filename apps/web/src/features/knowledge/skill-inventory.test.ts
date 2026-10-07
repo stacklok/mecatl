@@ -13,12 +13,17 @@ const skill = (name: string, over: Partial<ConfiguredSkill> = {}): ConfiguredSki
 });
 
 describe("skill inventory", () => {
-  it("sorts case-insensitively and numerically without mutating the input", () => {
-    const input = [skill("b", { activeVersion: "v10" }), skill("A", { activeVersion: "v2" })];
-    expect(sortSkills(input, "name", "asc").map((s) => s.name)).toEqual(["A", "b"]);
-    expect(sortSkills(input, "version", "asc").map((s) => s.activeVersion)).toEqual(["v2", "v10"]);
-    expect(sortSkills(input, "name", "desc").map((s) => s.name)).toEqual(["b", "A"]);
-    expect(input.map((s) => s.name)).toEqual(["b", "A"]);
+  it("sorts case-insensitively without mutating the input", () => {
+    const input = [skill("b-skill", { description: "z" }), skill("A", { description: "y" })];
+    expect(sortSkills(input, "name", "asc").map((s) => s.name)).toEqual(["A", "b-skill"]);
+    expect(sortSkills(input, "name", "desc").map((s) => s.name)).toEqual(["b-skill", "A"]);
+    expect(sortSkills(input, "description", "asc").map((s) => s.name)).toEqual(["A", "b-skill"]);
+    expect(input.map((s) => s.name)).toEqual(["b-skill", "A"]);
+  });
+
+  it("breaks ties by name whatever the direction", () => {
+    const input = [skill("b", { description: "same" }), skill("a", { description: "same" })];
+    expect(sortSkills(input, "description", "desc").map((s) => s.name)).toEqual(["a", "b"]);
   });
 
   it("filters across name, description and owner", () => {

@@ -3,41 +3,42 @@
 import { listConfiguredSkillsOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
-import { useState } from "react";
-import { Badge } from "../../components/ui/badge";
+import { Ellipsis } from "lucide-react";
 import { Button } from "../../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
 import { pageTitleClass } from "../../lib/typography";
+import { cn } from "../../lib/utils";
+import { humanizeSkillName } from "./humanize-skill-name";
 
 /**
- * TERM: skill detail views — Summary (what the daemon reports), Manage (which
- * lifecycle actions are permitted), Files (the skill's content).
+ * TERM: skill detail sections — Summary (what the daemon reports), Manage (lifecycle
+ * actions), Files (the skill's content). Sections of one page, not tabs. Avoid: "tabs".
  *
- * DECISION: configured-skill Manage is a read-only statement, not a disabled form.
- * Reason: the issue holds create/edit/delete/upload read-only until a write
- * contract is approved; disabled controls would imply a contract that doesn't exist.
- * Rejected: hiding the tab — users then can't tell "no actions" from "not built".
+ * DECISION: the layout follows the Studio design baseline, mecatl-prototypes PR #46
+ * (skill-detail-page.tsx): back pill, serif title, pill row, Summary and Manage in the left
+ * column, Files in the right. Rejected: tabs, which the baseline does not have.
  *
- * ASSUMPTION: Files for a configured skill shows an explanatory empty state, because
- * ListSkills returns only name/description/owner/version and the daemon exposes no
- * file-listing or body RPC for configured skills.
+ * DECISION: Manage renders the baseline's Edit and Disable/Delete controls, permanently
+ * disabled with an explanatory note. Reason: the issue holds configured-skill writes
+ * read-only until a write contract is approved, and the baseline shows the controls inert
+ * rather than absent. Rejected: omitting them — the baseline would then differ visibly.
  *
- * ASSUMPTION: the active tab is component state, not a URL search param.
+ * DECISION: Files is a note, not a listing. Reason: the daemon's ListSkills is metadata-only
+ * (name, description, owner, version); it has no file-listing or body RPC for configured
+ * skills. This is the intentional deviation to record in the owning issue.
  *
- * SPEC: a configured skill missing from the inventory renders "not found" with a
- * link back, never a blank page; unsupported inventory shows the daemon's reason.
+ * SPEC: a configured skill missing from the inventory renders "not found" with a link back,
+ * never a blank page; an unsupported inventory shows the daemon's reason.
  */
-type Tab = "summary" | "manage" | "files";
-
-const TABS: ReadonlyArray<readonly [Tab, string]> = [
-  ["summary", "Summary"],
-  ["manage", "Manage"],
-  ["files", "Files"],
-];
+const MANAGED_NOTE = "Managed by the Mecatl deployment";
 
 export function ConfiguredSkillDetail({ name }: { name: string }) {
   const query = useQuery(listConfiguredSkillsOptions());
-  const [tab, setTab] = useState<Tab>("summary");
 
   if (query.isPending) return <DetailState text="Loading skill…" />;
   if (query.isError) return <DetailState error text="The skill inventory could not be loaded." />;
@@ -51,55 +52,75 @@ export function ConfiguredSkillDetail({ name }: { name: string }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-5xl px-4 py-7 sm:px-8 sm:py-10">
+      <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-7 sm:px-8 sm:py-10">
         <BackLink />
-        <div className="mt-7 flex flex-wrap items-center gap-2">
-          <h1 className={pageTitleClass("break-words")}>{skill.name}</h1>
-          <Badge variant="outline">configured</Badge>
-          {skill.agentOwned && <Badge variant="info">agent-owned</Badge>}
+        <div className="space-y-3">
+          <h1
+            className={pageTitleClass(
+              "break-words text-[44px] leading-[1.05] max-[499px]:text-3xl",
+            )}
+          >
+            {humanizeSkillName(skill.name)}
+          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <MetaPill className="font-mono">{skill.name}</MetaPill>
+            {skill.agentOwned && skill.ownerAgent && <MetaPill>by {skill.ownerAgent}</MetaPill>}
+            {skill.agentOwned && skill.activeVersion && (
+              <MetaPill className="font-mono">{skill.activeVersion}</MetaPill>
+            )}
+          </div>
         </div>
-        <div
-          className="mt-6 inline-flex max-w-full overflow-x-auto rounded-full bg-muted p-1"
-          role="tablist"
-        >
-          {TABS.map(([value, label]) => (
-            <button
-              aria-selected={tab === value}
-              className={`h-8 rounded-full px-4 text-sm ${tab === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
-              key={value}
-              onClick={() => setTab(value)}
-              role="tab"
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="mt-6" role="tabpanel">
-          {tab === "summary" && (
-            <>
-              <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+
+        <div className="flex flex-col gap-10 lg:flex-row lg:items-start">
+          <aside className="flex w-full max-w-[465px] flex-col gap-6">
+            <div className="space-y-3">
+              <h2 className="text-base font-semibold">Summary</h2>
+              <p className="text-base leading-relaxed text-muted-foreground">
                 {skill.description || "No description recorded."}
               </p>
-              <dl className="mt-6 grid gap-3 rounded-xl border bg-card p-4 text-sm sm:grid-cols-3">
-                <Fact label="Version" value={skill.activeVersion || "Unversioned"} />
-                <Fact label="Owner" value={skill.ownerAgent || "Deployment"} />
-                <Fact label="Source" value="Configured" />
-              </dl>
-            </>
-          )}
-          {tab === "manage" && (
-            <Panel
-              text="This skill is managed by the Mecatl deployment. Studio can't edit, delete, or upload configured skills."
-              title="Read-only"
-            />
-          )}
-          {tab === "files" && (
-            <Panel
-              text="The daemon doesn't report file contents for configured skills yet."
-              title="No files to show"
-            />
-          )}
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-base font-semibold">Manage</h2>
+              <div className="flex items-center gap-2">
+                <Button className="rounded-full" disabled title={MANAGED_NOTE} variant="outline">
+                  Edit
+                </Button>
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      aria-label={`More actions for ${skill.name}`}
+                      className="size-9 rounded-full"
+                      disabled
+                      size="icon"
+                      title={MANAGED_NOTE}
+                      variant="outline"
+                    >
+                      <Ellipsis className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem disabled>Disable</DropdownMenuItem>
+                    <DropdownMenuItem disabled variant="destructive">
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {MANAGED_NOTE}. Change the deployment&rsquo;s own skills directory instead.
+              </p>
+            </div>
+          </aside>
+
+          <section className="flex min-w-0 flex-1 flex-col gap-3">
+            <h2 className="text-base font-semibold">Files</h2>
+            <div className="rounded-lg border bg-background p-6">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                The daemon&rsquo;s inventory is metadata-only; the agent reads a skill&rsquo;s body
+                only when it loads it.
+              </p>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -108,30 +129,25 @@ export function ConfiguredSkillDetail({ name }: { name: string }) {
 
 function BackLink() {
   return (
-    <Button asChild size="sm" variant="outline">
+    <Button asChild className="h-9 w-fit gap-1 rounded-full px-4" size="sm" variant="outline">
       <Link search={{ item: undefined, view: "configured" }} to="/workspace/skills">
-        <ArrowLeft />
-        Back to skills
+        <span aria-hidden="true">‹</span>
+        Back
       </Link>
     </Button>
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function MetaPill({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-words">{value}</dd>
-    </div>
-  );
-}
-
-function Panel({ text, title }: { text: string; title: string }) {
-  return (
-    <div className="rounded-xl border border-dashed p-6">
-      <h2 className="font-semibold">{title}</h2>
-      <p className="mt-2 max-w-xl text-sm text-muted-foreground">{text}</p>
-    </div>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground",
+        className,
+      )}
+    >
+      {children}
+    </span>
   );
 }
 

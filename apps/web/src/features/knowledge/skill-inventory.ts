@@ -2,6 +2,7 @@
 
 import type { ListConfiguredSkillsResponse } from "@mecatl-studio/contracts/generated";
 import type { SortDirection } from "../../components/ui/sortable-head";
+import { humanizeSkillName } from "./humanize-skill-name";
 
 /**
  * TERM: configured skill — a skill in the daemon's resolved ListSkills inventory,
@@ -16,17 +17,17 @@ import type { SortDirection } from "../../components/ui/sortable-head";
  * the learned inventory is capped at 100 with `complete: false` shown in the UI.
  * Rejected: a server-side sort contract — it needs a daemon change nobody asked for.
  *
- * SPEC: sorting is stable and case-insensitive, and never mutates its input.
+ * SPEC: sorting is case-insensitive, never mutates its input, and keeps name order as the
+ * direction-independent tiebreak so equal rows do not move.
  * SPEC: filtering matches name, description and owner agent, case-insensitively.
  */
 export type ConfiguredSkill = ListConfiguredSkillsResponse["items"][number];
 
-export type SkillSortKey = "name" | "owner" | "version";
+export type SkillSortKey = "name" | "description";
 
 const sortValue: Record<SkillSortKey, (skill: ConfiguredSkill) => string> = {
-  name: (skill) => skill.name,
-  owner: (skill) => skill.ownerAgent,
-  version: (skill) => skill.activeVersion,
+  description: (skill) => skill.description,
+  name: (skill) => humanizeSkillName(skill.name),
 };
 
 export function sortSkills(
@@ -36,9 +37,12 @@ export function sortSkills(
 ): ConfiguredSkill[] {
   const read = sortValue[key];
   const sign = direction === "asc" ? 1 : -1;
+  const compare = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
   return [...skills].sort(
     (a, b) =>
-      sign * read(a).localeCompare(read(b), undefined, { numeric: true, sensitivity: "base" }),
+      sign * compare(read(a), read(b)) ||
+      compare(humanizeSkillName(a.name), humanizeSkillName(b.name)),
   );
 }
 

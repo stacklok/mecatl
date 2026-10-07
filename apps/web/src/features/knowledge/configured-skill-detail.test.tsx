@@ -57,19 +57,19 @@ const inventory = {
   supported: true,
 };
 
-it("shows summary, read-only manage, and an honest files state", async () => {
+it("shows summary, inert manage controls, and the metadata-only files note", async () => {
   const container = await renderDetail("deploy", inventory);
-  expect(container.textContent).toContain("v3");
+  expect(container.querySelector("h1")?.textContent).toBe("Deploy");
+  expect(container.textContent).toContain("Summary");
   expect(container.querySelector("b")).toBeNull(); // description is text, not markup
-  const tab = (label: string) =>
-    [...container.querySelectorAll<HTMLButtonElement>("[role=tab]")].find(
-      (button) => button.textContent === label,
-    );
-  await act(async () => tab("Manage")?.click());
-  expect(container.textContent).toContain("Read-only");
-  expect(container.querySelector("input, textarea")).toBeNull();
-  await act(async () => tab("Files")?.click());
-  expect(container.textContent).toContain("No files to show");
+  const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")];
+  const edit = buttons.find((button) => button.textContent === "Edit");
+  expect(edit?.disabled).toBe(true);
+  expect(
+    buttons.find((button) => button.getAttribute("aria-label")?.includes("More actions"))?.disabled,
+  ).toBe(true);
+  expect(container.textContent).toContain("Managed by the Mecatl deployment");
+  expect(container.textContent).toContain("metadata-only");
 });
 
 it("renders not-found for a skill missing from the inventory", async () => {

@@ -3,11 +3,16 @@
 import type { ListLearnedSkillsResponse } from "@mecatl-studio/contracts/generated";
 import {
   actOnLearnedSkillMutation,
+  diffLearnedSkillVersionsOptions,
+  getRuntimeOptions,
   listConfiguredSkillsOptions,
+  listLearnedSkillChangesOptions,
+  listLearnedSkillChangesQueryKey,
   listLearnedSkillsOptions,
   listLearnedSkillsQueryKey,
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Brain, GraduationCap, Sparkles } from "lucide-react";
 import { useState } from "react";
 import {
@@ -15,18 +20,29 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
+  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Dialog, DialogContent } from "../../components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
 import { pageTitleClass } from "../../lib/typography";
+import { humanizeSkillName } from "./humanize-skill-name";
+import { DiffBlock, hasSkillDiffChanges, skillDiffRows } from "./skill-diff";
 import { filterSkills, type SkillSortKey, sortSkills } from "./skill-inventory";
+import { SkillToolDisabledBanner } from "./skill-tool-disabled-banner";
 
 export type KnowledgeView = "configured" | "learned";
 type LearnedSkill = ListLearnedSkillsResponse["items"][number];
@@ -43,22 +59,25 @@ export function KnowledgeWorkspace({
   onViewChange: (view: KnowledgeView) => void;
   view: KnowledgeView;
 }) {
+  const runtime = useQuery(getRuntimeOptions());
+  // Hide the Learned pill only once the daemon says it has no learned-skill inventory.
+  const learnedHidden = runtime.data?.capabilities.learnedSkills === false;
+  const activeView = view === "learned" && learnedHidden ? "configured" : view;
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
+      <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-7 sm:px-8 sm:py-10">
+        <SkillToolDisabledBanner />
         <h1 className={pageTitleClass()}>Skills</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Inspect the procedures available to Mecatl.
-        </p>
-        <div className="mt-7 inline-flex max-w-full overflow-x-auto rounded-full bg-muted p-1">
+        <div className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1">
           {(
             [
-              ["configured", "Skills"],
-              ["learned", "Learned"],
+              ["configured", "All"],
+              ...(learnedHidden ? [] : [["learned", "Learned"] as const]),
             ] as const
           ).map(([value, label]) => (
             <button
-              className={`h-8 rounded-full px-4 text-sm ${view === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
+              aria-pressed={activeView === value}
+              className={`h-7 rounded-full px-3.5 text-sm transition-colors ${activeView === value ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               key={value}
               onClick={() => onViewChange(value)}
               type="button"
@@ -67,19 +86,17 @@ export function KnowledgeWorkspace({
             </button>
           ))}
         </div>
-        <div className="mt-5">
-          {view === "configured" ? (
-            <ConfiguredSkills onSelect={onItemChange} />
-          ) : (
-            <LearnedSkills onSelect={onItemChange} selectedId={item} />
-          )}
-        </div>
+        {activeView === "configured" ? (
+          <ConfiguredSkills />
+        ) : (
+          <LearnedSkills onSelect={onItemChange} selectedId={item} />
+        )}
       </div>
     </div>
   );
 }
 
-function ConfiguredSkills({ onSelect }: { onSelect: (name: string) => void }) {
+function ConfiguredSkills() {
   const query = useQuery(listConfiguredSkillsOptions());
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ direction: SortDirection; key: SkillSortKey }>({
@@ -97,11 +114,9 @@ function ConfiguredSkills({ onSelect }: { onSelect: (name: string) => void }) {
       direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
       key,
     }));
+  const direction = (key: SkillSortKey) => (sort.key === key ? sort.direction : undefined);
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Configured skills are read-only here and managed by the Mecatl deployment.
-      </p>
       <Input
         aria-label="Filter skills"
         onChange={(event) => setFilter(event.target.value)}
@@ -112,89 +127,88 @@ function ConfiguredSkills({ onSelect }: { onSelect: (name: string) => void }) {
         <StateCard text={`No skills match "${filter.trim()}".`} />
       ) : (
         <>
-          <div className="hidden overflow-hidden rounded-xl border bg-card md:block">
+          <div className="overflow-hidden rounded-xl border bg-card max-[499px]:hidden">
             <Table>
-              <TableHeader className="text-xs text-muted-foreground">
-                <TableRow>
-                  {(
-                    [
-                      ["name", "Skill"],
-                      ["version", "Version"],
-                      ["owner", "Owner"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <SortableHead
-                      className="px-4"
-                      direction={sort.key === key ? sort.direction : undefined}
-                      key={key}
-                      label={label}
-                      onSort={() => toggle(key)}
-                    />
-                  ))}
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <SortableHead
+                    className="w-px whitespace-nowrap px-4"
+                    direction={direction("name")}
+                    label="Name"
+                    onSort={() => toggle("name")}
+                  />
+                  <SortableHead
+                    className="px-4"
+                    direction={direction("description")}
+                    label="Description"
+                    onSort={() => toggle("description")}
+                  />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((skill) => (
                   <TableRow key={skill.name}>
-                    <TableCell className="whitespace-normal px-4 py-3">
-                      <button
-                        className="text-left font-medium"
-                        onClick={() => onSelect(skill.name)}
-                        type="button"
+                    <TableCell className="w-px max-w-[360px] whitespace-nowrap px-4 py-3 pr-6">
+                      <Link
+                        className="block truncate text-sm font-medium hover:underline"
+                        params={{ item: skill.name, view: "configured" }}
+                        to="/workspace/skills/$view/$item"
                       >
-                        {humanize(skill.name)}
-                      </button>
-                      <span className="ml-2 font-mono text-xs text-muted-foreground">
+                        {humanizeSkillName(skill.name)}
+                      </Link>
+                      <p className="truncate font-mono text-xs text-muted-foreground">
                         {skill.name}
-                      </span>
-                      {skill.agentOwned && (
-                        <Badge className="ml-2" variant="info">
-                          agent-owned
-                        </Badge>
-                      )}
-                      <p className="mt-1 line-clamp-1 text-muted-foreground">
-                        {skill.description || "No description recorded."}
                       </p>
                     </TableCell>
-                    <TableCell className="px-4 py-3 font-mono text-xs">
-                      {skill.activeVersion || "unversioned"}
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-xs text-muted-foreground">
-                      {skill.ownerAgent || "—"}
+                    <TableCell className="w-full max-w-0 px-4 py-3">
+                      <p className="line-clamp-1 whitespace-normal text-xs text-muted-foreground">
+                        {skill.description || "No description recorded."}
+                      </p>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          <ul className="divide-y overflow-hidden rounded-xl border bg-card md:hidden">
-            {rows.map((skill) => (
-              <li key={skill.name}>
-                <button
-                  className="block w-full p-4 text-left"
-                  onClick={() => onSelect(skill.name)}
-                  type="button"
+          <div className="divide-y overflow-hidden rounded-xl border bg-card min-[500px]:hidden">
+            {[...rows]
+              .sort((a, b) => humanizeSkillName(a.name).localeCompare(humanizeSkillName(b.name)))
+              .map((skill) => (
+                <Link
+                  className="block px-4 py-3"
+                  key={skill.name}
+                  params={{ item: skill.name, view: "configured" }}
+                  to="/workspace/skills/$view/$item"
                 >
-                  <span className="flex items-center gap-2 font-medium">
-                    {humanize(skill.name)}
-                    {skill.agentOwned && <Badge variant="info">agent-owned</Badge>}
+                  <span className="block truncate text-sm font-medium">
+                    {humanizeSkillName(skill.name)}
                   </span>
-                  <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
+                  <span className="line-clamp-2 text-xs text-muted-foreground">
                     {skill.description || "No description recorded."}
                   </span>
-                  <span className="mt-2 block font-mono text-xs text-muted-foreground">
-                    {skill.activeVersion || "unversioned"}
-                    {skill.ownerAgent && ` · ${skill.ownerAgent}`}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+                </Link>
+              ))}
+          </div>
         </>
       )}
     </div>
   );
 }
+
+/**
+ * DECISION: learned-skill review follows the Studio design baseline (mecatl-prototypes PR
+ * #46): a flat list, a review dialog with the version diff and body, and a "Recent changes"
+ * ledger. The dialog is driven by the route (`/workspace/skills/learned/$item`) so search
+ * results and links still deep-link to one skill. Rejected: the routed detail page, which
+ * the baseline folds into the dialog; its per-skill history is covered by the ledger.
+ *
+ * DECISION: the dialog offers only the actions the daemon reports in `skill.actions`.
+ * Reason: the issue requires permitted-only actions; the baseline derived them from state.
+ *
+ * SPEC: a failed action (stale revision, conflict) re-reads the inventory and ledger and
+ * shows the error inside the dialog; it never closes the dialog or reports success.
+ */
+const LEDGER_LIMIT = 20;
 
 function LearnedSkills({
   onSelect,
@@ -205,13 +219,18 @@ function LearnedSkills({
 }) {
   const queryClient = useQueryClient();
   const query = useQuery(listLearnedSkillsOptions());
+  const changes = useQuery(listLearnedSkillChangesOptions());
   const mutation = useMutation(actOnLearnedSkillMutation());
   const [error, setError] = useState<string>();
-  const [pendingAction, setPendingAction] = useState<{
-    action: LearnedSkillAction;
-    skill: LearnedSkill;
-  }>();
+  const [pendingAction, setPendingAction] = useState<LearnedSkillAction>();
   const selected = query.data?.items.find((skill) => skill.id === selectedId);
+
+  async function refresh() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: listLearnedSkillsQueryKey() }),
+      queryClient.invalidateQueries({ queryKey: listLearnedSkillChangesQueryKey() }),
+    ]);
+  }
 
   async function act(skill: LearnedSkill, action: LearnedSkillAction) {
     setError(undefined);
@@ -227,11 +246,11 @@ function LearnedSkills({
         path: { skillId: skill.id },
       });
       onSelect(undefined);
-      await queryClient.invalidateQueries({ queryKey: listLearnedSkillsQueryKey() });
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setPendingAction(undefined);
+      await refresh();
     }
   }
 
@@ -239,152 +258,275 @@ function LearnedSkills({
   if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
   if (!query.data.supported)
     return <StateCard text={query.data.reason} title="Learned skills are unavailable" />;
-  if (query.data.items.length === 0)
-    return (
-      <StateCard
-        icon="sparkles"
-        text="Procedures drafted from reflection will appear here for review before reaching the live inventory."
-        title="No learned skills yet"
-      />
-    );
+  const ledger = (changes.data?.items ?? []).slice(0, LEDGER_LIMIT);
   return (
-    <>
-      {error && (
-        <p className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
+    <div className="space-y-5">
+      {query.data.items.length === 0 ? (
+        <StateCard
+          icon="sparkles"
+          text="When the agent drafts a procedure from reflection, it lands here for review before it can reach the live inventory."
+          title="No learned skills yet"
+        />
+      ) : (
+        <>
+          {!query.data.complete && (
+            <p className="text-xs text-warning">Showing the first 100 learned skills.</p>
+          )}
+          <div className="divide-y overflow-hidden rounded-xl border bg-card">
+            {query.data.items.map((skill) => (
+              <button
+                className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/50"
+                key={`${skill.id}-${skill.version}`}
+                onClick={() => onSelect(skill.id)}
+                type="button"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-medium">{skill.name}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{skill.version}</span>
+                    <SkillState state={skill.state} />
+                  </span>
+                  <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+                    {skill.description || "No description recorded."}
+                  </span>
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {skill.ownerAgent}
+                  {skill.updatedAt && ` · ${formatDate(skill.updatedAt)}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
-      {!query.data.complete && (
-        <p className="mb-3 text-xs text-warning">Showing the first 100 learned skills.</p>
+
+      {ledger.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+            Recent changes
+          </h2>
+          <ul className="divide-y overflow-hidden rounded-xl border bg-card">
+            {ledger.map((change) => (
+              <li className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs" key={change.id}>
+                <span className="font-medium">{change.name}</span>
+                <span className="font-mono text-muted-foreground">{change.version}</span>
+                <span className="text-muted-foreground">
+                  {humanizeOperation(change.operation)}
+                  {change.fromState &&
+                    change.toState &&
+                    ` — ${change.fromState} → ${change.toState}`}
+                </span>
+                {change.verdict && <Badge variant="outline">{change.verdict}</Badge>}
+                {change.at && (
+                  <span className="ml-auto text-muted-foreground">{formatDate(change.at)}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {changes.data && !changes.data.complete && (
+            <p className="text-xs text-warning">Showing the most recent lifecycle changes only.</p>
+          )}
+        </div>
       )}
-      <div className="divide-y overflow-hidden rounded-xl border bg-card">
-        {query.data.items.map((skill) => (
-          <button
-            className="flex w-full items-start gap-3 p-4 text-left hover:bg-muted/40"
-            key={`${skill.id}-${skill.version}`}
-            onClick={() => onSelect(skill.id)}
-            type="button"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{skill.name}</span>
-                <span className="font-mono text-xs text-muted-foreground">{skill.version}</span>
-                <SkillState state={skill.state} />
-              </span>
-              <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
-                {skill.description || "No description recorded."}
-              </span>
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">{skill.ownerAgent}</span>
-          </button>
-        ))}
-      </div>
+
+      {selectedId && !selected && (
+        <p className="text-sm text-muted-foreground">
+          That learned skill no longer exists or is not visible to you.
+        </p>
+      )}
       {selected && (
         <LearnedSkillDialog
           busy={mutation.isPending}
-          onAction={(action) => setPendingAction({ action, skill: selected })}
-          onClose={() => onSelect(undefined)}
+          error={error}
+          onAction={(action) => setPendingAction(action)}
+          onClose={() => {
+            setError(undefined);
+            onSelect(undefined);
+          }}
           skill={selected}
         />
       )}
       <AlertDialog
         onOpenChange={(open) => !open && setPendingAction(undefined)}
-        open={Boolean(pendingAction)}
+        open={Boolean(pendingAction && selected)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {pendingAction &&
-                `${actionLabel(pendingAction.action)} ${pendingAction.skill.name} ${pendingAction.skill.version}?`}
+              {pendingAction && selected && actionCopy(pendingAction, selected).title}
             </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAction && selected && actionCopy(pendingAction, selected).description}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               disabled={mutation.isPending}
-              onClick={() => pendingAction && void act(pendingAction.skill, pendingAction.action)}
+              onClick={() => pendingAction && selected && void act(selected, pendingAction)}
             >
               Confirm
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </div>
   );
 }
 
 function LearnedSkillDialog({
   busy,
+  error,
   onAction,
   onClose,
   skill,
 }: {
   busy: boolean;
-  onAction: (action: "activate" | "archive" | "reject" | "rollback") => void;
+  error?: string;
+  onAction: (action: LearnedSkillAction) => void;
   onClose: () => void;
   skill: LearnedSkill;
 }) {
-  return (
-    <Modal onClose={onClose}>
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold">{skill.name}</h2>
-        <span className="font-mono text-sm text-muted-foreground">{skill.version}</span>
-        <SkillState state={skill.state} />
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">
-        {skill.description || "No description recorded."}
-      </p>
-      {skill.body && (
-        <pre className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-muted p-4 font-mono text-xs leading-5">
-          {skill.body}
-        </pre>
-      )}
-      <p className="mt-3 text-xs text-muted-foreground">
-        {skill.evidenceCount} evidence reference{skill.evidenceCount === 1 ? "" : "s"}
-        {skill.updatedAt && ` · updated ${formatDate(skill.updatedAt)}`}
-      </p>
-      <div className="mt-5 flex flex-wrap justify-end gap-2">
-        {skill.actions.reject && (
-          <Button disabled={busy} onClick={() => onAction("reject")} variant="outline">
-            Reject
-          </Button>
-        )}
-        {skill.actions.activate && (
-          <Button disabled={busy} onClick={() => onAction("activate")} variant="action">
-            Activate
-          </Button>
-        )}
-        {skill.actions.rollback && (
-          <Button disabled={busy} onClick={() => onAction("rollback")} variant="outline">
-            Roll back to {skill.supersedes}
-          </Button>
-        )}
-        {skill.actions.archive && (
-          <Button disabled={busy} onClick={() => onAction("archive")} variant="outline">
-            Archive
-          </Button>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-export function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const comparison = useQuery({
+    ...diffLearnedSkillVersionsOptions({
+      path: { skillId: skill.id },
+      query: {
+        fromVersion: skill.supersedes || "pending",
+        ownerAgent: skill.ownerAgent,
+        toVersion: skill.version,
+      },
+    }),
+    enabled: Boolean(skill.supersedes),
+  });
+  const rows = comparison.data?.diff
+    ? skillDiffRows(comparison.data.diff, { body: skill.body, description: skill.description })
+    : [];
   return (
     <Dialog onOpenChange={(open) => !open && onClose()} open>
-      <DialogContent className="max-h-[85dvh] max-w-2xl overflow-y-auto">{children}</DialogContent>
+      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <span>{skill.name}</span>
+            <span className="font-mono text-sm font-normal text-muted-foreground">
+              {skill.version}
+            </span>
+            <SkillState state={skill.state} />
+          </DialogTitle>
+          <DialogDescription>
+            {skill.description || "No description recorded."}
+            {skill.ownerAgent && ` — owned by ${skill.ownerAgent}.`}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+          {error && (
+            <p className="rounded-lg bg-destructive/10 p-3 text-sm text-foreground" role="alert">
+              {error} The skill was refreshed; review its current state before trying again.
+            </p>
+          )}
+          {skill.supersedes && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">
+                Changes since {skill.supersedes}
+              </p>
+              {comparison.isPending ? (
+                <p className="text-xs text-muted-foreground">Comparing versions…</p>
+              ) : comparison.isError || !hasSkillDiffChanges(rows) ? (
+                <p className="text-xs text-muted-foreground">
+                  No textual diff available — full body below.
+                </p>
+              ) : (
+                <DiffBlock rows={rows} />
+              )}
+            </div>
+          )}
+          {skill.body && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Body</p>
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {skill.body}
+              </pre>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {skill.evidenceCount} evidence reference{skill.evidenceCount === 1 ? "" : "s"}
+            {skill.updatedAt && ` · updated ${formatDate(skill.updatedAt)}`}
+          </p>
+        </div>
+        <DialogFooter className="flex-wrap gap-2">
+          {skill.actions.reject && (
+            <Button disabled={busy} onClick={() => onAction("reject")} size="sm" variant="outline">
+              Reject
+            </Button>
+          )}
+          {skill.actions.activate && (
+            <Button disabled={busy} onClick={() => onAction("activate")} size="sm" variant="action">
+              Activate
+            </Button>
+          )}
+          {skill.actions.rollback && (
+            <Button
+              disabled={busy}
+              onClick={() => onAction("rollback")}
+              size="sm"
+              variant="outline"
+            >
+              Roll back to {skill.supersedes}
+            </Button>
+          )}
+          {skill.actions.archive && (
+            <Button disabled={busy} onClick={() => onAction("archive")} size="sm" variant="outline">
+              Archive
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }
 
+const STATE_VARIANTS: Record<
+  string,
+  "destructive" | "info" | "muted" | "outline" | "success" | "warning"
+> = {
+  active: "success",
+  archived: "outline",
+  evaluated: "info",
+  rejected: "destructive",
+  staged: "warning",
+};
+
 function SkillState({ state }: { state: string }) {
-  const variant =
-    state === "active"
-      ? "success"
-      : state === "rejected"
-        ? "destructive"
-        : state === "staged"
-          ? "warning"
-          : "muted";
-  return <Badge variant={variant}>{state || "unknown"}</Badge>;
+  return <Badge variant={STATE_VARIANTS[state] ?? "muted"}>{state || "unknown"}</Badge>;
+}
+
+function actionCopy(action: LearnedSkillAction, skill: LearnedSkill) {
+  const name = `${skill.name} ${skill.version}`;
+  if (action === "activate")
+    return {
+      description:
+        "The skill is published into the live inventory, so the agent can load and follow it from the next run.",
+      title: `Activate ${name}?`,
+    };
+  if (action === "reject")
+    return {
+      description:
+        "The draft is retired without reaching the agent. The version stays inspectable in history.",
+      title: `Reject ${name}?`,
+    };
+  if (action === "archive")
+    return {
+      description:
+        "The skill is withdrawn from the live inventory. It stays inspectable and can be rolled back to later.",
+      title: `Archive ${name}?`,
+    };
+  return {
+    description: `${skill.name} returns to version ${skill.supersedes}; ${skill.version} is retired.`,
+    title: `Roll back to ${skill.supersedes}?`,
+  };
+}
+
+function humanizeOperation(value: string) {
+  return value.replaceAll("_", " ");
 }
 
 export function StateCard({
@@ -414,16 +556,6 @@ export function StateCard({
   );
 }
 
-function actionLabel(action: string) {
-  return action.charAt(0).toUpperCase() + action.slice(1);
-}
-function humanize(value: string) {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
     new Date(value),

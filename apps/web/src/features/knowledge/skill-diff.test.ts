@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { hasSkillDiffChanges, skillDiffRows } from "./learned-skill-detail";
+import { hasSkillDiffChanges, skillDiffRows } from "./skill-diff";
 
 /** Builds a diff exactly as the daemon's DiffLearnedSkillVersions formats it. */
 function daemonDiff(
