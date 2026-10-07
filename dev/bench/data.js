@@ -273548,6 +273548,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791374403975,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c472874b4e96296a1fd1316486c09c5649fabb8",
+          "message": "feat: discover nested AGENTS.md within trusted sources (#2110)\n\nLoad nested project instructions lazily from admitted sources while preserving scope, source authority, session snapshots, and independent child contexts.\n\nBound content and discovery metadata using operator-configured limits, preserve successfully loaded guidance when another read fails, and report safe warnings. Cover child mappings, fork inheritance, lifecycle, and failure handling with regression tests, and extend the existing live writable-subagent scenario to verify nested guidance with a real model.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T15:30:13+03:00",
+          "tree_id": "6b7d5f7e6213ba66cdd48d0d94724bba2b8dbbe5",
+          "url": "https://github.com/stacklok/mecatl/commit/0c472874b4e96296a1fd1316486c09c5649fabb8"
+        },
+        "date": 1791376916119,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -396714,6 +396748,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791376913309,
+  "lastUpdate": 1791376917219,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
