@@ -85,8 +85,8 @@ func TestProtectedStorageKeyRingValidation(t *testing.T) {
 	}
 	cfg := validBrokerConfig()
 	cfg.ProtectedStorage = &fileProtectedStorage{}
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "requires an OAuth") {
-		t.Fatalf("protected storage without OAuth = %v", err)
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "protected Redis address is invalid") {
+		t.Fatalf("session metadata without protected Redis = %v", err)
 	}
 }
 

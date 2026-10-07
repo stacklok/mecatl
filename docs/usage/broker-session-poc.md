@@ -8,7 +8,8 @@ working location. Run build and test tasks from the parent root.
 Use this checkout to connect `mecated` or `mecak8s` to the canonical
 `mecatl.broker.v1.SessionService` with an explicit OWNERLESS deployment partition.
 This local experiment is approved only for Kind readiness testing. It is not
-merged or ship-ready; Workstream 2 is excluded.
+merged or ship-ready; Workstream 2 is excluded. For the broker's runtime
+boundary, see the [architecture overview](../architecture.md).
 
 ## Prerequisites
 
@@ -328,11 +329,6 @@ mutex (one `SessionAPI.mu` across all sessions, held during native readiness I/O
 process-local flows/receipts, and existing persistence ordering are not redesigned
 here. Reauthorization rotates native token-session/custody references; superseded
 native rows remain subject to native retention rather than a new cleanup system.
-
-## Next steps
-
-See [the retirement acceptance plan](../acceptance/broker-path-retirement.md) for the test commands,
-composition entrypoints and remaining delivery work.
 
 ## Troubleshooting
 

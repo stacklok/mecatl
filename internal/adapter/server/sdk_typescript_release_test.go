@@ -216,6 +216,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"CreateTeamOnDefaultPlacement",
 		"DeleteSessionForRetention",
 		"DeleteSessionForRetentionCandidate",
+		"DisconnectWorkspaceServices",
 		"Diagnostics",
 		"Drain",
 		"EmitScheduleEvent",
