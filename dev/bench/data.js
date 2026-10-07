@@ -274980,6 +274980,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791380111083,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a3f30b84f740aebcdba7a2defed2c97b83d9aa15",
+          "message": "docs(proto): drop ADR references from public Harness and Schedule comments (#2153)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T10:06:57-04:00",
+          "tree_id": "9883433fe9d6cd5c0d843d9cdf4ecca8d3fd4ebd",
+          "url": "https://github.com/stacklok/mecatl/commit/a3f30b84f740aebcdba7a2defed2c97b83d9aa15"
+        },
+        "date": 1791382714115,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -398758,6 +398792,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791382711001,
+  "lastUpdate": 1791382715337,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
