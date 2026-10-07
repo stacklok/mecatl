@@ -309,6 +309,24 @@ environment so MCP/provider credentials are not exposed through Shell. See the
 
 ## ToolHive broker OAuth
 
+The local experimental SessionService broker uses a stable connection reference
+for disconnecting workspace services. A broker replacement can refresh its tool
+catalog without changing that cleanup reference. Disconnect first saves withdrawn
+host authority, then cleans up the broker connection; a cleanup error leaves the
+tools unavailable. Explicit reconnection publishes a fresh connection reference.
+Repeating cleanup for the previous disconnected connection leaves a pending new
+enrollment intact, and cleanup for that previous connection cannot withdraw a
+newly published connection. This experimental path is not a released deployment
+contract.
+
+In this experimental path, Mecatl saves an uncertainty marker before sending a
+broker tool call. A lost reply or failed result save leaves further broker calls
+blocked for that session, including after restart. Check the upstream service
+before deciding whether to repeat the action: the original call could have taken
+effect. There is no automatic resend or recovery operation that clears this
+uncertainty. Authorization checks do not execute tools; a verified request for
+browser authorization can instead be saved as pending authorization.
+
 In `mecak8s` broker mode, each session starts one opaque enrollment, and
 ToolHive authorizes the configured protected upstreams sequentially. ToolHive
 owns upstream callback state, code exchange, refresh, and provider-specific
@@ -343,10 +361,18 @@ endpoints, and tokens. Providers return to ToolHive at
 Mecatl callback path. Route both paths to the same listener. See the
 [Kubernetes deployment guide](/operating/mecak8s.md) for Helm configuration.
 
-Pending broker enrollment is process-local. After a Mecatl restart, start a new
-enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
-requires a single replica. The chart enforces `replicaCount: 1` and the
-`Recreate` strategy, so broker mode does not provide high availability.
+Broker session attachments and outer callback correlation remain process-local.
+The current standalone `mecabroker` singleton does not wire Redis storage for
+inner ToolHive upstream authorization/pending/token records: both inner and
+outer broker state are in memory. Pending broker enrollment is therefore
+process-local too — after a `mecabroker` restart, start a new enrollment even
+if a longer-lived deployment eventually preserves ToolHive's inner tokens; a
+broker replacement is a reauthorization boundary, not recovery of a prior
+enrollment. Agent sessions and their event log remain Redis-backed
+independently of broker state. Broker mode requires a single replica: the
+chart enforces `replicaCount: 1` and the `Recreate` strategy on the
+`mecabroker` workload, so broker mode does not provide high availability, and
+the chart's agent replicas share that one singleton broker.
 
 ## Bearer tokens for flag-configured servers
 

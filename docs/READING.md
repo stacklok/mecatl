@@ -44,6 +44,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 - [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
 - [Drafts](drafts/README.md) — proposals, not current behavior.
+- [Run the scratch broker-session host PoC](usage/broker-session-poc.md) - opt-in host configuration and offline proofs; scratch-only Spike.
 - [Performance regression tracking](perf-tracking.md) — KPIs, gating strategy, and the benchmark baseline snapshot.
 - [User-docs authoring contract](../user-docs/_README.md) and [style guide](../user-docs/_STYLE.md) — where public documentation lives and how it is written.
 - Design notes: [design principles](design/principles.md).

@@ -17,10 +17,12 @@ The chart creates these resources:
 |Resource|Behavior|
 |-|-|
 |ServiceAccount, Role, and RoleBinding|Grants only the required Lease verbs.|
-|Deployment|Runs two storage-free replicas by default; one replica is supported.|
+|Deployment|Runs two storage-free agent replicas by default; one replica is supported.|
+|Broker Deployment|Created only when `mcp.mode: broker` or broker profiles are configured; it is a separate one-replica `Recreate` workload.|
+|Broker Service|Created with the broker and exposes its HTTPS listener on port 8443.|
 |ConfigMap|Stores the non-secret installation UUID for telemetry.|
 |ClusterIP Service|Exposes gRPC on 8080 and HTTP/SSE on 8081.|
-|PodDisruptionBudget|Uses `maxUnavailable: 1` for two or more replicas and is omitted for one.|
+|PodDisruptionBudget|Protects the agent Deployment with `maxUnavailable: 1` for two or more replicas and is omitted for one.|
 |Raw-driver NetworkPolicy|Created only with OIDC and limits raw-driver ingress to agent pods.|
 |Local Redis fixture|Created only by the disposable `values-kind.yaml` profile.|
 
@@ -29,7 +31,15 @@ for your provider, MCP, Redis, identity-provider, and Kubernetes API traffic.
 
 Deployment details:
 
-- Two replicas use `RollingUpdate`, `maxSurge: 1`, and `maxUnavailable: 0`.
+- Without the broker selected, two replicas use `RollingUpdate`, `maxSurge: 1`,
+  and `maxUnavailable: 0`. When broker mode is selected, the agent Deployment
+  also uses `Recreate`; its replica count remains independent of the broker's
+  singleton Deployment.
+- The broker itself is not highly available: broker replacement interrupts
+  in-progress OAuth callbacks and setup. Completed OAuth credentials are kept in
+  its separate encrypted Redis store. See
+  [MCP access and broker operations](identity-and-client-access.md#configure-mcp-server-access)
+  for credential requirements and rotation procedures.
 - Pods prefer separate nodes through a soft hostname topology-spread constraint;
   single-node clusters remain schedulable.
 - `terminationGracePeriodSeconds` defaults to 60 seconds. The schema requires at

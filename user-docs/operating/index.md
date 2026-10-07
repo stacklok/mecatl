@@ -24,9 +24,11 @@ instance. Its process and storage are yours to maintain.
 
 Use [`mecak8s`](./mecak8s.md) for a shared team, including small teams. It
 supplies Redis-backed durable state, Kubernetes lease coordination, and
-disposable replicas. Start with [Try Mecatl on Kubernetes](./kubernetes.md) to
-see a session survive replacement of its pod, then follow the deployment and
-maintenance guides.
+disposable agent replicas. Configure broker-backed MCP profiles to add its
+separate single-replica broker; see
+[MCP access and broker operations](./mecak8s/identity-and-client-access.md#configure-mcp-server-access).
+Start with [Try Mecatl on Kubernetes](./kubernetes.md) to see a session survive
+replacement of its pod, then follow the deployment and maintenance guides.
 
 |Operating model|What you own|
 |-|-|

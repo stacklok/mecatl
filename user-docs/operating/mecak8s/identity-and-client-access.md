@@ -175,17 +175,21 @@ from authenticated gRPC transport.
 |**Identity data**|The token's `name` claim, often an email address, is stored unredacted in session snapshots, schedule records, and durable event actor metadata. Configure retention and deletion accordingly.|
 |**Authentication visibility**|Mecatl emits no authentication metric and does not log authentication failures. The caller sees the 401 or 503 response.|
 
-## Connect global MCP servers
+## Configure MCP server access
 
-Use `mcp.servers` for global streaming-HTTP connections. The chart supports no
-authentication, a bearer from a Kubernetes Secret, or an OAuth profile. It does
-not accept inline credentials, arbitrary headers, stdio/SSE transports, browser
-credentials, or a writable credential store.
+The chart's `mcp.servers` values configure broker-backed streaming-HTTP profiles.
+Supported profile authentication modes are `none` and `oauth`; the chart rejects
+`staticBearer` in broker mode. Use host direct configuration instead for global
+MCP servers that need static bearer credentials. Set `mcp.mode: global` for that
+host configuration and do not set `mcp.servers` or `mcp.broker.callbackURL`.
 
-Global OAuth profiles enforce an exact-origin network policy. Broker OAuth must
-set `additionalOrigins: []`, `privateOrigins: []`, and `maxRedirects: 0`.
-Startup performs the final URL, origin, and loopback validation after Helm has
-validated the values and Secret references.
+The chart selects the in-release broker when `mcp.mode: broker` is set or broker
+profiles are configured. The broker is a separate single-replica Deployment with
+`Recreate` updates; the `replicaCount` value independently controls agent replicas.
+Agent updates also use `Recreate` while broker mode is selected, so plan for an
+agent service interruption during those updates.
+
+A profile using no authentication can be configured as:
 
 ```yaml
 mcp:
@@ -193,42 +197,12 @@ mcp:
     - name: public
       url: https://public-mcp.example/mcp
       auth: { mode: none }
-    - name: github
-      url: https://github-mcp.example/mcp
-      auth:
-        mode: staticBearer
-        staticBearer:
-          secretKeyRef: { name: mecak8s-mcp, key: github-token }
 ```
 
-The static token is projected as `MCP_GITHUB_TOKEN`; it never appears in Helm
-values, arguments, or a ConfigMap. For a browser-based GitHub OAuth App, use
-`auth.mode: oauth` with
-`upstream: {mode: oauth2, oauth2: {authorizationEndpoint, tokenEndpoint}}`
-instead of `issuer`, and optionally declare a static `tools` catalog. OAuth uses
-the per-session broker. One enrollment can cover several protected upstreams;
-each token is sent only to its configured backend.
-
-Set `mcp.broker.callbackURL` to the final public HTTPS callback. Route the full
-`/v1/mcp/broker/` prefix to the `mecak8s` HTTP listener. Broker mode requires
-OIDC caller identity.
-
-Declared protected tools appear as placeholders before enrollment. Successful
-enrollment discovers every protected backend and atomically replaces the
-placeholders with a frozen per-session catalog. Failure exposes no partial
-catalog. Keep preregistered client secrets in `SecretKeyRef`; broker metadata
-and profiles remain non-secret ConfigMap data.
-
-:::caution[Broker mode is single-replica]
-
-Broker sessions and OAuth state are process-local. The chart requires
-`replicaCount: 1` and uses the `Recreate` strategy when `mcp.broker.callbackURL`
-is set. Broker mode does not provide high availability or zero-downtime
-rollouts.
-
-:::
-
-For a preregistered OAuth client, add this shape to the server entry:
+For browser-based OAuth, use `auth.mode: oauth`. GitHub OAuth Apps use explicit
+OAuth2 authorization and token endpoints instead of `issuer`; the optional
+`tools` catalog can declare protected tools before enrollment. For a preregistered
+OAuth client, add this shape to the server entry:
 
 ```yaml
 auth:
@@ -250,26 +224,62 @@ auth:
 
 Set `client.mode: cimd` with `cimd.documentURL` for client ID metadata, or
 `client.mode: dcr` with an HTTPS RFC 8414 discovery URL for dynamic client
-registration. A plain OAuth2 upstream uses explicit `authorizationEndpoint` and
-`tokenEndpoint` values instead of `issuer`.
+registration. DCR requires explicit OAuth2 authorization and token endpoints.
+OAuth requires OIDC caller identity and `mcp.broker.callbackURL`. Set that value
+to the final public HTTPS callback and route the callback and
+`/v1/mcp/broker/` prefix to the broker's HTTPS Service, not the agent's HTTP
+listener. The chart rejects non-empty OAuth network exceptions; keep
+`additionalOrigins` and `privateOrigins` empty and `maxRedirects` at zero.
+
+Broker selection requires operator-created serving-TLS and agent trust-CA Secrets
+(`broker.tls.secretName` and `broker.clientCA.secretName`, defaulting to
+`mecabroker-tls` and `mecabroker-ca`) and a separate broker credential store.
+Configure a TLS-protected Redis endpoint (or enable the chart-managed Redis
+option) and reference its ACL credentials with `broker.credentialStore`. OAuth
+additionally requires an encryption Secret with an active key and at least one
+32-byte key entry; no encryption keys are used for profiles without OAuth. For
+example:
+
+```yaml
+broker:
+  credentialStore:
+    redis:
+      address: broker-redis.example.internal:6379
+      credentialsSecret: broker-redis-credentials
+      usernameKey: username
+      passwordKey: password
+      caSecret: broker-redis-ca
+    encryption:
+      secretName: broker-credential-keks
+      activeID: current
+      keys:
+        - {id: current, secretKey: kek-current}
+```
+
+The chart does not generate these Secrets. Keep preregistered OAuth client
+secrets in `SecretKeyRef`; profiles and broker metadata in the ConfigMap are
+non-secret.
 
 ## Maintain MCP network access and credentials
 
 Keep MCP and OAuth endpoints on HTTPS and permit their egress through your
-NetworkPolicy or mesh. `insecureHTTP: true` is accepted only for non-loopback,
-non-OAuth HTTP servers and allows a bearer to cross the pod network in
-cleartext. Use it only for an isolated in-cluster endpoint.
+NetworkPolicy or mesh. The chart's ingress policy does not enforce egress,
+callback paths, TLS identity, OAuth identity, or hostnames.
 
-OAuth profile changes trigger a rollout. After changing a static bearer or OAuth
-client Secret, roll the Deployment and keep both credentials valid during the
-transition. The chart reserves these environment names:
-`MECATL_INSTALLATION_ID`, `MECATL_DRIVER_AUTH_TOKEN`, and authentication names
-generated by `mcp.servers`. Rendering fails when `extraEnv` collides with one.
+Broker Secret changes do not automatically restart the broker. Explicitly roll
+the broker after changing its serving certificate, client-CA bundle, Redis
+credentials or CA, or a preregistered OAuth client Secret. The broker is a
+single-replica `Recreate` workload, so a restart interrupts in-flight browser
+callbacks and authorization setup; completed OAuth credentials remain in the
+broker's encrypted Redis store. For a CA rotation, first add the new root to the
+agent's `broker.clientCA` trust bundle and roll the agents, then rotate and restart
+the broker certificate, verify connectivity, and finally remove the old root and
+roll the agents again. A leaf renewal under the same CA needs only the broker
+Secret update and broker restart.
 
-Broker authorization storage uses a separate Redis connection that does not
-reload Redis CA or ACL files. Restart the pod after rotating those files. The
-main session-store connection can remain healthy, so `/readyz` does not detect a
-stale broker connection.
+`broker.logging.level` sets the broker's process logging threshold independently
+of `logging.level`, which configures only the agent. OAuth profile changes update
+the broker configuration and trigger a rollout.
 
 ## Give clients connection details
 
