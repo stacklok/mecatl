@@ -59,6 +59,9 @@ func (s *Session) BeginWorkspaceEnrollment(pending PendingWorkspaceEnrollment) e
 	if !s.authorityBound {
 		return fmt.Errorf("%w: workspace enrollment requires bound authority", ErrIllegalTransition)
 	}
+	if s.brokerCredentialCustody != nil {
+		return fmt.Errorf("%w: broker credential custody must be cleared before beginning workspace enrollment", ErrIllegalTransition)
+	}
 	if s.pendingWorkspaceEnrollment != nil {
 		return fmt.Errorf("%w: workspace enrollment already pending", ErrIllegalTransition)
 	}
@@ -141,11 +144,39 @@ func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment
 	return nil
 }
 
+// CompleteWorkspaceEnrollmentWithBinding atomically installs the fresh broker
+// binding and authority produced by one exact pending enrollment.
+func (s *Session) CompleteWorkspaceEnrollmentWithBinding(pending PendingWorkspaceEnrollment, binding ExternalBinding, exactTools []string) error {
+	if binding == "" {
+		return fmt.Errorf("%w: broker binding is required", ErrIllegalTransition)
+	}
+	if s.pendingWorkspaceEnrollment == nil || s.pendingWorkspaceEnrollment.ID != pending.ID ||
+		s.pendingWorkspaceEnrollment.RequiredServices != pending.RequiredServices ||
+		!s.pendingWorkspaceEnrollment.ExpiresAt.Equal(pending.ExpiresAt) {
+		return fmt.Errorf("session: workspace enrollment %q is not pending", pending.ID)
+	}
+	if s.State != StateIdle || s.Conversation == nil || len(s.Conversation.Messages) != 0 {
+		return fmt.Errorf("%w: workspace enrollment must complete before the first prompt", ErrIllegalTransition)
+	}
+	if !s.authorityBound || !ValidWorkspaceEnrollmentToolNames(exactTools) {
+		return fmt.Errorf("%w: invalid workspace enrollment tool set", ErrIllegalTransition)
+	}
+	exact := s.Authority.Clone()
+	exact.CapabilitySet.Tools = append([]string(nil), exactTools...)
+	s.Authority = exact
+	s.ExternalBinding = binding
+	s.pendingWorkspaceEnrollment = nil
+	return nil
+}
+
 // AbortWorkspaceEnrollment clears only the enrollment whose exact identifier
 // is supplied.
 func (s *Session) AbortWorkspaceEnrollment(id WorkspaceEnrollmentID) error {
 	if s.pendingWorkspaceEnrollment == nil || s.pendingWorkspaceEnrollment.ID != id {
 		return fmt.Errorf("session: workspace enrollment %q is not pending", id)
+	}
+	if s.brokerCredentialCustody != nil {
+		return fmt.Errorf("%w: broker credential custody must be cleared before aborting workspace enrollment", ErrIllegalTransition)
 	}
 	s.pendingWorkspaceEnrollment = nil
 	return nil
