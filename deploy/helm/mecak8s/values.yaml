@@ -156,7 +156,7 @@ podDisruptionBudget:
 # workspace is the operator-mounted agent filesystem root (e.g. a PVC mount
 # path). Empty (the default) is a FILE-LESS deployment: every session is no-FS.
 # A non-empty ABSOLUTE path makes the deployment server-assigned filesystem
-# authority rooted there — clients cannot select another root (ADR 0237). Mount
+# authority rooted there — clients cannot select another root. Mount
 # the volume yourself; the chart only passes the flag.
 workspace: ""
 
@@ -174,7 +174,7 @@ execution:
 redis:
   # A production release never creates Redis. Supply the managed endpoint and,
   # when the service needs a private CA or ACL credentials, a Secret holding
-  # them. Client-certificate (mTLS) authentication is not supported (ADR 0233).
+  # them. Client-certificate (mTLS) authentication is not supported.
   endpoint: ""
   credentialsSecret: ""
   passwordKey: ""
@@ -199,7 +199,7 @@ redis:
     enabled: false
 
 oidc:
-  # Caller identity (ADR 0204/0205). Off for mock and explicit unsafe-bypass
+  # Caller identity. Off for mock and explicit unsafe-bypass
   # profiles; required for a real provider under the secure default.
   enabled: false
   issuer: ""

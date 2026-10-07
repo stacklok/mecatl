@@ -1,5 +1,5 @@
 # Reusable mecatequi workflow. See user-docs/building/deployment/mecatequi.md for setup and
-# docs/adr/0028-mecatequi.md for the split-privilege design.
+# the split-privilege design.
 #
 # Sibling actions use the `$/` self-repository syntax: it resolves to THIS repository at
 # the exact ref this workflow is running from, with no checkout. That is why there is no
@@ -222,7 +222,7 @@ jobs:
     # on it wrongly SKIPS legitimate runs. For a PRIVATE repo the trigger IS the gate (label
     # application needs triage/write; comment access is team-only). For a PUBLIC repo, the
     # caller should use the escape-hatch template and add a dedicated permission-check gate
-    # job (see docs/adr/0028-mecatequi.md).
+    # job (see user-docs/building/deployment/mecatequi.md).
     needs: acknowledge
     if: >-
       needs.acknowledge.result == 'success' && (
@@ -394,7 +394,7 @@ jobs:
             echo "mecatequi-publish: using the pre-minted publish-token (form 2)."
           else
             gh_token="${STANDING_TOKEN}"
-            echo "::warning::mecatequi-publish: no publish-app-private-key and no publish-token were provided; falling back to the standing GITHUB_TOKEN grant (form 3). The stronger posture is a JIT GitHub App installation token (publish-app-id + publish-app-private-key) or a pre-minted publish-token — see docs/adr/0028-mecatequi.md."
+            echo "::warning::mecatequi-publish: no publish-app-private-key and no publish-token were provided; falling back to the standing GITHUB_TOKEN grant (form 3). The stronger posture is a JIT GitHub App installation token (publish-app-id + publish-app-private-key) or a pre-minted publish-token."
           fi
           # Write to $GITHUB_ENV so publish.sh reads GH_TOKEN from the process environment.
           # The value never appears in the log: it is piped to the file, not echoed.

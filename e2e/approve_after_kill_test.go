@@ -47,7 +47,7 @@ import (
 // CAVEAT (what even this live spec does NOT catch): a torn final append racing the
 // kill (jsonlstore appendLine is not an atomic rename) and OS-crash durability (no
 // fsync) — both narrow and out of scope for "disposable process" (process restart,
-// not host crash); see docs/adr/0027-cloud-native.md.
+// not host crash).
 // This scenario's hard-pinned lane is the shared haikuLane constant (see
 // restart_helpers_test.go): a tool-call-capable Bedrock-routed model that does
 // NOT content-filter mecatl-shaped tool-bearing requests, independent of

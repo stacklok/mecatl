@@ -64,7 +64,7 @@ type Provider struct {
 	thinkingFor    thinkingResolver  // per-request LIVE thinking descriptor (WithThinkingResolver)
 	thinkingBudget int64
 	// effort is the reasoning-effort token stamped on every request's
-	// output_config.effort field (ADR 0055). Empty (and "auto") means OMIT the
+	// output_config.effort field. Empty (and "auto") means OMIT the
 	// field entirely (the model default applies). Anthropic's output_config.effort
 	// is INDEPENDENT of the extended-thinking config (both coexist); identity-maps
 	// low/medium/high/xhigh/max. It is an adapter-CONSTRUCTION knob, not a
@@ -83,7 +83,7 @@ type Provider struct {
 	// no Parts always takes the legacy single-string path regardless.
 	caps *port.ProviderCapabilities
 	// conversationCaching gates the three NEW conversation cache_control
-	// breakpoints (ADR 0100): the two conditional conversation anchors (the
+	// breakpoints: the two conditional conversation anchors (the
 	// leading-turn-0-fragment boundary and the previous-turn boundary) plus the
 	// top-level automatic marker. It does NOT gate the pre-existing StablePrefix
 	// breakpoint in buildSystem, which shipped before this feature and stays
@@ -94,7 +94,7 @@ type Provider struct {
 	// cacheTTL is the raw TTL token (mirrors effort) stamped on EVERY breakpoint
 	// the adapter emits — the StablePrefix marker, the two conditional
 	// conversation anchors, and the top-level automatic marker all carry the SAME
-	// ttl (the uniform-TTL rule, ADR 0100). "" (the default) omits the ttl field
+	// ttl (the uniform-TTL rule). "" (the default) omits the ttl field
 	// everywhere (the API's own 5m default applies), byte-identical to today.
 	// Mapped per-request via cacheTTLFor; an unrecognised token degrades to ""
 	// fail-soft, mirroring outputConfigEffortFor's omit-on-unknown arm.
@@ -169,7 +169,7 @@ func WithThinkingBudget(n int64) Option {
 }
 
 // WithReasoningEffort sets the reasoning-effort token stamped on every request's
-// output_config.effort field (ADR 0055). The value is a NEUTRAL composition token;
+// output_config.effort field. The value is a NEUTRAL composition token;
 // Anthropic identity-maps all five tiers (low/medium/high/xhigh/max). Empty (and
 // "auto") OMITS the field — the model default applies. It is INDEPENDENT of the
 // extended-thinking config (WithThinkingBudget / WithThinkingResolver) — both
@@ -201,7 +201,7 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 }
 
 // WithConversationCaching toggles the three NEW conversation cache_control
-// breakpoints (ADR 0100): the two conditional conversation anchors — the
+// breakpoints: the two conditional conversation anchors — the
 // leading-turn-0-fragment boundary and the previous-turn boundary — plus the
 // top-level automatic marker (MessageNewParams.CacheControl, which self-
 // advances to the last cacheable block on every turn). It does NOT gate the
@@ -216,7 +216,7 @@ func WithConversationCaching(enabled bool) Option {
 // WithCacheTTL sets the raw TTL token stamped on EVERY breakpoint the adapter
 // emits — the StablePrefix marker, the two conditional conversation anchors,
 // and the top-level automatic marker all carry the SAME ttl (the uniform-TTL
-// rule, ADR 0100: it makes every documented TTL-ordering 400 unreachable).
+// rule: it makes every documented TTL-ordering 400 unreachable).
 // Accepts "5m" or "1h"; "" (the default) omits the ttl field everywhere (the
 // API's own 5m default applies), byte-identical to today. An unrecognised
 // token degrades to "" fail-soft — mirrors outputConfigEffortFor's

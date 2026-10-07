@@ -2,8 +2,7 @@
 
 /**
  * Studio-owned configuration (`STUDIO_*`). Settings that describe the mecatl
- * TARGET (`MECATL_*`) are parsed next door in `mecatl/runtime.ts`; the split
- * is ADR 0351 decision 5.
+ * TARGET (`MECATL_*`) are parsed next door in `mecatl/runtime.ts`.
  */
 
 export class ConfigurationError extends Error {

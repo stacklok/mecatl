@@ -30,30 +30,30 @@ func keyFrom(t *testing.T, p *Provider, req port.LLMRequest) string {
 	return rest[:j]
 }
 
-// TestADR_0346_CacheKeyUnsaltedWithoutOption pins AC3.4: a consumer that passes
-// no WithCacheKeySalt Option keeps ADR 0100's exact derivation, so the module's
-// zero value stays byte-identical and the change classifies as Added, not
-// Changed (engine/COMPATIBILITY.md, ADR 0093).
-func TestADR_0346_CacheKeyUnsaltedWithoutOption(t *testing.T) {
+// TestCacheKeyUnsaltedWithoutOption pins AC3.4: a consumer that passes
+// no WithCacheKeySalt Option keeps the exact unsalted derivation, so the
+// module's zero value stays byte-identical and the change classifies as Added,
+// not Changed (engine/COMPATIBILITY.md).
+func TestCacheKeyUnsaltedWithoutOption(t *testing.T) {
 	req := cacheReq("gpt-5.2")
 	p := New(WithCacheDialect(CacheDialectOpenAI))
 
-	// Recompute ADR 0100's derivation independently rather than pinning a magic
+	// Recompute the unsalted derivation independently rather than pinning a magic
 	// string, so this fails on an algorithm change, not on a fixture edit.
 	prefixSum := sha256.Sum256([]byte(req.System.StablePrefix))
 	anchorSum := sha256.Sum256([]byte(anchorText(req.Messages)))
 	want := "mecatl-" + hex.EncodeToString(prefixSum[:])[:12] + "-" + hex.EncodeToString(anchorSum[:])[:8]
 
 	if got := keyFrom(t, p, req); got != want {
-		t.Errorf("unsalted prompt_cache_key = %q, want the ADR 0100 derivation %q", got, want)
+		t.Errorf("unsalted prompt_cache_key = %q, want the unsalted derivation %q", got, want)
 	}
 }
 
-// TestADR_0346_CacheKeySaltChangesKey is the adapter half of AC3.1: a distinct
+// TestCacheKeySaltChangesKey is the adapter half of AC3.1: a distinct
 // salt must produce a distinct key, which is the property that removes
 // cross-principal correlation. The composition half (two app.Build instances
 // differing without any config change) lives in internal/app.
-func TestADR_0346_CacheKeySaltChangesKey(t *testing.T) {
+func TestCacheKeySaltChangesKey(t *testing.T) {
 	req := cacheReq("gpt-5.2")
 	a := keyFrom(t, New(WithCacheDialect(CacheDialectOpenAI), WithCacheKeySalt("salt-a")), req)
 	b := keyFrom(t, New(WithCacheDialect(CacheDialectOpenAI), WithCacheKeySalt("salt-b")), req)
@@ -74,10 +74,10 @@ func TestADR_0346_CacheKeySaltChangesKey(t *testing.T) {
 	}
 }
 
-// TestADR_0346_CacheKeySaltDomainSeparated pins the NUL domain separator: without
+// TestCacheKeySaltDomainSeparated pins the NUL domain separator: without
 // it, (salt+prefixHead, prefixTail) and (salt, prefix) would collide, letting a
 // chosen prefix impersonate a different installation's salt.
-func TestADR_0346_CacheKeySaltDomainSeparated(t *testing.T) {
+func TestCacheKeySaltDomainSeparated(t *testing.T) {
 	base := cacheReq("gpt-5.2")
 	shifted := cacheReq("gpt-5.2")
 	shifted.System = prompt.Layered{StablePrefix: "X" + base.System.StablePrefix, VolatileSuffix: base.System.VolatileSuffix}
@@ -90,7 +90,7 @@ func TestADR_0346_CacheKeySaltDomainSeparated(t *testing.T) {
 }
 
 // TestUnifiedPromptCache_Scenario3_KeyStableAcrossTurnsAndCompaction pins AC3.2:
-// salting must not disturb the two properties ADR 0100 relies on — byte-stability
+// salting must not disturb the two properties the cache key relies on — byte-stability
 // within a run (the memo path included) and per-conversation separation, which is
 // what keeps concurrent Subagent children off one routing lane.
 func TestUnifiedPromptCache_Scenario3_KeyStableAcrossTurnsAndCompaction(t *testing.T) {

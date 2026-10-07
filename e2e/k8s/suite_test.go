@@ -26,7 +26,7 @@ var agentPods []string
 // tag, so `task test` (no tag) never compiles or runs it.
 func TestK8sE2E(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "mecatl kind k8s e2e suite (ADR 0048)")
+	ginkgo.RunSpecs(t, "mecatl kind k8s e2e suite")
 }
 
 // BeforeSuite runs the cluster lifecycle (MECAK8S-PLAN §4h):
@@ -99,7 +99,7 @@ var _ = ginkgo.AfterSuite(func() {
 // the SAME pod set (deleting pods changes the roster), so they cannot run
 // concurrently. ContinueOnFailure keeps a mid-suite failure from skipping the
 // teardown (the AfterSuite cluster delete always runs).
-var _ = ginkgo.Describe("mecak8s cloud-native properties (ADR 0048)", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
+var _ = ginkgo.Describe("mecak8s cloud-native properties", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	leaseExclusionSpecs()
 	drainIsolationSpecs()
 	failoverSpecs()

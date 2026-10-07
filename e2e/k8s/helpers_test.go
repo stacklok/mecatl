@@ -1,7 +1,7 @@
 //go:build kind_e2e
 
 // Package k8s_e2e_test is the kind-based Kubernetes cloud-native PROOF for
-// mecak8s (ADR 0048, MECAK8S-PLAN §4h). It spins a real kind cluster with a
+// mecak8s (MECAK8S-PLAN §4h). It spins a real kind cluster with a
 // Redis StatefulSet + two storage-free agent replicas and asserts three
 // cloud-native properties over the HTTP API:
 //
@@ -41,7 +41,7 @@ import (
 	"github.com/onsi/gomega"
 )
 
-// Cluster + manifest constants (ADR 0048 §4h, deploy/helm/mecak8s/).
+// Cluster + manifest constants (deploy/helm/mecak8s/).
 const (
 	kindClusterName    = "mecatl-e2e"
 	kindNodeImage      = "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"

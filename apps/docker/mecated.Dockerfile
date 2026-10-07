@@ -2,8 +2,8 @@
 #
 # Local dev/demo image for mecated, built for `docker compose up` in the Studio
 # workspace (apps/docker-compose.yml) only. NOT the project's official release
-# artifact — that's built via `ko` from ../../.ko.yaml (see docs/adr/ for the
-# release pipeline). This Dockerfile exists purely so Studio is runnable end to
+# artifact — that's built via `ko` from ../../.ko.yaml (see
+# .github/workflows/release.yml for the release pipeline). This Dockerfile exists purely so Studio is runnable end to
 # end against a real daemon without a separately-installed Go toolchain. It is a
 # Studio-owned copy of the Slack bot example's
 # sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile, so the two demos

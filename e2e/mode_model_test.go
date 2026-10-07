@@ -11,8 +11,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// modeModelSpecs covers ADR 0030 Layer 3 (mode→model re-resolution, the opusplan
-// pattern) LIVE: a mecated spawned with `--model-slot plan=reasoning --model-alias
+// modeModelSpecs covers mode→model re-resolution (the opusplan pattern) LIVE: a mecated spawned with `--model-slot plan=reasoning --model-alias
 // reasoning=<model>` must wire the `plan` slot — proven by the build-once "model slot
 // ACTIVE" fact naming the plan slot + the resolved model (logSlotConfigFacts).
 //
@@ -27,7 +26,7 @@ import (
 // would WARN+degrade (no ACTIVE line) and fail this spec.
 func modeModelSpecs() {
 	ginkgo.Describe("mode model (plan slot)", func() {
-		ginkgo.It("wires the plan slot to the reasoning model (opusplan, ADR 0030 Layer 3)",
+		ginkgo.It("wires the plan slot to the reasoning model (opusplan)",
 			ginkgo.SpecTimeout(4*time.Minute),
 			func(ginkgo.SpecContext) {
 				if !target.IsLocal() {
