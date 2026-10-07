@@ -75,7 +75,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 		call, line string
 	}{
 		{"read", "✓ Read · greeting.txt"},
-		{"failed", "✗ Read · missing.txt"},
+		{"failed", "✗ Read · missing.txt · failed"},
 		{"edit", "✓ Edit · x.go"},
 		{"write", "✓ Write · new.go"},
 	} {
@@ -102,7 +102,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 		if !entry.settled() || len(rows) != 1 {
 			continue
 		}
-		glyph, _, _ := entry.state.status()
+		glyph, _ := entry.state.status()
 		want := glyph + " " + entry.summary()
 		if got := strings.TrimSpace(stripANSIstr(rows[0])); got != want {
 			t.Fatalf("conversation %q differs from inspector semantic projection %q", got, want)
@@ -123,8 +123,8 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	listText := stripANSIstr(list)
 	for _, entry := range entries {
 		semantic := entry.summary()
-		if strings.Contains(semantic, "done ·") || strings.Contains(semantic, "failed ·") {
-			t.Fatalf("settled inspector row still advertises redundant status: %q", semantic)
+		if strings.Contains(semantic, "done ·") {
+			t.Fatalf("successful settled inspector row still advertises redundant status: %q", semantic)
 		}
 		if !strings.Contains(listText, semantic) {
 			t.Fatalf("inspector list missing %q:\n%s", semantic, listText)
@@ -141,12 +141,12 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 			break
 		}
 	}
-	if !strings.Contains(failedRow, "✗ Read · missing.txt") || strings.Contains(failedRow, "failed") {
-		t.Fatalf("failed inspector list row must show only its status icon: %q", failedRow)
+	if !strings.Contains(failedRow, "✗ Read · missing.txt · failed") {
+		t.Fatalf("failed inspector list row must show a textual failure cue: %q", failedRow)
 	}
 	inspector.selected = failedEntry.index
 	inspector.refreshDetail(&m.conv.scrollback)
-	if inspector.detailEntry == nil || !strings.Contains(strings.Join(toolcallDetailLines(*inspector.detailEntry), "\n"), "✗ Read · failed") {
+	if inspector.detailEntry == nil || !strings.Contains(strings.Join(toolcallDetailLines(*inspector.detailEntry), "\n"), "✗ Read · missing.txt · failed") {
 		t.Fatalf("failed inspector detail lost its status word: %#v", inspector.detailEntry)
 	}
 	inspector.selected = mcpEntry.index
@@ -213,7 +213,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 		if entry.fullName == "Grep" && entry.intent != `"needle" in cmd/**/*.go` {
 			t.Fatalf("Grep intent lost pattern or search scope: %q", entry.intent)
 		}
-		glyph, _, _ := entry.state.status()
+		glyph, _ := entry.state.status()
 		want := glyph + " " + entry.summary()
 		if !strings.Contains(listText, want) {
 			t.Fatalf("inspector list missing shared semantic text %q:\n%s", want, listText)

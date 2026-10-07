@@ -26,7 +26,19 @@ For how Mecatl isolates child workspaces and handles direct writes, see
 
 ## Watch a delegation in `mecatui`
 
-A Subagent parent detail shows one-line status summaries for up to 128 recent child tool calls; `/toolcalls` lists only top-level calls, with no child drilldown. The `f6` Agents view shows bounded activity for Subagent children, Parallel branches, and Team members. Each lane retains up to 128 tool calls and 12 separate message previews; messages do not evict calls. A result updates only its matching retained pending call (or, for older ID-less events, a unique ID-less pending call by name). Unmatched and evicted results are dropped. These are capped previews, not complete child arguments or results, and do not enter the parent's model context. See [Work in the TUI](/mecatui/using-the-tui.md) for navigation and unavailable-activity guidance. Interactive clients can surface child permission requests with an attributed, bounded summary; raw child arguments are withheld.
+A Subagent parent detail shows one-line status summaries for up to 128 recent
+child tool calls. `/toolcalls` lists only top-level calls, with no child
+drilldown. The `f6` Agents view shows bounded activity for Subagent children,
+Parallel branches, and Team members. Each lane retains up to 128 tool calls and
+12 separate message previews; messages do not evict calls. An early observed
+result updates its matching retained call provisionally; the canonical result
+can confirm or replace it. Older ID-less results match only a unique ID-less
+pending call by name. Unmatched and evicted results are dropped. These are
+capped previews, not complete child arguments or results, and do not enter the
+parent's model context. See [Work in the TUI](/mecatui/using-the-tui.md) for
+navigation and unavailable-activity guidance. Interactive clients can surface
+child permission requests with an attributed, bounded summary; raw child
+arguments are withheld.
 
 ## Subagent
 

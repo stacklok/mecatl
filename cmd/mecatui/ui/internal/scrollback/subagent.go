@@ -23,11 +23,11 @@ func Float64(v float64) *float64 { return &v }
 // TraceEntry is one retained delegation preview. A Subagent update holds at most
 // 128 tool calls and 12 message previews per child lane, interleaved in event order.
 type TraceEntry struct {
-	Lane                         string // child session ID when multiple children share a Subagent card
-	ID                           string // child tool-call ID, scoped to its lane
-	Kind, Text, ToolName, Detail string
-	Error, Resolved, Blocked     bool
-	Serial                       uint64
+	Lane                                  string // child session ID when multiple children share a Subagent card
+	ID                                    string // child tool-call ID, scoped to its lane
+	Kind, Text, ToolName, Detail, Intent  string
+	Error, Resolved, Provisional, Blocked bool
+	Serial                                uint64
 }
 
 // MaxTraceEntries bounds tool calls plus independently retained message previews.

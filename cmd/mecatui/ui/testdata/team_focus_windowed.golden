@@ -9,12 +9,12 @@
   ┃  ◆ · scout [lead] · Read… · ↑0 ↓0                                                            ┃
   ┃                                                                                              ┃
   ┃    investigating the whole subsystem                                                         ┃
-  ┃    ✓ Read · success — 100 lines                                                              ┃
-  ┃    … Read · pending — file-01.go                                                             ┃
-  ┃    … Read · pending — file-02.go                                                             ┃
-  ┃    … Read · pending — file-03.go                                                             ┃
-  ┃    … Read · pending — file-04.go                                                             ┃
-  ┃    … Read · pending — file-05.go                                                             ┃
+  ┃    ✓ Read                                                                                    ┃
+  ┃    … Read · pending                                                                          ┃
+  ┃    … Read · pending                                                                          ┃
+  ┃    … Read · pending                                                                          ┃
+  ┃    … Read · pending                                                                          ┃
+  ┃    … Read · pending                                                                          ┃
   ┃                                                                                              ┃
   ┃  lines 1–7 of 129 · esc back · ↑/↓ scroll · pgup/pgdn · home/end                             ┃
   ┃                                                                                              ┃

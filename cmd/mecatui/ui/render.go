@@ -1489,104 +1489,48 @@ func teamStopReasonLabel(reason string) string {
 	}
 }
 
-// renderTrace renders a delegation lane's expanded trace — the SHARED format for
-// the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
-// lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
-// prefixed "  ") interleave with tool chips (pending … until a result is
-// safely associated, then ✓/✗) carrying bounded argument/result previews.
-// A chip with a preview gets its own line ("  … Grep — pattern: foo"); bare
-// chips coalesce onto one wrapped row. Returns "" for an empty trace. All text is sanitized; the previews are capped again here
-// (maxTraceDetailLen / maxTraceMessageLen) on top of the server clamp — the
-// intentional double-truncation defense-in-depth.
+// renderTrace renders the shared bounded delegation trace for Subagent, Parallel,
+// Team and the Agents overlay. Results change status, never call-side intent.
 func (r *renderer) renderTrace(trace []teamTrace) string {
 	if len(trace) == 0 {
 		return ""
 	}
 	muted := r.th.Style("muted")
-	okStyle := r.th.Style("toolOk")
-	errStyle := r.th.Style("toolErr")
 	nameStyle := r.th.Style("toolName")
-
 	var b strings.Builder
-	var chips []string
-	flush := func() {
-		if len(chips) == 0 {
-			return
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		for i, row := range wrapDelegationRow("  ", strings.Join(chips, chipSep), r.traceWidth) {
-			if i > 0 {
-				b.WriteString("\n")
+	for _, t := range trace {
+		if t.kind == teamTraceMessage {
+			for _, row := range wrapDelegationRow("  ", truncate(terminaltext.Sanitize(oneLine(t.text)), maxTraceMessageLen), r.traceWidth) {
+				if b.Len() > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(muted.Render(row))
 			}
-			b.WriteString(nameStyle.Render(row))
+			continue
 		}
-		chips = nil
-	}
-	writeLine := func(prefix, text string, style lipgloss.Style) {
-		flush()
-		for _, row := range wrapDelegationRow(prefix, text, r.traceWidth) {
+		line := delegationToolLine(t.name, t.intent, t.resolved, t.isError, t.provisional)
+		offset := 0
+		for _, row := range wrapDelegationRow("  ", line.Text(), r.traceWidth) {
 			if b.Len() > 0 {
-				b.WriteString("\n")
+				b.WriteByte('\n')
 			}
-			b.WriteString(style.Render(row))
-		}
-	}
-	writeToolLine := func(glyph, name, detail string, glyphStyle lipgloss.Style) {
-		flush()
-		rows := wrapDelegationRow("  ", glyph+" "+name+" — "+detail, r.traceWidth)
-		regularPrefix := r.traceWidth <= 0 || r.traceWidth > 2
-		offset, glyphStart := 0, 0
-		if !regularPrefix {
-			glyphStart = 2
-		}
-		for _, row := range rows {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			if regularPrefix {
+			// wrapDelegationRow retains the two-cell indent on ordinary widths.
+			if r.traceWidth <= 0 || r.traceWidth > 2 {
 				b.WriteString(row[:2])
 				row = row[2:]
 			}
-			b.WriteString(renderTraceToolRow(row, offset, glyphStart, name, glyphStyle, nameStyle, muted))
+			b.WriteString(renderTraceToolRow(row, offset, line, r.th.Style(line.StatusStyle()), nameStyle, muted))
 			offset += len([]rune(row))
 		}
 	}
-	for i := range trace {
-		t := &trace[i]
-		switch t.kind {
-		case teamTraceTool:
-			glyph, status := t.cue()
-			style := nameStyle
-			if glyph == "✓" {
-				style = okStyle
-			}
-			if glyph == "✗" {
-				style = errStyle
-			}
-			name := truncate(terminaltext.Sanitize(t.name), maxTraceToolNameLen) + " · " + status
-			if detail := terminaltext.Sanitize(oneLine(t.detail)); detail != "" {
-				writeToolLine(glyph, name, truncate(detail, maxTraceDetailLen), style)
-			} else {
-				chips = append(chips, glyph+" "+name)
-			}
-		case teamTraceMessage:
-			writeLine("  ", truncate(terminaltext.Sanitize(oneLine(t.text)), maxTraceMessageLen), muted)
-		}
-	}
-	flush()
 	return b.String()
 }
 
-// renderTraceToolRow restores a trace tool row's semantic styles after its raw
-// text has been wrapped: status glyph, tool name, then muted preview. offset and
-// glyphStart are rune offsets in the unwrapped text, letting a style boundary fall
-// on either side of a wrapped row.
-func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphStyle, nameStyle, muted lipgloss.Style) string {
-	nameStart := glyphStart + 2 // glyph plus its following space
-	detailStart := nameStart + len([]rune(name))
-
+// renderTraceToolRow reapplies semantic styles after wrapping the plain line.
+func renderTraceToolRow(row string, offset int, line renderfmt.ToolLine, statusStyle, nameStyle, muted lipgloss.Style) string {
+	nameStart := len([]rune(line.Glyph())) + 1
+	intentStart := nameStart + len([]rune(line.Name()))
+	statusStart := len([]rune(line.Text())) - len([]rune(line.Status()))
 	var b strings.Builder
 	var runes []rune
 	style := -1
@@ -1598,7 +1542,7 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 		text := string(runes)
 		switch style {
 		case 0:
-			b.WriteString(glyphStyle.Render(text))
+			b.WriteString(statusStyle.Render(text))
 		case 1:
 			b.WriteString(nameStyle.Render(text))
 		case 2:
@@ -1613,11 +1557,13 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 		position := offset + i
 		next := -1
 		switch {
-		case position == glyphStart:
+		case position < len([]rune(line.Glyph())):
 			next = 0
-		case position >= nameStart && position < detailStart:
+		case position >= nameStart && position < intentStart:
 			next = 1
-		case position >= detailStart:
+		case line.Status() != "" && position >= statusStart:
+			next = 0
+		case position >= intentStart:
 			next = 2
 		}
 		if next != style {

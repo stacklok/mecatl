@@ -608,7 +608,7 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		base.ToolName = ev.ToolCall.Name
 		base.ChildToolCallID = ev.ToolCall.ID
 		base.Detail = clampPreview(string(ev.ToolCall.Args))
-	case session.EvToolResult:
+	case session.EvToolResultAvailable, session.EvToolResult:
 		if ev.ToolResult == nil || !previewChildToolCallID(ev.ToolResult.CallID) {
 			return session.Event{}, false
 		}

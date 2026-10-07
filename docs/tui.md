@@ -57,8 +57,35 @@ wheel events into the conversation.
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Let the surface own item semantics and activation.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
-`toolErr`. Keep a readable `running`, `done`, or `failed` label with each glyph
-so status does not depend on color.
+`toolErr`. Pending and failed calls retain readable labels; settled successful
+single-line calls use the glyph and name without a redundant success label.
+
+`cmd/mecatui/internal/renderfmt/toolcall.go` owns the single-line tool-call
+vocabulary: `ToolIntent(name, arguments)` derives a sanitized call-side intent,
+`ArgumentOrder(name)` orders known fields in the full-arguments inspector, and
+`PresentToolLine(name, intent, state)` returns a bounded typed `ToolLine`; its
+state-owned glyph, readable status label, and semantic style slot are exposed by
+methods. Use `ToolRunning`, `ToolAwaitingResult`, `ToolFinalizing`,
+`ToolFinalizingFailed`, `ToolDelegatedPending`, `ToolSucceeded`, or
+`ToolFailed` rather than selecting
+those components in a surface. Settled successful rows suppress redundant status
+text; failed rows consistently say `failed`. Extend its presentation table when
+adding a tool;
+do not duplicate argument decoding or tool-specific summaries in a surface.
+The conversation's settled rows, `/toolcalls` list and child inspector rows, and
+expanded Subagent/Parallel/Team traces (including F6 Agents) use this API.
+Surfaces own ANSI styles, clipping, wrapping, selection, and pointer geometry:
+list rows stay single-line, child inspector summaries clip at the viewport width,
+and expanded traces wrap at their lane width.
+
+Status comes from the observed call/result lifecycle, never from output text.
+Delegated events carry only bounded argument and result previews: derive and
+retain intent at `tool.call` from the received bounded arguments, then keep it
+when a `tool.result` changes status or the latest preview. Malformed or
+truncated JSON falls back to the tool name; never infer a path from a result
+body (including numbered Read output). Child traces remain per-lane capped and
+cannot recover full arguments; parent inspector arguments and results remain
+independently inspectable.
 
 For list-and-detail browsers, use a bounded list for stable item selection and
 a separate bounded viewport for long detail. In wheel-enabled inventories,

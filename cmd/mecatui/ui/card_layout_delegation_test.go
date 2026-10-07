@@ -100,7 +100,7 @@ func TestDelegationTraceStyles(t *testing.T) {
 	th := aztec()
 	r := &renderer{th: th, traceWidth: 7}
 
-	out := r.renderTrace([]teamTrace{{kind: teamTraceTool, name: "Read", detail: "preview"}})
+	out := r.renderTrace([]teamTrace{{kind: teamTraceTool, name: "Read", intent: "path"}})
 	lines := strings.Split(out, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("trace should wrap at the configured width, got %q", out)
@@ -108,12 +108,12 @@ func TestDelegationTraceStyles(t *testing.T) {
 	if want := "  " + th.Style("toolName").Render("…") + " " + th.Style("toolName").Render("Rea"); lines[0] != want {
 		t.Errorf("first row = %q, want %q", lines[0], want)
 	}
-	if want := "  " + th.Style("toolName").Render("d · p"); lines[1] != want {
+	if want := "  " + th.Style("toolName").Render("d") + th.Style("muted").Render(" · p"); lines[1] != want {
 		t.Errorf("second row = %q, want %q", lines[1], want)
 	}
 
-	errorOut := (&renderer{th: th}).renderTrace([]teamTrace{{kind: teamTraceTool, resolved: true, isError: true, name: "Read", detail: "preview"}})
-	if want := "  " + th.Style("toolErr").Render("✗") + " " + th.Style("toolName").Render("Read · error") + th.Style("muted").Render(" — preview"); errorOut != want {
+	errorOut := (&renderer{th: th}).renderTrace([]teamTrace{{kind: teamTraceTool, resolved: true, isError: true, name: "Read", intent: "path", detail: "preview"}})
+	if want := "  " + th.Style("toolErr").Render("✗") + " " + th.Style("toolName").Render("Read") + th.Style("muted").Render(" · path · ") + th.Style("toolErr").Render("failed"); errorOut != want {
 		t.Errorf("error trace = %q, want %q", errorOut, want)
 	}
 }

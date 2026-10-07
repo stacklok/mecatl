@@ -4267,7 +4267,7 @@ func projectChildEvent(emit func(session.Event), ev session.Event, names map[ses
 
 func projectableChildEvent(emit func(session.Event), ev session.Event) bool {
 	switch ev.Type {
-	case session.EvToolCall, session.EvToolResult, session.EvMessageDelta, session.EvResult, session.EvTurnEnd:
+	case session.EvToolCall, session.EvToolResultAvailable, session.EvToolResult, session.EvMessageDelta, session.EvResult, session.EvTurnEnd:
 		return true
 	case session.EvHook:
 		if ev.Hook != nil && ev.Hook.Phase == "ProjectInstructions" && ev.Hook.Decision == session.HookAdvisory && ev.Hook.Tool == "" && ev.Hook.CallID == "" && ev.Hook.Guardrail == nil && isInstructionWarning(ev.Text) {
@@ -4291,7 +4291,7 @@ func projectChildPayload(payload *session.SubagentPayload, ev session.Event, nam
 	switch ev.Type {
 	case session.EvToolCall:
 		return projectChildToolCall(payload, ev, names)
-	case session.EvToolResult:
+	case session.EvToolResultAvailable, session.EvToolResult:
 		return projectChildToolResult(payload, ev, names)
 	case session.EvMessageDelta:
 		if strings.TrimSpace(ev.Text) == "" {

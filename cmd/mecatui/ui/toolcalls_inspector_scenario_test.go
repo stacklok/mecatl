@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
@@ -554,7 +555,7 @@ func TestMecatuiToolcallsInspector_Scenario4_LargeListIntentDoesNotBuildDetail(t
 	}
 	// Parsing the top-level object is required, but the list must not expand
 	// thousands of nested detail labels on every scrollback update.
-	if allocs := testing.AllocsPerRun(5, func() { _ = toolcallIntentFor("Subagent", args) }); allocs > 200 {
+	if allocs := testing.AllocsPerRun(5, func() { _ = renderfmt.ToolIntent("Subagent", args) }); allocs > 200 {
 		t.Fatalf("list intent allocated %.0f times for %d detail items", allocs, items)
 	}
 	s.detail = true
@@ -575,7 +576,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 	)
 	s := inspectorOpenDetail(t, &m)
 	lines := strings.Join(toolcallDetailLines(*s.detailEntry), "\n")
-	for _, want := range []string{"✗ Read · failed", "Arguments", "Error", "Structured content", "Resources", "alpha", `{"count":2}`, "report", "mcp://reports/latest"} {
+	for _, want := range []string{"✗ Read · notes.txt · failed", "Arguments", "Error", "Structured content", "Resources", "alpha", `{"count":2}`, "report", "mcp://reports/latest"} {
 		if !strings.Contains(lines, want) {
 			t.Errorf("detail lines missing %q: %q", want, lines)
 		}
@@ -597,7 +598,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 		s.width = 0
 		s.follow = false
 		got := inspectorDetail(t, s, width, 40)
-		for _, want := range []string{"✗ Read · failed", "Arguments", "Error", "Structured content", "Resources"} {
+		for _, want := range []string{"✗ Read · notes.txt · failed", "Arguments", "Error", "Structured content", "Resources"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("width %d detail missing %q: %q", width, want, got)
 			}
@@ -608,7 +609,7 @@ func TestMecatuiToolcallsInspector_Scenario4_SectionsAndReadGutter(t *testing.T)
 		t.Fatalf("inspector changed canonical result: got %q, want %q", entry.result.Body, readResult)
 	}
 	previous := -1
-	for _, row := range []string{"✗ Read · failed", "Arguments:", "Error:", "Structured content", "Resources"} {
+	for _, row := range []string{"✗ Read · notes.txt · failed", "Arguments:", "Error:", "Structured content", "Resources"} {
 		pos := strings.Index(lines, row)
 		if pos <= previous {
 			t.Fatalf("section %q missing or out of order in %q", row, lines)

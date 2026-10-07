@@ -84,7 +84,7 @@ func TestDelegationOutOfOrderAndDuplicateCalls(t *testing.T) {
 	}
 	trace = traceMarkToolResult(trace, "id", "Read", "done", false)
 	trace = traceAppendTool(trace, "id", "Read", "late replay")
-	if len(trace) != 1 || !trace[0].resolved || trace[0].detail != "done" {
+	if len(trace) != 1 || !trace[0].resolved || trace[0].detail != "done" || trace[0].intent != "Read" {
 		t.Fatalf("late replay changed call: %+v", trace)
 	}
 }
@@ -283,19 +283,19 @@ func TestToolcallsParentDetailLiveChildSummary(t *testing.T) {
 	s.selected = 0
 	for _, msg := range []client.SubagentMsg{
 		{Kind: client.SubagentStart, ParentCallID: "parent", ChildID: "child"},
-		{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "one", ToolName: "Read", Detail: "args"},
+		{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "one", ToolName: "Read", Detail: `{"path":"auth.go"}`},
 	} {
 		updated, _ := m.Update(msg)
 		m = updated.(Model)
 	}
 	s = toolcallsForTest(t, m)
-	if len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "… Read · pending — args") {
+	if len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "… Read · auth.go · pending") {
 		t.Fatalf("live detail not updated: %+v", s.detailEntry)
 	}
 	updated, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.result", ChildToolCallID: "one", ToolName: "Read", Detail: "done", IsError: true})
 	m = updated.(Model)
 	s = toolcallsForTest(t, m)
-	if s.selected != 0 || len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "✗ Read · error — done") {
+	if s.selected != 0 || len(s.entries) != 1 || !strings.Contains(inspectorDetail(t, s, 90, 24), "✗ Read · auth.go · failed") {
 		t.Fatalf("result did not refresh parent: %+v", s.detailEntry)
 	}
 	updated, _ = m.Update(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "parent", ChildID: "child", InnerKind: "tool.call", ChildToolCallID: "two", ToolName: "Grep", Detail: "next"})
@@ -320,7 +320,7 @@ func TestToolcallsParentDetailLiveChildSummary(t *testing.T) {
 	m = updated.(Model)
 	s = toolcallsForTest(t, m)
 	s.Render(60, 12)
-	if s.selected != 0 || s.window.Offset() != before || !strings.Contains(strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n"), "live result") {
+	if s.selected != 0 || s.window.Offset() != before || strings.Contains(strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n"), "live result") {
 		t.Fatalf("live scroll/selection lost: selected=%d offset=%d want=%d", s.selected, s.window.Offset(), before)
 	}
 }
@@ -532,6 +532,69 @@ func TestDelegationIDLessResultRequiresToolName(t *testing.T) {
 	}
 }
 
+func TestDelegationToolSummaryParityAcrossSurfaces(t *testing.T) {
+	th := aztec()
+	for _, tc := range []struct {
+		name                string
+		resolved, isError   bool
+		glyph, status, slot string
+	}{
+		{"pending", false, false, "…", "pending", "toolName"},
+		{"success", true, false, "✓", "", "toolOk"},
+		{"failure", true, true, "✗", "failed", "toolErr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name, intent := "Read", "auth.go"
+			trace := []teamTrace{{kind: teamTraceTool, name: name, intent: intent, resolved: tc.resolved, isError: tc.isError}}
+			inline := (&renderer{th: th}).renderTrace(trace)
+			f6 := strings.Join(renderedTraceLines(th, defaultHelpKeys(), 80, trace), "\n")
+			s := &toolcallsState{deps: surfaceDeps{theme: th}}
+			entry := toolcallDetail{name: "Subagent", childTools: []scrollback.TraceEntry{{Kind: toolKind, ToolName: name, Intent: intent, Detail: "result preview", Resolved: tc.resolved, Error: tc.isError}}}
+			inspector := strings.Join(s.styledToolcallDetailLines(entry), "\n")
+			want := tc.glyph + " " + name + " · " + intent
+			if tc.status != "" {
+				want += " · " + tc.status
+			}
+			if !strings.Contains(stripANSIstr(inline), want) || !strings.Contains(stripANSIstr(f6), want) || !strings.Contains(stripANSIstr(inspector), want) {
+				t.Fatalf("shared row %q absent: inline=%q f6=%q inspector=%q", want, inline, f6, inspector)
+			}
+			colored := th.Style(tc.slot).Render(tc.glyph)
+			if !strings.Contains(inline, colored) || !strings.Contains(f6, colored) || !strings.Contains(inspector, colored) {
+				t.Fatalf("status color differs: inline=%q f6=%q inspector=%q", inline, f6, inspector)
+			}
+		})
+	}
+}
+
+func TestChildSummaryFollowsParentResultIncludingPending(t *testing.T) {
+	child := []scrollback.TraceEntry{{Kind: toolKind, ToolName: "Read\x1b[31m", Intent: "auth.go", Detail: "hostile\x1b[2J", Resolved: true}}
+	for _, test := range []struct {
+		name, result string
+		received     bool
+	}{
+		{name: "pending"},
+		{name: "received", result: "parent result", received: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := strings.Join(toolcallDetailLines(toolcallDetail{
+				name: "Subagent", callID: "parent", intent: `{"task":"parent prompt"}`,
+				resultReceived: test.received, result: scrollback.ToolResult{Body: test.result}, childTools: child,
+			}), "\n")
+			resultAt := strings.Index(rows, "Result:")
+			if !test.received {
+				resultAt = strings.Index(rows, "Result: pending")
+			}
+			childAt := strings.Index(rows, "Recent child tools (bounded previews):")
+			if argsAt := strings.Index(rows, "parent prompt"); argsAt < 0 || resultAt < argsAt || childAt < resultAt {
+				t.Fatalf("parent arguments/result must precede child summaries:\n%s", rows)
+			}
+			if strings.Contains(rows, "\x1b") || !strings.Contains(rows, "✓ Read[31m · auth.go") {
+				t.Fatalf("child summary lost canonical semantics or sanitization: %q", rows)
+			}
+		})
+	}
+}
+
 func TestChildSummarySanitizesBoundedPreview(t *testing.T) {
 	m := newToolcallsInspectorModel(t)
 	m.conv.addTool("parent", "Subagent", `{}`)
@@ -543,7 +606,7 @@ func TestChildSummarySanitizesBoundedPreview(t *testing.T) {
 	s.selected, s.detail = 0, true
 	s.refreshDetail(&m.conv.scrollback)
 	rows := strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n")
-	if strings.Contains(rows, "\x1b[2J") || !strings.Contains(stripANSIstr(rows), "unsafe[2J") || len([]rune(s.detailEntry.childTools[0].Detail)) > maxTraceDetailLen {
+	if strings.Contains(rows, "\x1b[2J") || strings.Contains(stripANSIstr(rows), "unsafe[2J") || len([]rune(s.detailEntry.childTools[0].Detail)) > maxTraceDetailLen || !strings.Contains(stripANSIstr(rows), "✓ Read") {
 		t.Fatalf("unsafe or unbounded summary: %q", rows)
 	}
 	for _, width := range []int{12, 20} {
@@ -568,9 +631,14 @@ func TestChildSummarySanitizesBoundedPreview(t *testing.T) {
 }
 
 func TestChildSummaryResizePreservesAnchor(t *testing.T) {
+	tools := make([]scrollback.TraceEntry, 9)
+	for i := range tools {
+		tools[i] = scrollback.TraceEntry{Kind: toolKind, ToolName: "Read", Detail: "preview"}
+	}
+	tools[0].Detail = strings.Repeat("preview ", 40)
 	s := &toolcallsState{deps: surfaceDeps{theme: testTheme()}, detailEntry: &toolcallDetail{
 		name: "Subagent", callID: "parent", historyCaveat: true,
-		childTools:     []scrollback.TraceEntry{{Kind: toolKind, ToolName: "Read", Detail: strings.Repeat("preview ", 40)}},
+		childTools:     tools,
 		intent:         `{"task":"` + strings.Repeat("task ", 30) + `"}`,
 		resultReceived: true, result: scrollback.ToolResult{Body: strings.Repeat("result\n", 20)},
 	}}
@@ -594,11 +662,16 @@ func TestChildSummaryResizePreservesAnchor(t *testing.T) {
 	line := func(_ lipgloss.Style, text string) string { return text }
 	s.renderDetail(wide, 5, "Tool calls", line)
 	s.follow = false
-	s.window.SetOffset(wideStart, len(toolcallRowCounts(wideContent, wide)))
+	totalWide := 0
+	for _, count := range toolcallRowCounts(wideContent, wide) {
+		totalWide += count
+	}
+	s.window.SetOffset(wideStart, totalWide)
 	s.recordAnchor()
 	s.renderDetail(narrow, 5, "Tool calls", line)
-	if got := s.window.Offset(); got != narrowStart {
-		t.Fatalf("resize offset = %d, want child summary at %d", got, narrowStart)
+	wantOffset := narrowStart
+	if got := s.window.Offset(); got != wantOffset {
+		t.Fatalf("resize offset = %d, want child summary at %d", got, wantOffset)
 	}
 }
 

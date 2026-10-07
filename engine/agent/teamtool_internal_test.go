@@ -29,7 +29,7 @@ func TestDelegationRejectsMalformedChildPreviewIDs(t *testing.T) {
 		{"invalid UTF-8", session.ToolCallID("bad\xff")},
 		{"oversized", session.ToolCallID(strings.Repeat("x", 257))},
 	} {
-		for _, kind := range []session.EventType{session.EvToolCall, session.EvToolResult} {
+		for _, kind := range []session.EventType{session.EvToolCall, session.EvToolResultAvailable, session.EvToolResult} {
 			t.Run(tc.name+"/"+string(kind), func(t *testing.T) {
 				call := session.NewToolCall(tc.id, "Read", []byte(`{}`))
 				result := session.NewToolResult(tc.id, "ok")
@@ -109,6 +109,97 @@ func TestDelegationChildToolCallIDs(t *testing.T) {
 		if id != want {
 			t.Errorf("projection %d (%s) ID = %q, want %q", i, kind, id, want)
 		}
+	}
+}
+
+func TestDelegationProjectsAvailableResultBeforeCanonical(t *testing.T) {
+	call := session.NewToolCall("child-call-7", "Read", []byte(`{"path":"x"}`))
+	available := session.NewToolResult(call.ID, "early\x1f"+strings.Repeat("a", maxTeamPreview+1))
+	canonical := session.NewToolResult(call.ID, "canonical failure")
+	canonical.IsError = true
+
+	var projected []session.Event
+	names := make(map[session.ToolCallID]string)
+	branch := branchEmitter{emit: func(ev session.Event) { projected = append(projected, ev) }, parentCallID: "parent"}.branchTool(2)
+	toolCount := 0
+	for _, inner := range []session.Event{
+		{Type: session.EvToolCall, ToolCall: &call},
+		{Type: session.EvToolResultAvailable, ToolResult: &available},
+		{Type: session.EvToolResult, ToolResult: &canonical},
+	} {
+		toolCount, _ = projectChildEvent(func(ev session.Event) {
+			projected = append(projected, ev)
+			branch(ev)
+		}, inner, names, "parent", "child", toolCount, session.Usage{})
+		teamEv, ok := projectTeamEvent("parent", "team", TeamEvent{Member: "scout", Event: inner})
+		if !ok {
+			t.Fatalf("team projection dropped %s", inner.Type)
+		}
+		projected = append(projected, teamEv)
+	}
+	if toolCount != 1 {
+		t.Fatalf("started tool count = %d, want 1", toolCount)
+	}
+	if len(projected) != 9 {
+		t.Fatalf("projected %d events, want 9", len(projected))
+	}
+
+	availableCount := 0
+	for _, ev := range projected {
+		switch {
+		case ev.Subagent != nil && ev.Subagent.InnerKind == session.EvToolResultAvailable:
+			availableCount++
+			if ev.Subagent.ToolName != "Read" || ev.Subagent.ChildToolCallID != call.ID || ev.Subagent.ToolCount != 1 || ev.Subagent.IsError || ev.Subagent.Detail == available.Content || !strings.Contains(ev.Subagent.Detail, "…") {
+				t.Fatalf("subagent available projection = %+v", ev.Subagent)
+			}
+		case ev.Parallel != nil && ev.Parallel.InnerKind == session.EvToolResultAvailable:
+			availableCount++
+			if ev.Parallel.ToolName != "Read" || ev.Parallel.ChildToolCallID != call.ID || ev.Parallel.ToolCount != 1 || ev.Parallel.IsError || ev.Parallel.Detail == available.Content || !strings.Contains(ev.Parallel.Detail, "…") {
+				t.Fatalf("parallel available projection = %+v", ev.Parallel)
+			}
+		case ev.Team != nil && ev.Team.InnerKind == session.EvToolResultAvailable:
+			availableCount++
+			if ev.Team.ChildToolCallID != call.ID || ev.Team.ToolName != "" || ev.Team.IsError || ev.Team.Detail == available.Content || !strings.Contains(ev.Team.Detail, "…") {
+				t.Fatalf("team available projection = %+v", ev.Team)
+			}
+		}
+	}
+	if availableCount != 3 {
+		t.Fatalf("available projections = %d, want 3", availableCount)
+	}
+
+	canonicalCount := 0
+	for _, ev := range projected {
+		switch {
+		case ev.Subagent != nil && ev.Subagent.InnerKind == session.EvToolResult:
+			canonicalCount++
+			if !ev.Subagent.IsError || ev.Subagent.Detail != canonical.Content || ev.Subagent.ToolCount != 1 {
+				t.Fatalf("subagent canonical projection = %+v", ev.Subagent)
+			}
+		case ev.Parallel != nil && ev.Parallel.InnerKind == session.EvToolResult:
+			canonicalCount++
+			if !ev.Parallel.IsError || ev.Parallel.Detail != canonical.Content || ev.Parallel.ToolCount != 1 {
+				t.Fatalf("parallel canonical projection = %+v", ev.Parallel)
+			}
+		case ev.Team != nil && ev.Team.InnerKind == session.EvToolResult:
+			canonicalCount++
+			if !ev.Team.IsError || ev.Team.Detail != canonical.Content {
+				t.Fatalf("team canonical projection = %+v", ev.Team)
+			}
+		}
+	}
+	if canonicalCount != 3 {
+		t.Fatalf("canonical projections = %d, want 3", canonicalCount)
+	}
+
+	ask := session.Event{Type: session.EvPermissionAsk, Ask: &session.PendingAsk{AskID: "child:1", Reason: "sensitive args"}}
+	before := len(projected)
+	toolCount, _ = projectChildEvent(func(ev session.Event) { projected = append(projected, ev) }, ask, names, "parent", "child", toolCount, session.Usage{})
+	if teamEv, ok := projectTeamEvent("parent", "team", TeamEvent{Member: "scout", Event: ask}); ok {
+		projected = append(projected, teamEv)
+	}
+	if len(projected) != before || toolCount != 1 {
+		t.Fatalf("permission ask leaked or changed count: events=%d want %d, count=%d", len(projected), before, toolCount)
 	}
 }
 

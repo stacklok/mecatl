@@ -239,8 +239,8 @@ func TestTeamOverlaySanitizesMemberContent(t *testing.T) {
 	if !strings.Contains(focus, "]0;pwnedscout") {
 		t.Errorf("sanitized member name not rendered as inert text in the focus pane:\n%q", focus)
 	}
-	if !strings.Contains(focus, "pattern: handleErr") {
-		t.Errorf("sanitized tool Detail not rendered as inert text in the focus pane:\n%q", focus)
+	if strings.Contains(focus, "pattern: handleErr") || !strings.Contains(focus, "Grep") {
+		t.Errorf("malformed call Detail must not render as intent in the focus pane:\n%q", focus)
 	}
 }
 
@@ -314,8 +314,8 @@ func TestAgentsSelectionAndFocus(t *testing.T) {
 	if !strings.Contains(out, "searching the codebase") || !strings.Contains(out, "Grep") {
 		t.Errorf("focus pane should show the member's trace, got %q", out)
 	}
-	if !strings.Contains(out, "3 matches") {
-		t.Errorf("focus pane should show the bounded Detail preview, got %q", out)
+	if strings.Contains(out, "3 matches") || !strings.Contains(out, "✓ Grep") {
+		t.Errorf("focus pane should show call status without result preview, got %q", out)
 	}
 
 	// esc → back to roster.

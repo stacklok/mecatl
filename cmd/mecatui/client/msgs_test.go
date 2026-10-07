@@ -15,7 +15,7 @@ import (
 
 func TestDelegationChildToolCallIDIngress(t *testing.T) {
 	for _, id := range []string{"bad\xff", strings.Repeat("x", 257), strings.Repeat("é", 129)} {
-		for _, kind := range []string{"tool.call", "tool.result"} {
+		for _, kind := range []string{"tool.call", "tool.result.available", "tool.result"} {
 			for _, tc := range []struct {
 				name string
 				ev   *mecatlv1.Event

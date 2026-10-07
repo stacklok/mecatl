@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
@@ -42,30 +43,22 @@ const (
 // member lanes, the Subagent inline/fleet lanes, and the Parallel branch lanes
 // (ADR 0079: the trace model converged on this one shape). It is either a message
 // line (kind=teamTraceMessage, text set) or a tool chip (kind=teamTraceTool,
-// name + detail + observed result status). detail is the server-bounded latest
-// argument or result preview shown next to the chip in the expanded view.
+// name + call-side intent + observed result status). detail retains the latest
+// bounded preview for compatibility, but never supplies single-line call intent.
 // All text is bounded server-side (clamp-scrubbed, ≤200 runes); the ui caps it again on render.
 type teamTrace struct {
-	id       string // child tool-call ID, scoped to this lane; empty for legacy events
-	lane     string // child session ID for a shared Subagent parent card
-	kind     teamTraceKind
-	text     string // message text (teamTraceMessage)
-	name     string // tool name (teamTraceTool)
-	detail   string // bounded arg/result preview (teamTraceTool)
-	resolved bool   // an observed, safely associated result
-	blocked  bool   // a pending ID-less call was evicted from this lane
-	serial   uint64 // UI-local slot generation, never a child tool-call ID
-	isError  bool   // tool errored (teamTraceTool)
-}
-
-func (t teamTrace) cue() (glyph, status string) {
-	if !t.resolved {
-		return "…", "pending"
-	}
-	if t.isError {
-		return "✗", "error"
-	}
-	return "✓", "success"
+	id          string // child tool-call ID, scoped to this lane; empty for legacy events
+	lane        string // child session ID for a shared Subagent parent card
+	kind        teamTraceKind
+	text        string // message text (teamTraceMessage)
+	name        string // tool name (teamTraceTool)
+	detail      string // bounded latest arg/result preview (teamTraceTool)
+	intent      string // bounded call-side intent; never replaced by a result
+	resolved    bool   // an observed, safely associated result
+	provisional bool   // observed availability awaiting canonical result
+	blocked     bool   // a pending ID-less call was evicted from this lane
+	serial      uint64 // UI-local slot generation, never a child tool-call ID
+	isError     bool   // tool errored (teamTraceTool)
 }
 
 // pushTrace retains independent budgets for calls and message previews.
@@ -145,13 +138,24 @@ func traceAppendTool(trace []teamTrace, id, name, detail string, lane ...string)
 			}
 		}
 	}
-	return pushTrace(trace, teamTrace{kind: teamTraceTool, lane: child, id: id, name: truncate(terminaltext.SanitizeSingleLine(name), maxTraceToolNameLen), detail: truncate(terminaltext.SanitizeSingleLine(detail), maxTraceDetailLen)})
+	boundedName := truncate(terminaltext.SanitizeSingleLine(name), maxTraceToolNameLen)
+	args := truncate(terminaltext.SanitizeSingleLine(detail), maxTraceMessageLen)
+	return pushTrace(trace, teamTrace{
+		kind: teamTraceTool, lane: child, id: id, name: boundedName,
+		detail: truncate(args, maxTraceDetailLen),
+		intent: truncate(renderfmt.ToolIntent(boundedName, args), maxTraceDetailLen),
+	})
 }
 
 // A result can resolve only an exact retained pending ID, or an unambiguous
-// ID-less legacy call of the same name. Evicted legacy calls make name matching
-// uncertain for the rest of the lane; an ID-bearing call is never a fallback.
+// ID-less legacy call of the same name. An ID-less match stays conservative
+// after eviction or ambiguity; a canonical result may replace a provisional
+// result only for an exact ID in the same lane.
 func traceMarkToolResult(trace []teamTrace, id, name, detail string, isError bool, lane ...string) []teamTrace {
+	return traceSetToolResult(trace, id, name, detail, isError, false, lane...)
+}
+
+func traceSetToolResult(trace []teamTrace, id, name, detail string, isError, available bool, lane ...string) []teamTrace {
 	if id != "" && !admitTraceID(id) {
 		return trace
 	}
@@ -159,9 +163,9 @@ func traceMarkToolResult(trace []teamTrace, id, name, detail string, isError boo
 	if len(lane) != 0 {
 		child = lane[0]
 	}
-	match := traceResultMatch(trace, id, name, child)
+	match := traceResultMatch(trace, id, name, child, !available)
 	if match >= 0 {
-		trace[match].resolved, trace[match].isError = true, isError
+		trace[match].resolved, trace[match].isError, trace[match].provisional = true, isError, available
 		if detail != "" {
 			trace[match].detail = truncate(terminaltext.SanitizeSingleLine(detail), maxTraceDetailLen)
 		}
@@ -169,8 +173,26 @@ func traceMarkToolResult(trace []teamTrace, id, name, detail string, isError boo
 	return trace
 }
 
-func traceResultMatch(trace []teamTrace, id, name, child string) int {
-	match := -1
+func traceResultMatch(trace []teamTrace, id, name, child string, canonical bool) int {
+	if id != "" {
+		match := -1
+		for i, t := range trace {
+			if t.lane == child && t.kind == teamTraceTool && t.id == id {
+				if match >= 0 || (t.resolved && (!canonical || !t.provisional)) {
+					return -1
+				}
+				match = i
+			}
+		}
+		return match
+	}
+	return traceLegacyResultMatch(trace, name, child)
+}
+
+func traceLegacyResultMatch(trace []teamTrace, name, child string) int {
+	if name == "" {
+		return -1
+	}
 	blocked := false
 	for i := len(trace) - 1; i >= 0; i-- {
 		if trace[i].lane == child {
@@ -178,23 +200,16 @@ func traceResultMatch(trace []teamTrace, id, name, child string) int {
 			break
 		}
 	}
-	if id != "" {
-		for i, t := range trace {
-			if t.lane == child && t.kind == teamTraceTool && t.id == id {
-				if match >= 0 || t.resolved {
-					return -1
-				}
-				match = i
+	if blocked {
+		return -1
+	}
+	match := -1
+	for i, t := range trace {
+		if t.lane == child && t.kind == teamTraceTool && t.name == name {
+			if match >= 0 || t.resolved || t.id != "" {
+				return -1
 			}
-		}
-	} else if name != "" && !blocked {
-		for i, t := range trace {
-			if t.lane == child && t.kind == teamTraceTool && t.name == name {
-				if match >= 0 || t.resolved || t.id != "" {
-					return -1
-				}
-				match = i
-			}
+			match = i
 		}
 	}
 	return match
@@ -525,6 +540,8 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, id, toolName, detail
 		trace = traceAppendMessage(trace, text, lane...)
 	case "tool.result":
 		trace = traceMarkToolResult(trace, id, toolName, detail, isError, lane...)
+	case "tool.result.available":
+		trace = traceSetToolResult(trace, id, toolName, detail, isError, true, lane...)
 	default: // "tool.call" — or an older server's kind-less subagent.tool/branch_tool
 		if toolName != "" {
 			current = toolName

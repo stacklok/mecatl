@@ -427,8 +427,8 @@ func TestSubagentOverlayBoundsChildContent(t *testing.T) {
 	if strings.Contains(focus, strings.Repeat("z", maxTraceDetailLen*3)) {
 		t.Errorf("an unbounded preview leaked into the focus pane (past maxTraceDetailLen):\n%q", focus)
 	}
-	if got := strings.Count(focus, "z"); got < maxTraceDetailLen-1 {
-		t.Errorf("the bounded preview should retain its truncated source text, got %d z runes:\n%q", got, focus)
+	if got := strings.Count(focus, "z"); got != 0 {
+		t.Errorf("malformed call arguments must fall back to name only, got %d z runes:\n%q", got, focus)
 	}
 	// The sanitized tool name renders as inert text (the OSC payload stripped).
 	if !strings.Contains(focus, "]0;"+sentinel+"Grep") {
