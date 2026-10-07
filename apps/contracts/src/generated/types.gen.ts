@@ -1393,6 +1393,66 @@ export type ResolveRunPermissionResponses = {
 
 export type ResolveRunPermissionResponse = ResolveRunPermissionResponses[keyof ResolveRunPermissionResponses];
 
+export type ResolvePlanAskData = {
+    body: {
+        verdict: 'approve' | 'accept_edits' | 'iterate';
+    };
+    path: {
+        sessionId: string;
+        runId: string;
+        askId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/runs/{runId}/plan-asks/{askId}';
+};
+
+export type ResolvePlanAskErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ResolvePlanAskError = ResolvePlanAskErrors[keyof ResolvePlanAskErrors];
+
+export type ResolvePlanAskResponses = {
+    /**
+     * The exact plan verdict was acknowledged.
+     */
+    204: void;
+};
+
+export type ResolvePlanAskResponse = ResolvePlanAskResponses[keyof ResolvePlanAskResponses];
+
 export type GetAuthorizationPresentationData = {
     body?: never;
     path: {

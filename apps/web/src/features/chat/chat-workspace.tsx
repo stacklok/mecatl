@@ -10,6 +10,7 @@ import {
   cancelAuthorization,
   cancelRun,
   recheckAuthorization,
+  resolvePlanAsk,
   resolveRunPermission,
   retrySession,
   startRun,
@@ -117,11 +118,14 @@ import {
   type ComposerModelOption,
   type DraftChatConfiguration,
 } from "./chat-composer";
+import { useChatEscape } from "./chat-escape";
 import { groupSessions, useChatFolders } from "./chat-folders";
 import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
 import { ChatSessionControls } from "./chat-session-controls";
 import {
+  approvalKey,
+  approvalMatchesToolCall,
   type ChatMessage,
   enqueueApproval,
   errorMessage,
@@ -141,7 +145,11 @@ import {
 } from "./chat-state";
 import { ChatStatus, type ChatStatusFacts, deriveChatStatus } from "./chat-status";
 import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
-import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
+import {
+  type ContentPreview,
+  ContentPreviewPanel,
+  restoreActivityOpenerFocus,
+} from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
 import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
@@ -154,6 +162,7 @@ import {
 } from "./delegation-fleet";
 import { type DelegationAnchor, placeDelegationCards } from "./delegation-placement";
 import { DraftGreeting } from "./draft-greeting";
+import { EscapeHintContext } from "./escape-hint-context";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
 import { FailedTurnCard } from "./failed-turn-card";
 import { pickLatestEligibleChat } from "./latest-chat";
@@ -165,6 +174,8 @@ import {
   imagePreview,
 } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
+import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import { QueuedMessageList } from "./queued-message-list";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import {
@@ -190,6 +201,12 @@ import {
   type SessionTitleRevision,
   sessionTitleFromEvent,
 } from "./session-title";
+import {
+  appendSteerTrace,
+  observedSteerTrace,
+  SteerTrace,
+  type SteerTraceEntry,
+} from "./steer-trace";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
 import {
@@ -348,6 +365,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [reattached, setReattached] = useState(false);
   const [reattachEpoch, setReattachEpoch] = useState(0);
+  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
@@ -357,6 +375,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const activityRefresh = useRef<
     { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
   >(undefined);
+  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
+    undefined,
+  );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
@@ -367,8 +388,34 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [notice, setNotice] = useState<string>();
   const [runTarget, setRunTarget] = useState<RunTarget>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const ordinaryVerdictsInFlight = useRef(new Set<string>());
+  const ordinaryVerdictsUncertain = useRef(new Set<string>());
+  const settledAskKeys = useRef(new Set<string>());
+  const [ordinaryVerdictEpoch, setOrdinaryVerdictEpoch] = useState(0);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
+  const [composerDraftPresent, setComposerDraftPresent] = useState(false);
+  const [clearDraftSignal, setClearDraftSignal] = useState(0);
+  const [escapeClearHint, setEscapeClearHint] = useState(false);
+  const workspaceRoot = useRef<HTMLDivElement>(null);
+  const chatOptionsTrigger = useRef<HTMLButtonElement>(null);
+  const chatOptionsEscapeSession = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const clearPending = () => {
+      chatOptionsEscapeSession.current = undefined;
+    };
+    const clearOnOtherKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") clearPending();
+    };
+    document.addEventListener("pointerdown", clearPending, true);
+    document.addEventListener("keydown", clearOnOtherKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", clearPending, true);
+      document.removeEventListener("keydown", clearOnOtherKey, true);
+    };
+  }, []);
+  const panelOpener = useRef<HTMLElement | null>(null);
+  const panelWasOpen = useRef(false);
   const [seedText, setSeedText] = useState<string | undefined>(arrivalSeed.seed?.text);
   const [seedRequiresConfirmation, setSeedRequiresConfirmation] = useState(
     arrivalSeed.seed?.requiresConfirmation ?? false,
@@ -378,7 +425,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   const [reconnectGeneration, setReconnectGeneration] = useState(0);
   const [liveUsage, setLiveUsage] = useState<SessionUsageResponse>();
+  const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
+  const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
+  const planVerdictsInFlight = useRef(new Set<string>());
+  const planVerdictsUncertain = useRef(new Set<string>());
+  const [planVerdictEpoch, setPlanVerdictEpoch] = useState(0);
+  const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
   const awayTracker = useRef(new AwayNoticeTracker());
@@ -467,7 +520,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
+    planFollowController.current?.abort();
+    planFollowController.current = undefined;
     activityRefresh.current = undefined;
+    planReattach.current = undefined;
+    setPlanContinuationActive(false);
     authorizationActivityCursor.current = undefined;
     activityFollowedSession.current = undefined;
     interruptedSettledSession.current = undefined;
@@ -491,8 +548,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setReturnNotice(undefined);
     awayTracker.current.clear();
     setApprovals([]);
+    ordinaryVerdictsInFlight.current.clear();
+    ordinaryVerdictsUncertain.current.clear();
+    planVerdictsInFlight.current.clear();
+    planVerdictsUncertain.current.clear();
+    settledAskKeys.current.clear();
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
+    setSteerTrace([]);
+    setShowSteerTrace(false);
     setContentPreview(undefined);
     setSelectionAction(undefined);
     if (!activeRun.current || activeRun.current.sessionId !== sessionId)
@@ -508,7 +572,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     };
   }, [sessionId, setMessages]);
 
-  useEffect(() => () => activeRun.current?.controller.abort(), []);
+  useEffect(
+    () => () => {
+      activeRun.current?.controller.abort();
+      planFollowController.current?.abort();
+    },
+    [],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow every streamed message update while the reader remains at the bottom
   useEffect(() => {
@@ -678,7 +748,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     },
     [],
   );
-  const approval = approvals[0];
   const displayedPreview =
     contentPreview?.kind === "authorization"
       ? {
@@ -693,6 +762,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               ) ?? contentPreview.authorization,
         }
       : contentPreview;
+  useEffect(() => {
+    if (contentPreview && !panelWasOpen.current) {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && !focused.closest('[data-chat-surface="thread"]'))
+        panelOpener.current = focused;
+    } else if (!contentPreview) {
+      panelOpener.current = null;
+    }
+    panelWasOpen.current = Boolean(contentPreview);
+  }, [contentPreview]);
   const models: ComposerModelOption[] =
     runtimeSettings.data?.models
       .filter((model) => !disabledModels.has(modelPreferenceId(model)))
@@ -703,6 +782,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         providerId: model.providerId,
       })) ?? [];
   const watchable = isActiveSessionState(selectedSession?.state);
+  const shouldWatch = watchable || planContinuationActive;
   const settledState = selectedSession?.state ?? sessionDetail.data?.state;
   const settled =
     settledState === "idle" ||
@@ -769,21 +849,28 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         : "No filesystem",
   };
 
-  // Attachment lifetime follows session identity and watchable state; an explicit
-  // authorization refresh can also attach while the session is idle.
+  // A proven server-owned continuation may need a new reader even before the
+  // session inventory reflects its execution run.
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
     const refresh = activityRefresh.current;
+    const planRefresh = planReattach.current;
     if (
       !sessionId ||
-      (!watchable && refresh?.sessionId !== sessionId) ||
+      (!shouldWatch && refresh?.sessionId !== sessionId && planRefresh?.sessionId !== sessionId) ||
       activeRun.current ||
       protectedRequestsPaused()
     )
       return;
 
-    const resumeFrom = refresh?.sessionId === sessionId ? refresh.cursor : undefined;
+    const resumeFrom =
+      planRefresh?.sessionId === sessionId
+        ? planRefresh.cursor
+        : refresh?.sessionId === sessionId
+          ? refresh.cursor
+          : undefined;
     activityRefresh.current = undefined;
+    planReattach.current = undefined;
     const uncertain = refresh
       ? authorizationUncertain.current.get(`${sessionId}\u0000${refresh.authorizationId}`)
       : undefined;
@@ -795,9 +882,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setIsRunning(true);
     setReattached(true);
     setStatusFacts({ phase: "following" });
+    if (planRefresh?.sessionId === sessionId) setRunTarget({ runId: planRefresh.runId, sessionId });
     setError(undefined);
     setNotice(undefined);
-    setApprovals([]);
+    setApprovals((current) => retainUncertainApprovals(current));
     if (!resumeFrom) {
       setMessages([]);
       // A status-driven attach can interrupt a settled replay. Preserve its
@@ -866,8 +954,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;
+          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
           if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
-          setApprovals([]);
+          setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
           setReattached(false);
           if (end.kind === "authorization")
@@ -893,12 +982,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       if (activeRun.current === owner) {
         activeRun.current = undefined;
         setRunTarget(undefined);
-        setApprovals([]);
+        setApprovals((current) => retainUncertainApprovals(current));
         setIsRunning(false);
         setReattached(false);
       }
     };
-  }, [reconnectGeneration, reattachEpoch, sessionId, watchable]);
+  }, [reconnectGeneration, reattachEpoch, sessionId, shouldWatch]);
 
   // Finished chats keep their saved transcript. Rebuild only the delegation
   // projection from the bounded activity replay, with no live run owner or
@@ -1262,7 +1351,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (owned) {
       activeRun.current = undefined;
       if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
-      setApprovals([]);
+      setApprovals((current) => retainUncertainApprovals(current));
     }
     if (owner.sessionId) {
       try {
@@ -1617,6 +1706,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           continue;
         }
         const event = delivery.event;
+        const observedSteer = observedSteerTrace(delivery);
+        if (observedSteer) setSteerTrace((current) => appendSteerTrace(current, observedSteer));
         if (sawAuthorizationStatus && event.runId) {
           continuationStarted = true;
           sawAuthorizationPark = false;
@@ -1753,14 +1844,40 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
-          if (approval) setApprovals((current) => enqueueApproval(current, approval));
+          if (approval && !settledAskKeys.current.has(`${event.runId}\u0000${approval.askId}`)) {
+            const controlTarget =
+              owner.sessionId && event.runId
+                ? { askId: approval.askId, runId: event.runId, sessionId: owner.sessionId }
+                : undefined;
+            setApprovals((current) =>
+              enqueueApproval(current, controlTarget ? { ...approval, controlTarget } : approval),
+            );
+          }
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
-          setApprovals((current) => retractApproval(current, askId));
+          if (askId) {
+            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
+            if (owner.sessionId) {
+              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
+              ordinaryVerdictsUncertain.current.delete(key);
+              planVerdictsUncertain.current.delete(key);
+            }
+            setOrdinaryVerdictEpoch((value) => value + 1);
+          }
+          setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "approval") {
           const askId = permissionAskId(event.payload);
-          setApprovals((current) => retractApproval(current, askId));
+          if (askId) {
+            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
+            if (owner.sessionId) {
+              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
+              ordinaryVerdictsUncertain.current.delete(key);
+              planVerdictsUncertain.current.delete(key);
+            }
+            setOrdinaryVerdictEpoch((value) => value + 1);
+          }
+          setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "result") {
           sawResult = true;
@@ -2030,24 +2147,176 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }
   }
 
-  async function respondToApproval(verdict: ApprovalVerdict) {
-    const target = controlTarget(runTarget, sessionId);
-    if (!target || !approval) {
+  function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
+    return current.filter(
+      (candidate) =>
+        candidate.controlTarget &&
+        (ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)) ||
+          planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget))),
+    );
+  }
+
+  function ordinaryApprovalUncertain(candidate: ApprovalRequest): boolean {
+    void ordinaryVerdictEpoch;
+    return Boolean(
+      candidate.controlTarget &&
+        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+    );
+  }
+
+  function ordinaryApprovalDisabled(candidate: ApprovalRequest): boolean {
+    const target = candidate.controlTarget;
+    const activeTarget = controlTarget(runTarget, sessionId);
+    return Boolean(
+      !target ||
+        target.askId !== candidate.askId ||
+        target.sessionId !== activeTarget?.sessionId ||
+        target.runId !== activeTarget?.runId ||
+        target.sessionId !== viewedSessionId.current ||
+        controlPending ||
+        ordinaryVerdictsInFlight.current.has(approvalKey(target)) ||
+        ordinaryVerdictsUncertain.current.has(approvalKey(target)),
+    );
+  }
+
+  async function respondToApproval(candidate: ApprovalRequest, verdict: ApprovalVerdict) {
+    if (
+      candidate.tool === "PresentPlan" ||
+      (verdict !== "deny" && !candidate.args.trim()) ||
+      ordinaryApprovalDisabled(candidate)
+    )
       return;
-    }
+    const target = candidate.controlTarget;
+    if (!target) return;
+    const key = approvalKey(target);
+    ordinaryVerdictsInFlight.current.add(key);
     setControlPending(true);
     try {
       await resolveRunPermission({
         body: { verdict },
-        path: { askId: approval.askId, runId: target.runId, sessionId: target.sessionId },
+        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
+      settledAskKeys.current.add(`${target.runId}\u0000${target.askId}`);
       if (viewedSessionId.current === target.sessionId) {
-        setApprovals((current) => retractApproval(current, approval.askId));
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+        setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
       }
     } catch (caught) {
-      setError(errorMessage(caught));
+      ordinaryVerdictsUncertain.current.add(key);
+      setOrdinaryVerdictEpoch((value) => value + 1);
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
+      ordinaryVerdictsInFlight.current.delete(key);
+      setControlPending(false);
+    }
+  }
+
+  function planUnavailableReason(candidate: ApprovalRequest): string | undefined {
+    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
+    if (featureReason) return featureReason;
+    const activeTarget = controlTarget(runTarget, sessionId);
+    const target = candidate.controlTarget;
+    return !target ||
+      target.askId !== candidate.askId ||
+      target.sessionId !== activeTarget?.sessionId ||
+      target.runId !== activeTarget?.runId ||
+      target.sessionId !== viewedSessionId.current
+      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
+      : undefined;
+  }
+
+  function planApprovalDisabled(candidate: ApprovalRequest): boolean {
+    void planVerdictEpoch;
+    const target = candidate.controlTarget;
+    return Boolean(
+      !target ||
+        controlPending ||
+        planVerdictsInFlight.current.has(approvalKey(target)) ||
+        planVerdictsUncertain.current.has(approvalKey(target)),
+    );
+  }
+
+  function planApprovalUncertain(candidate: ApprovalRequest): boolean {
+    void planVerdictEpoch;
+    return Boolean(
+      candidate.controlTarget &&
+        planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+    );
+  }
+
+  async function respondToPlan(candidate: ApprovalRequest, verdict: PlanVerdict) {
+    if (
+      candidate.tool !== "PresentPlan" ||
+      planUnavailableReason(candidate) ||
+      planApprovalDisabled(candidate)
+    ) {
+      setError("This plan ask is stale. Refresh activity before deciding.");
+      return;
+    }
+    const target = candidate.controlTarget;
+    if (!target) return;
+    const key = approvalKey(target);
+    planVerdictsInFlight.current.add(key);
+    const askId = target.askId;
+    setControlPending(true);
+    setError(undefined);
+    try {
+      await resolvePlanAsk({
+        body: { verdict },
+        path: { askId, runId: target.runId, sessionId: target.sessionId },
+        throwOnError: true,
+      });
+      settledAskKeys.current.add(`${target.runId}\u0000${askId}`);
+      if (viewedSessionId.current === target.sessionId) {
+        setApprovals((current) => retractApproval(current, askId, target.runId));
+      }
+      if (viewedSessionId.current !== target.sessionId) return;
+      if (verdict === "iterate") {
+        if (viewedSessionId.current === target.sessionId) setNotice("Plan iteration requested.");
+        return;
+      }
+      if (viewedSessionId.current === target.sessionId) {
+        setNotice("Plan approval accepted; checking whether execution started.");
+      }
+      const controller = new AbortController();
+      planFollowController.current = controller;
+      const evidence = await followPlanContinuationFromBff(
+        { askId, planRunId: target.runId, sessionId: target.sessionId },
+        controller.signal,
+      );
+      if (controller.signal.aborted || viewedSessionId.current !== target.sessionId) return;
+      if (evidence.kind === "started") {
+        // The verdict watcher establishes the new run and a durable replay
+        // checkpoint. Transfer this view's one reader to that run so its
+        // transcript and controls follow the same evidence.
+        planReattach.current = {
+          cursor: evidence.resumeFrom,
+          runId: evidence.runId,
+          sessionId: target.sessionId,
+        };
+        setPlanContinuationActive(true);
+        activeRun.current?.controller.abort();
+        activeRun.current = undefined;
+        setRunTarget({ runId: evidence.runId, sessionId: target.sessionId });
+        setReattachEpoch((current) => current + 1);
+      } else if (evidence.kind === "failed") {
+        setNotice(undefined);
+        setError("Plan approval was recorded, but execution could not start.");
+      } else {
+        setNotice(undefined);
+        setError(
+          "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
+        );
+      }
+    } catch (caught) {
+      planVerdictsUncertain.current.add(key);
+      setPlanVerdictEpoch((value) => value + 1);
+      if (viewedSessionId.current === target.sessionId) setError(errorMessage(caught));
+    } finally {
+      planFollowController.current = undefined;
+      planVerdictsInFlight.current.delete(key);
       setControlPending(false);
     }
   }
@@ -2157,14 +2426,72 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   useShortcut("chat.fork", () => void forkStandaloneChat());
   useShortcut("chat.clear", () => void clearStandaloneChat());
   useShortcut("chat.expandDetails", () => setExpandDetails(!expandDetails));
-  useShortcut("close.esc", () => {
-    if (contentPreview) setContentPreview(undefined);
-    else if (sidebarOpen) setSidebarOpen(false);
-    else if (isRunning) void stopRun();
+  const escapeAsk =
+    approvals.find((candidate) => {
+      const target = candidate.controlTarget;
+      return target?.sessionId === sessionId && target?.runId === runTarget?.runId;
+    }) ?? approvals.find((candidate) => candidate.controlTarget?.sessionId === sessionId);
+  useChatEscape({
+    active: true,
+    askAvailable: escapeAsk
+      ? escapeAsk.tool === "PresentPlan"
+        ? !planApprovalDisabled(escapeAsk)
+        : !ordinaryApprovalDisabled(escapeAsk)
+      : false,
+    draft: composerDraftPresent,
+    onClearDraft: () => setClearDraftSignal((value) => value + 1),
+    onClosePanel: () => {
+      if (contentPreview) {
+        setContentPreview(undefined);
+        if (contentPreview.kind === "activity") {
+          restoreActivityOpenerFocus({
+            fallbackOpener: sessionActivityControl.current,
+            opener: activityOpener.current,
+            openerFocus: activityOpenerFocus.current,
+          });
+        } else {
+          const opener = panelOpener.current;
+          if (opener?.isConnected) opener.focus();
+        }
+      } else setSidebarOpen(false);
+    },
+    onDenyAsk: () => {
+      if (escapeAsk) void respondToApproval(escapeAsk, "deny");
+    },
+    onHintChange: setEscapeClearHint,
+    onIteratePlan: () => {
+      if (escapeAsk) void respondToPlan(escapeAsk, "iterate");
+    },
+    onStopRun: () => void stopRun(),
+    onUnavailablePlan: () =>
+      setError(
+        escapeAsk
+          ? (planUnavailableReason(escapeAsk) ??
+              "Exact plan verdict is unavailable. Refresh activity.")
+          : "Exact plan verdict is unavailable.",
+      ),
+    navigationKey: sessionId,
+    ownsFocus: (target) => {
+      const node = target instanceof Node ? target : document.activeElement;
+      if (chatOptionsEscapeSession.current !== undefined) {
+        const sameSession = chatOptionsEscapeSession.current === sessionId;
+        chatOptionsEscapeSession.current = undefined;
+        if (sameSession && node === document.body) return true;
+      }
+      return Boolean(
+        node &&
+          workspaceRoot.current?.contains(node) &&
+          !(node instanceof Element && node.closest('[data-chat-surface="thread"]')),
+      );
+    },
+    panelOpen: Boolean(contentPreview || sidebarOpen),
+    pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
+    runActive: isRunning && Boolean(controlTarget(runTarget, sessionId)),
   });
 
   return (
-    <div className="relative flex h-full min-w-0">
+    <div className="relative flex h-full min-w-0" ref={workspaceRoot}>
       <SessionSidebar
         collapsed={sidebarHidden}
         creating={createSession.isPending || isRunning}
@@ -2278,11 +2605,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           {sessionId && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button aria-label="Chat options" size="icon" variant="ghost">
+                <Button
+                  aria-label="Chat options"
+                  ref={chatOptionsTrigger}
+                  size="icon"
+                  variant="ghost"
+                >
                   <MoreHorizontal aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent
+                align="end"
+                className="w-52"
+                onEscapeKeyDown={() => {
+                  chatOptionsEscapeSession.current = sessionId;
+                }}
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault();
+                  chatOptionsTrigger.current?.focus();
+                }}
+              >
                 {usageLines.length > 0 && (
                   <div className="mb-1 border-b px-2 py-1.5">
                     <p className="text-xs font-medium text-muted-foreground">Token usage</p>
@@ -2300,6 +2642,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 <DropdownMenuItem onSelect={() => setExpandDetails(!expandDetails)}>
                   <ListTree aria-hidden="true" />
                   {expandDetails ? "Collapse details" : "Expand details"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowSteerTrace(!showSteerTrace)}>
+                  <Bug aria-hidden="true" />
+                  {showSteerTrace ? "Hide developer steer trace" : "Show developer steer trace"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(sessionId)}>
@@ -2399,15 +2745,24 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 </Badge>
               )}
               {controlTarget(runTarget, sessionId) && (
-                <Button
-                  disabled={controlPending}
-                  onClick={() => void stopRun()}
-                  size="sm"
-                  variant="outline"
-                >
-                  <Square aria-hidden="true" className="fill-current" />
-                  Stop
-                </Button>
+                <>
+                  <Button
+                    disabled={controlPending}
+                    onClick={() => void stopRun()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Square aria-hidden="true" className="fill-current" />
+                    Stop
+                  </Button>
+                  {!escapeAsk &&
+                    !contentPreview &&
+                    !sidebarOpen &&
+                    isRunning &&
+                    !controlPending && (
+                      <span className="text-xs text-muted-foreground">Esc to Stop</span>
+                    )}
+                </>
               )}
             </div>
           )}
@@ -2424,9 +2779,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ref={transcriptScroll}
         >
           <div className="mx-auto flex min-h-full max-w-3xl flex-col px-4 py-8 sm:px-6">
+            {showSteerTrace && <SteerTrace entries={steerTrace} />}
             {transcript.isPending && sessionId && !isRunning ? (
               <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
-            ) : messages.length === 0 ? (
+            ) : messages.length === 0 && approvals.length === 0 ? (
               <div className="m-auto flex flex-col items-center">
                 <DraftGreeting
                   onPickSeed={(seed) => {
@@ -2439,37 +2795,55 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 )}
               </div>
             ) : (
-              <ChatTranscript
-                agentName={agentName}
-                delegationsByMessageId={delegationPlacement.byMessageId}
-                messages={messages}
-                onOpenActivity={(focus, opener) => {
-                  activityOpener.current = opener;
-                  activityOpenerFocus.current = focus;
-                  setActivityFocus(focus);
-                  setActivityFocusRequest((value) => value + 1);
-                  setContentPreview({ kind: "activity" });
-                }}
-                onOpenThread={(message) => void openSideThread(message)}
-                onReviewAuthorization={(authorization) =>
-                  setContentPreview({ authorization, kind: "authorization" })
-                }
-                onPreviewImage={(image) =>
-                  setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                }
-                onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                showToolCalls={showToolCalls}
-                streamingMessageId={
-                  isRunning && messages.at(-1)?.role === "assistant"
-                    ? messages.at(-1)?.id
-                    : undefined
-                }
-                threadDisabled={forkSession.isPending}
-                threadSessionIdForMessage={(message) =>
-                  threadMap[threadKeyForMessage(message)]?.sessionId
-                }
-                userName={userName}
-              />
+              <EscapeHintContext.Provider value={escapeAsk}>
+                <ChatTranscript
+                  agentName={agentName}
+                  approvalDisabled={(candidate) =>
+                    candidate.tool === "PresentPlan"
+                      ? planApprovalDisabled(candidate)
+                      : ordinaryApprovalDisabled(candidate)
+                  }
+                  approvalUncertain={(candidate) =>
+                    candidate.tool === "PresentPlan"
+                      ? planApprovalUncertain(candidate)
+                      : ordinaryApprovalUncertain(candidate)
+                  }
+                  approvals={approvals}
+                  delegationsByMessageId={delegationPlacement.byMessageId}
+                  messages={messages}
+                  onOpenActivity={(focus, opener) => {
+                    activityOpener.current = opener;
+                    activityOpenerFocus.current = focus;
+                    setActivityFocus(focus);
+                    setActivityFocusRequest((value) => value + 1);
+                    setContentPreview({ kind: "activity" });
+                  }}
+                  onOpenThread={(message) => void openSideThread(message)}
+                  onReviewAuthorization={(authorization) =>
+                    setContentPreview({ authorization, kind: "authorization" })
+                  }
+                  onPreviewImage={(image) =>
+                    setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                  }
+                  onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                  onRespondToApproval={(candidate, verdict) =>
+                    void respondToApproval(candidate, verdict)
+                  }
+                  onRespondToPlan={(candidate, verdict) => void respondToPlan(candidate, verdict)}
+                  planUnavailableReason={planUnavailableReason}
+                  showToolCalls={showToolCalls}
+                  streamingMessageId={
+                    isRunning && messages.at(-1)?.role === "assistant"
+                      ? messages.at(-1)?.id
+                      : undefined
+                  }
+                  threadDisabled={forkSession.isPending}
+                  threadSessionIdForMessage={(message) =>
+                    threadMap[threadKeyForMessage(message)]?.sessionId
+                  }
+                  userName={userName}
+                />
+              </EscapeHintContext.Provider>
             )}
             {delegationPlacement.unanchored.length > 0 && (
               <DelegationCardRow
@@ -2539,15 +2913,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {notice}
           </div>
         )}
-        {approval && (
-          <ApprovalPanel
-            approval={approval}
-            disabled={controlPending}
-            onRespond={(verdict) => void respondToApproval(verdict)}
-            position={1}
-            total={approvals.length}
-          />
-        )}
         {failedRun && (
           <RunFailurePanel
             failure={failedRun}
@@ -2579,11 +2944,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onEdit={queuedMessages.update}
         />
         <ChatComposer
+          clearDraftSignal={clearDraftSignal}
           configuration={sessionId ? undefined : draftConfiguration}
           disabled={createSession.isPending}
           imageAttachmentsSupported={imageAttachmentsSupported}
           models={models}
           onConfigurationChange={setDraftConfiguration}
+          onDraftChange={setComposerDraftPresent}
           onPreviewImage={(image) =>
             setContentPreview({ file: imagePreview(image, false), kind: "file" })
           }
@@ -2610,9 +2977,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
           workingBehavior={enterSendBehavior}
         />
+        {!escapeAsk &&
+          !contentPreview &&
+          !sidebarOpen &&
+          !isRunning &&
+          composerDraftPresent &&
+          !escapeClearHint && (
+            <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground">
+              Esc twice to clear draft
+            </p>
+          )}
+        {escapeClearHint && (
+          <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground" role="status">
+            Press Escape again to clear the unsent draft.
+          </p>
+        )}
       </section>
       {displayedPreview && (
         <ContentPreviewPanel
+          escapeManagedExternally
+          escapeHint={!escapeAsk}
           activity={{
             fallbackOpener: sessionActivityControl.current,
             fleet: visibleDelegationFleet,
@@ -2633,7 +3017,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onCanvasChange={canvas.setValue}
           onAuthorizationOperation={operateAuthorization}
           onRefreshAuthorizationActivity={refreshAuthorizationActivity}
-          onClose={() => setContentPreview(undefined)}
+          onClose={() => {
+            setContentPreview(undefined);
+            const opener = panelOpener.current;
+            if (opener?.isConnected) opener.focus();
+          }}
           preview={displayedPreview}
         />
       )}
@@ -2765,10 +3153,16 @@ function RunFailurePanel({
 export function Message({
   agentAvatar,
   agentName,
+  approvalDisabled,
+  approvalUncertain,
+  approvals = [],
   message,
   onOpenThread,
   onPreviewImage,
   onPreviewTool,
+  onRespondToApproval,
+  onRespondToPlan,
+  planUnavailableReason,
   showToolCalls,
   streaming,
   threadDisabled,
@@ -2778,10 +3172,16 @@ export function Message({
 }: {
   agentAvatar: string;
   agentName: string;
+  approvalDisabled?: (approval: ApprovalRequest) => boolean;
+  approvalUncertain?: (approval: ApprovalRequest) => boolean;
+  approvals?: ApprovalRequest[];
   message: ChatMessage;
   onOpenThread?: () => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
+  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
+  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
+  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   showToolCalls: boolean;
   streaming: boolean;
   threadDisabled: boolean;
@@ -2795,13 +3195,18 @@ export function Message({
   // chip) renders nothing at all — never a "Thinking…" placeholder for a
   // run that has already finished (e.g. StopNoProgress with an empty final
   // turn).
-  const hasVisibleTools = showToolCalls && Boolean(message.tools?.length);
+  const matching = approvals.filter((approval) =>
+    message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+  );
+  const unmatched = approvals.filter((approval) => !matching.includes(approval));
+  const hasVisibleTools = (showToolCalls || matching.length > 0) && Boolean(message.tools?.length);
   const hasExtras =
     Boolean(message.images?.length) ||
     Boolean(message.reasoning) ||
     Boolean(message.failure) ||
     Boolean(message.turnStat) ||
-    hasVisibleStopReason(message.stopReason ?? "");
+    hasVisibleStopReason(message.stopReason ?? "") ||
+    approvals.length > 0;
   if (!user && !streaming && !message.content && !hasVisibleTools && !hasExtras) {
     return null;
   }
@@ -2880,8 +3285,47 @@ export function Message({
         ) : message.tools?.length ? null : streaming ? (
           <StreamingIndicator />
         ) : null}
-        {showToolCalls && message.tools && message.tools.length > 0 && (
-          <ToolActivityList onPreview={onPreviewTool} tools={message.tools} />
+        {(showToolCalls || matching.length > 0) && message.tools && message.tools.length > 0 && (
+          <ToolActivityList
+            approvalDisabled={approvalDisabled}
+            approvalUncertain={approvalUncertain}
+            approvals={matching.filter((approval) => approval.tool !== "PresentPlan")}
+            onPreview={onPreviewTool}
+            onRespondToApproval={onRespondToApproval}
+            tools={message.tools}
+          />
+        )}
+        {matching
+          .filter((approval) => approval.tool === "PresentPlan")
+          .map((approval) => (
+            <PlanReviewCard
+              approval={approval}
+              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
+              uncertain={approvalUncertain?.(approval)}
+              unavailableReason={planUnavailableReason?.(approval)}
+            />
+          ))}
+        {unmatched.map((approval) =>
+          approval.tool === "PresentPlan" ? (
+            <PlanReviewCard
+              approval={approval}
+              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
+              uncertain={approvalUncertain?.(approval)}
+              unavailableReason={planUnavailableReason?.(approval)}
+            />
+          ) : (
+            <ApprovalPanel
+              approval={approval}
+              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+              onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
+              uncertain={approvalUncertain?.(approval)}
+            />
+          ),
         )}
         {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
         {message.failure && (

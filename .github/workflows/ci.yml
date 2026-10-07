@@ -671,9 +671,6 @@ jobs:
       - name: Install Chromium for Studio browser journeys
         run: task studio:browser:install
 
-      - name: Test Studio browser journeys (Playwright, offline)
-        run: task studio:browser
-
       - name: Verify committed contracts artifacts are fresh
         run: task studio:generated-check
 
@@ -694,6 +691,11 @@ jobs:
 
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
+
+      # The approval journey uses the binary built by the integration task
+      # through the published SDK and a loopback-only browser fixture.
+      - name: Test Studio browser journeys (Playwright, offline)
+        run: STUDIO_REQUIRE_MECATED=1 task studio:browser
 
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
 

@@ -129,6 +129,27 @@ const parallel: ParallelGroupActivity = {
 };
 
 describe("session activity content", () => {
+  it("leaves panel Escape to the owning chat when managed externally", async () => {
+    let closes = 0;
+    const node = await mount(
+      <ContentPreviewPanel
+        canvas=""
+        escapeManagedExternally
+        onCanvasChange={() => {}}
+        onClose={() => {
+          closes += 1;
+        }}
+        preview={{ kind: "canvas" }}
+      />,
+    );
+    await act(async () =>
+      node
+        .querySelector("aside")
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(closes).toBe(0);
+    expect(node.querySelector("aside")).not.toBeNull();
+  });
   it("keeps activity usable at mobile widths and bounds trace rows", async () => {
     function delivery(kind: string, seq: number, payload: unknown): RunStreamEvent {
       return {

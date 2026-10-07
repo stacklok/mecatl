@@ -92,6 +92,9 @@ const chat = {
   async resolvePermission() {
     return true;
   },
+  async resolvePlanAsk() {
+    return "acknowledged" as const;
+  },
   async steer() {
     return true;
   },
@@ -600,6 +603,82 @@ describe("chat routes", () => {
     expect(permission.status).toBe(204);
     expect(steer.status).toBe(204);
   });
+  it("rejects stale and duplicate plan verdicts across BFF routes", async () => {
+    const resolved = new Set<string>();
+    const resolvePlan = vi.fn();
+    const resolvePlanAsk = vi.fn(async (askId: string, _verdict: string) => {
+      if (askId === "ask-unopted") {
+        throw new MecatlError("unopted", {
+          code: "failed_precondition",
+          status: 412,
+          transport: "http",
+        });
+      }
+      if (resolved.has(askId)) {
+        throw new MecatlError("consumed", {
+          code: "ask_not_pending",
+          status: 409,
+          transport: "http",
+        });
+      }
+      resolved.add(askId);
+      return undefined;
+    });
+    const controls = vi.fn((runId: string) => ({
+      resolvePlanAsk: async (askId: string, verdict: string) => {
+        if (runId !== "run-plan") {
+          throw new MecatlError("old run", {
+            code: "stale_run_control",
+            status: 409,
+            transport: "http",
+          });
+        }
+        return resolvePlanAsk(askId, verdict);
+      },
+    }));
+    const compatibility = vi.fn().mockResolvedValue({
+      features: new Set(["exact_plan_ask_control"]),
+    });
+    const service = createMecatlChatService({
+      server: { compatibility },
+      sessions: { get: vi.fn().mockResolvedValue({ controls, resolvePlan }) },
+    } as unknown as Client);
+    const firstBff = createApp({ chat: service });
+    const secondBff = createApp({ chat: service });
+    const send = (target: typeof firstBff, runId: string, askId: string, verdict: string) =>
+      target.request(`/api/v1/sessions/session-1/runs/${runId}/plan-asks/${askId}`, {
+        body: JSON.stringify({ verdict }),
+        headers: csrfHeaders("t", { "Content-Type": "application/json" }),
+        method: "POST",
+      });
+
+    expect((await send(firstBff, "run-plan", "ask-1", "approve")).status).toBe(204);
+    for (const response of await Promise.all([
+      send(secondBff, "run-plan", "ask-1", "approve"),
+      send(firstBff, "run-old", "ask-2", "accept_edits"),
+      send(secondBff, "run-plan", "ask-unopted", "iterate"),
+    ])) {
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "stale_run_control" });
+    }
+    expect((await send(secondBff, "run-plan", "ask-3", "accept_edits")).status).toBe(204);
+    expect((await send(firstBff, "run-plan", "ask-4", "iterate")).status).toBe(204);
+    expect(resolvePlanAsk.mock.calls).toEqual([
+      ["ask-1", "approve"],
+      ["ask-1", "approve"],
+      ["ask-unopted", "iterate"],
+      ["ask-3", "accept_edits"],
+      ["ask-4", "iterate"],
+    ]);
+    expect(resolvePlan).not.toHaveBeenCalled();
+
+    expect((await send(firstBff, "run-plan", "ask-5", "allow_once")).status).toBe(400);
+    expect(resolvePlanAsk).toHaveBeenCalledTimes(5);
+    compatibility.mockResolvedValue({ features: new Set() });
+    expect((await send(firstBff, "run-plan", "ask-6", "approve")).status).toBe(503);
+    expect(resolvePlanAsk).toHaveBeenCalledTimes(5);
+  });
+
   it("returns 409 stale_run_control when a control targets an ended run", async () => {
     const stale = createApp({
       chat: {

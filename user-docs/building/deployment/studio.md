@@ -207,6 +207,28 @@ Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
 can be sent after the current run ends.
 
+### Review tool calls and plans
+
+When a tool needs permission, its card shows the tool name, reason, and arguments.
+Edit and Write cards show a bounded line diff when the arguments support one;
+**Raw arguments** remains available for inspection. Choose **Allow once**,
+**Always allow**, or **Deny**. A card without arguments allows only **Deny**.
+If Studio cannot confirm a verdict, refresh activity before deciding again.
+
+A **Plan review** card shows the proposed plan and any note. Choose **Approve &
+run**, **Auto-accept edits**, or **Iterate**. Iterate rejects this plan and keeps
+the chat in plan mode. If the exact plan control is unavailable, Studio explains
+why and leaves the review read-only.
+
+Escape handles one chat layer per press. An open dialog or menu closes first and
+returns focus to its trigger. Otherwise, Escape clears a text selection, denies
+a pending tool ask or iterates a plan review, closes a side panel, or stops the
+live run, in that order. With no higher layer and an unsent draft, press Escape,
+release it, then press again within half a second to clear the draft. The visible
+hint confirms the available action. Enter or Space on a focused verdict button
+selects that verdict without sending the draft. The
+**Keyboard shortcuts** page lists the same behavior.
+
 If a tool needs external authorization, select **Review authorization** in the
 chat. Select **Open authorization** to complete the external step in a
 new tab, then return to Studio and select **Recheck**. The panel shows the

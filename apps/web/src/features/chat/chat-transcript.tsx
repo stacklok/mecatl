@@ -2,8 +2,9 @@
 
 import { ExternalLink, MessageSquareText } from "lucide-react";
 import { memo, useCallback, useRef } from "react";
+import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
-import type { ChatMessage } from "./chat-state";
+import { approvalMatchesToolCall, type ChatMessage } from "./chat-state";
 import {
   type DelegationActivity,
   DelegationCardRow,
@@ -12,10 +13,23 @@ import {
 import { FailedTurnCard } from "./failed-turn-card";
 import { type ChatImage, chatImageDisplay } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
 import type { ToolActivity } from "./tool-activity";
+
+const EMPTY_APPROVALS: ApprovalRequest[] = [];
+
+function approvalsForMessage(
+  message: ChatMessage,
+  approvals: ApprovalRequest[],
+): ApprovalRequest[] {
+  const matched = approvals.filter((approval) =>
+    message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+  );
+  return matched.length ? matched : EMPTY_APPROVALS;
+}
 
 export interface TranscriptScrollMetrics {
   clientHeight: number;
@@ -29,6 +43,7 @@ export function isNearTranscriptBottom(metrics: TranscriptScrollMetrics): boolea
 }
 
 export interface TranscriptRowState {
+  approvals?: ApprovalRequest[];
   delegations?: DelegationActivity[];
   message: ChatMessage;
   showToolCalls: boolean;
@@ -41,6 +56,7 @@ export function shouldUpdateTranscriptRow(
   next: TranscriptRowState,
 ): boolean {
   return (
+    previous.approvals !== next.approvals ||
     previous.delegations !== next.delegations ||
     previous.message !== next.message ||
     previous.showToolCalls !== next.showToolCalls ||
@@ -50,11 +66,16 @@ export function shouldUpdateTranscriptRow(
 
 interface TranscriptRowProps extends TranscriptRowState {
   agentName: string;
+  approvalDisabled?: (approval: ApprovalRequest) => boolean;
+  approvalUncertain?: (approval: ApprovalRequest) => boolean;
   onOpenActivity?: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
   onOpenThread?: (message: ChatMessage) => void;
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
+  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
+  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
+  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   threadDisabled: boolean;
   threadSessionId?: string;
   userName: string;
@@ -62,6 +83,9 @@ interface TranscriptRowProps extends TranscriptRowState {
 
 function TranscriptRow({
   agentName,
+  approvalDisabled,
+  approvalUncertain,
+  approvals,
   delegations,
   message,
   onOpenActivity,
@@ -69,6 +93,9 @@ function TranscriptRow({
   onReviewAuthorization,
   onPreviewImage,
   onPreviewTool,
+  onRespondToApproval,
+  onRespondToPlan,
+  planUnavailableReason,
   showToolCalls,
   streaming,
   threadDisabled,
@@ -86,7 +113,11 @@ function TranscriptRow({
     message.delivery ||
     message.images?.length ||
     message.reasoning ||
-    (showToolCalls && message.tools?.length) ||
+    ((showToolCalls ||
+      approvals?.some((approval) =>
+        message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+      )) &&
+      message.tools?.length) ||
     message.authorizations?.length ||
     (delegations && delegations.length > 0) ||
     message.failure ||
@@ -164,50 +195,81 @@ function TranscriptRow({
       ) : streaming ? (
         <StreamingIndicator />
       ) : null}
-      {showToolCalls && message.tools && message.tools.length > 0 && (
-        <ol className="mt-3 space-y-2">
-          {message.tools.map((tool) => (
-            <li className="min-w-0 rounded-lg border bg-muted/20 p-3 text-xs" key={tool.id}>
-              <p className="font-mono font-semibold">Tool: {tool.name}</p>
-              <p className="mt-2 text-muted-foreground">Input</p>
-              <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
-                {tool.args || "{}"}
-              </pre>
-              {tool.output !== undefined && (
-                <>
-                  <p className="mt-2 text-muted-foreground">
-                    {tool.isError ? "Failed result" : "Result"}
-                  </p>
-                  <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
-                    {tool.output || "No output"}
-                  </pre>
-                  {onPreviewTool && (
-                    <button
-                      className="mt-2 underline"
-                      onClick={() => onPreviewTool(tool)}
-                      type="button"
-                    >
-                      Open result
-                    </button>
+      {(showToolCalls ||
+        approvals?.some((approval) =>
+          message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+        )) &&
+        message.tools &&
+        message.tools.length > 0 && (
+          <ol className="mt-3 space-y-2">
+            {message.tools.map((tool) => (
+              <li className="min-w-0 rounded-lg border bg-muted/20 p-3 text-xs" key={tool.id}>
+                <p className="font-mono font-semibold">Tool: {tool.name}</p>
+                <p className="mt-2 text-muted-foreground">Input</p>
+                <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
+                  {tool.args || "{}"}
+                </pre>
+                {tool.output !== undefined && (
+                  <>
+                    <p className="mt-2 text-muted-foreground">
+                      {tool.isError ? "Failed result" : "Result"}
+                    </p>
+                    <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
+                      {tool.output || "No output"}
+                    </pre>
+                    {onPreviewTool && (
+                      <button
+                        className="mt-2 underline"
+                        onClick={() => onPreviewTool(tool)}
+                        type="button"
+                      >
+                        Open result
+                      </button>
+                    )}
+                  </>
+                )}
+                {message.authorizations
+                  ?.filter(
+                    (authorization) =>
+                      authorization.callId === tool.id && authorization.runId === tool.runId,
+                  )
+                  .map((authorization) => (
+                    <AuthorizationReviewTrigger
+                      authorization={authorization}
+                      key={authorization.authorizationId}
+                      onReview={onReviewAuthorization ?? (() => undefined)}
+                    />
+                  ))}
+                {approvals
+                  ?.filter((approval) => approvalMatchesToolCall(approval, tool))
+                  .map((approval) =>
+                    approval.tool === "PresentPlan" ? (
+                      <PlanReviewCard
+                        approval={approval}
+                        disabled={
+                          !approval.controlTarget || (approvalDisabled?.(approval) ?? false)
+                        }
+                        key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                        onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
+                        uncertain={approvalUncertain?.(approval)}
+                        unavailableReason={planUnavailableReason?.(approval)}
+                      />
+                    ) : (
+                      <ApprovalPanel
+                        approval={approval}
+                        disabled={
+                          !approval.controlTarget || (approvalDisabled?.(approval) ?? false)
+                        }
+                        key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                        onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
+                        uncertain={approvalUncertain?.(approval)}
+                      />
+                    ),
                   )}
-                </>
-              )}
-              {message.authorizations
-                ?.filter(
-                  (authorization) =>
-                    authorization.callId === tool.id && authorization.runId === tool.runId,
-                )
-                .map((authorization) => (
-                  <AuthorizationReviewTrigger
-                    authorization={authorization}
-                    key={authorization.authorizationId}
-                    onReview={onReviewAuthorization ?? (() => undefined)}
-                  />
-                ))}
-            </li>
-          ))}
-        </ol>
-      )}
+              </li>
+            ))}
+          </ol>
+        )}
       {message.authorizations
         ?.filter(
           (authorization) =>
@@ -265,11 +327,17 @@ const MemoTranscriptRow = memo(
     previous.onOpenThread === next.onOpenThread &&
     previous.onReviewAuthorization === next.onReviewAuthorization &&
     previous.onPreviewImage === next.onPreviewImage &&
-    previous.onPreviewTool === next.onPreviewTool,
+    previous.onPreviewTool === next.onPreviewTool &&
+    previous.approvalDisabled === next.approvalDisabled &&
+    previous.approvalUncertain === next.approvalUncertain &&
+    previous.onRespondToApproval === next.onRespondToApproval,
 );
 
 export interface ChatTranscriptProps {
   agentName?: string;
+  approvalDisabled?: (approval: ApprovalRequest) => boolean;
+  approvalUncertain?: (approval: ApprovalRequest) => boolean;
+  approvals?: ApprovalRequest[];
   delegationsByMessageId?: Record<string, DelegationActivity[]>;
   messages: ChatMessage[];
   onOpenActivity?: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
@@ -277,6 +345,9 @@ export interface ChatTranscriptProps {
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
+  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
+  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
+  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   showToolCalls: boolean;
   streamingMessageId?: string;
   threadDisabled?: boolean;
@@ -287,6 +358,9 @@ export interface ChatTranscriptProps {
 /** Flat, left-aligned conversation rows; settled rows keep their React identity. */
 export function ChatTranscript({
   agentName = "Mecatl",
+  approvalDisabled,
+  approvalUncertain,
+  approvals = EMPTY_APPROVALS,
   delegationsByMessageId,
   messages,
   onOpenActivity,
@@ -294,6 +368,9 @@ export function ChatTranscript({
   onReviewAuthorization,
   onPreviewImage,
   onPreviewTool,
+  onRespondToApproval,
+  onRespondToPlan,
+  planUnavailableReason,
   showToolCalls,
   streamingMessageId,
   threadDisabled = false,
@@ -301,18 +378,28 @@ export function ChatTranscript({
   userName = "You",
 }: ChatTranscriptProps) {
   const actions = useRef({
+    approvalDisabled,
+    approvalUncertain,
     onOpenActivity,
     onOpenThread,
     onPreviewImage,
     onPreviewTool,
     onReviewAuthorization,
+    onRespondToApproval,
+    onRespondToPlan,
+    planUnavailableReason,
   });
   actions.current = {
+    approvalDisabled,
+    approvalUncertain,
     onOpenActivity,
     onOpenThread,
     onPreviewImage,
     onPreviewTool,
     onReviewAuthorization,
+    onRespondToApproval,
+    onRespondToPlan,
+    planUnavailableReason,
   };
   const openActivity = useCallback(
     (focus: DelegationFocus, opener: HTMLButtonElement) =>
@@ -335,12 +422,44 @@ export function ChatTranscript({
     (message: ChatMessage) => actions.current.onOpenThread?.(message),
     [],
   );
+  const respondToApproval = useCallback(
+    (approval: ApprovalRequest, verdict: ApprovalVerdict) =>
+      actions.current.onRespondToApproval?.(approval, verdict),
+    [],
+  );
+  const respondToPlan = useCallback(
+    (approval: ApprovalRequest, verdict: PlanVerdict) =>
+      actions.current.onRespondToPlan?.(approval, verdict),
+    [],
+  );
+  const planUnavailable = useCallback(
+    (approval: ApprovalRequest) => actions.current.planUnavailableReason?.(approval),
+    [],
+  );
+  const isApprovalDisabled = useCallback(
+    (approval: ApprovalRequest) => actions.current.approvalDisabled?.(approval) ?? false,
+    [],
+  );
+  const isApprovalUncertain = useCallback(
+    (approval: ApprovalRequest) => actions.current.approvalUncertain?.(approval) ?? false,
+    [],
+  );
+
+  const unmatched = approvals.filter(
+    (approval) =>
+      !messages.some((message) =>
+        message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+      ),
+  );
 
   return (
     <div className="min-w-0 max-w-full space-y-5">
       {messages.map((message) => (
         <MemoTranscriptRow
           agentName={agentName}
+          approvalDisabled={approvalDisabled ? isApprovalDisabled : undefined}
+          approvalUncertain={approvalUncertain ? isApprovalUncertain : undefined}
+          approvals={approvalsForMessage(message, approvals)}
           delegations={delegationsByMessageId?.[message.id]}
           key={message.id}
           message={message}
@@ -349,6 +468,9 @@ export function ChatTranscript({
           onReviewAuthorization={onReviewAuthorization ? reviewAuthorization : undefined}
           onPreviewImage={onPreviewImage ? previewImage : undefined}
           onPreviewTool={onPreviewTool ? previewTool : undefined}
+          onRespondToApproval={onRespondToApproval ? respondToApproval : undefined}
+          onRespondToPlan={onRespondToPlan ? respondToPlan : undefined}
+          planUnavailableReason={planUnavailableReason ? planUnavailable : undefined}
           showToolCalls={showToolCalls}
           streaming={message.id === streamingMessageId}
           threadDisabled={threadDisabled}
@@ -356,6 +478,26 @@ export function ChatTranscript({
           userName={userName}
         />
       ))}
+      {unmatched.map((approval) =>
+        approval.tool === "PresentPlan" ? (
+          <PlanReviewCard
+            approval={approval}
+            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+            onRespond={(verdict) => respondToPlan(approval, verdict)}
+            uncertain={approvalUncertain?.(approval)}
+            unavailableReason={planUnavailableReason?.(approval)}
+          />
+        ) : (
+          <ApprovalPanel
+            approval={approval}
+            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+            onRespond={(verdict) => respondToApproval(approval, verdict)}
+            uncertain={approvalUncertain?.(approval)}
+          />
+        ),
+      )}
     </div>
   );
 }
