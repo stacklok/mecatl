@@ -76,10 +76,7 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	// (1) Live-first.
 	if reg != nil && reg.meta != nil {
 		if entry, ok := reg.meta.lookup(providerID, modelID); ok {
-			if entry.anthropicThinking {
-				return entry.Reasoning, entry.Thinking.Known
-			}
-			return entry.Reasoning, true
+			return entry.Reasoning, !entry.reasoningUnknown
 		}
 	}
 	// Preserve the configured default's presence floor for non-Messages protocols.
