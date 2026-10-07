@@ -22,6 +22,7 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 | `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
 | `shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter` | Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal). |
 | `↑` | With empty input, bring queued follow-ups back for editing. |
+| `←` | With empty input and no overlay or approval open, open the window session list (`Sessions`; remappable). See [Work with several sessions in one window](./sessions.md#work-with-several-sessions-in-one-window). |
 | `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
 | physical `esc` twice within 500ms | While idle, clear the draft, including staged media and pastes. Requires enhanced key-event support and a release between presses; repeats do not count. Other views and active runs take precedence. Not remappable; use `ctrl+u` otherwise. |
 | `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
@@ -140,6 +141,7 @@ Put client-owned bindings in `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally
 keymap:
   Toolcalls: ctrl+f10
   ExpandConversation: ctrl+f9
+  Sessions: alt+s # optional override for the default left arrow
 ```
 
 Or override an action for one launch:

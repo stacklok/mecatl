@@ -101,6 +101,9 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
+	if req.GetNewWorktree() {
+		opts = append(opts, WithNewWorktree())
+	}
 	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
 	// through the ONE Service seam, which classifies through the same validator the
 	// ACP surface uses and then applies the deployment policy — so this handler
@@ -439,10 +442,13 @@ func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteS
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
-	if err := h.svc.DeleteSession(ctx, session.SessionID(req.GetSessionId())); err != nil {
+	result, err := h.svc.DeleteSessionWithOptions(ctx, session.SessionID(req.GetSessionId()), DeleteSessionOptions{
+		StopActive: req.GetStopActive(), RemoveWorktree: req.GetRemoveWorktree(),
+	})
+	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.DeleteSessionResponse{}, nil
+	return &mecatlv1.DeleteSessionResponse{WorktreeRemoved: result.WorktreeRemoved, WorktreeRetainedReason: result.WorktreeRetainedReason}, nil
 }
 
 // CompactSession applies one out-of-band compaction pass to an owned session.

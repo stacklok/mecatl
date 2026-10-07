@@ -312,7 +312,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 				}
 				failureRow := requireSessionsCommandRow(ctx, t, cl, failureID)
 				m = updateSessionsCommandModel(t, m, client.SessionsListedMsg{Sessions: []client.SessionListItem{failureRow}}, nil)
-				if err := cl.DeleteSession(ctx, failureID); err != nil {
+				if _, err := cl.DeleteSession(ctx, failureID, client.DeleteSessionOptions{}); err != nil {
 					t.Fatalf("delete stale fork target: %v", err)
 				}
 				m = updateSessionsCommandModel(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"}, func(msg tea.Msg) tea.Msg { return msg })

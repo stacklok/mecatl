@@ -13,9 +13,12 @@ import (
 const (
 	localDefaultPlacementID       = "local-default"
 	localDefaultPlacementRevision = "configured-v1"
-	noFSPlacementID               = "no-fs"
-	noFSPlacementRevision         = "nofs-v1"
-	defaultPlacementScope         = server.PlacementScope("deployment")
+	// localWorktreePlacementRevision is the commit-stable identity of a local
+	// worktree ref (ADR 0374 Decision 2); HEAD is display metadata only.
+	localWorktreePlacementRevision = "worktree-v1"
+	noFSPlacementID                = "no-fs"
+	noFSPlacementRevision          = "nofs-v1"
+	defaultPlacementScope          = server.PlacementScope("deployment")
 )
 
 func referenceIntentLifecycle(provider server.PlacementProvider) server.ReferenceIntentLifecycle {
@@ -44,6 +47,10 @@ func (p *profilePlacementProvider) ValidatePlacement(ctx context.Context) error 
 	return nil
 }
 func (p *profilePlacementProvider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+	if req.NewWorktree {
+		// ADR 0374 admits server-created worktrees for local default placement only.
+		return server.PlacementBinding{}, server.ErrWorktreeCreationUnavailable
+	}
 	if req.Selector.IsNoFS() {
 		return p.local.Bind(ctx, req)
 	}
@@ -127,11 +134,20 @@ type localPlacementProvider struct {
 	runnerForRoot func(string) tool.CommandRunner
 	worktrees     server.WorktreeLister
 	selectors     *server.WorktreeSelectorIssuer
+	// creator makes server-created worktrees (ADR 0374); nil when the
+	// deployment's worktree gate is closed.
+	creator *worktreeCreator
 }
 
 func (p *localPlacementProvider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
 	if req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	if req.NewWorktree {
+		if !req.Selector.IsDefault() {
+			return server.PlacementBinding{}, server.ErrInvalidPlacementSelection
+		}
+		return p.bindNewWorktree(ctx)
 	}
 
 	switch {
@@ -163,7 +179,8 @@ func (p *localPlacementProvider) Reattach(ctx context.Context, req server.Placem
 		return p.bindNoFS()
 	}
 	if choice, ok := p.currentWorktree(ctx, req.Ref); ok {
-		return p.bindWorktree(choice)
+		// Reattach returns the exact persisted ref, legacy HEAD revisions included.
+		return p.bindWorktreeRef(choice, req.Ref)
 	}
 	return server.PlacementBinding{}, server.ErrPlacementNotFound
 }
@@ -237,16 +254,51 @@ func (p *localPlacementProvider) currentWorktree(ctx context.Context, ref sessio
 	if err != nil {
 		return server.Worktree{}, false
 	}
+	// ADR 0374 Decision 2: a worktree other than the configured root is matched
+	// by path, so a commit in it does not break its sessions. Its revision must
+	// still be one this provider minted (worktree-v1) or a legacy HEAD object id;
+	// anything else fails closed. A ref naming the configured root keeps the
+	// exact HEAD match it was bound with.
+	byPath := ref.ID != p.root
+	if byPath && !validLocalWorktreeRevision(ref.Revision) {
+		return server.Worktree{}, false
+	}
 	for _, choice := range current {
-		if choice.Path == ref.ID && choice.Head == ref.Revision {
+		if choice.Path == ref.ID && (byPath || choice.Head == ref.Revision) {
 			return choice, true
 		}
 	}
 	return server.Worktree{}, false
 }
 
+// validLocalWorktreeRevision accepts the commit-stable worktree identity and a
+// well-formed lowercase hex git object id (SHA-1 or SHA-256) persisted before it.
+func validLocalWorktreeRevision(revision string) bool {
+	if revision == localWorktreePlacementRevision {
+		return true
+	}
+	if len(revision) != 40 && len(revision) != 64 {
+		return false
+	}
+	for _, c := range revision {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// bindWorktree binds a newly selected worktree. Worktrees other than the
+// configured root get the commit-stable revision (ADR 0374 Decision 2).
 func (p *localPlacementProvider) bindWorktree(choice server.Worktree) (server.PlacementBinding, error) {
-	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
+	revision := localWorktreePlacementRevision
+	if choice.Path == p.root {
+		revision = choice.Head
+	}
+	return p.bindWorktreeRef(choice, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: revision})
+}
+
+func (p *localPlacementProvider) bindWorktreeRef(choice server.Worktree, ref session.EnvironmentRef) (server.PlacementBinding, error) {
 	ws := p.workspace(choice.Path)
 	if ws == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable

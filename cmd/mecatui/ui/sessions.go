@@ -19,6 +19,18 @@ import (
 // mirrored here as a bare string since ui/ imports no engine/... packages.
 const sessionStateIdle = "idle"
 
+// sessionOpen says how a multi-session window session starts (session_window.go).
+// The zero value is the launch session, which honours Deps' startup inputs
+// (resume, browse, initial prompt). attachID adopts an existing session without
+// creating one; the window applies its authoritative transcript right after
+// construction. create runs the normal ListModels→CreateSession startup with the
+// request's mode, selection, and NewWorktree intent. It lives here because the
+// surface placement gate homes all session-vocabulary declarations in this file.
+type sessionOpen struct {
+	attachID string
+	create   *client.CreateSessionRequest
+}
+
 type sessionDetailsView struct {
 	ID            string
 	DebugTargetID string
@@ -296,6 +308,21 @@ func (m Model) loadSessionTranscript(row client.SessionListItem, inspect bool) (
 	mm, _, _ := m.applySurfaceIntent(state.takeSurfaceIntent())
 	m = mm.(Model)
 	return m, cmd, true
+}
+
+// handOffToWindow gives a chat opened from /sessions to the window root when this
+// window session already has its own chat: the root adds it as another session
+// (or switches to it when it is already open) instead of replacing this one.
+func (m Model) handOffToWindow(intent sessionsTranscriptAdoptionIntent) (Model, tea.Cmd, bool) {
+	if m.deps.window == nil || m.sessionID == "" {
+		return m, nil, false
+	}
+	m.closeModal()
+	m.phase = phaseIdle
+	cmd := m.prompt.Focus()
+	m.refreshView()
+	open := windowOpenSavedMsg(intent)
+	return m, tea.Batch(cmd, func() tea.Msg { return open }), true
 }
 
 func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded conversation, snapshot client.SessionSnapshot) (tea.Model, tea.Cmd, bool) {

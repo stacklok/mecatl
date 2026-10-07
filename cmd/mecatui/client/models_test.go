@@ -311,3 +311,24 @@ func TestModeHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateSessionWithSendsNewWorktree(t *testing.T) {
+	fake := &fakeModelsClient{createResp: &mecatlv1.CreateSessionResponse{SessionId: "wt"}, caps: &mecatlv1.ServerCapabilities{CreateWorktrees: true}}
+	cl := newFakeClient(fake)
+	sel := ModelSelection{ProviderID: "p", ModelID: "m", ReasoningEffort: "high"}
+	id, caps, _, err := cl.CreateSessionWith(context.Background(), CreateSessionRequest{Mode: "plan", Selection: sel, NewWorktree: true})
+	if err != nil || id != "wt" || !caps.CreateWorktrees {
+		t.Fatalf("id = %q, caps = %+v, err = %v", id, caps, err)
+	}
+	req := fake.lastCreate
+	if !req.GetNewWorktree() || req.GetMode() != ModeFromString("plan") || req.GetProviderId() != "p" || req.GetModelId() != "m" || req.GetReasoningEffort() != "high" {
+		t.Fatalf("request = %+v", req)
+	}
+
+	if _, _, _, err := cl.CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, sel); err != nil {
+		t.Fatal(err)
+	}
+	if fake.lastCreate.GetNewWorktree() {
+		t.Fatalf("legacy CreateSession sent new_worktree: %+v", fake.lastCreate)
+	}
+}

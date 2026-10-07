@@ -185,9 +185,9 @@ func (f *fakeSessionManager) RenameSession(_ context.Context, id, title string) 
 	return f.renameSnapshot, f.renameErr
 }
 
-func (f *fakeSessionManager) DeleteSession(_ context.Context, id string) error {
+func (f *fakeSessionManager) DeleteSession(_ context.Context, id string, _ client.DeleteSessionOptions) (client.DeleteSessionResult, error) {
 	f.deletedID = id
-	return f.deleteErr
+	return client.DeleteSessionResult{}, f.deleteErr
 }
 
 func TestSessionsCopyViewAndCapabilityHints(t *testing.T) {

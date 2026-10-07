@@ -174,6 +174,7 @@ var errorRegistry = []errorCodeEntry{
 	// transport pairing is a property of the sentinel, not of one route.
 	{Sentinel: port.ErrCursorExpired, Code: "cursor_expired", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Event-log cursor is from a superseded log generation"},
 	{Sentinel: port.ErrCursorMalformed, Code: "cursor_malformed", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Event-log cursor is malformed"},
+	{Sentinel: ErrSessionStopTimeout, Code: "session_stop_timeout", GRPC: codes.DeadlineExceeded, HTTPStatus: http.StatusGatewayTimeout, Title: "Session run did not stop in time"},
 	{Sentinel: ErrSessionDeleteUnsupported, Code: "session_delete_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Session deletion is not supported by the configured store"},
 	{Sentinel: port.ErrSessionMetadataCursorRestart, Code: "session_metadata_cursor_restart", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Session metadata cursor must restart"},
 	{Sentinel: port.ErrSessionMetadataPagingUnsupported, Code: "session_metadata_paging_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Session metadata paging is not supported"},

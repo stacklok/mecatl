@@ -29,6 +29,10 @@ var (
 	ErrPlacementChanged = errors.New("server: placement changed during bind")
 	// ErrInvalidPlacementBinding reports unsafe or internally inconsistent provider output.
 	ErrInvalidPlacementBinding = errors.New("server: invalid placement binding")
+	// ErrWorktreeCreationUnavailable reports that a requested server-created
+	// worktree cannot be made here (gate closed, unborn HEAD). It is a failed
+	// precondition, not a transient placement outage.
+	ErrWorktreeCreationUnavailable = fmt.Errorf("%w: worktree creation unavailable", ErrFailedPrecondition)
 )
 
 const readinessRemediation = "run 'mecated microvm doctor' and inspect the mecatui/server diagnostics log, then retry"
@@ -142,6 +146,41 @@ type PlacementBindRequest struct {
 	// BindingID is the final server-minted session identity. Providers that
 	// allocate durable environments use it as their idempotency/reference key.
 	BindingID session.SessionID
+	// NewWorktree asks the provider to create a fresh worktree of its configured
+	// repository and bind it (ADR 0374 Decision 1). It is legal only with the
+	// default selector on a create; a provider that cannot create worktrees
+	// must fail rather than fall back to its default.
+	NewWorktree bool
+}
+
+// PlacementWorktreeCreator is the optional provider capability behind
+// PlacementBindRequest.NewWorktree and ServerCapabilities.create_worktrees.
+type PlacementWorktreeCreator interface {
+	CanCreateWorktrees() bool
+}
+
+// WorktreeOwnership is a provider's derived verdict on one exact local ref
+// (ADR 0374 Decision 3). Clean is meaningful only when ServerCreated is true: no
+// uncommitted or untracked changes.
+type WorktreeOwnership struct {
+	ServerCreated bool
+	Clean         bool
+}
+
+// PlacementWorktreeRemover is the optional provider capability behind
+// DeleteSessionRequest.remove_worktree (ADR 0374 Decision 4). RemoveWorktree
+// removes only a server-created worktree, never forcibly, and keeps its branch.
+// A provider without it makes worktree removal unavailable.
+//
+// WorktreeOwnership is the authoritative delete-time verdict and may run git
+// (worktree listing and a cleanliness check). WorktreeServerCreated is the
+// cheap listing-time projection behind SessionInventoryCapabilities.remove_worktree:
+// it must not run git or inspect worktree contents, so it may report true for a
+// path that the delete-time WorktreeOwnership later refuses.
+type PlacementWorktreeRemover interface {
+	WorktreeOwnership(ctx context.Context, req PlacementReattachRequest) (WorktreeOwnership, error)
+	WorktreeServerCreated(ctx context.Context, req PlacementReattachRequest) (bool, error)
+	RemoveWorktree(ctx context.Context, req PlacementReattachRequest) error
 }
 
 // PlacementMetadata is the bounded, display-safe provider projection returned
@@ -373,7 +412,7 @@ func sanitizePlacementProviderError(err error) error {
 		public = readinessErr
 	} else {
 		for _, candidate := range []error{
-			ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
+			ErrWorktreeCreationUnavailable, ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
 			ErrPlacementUnavailable, ErrPlacementChanged, ErrInvalidPlacementBinding,
 		} {
 			if errors.Is(err, candidate) {
@@ -432,14 +471,14 @@ func configuredPlacementBinder(cfg Config) (*PlacementBinder, error) {
 	return NewPlacementBinder(cfg.PlacementProvider)
 }
 
-func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal, bindingID session.SessionID) (string, *PlacementBinding, error) {
+func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal, bindingID session.SessionID, newWorktree bool) (string, *PlacementBinding, error) {
 	selector := DefaultPlacement()
 	if profile == ProfileNoFS {
 		selector = NoFSPlacement()
 	}
 	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
-		Operation: PlacementOperationCreate, BindingID: bindingID,
+		Operation: PlacementOperationCreate, BindingID: bindingID, NewWorktree: newWorktree,
 	})
 	if err != nil {
 		s.logPlacementProviderError(ctx, "bind", err)
@@ -718,6 +757,12 @@ func (b *PlacementBinder) Bind(ctx context.Context, req PlacementBindRequest) (P
 	if !req.Selector.Valid() || req.Scope == "" || !validPlacementOperation(req.Operation) {
 		return PlacementBinding{}, ErrInvalidPlacementSelection
 	}
+	if req.NewWorktree && (!req.Selector.IsDefault() || req.Operation != PlacementOperationCreate) {
+		return PlacementBinding{}, ErrInvalidPlacementSelection
+	}
+	if creator, ok := b.provider.(PlacementWorktreeCreator); req.NewWorktree && (!ok || !creator.CanCreateWorktrees()) {
+		return PlacementBinding{}, ErrWorktreeCreationUnavailable
+	}
 
 	binding, err := b.provider.Bind(ctx, clonePlacementRequest(req))
 	if err != nil {
@@ -845,9 +890,41 @@ func canonicalPlacementMetadata(binding PlacementBinding) session.PlacementMetad
 	return session.PlacementMetadata{
 		Kind:     sanitizePlacementDisplay(string(binding.Ref.Kind), maxPlacementKindRunes),
 		Label:    sanitizePlacementDisplay(binding.Metadata.Label, maxPlacementNameRunes),
-		Branch:   sanitizePlacementDisplay(binding.Metadata.Branch, maxPlacementNameRunes),
+		Branch:   sanitizePlacementBranch(binding.Metadata.Branch),
 		Revision: sanitizePlacementDisplay(binding.Metadata.Revision, maxPlacementIdentityRunes),
 	}
+}
+
+// Server-created worktree naming (ADR 0374 Decision 1): directory
+// mecatl-<8 lowercase hex> on branch mecatl/<directory name>.
+const (
+	ManagedWorktreeNamePrefix   = "mecatl-"
+	ManagedWorktreeBranchPrefix = "mecatl/"
+)
+
+// ValidManagedWorktreeName reports whether name is a server-generated worktree
+// name: ManagedWorktreeNamePrefix followed by exactly 8 lowercase hex digits.
+func ValidManagedWorktreeName(name string) bool {
+	suffix, ok := strings.CutPrefix(name, ManagedWorktreeNamePrefix)
+	if !ok || len(suffix) != 8 {
+		return false
+	}
+	for _, c := range suffix {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizePlacementBranch is sanitizePlacementDisplay for branch names, with one
+// narrow exemption from the slash ban: exactly the server-generated
+// mecatl/<ValidManagedWorktreeName> branch, which can name no path.
+func sanitizePlacementBranch(value string) string {
+	if name, ok := strings.CutPrefix(value, ManagedWorktreeBranchPrefix); ok && ValidManagedWorktreeName(name) {
+		return value
+	}
+	return sanitizePlacementDisplay(value, maxPlacementNameRunes)
 }
 
 func sanitizePlacementDisplay(value string, maxRunes int) string {

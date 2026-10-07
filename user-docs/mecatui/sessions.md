@@ -3,7 +3,7 @@ sidebar_position: 4
 title: Manage sessions
 sidebar_label: Sessions
 description:
-  Resume, browse, inspect, fork, and maintain Mecatl sessions from mecatui.
+  Switch, resume, browse, inspect, fork, and delete Mecatl sessions from mecatui.
 ---
 
 # Manage sessions
@@ -120,6 +120,88 @@ including while the agent is responding or waiting on a tool. It shows whether
 full session ID. Press `esc` to close the overlay and return focus to the
 conversation. Opening the overlay does not cancel, pause, or steer the run.
 
+## Work with several sessions in one window
+
+One `mecatui` window can hold several sessions. Press `←` on an empty prompt to
+open the window session list; the footer shows the key as `← sessions`.
+Switching to another session does not stop the one you leave: a background
+session keeps running and can pause for approval.
+
+The list fills the screen. Each row shows a status, a label, the worktree branch
+for a session outside the default checkout, and when the session last changed.
+The status is **running**, **needs approval**, **failed**, or **idle**;
+completed and cancelled turns show as idle. The label is the session title.
+When two sessions in the window share a title, each label adds the session's
+short handle. A background approval marks its row **needs approval** and adds a
+badge to the footer; switching to that session opens the request.
+
+Tabs above the table count the sessions with each status. Press `tab` or
+`shift+tab` to show only one status, or all sessions again. Beside the table
+(below it in a narrow terminal), the details for the selected session show its
+last message, its placement, model, and token use, and your latest prompt.
+
+The list holds only sessions opened in this window: the startup session, new
+ones created from the list, and chats opened from `/sessions`. It is not saved
+when `mecatui` exits. To bring in a saved session, press `o` in the list or run
+`/sessions`; opening a chat that is already in the window switches to its row.
+
+|Key in the list|Action|
+|-|-|
+|`↑` / `↓`|Move between rows.|
+|`tab` / `shift+tab`|Show the next or previous status tab.|
+|`enter`|Switch to the selected session.|
+|`n`|Start a session in the default checkout and switch to it.|
+|`w`|Start a session in a fresh worktree and switch to it.|
+|`d`|Delete the selected session after confirmation.|
+|`o`|Open the `/sessions` picker.|
+|`esc` or `←`|Close the list.|
+|`ctrl+c`|Quit `mecatui` with one press. If other sessions are running or waiting for approval, you are asked first.|
+
+To open the list with another key, remap the `Sessions` action; see
+[Remap actions](./keybindings.md#remap-actions).
+
+### Start a session in a new worktree
+
+Press `w` to start a session in a worktree that the server creates for it. The
+server creates the worktree from the current `HEAD` of the main checkout, on a
+new branch named `mecatl/<NAME>`, and the row shows that branch. The worktree
+lives outside the repository on the server host, at
+`$XDG_STATE_HOME/mecatl/worktrees/<REPO>-<HASH>/<NAME>` (normally under
+`~/.local/state`), where `<REPO>` is the repository directory name and
+`<HASH>` identifies the configured root. The client never receives the path.
+
+The `w` action appears only when the server can create worktrees: a local
+deployment with a configured workspace, a shell, and a trusted project. If the
+server cannot create the worktree, the list shows the error and adds no row. A
+commit in the worktree does not break the session bound to it.
+
+### Delete a session
+
+Press `d` on a row and confirm with `y`. Deleting a session that is running or
+waiting for approval stops it first. The row leaves the window and the stored
+session is removed. Deleting the active session switches to the next row;
+deleting the last one opens a new session. An older server cannot stop and
+delete in one step, so `mecatui` cancels the session's run, waits for it to
+end, and then deletes the session. Press `n` or `Esc` to stop waiting and keep
+the session.
+
+For a session in a worktree that the server created, the confirmation also
+offers **delete and remove worktree** (`r`). The server removes the worktree
+only when no other session or schedule uses it and it has no uncommitted or
+untracked changes. Removal never forces: it deletes ignored files in the
+worktree but keeps the `mecatl/<NAME>` branch, so committed work remains. When
+the server refuses, for example because of uncommitted changes, the list shows
+the reason and keeps the session. If the stopped run changed the worktree
+before it ended, the chat is deleted and the list reports **chat deleted,
+worktree kept** with the reason.
+
+### Quit with background sessions
+
+Quitting ends every session's stream in the window. If another session is
+running or waiting for approval, `mecatui` asks once and names how many sessions
+it will cancel. Press `y` to quit or `n` to stay. The sessions remain stored, and
+you can reopen them with `/sessions`.
+
 ## Browse and maintain stored sessions
 
 Open the session inventory without creating a session:
@@ -205,7 +287,9 @@ reference.
 
 Selectors expire when the server restarts. `mecatui` relists expired selectors,
 and a relist or fork failure leaves the source chat active. Sessions without a
-filesystem cannot move to a worktree through this command.
+filesystem cannot move to a worktree through this command. To start a new
+session in a fresh worktree instead, see
+[Start a session in a new worktree](#start-a-session-in-a-new-worktree).
 
 ## Diagnose a stored session
 

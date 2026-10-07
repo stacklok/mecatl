@@ -80,7 +80,7 @@ func TestListSessionsFromProtoCarriesPerActionReasons(t *testing.T) {
 		Capabilities: &mecatlv1.SessionInventoryCapabilities{Reasons: &mecatlv1.SessionInventoryActionReasons{
 			PublicChat: "inspect_only_kind", Inspect: "unknown", CopyId: "unknown",
 			ViewTranscript: "transcript_unavailable", Fork: "awaiting_approval",
-			Rename: "active_elsewhere", Delete: "storage_unsupported",
+			Rename: "active_elsewhere", Delete: "storage_unsupported", RemoveWorktree: "not_server_created",
 		}},
 	}})
 	if len(got) != 1 {
@@ -90,7 +90,7 @@ func TestListSessionsFromProtoCarriesPerActionReasons(t *testing.T) {
 		PublicChat: CapabilityReasonInspectOnlyKind, Inspect: CapabilityReasonUnknown,
 		CopyID: CapabilityReasonUnknown, ViewTranscript: CapabilityReasonTranscriptUnavailable,
 		Fork: CapabilityReasonAwaitingApproval, Rename: CapabilityReasonActiveElsewhere,
-		Delete: CapabilityReasonStorageUnsupported,
+		Delete: CapabilityReasonStorageUnsupported, RemoveWorktree: CapabilityReasonNotServerCreated,
 	}
 	if !reflect.DeepEqual(got[0].Reasons, want) {
 		t.Fatalf("reasons = %+v, want %+v", got[0].Reasons, want)

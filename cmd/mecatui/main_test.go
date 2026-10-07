@@ -17,7 +17,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
@@ -109,30 +108,40 @@ func TestEmbeddedReadinessCallbacksReachFirstSessionModel(t *testing.T) {
 			composition = cfg
 			return nil
 		},
-		runProgram: func(_ context.Context, model ui.Model) (tea.Model, error) {
+		runProgram: func(_ context.Context, model tea.Model) (tea.Model, error) {
 			const progress = "Preparing microVM first session"
 			composition.MicroVMReadinessObserver(microvmmanager.StagePrepare, progress)
-			batch, ok := model.Init()().(tea.BatchMsg)
-			if !ok {
-				t.Fatalf("Init message = %T, want tea.BatchMsg", model.Init()())
-			}
+			// The window root tags and nests session commands, and its status
+			// listener blocks, so run each command with a bound and flatten batches.
+			queue := []tea.Cmd{model.Init()}
 			seen := false
-			for _, cmd := range batch {
-				msg := cmd()
-				updated, _ := model.Update(msg)
-				model = updated.(ui.Model)
-				if strings.Contains(model.View().Content, progress) {
-					seen = true
-					break
+			for len(queue) > 0 && !seen {
+				cmd := queue[0]
+				queue = queue[1:]
+				if cmd == nil {
+					continue
 				}
+				result := make(chan tea.Msg, 1)
+				go func() { result <- cmd() }()
+				var msg tea.Msg
+				select {
+				case msg = <-result:
+				case <-time.After(2 * time.Second):
+					continue
+				}
+				if batch, ok := msg.(tea.BatchMsg); ok {
+					queue = append(queue, batch...)
+					continue
+				}
+				model, _ = model.Update(msg)
+				seen = strings.Contains(model.View().Content, progress)
 			}
 			if !seen {
 				t.Fatalf("app readiness progress did not reach UI model:\n%s", model.View().Content)
 			}
 
 			composition.MicroVMReadinessFailed(microvmmanager.StagePrepare)
-			updated, _ := model.Update(client.ConnectErrMsg{Err: errors.New("placement unavailable: private detail")})
-			model = updated.(ui.Model)
+			model, _ = model.Update(activeSessionMsg(model, client.ConnectErrMsg{Err: errors.New("placement unavailable: private detail")}))
 			view := model.View().Content
 			if !strings.Contains(view, "mecated microvm doctor") || strings.Contains(view, "private detail") {
 				t.Fatalf("app readiness failure did not reach redacted UI remediation:\n%s", view)

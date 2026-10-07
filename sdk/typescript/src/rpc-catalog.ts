@@ -476,9 +476,9 @@ const rpcCatalogRows = [
     service: "HarnessService",
     method: "DeleteSession",
     shape: "unary",
-    backingService: "DeleteSession",
+    backingService: "DeleteSessionWithOptions",
     grpc: grpc(HarnessService.method.deleteSession),
-    http: http("POST", "/v1/sessions/{id}/delete", ["id=session_id"], [], "none", "json"),
+    http: http("POST", "/v1/sessions/{id}/delete", ["id=session_id"], [], "optional-json", "json"),
   }),
   rpc({
     key: "HarnessService.CompactSession",

@@ -243,6 +243,9 @@ type createSessionBody struct {
 	// one authorized target; it never copies target conversation state.
 	DebugTargetSessionID string   `json:"debug_target_session_id,omitempty"`
 	DebugMCPServers      []string `json:"debug_mcp_servers,omitempty"`
+	// NewWorktree asks the server to create and bind a fresh worktree (ADR 0374).
+	// It is an intent only; no path, name, or branch crosses the wire.
+	NewWorktree bool `json:"new_worktree,omitempty"`
 	// MCPServers are CLIENT-PROVIDED streaming-HTTP MCP servers mounted for this
 	// session's lifetime, mirroring the proto field (issue #821, ADR 0237). Empty
 	// is byte-identical to today. Whether the field is accepted at all is a
@@ -539,6 +542,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if len(body.DebugMCPServers) > 0 {
 		opts = append(opts, WithDebugMCP(body.DebugMCPServers))
 	}
+	if body.NewWorktree {
+		opts = append(opts, WithNewWorktree())
+	}
 	// Client-provided MCP servers (issue #821, ADR 0237): the SAME Service seam the
 	// gRPC handler calls, so both transports classify through one validator and
 	// read one deployment policy. No filtering or classification happens here.
@@ -611,28 +617,47 @@ type successorBody struct {
 	ReasoningEffort  string  `json:"reasoning_effort,omitempty"`
 }
 
-func decodeOptionalStrictJSON(r *http.Request, dst any) error {
+// maxOptionalBodyBytes caps the small optional JSON bodies of the delete,
+// clear, and fork routes (a few flags, a selector, a title, and ids).
+const maxOptionalBodyBytes = 16 << 10 // 16 KiB
+
+// decodeOptionalStrictJSON decodes an optional, size-capped, single strict JSON
+// object into dst. On failure it writes the error response (413 for an
+// oversized body, 400 otherwise) and returns false.
+func decodeOptionalStrictJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if r.ContentLength == 0 {
-		return nil
+		return true
 	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("multiple JSON values")
+	r.Body = http.MaxBytesReader(w, r.Body, maxOptionalBodyBytes)
+	err := func() error {
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(dst); err != nil {
+			return err
 		}
-		return err
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			if err == nil {
+				return errors.New("multiple JSON values")
+			}
+			return err
+		}
+		return nil
+	}()
+	if err == nil {
+		return true
 	}
-	return nil
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return false
+	}
+	writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+	return false
 }
 
 func (h *HTTPHandler) clearSession(w http.ResponseWriter, r *http.Request) {
 	var body successorBody
-	if err := decodeOptionalStrictJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+	if !decodeOptionalStrictJSON(w, r, &body) {
 		return
 	}
 	selector := ""
@@ -649,8 +674,7 @@ func (h *HTTPHandler) clearSession(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) forkSession(w http.ResponseWriter, r *http.Request) {
 	var body successorBody
-	if err := decodeOptionalStrictJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+	if !decodeOptionalStrictJSON(w, r, &body) {
 		return
 	}
 	selector := ""
@@ -1256,12 +1280,33 @@ func (h *HTTPHandler) renameSession(w http.ResponseWriter, r *http.Request) {
 
 // deleteSession handles POST /v1/sessions/{id}/delete. DELETE on the base path
 // intentionally retains CloseSession's resource-release-only semantics.
+//
+// The optional JSON body {stop_active, remove_worktree} carries the ADR 0374
+// options. The response is 204 unless remove_worktree was requested, when it
+// is 200 with the worktree outcome.
 func (h *HTTPHandler) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DeleteSession(r.Context(), session.SessionID(r.PathValue("id"))); err != nil {
+	var body struct {
+		StopActive     bool `json:"stop_active,omitempty"`
+		RemoveWorktree bool `json:"remove_worktree,omitempty"`
+	}
+	if !decodeOptionalStrictJSON(w, r, &body) {
+		return
+	}
+	result, err := h.svc.DeleteSessionWithOptions(r.Context(), session.SessionID(r.PathValue("id")), DeleteSessionOptions{
+		StopActive: body.StopActive, RemoveWorktree: body.RemoveWorktree,
+	})
+	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if !body.RemoveWorktree {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		WorktreeRemoved        bool   `json:"worktree_removed"`
+		WorktreeRetainedReason string `json:"worktree_retained_reason"`
+	}{result.WorktreeRemoved, result.WorktreeRetainedReason})
 }
 
 // compactSession handles the bodyless POST /v1/sessions/{id}/compact action.

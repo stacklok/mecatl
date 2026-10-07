@@ -292,6 +292,9 @@ type Config struct {
 	// SessionCleared drops process-local state tied to a source session after a
 	// successful ClearSession successor publication. nil is inert.
 	SessionCleared func(session.SessionID)
+	// StopActiveTimeout bounds how long DeleteSession{stop_active} waits for a
+	// cancelled run to settle. Zero means the 10-second default (ADR 0374).
+	StopActiveTimeout time.Duration
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
@@ -982,7 +985,7 @@ type Service struct {
 	// it is separate from runEntryMu because engine rebuilds may already hold that
 	// run-entry lock.
 	brokerAttachments map[session.SessionID]brokercontract.Attachment
-	brokerMu          keyedMutex
+	brokerMu          keyedMutex[session.SessionID]
 	// authorizationExpiry is Service-owned and guarded by mu.
 	authorizationExpiry map[session.SessionID]*authorizationExpiry
 	// beforeAuthorizationContinuationStart is an inert test synchronization seam.
@@ -1075,7 +1078,7 @@ type Service struct {
 	// not reentrant; a per-session lock also keeps unrelated sessions' resumes
 	// concurrent. The keyedMutex frees a key once no caller holds it, so it never grows
 	// unbounded.
-	resumeMu keyedMutex
+	resumeMu keyedMutex[session.SessionID]
 
 	// runEntryMu serializes the per-session RUN-ENTRY critical section (ADR 0030
 	// Layer 3, the use-after-close guard): the engine-resolve (engineAndEnvironmentFor,
@@ -1090,7 +1093,7 @@ type Service struct {
 	// (a keyedMutex, freed when no caller holds a key) so unrelated sessions never
 	// serialize; lock order is resumeMu → runEntryMu (resumeFromAwaiting takes both;
 	// StartRunContent takes only runEntryMu) so the two never deadlock.
-	runEntryMu keyedMutex
+	runEntryMu keyedMutex[session.SessionID]
 
 	// replayedApprovals tracks the session ids whose learned-rule store has already
 	// been repopulated from the durable EventLog this process lifetime (cloud-native
@@ -1148,7 +1151,7 @@ type Service struct {
 	// holds the key) so all three are strictly ordered relative to one
 	// another for the same id: exactly one of loss-handling, trial-reconcile,
 	// or close-teardown runs at a time, never interleaved mid-flight.
-	leaseLossMu keyedMutex
+	leaseLossMu keyedMutex[session.SessionID]
 
 	// leaseDisabled is set (once) when Config.SessionLease reports
 	// ErrLeaseUnsupported: the seam never works on this backend, so the run-entry
@@ -1424,9 +1427,9 @@ func (st *runState) recordExactApprovalContext(ctx context.Context, askID string
 // holder unlocks. It is used to make the awaiting-approval resume decision atomic per
 // session (see Service.resumeMu): only one ResumeApproval is ever spawned for a given
 // awaiting session even under concurrent Approve calls.
-type keyedMutex struct {
+type keyedMutex[K comparable] struct {
 	mu    sync.Mutex
-	locks map[session.SessionID]*keyedMutexEntry
+	locks map[K]*keyedMutexEntry
 }
 
 type keyedMutexEntry struct {
@@ -1438,10 +1441,10 @@ type keyedMutexEntry struct {
 // drops the key when no other caller holds it. The pattern is: ref under the guard,
 // then block on the per-key mutex OUTSIDE the guard (so distinct keys never serialize
 // and the guard is never held across the contended wait).
-func (k *keyedMutex) lock(key session.SessionID) func() {
+func (k *keyedMutex[K]) lock(key K) func() {
 	k.mu.Lock()
 	if k.locks == nil {
-		k.locks = make(map[session.SessionID]*keyedMutexEntry)
+		k.locks = make(map[K]*keyedMutexEntry)
 	}
 	e, ok := k.locks[key]
 	if !ok {
@@ -1620,6 +1623,13 @@ func (s *Service) bindModelInventory() {
 func (s *Service) placementDiscoveryAvailable() bool {
 	_, ok := s.cfg.PlacementProvider.(PlacementDiscoverer)
 	return ok
+}
+
+// worktreeCreationAvailable reports whether CreateSession may request a fresh
+// server-created worktree. Only the provider knows its gate (ADR 0374).
+func (s *Service) worktreeCreationAvailable() bool {
+	creator, ok := s.cfg.PlacementProvider.(PlacementWorktreeCreator)
+	return ok && creator.CanCreateWorktrees()
 }
 
 // BindPlacement atomically authorizes and resolves a placement through the
@@ -1816,6 +1826,17 @@ type createSessionOpts struct {
 	// publication even when the provider has no detachable attachment. ACP editor
 	// buffers are the only such create-time override.
 	placementEnvironmentOverride bool
+	// newWorktree asks the provider to create and bind a fresh server-created
+	// worktree instead of the deployment default (ADR 0374 Decision 1).
+	newWorktree bool
+}
+
+// WithNewWorktree binds the new session to a fresh server-created worktree
+// (ADR 0374). It is admitted only when the provider reports worktree creation
+// (PlacementWorktreeCreator) and the profile is the default; otherwise the
+// create fails with ErrWorktreeCreationUnavailable before any side effect.
+func WithNewWorktree() CreateSessionOption {
+	return func(o *createSessionOpts) { o.newWorktree = true }
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -2376,6 +2397,9 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
+	if opts.newWorktree && (profile != ProfileDefault || opts.placement != nil || opts.debugTargetID != "" || !s.worktreeCreationAvailable()) {
+		return nil, fmt.Errorf("%w: a new worktree requires the default profile on a local deployment that can create worktrees", ErrWorktreeCreationUnavailable)
+	}
 	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil
 	if definitelyPerSession {
 		if opts.debugTargetID != "" {
@@ -2469,7 +2493,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID)
+		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID, opts.newWorktree)
 		if err != nil {
 			return nil, err
 		}
@@ -2819,6 +2843,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
 		Worktrees:         s.placementDiscoveryAvailable(),
+		CreateWorktrees:   s.worktreeCreationAvailable(),
 		Reflection:        s.cfg.ReflectSession != nil,
 		LearningProposals: s.cfg.Proposals != nil,
 		LearnedSkills:     s.cfg.LearnedSkills != nil,
@@ -3935,29 +3960,14 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 // sidecars. Absence and foreign ownership are both idempotent success, preventing
 // deletion from becoming an ownership oracle. Infrastructure failures remain loud.
 func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error {
-	absent, err := s.managementOwnershipPreflight(ctx, id, true)
-	if err != nil || absent {
-		return err
-	}
-	unlock := s.runEntryMu.lock(id)
-	defer unlock()
-	_, absent, err = s.managementTargetAwaitingDrain(ctx, id, true)
-	if err != nil || absent {
-		return err
-	}
-	prunable, ok := s.cfg.Store.(port.PrunableStore)
-	if !ok {
-		return ErrSessionDeleteUnsupported
-	}
-	release, err := s.acquireMutationLease(ctx, id)
-	if err != nil {
-		return err
-	}
-	defer release()
-	sess, absent, err := s.managementTargetAwaitingDrain(ctx, id, true)
-	if err != nil || absent {
-		return err
-	}
+	_, err := s.DeleteSessionWithOptions(ctx, id, DeleteSessionOptions{})
+	return err
+}
+
+// deleteManagedSessionLocked removes one authorized, loaded session. The caller
+// holds runEntryMu for its id and the mutation lease.
+func (s *Service) deleteManagedSessionLocked(ctx context.Context, sess *session.Session, prunable port.PrunableStore) error {
+	id := sess.ID
 	referenceDelete, err := s.prepareReferenceDelete(ctx, sess)
 	if err != nil {
 		return err
@@ -9392,6 +9402,9 @@ type SessionInventoryCapabilities struct {
 	Fork                    bool
 	Rename                  bool
 	Delete                  bool
+	// RemoveWorktree reports that delete may also remove the row's unshared
+	// server-created worktree (ADR 0374). Dirtiness is checked at delete time.
+	RemoveWorktree bool
 }
 
 // SessionInventoryActionReasons carries one closed reason for each disabled action.
@@ -9403,6 +9416,7 @@ type SessionInventoryActionReasons struct {
 	Fork           CapabilityReason
 	Rename         CapabilityReason
 	Delete         CapabilityReason
+	RemoveWorktree CapabilityReason
 }
 
 // CapabilityReason is a stable machine-readable explanation for a disabled
@@ -9423,6 +9437,13 @@ const (
 	CapabilityReasonStorageUnsupported CapabilityReason = "storage_unsupported"
 	// CapabilityReasonUnknown means the row cannot prove action eligibility.
 	CapabilityReasonUnknown CapabilityReason = "unknown"
+	// CapabilityReasonNotServerCreated means the row's placement is not a
+	// worktree the server created.
+	CapabilityReasonNotServerCreated CapabilityReason = "not_server_created"
+	// CapabilityReasonShared means another session or schedule binds the worktree.
+	CapabilityReasonShared CapabilityReason = "shared"
+	// CapabilityReasonUnavailable means worktree removal is not offered here.
+	CapabilityReasonUnavailable CapabilityReason = "unavailable"
 )
 
 const (
@@ -9491,6 +9512,7 @@ func inventoryCapabilities(kind session.SessionKind, id session.SessionID, state
 		PublicChat: CapabilityReasonUnknown, CopyID: CapabilityReasonUnknown,
 		ViewTranscript: CapabilityReasonTranscriptUnavailable, Fork: CapabilityReasonUnknown,
 		Rename: CapabilityReasonUnknown, Delete: CapabilityReasonUnknown,
+		RemoveWorktree: CapabilityReasonUnavailable,
 	}
 	if caps.CopyID {
 		reasons.CopyID = ""
@@ -9626,6 +9648,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 		}
 		out.Sessions = append(out.Sessions, s.summaryFromDiscoveryMeta(meta))
 	}
+	s.annotateRemoveWorktree(ctx, out.Sessions, page.Sessions)
 	out.NextCursor, err = encodeInventoryCursor(page.NextCursor)
 	if err != nil {
 		return ListSessionsPage{}, fmt.Errorf("%w: encode session inventory cursor: %v", ErrInternal, err)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -22,10 +23,30 @@ import (
 // (the test cannot cross-import a `_test` package).
 func wsRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := isolatedGitCommand(t, dir, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
+}
+
+// isolatedGitCommand is a fixture git invocation with no ambient git
+// configuration: every inherited GIT_* variable (GIT_CONFIG_COUNT/KEY/VALUE,
+// GIT_DIR, ...) is dropped, global and system config are disabled, and HOME is a
+// test-owned directory. Fixture behavior (for example, whether a repository hook
+// fires) then depends only on the repository the test built.
+func isolatedGitCommand(t *testing.T, dir string, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(key, "GIT_") || key == "HOME" || key == "XDG_CONFIG_HOME" {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = append(env, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "HOME="+t.TempDir())
+	return cmd
 }
 
 func wsInitRepo(t *testing.T, dir string) {

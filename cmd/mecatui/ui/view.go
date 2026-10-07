@@ -94,6 +94,9 @@ func (m Model) View() tea.View {
 func (m Model) renderBody() string {
 	m.hits.clear()
 	m.metrics.clear()
+	if m.windowOverlay != "" {
+		return m.windowOverlay
+	}
 	if m.phase == phaseAuthorizing {
 		return m.renderMCPAuthorization()
 	}
@@ -448,6 +451,11 @@ func (m Model) renderFooter() string {
 	// server slash-command expansion is disabled.
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands"
+	if m.deps.window != nil && m.windowBadge == "" {
+		// The window session list is one key away; lead with it. A window
+		// badge already names the key, so it replaces this hint.
+		help = hk.sessions + " sessions · " + help
+	}
 	if m.pasteGateOpen() {
 		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " session details"
 	}
@@ -468,6 +476,10 @@ func (m Model) renderFooter() string {
 	// left status differs by phase), so it is the robust place for the hint.
 	if m.quitArmed {
 		help = m.deps.Theme.Style("ctxWarn").Render(hk.quit+" again to quit") + " · " + help
+	}
+	// A window badge (another session needs approval) leads the same line.
+	if m.windowBadge != "" {
+		help = m.deps.Theme.Style("askTitle").Render(m.windowBadge) + " · " + help
 	}
 
 	width := m.widthOr()

@@ -254,6 +254,7 @@ type helpKeys struct {
 	clearPrompt            string // ClearPrompt — clear the unsent prompt
 	cancel                 string // Cancel — cancel the running turn
 	editBack               string // EditBack — pull the queued follow-up back into the textarea
+	sessions               string // Sessions — open the window session list
 	quit                   string // Quit
 	quitD                  string // QuitD — the EOF-habit quit (double-press, empty prompt only)
 	suspend                string // Suspend — suspend the TUI to the shell (fg resumes)
@@ -336,6 +337,8 @@ func navGlyph(chord string) string {
 		return "↑"
 	case keyMenuDown:
 		return "↓"
+	case "left":
+		return "←"
 	default:
 		return chord
 	}
@@ -373,6 +376,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		clearPrompt:            firstKey(km.ClearPrompt, "ctrl+u"),
 		cancel:                 firstKey(km.Cancel, "esc"),
 		editBack:               navGlyph(firstKey(km.EditBack, "up")),
+		sessions:               navGlyph(firstKey(km.Sessions, "left")),
 		quit:                   firstKey(km.Quit, "ctrl+c"),
 		quitD:                  firstKey(km.QuitD, "ctrl+d"),
 		suspend:                firstKey(km.Suspend, "ctrl+z"),

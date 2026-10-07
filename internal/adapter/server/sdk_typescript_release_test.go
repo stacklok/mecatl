@@ -214,6 +214,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"CreateSessionWithMCP",
 		"CreateSessionWithProvider",
 		"CreateTeamOnDefaultPlacement",
+		"DeleteSession", // option-free Go convenience over DeleteSessionWithOptions
 		"DeleteSessionForRetention",
 		"DeleteSessionForRetentionCandidate",
 		"Diagnostics",

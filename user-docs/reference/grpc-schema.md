@@ -736,6 +736,7 @@ CreateSessionRequest opens a new session.
 | `debug_target_session_id` | `string` |  |  | debug_target_session_id creates a separate diagnostic no-FS session. |
 | `debug_mcp_servers` | `string` | repeated |  | debug_mcp_servers explicitly selects already-configured server-global streaming-HTTP MCP servers for this debug session. Legal only with a debug target; names are bounded and unique. No URL, header, or inline MCP config is accepted, and selection never implies publication authority. |
 | `mcp_servers` | `McpServerSpec` | repeated |  | mcp_servers are CLIENT-PROVIDED streaming-HTTP MCP servers to mount for the lifetime of this session, via a per-session engine. Empty (the default) is byte-identical to today: the session takes the shared-engine path.  LISTENER-SCOPED (ADR 0237 / ADR 0248): accepting an MCP endpoint plus its auth headers from an API caller combines a remote principal with the server&#39;s ambient outbound network authority, so it is a DEPLOYMENT policy, not an inference from the request. A deployment whose API listeners are all local (a UNIX socket, a disabled HTTP listener) permits this field; a deployment with any network-facing API listener refuses every non-empty value with the typed `client_mcp_unsupported` error (UNIMPLEMENTED / 501) rather than mounting it. The refusal is the SERVER&#39;s, so it holds against a client that never checked. A client discovers whether the field is usable from `mcp_servers_on_create` in GetCompatibilityInfo.features.  Transport is streaming-HTTP ONLY, on EVERY listener and regardless of that policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md: &#34;No stdio MCP, ever&#34; — mecatl never spawns an MCP server process). |
+| `new_worktree` | `bool` |  |  | new_worktree asks the server to create a fresh worktree of the deployment&#39;s configured repository and bind this session to it (ADR 0374). It is an intent, not a placement: the client sends no path, name, branch, or selector, and the server owns location and naming. Rejected with FAILED_PRECONDITION, creating nothing, when worktree creation is unavailable (see ServerCapabilities.create_worktrees) or profile is &#34;no-fs&#34;. The new branch is returned only as display metadata on CreateSessionResponse.placement. |
 
 
 
@@ -837,6 +838,8 @@ CreateTeamResponse returns the new team&#39;s id and the enrolled initial roster
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `session_id` | `string` |  |  |  |
+| `stop_active` | `bool` |  |  | stop_active lets deletion proceed on a running or awaiting main session (ADR 0374): the server takes the run-entry lock and the real session lease, cancels any live run (waiting at most 10 seconds), and discards a parked ask. A lease held by another process fails with FAILED_PRECONDITION and delegation-child ids are refused. False keeps the existing refusal. |
+| `remove_worktree` | `bool` |  |  | remove_worktree also removes the session&#39;s worktree when it is a clean server-created worktree that no other persisted session or schedule binds. The worktree&#39;s branch is always kept. An unsafe pre-check fails with FAILED_PRECONDITION and changes nothing. |
 
 
 
@@ -845,7 +848,11 @@ CreateTeamResponse returns the new team&#39;s id and the enrolled initial roster
 
 
 
-This message has no fields.
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `worktree_removed` | `bool` |  |  | worktree_removed is true when the session&#39;s worktree directory was removed. |
+| `worktree_retained_reason` | `string` |  |  | worktree_retained_reason explains why a requested removal kept the worktree after the session was deleted: &#34;dirty&#34; or &#34;shared&#34; (found at the post-stop re-check) or &#34;remove_failed&#34;. Empty otherwise. |
+
 
 
 
@@ -2926,6 +2933,7 @@ old clients ignore and new clients reading an old server see as false.
 | `workspace_enrollment` | `bool` |  |  | workspace_enrollment is true when protected workspace services must be admitted as one complete bundle before the first prompt. |
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
+| `create_worktrees` | `bool` |  |  | create_worktrees is true when CreateSessionRequest.new_worktree is admitted: the default placement is local and the server could also list worktrees (configured workspace, shell, and trusted project; ADR 0374). Additive: an older server leaves it false and the client hides its new-worktree action. |
 
 
 
@@ -3002,6 +3010,7 @@ requiring a client to duplicate server eligibility policy.
 | `fork` | `string` |  |  |  |
 | `rename` | `string` |  |  |  |
 | `delete` | `string` |  |  |  |
+| `remove_worktree` | `string` |  |  | remove_worktree is &#34;not_server_created&#34;, &#34;shared&#34;, or &#34;unavailable&#34; when capabilities.remove_worktree is false. |
 
 
 
@@ -3022,6 +3031,7 @@ SessionInventoryCapabilities is the picker-safe action posture for one row.
 | `rename` | `bool` |  |  |  |
 | `delete` | `bool` |  |  |  |
 | `reasons` | `SessionInventoryActionReasons` |  |  | reasons carries one closed machine-readable reason per disabled action. |
+| `remove_worktree` | `bool` |  |  | remove_worktree reports whether DeleteSession may also remove this session&#39;s worktree (a server-created worktree no other session or schedule binds; ADR 0374). Dirtiness is checked at delete time, not projected here. |
 
 
 

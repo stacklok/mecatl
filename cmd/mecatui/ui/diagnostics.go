@@ -138,7 +138,7 @@ func (m Model) capabilityDiagnosticsReport() string {
 }
 
 func (m Model) statusCommandDiagnosticsReport() string {
-	source, ok := m.deps.StatusSource.(customization.CommandDiagnosticsSource)
+	source, ok := unwrapStatusSource(m.deps.StatusSource).(customization.CommandDiagnosticsSource)
 	if !ok {
 		return ""
 	}

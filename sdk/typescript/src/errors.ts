@@ -74,6 +74,7 @@ export const MECATL_ERROR_CODES = [
   "session_metadata_cursor_restart",
   "session_metadata_paging_unsupported",
   "session_not_found",
+  "session_stop_timeout",
   "stale_run_control",
   "storage_health_backend",
   "team_not_found",

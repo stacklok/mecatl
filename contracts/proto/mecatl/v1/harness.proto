@@ -595,6 +595,15 @@ message CreateSessionRequest {
   // policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md:
   // "No stdio MCP, ever" — mecatl never spawns an MCP server process).
   repeated McpServerSpec mcp_servers = 11;
+
+  // new_worktree asks the server to create a fresh worktree of the deployment's
+  // configured repository and bind this session to it (ADR 0374). It is an
+  // intent, not a placement: the client sends no path, name, branch, or
+  // selector, and the server owns location and naming. Rejected with
+  // FAILED_PRECONDITION, creating nothing, when worktree creation is unavailable
+  // (see ServerCapabilities.create_worktrees) or profile is "no-fs". The new
+  // branch is returned only as display metadata on CreateSessionResponse.placement.
+  bool new_worktree = 12;
 }
 
 // McpServerSpec is one client-provided MCP server on CreateSessionRequest. It
@@ -807,6 +816,11 @@ message ServerCapabilities {
   // mcp_refresh is true when direct/global MCP source reconciliation is wired.
   // It is mutually exclusive with workspace_enrollment in a valid deployment.
   bool mcp_refresh = 30;
+  // create_worktrees is true when CreateSessionRequest.new_worktree is admitted:
+  // the default placement is local and the server could also list worktrees
+  // (configured workspace, shell, and trusted project; ADR 0374). Additive: an
+  // older server leaves it false and the client hides its new-worktree action.
+  bool create_worktrees = 31;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -1140,6 +1154,10 @@ message SessionInventoryCapabilities {
   bool delete = 9;
   // reasons carries one closed machine-readable reason per disabled action.
   SessionInventoryActionReasons reasons = 10;
+  // remove_worktree reports whether DeleteSession may also remove this session's
+  // worktree (a server-created worktree no other session or schedule binds;
+  // ADR 0374). Dirtiness is checked at delete time, not projected here.
+  bool remove_worktree = 11;
 }
 
 // SessionInventoryActionReasons explains each disabled inventory action without
@@ -1152,6 +1170,9 @@ message SessionInventoryActionReasons {
   string fork = 5;
   string rename = 6;
   string delete = 7;
+  // remove_worktree is "not_server_created", "shared", or "unavailable" when
+  // capabilities.remove_worktree is false.
+  string remove_worktree = 8;
 }
 
 // ListSessionsResponse carries one bounded stored-session inventory page, sorted
@@ -1297,9 +1318,27 @@ message RenameSessionResponse {
 
 message DeleteSessionRequest {
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  // stop_active lets deletion proceed on a running or awaiting main session
+  // (ADR 0374): the server takes the run-entry lock and the real session lease,
+  // cancels any live run (waiting at most 10 seconds), and discards a parked
+  // ask. A lease held by another process fails with FAILED_PRECONDITION and
+  // delegation-child ids are refused. False keeps the existing refusal.
+  bool stop_active = 2;
+  // remove_worktree also removes the session's worktree when it is a clean
+  // server-created worktree that no other persisted session or schedule binds.
+  // The worktree's branch is always kept. An unsafe pre-check fails with
+  // FAILED_PRECONDITION and changes nothing.
+  bool remove_worktree = 3;
 }
 
-message DeleteSessionResponse {}
+message DeleteSessionResponse {
+  // worktree_removed is true when the session's worktree directory was removed.
+  bool worktree_removed = 1;
+  // worktree_retained_reason explains why a requested removal kept the worktree
+  // after the session was deleted: "dirty" or "shared" (found at the post-stop
+  // re-check) or "remove_failed". Empty otherwise.
+  string worktree_retained_reason = 2;
+}
 
 // ClearSessionRequest creates an empty-history successor.
 message ClearSessionRequest {

@@ -295,6 +295,26 @@ func (c *Client) CreateSession(ctx context.Context, mode mecatlv1.PermissionMode
 	})
 }
 
+// CreateSessionRequest is the proto-free CreateSession input. Mode uses the
+// ModeFromString vocabulary. NewWorktree asks the server to bind a fresh
+// server-created worktree (ADR 0374); gate it on Capabilities.CreateWorktrees.
+type CreateSessionRequest struct {
+	Mode        string
+	Selection   ModelSelection
+	NewWorktree bool
+}
+
+// CreateSessionWith is CreateSession driven by a CreateSessionRequest.
+func (c *Client) CreateSessionWith(ctx context.Context, req CreateSessionRequest) (string, Capabilities, ResolvedModel, error) {
+	return c.createSession(ctx, &mecatlv1.CreateSessionRequest{
+		Mode:            ModeFromString(req.Mode),
+		ProviderId:      req.Selection.ProviderID,
+		ModelId:         req.Selection.ModelID,
+		ReasoningEffort: req.Selection.ReasoningEffort,
+		NewWorktree:     req.NewWorktree,
+	})
+}
+
 // SessionHandleWidth is the fixed maximum ASCII-column width of every ordinary
 // session handle shown by mecatui.
 const SessionHandleWidth = 12
