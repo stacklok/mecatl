@@ -120,9 +120,6 @@ func (s *Session) AdoptBrokerCatalogue(ref BrokerSessionRef, catalogue BrokerCat
 }
 
 func (s *Session) applyBrokerProjection(a BrokerAccess) error {
-	a.IndependentTools = slices.Clone(a.IndependentTools)
-	a.BrokerTools = slices.Clone(a.BrokerTools)
-	a.Current = cloneBrokerHostAttempt(a.Current)
 	authority := s.Authority.Clone()
 	authority.CapabilitySet.Tools = unionToolNames(a.IndependentTools, a.BrokerTools)
 	if err := s.validateBrokerAccess(a, authority); err != nil {
@@ -163,12 +160,4 @@ func (s *Session) WithdrawBrokerAccess() error {
 	a.Withdrawn = true
 	a.BrokerTools = []string{}
 	return s.applyBrokerProjection(a)
-}
-
-func cloneBrokerHostAttempt(a *BrokerHostAttempt) *BrokerHostAttempt {
-	if a == nil {
-		return nil
-	}
-	copy := *a
-	return &copy
 }

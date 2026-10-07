@@ -42,6 +42,13 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			attempt, err := s.PrepareBrokerInvocation(ref, cat, NewToolCall("attempted", "mcp__test__x", []byte(`{}`)), time.Unix(2, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.DispatchBrokerInvocation(attempt); err != nil {
+				t.Fatal(err)
+			}
 			if err := s.WithdrawBrokerAccess(); err != nil {
 				t.Fatal(err)
 			}
@@ -53,7 +60,7 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 				t.Fatalf("withdrawal tools: %v want %v", s.Authority.CapabilitySet.Tools, want)
 			}
 			a, _ := s.BrokerAccess()
-			if !a.Withdrawn || a.BrokerTools == nil || len(a.BrokerTools) != 0 {
+			if !a.Withdrawn || a.BrokerTools == nil || len(a.BrokerTools) != 0 || a.Current == nil || a.Current.CallID != "attempted" {
 				t.Fatalf("withdrawal: %+v", a)
 			}
 			if err := s.AdoptBrokerCatalogue(ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), []string{"mcp__test__y"}); err == nil {
@@ -76,7 +83,7 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 				t.Fatal(err)
 			}
 			a, _ = s.BrokerAccess()
-			if a.Withdrawn || a.Current != nil || !reflect.DeepEqual(a.IndependentTools, want) {
+			if a.Withdrawn || a.Current == nil || a.Current.CallID != "attempted" || !reflect.DeepEqual(a.IndependentTools, want) {
 				t.Fatalf("reenrollment: %+v", a)
 			}
 			if _, ok := s.PendingWorkspaceEnrollment(); ok {
@@ -157,7 +164,7 @@ func TestBrokerAuthorityRestoreValidation(t *testing.T) {
 		{"withdrawn contribution", func(a *BrokerAccess) { a.Withdrawn = true }},
 		{"projection mismatch", func(a *BrokerAccess) { a.IndependentTools = []string{} }},
 		{"bad reference", func(a *BrokerAccess) { a.Session = "bad" }},
-		{"bad attempt", func(a *BrokerAccess) { a.Current = &BrokerHostAttempt{CallID: "call", Digest: [32]byte{1}} }},
+		{"bad fence", func(a *BrokerAccess) { a.Pending = "unattempted" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, _ := s.BrokerAccess()

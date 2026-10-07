@@ -1,7 +1,6 @@
 package sessnap_test
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
@@ -75,11 +74,6 @@ func TestBrokerAuthoritySnapshotAndFold(t *testing.T) {
 				}
 				ref := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 				if err := s.AdoptBrokerCatalogue(session.BrokerSessionRef(ref), session.BrokerCatalogueRef(ref), session.BrokerConnectionRef(ref), time.Unix(100, 0), []string{"mcp__test__x"}); err != nil {
-					t.Fatal(err)
-				}
-				access, _ := s.BrokerAccess()
-				access.Current = &session.BrokerHostAttempt{Attempt: session.NewBrokerAttempt(), CallID: "call", Digest: sha256.Sum256([]byte("prepared call"))}
-				if err := s.RestoreBrokerAccess(access); err != nil {
 					t.Fatal(err)
 				}
 				if withdrawn {
