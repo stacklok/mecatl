@@ -100,10 +100,9 @@ func TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces(t *testing.T) {
 		"Taskfile.yml":         "go            >= 1.27",
 		"docs/architecture.md": "on a **go 1.27** toolchain",
 		"docs/architecture/deployment-and-hardening.md":               "toolchain is **go 1.27**",
-		"user-docs/install.md":                                        "requires Go 1.27 or later",
-		"user-docs/building/getting-started/demo.md":                  "**Go 1.27 or newer**",
-		"user-docs/building/getting-started/first-agent.md":           "Go 1.27 or newer",
-		"user-docs/building/deployment/embed-engine.md":               "go 1.27",
+		"user-docs/_partials/release-archives-and-source.mdx":         "requires Go 1.27 or later",
+		"user-docs/building/go/demo.md":                               "**Go 1.27 or newer**",
+		"user-docs/building/go/first-agent.md":                        "Go 1.27 or newer",
 		"sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile": "FROM golang:1.27-bookworm AS build",
 	} {
 		body, err := os.ReadFile(filepath.Join(root, name))

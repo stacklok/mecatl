@@ -37,7 +37,7 @@ Studio is a consumer of Mecatl's public surface, not part of the Go build:
 - **The browser never talks to Mecatl.** `web/` imports neither the SDK nor its
   generated protocol types (Biome rejects `@stacklok-oss/mecatl-sdk`, `/node`, and
   `/gen` there). Only the BFF holds a credential; the browser holds four cookies (see
-  the [security model](../user-docs/building/deployment/studio.md)).
+  the [security model](../user-docs/operating/studio.md)).
 - **One local gate.** `task studio:check` (lint, typecheck, offline tests,
   generated-artifact drift check) must pass for any change under `apps/`. CI runs those
   steps plus a dependency audit, integration tests against a spawned `mecated --mock`,
@@ -113,7 +113,7 @@ reported as `mode: "static"` / `"none"`; inside the image they additionally requ
 
 Deploying Studio, its full environment reference, the image, browser login, and the
 security model are documented on the public
-[Mecatl Studio web UI](../user-docs/building/deployment/studio.md) page; this README covers
+[Mecatl Studio web UI](../user-docs/operating/studio.md) page; this README covers
 only local development. All configuration is environment variables read once at startup:
 `MECATL_*` describe the target, `STUDIO_*` are Studio's own.
 `.env.example` lists them with comments; `pnpm dev` reads `../.env` when it exists, and

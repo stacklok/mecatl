@@ -1,0 +1,8 @@
+{
+  "label": "Extension points",
+  "position": 5,
+  "link": {
+    "type": "doc",
+    "id": "building/go/extension-points/index"
+  }
+}

@@ -1202,6 +1202,16 @@ tasks:
             --path contracts/proto/mecatl/v1/schedule.proto
         silent: true
 
+  docs:server-cli:
+    desc: Generate the server CLI reference from trusted help with operator environment overrides removed
+    cmds:
+      - python3 scripts/server-cli-reference.py
+
+  docs:server-cli:check:
+    desc: Check server CLI reference freshness without modifying its output
+    cmds:
+      - python3 scripts/server-cli-reference.py --check
+
   docs:check:
     desc: Gate instruction-file hygiene, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
@@ -1224,6 +1234,7 @@ tasks:
     cmds:
       - task: docs:configref
       - task: docs:grpc-ref
+      - task: docs:server-cli
       - task: sdk:docs
       - task: docs:check
 

@@ -17,7 +17,7 @@ and
 [`contracts/proto/mecatl/v1/schedule.proto`](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto).
 For behavior, authentication, status codes, and operational guidance, see the
 [gRPC API reference](/reference/grpc-api.md). For help choosing between gRPC and
-HTTP/SSE, see [Connect with gRPC or HTTP](/building/deployment/grpc-http.md).
+HTTP/SSE, see [Connect with gRPC or HTTP](/building/grpc-http.md).
 
 ## Services
 

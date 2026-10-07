@@ -9,7 +9,7 @@ sidebar_position: 3
 
 This is the detailed operator and wire reference. For the client-integration
 entry point, shared event lifecycle, and gRPC comparison, start with
-[Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
+[Drive via gRPC / HTTP](/building/grpc-http.md).
 
 The HTTP adapter wraps the same service. Every event is emitted as one SSE
 `data:` line carrying the generated proto Go value marshalled by `encoding/json`
@@ -68,7 +68,7 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`GET /v1/sessions`|—|`200` `{sessions: [...]}` — path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|—|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
 |`GET /v1/sessions/{id}/events`|—|`200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips). A replayed `user_prompt.synthetic` value of `true` identifies a server-authored continuation; absent/false means genuine or legacy-unknown. Never infer origin from text. Empty for an unknown id; `501` when no durable `EventLog` is wired|
-|`GET /v1/sessions/{id}/watch?cursor=&run_id=`|—|`200` `text/event-stream` — **durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0250-durable-cursors-and-watch.md)). Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing|
+|`GET /v1/sessions/{id}/watch?cursor=&run_id=`|—|`200` `text/event-stream` — **durable replay-then-follow**. Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing|
 |`POST /v1/sessions/{id}/rename`|`{title}`|`200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease|
 |`POST /v1/sessions/{id}/delete`|—|`204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete|
 |`POST /v1/sessions/{id}/compact`|no body|`200` `{"compacted":true}` when one forced pass saved shorter model history, or `{"compacted":false}` for a successful no-op; `412` for an active/awaiting/non-main session, `409` when another replica holds its lease|
@@ -79,7 +79,7 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/prompt`|`{text}`|`200` `text/event-stream` of events; rejected while failed-step retry intent is pending|
 |`POST /v1/sessions/{id}/retry`|no body|`200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible|
 |`POST /v1/sessions/{id}/controls/resolve-ask`|`{expected_run_id, ask_id, verdict, review_id?, guardrail_kind?}`; `verdict` is `deny`, `allow_once`, or `allow_always`|`200` `{run_id, ask_id}`; `409 stale_run_control` when the run is no longer live|
-|`POST /v1/sessions/{id}/plan:approve`|`{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}`|`200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session|
+|`POST /v1/sessions/{id}/plan:approve`|`{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}`|`200` `text/event-stream` — atomically resolve a parked **plan-approval** ask: on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session|
 |`POST /v1/sessions/{id}/controls/cancel`|`{expected_run_id}`|`200` `{run_id}`; `409 stale_run_control` when the run is no longer live|
 |`POST /v1/sessions/{id}/cancel-child`|`{child_id}`|`204`; `404` for an unknown / already-finished child|
 |`POST /v1/sessions/{id}/controls/steer`|`{expected_run_id, text?, parts?, message_id?}`; text or at least one part is required|`200` `{outcome, run_id, message_id}`; `409 stale_run_control` when the run is no longer live|
@@ -88,11 +88,10 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
 
 When durable-follower admission is full, the watch route retains its HTTP 200
-response and emits a terminal `event: error` frame with code
-`watch_capacity`. Resume from the last processed cursor with the same
-`run_id` filter and bounded backoff. `watch_lagging` uses the same resumable
-framing for a client that does not consume the bounded delivery buffer quickly
-enough.
+response and emits a terminal `event: error` frame with code `watch_capacity`.
+Resume from the last processed cursor with the same `run_id` filter and bounded
+backoff. `watch_lagging` uses the same resumable framing for a client that does
+not consume the bounded delivery buffer quickly enough.
 
 `WorkspaceEnrollment` contains only `enrollment_id`, `status`,
 `required_services`, and the ephemeral `presentation_url` when a new enrollment
@@ -105,8 +104,7 @@ session's lifetime, via a per-session engine. Each entry is
 `{name, url, type?, headers?}` — the HTTP mirror of the gRPC
 `CreateSessionRequest.mcp_servers` field, documented in full in
 [the gRPC API guide](./grpc-api.md). The short version: client MCP is a separate
-listener-scoped outbound-network/credential policy
-([ADR 0248](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0248-sdk-compatibility-and-error-contract.md)).
+listener-scoped outbound-network/credential policy.
 Only a `--grpc-unix-socket` daemon with `--http-addr ""` accepts it — which
 means the HTTP surface never does, since serving HTTP at all is a TCP listener;
 every other deployment, loopback included, returns `501` /
@@ -360,23 +358,22 @@ safe.
 
 ### Approve / deny a pending ask
 
-Run controls address one exact run. Every event a run emits carries that run's
-`run_id`; pass it as `expected_run_id`. Check for the `prompt_free_controls`
+Run controls target a specific run. Each run event includes its `run_id`;
+pass that value as the required `expected_run_id`. Check for the `prompt_free_controls`
 feature before using the `controls/*` routes.
 
 When the stream emits a `permission.ask` with an `ask.ask_id`, resolve it on a
 **second** connection while the SSE stream is still open:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/resolve-ask \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/resolve-ask \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run_id-from-the-event>","ask_id":"<ask_id-from-the-event>","verdict":"allow_once"}'
-{"run_id":"<run_id>","ask_id":"<ask_id>"}
+       -d '{"expected_run_id":"<RUN_ID>","ask_id":"<ASK_ID>","verdict":"allow_once"}'
+{"run_id":"<RUN_ID>","ask_id":"<ASK_ID>"}
 ```
 
-`verdict` is `allow_once`, `allow_always`, or `deny`. On a deny, the model
-receives the denial reason and adapts. A contextual guardrail ask also needs the
-`review_id` and `guardrail_kind` it was presented with. If the named run has
+`verdict` is `allow_once`, `allow_always`, or `deny`. For a contextual
+guardrail ask, also pass the `review_id` and `guardrail_kind` from the ask. If the named run has
 finished or been replaced, the server returns `409` with the problem code
 `stale_run_control`.
 
@@ -386,8 +383,7 @@ In plan mode, once the model has presented a complete plan it calls the
 `PresentPlan` signalling tool, which parks the run `awaiting` on a
 **plan-approval** ask (`ask.tool == "PresentPlan"` — the tool name is the
 discriminator; no provenance field on the proto). Resolve it atomically with
-`POST /v1/sessions/{id}/plan:approve`
-([ADR 0069](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0069-plan-approval-gate.md)):
+`POST /v1/sessions/{id}/plan:approve`:
 
 ```sh
 $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/plan:approve \
@@ -415,10 +411,10 @@ headless/cross-process composition of resume + continuation into one stream.
 ### Cancel a run
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/cancel \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/cancel \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run-id>"}'
-{"run_id":"<run-id>"}
+       -d '{"expected_run_id":"<RUN_ID>"}'
+{"run_id":"<RUN_ID>"}
 ```
 
 The run terminates with a `result` whose `stop` is `cancelled`. If the named run
@@ -433,37 +429,39 @@ clients use the `steer` and `steer_cancel` arms on the bidirectional `Converse`
 stream. ACP does not support steer.
 
 Check for both the runtime `steer` capability and the `http_steer` compatibility
-feature before using the HTTP routes. The feature prevents clients from probing
-older servers by 404.
+feature before using the HTTP routes. These advertised values identify whether
+the server supports HTTP steering.
 
 Send text, multimodal parts, or both, addressed to the run by its `run_id`:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/steer \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/steer \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run-id>","text":"Use the existing parser","message_id":"client-42"}'
-{"outcome":"accepted","run_id":"<run-id>","message_id":"client-42"}
+       -d '{"expected_run_id":"<RUN_ID>","text":"Use the existing parser","message_id":"client-42"}'
+{"outcome":"accepted","run_id":"<RUN_ID>","message_id":"client-42"}
 ```
 
 The `parts` array uses the same `{kind, mime_type, data?, url?}` content blocks
-as an HTTP prompt. The selected provider must support every supplied media kind.
+as an HTTP prompt. A message can contain at most 16 parts, with at most 10 MiB per inline part
+and 20 MiB of inline media in total. The selected provider must support every
+supplied media kind.
 `message_id` is an optional client correlation value. It must be no longer than
 64 Unicode code points. A pending bundle can accept multiple steers: the first
 returns `accepted`, and later fragments return `appended`. The eventual `steer`
 event echoes the latest message ID as a watermark for the committed bundle.
 
-A steer never moves to another run. If the named run is absent, has finished,
-has been replaced, or reaches its end before the steer can be committed, the
-server returns `409` with the problem code `stale_run_control`. To continue
-after that, send a new prompt.
+A steer applies only to the named run. If that run is absent, has finished,
+has been replaced, or ends before the steer can be committed, the server
+returns `409` with the problem code `stale_run_control`. Send a new prompt
+to continue.
 
 Retract a pending bundle before it reaches a turn boundary:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/cancel-steer \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/controls/cancel-steer \
        -H 'Content-Type: application/json' \
-       -d '{"expected_run_id":"<run-id>","message_id":"cancel-42"}'
-{"outcome":"retracted","run_id":"<run-id>","message_id":"cancel-42"}
+       -d '{"expected_run_id":"<RUN_ID>","message_id":"cancel-42"}'
+{"outcome":"retracted","run_id":"<RUN_ID>","message_id":"cancel-42"}
 ```
 
 When no bundle can be retracted, the outcome is `none_pending`. A cancel-steer
@@ -501,4 +499,4 @@ JSON-RPC frames.
 ## Related information
 
 - [gRPC API reference](./grpc-api.md)
-- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
+- [Drive via gRPC / HTTP](/building/grpc-http.md)

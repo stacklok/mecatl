@@ -1,45 +1,56 @@
 ---
 sidebar_position: 1
 slug: /
-title: Mecatl documentation
-description:
-  Find the right guide for using, deploying, or building with Mecatl.
+title: Mecatl
+sidebar_label: Introduction
+description: Find the right guide for using, deploying, or building with Mecatl.
 ---
 
-# Mecatl documentation
+# Mecatl
 
-Mecatl is a **cloud-native harness**: an agent loop with explicit boundaries for
-clients, tools, execution environments, and durable services.
+Mecatl is an open source, cloud-native agent harness for running AI agents on
+infrastructure you operate. It separates the agent loop from the client,
+execution environment, model provider, and durable state, so you can run the
+same core locally, as a shared service, or inside an application.
 
-## Start with one of these paths
+## How Mecatl fits together
 
-### [Use it now](/mecatui/getting-started.md)
+Use `mecatui` when you want to work with an agent from your terminal. It can
+start a private server for your local workspace or connect to a remote Mecatl
+service. Operators run that service with `mecated`, or with `mecak8s` when they
+need Kubernetes-native storage and coordination. Application builders can embed
+the Go engine, or connect through the TypeScript SDK and the gRPC or HTTP/SSE
+APIs.
 
-Install `mecatui`, configure a provider with an API key, and start a local
-session in your project.
+```mermaid
+flowchart LR
+  T[Terminal user] --> U[mecatui]
+  A[Your application] --> I[Go engine or SDK/API]
+  O[Operator] --> D[mecated or mecak8s]
+  U --> R[Mecatl runtime]
+  I --> R
+  D --> R
+```
 
-### [Run on Kubernetes](/building/deployment/mecak8s.md)
+The runtime can be disposable while its session state and execution concerns
+live in services that you manage. That design lets Mecatl fit the deployment and
+governance patterns you already use for applications. Read
+[What is a cloud-native harness?](/cloud-native-harness.md) for the architecture
+and its implications.
 
-Deploy `mecak8s` with the production Helm chart, Redis-backed session state, and
-Kubernetes coordination.
+## Start with the journey that fits your work
 
-### [What is a cloud-native harness?](/building/cloud-native-harness.md)
+### [Use Mecatl](/mecatui/index.md)
 
-Understand the architectural model, why it differs from lift-and-shift hosting,
-and where Mecatl is going.
+Run local sessions in your workspace or connect the terminal client to your
+organization's Mecatl service.
 
-## Find the right guide
+### [Deploy and operate Mecatl](/operating/index.md)
 
-- **Use Mecatl:** [the `mecatui` guides](/mecatui/index.md) cover local and
-  remote sessions, models, permissions, tools, and terminal controls.
-- **Configure Mecatl:** [feature guides](/features/index.md) cover shared
-  capabilities such as models, permissions, sessions, and agent behavior.
-- **Build with Mecatl:** [Building on Mecatl](/building/index.md) covers the Go
-  engine, TypeScript SDK, and extension points.
-- **Deploy Mecatl:** [deployment guides](/building/deployment/index.md) cover
-  `mecated`, `mecak8s`, CI, containers, the early-access Studio web UI, and
-  remote transport.
-- **Install or verify Mecatl:** [Install Mecatl](/install.md) covers release
-  archives, checksums, signatures, deployment artifacts, and source builds.
-- **Look up exact details:** [reference](/reference/index.md) covers
-  configuration and gRPC and HTTP/SSE contracts.
+Start with a lightweight `mecated` service, then use `mecak8s` for shared-team
+state, coordination, and scaling.
+
+### [Build with Mecatl](/building/index.md)
+
+Embed the Go engine, connect an application through the TypeScript SDK, or use
+the public APIs and extension points.

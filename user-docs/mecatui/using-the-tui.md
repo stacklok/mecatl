@@ -86,13 +86,13 @@ Press `ctrl+v` to paste an image from the clipboard. If the clipboard does not
 contain an image, `ctrl+v` pastes its text. Large text pastes appear as compact
 placeholders in the editor and expand when you send the prompt.
 
-See [Multimodal input](/features/multimodal-input.md) for model capability and
+See [Multimodal input](/features/sessions/multimodal-input.md) for model capability and
 validation behavior.
 
 ## When a model stream fails
 
 The server recovers transient failures before model output becomes visible,
-within its configured [recovery limits](/features/choose-models.md#a-provider-error-ended-a-model-step).
+within its configured [recovery limits](/features/sessions/choose-models.md#a-provider-error-ended-a-model-step).
 If recovery ends in a terminal failure, use `/retry`; `mecatui` does not start
 another run automatically. The same command retries a `retryable + visible`
 failure, including one reopened from storage.
@@ -148,16 +148,16 @@ commands supported by the connected server.
 
 |Task|Open in `mecatui`|More information|
 |-|-|-|
-|Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/building/what-you-get/mcp-client.md)|
+|Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/features/security-and-execution/mcp-client.md)|
 |Refresh direct MCP tools or broker workspace services|`/mcp-refresh`|[Use learning and memory commands](./commands-and-memory.md#workspace-service-enrollment)|
-|Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
-|Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
-|Inspect saved memory|`/memory`|[Memory](/building/what-you-get/memory.md)|
-|Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/scheduled-tasks.md)|
+|Inspect named agent definitions|`/agents`|[Named agents](/features/agent-behavior/named-agents.md)|
+|Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)|
+|Inspect saved memory|`/memory`|[Memory](/features/agent-behavior/memory.md)|
+|Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/sessions/scheduled-tasks.md)|
 |Review learning and maintain memory|`/learning`, `/reflections`, `/reflect`, and `/dream`|[Use learning and memory commands](./commands-and-memory.md)|
 
 The palette also includes workspace-defined slash commands. See
-[Skills, commands, and soul](/features/skills-commands-and-soul.md) for how the
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for how the
 server discovers and expands them.
 
 ## Monitor delegated work
@@ -168,13 +168,13 @@ the overlay to inspect bounded activity previews; `/team` opens the same overlay
 on the Teams tab.
 
 See
-[Subagents, teams, and parallel](/building/what-you-get/subagents-teams-parallel.md#watch-a-delegation-in-mecatui)
+[Subagents, teams, and parallel](/features/agent-behavior/subagents-and-teams.md#watch-a-delegation-in-mecatui)
 for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings
 
 Press `shift+tab` to switch the active permission mode. See
-[Choose a permission mode](/features/permissions-and-posture.md#choose-a-permission-mode)
+[Choose a permission mode](/features/security-and-execution/permissions-and-posture.md#choose-a-permission-mode)
 for the available modes and their behavior.
 
 |Command|Result|
@@ -184,11 +184,53 @@ for the available modes and their behavior.
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
-|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable or older-server status is unknown. See [Permissions and posture](/features/permissions-and-posture.md).|
+|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable or older-server status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
 
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait
 for it to settle, then retry `/clear`.
+
+## A short key reference
+
+Use `?` on an empty prompt for the live help overlay. The everyday defaults are
+`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
+to open `/toolcalls`, `f9` to reveal conversation details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
+not support steering, `enter` queues a follow-up while a run is active. See
+[Keybindings](./keybindings.md) for approval controls, remapping, and the
+complete reference.
+
+## Inspect the broker catalogue
+
+On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
+broker catalogue: enrollment state, connector names, catalogue state, and tool
+counts. Opening and refresh read only that local state; they do not probe an
+upstream, refresh credentials, or enroll connectors. When the owner-authorized
+session is stably idle and the enrollment controller is wired, `/mcp` (or Ctrl+O)
+offers `c connect tools` after a fresh session, completed turns, a prior
+connection, a failed/terminal attempt, or a broker-process restart. A persisted
+name or inventory row never proves live connectivity: after restart the panel
+truthfully reports broker state unavailable and protected tools remain
+unavailable until the owner explicitly refreshes this same session.
+Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
+second refresh are blocked until the existing operation settles. The existing
+browser flow continues without a reopen-browser action. A running or awaiting
+session does not offer refresh. Setup is destructive and bundle-wide: starting
+it withdraws broker tools, and cancellation or failure leaves them unavailable.
+Use `/mcp-refresh` for this broker flow. `/tools-connect` remains a deprecated
+broker-only alias, and `/tools-cancel` cancels pending setup.
+
+ToolHive remains the sole custodian of upstream OAuth presentation, callback
+state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only
+its opaque enrollment control. The operator configures broker availability; see [MCP network access and credentials](/operating/mecak8s/identity-and-client-access.md#maintain-mcp-network-access-and-credentials).
+The panel still requires the existing authenticated verified principal and a
+matching owned session; broker-only and direct-MCP compositions remain
+mutually exclusive, so broker-only sessions do not offer direct resources,
+prompts, or groups.
+
+The panel is not an upstream health check. It requires the authenticated owner
+of the session. Broker-only sessions do not expose direct MCP resources,
+prompts, or groups.
+
 
 ## Next steps
 

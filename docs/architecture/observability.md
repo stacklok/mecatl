@@ -393,7 +393,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
 
 External Go applications use `github.com/stacklok/mecatl/adapters/grpcdriver`;
 local stores are in the sibling `jsonlstore` and `redisstore` packages. The
-[store integration guide](../../user-docs/building/extension-points/session-store.md)
+[store integration guide](../../user-docs/building/go/extension-points/session-store.md)
 owns construction examples, capability checks, reader limitations, and resource
 ownership. The complete concrete packages are retained, including their write,
 schedule, content-source, and learning APIs.

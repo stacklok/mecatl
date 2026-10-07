@@ -1,5 +1,5 @@
 ---
-sidebar_position: 10
+sidebar_position: 12
 title: Troubleshoot mecatui
 description:
   Diagnose mecatui startup, connection, authentication, TLS, and session
@@ -27,7 +27,7 @@ mecatui --mock --workspace "$PWD"
 
 Do not put provider secrets in command-line flags. For provider credentials and
 server-side selection, use
-[Run mecated standalone](/building/deployment/mecated.md#provider-and-model).
+[Run mecated standalone](/reference/server-cli.md#mecated-serve).
 
 ## Provider is not configured or credentials are unavailable
 
@@ -81,15 +81,15 @@ inspect the gateway logs for its rejection. If the provider cannot report a
 context window, configure the exact value under
 `models.context_windows.<provider-id>.<model-id>` or restore live model
 discovery. See
-[Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
+[Choose models and providers](/features/sessions/choose-models.md#set-up-a-local-provider).
 
 Chat can fail with `context window unavailable` even when the same credential
 works for chat completions: a custom provider's context window is learned by
 fetching its live model list, and some OpenAI-compatible gateways authorize or
-implement that listing endpoint differently from the completion endpoint.
-Check the server's startup log for `live model fetch failed` and its reported
-state, and confirm the credential against the listing endpoint directly, for
-example `curl -H "Authorization: Bearer <key>" <base_url>/models`.
+implement that listing endpoint differently from the completion endpoint. Check
+the server's startup log for `live model fetch failed` and its reported state,
+and confirm the credential against the listing endpoint directly, for example
+`curl -H "Authorization: Bearer <key>" <base_url>/models`.
 
 ### Recover OIDC credentials
 
@@ -108,8 +108,7 @@ and key, issuer trust, and network and TLS settings:
 - During logout, an unavailable enrollment requires checking the provider
   configuration and `mecatui providers status PROVIDER`.
 
-The
-[provider configuration guide](/building/deployment/mecated.md#configure-providers)
+The [provider configuration guide](/operating/mecated/configure-providers-and-storage.md#configure-providers)
 and [credential store reference](/reference/configuration.md#credential_store)
 describe the supported schema.
 
@@ -141,8 +140,7 @@ Identify the failure before changing the client configuration:
 A bearer token is allowed over plaintext loopback, but `mecatui` refuses it over
 explicit non-loopback plaintext. Saved OIDC authentication always uses verified
 TLS, even for loopback. See [Connect to a server](./remote-servers.md) and the
-operator
-[server flag reference](/building/deployment/mecated.md#flag-reference).
+operator [server flag reference](/reference/server-cli.md#mecated-serve).
 
 If `mecatui login` reports `storage_unavailable`, follow the stage-specific
 action in the same message. An issuer CA read failure means checking the login
@@ -156,7 +154,7 @@ directory under your XDG config home.
 For an embedded session, `--workspace` is the local checkout. For a connected
 session, the server configures the workspace in its own filesystem. Ask the
 operator which paths are available. See
-[Connect the client](./remote-servers.md#connect-the-client).
+[Connect the client](./remote-servers.md#connect-with-a-bearer-token).
 
 ## A provider error says retrying will not help
 
@@ -164,7 +162,7 @@ A permanent provider rejection or context-window overflow will not succeed when
 you retry the same request unchanged. Start a new session, or change the request
 or model as directed. Retry transient connection and service failures. For
 recovery details, see
-[Agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
+[Session states and continuation](/features/sessions/start-and-resume-sessions.md#session-states-and-continuation).
 
 ## A session will not resume
 
@@ -174,7 +172,7 @@ ineligible or unreadable entries. Verify that you reached the same server and
 that its storage still has the session, then ask the operator about storage,
 retention, or leases. Do not create a replacement session if you need the
 original transcript. See [Sessions](./sessions.md) and
-[session storage operations](/building/deployment/session-storage-operations.md).
+[session storage operations](/operating/session-storage-operations.md).
 
 ## A debug command cannot open its target
 
@@ -211,7 +209,7 @@ A warning's explanation updates its existing entry when available; a review that
 needs your decision shows the explanation in its approval prompt. An unavailable
 or expired explanation does not imply a security finding. Check the displayed
 outcome to see whether the action stopped, the result was withheld, or work
-continued. See [guardrail approvals](/features/permissions-and-posture.md#guardrails)
+continued. See [guardrail approvals](/features/security-and-execution/permissions-and-posture.md#guardrails)
 for the available choices.
 
 An explicit `--debug=false` overrides the environment. Debug mode is client-only

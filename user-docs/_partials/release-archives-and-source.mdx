@@ -1,0 +1,40 @@
+## Install from a release archive
+
+[GitHub releases](https://github.com/stacklok/mecatl/releases) provide `darwin`
+and `linux` archives for `amd64` and `arm64`. Each release also includes
+checksums, Cosign signature bundles, SBOMs, and build provenance.
+
+```sh
+tar -xzf mecatl_<VERSION>_darwin_arm64.tar.gz
+./mecatui --version
+./mecated --version
+```
+
+Each archive contains `mecatui` and `mecated` at its root, plus the license and
+README.
+
+Verify the checksum, signature, and provenance:
+
+```sh
+shasum -a 256 -c checksums.txt --ignore-missing
+
+cosign verify-blob \
+  --bundle mecatl_<VERSION>_darwin_arm64.tar.gz.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/stacklok/mecatl/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  mecatl_<VERSION>_darwin_arm64.tar.gz
+
+gh attestation verify mecatl_<VERSION>_darwin_arm64.tar.gz --repo stacklok/mecatl
+```
+
+The Cosign command verifies that a GitHub Actions workflow in the
+`stacklok/mecatl` repository signed the archive.
+
+## Build from source
+
+A source build requires Go 1.27 or later and [Task](https://taskfile.dev/) v3.
+From the repository root, build all executables into `bin/`:
+
+```sh
+task build
+```

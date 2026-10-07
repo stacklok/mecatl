@@ -112,7 +112,7 @@ record is client-memory-only; it neither persists a draft nor automatically repl
   old bodies from storage. Children inherit admitted sources and a separate
   snapshot; isolated forks retain execution-relative paths for subsequent scope
   discovery. An unmappable child retains only starting guidance with a notice.
-  See [project instructions and rules](../../user-docs/features/project-instructions-and-rules.md)
+  See [project instructions and rules](../../user-docs/features/agent-behavior/project-instructions-and-rules.md)
   for reader-facing scope and budget behavior. After a successful pass the loop
   rebuilds only the message suffix; the system and tool layers remain byte-for-byte
   unchanged.

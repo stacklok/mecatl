@@ -39,7 +39,7 @@ committing sizeable prose edits if you want the diff to stay clean; skip it
 for small, targeted changes.
 
 `user-docs/.prettierignore` excludes the generated reference pages
-(`reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
+(`reference/server-cli.md`, `reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
 `reference/typescript-sdk-api/node.md`) so prettier never fights their own
 generators — see [`../user-docs/_README.md`](../user-docs/_README.md#verify-behavior).
 
@@ -64,9 +64,9 @@ slug renames, render correctly in GitHub's markdown preview, and are portable if
 ### Pattern
 
 ```markdown
-[The agent loop](/building/what-you-get/agent-loop.md)
-[Overview](/building/extension-points/index.md)
-[Cloud-native harness](/building/cloud-native-harness.md)
+[The agent loop](/features/sessions/agent-loop.md)
+[Overview](/building/go/extension-points/index.md)
+[Cloud-native harness](/cloud-native-harness.md)
 ```
 
 The leading `/` resolves from the docs content root (`user-docs/`), not the site root.
@@ -76,16 +76,16 @@ Docusaurus strips the `.md` extension when building URLs.
 
 ```markdown
 <!-- inside getting-started/demo.md -->
-[Deployment decision](./deployment-decision.md)
+[Build your first agent](./first-agent.md)
 ```
 
 ### What NOT to use
 
 | Pattern | Problem |
 |---------|---------|
-| `/docs/building/what-you-get/agent-loop` | Site-root absolute — breaks if `routeBasePath` changes; `.md` omitted so GitHub can't preview |
-| `../building/what-you-get/agent-loop.md` | Cross-section relative paths have a known Docusaurus v3 resolution bug with `index.md` files; use content-root-relative instead |
-| `building/what-you-get/agent-loop.md` (no leading `/`) | Resolves relative to current file — fine within a section, fragile across sections |
+| `/docs/features/agent-loop` | Site-root absolute — breaks if `routeBasePath` changes; `.md` omitted so GitHub can't preview |
+| `../features/sessions/agent-loop.md` | Cross-section relative paths have a known Docusaurus v3 resolution bug with `index.md` files; use content-root-relative instead |
+| `features/agent-loop.md` (no leading `/`) | Resolves relative to current file — fine within a section, fragile across sections |
 
 ### Why cross-section relative paths break
 
