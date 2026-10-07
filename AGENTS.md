@@ -34,7 +34,7 @@ go run ./cmd/mecademo    # offline session smoke test
 The root is one Go module; `engine/` is its own. Root `go test ./...` does not cross
 the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
 [`internal/`](internal/AGENTS.md), and [`website/`](website/AGENTS.md) have their own
-`AGENTS.md`.
+`AGENTS.md`. For how the system fits together, start at [`docs/READING.md`](docs/READING.md).
 
 ## Implementation boundaries
 

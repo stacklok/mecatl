@@ -31,5 +31,8 @@ the API snapshot gate. Production code in `engine/adapter/*` never imports `agen
   carry governance values.
 - Mutate `Session` only through its aggregate methods, and keep tool-call/result
   pairing valid.
+- A `ReadOnly()` tool whose call can write the parent workspace must implement
+  `MutatesParent`, or dispatch batches it with concurrent reads; see
+  [the agent loop](../docs/architecture/agent-loop.md#tool-dispatch).
 - `port.LLMRequest` stays provider-neutral and provider replay stateless. Re-derive
   provider- or model-dependent dependencies through factories, not clone-and-swap.
