@@ -104,7 +104,7 @@ export async function followPlanContinuation(
     } catch {
       // The acknowledgement may already have committed; only activity can settle it.
     }
-    if (read + 1 < maxReads) await wait(250);
+    if (read + 1 < maxReads && !options.signal?.aborted) await wait(250);
   }
   return { kind: "uncertain" };
 }
@@ -117,46 +117,32 @@ export async function followPlanContinuationFromBff(
   maxDurationMs = 10_000,
 ): Promise<PlanContinuationEvidence> {
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  if (signal.aborted) abort();
-  else signal.addEventListener("abort", abort, { once: true });
-  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<PlanContinuationEvidence>((resolve) => {
-    deadlineTimer = setTimeout(() => {
-      abort();
-      resolve({ kind: "uncertain" });
-    }, maxDurationMs);
-  });
+  const combined = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(maxDurationMs)]);
   try {
-    return await Promise.race([
-      followPlanContinuation(
-        target,
-        async (cursor) => {
-          let latestCursor = cursor;
-          const response = await watchSessionActivity({
-            onSseEvent: ({ id }) => {
-              if (id) latestCursor = id;
-            },
-            path: { sessionId: target.sessionId },
-            query: cursor ? { resumeFrom: cursor } : undefined,
-            signal: controller.signal,
-            sseMaxRetryAttempts: 1,
-          });
-          return {
-            async *[Symbol.asyncIterator]() {
-              for await (const delivery of response.stream) {
-                yield { cursor: latestCursor, delivery };
-              }
-            },
-          };
-        },
-        { resumeFrom, signal: controller.signal },
-      ),
-      deadline,
-    ]);
+    return await followPlanContinuation(
+      target,
+      async (cursor) => {
+        let latestCursor = cursor;
+        const response = await watchSessionActivity({
+          onSseEvent: ({ id }) => {
+            if (id) latestCursor = id;
+          },
+          path: { sessionId: target.sessionId },
+          query: cursor ? { resumeFrom: cursor } : undefined,
+          signal: combined,
+          sseMaxRetryAttempts: 1,
+        });
+        return {
+          async *[Symbol.asyncIterator]() {
+            for await (const delivery of response.stream) {
+              yield { cursor: latestCursor, delivery };
+            }
+          },
+        };
+      },
+      { resumeFrom, signal: combined },
+    );
   } finally {
-    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-    signal.removeEventListener("abort", abort);
     controller.abort();
   }
 }

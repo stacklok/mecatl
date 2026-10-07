@@ -402,6 +402,10 @@ export function createMecatlChatService(client: Client): ChatService {
         if (error instanceof MecatlError) {
           if (error.code === "unsupported_feature") return "unavailable";
           if (
+            // DECISION: "failed_precondition" (HTTP 412) stays stale: the server
+            // returns it when a live run owns its plan continuation, so the ask
+            // can no longer be answered here. Rejected: dropping it, which would
+            // surface a legitimate stale case as an uncertain verdict.
             [
               "stale_run_control",
               "ask_not_pending",

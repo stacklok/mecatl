@@ -64,13 +64,13 @@ import type { ComposerModelOption } from "./chat-composer";
 import { useChatEscape } from "./chat-escape";
 import {
   applyRunDelivery,
-  approvalKey,
-  approvalMatchesToolCall,
   type ChatMessage,
   errorMessage,
   initialRunDeliveryState,
+  messageOwnsApproval,
   messagesFromTranscript,
   retractApproval,
+  unmatchedApprovals,
 } from "./chat-state";
 import { Message } from "./chat-workspace";
 import { EscapeHintContext } from "./escape-hint-context";
@@ -86,6 +86,7 @@ import {
 } from "./run-stream";
 import { registerThreadSession } from "./thread-map";
 import { useVoiceInput } from "./use-voice-input";
+import { VerdictLedger } from "./verdict-ledger";
 
 /** Collects an SSE transport failure for any of a thread run's streams, including reattached ones. */
 interface StreamFailure {
@@ -324,7 +325,7 @@ export function SideThreadPanel({
                     approvalDisabled={run.approvalDisabled}
                     approvalUncertain={run.approvalUncertain}
                     approvals={run.approvals.filter((approval) =>
-                      message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+                      messageOwnsApproval(message, approval),
                     )}
                     key={message.id}
                     message={message}
@@ -340,33 +341,26 @@ export function SideThreadPanel({
                 ))}
               </div>
             )}
-            {run.approvals
-              .filter(
-                (approval) =>
-                  !run.messages.some((message) =>
-                    message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
-                  ),
-              )
-              .map((approval) =>
-                approval.tool === "PresentPlan" ? (
-                  <PlanReviewCard
-                    approval={approval}
-                    disabled={run.approvalDisabled(approval)}
-                    key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                    onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
-                    uncertain={run.approvalUncertain(approval)}
-                    unavailableReason={run.planUnavailableReason(approval)}
-                  />
-                ) : (
-                  <ApprovalPanel
-                    approval={approval}
-                    disabled={run.approvalDisabled(approval)}
-                    key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                    onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
-                    uncertain={run.approvalUncertain(approval)}
-                  />
-                ),
-              )}
+            {unmatchedApprovals(run.approvals, run.messages).map((approval) =>
+              approval.tool === "PresentPlan" ? (
+                <PlanReviewCard
+                  approval={approval}
+                  disabled={run.approvalDisabled(approval)}
+                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                  onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
+                  uncertain={run.approvalUncertain(approval)}
+                  unavailableReason={run.planUnavailableReason(approval)}
+                />
+              ) : (
+                <ApprovalPanel
+                  approval={approval}
+                  disabled={run.approvalDisabled(approval)}
+                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                  onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
+                  uncertain={run.approvalUncertain(approval)}
+                />
+              ),
+            )}
           </div>
         </div>
 
@@ -515,9 +509,11 @@ function useSideThreadRun(sessionId: string) {
   const [reattachEpoch, setReattachEpoch] = useState(0);
   const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const runIdRef = useRef<string | undefined>(undefined);
-  const verdictInFlight = useRef(new Set<string>());
-  const uncertainVerdicts = useRef(new Set<string>());
-  const acknowledgedVerdicts = useRef(new Set<string>());
+  // A side thread can move to a successor session without remounting, so a
+  // verdict that lands late must not write into the session now on screen.
+  const viewedSessionId = useRef(sessionId);
+  viewedSessionId.current = sessionId;
+  const verdicts = useRef(new VerdictLedger());
   const [verdictEpoch, setVerdictEpoch] = useState(0);
 
   useEffect(() => () => planFollowAbort.current?.abort(), []);
@@ -541,9 +537,8 @@ function useSideThreadRun(sessionId: string) {
     setIsRunning(false);
     setRunId(undefined);
     runIdRef.current = undefined;
-    verdictInFlight.current.clear();
-    uncertainVerdicts.current.clear();
-    acknowledgedVerdicts.current.clear();
+    verdicts.current.clear();
+    setControlPending(false);
   }, [sessionId]);
 
   const selected = sessions.data?.items.find((session) => session.id === sessionId);
@@ -684,7 +679,7 @@ function useSideThreadRun(sessionId: string) {
           state.approvals.filter(
             (approval) =>
               !approval.controlTarget ||
-              !acknowledgedVerdicts.current.has(approvalKey(approval.controlTarget)),
+              verdicts.current.phase(approval.controlTarget) !== "acknowledged",
           ),
         );
         if (
@@ -698,10 +693,7 @@ function useSideThreadRun(sessionId: string) {
               ? delivery.event.payload.askId
               : undefined;
           if (typeof askId === "string") {
-            const key = approvalKey({ askId, runId: delivery.event.runId, sessionId });
-            uncertainVerdicts.current.delete(key);
-            verdictInFlight.current.delete(key);
-            acknowledgedVerdicts.current.delete(key);
+            verdicts.current.reset({ askId, runId: delivery.event.runId, sessionId });
             setVerdictEpoch((value) => value + 1);
           }
         }
@@ -800,15 +792,14 @@ function useSideThreadRun(sessionId: string) {
   function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
     return current.filter(
       (approval) =>
-        approval.controlTarget &&
-        uncertainVerdicts.current.has(approvalKey(approval.controlTarget)),
+        approval.controlTarget && verdicts.current.phase(approval.controlTarget) === "uncertain",
     );
   }
 
   function approvalUncertain(approval: ApprovalRequest): boolean {
     void verdictEpoch;
     return Boolean(
-      approval.controlTarget && uncertainVerdicts.current.has(approvalKey(approval.controlTarget)),
+      approval.controlTarget && verdicts.current.phase(approval.controlTarget) === "uncertain",
     );
   }
 
@@ -820,8 +811,7 @@ function useSideThreadRun(sessionId: string) {
         target.sessionId !== sessionId ||
         target.runId !== runIdRef.current ||
         controlPending ||
-        verdictInFlight.current.has(approvalKey(target)) ||
-        uncertainVerdicts.current.has(approvalKey(target)),
+        verdicts.current.blocks(target),
     );
   }
 
@@ -846,8 +836,7 @@ function useSideThreadRun(sessionId: string) {
       return;
     const target = approval.controlTarget;
     if (!target) return;
-    const key = approvalKey(target);
-    verdictInFlight.current.add(key);
+    if (!verdicts.current.begin(target)) return;
     setControlPending(true);
     try {
       await resolvePlanAsk({
@@ -855,7 +844,8 @@ function useSideThreadRun(sessionId: string) {
         path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      acknowledgedVerdicts.current.add(key);
+      verdicts.current.acknowledge(target);
+      if (viewedSessionId.current !== target.sessionId) return;
       setApprovals((current) => retractApproval(current, target.askId, target.runId));
       if (verdict === "iterate") {
         setNotice("Plan iteration requested.");
@@ -867,7 +857,7 @@ function useSideThreadRun(sessionId: string) {
           { askId: target.askId, planRunId: target.runId, sessionId: target.sessionId },
           controller.signal,
         );
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && viewedSessionId.current === target.sessionId) {
           if (evidence.kind === "started") {
             planReattach.current = {
               cursor: evidence.resumeFrom,
@@ -892,13 +882,13 @@ function useSideThreadRun(sessionId: string) {
         }
       }
     } catch (caught) {
-      uncertainVerdicts.current.add(key);
+      verdicts.current.markUncertain(target);
       setVerdictEpoch((value) => value + 1);
-      setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
       planFollowAbort.current = undefined;
-      verdictInFlight.current.delete(key);
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
@@ -911,8 +901,7 @@ function useSideThreadRun(sessionId: string) {
       return;
     const target = approval.controlTarget;
     if (!target) return;
-    const key = approvalKey(target);
-    verdictInFlight.current.add(key);
+    if (!verdicts.current.begin(target)) return;
     setControlPending(true);
     try {
       await resolveRunPermission({
@@ -920,16 +909,17 @@ function useSideThreadRun(sessionId: string) {
         path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      acknowledgedVerdicts.current.add(key);
+      verdicts.current.acknowledge(target);
+      if (viewedSessionId.current !== target.sessionId) return;
       setApprovals((current) => retractApproval(current, target.askId, target.runId));
       setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
     } catch (caught) {
-      uncertainVerdicts.current.add(key);
+      verdicts.current.markUncertain(target);
       setVerdictEpoch((value) => value + 1);
-      setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
-      verdictInFlight.current.delete(key);
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
