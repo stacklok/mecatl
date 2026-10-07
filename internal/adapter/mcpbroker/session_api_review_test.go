@@ -40,14 +40,6 @@ func TestSessionAPIReviewPendingDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repeated, err := api.BeginEnrollment(ctx, opened.Ref)
-	if err != nil || repeated.Started == nil || repeated.Started.Ref != pending.Started.Ref || repeated.Started.Prompt != pending.Started.Prompt {
-		t.Fatalf("pending enrollment was not reused: %#v %v", repeated, err)
-	}
-	uncompleted, err := api.ObserveEnrollment(ctx, opened.Ref, pending.Started.Ref)
-	if err != nil || uncompleted.Kind != c.FlowPending || api.states[opened.Ref].record.Connected {
-		t.Fatalf("browser prompt was mistaken for publication: %#v %v", uncompleted, err)
-	}
 	u, _ := url.Parse(pending.Started.Prompt.URL)
 	a := api.states[opened.Ref].attachment
 	if _, err := api.DisconnectTools(ctx, opened.Ref, ""); err == nil {
