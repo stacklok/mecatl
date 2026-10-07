@@ -276412,6 +276412,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791395271623,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9cda76ea61c908976f5ce8ff08b0f174dae19f7b",
+          "message": "test(e2e): isolate pending-delete outage test from the mecak8s reconciler (#2177)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-07T11:32:36-07:00",
+          "tree_id": "b05c590d9a16019b3a041f9bad95ebaf0603756d",
+          "url": "https://github.com/stacklok/mecatl/commit/9cda76ea61c908976f5ce8ff08b0f174dae19f7b"
+        },
+        "date": 1791398651912,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -400802,6 +400836,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791398649022,
+  "lastUpdate": 1791398652957,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
