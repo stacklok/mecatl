@@ -1,310 +1,173 @@
-# Extensibility — MCP, tools & progressive disclosure
+# Extensibility
 
-> Part of the [mecatl architecture guide](../architecture.md).
+> Part of the [Mecatl architecture guide](../architecture.md).
 
-**What this covers:** the `tool.Catalog` registration seam, MCP client (streaming-HTTP only), progressive tool disclosure (`Disclosable` + `ToolSearch`), skills (progressive-disclosure instruction units), the self-improving skill loop (`SkillDraft`), slash commands, the engine-as-library module contract, and the seam summary table.
+MCP servers add remote tools, skills add instructions that load on demand, slash
+commands expand reusable prompts, and web tools reach the internet, all without
+changing the agent loop. Remote tools join the same `tool.Catalog` as built-in
+ones, so the same permission, dispatch, hook, guardrail, and audit paths apply.
 
-**Prerequisites:** [the ports](ports.md) — the `tool.Workspace`/`tool.Catalog` seams and the tool contract.
+## MCP
 
-**Follow-on:** [the API surface](api-surface.md) and [subagents & teams](subagents-and-teams.md) — the MCP/inventory endpoints and delegation families that consume the catalog.
+`internal/adapter/mcp` wraps the official Go SDK and turns each remote tool into
+an ordinary `tool.Tool`. It speaks only streamable HTTP and never spawns a
+server. A stdio server is a program started from configuration, which can come
+from a client's create request or an agent definition, so spawning it would run
+code outside the Shell permission path and secret scrubbing. An HTTP server stays
+a network peer the operator runs and isolates, for example with ToolHive.
+`mcp.PartitionClientServers` rejects stdio-shaped entries unconditionally.
 
-The `tool.Catalog` is the single registration seam, so every tool — core, remote,
-or generated — is one uniform `tool.Tool`.
+### Where servers come from
 
-**Managed Shell temporary storage (Linux and macOS).** The default operator-managed Shell scope
-allocates one private command/job lease and supplies only its `tmp/` child as
-`TMPDIR`/`GOTMPDIR`. Ordinary completion removes the exact lease; a Build-owned,
-interval-gated worker later reclaims only validated, unlocked abandoned leases after
-the configured TTL. The worker's root coordination lock never delays command
-allocation or execution, and each startup/periodic sweep and shutdown join has its
-own configured deadline. The workspace manifest holds the canonical current workspace
-path for owner-only diagnostics and refreshes it when the same managed key opens from a
-new path. Operators can select `temporary_storage.mode: system` to
-restore inherited/configured system temporary storage; this disables managed
-allocation and reaping and leaves existing managed data for explicit inspection or
-removal. Managed mode is available on Linux and macOS; other platforms must use
-`system` mode. See ADR 0281.
+| Source | Lifetime | Notes |
+|-|-|-|
+| Global (direct) | Process | Flags, operator `mcp.servers` profiles (the only direct OAuth path), or ToolHive discovery through `mcp/source.Source` |
+| Per-session | One session | Client-supplied: HTTPS or loopback HTTP, no URL userinfo, no redirects, static headers only |
+| Agent definition | Child engine | A reference to a global server, or an inline server whose tools never enter the parent conversation |
+| Broker | One session | Owner-authorized catalogue through ToolHive; exclusive with global servers |
 
-**Portable memory contract.** `tool.MemoryStore` is one mandatory lifecycle/CAS
-contract: create-only or exact-version Remember, Inspect, Recall, List, exact-version
-Forget, Index, Search, and exact-version Undo. Portable
-`engine/adapter/memorytools` bodies register the same six model-facing tools for
-every store. Remote adapters must negotiate the exact current driver contract
-before composition; old/base-only peers are rejected rather than receiving
-unversioned writes or deletes. `prompt.OperatorProfileSource` is a separate
-consumer-defined read seam, so an embedding can supply live user facts without
-adopting the file adapter.
+### Admission and naming
 
-**MCP client** (`internal/adapter/mcp`) — remote tools register here. The
-transport is **streaming-HTTP only** (the project's hard constraint): the
-stdio/command transport is never used, so no MCP server is ever `os/exec`-spawned.
-`mcp.Connect` / `mcp.NewManager` dial the configured servers, and the discovered
-tools are registered into the catalog **namespaced** `mcp__<server>__<tool>` so a
-remote tool can never collide with or shadow a built-in. Concrete session loss
-(server restart, plain missing-session 404, closed transport, EOF, or refused
-connection) is re-established transparently with a single bounded reconnect
-attempt per call, serialized under a mutex. A closed idle HTTP connection while
-a POST is being sent is different: delivery may be ambiguous, so the operation
-is not replayed and the model receives a normalized unavailable result that
-states its outcome is unknown. A structured JSON-RPC 400/404 or HTTP
-429/502/503/504 is likewise a one-call failure: the live session is retained
-and the operation is never replayed automatically. See
-ADR 0056,
-ADR 0223, and
-ADR 0309. The client also holds the
-**standalone SSE GET stream** open per connected server, so server-initiated
-`notifications/{tools,prompts,resources}/list_changed` enter the same serialized,
-bounded reconciler as explicit refresh and ToolHive-only jittered polling. The
-reconciler retains source last-known-good state, builds complete immutable
-candidates, and atomically publishes one runtime revision. Root operations pin
-that revision; displaced runtimes close after their pins drain. See
-ADR 0057 and
-ADR 0355.
+A remote tool's catalog name is `mcp__<server>__<tool>`. Server names cannot
+contain `__`, so a remote tool can't shadow a built-in or another server's tool.
+The name must be valid UTF-8 without control characters, at most 256 bytes.
+Mecatl rejects a bad name rather than repairing it, because permission rules and
+session grants match that exact name. A tool is read-only, and may run in
+parallel, only if the server sets `readOnlyHint`. Direct registration is
+first-wins: global tools register first, so a colliding per-session tool is
+skipped with a warning.
 
-Automatic reconciliation changes current availability but never widens durable
-session authority. `Service.RefreshMcpSources` owner-checks an eligible idle or
-quiescent completed ordinary root, requests shared reconciliation, and
-stable-unions only missing active direct names. A no-op takes no mutation lease
-and performs no save. A widening refresh saves one detached candidate and
-confirms an ambiguous save by bounded authoritative reload while the run-entry
-and mutation exclusions remain held. `ListMcpSources` reports the cached
-published/pre-shadow inventory, revision, stale state, and active reconciliation
-without probing a source.
+Each session holds a durable set of MCP names it may call. Reconciliation changes
+which tools are available, never what a session may call. Only an explicit owner
+refresh (`RefreshMcpSources`) adds active direct names to an idle or completed
+session. A lost connection gets one bounded reconnect and retry, but an ambiguous
+send or server-declared failure is never replayed, since it may have mutated.
 
-A dedicated debug session can borrow only direct tools from explicitly named, already
-connected server-global MCP servers. It persists the names and the exact initial tool-name
-ceiling, excludes resource/query meta-tools and all inline/client configuration, and fails
-closed if the current direct tool set differs at all on restart. Every selected call,
-including an outbound read and a tool marked read-only, requires a fresh interactive approval;
-deny remains absolute, headless denies, and approval is never learned. This is the hardened
-GitHub-like draft-then-publish boundary in
-ADR 0257, not a general MCP permission
-exception.
+ToolHive polling, server `list_changed` notifications, and explicit refreshes
+feed one serialized reconciler in `internal/app`. Each cycle builds a complete,
+immutable runtime and publishes it as one revision. A run, team operation, or
+resource/prompt call pins its starting revision, so schemas and dispatch targets
+never mix. A failed cycle keeps the last usable runtime and marks it stale, and
+`ListMcpSources` reports that cached status without probing upstreams.
 
-The adapter optionally owns an authorization-code `OAuthController` when an embedding
-supplies `ServerConfig.OAuth`. One official SDK handler, durable credential source,
-authorization singleflight, and dedicated hardened HTTP client live for the whole
-`Server` lifetime and survive MCP session reconnects. Preregistered confidential and CIMD
-clients are supported; DCR is rejected by omission because the SDK exposes no durable
-registration hook. A nil presenter fails protected-server login immediately. An explicitly
-constructed stdlib-only `mcp/oauthlogin` runtime can instead own one serialized, random-path
-IPv4-loopback callback interaction. `internal/app.LoginMCP` bridges that runtime to a copy
-of one already-resolved OAuth `ServerConfig`, calls the real `mcp.Connect`, requires
-initialize and initial tool listing to succeed, and immediately closes the temporary
-server/controller while leaving the borrowed credential store open. The callback converts
-only code/state/issuer; the controller and official SDK retain their issuer/state checks,
-discovery, PKCE, exchange, and durable CAS. OAuth traffic is exact-origin allowlisted, DNS-resolved and pinned, and blocks
-loopback, link-local, metadata, unspecified, multicast, mapped, and other special destinations unconditionally.
-An exact `private_origins` opt-in admits only RFC1918 IPv4 or ULA IPv6 answers; every DNS answer must remain in that
-class. The adapter ignores
-proxies, and follows only bounded same-origin safe redirects. Discovery GETs may reach the
-resource/additional origins, but the presenter and protocol transport permit codes, tokens,
-client authentication, and token exchanges only at the canonical configured issuer origin;
-preregistered confidential clients require Basic and `client_secret_post` is denied before
-network send. The shipped roots resolve strict operator-tier `mcp.servers` profiles
-through one loader: `none`, environment-referenced `static_bearer`, or OAuth backed by a
-mutable encrypted local Store or read-only environment Reader. Normal serving and ACP
-never install a presenter. Only `mecated mcp login SERVER [--no-browser]
-[--permission-config PATH ...]` authorizes a local Store; the repeatable permission-config
-option selects trusted operator settings only and never carries OAuth values. Environment
-credentials are preprovisioned and picked up after restart. The
-combined path is guarded offline through operator resolution → explicit login → encrypted
-store close/reopen → `app.Build` global catalog → model tool call → lazy refresh rotation →
-second process restart → real dropped-session reconnect. The same gate verifies manager-before-
-profile-source teardown and scans diagnostics, errors, model-facing results, and generated
-configuration projections for distinct secret canaries. Headless startup with a clean store
-fails soft with a login remedy and no presenter; ACP consumes the already-built catalog and
-cannot provide OAuth profiles or authorize. After operator authorization, ACP sessions may
-invoke the shared global OAuth-backed tools under ordinary permissions.
-OAuth remains unavailable to per-session/inline/discovered MCP, and DCR remains
-unsupported. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
-cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
-Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
-headers retain their existing origin-scoped behavior. See ADR 0219
-for the constrained dependency profile, ADR 0220
-for controller ownership, ADR 0112 for the
-opt-in host runtime, and ADR 0113 for profile
-and command wiring.
+### The session-scoped broker
 
-**Progressive tool disclosure** (pattern 9) — a tool may optionally implement
-`tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,
-`tool.NewToolSearch`) hydrates hidden tools on demand by searching the catalog. A
-tool that does not implement `Disclosable` is always listed, so this is opt-in and
-backwards-compatible (gated by the `ProgressiveTools` flag on the Engine `Deps`).
+Broker mode (`internal/adapter/mcpbroker`) is one in-process runtime owned by
+`app.Built`, and `app.Build` rejects a configuration that also sets global
+`MCPServers`. ToolHive runs each upstream's OAuth and injects backend tokens;
+Mecatl holds only an opaque outer broker credential. `mecated` and `mecak8s`
+mount the broker's fixed `HandlerBundle` and an operator-configured callback on
+their primary HTTP mux; see [deployment and hardening](deployment-and-hardening.md).
 
-**Skills** (`internal/adapter/skills`) — pattern 9 applied to *instructions*
-instead of tool schemas. A skill is a progressive-disclosure instruction unit: a
-`SKILL.md` file with YAML frontmatter (`name` + `description`) and a markdown
-body, laid out as `<skills-dir>/<name>/SKILL.md` (matching the Agent Skills
-ecosystem; see the format references under `docs/examples/skills/`).
-`skills.Discover` scans the directory and parses each file into a pure
-`skills.Skill` value object; discovery is forgiving — a malformed or
-frontmatter-less file is **skipped and reported** (`skills.SkipError`), never
-fatal, and a kept skill whose **always-in-context description** exceeds a cap
-(`maxDescriptionBytes`) is rune-safe truncated with a warning (so one oversized
-description cannot bloat every request and break the byte-stable prompt prefix);
-an oversized body is flagged too (it is truncated on activation). A single
-read-only `Skill` tool (`skills.NewTool`, catalog name `Skill`,
-`ReadOnly()==true`) exposes them: its `Spec().Description` **enumerates every
-discovered skill's name + one-line description** — the cheap, always-in-context,
-cache-stable metadata layer. `Execute({name})` returns that skill's full **body** and
-a bounded inventory of bundled assets by logical name. If the instructions need a
-textual reference, the model calls the same tool again with
-`Execute({name, asset})`; the tool validates the advertised logical name, fetches
-only that payload through `tool.SkillSource`, enforces its size cap, and rejects
-invalid UTF-8 or NUL-containing content. No base directory crosses the seam, no
-asset is materialized or added to the workspace, and `Read`/`Shell` gain no implicit
-access. A workflow that genuinely needs a file must create or obtain it explicitly
-inside the workspace under ordinary permissions. Because the tool is read-only it
-is also available in plan and no-filesystem sessions. The tool is registered **only
-when at least one valid skill is discovered** — an empty inventory advertises
-nothing.
+A session gets its catalogue one of two ways:
 
-The discovered set is *also* projected into a server-side inventory snapshot
-(`internal/app.skillSnapshot`, name-sorted, name+description only — no body),
-carried on `server.Config.Skills` and served read-only by the **`ListSkills`
-RPC** (`HarnessService.ListSkills` / `GET /v1/skills`). It mirrors `ListAgents`
-rather than `ListCommands`: skills are discovered once at build time and
-immutable for the process lifetime, so the snapshot is a pure read, never a live
-re-scan. The mecatui TUI consumes it for the `/skills` browser panel (gated on
-`caps.Skills` plus a wired `client.SkillLister`); activation stays the model's
-concern, so the panel is discovery only.
+- **Lazy authorization.** Trusted static `tools:` declarations appear at once as
+  placeholders. The first call parks while the user authorizes the whole bundle,
+  authenticated discovery replaces the placeholders, and the call resumes.
+- **Pre-prompt enrollment.** Every backend is queried and results are staged
+  privately. Each definition must pass `validateAuthenticatedRoute` (the same
+  naming rules plus size and collision checks). One frozen catalogue then
+  replaces the placeholders atomically, and any failure admits nothing.
 
-*Where skills come from* is itself a seam: `skills.Source`
-(`Skills(ctx) ([]Skill, []SkipError, error)`) is the **pluggable extensibility
-point**. `skills.DirSource{Dir, Label}` is the default local-filesystem
-implementation (the `<dir>/<name>/SKILL.md` layout); `skills.MultiSource`
-composes an **ordered** list of sources with a defined precedence — **earlier
-source wins** on name collisions, the loser dropped with a "shadowed by a
-higher-precedence source" `SkipError`. A future embedded-defaults or remote
-registry source just implements `Source` and slots into the `MultiSource`; the
-consumer (`skills.RegisterSource`) is unchanged. Two seams now exist at
-different altitudes. **`tool.SkillSource`** (`engine/tool/skillsource.go`) is
-the DOMAIN port skills cross as **logical bundles** — identity/metadata
-(`SkillMeta`), body, and payloads addressed by logical name
-(`SkillAsset`, `ListSkillAssets`/`ReadSkillAsset`) — never a path/dir/root;
-both the FS adapter (`skills.FSSource`) and the remote driver
-(`SkillSourceService`, [observability & persistence](observability.md)) implement it, and the conformance suite holds them
-to the same semantics. `skills.Source` remains the **adapter-local**
-discovery/composition seam underneath it (where a skill's files live is the FS
-adapter's private business); nothing in the agent loop consumes skills directly
-(they are packaged into a `tool.Tool` at composition time).
+The catalogue stays frozen until the owner explicitly refreshes. Broker state is
+process-local: a persisted binding is never treated as live after a restart, so
+broker tools stay unavailable until the owner enrolls again, and the Helm chart
+requires `replicaCount: 1` with broker callbacks. The owner-scoped connector
+inventory (mecatui's `/mcp` panel) reports what was published, not health.
 
-**The self-improving skill loop** (`skills.Drafter`, opt-in) closes the loop so
-durable skills can *come into being from the agent's own experience*. A single
-writable tool, **`SkillDraft`** (`skills.NewDraftTool`, catalog name `SkillDraft`,
-`ReadOnly()==false`), lets the model PROPOSE a skill; its `skills.Drafter` write
-seam (mirroring `Source`, in the adapter package — nothing in domain/agent consumes
-or produces skills) validates and sanitizes the untrusted candidate and writes it
-to a **quarantine directory that is NEVER registered as a catalog `Source`**. The
-default `DirDrafter` is fully offline: it reuses `parseSkill`/`validateName`, an
-exported injection scan (`ScanForInjection`, run on both the always-in-context
-description and the body), a name regex (lowercase Agent-Skills style, blocking
-traversal), the existing size caps, a path-containment assert, an atomic
-temp+rename write, and an offline **2-gram Jaccard** novelty check
-(`Jaccard2Gram`) that *warns* (never blocks) on near-duplicate descriptions. Every
-quarantined `SKILL.md` is provenance-stamped (`origin: model`, `drafted_at`) for the
-reviewer; `parseSkill` ignores those keys so they never reach context. **The trust
-boundary** (stated in `internal/adapter/skills/promote.go`): the model can author a candidate but can
-never activate its own proposal in any session. It rests on two invariants, both
-enforced in `cmd/mecated` (`validateSkillDraftConfig`, fatal on a misconfig):
-(1) the quarantine dir must live **outside the workspace root**, so the model's
-workspace-confined `Write`/`Edit` structurally cannot reach it — a candidate only
-ever enters quarantine via the `Drafter`; and (2) the dir must be **disjoint from
-every active skills dir**. Promotion from quarantine to an active `--skills-dir` is
-an **operator** action (`skills.Promote`, the `mecated skills promote` subcommand),
-which **shows the full candidate, requires confirmation** (`--yes` for scripted use),
-**verifies `origin: model` provenance**, and re-runs structural validation + the
-injection scan before moving it (refusing to overwrite an existing name). The
-convention is **author in session N → operator promotes → active in N+1**: drafts
-never enter the live catalog or perturb the byte-stable prompt prefix (it is built
-once at startup from operator-trusted sources only). `SkillDraft` is opt-in via
-`--skills-draft-dir` (empty ⇒ tool not registered, like `--memory-dir` gating
-Remember). **Residual** (documented, not hidden): absent the deferred OS sandbox the
-`Shell` tool can write to any path, so the structural boundary covers `Write`/`Edit`
-only — `mecated` warns when `SkillDraft` and `Shell` are enabled together; the fully
-structural deployment is shell-less or sandboxed. `SkillDraft` itself defaults to **ask** so a
-human reviews authorship, and being mutating it is filtered out of plan mode.
+### Secret-shaped headers
 
-It stays **opt-in**: `mecated` wires it via a repeatable `--skills-dir`
-(highest precedence) and an opt-in `--skills-conventional` that adds Claude-Code-
-style **known paths** (`skills.ResolveSources`): project-level
-`<workspace>/.mecatl/skills` and `<workspace>/.claude/skills`, then user-level
-`$XDG_CONFIG_HOME/mecatl/skills` (or `~/.config/mecatl/skills`) and `~/.claude/skills`,
-with precedence **explicit > project > user**. With neither flag set, the resolver
-yields no sources and nothing is read. Discovery (reading files, YAML parsing via
-`github.com/goccy/go-yaml`) is an adapter concern; nothing in this package is imported
-by a domain package — it merely implements the domain `tool.Tool` interface.
+Headers on per-session, inline agent-definition, and bearer-profile servers
+usually carry credentials. Mecatl sends them unchanged and keeps them out of
+logs, errors, events, inventories, snapshots, and configuration projections. URL
+userinfo is rejected because `net/http` would turn it into an `Authorization`
+header that bypasses those rules, and logged URLs are redacted.
 
-### The engine as an embeddable library
+## Skills
 
-The extensibility story is not only "swap an adapter inside mecatl" — `engine/`
-is **its own Go module** (`github.com/stacklok/mecatl/engine`), so an external
-consumer can import the loop, the domain, and the ports directly without pulling
-in mecatl's full dependency cone. The engine module's standalone closure is
-deliberately tiny — `doublestar` + `robfig/cron` + `github.com/goccy/go-yaml` +
-`x/sync` (+ test-only `goleak`) — versus the
-toolhive/k8s/OTel/gRPC cone the root module carries; an embedding host brings its
-own adapters. The exported identifiers of the **seven core packages** (`session`,
-`governance`, `tool`, `prompt`, `port`, `team`, `agent`) are the engine's STABLE
-public surface, governed by [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md)
-and the `api-compat` gate (`internal/apicheck`); the `engine/adapter/*` reference
-adapters (`mockllm`, `memfs`, `nofs`, `memstore`, …) ship for offline tests and
-sane defaults and carry **no** stability promise. See
-ADR 0036 (the module carve) and
-ADR 0037 (the contract).
+A skill is a `SKILL.md` file (frontmatter `name` and `description`, then a body)
+plus optional bundled files. The read-only core is `engine/adapter/skillfs`.
 
-### Seam summary
+### Discovery and trust
 
-Every capability above is a default-on (or opt-in) interface; the core never
-changes when one is swapped:
+Skills cross the `tool.SkillSource` port as logical bundles: metadata, a body,
+and assets addressed by relative name, never a path. Under the port,
+`skillfs.MultiSource` composes sources in order, and an earlier source wins a
+name collision: explicit directories, then the project tier (`.mecatl/skills`,
+`.claude/skills`), then the user tier. The conventional tiers are opt-in, and
+composition never builds the project tier for an untrusted workspace. A remote
+driver source replaces local discovery. Malformed skills are skipped with a
+diagnostic, and descriptions are capped so one can't bloat every request.
 
-| Seam | Where | Default → swap-in |
-|---|---|---|
-| `port.LLMProvider` | `engine/port/llm.go` | `openai`/`mockllm`; decorated by `llmresilience`; other vendors slot in unchanged |
-| `port.PermissionPolicy` | `engine/port/permission.go` | `permpolicy` (layer-1 rules), optionally decorated by `permclassify` (layer-2 model classifier) |
-| `Compactor` | `engine/agent/compaction.go` | `HeuristicCompactor` → `CascadeCompactor` |
-| `TokenCounter` | `engine/agent/tokencount.go` | `HeuristicTokenCounter` → `tokenizer.Counter` |
-| `InstructionAssembler` | `engine/prompt/instructions.go` | `RootAssembler` (AGENTS.md/CLAUDE.md) → `MultiAssembler` composing `RootAssembler` → `SoulAssembler` (persona) → `MemoryIndexAssembler` (saved project facts) → `UserModelAssembler` (operator FACTS), all as turn-0 user messages |
-| `prompt.SoulSource` | `engine/prompt/soul.go` (impl `internal/adapter/soul`) | nil (off) → `*soul.Store`; agent-READ-ONLY (no write path), env-injected (not the WorkspaceReader — the file is outside any session root), injection-scanned + byte-capped, fail-soft; on by default, `--soul-file`/`--no-soul`. **Two provenances + trust gate (issue #14, Phase 3, Item 2):** a USER soul (`<xdg>/mecatl/soul.md` or `--soul-file PATH`) is always trusted; a PROJECT soul (a discovered `<workspace>/.mecatl/soul.md`, parallel to `.mecatl/settings.yaml`) is **untrusted by default** and honoured only with `--trust-project` (the SAME issue-#13 gesture — not a new flag, not routed through governance: the soul is fenced DATA). **USER-WINS precedence** (single identity anchor, not a merge): a present user soul is used and the project soul is ignored; an untrusted project soul is dropped + WARN-narrated (via the injected `port.Diagnostics`). The selection (provenance/trusted/drift metadata) lives in `internal/app/soulselect.go`; `engine/prompt` stays trust-unaware. **Drift baseline (Item 1):** `soul.LoadWithMeta` computes the sha256 of the clean body in the same read; `internal/app/soulguard` records it as a harness-owned sidecar `<soulPath>.sha256` trust-on-first-use (against WHICHEVER soul wins), WARNs on a later mismatch, and (with `--soul-strict`) drops a drifted soul. `--approve-soul` re-baselines. The WRITE lives ONLY in the composition layer — the adapter stays write-free. |
-| `prompt.UserModelSource` | `engine/prompt/usermodel.go` (impl `internal/adapter/memory`) | nil (off) → a SECOND, user-scoped, **cross-project** `*memory.Store` over `<xdg>/mecatl/usermodel`; durable operator FACTS exposed as RememberUser/RecallUser/SearchUserModel (enforced `user/` prefix; write-time injection scan) + the turn-0 `<user-model>` block; on by default, `--user-model-dir`/`--no-user-model`. Writable FACTS, not a governance scope. `learning.mode`: Off has no automatic observer; Review stages evidence-backed proposals without writes; Auto stages then conservatively promotes; `--user-model-review` is a deprecated Auto alias. |
-| `CommandExpander` | `engine/prompt/command.go` | `NoopExpander` → `DirCommandExpander` (slash commands) |
-| `tool.Disclosable` + `ToolSearch` | `engine/tool` | always-listed → progressive disclosure |
-| `Skill` tool (skills) | `internal/adapter/skills` (impl) | off → opt-in `--skills-dir`; progressive disclosure of *instructions* (metadata always in context, body on activation) |
-| `skills.Source` (adapter) / `tool.SkillSource` (domain port) | `engine/adapter/skillfs/source.go` / `engine/tool/skillsource.go` | `DirSource` (one dir) → `MultiSource` (ordered, earlier-wins); known-path resolver (`--skills-conventional`: project `.mecatl`/`.claude`, user XDG/`~/.claude`); the domain port carries skills as logical bundles (metadata/body/assets, no paths) — implemented by `skills.FSSource` and the remote `SkillSourceService` driver |
-| `skills.Drafter` (self-improving loop) | `internal/adapter/skills/drafter.go` | off → opt-in `--skills-draft-dir`; default `DirDrafter` (offline: validate/sanitize/2-gram-Jaccard novelty → out-of-workspace quarantine, NEVER a catalog Source). WRITE side is pluggable (a future LLM-vetting decorator slots in); promotion is filesystem-only in the MVP — operator `mecated skills promote` is the gate (shows content, confirms, verifies provenance; author N → promote → active N+1) |
-| `tool.CommandRunner` | `engine/tool/tool.go` (impl `osfs`) | the command-execution chokepoint; an OS sandbox wraps here |
-| `tool.MemoryStore` | `engine/tool/tool.go` (impl `memory`; conformance `engine/adapter/memconformance`) | cross-session memory + `dream` consolidation |
-| `tool.EnvironmentForker` | `engine/tool/isolation.go` (impl `forker`) | fork-join isolated branches (returns a complete child `Environment`) |
-| `tool.Catalog` | `engine/tool/catalog.go` | core tools + MCP (streaming-HTTP) |
-| `mcpperf.Deps` (perf MCP server) | `internal/adapter/mcpperf` | opt-in `--perf-mcp`; a read-only streaming-HTTP MCP `http.Handler` mounted at `/mcp`. `mecated` serves it on its loopback admin listener; embedded mecatui with no explicit `--perf-addr` chooses ephemeral loopback TCP because streaming HTTP needs a URL (plain `--perf` instead defaults to a private per-instance UNIX socket). Built by DI — `Snapshot`/`Gatherer`/`Profiler` from `telemetry`, a slow-turn ring buffer (`telemetry.SlowTurnBuffer`) bridged at the cmd boundary to the `mcpperf.SlowTurnSource` seam (telemetry never imports mcpperf — the dependency points inward). Explicit TCP is fail-closed to loopback (unauthenticated); no stdio transport |
-| `SessionStore` + AGENTS.md/CLAUDE.md discovery | `port` + `engine/prompt/builder.go` | file-as-memory; AGENTS.md wins over CLAUDE.md, injected as a **user** message, never system |
+### The Skill tool
 
-**Remaining non-goals / deliberate deferrals**: an **OS-level sandbox**
-(Landlock/seccomp/Seatbelt) is the one explicitly-deferred item — the
-`CommandRunner` seam is the place it wraps, and shell-less deploys avoid the
-surface entirely. **stdio MCP is never supported**. Embeddings remain unbuilt
-(multi-provider routing shipped — [multi-provider](providers.md)); **skills**
-exist as progressive-disclosure instruction units (see above), with bundled
-*packaging* shipped as logical assets on the `tool.SkillSource` port
-(`SkillAsset`, `ListSkillAssets`/`ReadSkillAsset` — never a path on the wire).
-The `Skill` tool retrieves textual assets one at a time by logical name; it does
-not materialize them or widen the workspace. The guiding restraint still holds: build the shape, instrument it,
-and resist features before the loop, tools, permissions, hooks, and cache all work.
+`Skill` is registered only when a skill exists. Its description lists each name
+and description, the cheap and cache-stable layer. `{name}` returns the body and
+a list of asset names. `{name, asset}` returns one capped textual asset.
 
-## Prerequisites
+Skills expose logical assets, not extra workspace or execution roots: nothing is
+materialized, and `Read` and `Shell` gain no access. A skill may live in a driver
+or outside the workspace, so a path would create a read or execute root outside
+confinement and trust. Being read-only, `Skill` works in plan mode and
+no-filesystem sessions. A skill's `allowed-tools` field is advisory; the
+permission evaluator never reads it.
 
-- [The ports](ports.md) — the `tool.Workspace`/`tool.Catalog` seams.
+The same inventory backs `/<skill-name>`, which loads the body and asset list but
+not asset content. `buildCommandExpander` (`internal/app/build.go`) chains
+file-backed commands, skills, driver commands, then MCP prompts; the first match
+wins. Untrusted project skills therefore never become commands.
 
-## Follow-on reading
+`SkillDraft` (`internal/adapter/skills`) lets the model propose a skill but never
+activate it in the writing session. With a learned-skill store, a draft goes live
+only after validation and evaluation (see [memory](memory.md)). Otherwise drafts
+land in a quarantine outside the workspace and apart from active skill
+directories until an operator runs `mecated skills promote`. `Shell` can still
+write anywhere, so Mecatl warns when both tools are enabled.
 
-- [The API surface](api-surface.md) — the MCP passthrough RPCs.
-- [Subagents & teams](subagents-and-teams.md) — delegation families that consume the catalog.
+## Project instructions
+
+`AGENTS.md` and `CLAUDE.md` pass the same trust gate: `prompt.RootAssembler`
+reads only an admitted source and its subtree. Nested files load lazily: when a
+structured file tool (Read, Edit, Write, Remove, Copy, or Move) reaches a new
+directory, that scope's instructions arrive with the next request. Shell and
+search tools don't activate nested scopes. The [agent loop](agent-loop.md) covers
+where instructions sit in each request.
+
+## Progressive disclosure
+
+Skills are the progressive disclosure that ships. For tool schemas, a
+`tool.Disclosable` tool advertises a metadata-only spec and the model loads the
+full schema with `ToolSearch`. `agent.Deps.ProgressiveTools` gates this and
+defaults to off; shipped hosts leave it off. Wrappers such as frozen broker tools
+forward `Advertised()` so wrapping never widens what the model sees.
+
+## Built-in web retrieval
+
+`WebSearch` uses a `tool.SearchProvider`. The default calls Exa's anonymous
+endpoint through a minimal client rather than the MCP manager: a search is a
+per-call lookup, not a set of catalog tools, and the client never follows OAuth
+discovery, so it can't park on a browser flow. Each provider has its own timeout
+and concurrency limit, because read-parallel dispatch can fan out many searches.
+
+`WebFetch` (`engine/adapter/webfetch`) reads one public text resource. It
+validates every resolved address and pins it into the dial, again on each of at
+most five redirects. It uses no proxy, cookies, or caller headers, caps raw and
+decompressed bodies at 5 MiB, parses HTML without running it, and fences at most
+25,000 bytes as untrusted. Both tools stay available to no-filesystem children.
+
+## Extending the engine as a library
+
+An embedder of the `engine` module registers `tool.Tool` values and can supply a
+`tool.SkillSource`, `prompt.CommandSource`, `prompt.InstructionAssembler`, or
+`tool.SearchProvider`. `skillfs`, `webfetch`, and `search` ship in the engine
+module; the MCP client is root-module `internal/`, so an embedder brings its own.
+See [extension points](../../user-docs/building/extension-points/index.md) and
+the [API surface](api-surface.md) for the compatibility contract.
 
 ## Related
 
-- [The agent loop that runs the tools](agent-loop.md)
-
----
-
-[← Architecture guide](../architecture.md)
+- [Ports](ports.md)
+- [Governance](governance.md)
+- [Memory](memory.md)
+- [MCP client](../../user-docs/building/what-you-get/mcp-client.md)
+- [Skills, commands, and soul](../../user-docs/features/skills-commands-and-soul.md)
