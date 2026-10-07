@@ -29,7 +29,7 @@ unexpected ways.
 
 An **agentic coding harness** is the system around a model that lets it finish a software
 task: the streaming agent loop, the tool kit, the permission model, hooks, and delegation,
-behind a provider-agnostic port (see [architecture](architecture.md)).
+behind a provider-agnostic port (see [architecture](../architecture.md)).
 
 > The **cloud-native harness kit** is the reusable substance of such a harness — the
 > importable engine, the port/driver contract, and the reference adapters — built so that:
@@ -153,8 +153,8 @@ These are unresolved and shape the scope of everything above:
 
 ## 6. Mapping to the domain model and architecture
 
-Most properties already have a name in the mecatl [domain model](architecture/mecatl.modelith.md)
-and a realization in the [architecture](architecture.md). The kit is largely a
+Most properties already have a name in the mecatl [domain model](../architecture/mecatl.modelith.md)
+and a realization in the [architecture](../architecture.md). The kit is largely a
 *generalization* of what mecatl already models and builds.
 
 | Kit property (§2) | Maps to (domain model entity / invariant) | Status |

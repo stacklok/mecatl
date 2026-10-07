@@ -210,7 +210,7 @@ alice -> Keycloak -> access token (scope: mcp:read, aud: vMCP resource)
 
 Keycloak replaced Dex because Dex cannot issue a usable subject token: its JWT
 carries no `scope`/`scp` claim, and its id_token carries `at_hash`, which ToolHive
-rejects outright. See [the delegation contract report](../../docs/design/mecak8s-vmcp-delegation-contract.md) for the
+rejects outright. See [the delegation contract report](../../docs/drafts/mecak8s-vmcp-delegation-contract.md) for the
 contract, and `keycloak-realm-generate.sh` for how the realm JSON is produced
 (do not hand-edit it -- a hand-written `clientScopes` array silently replaces
 Keycloak's built-ins and drops the `sub` claim).
