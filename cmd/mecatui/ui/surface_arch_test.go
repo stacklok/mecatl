@@ -34,11 +34,17 @@ var surfaceFileHomes = map[string]bool{
 	"models_catalog.go":   true,
 	"models_surface.go":   true,
 	"usermodel.go":        true,
+	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 10
+const surfaceFileCount = 11
+
+var dreamSymbolHomes = map[string]string{
+	"dreamState": "dream.go", "dreamResultMsg": "dream.go", "dreamView": "dream.go",
+	"openDream": "dream.go", "dreamReaderLayout": "dream.go", "dreamPhysicalRows": "dream.go",
+}
 
 // surfaceToken identifies declarations governed by the surface placement gate.
 var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|session[A-Za-z0-9]*|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|brokerMCPSetupState|canConnect|syncMCPSetup|renderBrokerMCPPanel|brokerEnrollmentLabel|brokerCatalogueLabel|argField|renderMCPOverlay|renderMCPPanel|renderMCPListHeader|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|modelsView|modelsNone|modelsPanel|modelsChrome|modelsState|modelsCatalogIntent|modelsSelectIntent|modelsGlobalDefaultIntent|filterModels|modelsDisabledNote|modelsErrorHint|modelsGatewayEmptyNote|modelsEmptyCopy|promotedStatus|providerStatusLine|renderProviderStatusLines|modelRowText|modelLabel|modelCapSegments|openModels|configProvenanceProviderSet|availableNotDefaultStatus)$`)
@@ -114,7 +120,8 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				}
 				_, isModelsSymbol := modelsSymbolHomes[n]
 				_, isUserModelSymbol := userModelSymbolHomes[n]
-				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol {
+				_, isDreamSymbol := dreamSymbolHomes[n]
+				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol && !isDreamSymbol {
 					continue
 				}
 				if !surfaceFileHomes[file] {
@@ -125,6 +132,9 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				}
 				if want, ok := userModelSymbolHomes[n]; ok && file != want {
 					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := dreamSymbolHomes[n]; ok && file != want {
+					t.Errorf("/dream declaration %q lives in %s, want %s", n, file, want)
 				}
 			}
 		}
@@ -260,6 +270,21 @@ func TestModelKeepsUserModelRequestToken(t *testing.T) {
 	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelRequestToken")
 	if !ok || field.Type.Kind() != reflect.Uint64 {
 		t.Error("Model must retain uint64 userModelRequestToken as the /memory lifetime token")
+	}
+}
+
+func TestModelHasNoDreamTombstones(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for _, name := range []string{"dream", "dreamGen", "dreamRequest"} {
+		if _, ok := st.FieldByName(name); ok {
+			t.Errorf("Model retains /dream tombstone %q", name)
+		}
+	}
+	state := reflect.TypeFor[dreamState]()
+	for i := 0; i < st.NumField(); i++ {
+		if st.Field(i).Type == state || st.Field(i).Type == reflect.PointerTo(state) {
+			t.Errorf("Model field %q holds dreamState outside m.modal", st.Field(i).Name)
+		}
 	}
 }
 

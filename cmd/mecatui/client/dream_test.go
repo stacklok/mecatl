@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -16,6 +17,48 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
+
+func TestClassifyDreamGenerateError(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		code   codes.Code
+		want   DreamGenerateErrorKind
+	}{
+		{"dream_generate_failed", codes.Internal, DreamGenerateFailed},
+		{"dream_deadline", codes.DeadlineExceeded, DreamGenerateDeadline},
+		{"dream_capacity", codes.ResourceExhausted, DreamGenerateCapacity},
+		{"dream_unavailable", codes.Unimplemented, DreamGenerateUnavailable},
+	} {
+		st, err := status.New(tc.code, "untrusted https://example.invalid/?token=secret").WithDetails(&errdetails.ErrorInfo{Domain: "mecatl.stacklok.com", Reason: tc.reason})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ClassifyDreamGenerateError(st.Err()); got != tc.want {
+			t.Fatalf("%s = %v, want %v", tc.reason, got, tc.want)
+		}
+		for _, invalid := range []error{
+			status.Error(tc.code, tc.reason),
+			status.Error(codes.Unknown, tc.reason),
+		} {
+			if got := ClassifyDreamGenerateError(invalid); got != DreamGenerateUnknown {
+				t.Fatalf("untyped %v = %v", invalid, got)
+			}
+		}
+		wrongDomain, _ := status.New(tc.code, tc.reason).WithDetails(&errdetails.ErrorInfo{Domain: "attacker.invalid", Reason: tc.reason})
+		wrongCode, _ := status.New(codes.Unknown, tc.reason).WithDetails(&errdetails.ErrorInfo{Domain: "mecatl.stacklok.com", Reason: tc.reason})
+		wrongReason, _ := status.New(tc.code, tc.reason).WithDetails(&errdetails.ErrorInfo{Domain: "mecatl.stacklok.com", Reason: "DREAM_GENERATE_FAILED"})
+		for _, invalid := range []error{wrongDomain.Err(), wrongCode.Err(), wrongReason.Err()} {
+			if got := ClassifyDreamGenerateError(invalid); got != DreamGenerateUnknown {
+				t.Fatalf("untrusted %v = %v", invalid, got)
+			}
+		}
+	}
+	for _, invalid := range []error{nil, errors.New("dream_generate_failed"), status.Error(codes.Unavailable, "dream_generate_failed")} {
+		if got := ClassifyDreamGenerateError(invalid); got != DreamGenerateUnknown {
+			t.Fatalf("untyped %v = %v", invalid, got)
+		}
+	}
+}
 
 type fakeDreamClient struct {
 	generateTarget string

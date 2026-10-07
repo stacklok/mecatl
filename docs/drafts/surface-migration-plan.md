@@ -3,7 +3,9 @@
 **Scope:** the GENERAL migration template
 for moving a `cmd/mecatui/ui` overlay (see [Developing the mecatui terminal UI](../tui.md)) onto the `surface` interface. Soul is the
 FIRST migrator (the proof-of-pattern that pins the interface); mcp, skills,
-/sessions, and /models are shipped migrations; section 6 is the checklist for the rest.
+/sessions, /models, approval, and Dream are shipped migrations; section 6 is
+the checklist for the rest. The named migration rows record completed work, not
+a count or inventory of every overlay that remains.
 
 Issue #555 describes "ADR 0108" as the surface-migration ADR; that is a stale
 reference. `0108-on-demand-logical-skill-assets`
@@ -68,8 +70,9 @@ These rules record the working conventions refined through `/sessions` and
    Model field. Mutations happen through the per-call pointer; there is no copy-back
    ceremony (the interface already holds the one instance).
 3. **Explicit deps struct, not a host interface.** Use shared `surfaceDeps`
-   (`cmd/mecatui/ui/surface.go`): it holds ambient collaborators only; each
-   surface keeps its own immutable inputs beside it. No `surfaceHost` interface.
+   (`cmd/mecatui/ui/surface.go`): it holds shared ambient collaborators only,
+   initialized at Open and held on the surface state as its `deps` field.
+   Surface-specific inputs live beside it. No `surfaceHost` interface.
 4. **"Surfaces size, parents place."** The surface sizes itself from the geometry
    (width/height) offered to `Render` on EVERY call — pure-function geometry, no
    stored size state and no `Resize` method — but never knows its screen position.
@@ -93,18 +96,20 @@ These rules record the working conventions refined through `/sessions` and
    dynamically at Open with no pre-declared field, and it generalises to dynamic
    views.
 8. **Deps are held on the surface state, not passed per call.** `surfaceDeps` is
-   the SHARED ambient base — `theme`/`keys`/`marks`/`caps` only — built once at
-   Open and held on the surface state as its `deps` field. Interface methods take
+   the SHARED ambient base, built at Open and held on the surface state as its `deps` field. Interface methods take
    NO deps parameter. Surface-SPECIFIC deps are fields on the surface's own state
    struct, set next to `deps` in the same Open literal (never on `surfaceDeps`).
-   Ambient deps are immutable-after-startup (see the banked dynamic-settings note,
-   §7); a future `DepsChanged` event would fan an update, but that is out of scope.
+   Root-owned theme and keymap can change while a surface is open: the parent
+   refreshes those presentation inputs at its render/input boundary for surfaces
+   that use them live. This does not make capabilities, clients, or every config
+   field dynamic, and needs no `DepsChanged` framework.
 9. **Geometry flows through `Render` every frame; there is NO `Resize` event.**
-   This is the immediate-mode (ImGui) discipline: the whole frame is recomputed
-   from current geometry on every `View()`, so nothing is ever stale. A surface
-   sizes itself from the `width`/`height` args on EVERY `Render` call and MUST NOT
-   call `centerCard` internally (parents place, surfaces size). There is no
-   separate resize notification a surface must respond to in the right order.
+   The parent owns the card-content offer and passes it to `Render`; the surface
+   derives view caches there, never from terminal dimensions in input handlers.
+   When navigation must work before the first `View()` or after resize, the
+   parent may prepare that same render path before dispatching key/wheel input.
+   Zero-sized offers clear geometry-dependent caches and hit regions. Pointer
+   input uses only the last displayed frame's current hits, not prepared hits.
 10. **Geometry-dependent view state is a per-frame cache, marked as such.**
     This is the ImGui `ImGuiWindow.Scroll` model: a surface's scroll offset,
     cursor, and any re-derived layout are retained VIEW state that lives on the
@@ -112,8 +117,8 @@ These rules record the working conventions refined through `/sessions` and
     re-derives geometry-dependent view state (a scroll clamp against
     `maxScroll`, a re-wrap) AT THE TOP OF `Render` from the fresh `width`/`height`
     — exactly as ImGui clamps `Scroll` inside `Begin`. Because the clamp runs
-    every frame against fresh geometry, it can never be stale and needs no event.
-    **Convention: fields that are retained view-state caches are marked
+    every render against fresh geometry, it cannot be stale at the input
+    boundary when the parent prepares Render before navigation. **Convention: fields that are retained view-state caches are marked
     `// view cache:`** on the struct so a reader knows they are refreshed in
     `Render`, not tracked across frames as authoritative. soul's scroll clamp
     bounds against raw content lines (no width), so it needs no geometry at all;
@@ -166,15 +171,15 @@ mirroring `approvalState.onApprovalKey`'s `*approvalState` receiver; the state
 itself lives inside the ONE `modal surface` interface field). Methods take NO
 deps parameter: the ambient base lives on the surface state (decision 8).
 
-**Geometry is immediate-mode (ImGui).** There is NO resize event: the whole
-frame is recomputed from current geometry on every `View()`, so nothing is ever
-stale and no ordering invariant exists. `Render(width, height)` is the ONE
-geometry consumer; a surface sizes itself from the offered args inline on every
-call and MUST NOT call `centerCard` internally (the Model centers in
-`renderBody`). This is the same discipline as ImGui's `Begin`/`Layout`: geometry
-is read fresh each frame, never remembered. A surface that must re-derive
-geometry-dependent view state (a scroll clamp against `maxScroll`, a re-wrap)
-does it at the TOP of `Render` from the fresh `width`/`height` — exactly as
+**Geometry is immediate-mode (ImGui).** There is NO resize event: the parent
+computes the card-content offer and passes it through `Render(width, height)`.
+It is the ONE geometry consumer; a surface sizes itself from the offered args
+and MUST NOT call `centerCard` internally (the Model centers in `renderBody`).
+The parent may call its existing render path before key/wheel dispatch so
+navigation works without a preceding `View()`; pointer hits remain tied to the
+last displayed frame, never an undisplayed preparation. A surface that must
+re-derive geometry-dependent view state (a scroll clamp against `maxScroll`, a
+re-wrap) does it at the TOP of `Render` from the fresh `width`/`height` — exactly as
 ImGui clamps `Scroll` inside `Begin` — so the clamp is always current and needs
 no event. Such retained view-state fields are marked `// view cache:` (decision
 10).
@@ -537,16 +542,23 @@ register the overlay:
 4. **models** ✓ — selecting picker (cursor + enter pick + provenance). Its
    surface returns semantic intents which Model executes; the interface stays
    unchanged.
-5. **approval** ✓ — the final Phase-2 migrator. The dynamically-created
-   `approvalSurface` owns the head ask, FIFO queue, dedupe set, focus, plan/args
-   viewports, in-card scroll state, rendering, and keyboard/wheel/hit input. It
-   emits only sealed `surfaceIntent` values; there is no approval-only intent
-   marker. Queue advancement reports unchanged, successor, or drained explicitly.
-   Model applies every ambient effect: stream verdict send, transcript notice,
-   phase restoration, focus, spinner, modal teardown, and terminal plan
-   continuation. A successor remains `awaiting approval`; a drained queue restores
-   the saved phase/focus and ticks the spinner only when that phase is running.
-   There is no `approvalState` tombstone on Model.
+5. **approval** ✓ — `approvalSurface` owns the head ask, FIFO queue, dedupe
+   set, focus, plan/args viewports, in-card scroll state, rendering, and
+   keyboard/wheel/hit input. It emits only sealed `surfaceIntent` values; there
+   is no approval-only intent marker. Queue advancement reports unchanged,
+   successor, or drained explicitly. Model applies every ambient effect: stream
+   verdict send, transcript notice, phase restoration, focus, spinner, modal
+   teardown, and terminal plan continuation. A successor remains `awaiting
+   approval`; a drained queue restores the saved phase/focus and ticks the
+   spinner only when that phase is running. There is no `approvalState`
+   tombstone on Model.
+6. **Dream** ✓ — the dynamically created `dreamState` owns target selection,
+   plan and receipt readers, confirmation states, request correlation,
+   rendering, and keyboard/wheel/hit input. Its bounded target list keeps wheel
+   scrolling independent of selection; only enabled target rows can be selected
+   by a click, and a separate confirmation starts token-spending generation.
+   Disabled target rows remain visible but are not selectable. There is no
+   `dreamState` tombstone on Model.
 
 ### Shipped: approval render-frame hit dispatch
 

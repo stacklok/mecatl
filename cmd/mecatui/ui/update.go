@@ -473,6 +473,9 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if result, ok := msg.(client.ModelsMsg); ok && result.RequestToken < m.modelCatalogRequestToken {
 		return m, nil
 	}
+	if _, ok := msg.(dreamResultMsg); ok {
+		return m, nil // no longer owned by an open Dream surface
+	}
 	// Lifecycle / transport msgs (session-ready, connect/stream error, stream
 	// close, clipboard results, slash-command discovery).
 	if mm, cmd, handled := m.updateLifecycle(msg); handled {
@@ -508,7 +511,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, reflections, dream, worktrees, schedule):
+// overlays (agentsInv, reflections, worktrees, schedule):
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
@@ -519,9 +522,6 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return mm, nil, true
 	}
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
-		return mm, nil, true
-	}
-	if mm, handled := m.updateDreamMsg(msg); handled {
 		return mm, nil, true
 	}
 	if mm, handled := m.updateWorktreesMsg(msg); handled {
@@ -2052,7 +2052,11 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		m.conversationView.observe(m.vp)
 	}
-	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
+	if _, ok := m.modal.(*dreamState); ok {
+		m.hits.clear()
+		m.metrics.clear()
+	}
+	// Other open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
 }
 
@@ -2410,7 +2414,7 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
 		m.reflections.view != reflectionsNone ||
-		m.dream.view != dreamClosed || m.effort.view != effortNone || m.worktrees.view != worktreesNone {
+		m.effort.view != effortNone || m.worktrees.view != worktreesNone {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2470,7 +2474,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onAgentsKey,
 		m.onAgentsInvKey,
 		m.onReflectionsKey,
-		m.onDreamKey,
 		m.onConnectKey,
 		m.onEffortKey,
 		m.onWorktreesKey,
@@ -2492,6 +2495,11 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.modal == nil {
 		return m, nil, false
+	}
+	if _, ok := m.modal.(*dreamState); ok {
+		// Prepare the same offer used by View before input, including the first key.
+		_ = (&m).renderModalSurface()
+		defer m.hits.clear() // no prepared hit becomes clickable before the next View
 	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
@@ -2965,7 +2973,7 @@ func normalizePastedNewlines(content string) string {
 // drift apart.
 func (m Model) pasteGateOpen() bool {
 	if m.showHelp || m.phase == phaseAwaitingApproval ||
-		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
 		return false
 	}
 	return m.phase == phaseIdle || m.phase == phaseRunning
@@ -4245,6 +4253,10 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
 		if m.width <= 0 || m.vp.Height() <= 0 {
 			return m, nil
+		}
+		if _, ok := m.modal.(*dreamState); ok {
+			_ = (&m).renderModalSurface()
+			defer m.hits.clear()
 		}
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd

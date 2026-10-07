@@ -183,6 +183,9 @@ func (m *Model) setResolvedSessionModel(resolved client.ResolvedModel) (changed 
 }
 
 func (m *Model) renderModalSurface() string {
+	if s, ok := m.modal.(*dreamState); ok {
+		s.deps.theme, s.deps.marks, s.deps.keys = m.deps.Theme, m.helpKeyMarkings(), m.keys
+	}
 	placement := modalPlacementCard
 	if source, ok := m.modal.(modalPlacementSource); ok {
 		placement = source.modalPlacement()
@@ -190,6 +193,9 @@ func (m *Model) renderModalSurface() string {
 	top := convTopRow(*m)
 	bodyW, bodyH := m.width, m.vp.Height()
 	if bodyW <= 0 || bodyH <= 0 {
+		if _, ok := m.modal.(*dreamState); ok {
+			m.modal.Render(0, 0)
+		}
 		m.hits.clear()
 		m.metrics.clear()
 		return ""

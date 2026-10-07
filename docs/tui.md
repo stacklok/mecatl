@@ -62,6 +62,8 @@ keyboard and wheel events into the conversation.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Let the surface own item semantics and activation.
+Keep unavailable entries visible when that explains the available choices, but
+exclude them from selection and activation.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
 `toolErr`. Pending and failed calls retain readable labels; settled successful
 single-line calls use the glyph and name without a redundant success label.
@@ -93,10 +95,13 @@ independently inspectable.
 
 List-and-detail browsers use a bounded list for selection and a separate bounded
 viewport for detail. Wheel scrolling moves the list window without changing
-selection. Returning from detail preserves the selected item and list window, and
-detail follows appended lines only while the reader is at the bottom. The
-saved-memory browser shows list/detail ownership; Sessions shows a surface that
-fills the conversation region while keeping the header, prompt, and footer.
+selection. Keyboard navigation and clicking an enabled row select and reveal it;
+selection alone does not activate it. Returning from detail preserves the selected
+item and list window, and detail follows appended lines only while the reader is
+at the bottom. Consequential activation requires a separate explicit confirmation
+using keyboard, pointer, or both as appropriate to the widget. The saved-memory
+browser shows list/detail ownership; Sessions shows a surface that fills the
+conversation region while keeping the header, prompt, and footer.
 
 List and inspector cards cap their outer width at 128 cells, permission cards at
 132, and inline tool cards at 100, or the available width if smaller. Budget

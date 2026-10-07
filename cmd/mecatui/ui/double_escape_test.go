@@ -297,7 +297,7 @@ func TestDoubleEscapeAllEscapeOwnersSuppressGesture(t *testing.T) {
 		{"agents inventory", func(m Model) Model { m.agentsInv.view = agentsInvPanel; return m }},
 		{"user model", func(m Model) Model { m.modal = &userModelState{view: userModelPanel}; return m }},
 		{"reflections", func(m Model) Model { m.reflections.view = reflectionsList; return m }},
-		{"dream", func(m Model) Model { m.dream.view = dreamGenerating; return m }},
+		{"dream", func(m Model) Model { m.modal = &dreamState{view: dreamGenerating}; return m }},
 		{"connect", func(m Model) Model { m.connect.open = true; return m }},
 		{"effort", func(m Model) Model { m.effort.view = effortPanel; return m }},
 		{"worktrees", func(m Model) Model { m.worktrees.view = worktreesPanel; return m }},

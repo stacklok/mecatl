@@ -2,11 +2,14 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -33,37 +36,51 @@ func (f *fakeDream) DecideDreamPlan(_ context.Context, id, decision string) (cli
 	f.decided = append(f.decided, [2]string{id, decision})
 	return f.receipt, f.err
 }
-
 func dreamModel(t *testing.T, f *fakeDream, caps *client.ManualDreamCapabilities) Model {
 	t.Helper()
-	th := theme.New("aztec", theme.AztecPalette())
-	m, _, _ := newTestModel(t, th)
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.phase = phaseIdle
 	m.deps.Dream = f
 	m.caps.ManualDream = caps
+	m = applyAll(m, tea.WindowSizeMsg{Width: 90, Height: 36})
 	return m
 }
-
+func dreamSurface(t *testing.T, m Model) *dreamState {
+	t.Helper()
+	s, ok := m.modal.(*dreamState)
+	if !ok {
+		t.Fatalf("modal = %T, want Dream", m.modal)
+	}
+	return s
+}
+func dreamAt(t *testing.T, m Model, st dreamState) Model {
+	t.Helper()
+	st.deps = (&m).surfaceDeps()
+	st.client = m.deps.Dream
+	m.modal = &st
+	return m
+}
 func pressDream(t *testing.T, m Model, pressed rune) (Model, tea.Cmd) {
 	t.Helper()
 	msg := tea.KeyPressMsg{Code: pressed, Text: string(pressed)}
 	if pressed == '\r' {
 		msg = tea.KeyPressMsg{Code: tea.KeyEnter}
 	}
-	mm, cmd, handled := m.onDreamKey(msg)
-	if !handled {
-		t.Fatal("dream key was not handled")
-	}
+	mm, cmd := m.Update(msg)
 	return mm.(Model), cmd
 }
-
+func dreamBody(t *testing.T, m Model, width, height int) string {
+	t.Helper()
+	body, _ := dreamSurface(t, m).Render(width, height)
+	return stripANSIstr(body)
+}
 func TestDreamCapabilityGatingAndUnavailableReasons(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	if _, ok := builtinByName(client.Capabilities{}, wiredCollaborators{Dream: true}, "dream"); ok {
-		t.Fatal("older server exposed /dream")
-	}
 	if strings.Contains(stripANSIstr(helpBody(th, client.Capabilities{}, defaultHelpKeys())), "/dream") {
 		t.Fatal("older server exposed /dream in help")
+	}
+	if _, ok := builtinByName(client.Capabilities{}, wiredCollaborators{Dream: true}, "dream"); ok {
+		t.Fatal("older server exposed /dream")
 	}
 	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{UnavailableReason: "project store disabled"}, UserModel: client.DreamTargetCapability{UnavailableReason: "user model read-only"}}
 	if _, ok := builtinByName(client.Capabilities{ManualDream: caps}, wiredCollaborators{Dream: true}, "dream"); !ok {
@@ -76,460 +93,839 @@ func TestDreamCapabilityGatingAndUnavailableReasons(t *testing.T) {
 	mm, cmd := m.openDream()
 	m = mm.(Model)
 	if cmd != nil {
-		t.Fatal("opening /dream made an RPC")
+		t.Fatal("open made RPC")
 	}
-	out := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 100, 30))
+	out := dreamBody(t, m, 100, 30)
 	for _, want := range []string{"spends tokens", "does not enable or change scheduled consolidation", "project store disabled", "user model read-only", "generation is disabled"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("overlay missing %q:\n%s", want, out)
+			t.Errorf("missing %q: %s", want, out)
+		}
+	}
+	if !strings.Contains(out, "generation is disabled") || strings.Contains(out, "to confirm the spend") || dreamSurface(t, m).target != -1 {
+		t.Fatal("no actionable target still offered Enter or selected a row")
+	}
+	for _, code := range []rune{tea.KeyDown, tea.KeyEnter} {
+		m = applyAll(m, tea.KeyPressMsg{Code: code})
+		if dreamSurface(t, m).target != -1 || dreamSurface(t, m).view != dreamTargets {
+			t.Fatal("disabled targets became actionable")
 		}
 	}
 }
-
 func TestDreamGenerateSelectionConfirmAndCorrelation(t *testing.T) {
 	f := &fakeDream{plan: client.DreamPlan{ID: "plan-1"}}
 	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}, UserModel: client.DreamTargetCapability{Generate: true, Decide: true}}
 	m := dreamModel(t, f, caps)
 	mm, _ := m.openDream()
 	m = mm.(Model)
-	if len(f.generated) != 0 {
-		t.Fatal("opening generated")
+	if len(f.generated) != 0 || m.prompt.Focused() {
+		t.Fatal("opening made RPC or left prompt focused")
 	}
 	m, _ = pressDream(t, m, 'j')
-	if m.dream.target != 1 {
-		t.Fatal("target selection did not move to user model")
+	if dreamSurface(t, m).target != 1 {
+		t.Fatal("selection did not move")
 	}
 	m, cmd := pressDream(t, m, '\r')
 	if cmd == nil || len(f.generated) != 0 {
-		t.Fatal("Enter should schedule, not synchronously execute, exactly one RPC")
+		t.Fatal("Enter should schedule one RPC")
 	}
-	msg := cmd().(client.DreamMsg)
+	msg := cmd().(dreamResultMsg)
 	if len(f.generated) != 1 || f.generated[0] != client.DreamTargetUserModel {
-		t.Fatalf("generated targets = %v", f.generated)
+		t.Fatalf("targets = %v", f.generated)
 	}
 	stale := msg
-	stale.RequestID++
-	mm, _ = m.updateDreamMsg(stale)
-	if mm.(Model).dream.view != dreamGenerating {
-		t.Fatal("wrong-request response was accepted")
+	stale.requestID++
+	m = applyAll(m, stale)
+	if dreamSurface(t, m).view != dreamGenerating {
+		t.Fatal("wrong request accepted")
 	}
-	mm, _ = m.updateDreamMsg(msg)
-	m = mm.(Model)
-	if m.dream.view != dreamReview || m.dream.plan.ID != "plan-1" {
-		t.Fatalf("generation result not accepted: %+v", m.dream)
+	m = applyAll(m, msg)
+	if dreamSurface(t, m).view != dreamReview || dreamSurface(t, m).plan.ID != "plan-1" {
+		t.Fatal("plan not accepted")
 	}
-	old := msg
-	mm, _ = m.closeDream()
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc}, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.modal != nil || !m.prompt.Focused() {
+		t.Fatal("Esc did not back then close/refocus")
+	}
+	m = applyAll(m, msg)
+	if m.modal != nil {
+		t.Fatal("late result reopened modal")
+	}
+	mm, _ = m.openDream()
 	m = mm.(Model)
-	mm, _ = m.updateDreamMsg(old)
-	if mm.(Model).dream.view != dreamClosed {
-		t.Fatal("late result reopened closed overlay")
+	m = applyAll(m, msg)
+	if dreamSurface(t, m).view != dreamTargets {
+		t.Fatal("old owner mutated reopened modal")
 	}
 }
-
 func TestDreamReviewActionsReceiptsAndExplicitRegenerate(t *testing.T) {
-	plan := client.DreamPlan{ID: "plan-1", Target: client.DreamTargetProjectMemory, PlannedOperationCount: 2, SourceCount: 3, Operations: []client.DreamOperation{
-		{Kind: "exact_duplicate", Survivor: client.DreamParticipant{Key: "keep", Value: "v", Description: "d"}, Sources: []client.DreamParticipant{{Key: "drop", Value: "v", Description: "d"}}, Reason: "same value", ExactDuplicateEligible: true},
-		{Kind: "synthesis", Survivor: client.DreamParticipant{Key: "revise", Value: "old", Description: "old desc"}, Sources: []client.DreamParticipant{{Key: "source", Value: "other", Description: "other desc"}}, Replacement: client.DreamReplacement{Value: "new", Description: "new desc"}, Reason: strings.Repeat("reason ", 100)},
-	}}
-	f := &fakeDream{generated: []string{client.DreamTargetProjectMemory}, plan: plan, receipt: client.DreamReceipt{Disposition: "applied", Planned: 3, Applied: 1, Conflicted: 1, Failed: 1}}
+	plan := client.DreamPlan{ID: "plan-1", Target: client.DreamTargetProjectMemory, PlannedOperationCount: 2, SourceCount: 3, Operations: []client.DreamOperation{{Kind: "exact_duplicate", Survivor: client.DreamParticipant{Key: "keep"}, Sources: []client.DreamParticipant{{Key: "drop"}}, Replacement: client.DreamReplacement{Value: "new", Description: "new desc"}, Reason: strings.Repeat("reason ", 100)}}}
+	f := &fakeDream{receipt: client.DreamReceipt{Disposition: "applied", Planned: 3, Applied: 1, Conflicted: 1, Failed: 1}}
 	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	m := dreamModel(t, f, caps)
-	m.dream = dreamState{view: dreamReview, plan: &plan}
-	out := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 90, 60))
-	for _, want := range []string{"planned operations: 2", "exact-duplicate eligible: true", "survivor key: \"keep\"", "source 1 key: \"drop\"", "replacement value: \"new\"", "replacement description: \"new desc\""} {
+	m := dreamAt(t, dreamModel(t, f, caps), dreamState{view: dreamReview, plan: &plan})
+	out := dreamBody(t, m, 80, 60)
+	for _, want := range []string{"planned operations: 2", "survivor key: \"keep\"", "source 1 key: \"drop\"", "replacement value: \"new\""} {
 		if !strings.Contains(out, want) {
-			t.Errorf("review missing %q:\n%s", want, out)
+			t.Errorf("missing %q", want)
 		}
 	}
-	clipped := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 90, 18))
-	if !strings.Contains(clipped, "lines 1–") {
-		t.Fatalf("bounded review has no scroll indicator:\n%s", clipped)
+	if !strings.Contains(dreamBody(t, m, 80, 18), "lines 1–") {
+		t.Fatal("no bounded indicator")
 	}
-	m, cmd := pressDream(t, m, 'a')
-	if cmd != nil || m.dream.view != dreamConfirmApply {
-		t.Fatal("apply did not require confirmation")
+	m, _ = pressDream(t, m, 'a')
+	if dreamSurface(t, m).view != dreamConfirmApply {
+		t.Fatal("apply not confirmed")
 	}
-	confirm := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 100, 30))
-	if !strings.Contains(confirm, "3 sources") || !strings.Contains(confirm, "survivor revisions") {
-		t.Fatalf("incomplete apply confirmation: %s", confirm)
+	if !strings.Contains(dreamBody(t, m, 80, 30), "3 sources") {
+		t.Fatal("confirmation missing count")
 	}
-	m, cmd = pressDream(t, m, '\r')
-	msg := cmd().(client.DreamMsg)
+	m, cmd := pressDream(t, m, '\r')
+	msg := cmd().(dreamResultMsg)
 	if len(f.decided) != 1 || f.decided[0] != [2]string{"plan-1", client.DreamDecisionApply} {
-		t.Fatalf("decision payload = %v", f.decided)
+		t.Fatalf("decision = %v", f.decided)
 	}
-	mm, _ := m.updateDreamMsg(msg)
-	m = mm.(Model)
-	receipt := strings.Join(renderDreamReceipt(m.dream), "\n")
-	for _, want := range []string{"disposition: applied", "planned: 3", "conflicted: 1", "failed: 1", "Memory changed", "Partial result"} {
+	m = applyAll(m, msg)
+	receipt := strings.Join(renderDreamReceipt(*dreamSurface(t, m)), "\n")
+	for _, want := range []string{"disposition: applied", "conflicted: 1", "failed: 1", "Memory changed", "Partial result"} {
 		if !strings.Contains(receipt, want) {
-			t.Errorf("receipt missing %q: %s", want, receipt)
+			t.Errorf("missing %q", want)
 		}
 	}
 	m, cmd = pressDream(t, m, 'r')
-	if cmd != nil || m.dream.view != dreamConfirmRegenerate || len(f.generated) != 1 {
-		t.Fatal("regenerate was not explicit-confirmation-only")
+	if cmd != nil || dreamSurface(t, m).view != dreamConfirmRegenerate {
+		t.Fatal("regenerate not confirmation-only")
 	}
-	m, cmd = pressDream(t, m, '\r')
+	_, cmd = pressDream(t, m, '\r')
 	_ = cmd()
-	if len(f.generated) != 2 {
-		t.Fatalf("confirmed regeneration calls = %d, want second provider call", len(f.generated))
+	if len(f.generated) != 1 {
+		t.Fatal("confirmed regeneration did not call provider")
 	}
 }
-
 func TestDreamUnknownDecisionErrorOffersSameDecisionRetry(t *testing.T) {
 	plan := client.DreamPlan{ID: "plan-transport", Target: client.DreamTargetProjectMemory}
 	f := &fakeDream{receipt: client.DreamReceipt{ID: plan.ID, Disposition: client.DreamDecisionDismiss}, err: status.Error(codes.Unavailable, "lost transport\x1b[31m")}
-	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	m := dreamModel(t, f, caps)
-	m.dream = dreamState{view: dreamConfirmDismiss, plan: &plan}
+	m := dreamAt(t, dreamModel(t, f, &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}), dreamState{view: dreamConfirmDismiss, plan: &plan})
 	m, cmd := pressDream(t, m, '\r')
-	if cmd == nil {
-		t.Fatal("initial decision was not sent")
+	first := cmd().(dreamResultMsg)
+	m = applyAll(m, first)
+	s := dreamSurface(t, m)
+	if s.view != dreamReceipt || s.plan.ID != plan.ID || s.decision != client.DreamDecisionDismiss {
+		t.Fatal("retry identity lost")
 	}
-	first := cmd().(client.DreamMsg)
-	mm, _ := m.updateDreamMsg(first)
-	m = mm.(Model)
-	if m.dream.view != dreamReceipt || m.dream.plan.ID != plan.ID || m.dream.decision != client.DreamDecisionDismiss {
-		t.Fatalf("decision error lost retry identity: %+v", m.dream)
-	}
-	out := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 100, 20))
-	for _, want := range []string{"first request may already have applied", "retry the SAME dismiss decision", "plan-transport", "authoritative receipt", "No opposite decision or automatic regeneration"} {
+	out := dreamBody(t, m, 100, 20)
+	for _, want := range []string{"first request may already have applied", "retry the SAME dismiss decision", "plan-transport", "No opposite decision"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("unknown decision outcome missing %q: %q", want, out)
+			t.Fatalf("missing %q: %s", want, out)
 		}
-	}
-	if strings.ContainsRune(out, '\x1b') {
-		t.Fatalf("unknown decision outcome was not sanitized: %q", out)
 	}
 	f.err = nil
 	m, cmd = pressDream(t, m, 't')
-	if cmd == nil || m.dream.view != dreamDeciding {
-		t.Fatal("generic decision error did not offer explicit same-decision retry")
+	if cmd == nil || dreamSurface(t, m).view != dreamDeciding {
+		t.Fatal("retry unavailable")
 	}
-	msg := cmd().(client.DreamMsg)
-	if got := f.decided; len(got) != 2 || got[0] != [2]string{"plan-transport", client.DreamDecisionDismiss} || got[1] != got[0] {
-		t.Fatalf("initial/retried decisions = %v", got)
+	second := cmd().(dreamResultMsg)
+	if len(f.decided) != 2 || f.decided[0] != f.decided[1] {
+		t.Fatalf("changed decision: %v", f.decided)
 	}
-	if len(f.generated) != 0 {
-		t.Fatalf("decision retry generated a new plan: %v", f.generated)
+	m = applyAll(m, first, second)
+	if dreamSurface(t, m).view != dreamReceipt || dreamSurface(t, m).err != nil || dreamSurface(t, m).receipt.ID != plan.ID {
+		t.Fatal("retry receipt not authoritative")
 	}
-	mm, _ = m.updateDreamMsg(msg)
-	m = mm.(Model)
-	if m.dream.err != nil || m.dream.receipt == nil || m.dream.receipt.ID != plan.ID || m.dream.receipt.Disposition != client.DreamDecisionDismiss {
-		t.Fatalf("authoritative retry receipt = %+v", m.dream)
+}
+func TestDreamDecisionErrorActionsAreStateHonest(t *testing.T) {
+	plan := client.DreamPlan{ID: "plan-state", Target: client.DreamTargetProjectMemory}
+	for _, tc := range []struct {
+		name         string
+		code         codes.Code
+		retry, regen bool
+	}{{"pending", codes.Aborted, true, false}, {"conflict", codes.FailedPrecondition, false, false}, {"gone", codes.NotFound, false, true}, {"terminal", codes.AlreadyExists, false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeDream{}
+			m := dreamAt(t, dreamModel(t, f, &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}), dreamState{view: dreamReceipt, plan: &plan, decision: client.DreamDecisionApply, err: status.Error(tc.code, "private backend detail")})
+			if strings.Contains(dreamBody(t, m, 100, 20), "private backend detail") {
+				t.Fatal("leaked transport detail")
+			}
+			retry, cmd := pressDream(t, m, 't')
+			if (cmd != nil) != tc.retry {
+				t.Fatal("retry mismatch")
+			}
+			if cmd != nil {
+				_ = cmd()
+				if f.decided[0] != [2]string{plan.ID, client.DreamDecisionApply} {
+					t.Fatal("wrong retry")
+				}
+			} else if dreamSurface(t, retry).view != dreamReceipt {
+				t.Fatal("non-retryable changed")
+			}
+			regen, cmd := pressDream(t, m, 'r')
+			if cmd != nil || (dreamSurface(t, regen).view == dreamConfirmRegenerate) != tc.regen {
+				t.Fatal("regenerate mismatch")
+			}
+		})
+	}
+}
+func TestDreamSanitizedDismissAndRegenerationBack(t *testing.T) {
+	plan := client.DreamPlan{ID: "plan", Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{Kind: "synth\x1b[31m", Survivor: client.DreamParticipant{Key: "bad\x1b]0;owned\a", Value: "\xffvalue"}}}}
+	f := &fakeDream{}
+	m := dreamAt(t, dreamModel(t, f, &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}), dreamState{view: dreamReview, plan: &plan})
+	out := dreamBody(t, m, 90, 30)
+	if strings.ContainsAny(out, "\x1b\a") || !strings.Contains(out, `\xff`) {
+		t.Fatalf("untrusted plan was not quoted: %q", out)
+	}
+	m, _ = pressDream(t, m, 'x')
+	if dreamSurface(t, m).view != dreamConfirmDismiss {
+		t.Fatal("dismiss did not require confirmation")
+	}
+	m, cmd := pressDream(t, m, '\r')
+	_ = cmd()
+	if f.decided[0] != [2]string{"plan", client.DreamDecisionDismiss} {
+		t.Fatalf("dismiss sent %v", f.decided)
+	}
+	s := dreamSurface(t, m)
+	s.view, s.receipt = dreamReceipt, &client.DreamReceipt{Failed: 1}
+	m, _ = pressDream(t, m, 'r')
+	if s.view != dreamConfirmRegenerate {
+		t.Fatal("receipt regeneration not confirmed")
+	}
+	applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.view != dreamReceipt {
+		t.Fatal("regeneration back returned to actionable review")
 	}
 }
 
-func TestDreamReviewFramesEveryUntrustedLineAndRendersCompleteReason(t *testing.T) {
-	forged := "a apply whole plan\noperation 99 — kind: trusted\nEnter apply   Esc back"
-	reason := strings.Repeat("reason-", 60) + "COMPLETE-END"
-	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
-		Kind:        "synthesized_replacement",
-		Survivor:    client.DreamParticipant{Key: forged, Value: forged, Description: forged},
-		Sources:     []client.DreamParticipant{{Key: forged, Value: forged, Description: forged}},
-		Replacement: client.DreamReplacement{Value: forged, Description: forged}, Reason: reason,
+func TestDreamReaderLongIndicatorFitsCard(t *testing.T) {
+	plan := &client.DreamPlan{Operations: make([]client.DreamOperation, 130)}
+	s := &dreamState{view: dreamReview, plan: plan, viewport: new(bounded.Viewport), deps: surfaceDeps{theme: theme.New("aztec", theme.AztecPalette()), marks: defaultHelpKeys()}}
+	_, _ = s.Render(24, 23)
+	if s.viewport.Height() < 1 {
+		t.Fatal("no reader")
+	}
+	s.viewport.Move(bounded.End, len(dreamPhysicalRows(dreamReaderLines(*s, client.Capabilities{}, 24), 24)))
+	body, _ := s.Render(24, 23)
+	if !strings.Contains(body, "lines ") {
+		t.Fatal("no indicator")
+	}
+	for _, row := range strings.Split(body, "\n") {
+		if ansi.StringWidth(row) > 24 {
+			t.Fatalf("row exceeds content offer: %q", row)
+		}
+	}
+}
+
+func TestDreamReaderRetainsFrameWhenRewrappingUntrustedRows(t *testing.T) {
+	payload := strings.Repeat("e\u0301👩‍👩‍👧‍👦界 ", 8) + "\n" + strings.Repeat("a apply whole plan ", 6)
+	plan := &client.DreamPlan{Operations: []client.DreamOperation{{
+		Survivor:    client.DreamParticipant{Key: payload, Value: payload, Description: payload},
+		Sources:     []client.DreamParticipant{{Key: payload, Value: payload, Description: payload}},
+		Replacement: client.DreamReplacement{Value: payload, Description: payload}, Reason: payload,
 	}}}
-	lines := renderDreamPlan(plan, 200, true, "")
-	for _, line := range lines {
-		for _, trusted := range []string{"a apply whole plan", "operation 99 — kind: trusted", "Enter apply   Esc back"} {
-			if line == trusted {
-				t.Fatalf("untrusted line spoofed trusted UI: %q", line)
+	for _, view := range []dreamView{dreamReview, dreamReceipt} {
+		for _, width := range []int{16, 24, 40, 65} {
+			t.Run(fmt.Sprintf("%d/%d", view, width), func(t *testing.T) {
+				m := dreamModel(t, &fakeDream{}, &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}})
+				s := &dreamState{view: view, plan: plan, receipt: &client.DreamReceipt{Disposition: payload}, deps: (&m).surfaceDeps()}
+				body, _ := s.Render(width, 90)
+				if s.compact {
+					t.Fatalf("unexpected compact reader at width %d", width)
+				}
+				framed := 0
+				for _, row := range strings.Split(body, "\n") {
+					if got := ansi.StringWidth(row); got > width {
+						t.Fatalf("row width %d exceeds offer %d: %q", got, width, row)
+					}
+					plain := ansi.Strip(row)
+					if strings.HasPrefix(plain, "│ ") {
+						framed++
+					} else if strings.Contains(plain, "👩") || strings.Contains(plain, "e\u0301") || strings.Contains(plain, "apply whole plan") && !strings.Contains(plain, "a apply whole plan   x dismiss") {
+						t.Fatalf("unframed untrusted continuation: %q", plain)
+					}
+				}
+				if framed < 2 {
+					t.Fatalf("no framed continuation: %q", ansi.Strip(body))
+				}
+			})
+		}
+	}
+}
+func TestDreamReaderUpdateViewAndResultLifecycle(t *testing.T) {
+	plan := client.DreamPlan{ID: "p", Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{Reason: strings.Repeat("long reason ", 100)}}}
+	f := &fakeDream{plan: plan}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamModel(t, f, caps)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 60, Height: 36})
+	mm, _ := m.openDream()
+	m = mm.(Model)
+	m, cmd := pressDream(t, m, '\r')
+	result := cmd().(dreamResultMsg)
+	m = applyAll(m, result)
+	s := dreamSurface(t, m)
+	if s.view != dreamReview || s.viewport.Offset() != 0 {
+		t.Fatal("plan did not reset reader")
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.viewport.Offset() != 1 {
+		t.Fatal("navigation before View failed")
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 38, Height: 27}, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if s.viewport.Offset() <= 1 {
+		t.Fatal("page navigation failed")
+	}
+	if !strings.Contains(m.View().Content, "lines ") {
+		t.Fatal("bounded reader not rendered")
+	}
+	m, _ = pressDream(t, m, 'a')
+	m, cmd = pressDream(t, m, '\r')
+	decision := cmd().(dreamResultMsg)
+	wrong := decision
+	wrong.requestID++
+	m = applyAll(m, result, wrong)
+	if s.view != dreamDeciding {
+		t.Fatal("stale decision changed state")
+	}
+	applyAll(m, decision)
+	if s.view != dreamReceipt || s.viewport.Offset() != 0 {
+		t.Fatal("receipt not reset")
+	}
+}
+func TestDreamSurfaceLifecycleIsolationAndWheel(t *testing.T) {
+	f := &fakeDream{plan: client.DreamPlan{ID: "p"}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamModel(t, f, caps)
+	mm, _ := m.openDream()
+	m = mm.(Model)
+	m, cmd := pressDream(t, m, '\r')
+	old := cmd().(dreamResultMsg)
+	// Replacing or resetting the owner cannot let its late command affect root or a new modal.
+	m.closeModal()
+	m.modal = &bodyOwnerTestSurface{}
+	m = applyAll(m, old)
+	if _, ok := m.modal.(*bodyOwnerTestSurface); !ok {
+		t.Fatal("old Dream result disturbed replacement modal")
+	}
+	m.closeModal()
+	mm, _ = m.openDream()
+	m = mm.(Model)
+	m = applyAll(m, old)
+	if dreamSurface(t, m).view != dreamTargets {
+		t.Fatal("replaced owner accepted result")
+	}
+	m = m.resetSessionDerived()
+	m = applyAll(m, old)
+	if m.modal != nil {
+		t.Fatal("reset admitted late response")
+	}
+	for _, view := range []dreamView{dreamTargets, dreamGenerating, dreamReview, dreamConfirmApply, dreamConfirmDismiss, dreamConfirmRegenerate, dreamDeciding, dreamReceipt} {
+		m = dreamAt(t, m, dreamState{view: view, plan: &client.DreamPlan{Target: client.DreamTargetProjectMemory}, viewport: new(bounded.Viewport)})
+		before := m.vp.YOffset()
+		mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m = mm.(Model)
+		if m.vp.YOffset() != before {
+			t.Fatalf("wheel leaked in %v", view)
+		}
+		m.closeModal()
+	}
+}
+func TestDreamSurfaceViewThemeAndBackOwnership(t *testing.T) {
+	plan := client.DreamPlan{ID: "p", Target: client.DreamTargetProjectMemory, SourceCount: 1}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamAt(t, dreamModel(t, &fakeDream{}, caps), dreamState{view: dreamReview, plan: &plan})
+	if !strings.Contains(m.View().Content, "Dream — manual memory maintenance") {
+		t.Fatal("Model.View did not show Dream in the modal")
+	}
+	m, _ = pressDream(t, m, 'a')
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if dreamSurface(t, m).view != dreamReview {
+		t.Fatal("Esc did not back out of confirmation")
+	}
+	m = m.switchTheme(theme.Solar())
+	_ = m.View()
+	if dreamSurface(t, m).deps.theme.Name != m.deps.Theme.Name {
+		t.Fatal("open surface retained prior theme")
+	}
+	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Close": {"ctrl+f33"}})
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF33, Mod: tea.ModCtrl})
+	if dreamSurface(t, m).view != dreamTargets {
+		t.Fatal("Dream retained old keymap")
+	}
+}
+
+func TestDreamReaderWheelMovesOnlyReader(t *testing.T) {
+	plan := client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{Reason: strings.Repeat("long reason ", 120)}}}
+	m := dreamAt(t, dreamModel(t, &fakeDream{}, &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}), dreamState{view: dreamReview, plan: &plan})
+	s := dreamSurface(t, m)
+	_ = m.View()
+	before := m.vp.YOffset()
+	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if s.viewport == nil || s.viewport.Offset() != 1 || m.vp.YOffset() != before {
+		t.Fatal("wheel did not scroll only the reader")
+	}
+	s.view = dreamReceipt
+	s.receipt = nil
+	s.err = status.Error(codes.Unavailable, "lost response")
+	s.plan.ID = strings.Repeat("p", 60)
+	s.decision = client.DreamDecisionApply
+	s.viewport.Reset()
+	m = applyAll(m, tea.WindowSizeMsg{Width: 24, Height: 30})
+	_ = m.View()
+	mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if s.viewport.Offset() != 1 || m.vp.YOffset() != before {
+		t.Fatalf("receipt wheel reader offset=%d height=%d width=%d compact=%t vp=%d before=%d", s.viewport.Offset(), s.viewport.Height(), s.width, s.compact, m.vp.YOffset(), before)
+	}
+}
+
+func TestDreamAllStateContentOffers(t *testing.T) {
+	plan := &client.DreamPlan{ID: "p", Target: client.DreamTargetProjectMemory, SourceCount: 3, Operations: []client.DreamOperation{{Reason: strings.Repeat("界 reason ", 24)}}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}, UserModel: client.DreamTargetCapability{UnavailableReason: strings.Repeat("界 unavailable ", 8)}}
+	views := []dreamView{dreamTargets, dreamGenerating, dreamReview, dreamConfirmApply, dreamConfirmDismiss, dreamConfirmRegenerate, dreamDeciding, dreamReceipt}
+	for _, view := range views {
+		for _, size := range [][2]int{{0, 0}, {1, 1}, {2, 8}, {12, 5}, {24, 14}, {60, 34}, {128, 50}, {220, 50}} {
+			t.Run(fmt.Sprintf("%d/%dx%d", view, size[0], size[1]), func(t *testing.T) {
+				m := dreamModel(t, &fakeDream{}, caps)
+				s := &dreamState{view: view, plan: plan, receipt: &client.DreamReceipt{Disposition: strings.Repeat("界 result ", 12), Conflicted: 1}, err: nil, deps: (&m).surfaceDeps()}
+				if view == dreamTargets {
+					s.err = errors.New(strings.Repeat("界 error ", 12))
+				}
+				body, _ := s.Render(size[0], size[1])
+				if size[0] <= 0 || size[1] <= 0 {
+					if body != "" || !s.compact {
+						t.Fatalf("nonpositive offer produced %q", body)
+					}
+					return
+				}
+				lines := strings.Split(body, "\n")
+				if len(lines) > size[1] {
+					t.Fatalf("body height %d > %d", len(lines), size[1])
+				}
+				for _, line := range lines {
+					if ansi.StringWidth(line) > size[0] {
+						t.Fatalf("row width %d > %d: %q", ansi.StringWidth(line), size[0], line)
+					}
+				}
+				if s.compact {
+					if len(lines) != 1 || strings.Contains(ansi.Strip(body), "back") {
+						t.Fatalf("compact not close-only: %q", body)
+					}
+				} else if !strings.Contains(ansi.Strip(body), "back/close") {
+					t.Fatalf("footer displaced: %q", body)
+				}
+			})
+		}
+	}
+}
+
+func TestDreamCompactOnlyClosesAndParentGeometry(t *testing.T) {
+	plan := &client.DreamPlan{ID: "p", Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{Reason: strings.Repeat("reason ", 100)}}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	for _, view := range []dreamView{dreamTargets, dreamGenerating, dreamReview, dreamConfirmApply, dreamConfirmDismiss, dreamConfirmRegenerate, dreamDeciding, dreamReceipt} {
+		t.Run(fmt.Sprint(view), func(t *testing.T) {
+			m := dreamAt(t, dreamModel(t, &fakeDream{}, caps), dreamState{view: view, plan: plan, receipt: &client.DreamReceipt{Failed: 1}})
+			m = applyAll(m, tea.WindowSizeMsg{Width: 12, Height: 10})
+			s := dreamSurface(t, m)
+			_ = m.View()
+			if !s.compact || s.modalFrame() {
+				t.Fatal("tiny parent must show unframed compact")
+			}
+			for _, code := range []rune{'a', 'x', 'r', 't', tea.KeyEnter, tea.KeyDown, tea.KeyPgDown} {
+				mm, cmd := m.Update(tea.KeyPressMsg{Code: code})
+				m = mm.(Model)
+				if cmd != nil || s.view != view || m.modal != s || s.viewport != nil {
+					t.Fatalf("compact accepted %q: cmd=%v view=%v viewport=%v", code, cmd, s.view, s.viewport)
+				}
+			}
+			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+			if m.modal != nil {
+				t.Fatal("compact Esc did not close final modal")
+			}
+		})
+	}
+	for _, view := range []dreamView{dreamTargets, dreamGenerating, dreamReview, dreamConfirmApply, dreamConfirmDismiss, dreamConfirmRegenerate, dreamDeciding, dreamReceipt} {
+		for _, size := range [][2]int{{1, 14}, {12, 12}, {60, 40}, {220, 55}} {
+			m := dreamAt(t, dreamModel(t, &fakeDream{}, caps), dreamState{view: view, plan: plan, receipt: &client.DreamReceipt{Failed: 1}})
+			m = applyAll(m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			_ = m.View()
+			bounds := m.metrics.outerBounds
+			if bounds.x1 > size[0] || bounds.x1-bounds.x0 > 128 || bounds.y1 > convTopRow(m)+m.vp.Height() {
+				t.Fatalf("view %d %v: card %+v outside parent offer height %d", view, size, bounds, m.vp.Height())
+			}
+			body := m.renderBody()
+			if len(strings.Split(body, "\n")) > m.vp.Height() {
+				t.Fatalf("view %d %v: body exceeds conversation height", view, size)
+			}
+			for _, row := range strings.Split(body, "\n") {
+				if ansi.StringWidth(row) > size[0] {
+					t.Fatalf("view %d %v: body row too wide: %q", view, size, row)
+				}
 			}
 		}
 	}
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "│ survivor value:") || !strings.Contains(joined, "│ replacement value:") || !strings.Contains(joined, "COMPLETE-END") {
-		t.Fatalf("review was not fully framed/rendered:\n%s", joined)
-	}
 }
 
-func TestDreamRegenerateOriginAndTerminalDecisionConflict(t *testing.T) {
-	plan := client.DreamPlan{ID: "plan-1", Target: client.DreamTargetProjectMemory}
-	f := &fakeDream{plan: plan, err: status.Error(codes.AlreadyExists, "decided")}
+func TestDreamCompactUpdateBeforeView(t *testing.T) {
 	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	m := dreamModel(t, f, caps)
-	m.dream = dreamState{view: dreamReceipt, plan: &plan, decision: client.DreamDecisionApply, receipt: &client.DreamReceipt{Failed: 1}}
-	m, _ = pressDream(t, m, 'r')
-	if m.dream.view != dreamConfirmRegenerate || m.dream.regenerateFrom != dreamReceipt {
-		t.Fatalf("regeneration origin = %+v", m.dream)
-	}
-	mm, _, handled := m.onDreamKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if !handled || mm.(Model).dream.view != dreamReceipt {
-		t.Fatal("Esc from receipt regeneration returned to actionable review")
-	}
-	m = mm.(Model)
-	m.dream.err = status.Error(codes.AlreadyExists, "decided")
-	m.dream.receipt = nil
-	out := strings.Join(renderDreamReceipt(m.dream), "\n")
-	if !strings.Contains(out, "different terminal decision") || !strings.Contains(out, "fresh plan") || strings.Contains(out, "retry the SAME") {
-		t.Fatalf("terminal conflict actions = %q", out)
-	}
-	m, cmd := pressDream(t, m, 't')
-	if cmd != nil || m.dream.view != dreamReceipt || len(f.decided) != 0 {
-		t.Fatal("terminal conflict offered a decision retry")
-	}
-	m, cmd = pressDream(t, m, 'r')
-	if cmd != nil || m.dream.view != dreamConfirmRegenerate {
-		t.Fatal("terminal conflict did not offer explicit regeneration confirmation")
-	}
-}
-
-func TestDreamDecisionErrorActionsAreStateHonest(t *testing.T) {
-	plan := client.DreamPlan{ID: "plan-state", Target: client.DreamTargetProjectMemory}
-	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	tests := []struct {
-		name      string
-		code      codes.Code
-		wantText  string
-		wantRetry bool
-		wantRegen bool
-	}{
-		{name: "pending same decision", code: codes.Aborted, wantText: "still in progress", wantRetry: true},
-		{name: "opposite decision in progress", code: codes.FailedPrecondition, wantText: "conflicting decision is in progress"},
-		{name: "plan not found", code: codes.NotFound, wantText: "expiry, restart, or routing", wantRegen: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeDream{}
-			m := dreamModel(t, f, caps)
-			m.dream = dreamState{view: dreamReceipt, plan: &plan, decision: client.DreamDecisionApply, err: status.Error(tc.code, "private backend detail")}
-			out := strings.Join(renderDreamReceipt(m.dream), "\n")
-			if !strings.Contains(out, tc.wantText) || strings.Contains(out, "private backend detail") {
-				t.Fatalf("rendered state = %q", out)
-			}
-			afterRetry, retryCmd := pressDream(t, m, 't')
-			if (retryCmd != nil) != tc.wantRetry {
-				t.Fatalf("retry command present = %t, want %t", retryCmd != nil, tc.wantRetry)
-			}
-			if retryCmd != nil {
-				_ = retryCmd()
-				if len(f.decided) != 1 || f.decided[0] != [2]string{plan.ID, client.DreamDecisionApply} {
-					t.Fatalf("retry changed decision: %v", f.decided)
+	for _, size := range [][2]int{{0, 0}, {1, 1}, {12, 10}} {
+		for _, view := range []dreamView{dreamTargets, dreamReview, dreamReceipt, dreamConfirmApply} {
+			t.Run(fmt.Sprintf("%v/%v", size, view), func(t *testing.T) {
+				f := &fakeDream{}
+				m := dreamAt(t, dreamModel(t, f, caps), dreamState{view: view, plan: &client.DreamPlan{ID: "p"}, receipt: &client.DreamReceipt{Failed: 1}})
+				m = applyAll(m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+				s := dreamSurface(t, m)
+				for _, code := range []rune{'a', 'x', 'r', 't', tea.KeyEnter, tea.KeyDown, tea.KeyPgDown} {
+					mm, cmd := m.Update(tea.KeyPressMsg{Code: code})
+					m = mm.(Model)
+					if cmd != nil || s.view != view || s.viewport != nil || s.list != nil || !s.compact || len(f.generated) != 0 || len(f.decided) != 0 {
+						t.Fatalf("hidden action %q accepted before View: view=%v compact=%t cmd=%v", code, s.view, s.compact, cmd)
+					}
 				}
-			} else if afterRetry.dream.view != dreamReceipt || len(f.decided) != 0 {
-				t.Fatalf("non-retryable state changed: %+v decisions=%v", afterRetry.dream, f.decided)
+			})
+		}
+	}
+}
+
+func TestDreamReaderResizeClampsWithoutFollowingTail(t *testing.T) {
+	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{Reason: strings.Repeat("long reason ", 80)}}}
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+	m := dreamAt(t, dreamModel(t, &fakeDream{}, caps), dreamState{view: dreamReview, plan: plan, viewport: new(bounded.Viewport)})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 60, Height: 36})
+	s := dreamSurface(t, m)
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	position := s.viewport.Offset()
+	if position == 0 {
+		t.Fatal("reader did not move before View")
+	}
+	m, _ = pressDream(t, m, 'a')
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.view != dreamReview || s.viewport.Offset() != position {
+		t.Fatal("confirmation back lost physical reader position")
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 44})
+	_ = m.View() // resize does not fan out geometry; Render clamps the reader
+	_, _, rows, _, readerHeight := dreamReaderLayout(s.deps.theme, *s, s.deps.caps, s.deps.marks, s.width, s.height)
+	if want := min(position, max(0, len(rows)-readerHeight)); s.viewport.Offset() != want {
+		t.Fatalf("resize offset = %d, want clamped %d (previous %d)", s.viewport.Offset(), want, position)
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	_ = m.View()
+	if !s.compact || s.viewport.Offset() != 0 {
+		t.Fatal("compact resize retained inaccessible scroll position")
+	}
+	_ = m.View()
+}
+
+func TestDreamReaderNavigationBeforeRenderAndAfterResize(t *testing.T) {
+	plan := client.DreamPlan{Operations: []client.DreamOperation{{Reason: strings.Repeat("a long reason ", 60)}}}
+	m := dreamModel(t, &fakeDream{}, &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}})
+	m = dreamAt(t, m, dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)})
+	m, _ = pressDream(t, m, 'j')
+	s := dreamSurface(t, m)
+	if s.viewport.Offset() != 1 {
+		t.Fatalf("first navigation = %d", s.viewport.Offset())
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 36, Height: 32})
+	applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if s.viewport.Offset() <= 1 {
+		t.Fatal("resize lost page navigation")
+	}
+	for _, size := range [][2]int{{48, 20}, {28, 12}, {12, 5}, {60, 30}} {
+		body, _ := s.Render(size[0], size[1])
+		if len(strings.Split(body, "\n")) > size[1] {
+			t.Fatalf("%v reader too tall", size)
+		}
+		for _, row := range strings.Split(body, "\n") {
+			if ansi.StringWidth(row) > size[0] {
+				t.Fatalf("%v reader too wide: %q", size, row)
 			}
-			afterRegen, regenCmd := pressDream(t, m, 'r')
-			if regenCmd != nil || (afterRegen.dream.view == dreamConfirmRegenerate) != tc.wantRegen {
-				t.Fatalf("regenerate confirmation = %v, want %t", afterRegen.dream.view, tc.wantRegen)
+		}
+	}
+}
+
+func TestDreamTargetPointerAndBoundedWindow(t *testing.T) {
+	f := &fakeDream{}
+	caps := &client.ManualDreamCapabilities{
+		ProjectMemory: client.DreamTargetCapability{Generate: true},
+		UserModel:     client.DreamTargetCapability{Generate: true},
+	}
+	m := dreamModel(t, f, caps)
+	m.deps.NoAltScreen = false
+	mm, _ := m.openDream()
+	m = mm.(Model)
+	_ = m.View()
+	s := dreamSurface(t, m)
+	if len(m.hits.frame) < 2 {
+		t.Fatal("both targets need row hits")
+	}
+	first := m.hits.frame[0]
+	second := m.hits.frame[len(m.hits.frame)-1]
+	if s.hitTargets[second.id] != 1 {
+		t.Fatal("last row is not user model")
+	}
+	for _, point := range [][2]int{{0, m.metrics.contentOrigin.y}, {m.width - 1, m.metrics.contentOrigin.y + 1}} {
+		mm, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: point[0], Y: point[1]})
+		m = mm.(Model)
+		if cmd != nil || s.target != 0 || len(f.generated) != 0 {
+			t.Fatalf("miss %v affected Dream", point)
+		}
+	}
+	x, y := m.metrics.localToGlobal(second.rect.x0, second.rect.y0)
+	mm, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	m = mm.(Model)
+	if cmd != nil || s.target != 1 || len(f.generated) != 0 {
+		t.Fatal("click should select user model without generation")
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 0, Height: 0})
+	s.target = 0
+	mm, cmd = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	m = mm.(Model)
+	if cmd != nil || s.target != 0 || len(f.generated) != 0 {
+		t.Fatal("old screen point selected target after zero resize without View")
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 90, Height: 36})
+	s.target = 1
+	_ = m.View()
+	caps.UserModel.Generate = false
+	m.caps.ManualDream.UserModel.Generate = false
+	_ = m.View()
+	if s.target != 1 { // a disabled row cannot activate even if capabilities change mid-frame
+		// No selection side effects from render.
+		t.Fatal("render changed selection")
+	}
+	s.target = 0 // replay must not select the formerly enabled user row
+	mm, cmd = m.Update(surfaceHitMsg{ID: second.id})
+	m = mm.(Model)
+	if cmd != nil || s.target != 0 || len(f.generated) != 0 {
+		t.Fatal("stale hit selected disabled target or activated RPC")
+	}
+	s.target = 0
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.target != 0 {
+		t.Fatal("navigation did not skip disabled user model")
+	}
+	_ = first
+	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 26})
+	_ = m.View()
+	if s.compact || s.list == nil {
+		beforeRows, afterRows := s.targetChrome(s.width)
+		t.Fatalf("short picker should keep a bounded list (offer %dx%d chrome %d+%d)", s.width, s.height, len(beforeRows), len(afterRows))
+	}
+	before := m.vp.YOffset()
+	selected := s.target
+	start := s.list.Offset()
+	for range 12 {
+		mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m = mm.(Model)
+	}
+	if s.target != selected || m.vp.YOffset() != before || s.list.Offset() <= start {
+		t.Fatalf("wheel did not scroll list independently: offset %d→%d selected %d conversation %d→%d", start, s.list.Offset(), s.target, before, m.vp.YOffset())
+	}
+	_ = m.View()
+	for _, hit := range m.hits.frame {
+		if s.hitTargets[hit.id] != 0 {
+			t.Fatal("disabled or indicator row got a hit")
+		}
+	}
+	s.view = dreamReview
+	s.target = 1 // a stale hit must not reselect project memory in another view
+	mm, cmd = m.Update(surfaceHitMsg{ID: first.id})
+	m = mm.(Model)
+	if cmd != nil || s.target != 1 || len(f.generated) != 0 {
+		t.Fatal("non-target state accepted stale click")
+	}
+	m.closeModal()
+	m = dreamAt(t, m, dreamState{view: dreamTargets, target: 1})
+	_ = m.View()
+	mm, cmd = m.Update(surfaceHitMsg{ID: first.id})
+	m = mm.(Model)
+	if cmd != nil || dreamSurface(t, m).target != 1 || len(f.generated) != 0 {
+		t.Fatal("replacement modal accepted old frame hit")
+	}
+}
+
+func TestDreamDisabledTargetClickAndWheelIsolation(t *testing.T) {
+	f := &fakeDream{}
+	caps := &client.ManualDreamCapabilities{
+		ProjectMemory: client.DreamTargetCapability{Generate: true},
+		UserModel:     client.DreamTargetCapability{UnavailableReason: strings.Repeat("disabled reason ", 10)},
+	}
+	m := dreamModel(t, f, caps)
+	m.deps.NoAltScreen = false
+	mm, _ := m.openDream()
+	m = mm.(Model)
+	_ = m.View()
+	s := dreamSurface(t, m)
+	if len(m.hits.frame) != 1 || s.target != 0 {
+		t.Fatal("disabled target has a hit or was selected")
+	}
+	body := ansi.Strip(m.View().Content)
+	if !strings.Contains(body, "disabled reason") {
+		t.Fatal("disabled reason not visible")
+	}
+	// A narrow, tall offer wraps the disabled row; its continuations must not be clickable.
+	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 40})
+	_ = m.View()
+	body, _ = s.Render(s.width, s.height)
+	clicked := false
+	for y, line := range strings.Split(body, "\n") {
+		if !strings.Contains(ansi.Strip(line), "user model") {
+			continue
+		}
+		x, globalY := m.metrics.localToGlobal(0, y)
+		mm, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: globalY})
+		m = mm.(Model)
+		if cmd != nil || s.target != 0 || len(f.generated) != 0 {
+			t.Fatal("disabled row click activated")
+		}
+		clicked = true
+	}
+	if !clicked {
+		t.Fatalf("disabled row not rendered in narrow picker: %q (offer %dx%d)", ansi.Strip(body), s.width, s.height)
+	}
+	for range 4 {
+		mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m = mm.(Model)
+	}
+	_ = m.View()
+	body, _ = s.Render(s.width, s.height)
+	continuation := false
+	for y, line := range strings.Split(body, "\n") {
+		if !strings.Contains(ansi.Strip(line), "disabled reason") {
+			continue
+		}
+		x, globalY := m.metrics.localToGlobal(0, y)
+		mm, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: globalY})
+		m = mm.(Model)
+		if cmd != nil || s.target != 0 || len(f.generated) != 0 {
+			t.Fatal("wrapped disabled continuation activated")
+		}
+		continuation = true
+	}
+	if !continuation {
+		t.Fatal("wrapped disabled reason was not reachable by wheel")
+	}
+	for _, view := range []dreamView{dreamTargets, dreamGenerating, dreamReview, dreamConfirmApply, dreamConfirmDismiss, dreamConfirmRegenerate, dreamDeciding, dreamReceipt} {
+		s.view = view
+		s.plan = &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{Reason: strings.Repeat("long reason ", 100)}}}
+		s.receipt = &client.DreamReceipt{Conflicted: 1, Disposition: strings.Repeat("long disposition ", 60)}
+		_ = m.View()
+		before := m.vp.YOffset()
+		for range 100 {
+			mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+			m = mm.(Model)
+		}
+		for range 100 {
+			mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			m = mm.(Model)
+		}
+		if m.vp.YOffset() != before || len(f.generated) != 0 {
+			t.Fatalf("wheel leaked or made RPC in view %d", view)
+		}
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 12, Height: 10})
+	_ = m.View()
+	before := m.vp.YOffset()
+	mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if !s.compact || m.vp.YOffset() != before {
+		t.Fatal("compact wheel leaked")
+	}
+}
+
+func TestDreamFailedGenerateReturnsToTargets(t *testing.T) {
+	const canary = "Bearer secret https://example.invalid/?token=secret"
+	for _, tc := range []struct {
+		name, reason, want string
+		code               codes.Code
+	}{
+		{"server", "dream_generate_failed", "check server diagnostics", codes.Internal},
+		{"deadline", "dream_deadline", "timed out", codes.DeadlineExceeded},
+		{"capacity", "dream_capacity", "Dismiss an existing plan", codes.ResourceExhausted},
+		{"unavailable", "dream_unavailable", "Check its configuration", codes.Unimplemented},
+		{"transport", "", "Check the connection", codes.Unavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := status.New(tc.code, canary)
+			if tc.reason != "" {
+				var err error
+				st, err = st.WithDetails(&errdetails.ErrorInfo{Domain: "mecatl.stacklok.com", Reason: tc.reason})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			f := &fakeDream{err: st.Err()}
+			caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true}}
+			m := dreamModel(t, f, caps)
+			mm, _ := m.openDream()
+			m = mm.(Model)
+			m, cmd := pressDream(t, m, '\r')
+			m = applyAll(m, cmd())
+			if dreamSurface(t, m).view != dreamTargets {
+				t.Fatal("failed generation did not return to targets")
+			}
+			out := dreamBody(t, m, 80, 30)
+			if !strings.Contains(out, tc.want) || strings.Contains(out, canary) || strings.Contains(out, "token=secret") {
+				t.Fatalf("unsafe or missing generation message: %q", out)
+			}
+			_, cmd = pressDream(t, m, '\r')
+			if cmd == nil {
+				t.Fatal("failed generation disabled retry")
 			}
 		})
 	}
 }
 
-func TestDreamDismissAndSanitization(t *testing.T) {
-	plan := client.DreamPlan{ID: "plan", SourceCount: 1, Operations: []client.DreamOperation{{Kind: "synth\x1b[31m", Survivor: client.DreamParticipant{Key: "bad\x1b]0;owned\a", Value: "\xffvalue"}}}}
-	f := &fakeDream{plan: plan, receipt: client.DreamReceipt{Disposition: "dismissed"}}
+func TestDreamReceiptAffordancesFollowRecovery(t *testing.T) {
 	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	m := dreamModel(t, f, caps)
-	m.dream = dreamState{view: dreamReview, plan: &plan}
-	out := stripANSIstr(renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 90, 30))
-	if strings.ContainsAny(out, "\x1b\a") || !strings.Contains(out, `\xff`) {
-		t.Fatalf("unsafe/invalid content was not quoted unambiguously: %q", out)
-	}
-	m, cmd := pressDream(t, m, 'x')
-	if cmd != nil || m.dream.view != dreamConfirmDismiss {
-		t.Fatal("dismiss did not require confirmation")
-	}
-	m, cmd = pressDream(t, m, '\r')
-	_ = cmd()
-	if f.decided[0] != [2]string{"plan", client.DreamDecisionDismiss} {
-		t.Fatalf("dismiss payload = %v", f.decided)
-	}
-}
-
-func TestDreamReaderRetainsFrameWhenRewrappingUntrustedRows(t *testing.T) {
-	rows := dreamPhysicalRows([]string{"│ reason: " + strings.Repeat("padding ", 5) + "a apply whole plan"}, 20)
-	if len(rows) < 2 {
-		t.Fatal("precondition: value must rewrap")
-	}
-	for _, row := range rows {
-		if !strings.HasPrefix(row, "│ ") {
-			t.Fatalf("untrusted continuation lost its frame: %q", row)
-		}
-		if ansi.StringWidth(row) > 20 {
-			t.Fatalf("framed row exceeds width: %q", row)
-		}
-	}
-	receipt := dreamState{view: dreamReceipt, receipt: &client.DreamReceipt{Disposition: strings.Repeat("padding ", 5) + "a apply whole plan"}}
-	for _, row := range dreamPhysicalRows(renderDreamReceipt(receipt), 20) {
-		if strings.Contains(row, "a apply whole plan") && !strings.HasPrefix(row, "│ ") {
-			t.Fatalf("receipt continuation impersonates an action: %q", row)
-		}
+	for _, tc := range []struct {
+		name         string
+		err          error
+		receipt      *client.DreamReceipt
+		retry, regen bool
+	}{
+		{"success", nil, &client.DreamReceipt{Disposition: "applied"}, false, false},
+		{"partial", nil, &client.DreamReceipt{Failed: 1}, false, true},
+		{"pending", status.Error(codes.Aborted, "pending"), nil, true, false},
+		{"unknown", status.Error(codes.Unavailable, "lost"), nil, true, false},
+		{"conflict", status.Error(codes.FailedPrecondition, "conflict"), nil, false, false},
+		{"gone", status.Error(codes.NotFound, "gone"), nil, false, true},
+		{"terminal", status.Error(codes.AlreadyExists, "terminal"), nil, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := dreamModel(t, &fakeDream{}, caps)
+			m = dreamAt(t, m, dreamState{view: dreamReceipt, plan: &client.DreamPlan{Target: client.DreamTargetProjectMemory}, decision: client.DreamDecisionApply, err: tc.err, receipt: tc.receipt})
+			out := ansi.Strip(m.View().Content)
+			if strings.Contains(out, "t retry") != tc.retry || strings.Contains(out, "r regenerate") != tc.regen {
+				t.Fatalf("receipt recovery mismatch: %q", out)
+			}
+		})
 	}
 }
 
-func TestDreamReaderLongIndicatorFitsCard(t *testing.T) {
-	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: make([]client.DreamOperation, 130)}
-	st := dreamState{view: dreamReview, plan: plan, viewport: new(bounded.Viewport)}
-	th := theme.New("aztec", theme.AztecPalette())
-	_, _, rows, _, bodyHeight := dreamReaderLayout(th, st, client.Capabilities{}, defaultHelpKeys(), 30, 25)
-	if bodyHeight < 1 || len(rows) < 1000 {
-		t.Fatalf("precondition: reader height=%d rows=%d", bodyHeight, len(rows))
-	}
-	_ = renderDreamOverlay(th, st, client.Capabilities{}, defaultHelpKeys(), 30, 25)
-	st.viewport.Move(bounded.End, len(rows))
-	out := renderDreamOverlay(th, st, client.Capabilities{}, defaultHelpKeys(), 30, 25)
-	for _, row := range strings.Split(out, "\n") {
-		if got := ansi.StringWidth(row); got > 30 {
-			t.Fatalf("overflow indicator/card row exceeds 30 columns (%d): %q", got, row)
-		}
-	}
-}
-
-func TestDreamReaderUpdateViewAndResultLifecycle(t *testing.T) {
-	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
-		Kind: "synthesis", Reason: strings.Repeat("long reason ", 100),
-	}}}
-	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
+func TestDreamLiveCapabilityHintsAndKeymap(t *testing.T) {
+	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: false, UnavailableReason: "read only"}}
 	m := dreamModel(t, &fakeDream{}, caps)
-	m = applyAll(m, tea.WindowSizeMsg{Width: 42, Height: 28})
-	m.dreamGen, m.dream.requestID = 3, 8
-	m.dream.view, m.dream.viewport = dreamGenerating, new(bounded.Viewport)
-	m.dream.viewport.SetGeometry(20, 2, 0, bounded.Clip)
-	m.dream.viewport.Move(bounded.End, 100)
-	staleOffset := m.dream.viewport.Offset()
-	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 7, Plan: plan})
-	if m.dream.viewport.Offset() != staleOffset || m.dream.view != dreamGenerating {
-		t.Fatal("stale plan response changed the reader")
-	}
-	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 8, Plan: plan})
-	if m.dream.view != dreamReview || m.dream.viewport.Offset() != 0 {
-		t.Fatal("new plan did not reset reader to top")
-	}
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown}) // no intervening View
-	if m.dream.viewport.Offset() != 1 {
-		t.Fatal("Model.Update did not route reader navigation through the copied model")
-	}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 38, Height: 27}, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.dream.viewport.Offset() <= 1 {
-		t.Fatal("Model.Update lost page navigation after resize")
-	}
-	if got := len(strings.Split(m.renderBody(), "\n")); got > m.vp.Height() {
-		t.Fatalf("reader body uses %d rows, offered %d", got, m.vp.Height())
-	}
-	if !strings.Contains(m.View().Content, "lines ") {
-		t.Fatal("Model.View did not project the bounded reader")
-	}
-	m.dream.view, m.dream.requestID, m.dream.decision = dreamDeciding, 9, client.DreamDecisionApply
-	scrolled := m.dream.viewport.Offset()
-	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 8, Err: status.Error(codes.Unavailable, "stale")})
-	if m.dream.viewport.Offset() != scrolled || m.dream.view != dreamDeciding {
-		t.Fatal("stale decision response changed the reader")
-	}
-	m = applyAll(m, client.DreamMsg{Generation: 3, RequestID: 9, Err: status.Error(codes.Unavailable, "retry")})
-	if m.dream.view != dreamReceipt || m.dream.viewport.Offset() != 0 {
-		t.Fatal("decision receipt did not reset reader to top")
-	}
-	out := m.renderBody()
-	if !strings.Contains(stripANSIstr(out), "Decision result unknown") {
-		t.Fatal("receipt did not render through the reader")
-	}
-	if !strings.Contains(stripANSIstr(out), "lines ") {
-		t.Fatal("clipped receipt lost its overflow indicator")
-	}
-	if got := len(strings.Split(out, "\n")); got > m.vp.Height() {
-		t.Fatalf("receipt body uses %d rows, offered %d", got, m.vp.Height())
-	}
-	for _, row := range strings.Split(out, "\n") {
-		if got := ansi.StringWidth(row); got > m.width {
-			t.Fatalf("receipt row exceeds terminal width (%d > %d): %q", got, m.width, row)
-		}
-	}
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.dream.viewport.Offset() != 1 {
-		t.Fatal("receipt navigation did not advance")
-	}
-	if got := len(strings.Split(m.View().Content, "\n")); got > m.height {
-		t.Fatalf("full frame uses %d rows, terminal height %d", got, m.height)
-	}
-}
-
-func TestDreamReaderNavigationBeforeRenderAndAfterResize(t *testing.T) {
-	plan := client.DreamPlan{Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
-		Kind: "synthesis", Reason: strings.Repeat("a long reason ", 60),
-	}}}
-	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	m := dreamModel(t, &fakeDream{}, caps)
-	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 36})
-	m.dream = dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)}
-	m, _ = pressDream(t, m, 'j') // no intervening View call
-	if got := m.dream.viewport.Offset(); got != 1 {
-		t.Fatalf("first navigation before rendering = %d, want 1", got)
-	}
-
-	m = applyAll(m, tea.WindowSizeMsg{Width: 36, Height: 32})
-	_, _, rows, _, bodyHeight := dreamReaderLayout(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	if bodyHeight < 1 {
-		t.Fatal("resize precondition: reader must fit")
-	}
-	mm, _, handled := m.onDreamKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if !handled {
-		t.Fatal("PageDown was not handled")
-	}
+	mm, _ := m.openDream()
 	m = mm.(Model)
-	if got, want := m.dream.viewport.Offset(), min(1+bodyHeight, max(0, len(rows)-bodyHeight)); got != want {
-		t.Fatalf("PageDown after resize before render = %d, want %d", got, want)
+	_ = m.View()
+	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Choose": {"ctrl+f33"}, "Close": {"ctrl+f34"}})
+	m = m.switchTheme(theme.Solar())
+	out := m.View().Content
+	if !strings.Contains(out, "read only") || !strings.Contains(out, m.helpKeyMarkings().choose) || dreamSurface(t, m).deps.theme.Name != m.deps.Theme.Name {
+		t.Fatal("live theme/keymap did not reach target hints")
 	}
-}
-
-func TestDreamReaderBoundedViewportScenario(t *testing.T) {
-	plan := client.DreamPlan{ID: "plan-reader", Target: client.DreamTargetProjectMemory, Operations: []client.DreamOperation{{
-		Kind: "synthesis", Survivor: client.DreamParticipant{Key: "survivor", Value: strings.Repeat("wide value ", 20)},
-		Sources:     []client.DreamParticipant{{Key: "source", Value: strings.Repeat("source value ", 20)}},
-		Replacement: client.DreamReplacement{Value: strings.Repeat("replacement ", 20)}, Reason: strings.Repeat("reason ", 80),
-	}}}
-	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}}
-	m := dreamModel(t, &fakeDream{}, caps)
-	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 36})
-	m.dream = dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)}
-
-	_ = renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), 48, m.vp.Height())
-	if m.dream.viewport.Height() < 1 {
-		t.Fatal("reader did not receive a usable viewport")
+	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory}
+	s := dreamSurface(t, m)
+	s.view, s.plan = dreamReview, plan
+	out = m.View().Content
+	if strings.Contains(out, "a apply") || strings.Contains(out, "x dismiss") || !strings.Contains(out, "r regenerate") {
+		t.Fatal("review actions disagree with capabilities")
 	}
-	for range 1000 {
-		m, _ = pressDream(t, m, 'j')
+	s.view, s.err, s.decision = dreamReceipt, status.Error(codes.FailedPrecondition, "conflict"), client.DreamDecisionApply
+	out = m.View().Content
+	if strings.Contains(out, "t retry") || strings.Contains(out, "r regenerate") {
+		t.Fatal("conflicting receipt advertised recovery")
 	}
-	atEnd := m.dream.viewport.Offset()
-	if atEnd == 0 {
-		t.Fatal("long plan did not scroll")
-	}
-	m, _ = pressDream(t, m, 'k')
-	if got := m.dream.viewport.Offset(); got != atEnd-1 {
-		t.Fatalf("Up after Down past End offset = %d, want %d", got, atEnd-1)
-	}
-	m, _ = pressDream(t, m, 'a')
-	if m.dream.view != dreamConfirmApply {
-		t.Fatalf("review action was lost to reader navigation: %v", m.dream.view)
-	}
-
-	m.dream = dreamState{view: dreamReview, plan: &plan, viewport: new(bounded.Viewport)}
-	for i, size := range [][2]int{{48, 20}, {28, 12}, {12, 5}, {60, 30}} {
-		m.width = size[0]
-		out := renderDreamOverlay(m.deps.Theme, m.dream, m.caps, defaultHelpKeys(), size[0], size[1])
-		if i == 0 {
-			m.dream.viewport.Move(bounded.End, len(dreamPhysicalRows(dreamReaderLines(m.dream, m.caps, m.width), cardTextWidth(m.width))))
-		} else if m.dream.viewport.Valid() {
-			total := len(dreamPhysicalRows(dreamReaderLines(m.dream, m.caps, m.width), cardTextWidth(m.width)))
-			if got, maxOffset := m.dream.viewport.Offset(), max(0, total-m.dream.viewport.Height()); got > maxOffset {
-				t.Fatalf("%dx%d resize offset = %d, want <= %d", size[0], size[1], got, maxOffset)
-			}
-		}
-		for _, line := range strings.Split(out, "\n") {
-			if got := ansi.StringWidth(ansi.Strip(line)); got > size[0] {
-				t.Fatalf("%dx%d row width = %d: %q", size[0], size[1], got, ansi.Strip(line))
-			}
-		}
-		if got := len(strings.Split(out, "\n")); got > size[1] {
-			t.Fatalf("%dx%d rendered %d rows", size[0], size[1], got)
-		}
-	}
-	m.dream = dreamState{view: dreamReceipt, plan: &plan, receipt: &client.DreamReceipt{Failed: 1}, viewport: m.dream.viewport}
-	m, _ = pressDream(t, m, 'r')
-	if m.dream.view != dreamConfirmRegenerate {
-		t.Fatalf("receipt action was lost to reader navigation: %v", m.dream.view)
+	s.err = status.Error(codes.Unavailable, "unknown")
+	out = m.View().Content
+	if !strings.Contains(out, "t retry") || strings.Contains(out, "r regenerate") {
+		t.Fatal("unknown receipt recovery mismatch")
 	}
 }

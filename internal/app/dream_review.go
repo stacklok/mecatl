@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -41,6 +42,7 @@ type retainedDream struct {
 
 type dreamReviewConfig struct {
 	targets    map[server.DreamTarget]*dream.Consolidator
+	diag       port.Diagnostics
 	now        func() time.Time
 	newID      func() (string, error)
 	ttl        time.Duration
@@ -54,6 +56,7 @@ type dreamReviewConfig struct {
 type dreamReviewCoordinator struct {
 	mu         sync.Mutex
 	targets    map[server.DreamTarget]*dream.Consolidator
+	diag       port.Diagnostics
 	records    map[string]*retainedDream
 	now        func() time.Time
 	newID      func() (string, error)
@@ -80,8 +83,11 @@ func newDreamReviewCoordinator(cfg dreamReviewConfig) *dreamReviewCoordinator {
 	if cfg.maxPending <= 0 {
 		cfg.maxPending = maxPendingDreamsPerTarget
 	}
+	if cfg.diag == nil {
+		cfg.diag = port.NopDiagnostics{}
+	}
 	return &dreamReviewCoordinator{
-		targets: cfg.targets, records: make(map[string]*retainedDream), now: cfg.now,
+		targets: cfg.targets, diag: cfg.diag, records: make(map[string]*retainedDream), now: cfg.now,
 		newID: cfg.newID, ttl: cfg.ttl, maxRecords: cfg.maxRecords, maxPending: cfg.maxPending,
 	}
 }
@@ -110,6 +116,7 @@ func (c *dreamReviewCoordinator) Generate(ctx context.Context, target server.Dre
 	id, err := c.uniqueIDLocked()
 	if err != nil {
 		c.mu.Unlock()
+		c.diag.Log(ctx, port.LevelError, "dream generation failed", "stage", "id_generation")
 		return server.DreamReview{}, server.ErrDreamGenerateFailed
 	}
 	record := &retainedDream{id: id, target: target, expiresAt: now.Add(c.ttl), state: dreamGenerating}
@@ -121,6 +128,35 @@ func (c *dreamReviewCoordinator) Generate(ctx context.Context, target server.Dre
 		c.mu.Lock()
 		delete(c.records, id)
 		c.mu.Unlock()
+		stage := "generation"
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			stage = "deadline"
+		case errors.Is(err, context.Canceled):
+			stage = "cancelled"
+		case errors.Is(err, dream.ErrReadStore):
+			stage = "read_store"
+		case errors.Is(err, dream.ErrSynthesis):
+			stage = "synthesis"
+		case errors.Is(err, dream.ErrPlanner):
+			stage = "planner"
+		}
+		attrs := []any{"stage", stage}
+		if stage == "planner" {
+			var metadata port.ProviderErrorMetadataError
+			if errors.As(err, &metadata) {
+				if code := metadata.ProviderHTTPStatus(); code >= 100 && code <= 599 {
+					attrs = append(attrs, "http_status", code)
+				}
+				if code := metadata.ProviderInBandStatus(); code >= 100 && code <= 599 {
+					attrs = append(attrs, "in_band_status", code)
+				}
+			}
+		}
+		c.diag.Log(ctx, port.LevelError, "dream generation failed", attrs...)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return server.DreamReview{}, server.ErrDreamDeadline
+		}
 		return server.DreamReview{}, server.ErrDreamGenerateFailed
 	}
 	review := projectDreamReview(id, target, c.now().Add(c.ttl), plan.Review())
@@ -336,5 +372,5 @@ func buildDreamReview(cfg Config, assets catalogAssets, providerPresent bool) (s
 		caps.UnavailableReason = "no manual dream target is available"
 		return nil, caps
 	}
-	return newDreamReviewCoordinator(dreamReviewConfig{targets: targets}), caps
+	return newDreamReviewCoordinator(dreamReviewConfig{targets: targets, diag: cfg.diag()}), caps
 }

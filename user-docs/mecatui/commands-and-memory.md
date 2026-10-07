@@ -46,10 +46,23 @@ server. For configuration details, see
 ## Review and maintain memory
 
 - `/dream` proposes maintenance for the selected project-memory or user-model
-  store. Generating a plan sends selected memory values to the configured model
-  and uses tokens. Review the plan before applying it. Use the arrow keys to read
-  a long plan. Confirmation applies the whole plan; dismissal changes nothing. A
-  server restart discards pending plans.
+  store. Choose the target with the arrow keys or by clicking an available row;
+  use the mouse wheel to browse the target list without changing the selection.
+  Generating sends the selected memory's full values and descriptions to the
+  configured model and uses tokens. Choosing a target does not start generation;
+  confirm the spend before the request is sent. Closing Dream closes the client
+  view, but does not cancel a request that the server has already received.
+  Review the plan before applying it. Use the arrow keys to read a long plan.
+  Confirmation applies the whole plan; dismissal changes nothing. A server
+  restart discards pending plans.
+- If plan generation fails, retry it. For a server-reported generation failure,
+  check server diagnostics. A connection or transport failure can happen before
+  the request reaches the server, so it might not have a matching diagnostic.
+  If a decision result is unknown or still in progress, retry the same decision
+  to retrieve its authoritative receipt instead of choosing the opposite
+  decision. When a plan has expired or already reached another terminal
+  decision, generate a fresh plan only after confirming the additional token
+  spend.
 - `/reflections` opens staged learning proposals. Review their evidence and
   approve or reject each proposal when the server allows it.
 - `/reflect` submits the completed session for immediate reflection, even when
