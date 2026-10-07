@@ -8,10 +8,10 @@
 // directory. The TUI then dials that socket as an ordinary gRPC client, so the
 // ui/theme/client packages stay pure: they never learn the server is in-process.
 //
-// Architectural boundary: this package — like cmd/mecatui/client and the
-// cmd/mecatui main — is the ONLY place in the TUI tree allowed to import
-// contracts/gen, grpc, internal/app, internal/adapter/*, and the server adapter.
-// The render packages (ui, theme) and the client package import none of it.
+// Architectural boundary: this package, cmd/mecatui/client, and the cmd/mecatui
+// main are the only places in the TUI tree that import contracts/gen, grpc, or
+// internal/ packages (the client imports contracts/gen, grpc, and the server
+// adapter). The render packages (ui, theme) import none of it.
 package embed
 
 import (
@@ -68,7 +68,7 @@ type grpcServer interface {
 const adminSocketName = "admin.sock"
 
 // PerfConfig is the opt-in perf-observability configuration for the embedded
-// server (decision 7 in docs/adr/0018-perf-observability.md). It is OFF by default
+// server. It is OFF by default
 // (the zero value): mecatui hosts a bare gRPC socket with no telemetry, exactly
 // as before. When Enabled, Start arms the SAME runtime-introspection surface
 // mecated exposes — pprof, expvar, the runtime/RSS snapshot, and the execution
@@ -136,7 +136,7 @@ type Server struct {
 	recorderArmed bool
 }
 
-// registerLocalSessionContextServer registers ADR 0296's privileged projection only
+// registerLocalSessionContextServer registers the privileged local-session-context projection only
 // on this package's owner-private Unix socket. It intentionally accepts no general
 // opt-in flag: starting embedded Mecatui is the v1 opt-in.
 func registerLocalSessionContextServer(grpcSrv *grpc.Server, lis net.Listener, local *server.LocalSessionContextServer) error {

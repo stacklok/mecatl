@@ -175,7 +175,7 @@ func TestStartupRunEntryFailureClassifiesSafeStatus(t *testing.T) {
 	}
 }
 
-func TestADR_0108_FirstPromptRevalidatesAtomically(t *testing.T) {
+func TestFirstPromptRevalidatesAtomically(t *testing.T) {
 	newFailedModel := func() (Model, *fakeConv, *fakeSender) {
 		sender := &fakeSender{}
 		conv := &fakeConv{recv: &fakeRecver{}, send: sender}

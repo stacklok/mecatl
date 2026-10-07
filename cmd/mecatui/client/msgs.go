@@ -243,7 +243,7 @@ type RoutingDecision struct {
 
 // SubagentMsg is the BOUNDED projection of a Subagent tool's child run. It carries
 // ids, a goal label, child tool names/counts, usage, stop, and duration — plus the
-// BOUNDED content previews the server clamp-scrubs per ADR 0079 (InnerKind/Text/
+// BOUNDED content previews the server clamp-scrubs (InnerKind/Text/
 // Detail on a subagent.tool event), so the ui renders a subagent's activity under
 // its Subagent card while the previews stay bounded, scrubbed, and client-only
 // (never entering the parent conversation — gauntlet #7). ParentCallID attributes
@@ -252,7 +252,7 @@ type RoutingDecision struct {
 // it on subagent.start only, and an older server yields false (no marker).
 // RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare
 // metadata (a category label + a model id) on subagent.start, empty when no
-// router classified the delegation (ADR 0031) — never child content, so
+// router classified the delegation — never child content, so
 // gauntlet #7 holds.
 type SubagentMsg struct {
 	Kind           SubagentKind
@@ -263,24 +263,24 @@ type SubagentMsg struct {
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the opt-in router did NOT classify this delegation
-	// (subagent.start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
+	// (subagent.start only; issue #397): empty on a routed hit, otherwise a
 	// bounded harness/composition gate or classifier-miss string. Bare metadata —
 	// never child content — so gauntlet #7 holds.
 	RoutingReason   string
 	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the child ACTUALLY ran on (subagent.start only),
 	// regardless of how it was chosen — inherited default, agent-def pin, per-call
-	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
+	// override, or the opt-in router (issue #112). When routed, Model ==
 	// RoutedModel. Bare metadata, never child content, so gauntlet #7 holds.
 	Model    string
 	ToolName string
 	IsError  bool
-	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
+	// InnerKind / Text / Detail are the bounded previews, set on a
 	// subagent.tool event per the child's forwarded inner event kind:
 	// InnerKind is "tool.call" (Detail = the bounded args preview), "tool.result"
 	// (Detail = the bounded result preview), or "message.delta" (Text = the capped
 	// message text); empty on start/end and from an older server (the ui then renders
-	// a bare chip, exactly the pre-ADR-0079 shape). The server clamp-scrubs every
+	// a bare chip, exactly the pre-preview shape). The server clamp-scrubs every
 	// preview (control bytes out, ≤200 runes); the ui caps again on render. ToolCount
 	// (tools started) and Usage (provider-reported) are CUMULATIVE totals stamped on
 	// EVERY subagent.tool event regardless of InnerKind — always current, so the ui
@@ -365,18 +365,18 @@ type TeamMemberSpec struct {
 	Lead     bool
 	// RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare metadata
 	// (a category label + a model id) for a routed member, empty when no router
-	// classified the member (ADR 0031 / ADR 0034) — never member content, so gauntlet
+	// classified the member — never member content, so gauntlet
 	// #7 holds.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the opt-in router did NOT classify this member
-	// (team.start roster only; issue #397 / ADR 0083): empty on a routed hit,
+	// (team.start roster only; issue #397): empty on a routed hit,
 	// otherwise a bounded harness/composition gate string. Bare metadata — never
 	// member content — so gauntlet #7 holds.
 	RoutingReason   string
 	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the member's engine ACTUALLY runs on (team.start
-	// roster only), regardless of how it was chosen (issue #112 / ADR 0035). When routed,
+	// roster only), regardless of how it was chosen (issue #112). When routed,
 	// Model == RoutedModel. Bare metadata, never member content, so gauntlet #7 holds.
 	Model string
 }
@@ -462,8 +462,8 @@ const (
 // Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a
 // join strategy and a single winner. It carries ids, a goal label, child tool
 // names/counts, usage, stop, duration, the join strategy, and the winner index —
-// plus the BOUNDED content previews the server clamp-scrubs per
-// ADR 0079 (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
+// plus the BOUNDED content previews the server clamp-scrubs
+// (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
 // client-only (never entering the parent conversation — gauntlet #7).
 // ParentCallID is the group key.
 type ParallelMsg struct {
@@ -483,25 +483,25 @@ type ParallelMsg struct {
 	Goal        string
 	// RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare metadata
 	// (a category label + a model id) for a routed branch, set on branch_start only,
-	// empty when no router classified the branch (ADR 0031 / ADR 0034) — never branch
+	// empty when no router classified the branch — never branch
 	// content, so gauntlet #7 holds.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the opt-in router did NOT classify this branch
-	// (branch_start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
+	// (branch_start only; issue #397): empty on a routed hit, otherwise a
 	// bounded harness/composition gate or classifier-miss string. Bare metadata —
 	// never branch content — so gauntlet #7 holds.
 	RoutingReason   string
 	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the branch ACTUALLY ran on (branch_start only),
-	// regardless of how it was chosen (issue #112 / ADR 0035). When routed, Model ==
+	// regardless of how it was chosen (issue #112). When routed, Model ==
 	// RoutedModel. Bare metadata, never branch content, so gauntlet #7 holds.
 	Model string
 	// ToolName / IsError / ToolCount carry per-branch tool activity (branch_tool;
 	// ToolCount is also final on branch_end).
 	ToolName string
 	IsError  bool
-	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
+	// InnerKind / Text / Detail are the bounded previews, set on a
 	// branch_tool event per the branch's forwarded inner event kind (tool.call /
 	// tool.result / message.delta), exactly as on SubagentMsg; empty from an older
 	// server. The server clamp-scrubs every preview; the ui caps again on render.
@@ -754,7 +754,7 @@ type ApprovalMsg struct {
 // continuation/notice); Parts carries any non-text media (image/audio) that rode
 // alongside it, projected to the plain ContentBlock type (image/audio only).
 // Synthetic is the server-authored origin bit; false remains genuine/legacy.
-// A delivery-patterned user_prompt (the fire-result delivery channel, ADR 0075)
+// A delivery-patterned user_prompt (the fire-result delivery channel)
 // maps to DeliveryNoteMsg instead — see deliverNoteFrom.
 type UserPromptMsg struct {
 	Text      string
@@ -762,7 +762,7 @@ type UserPromptMsg struct {
 	Synthetic bool
 }
 
-// DeliveryNoteMsg is a fire-result delivery note (ADR 0075 Scenario 5): the
+// DeliveryNoteMsg is a fire-result delivery note: the
 // fenced-untrusted harness note the scheduler delivered into the origin session.
 // It is projected from an EvUserPrompt event whose text starts with the
 // "[scheduled task <name> (fire <id>) ..." provenance header renderFireDelivery
@@ -1195,7 +1195,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		up := ev.GetUserPrompt()
 		text := up.GetText()
 		parts := contentPartsFromProto(up.GetParts())
-		// Route fire-result delivery notes (ADR 0075 Scenario 5) to a
+		// Route fire-result delivery notes to a
 		// distinct DeliveryNoteMsg so the ui renders them as a delivery
 		// card with a scheduled-task affordance, not as a user-typed
 		// prompt. The pattern is the renderFireDelivery provenance header.

@@ -1108,7 +1108,7 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 	}
 }
 
-// renderSubagent renders a Subagent card's BOUNDED subagent region (ADR 0079 — the
+// renderSubagent renders a Subagent card's BOUNDED subagent region (the
 // previews are bounded, scrubbed, client-only; they never enter the parent
 // conversation). It has three states, per the agreed UX:
 //
@@ -1128,11 +1128,11 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 
 // subagentModelLabel renders the model surface for a delegation as a muted one-line
 // cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
-// when the router classified the delegation (ADR 0031); otherwise it shows the
-// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112 / ADR 0035)
+// when the router classified the delegation; otherwise it shows the
+// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112)
 // — inherited default, agent-def pin, or per-call override — annotated with WHY the
 // router did not classify as " · not routed: <reason>" when the server supplied a
-// reason (issue #397 / ADR 0083). It returns "" when no model is known and the router
+// reason (issue #397). It returns "" when no model is known and the router
 // did not fire. The category/model/reason are server-derived bare metadata (sanitized)
 // — never child content — so gauntlet #7 holds. When routed, model == routedModel and
 // the reason is empty, so the routed cue is shown (not duplicated as a model: line).
@@ -1306,14 +1306,14 @@ const maxTraceToolNameLen = 20
 // maxTraceDetailLen caps how many runes of a tool chip's arg/result preview show
 // next to it in the expanded trace. Server-bounded already (≤200 runes); this keeps
 // a single chip line scannable. Shared by the Subagent/Team/Parallel trace
-// renderers per ADR 0079 — the engine cap + this cap is the intentional
+// renderers — the engine cap + this cap is the intentional
 // double-truncation defense-in-depth.
 const maxTraceDetailLen = 80
 
 // boundedPreviewsSubNote / boundedPreviewsParNote are the honesty notes every
-// Subagent / Parallel trace surface carries (ADR 0079): the previews are BOUNDED —
+// Subagent / Parallel trace surface carries: the previews are BOUNDED —
 // clamped + scrubbed server-side, capped again on render, client-only — so the
-// note states the accurate posture instead of the pre-ADR-0079 "content hidden"
+// note states the accurate posture instead of the older "content hidden"
 // claim. The parent conversation stays clean (gauntlet #7 is about the
 // conversation, not what a client may observe).
 const (
@@ -1491,7 +1491,7 @@ func teamStopReasonLabel(reason string) string {
 
 // renderTrace renders a delegation lane's expanded trace — the SHARED format for
 // the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
-// lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
+// lanes (one trace shape, one renderer). Message lines (clamped, dim,
 // prefixed "  ") interleave with tool chips (✓/✗ name) carrying their bounded
 // arg/result preview, in arrival order. A chip with a preview gets its own line
 // ("  ✓ Grep — pattern: foo"); bare chips coalesce onto one wrapped row. Returns

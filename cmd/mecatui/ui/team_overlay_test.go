@@ -1595,7 +1595,7 @@ func TestAgentsFocusWindowedGolden(t *testing.T) {
 }
 
 // TestTeamRosterRoutedMetadata asserts the opt-in model router's bare metadata
-// (category + model, ADR 0034) surfaces on a member's roster row in the f6 Teams
+// (category + model) surfaces on a member's roster row in the f6 Teams
 // tab as a muted "routed: <category> → <model>" cue — and is absent for an unrouted
 // member (a DEFINED member that pinned its own model, or no router). It carries no
 // member content (gauntlet #7).
@@ -1614,7 +1614,7 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 		t.Errorf("routed member roster row should carry the routed cue:\n%s", out)
 	}
 	// The plain (non-routed) lead member shows its inherited model as a "model:" cue
-	// (issue #112 / ADR 0035) — not a routed cue.
+	// (issue #112) — not a routed cue.
 	if !strings.Contains(out, "model: openai/gpt-4.5") {
 		t.Errorf("non-routed lead roster row should carry the plain model: cue:\n%s", out)
 	}

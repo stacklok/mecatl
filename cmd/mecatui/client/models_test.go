@@ -170,7 +170,7 @@ func TestCreateSessionCarriesModelSelection(t *testing.T) {
 }
 
 // TestCreateSessionCarriesReasoningEffort asserts the proto-build point sets
-// reasoning_effort from the selection (ADR 0055), leaves it empty for an unset
+// reasoning_effort from the selection, leaves it empty for an unset
 // effort, and that the response's resolved_model.reasoning_effort flows back into
 // client.ResolvedModel.ReasoningEffort (the EFFECTIVE effort the server resolved).
 func TestCreateSessionCarriesReasoningEffort(t *testing.T) {

@@ -23,7 +23,7 @@ const (
 	conversationRegionAppendix
 )
 
-// readingAnchor is the renderer-facing subset of ADR 0301's logical coordinate.
+// readingAnchor is the renderer-facing subset of the logical conversation coordinate.
 // Text rows use sourceOffset (a grapheme offset in ANSI-free visible text); chrome
 // and other derived rows retain their local row fallback.
 type readingAnchor struct {

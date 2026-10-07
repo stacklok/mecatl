@@ -473,7 +473,7 @@ func modelCapSegments(mi client.ModelInfo) []string {
 	if mi.ContextLimit > 0 {
 		segs = append(segs, renderfmt.HumanizeTokens(mi.ContextLimit))
 	}
-	// ADR 0346: mark a row mecatl sends no cache breakpoint for. The row stays
+	// Mark a row mecatl sends no cache breakpoint for. The row stays
 	// SELECTABLE, and marking rather than hiding was the explicit decision
 	// recorded in the acceptance plan.
 	//
@@ -497,7 +497,7 @@ func modelCapSegments(mi client.ModelInfo) []string {
 }
 
 // anyUncachedModel reports whether any row in the catalog would carry the
-// no-cache marker, gating its legend line (ADR 0346). It must apply the SAME
+// no-cache marker, gating its legend line. It must apply the SAME
 // predicate modelCapSegments does, or the legend and the markers disagree.
 func anyUncachedModel(models []client.ModelInfo) bool {
 	for _, mi := range models {

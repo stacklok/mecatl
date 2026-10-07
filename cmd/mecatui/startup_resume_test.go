@@ -205,7 +205,7 @@ func TestSessionContinuityUX_Scenario6_LatestSelection(t *testing.T) {
 	}
 }
 
-func TestADR_0108_StartupStaticValidation(t *testing.T) {
+func TestStartupResumeStaticValidation(t *testing.T) {
 	child := client.SessionListItem{ID: "child", Kind: client.SessionKindSubagent, Capabilities: client.SessionInventoryCapabilities{Inspect: true}, ReasonCode: client.CapabilityReasonInspectOnlyKind}
 	source := &fakeStartupResumeSource{
 		rows: []client.SessionListItem{child},

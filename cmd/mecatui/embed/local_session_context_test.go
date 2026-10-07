@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-func adr0296MockAppConfig(t testing.TB, workspace string) app.Config {
+func localSessionContextMockAppConfig(t testing.TB, workspace string) app.Config {
 	t.Helper()
 	return app.Config{
 		Workspace: workspace, UserModelDir: t.TempDir(), Model: "mock-model", UseMock: true,
@@ -27,10 +27,10 @@ func adr0296MockAppConfig(t testing.TB, workspace string) app.Config {
 	}
 }
 
-func TestADR_0296_EmbeddedMecatuiServesLocalSessionContext(t *testing.T) {
+func TestEmbeddedMecatuiServesLocalSessionContext(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
-	srv, err := Start(ctx, adr0296MockAppConfig(t, workspace), PerfConfig{})
+	srv, err := Start(ctx, localSessionContextMockAppConfig(t, workspace), PerfConfig{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestADR_0296_EmbeddedMecatuiServesLocalSessionContext(t *testing.T) {
 	}
 }
 
-func TestADR_0296_LocalContextRequiresEmbeddedPrivateListener(t *testing.T) {
+func TestLocalContextRequiresEmbeddedPrivateListener(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		open func(t *testing.T) net.Listener
@@ -123,7 +123,7 @@ func TestADR_0296_LocalContextRequiresEmbeddedPrivateListener(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StandaloneMecatedDoesNotExposeLocalSessionContext(t *testing.T) {
+func TestStandaloneMecatedDoesNotExposeLocalSessionContext(t *testing.T) {
 	ctx := context.Background()
 	// Standalone registration is intentionally absent: an ordinary gRPC server with
 	// the standard Harness registration leaves this privileged method unimplemented.

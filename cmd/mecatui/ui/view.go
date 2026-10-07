@@ -821,7 +821,7 @@ func (m Model) renderFatalAtHeight(height int) string {
 }
 
 // effortHeaderSuffix returns the reasoning-effort token to show beside the model in
-// the header, or "" when nothing should render (ADR 0055). It hides the unset state
+// the header, or "" when nothing should render. It hides the unset state
 // honestly: the server echoes "" for an unset/auto effort, and an explicit "auto"
 // (defensive — the picker maps auto→"" before sending, but an older path could echo
 // it) is treated the same. The value is server-owned, so it is terminal-sanitized.

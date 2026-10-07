@@ -52,7 +52,7 @@ type Capabilities struct {
 	// server (field absent → false) hides the overlay. Independent of the scheduler
 	// tick loop: the overlay can create/inspect/pause/resume/fire-now on any
 	// store-backed server; auto-firing on a cadence is the server's tick loop
-	// (ON by default on a store-backed server, ADR 0073 — `--no-scheduler` opts out).
+	// (ON by default on a store-backed server; `--no-scheduler` opts out).
 	Scheduling        bool
 	Reflection        bool
 	LearningProposals bool
@@ -166,7 +166,7 @@ type ResolvedModel struct {
 	ModelID       string
 	ContextWindow int64
 	// ReasoningEffort is the EFFECTIVE reasoning-effort tier this session resolved
-	// to (ADR 0055), "" when unset (provider default). The ui shows it in the model
+	// to, "" when unset (provider default). The ui shows it in the model
 	// footer segment (only when non-empty). Server-owned + echoed verbatim — never
 	// recomputed by the client.
 	ReasoningEffort string

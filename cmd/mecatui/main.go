@@ -194,8 +194,8 @@ func runWithOptions(argv []string, options runOptions) error {
 		return err
 	}
 
-	// Resolve the full CLI invocation through the PURE resolveInvocation seam
-	// (ADR 0087). prepareRun owns only the help/error side effects; an executable
+	// Resolve the full CLI invocation through the PURE resolveInvocation seam.
+	// prepareRun owns only the help/error side effects; an executable
 	// invocation then threads its mode and remaining flag tail into
 	// parseTransportFlags. Neither step reads or mutates os.Args.
 	res, err := prepareRun(argv)
@@ -237,7 +237,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	// from resolveTransport and would otherwise leave the default at stderr, which the
 	// alt-screen (started below for ALL paths) would let a stray ambient/third-party
 	// slog line corrupt. The host-embedded branch later refines this floor to the
-	// mecatui.log file writer. See docs/adr/0020-diagnostics.md.
+	// mecatui.log file writer.
 	installBaselineSlog(cfg.quiet)
 
 	warnEmbeddedPosture(cfg)
@@ -583,7 +583,7 @@ func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
 }
 
 // resolveThemeAutoDetect decides whether the light/dark terminal-background
-// auto-detect (ADR 0280) should be armed for this launch: only when no
+// auto-detect should be armed for this launch: only when no
 // explicit --theme/MECATUI_THEME was given (finalizeParsedConfig resolves both
 // into cfg.theme, so an empty value means neither was given) AND stdout is a
 // real terminal — never on redirected/piped output, which must never see the
@@ -703,7 +703,7 @@ func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent,
 		conn, err := ops.connection(intent.Target)
 		if err == nil {
 			ctx, cancel := ops.loginContext(savedLoginCallbackTimeout)
-			// ADR 0271: the recovery overlay never opens a browser. This is
+			// The recovery overlay never opens a browser. This is
 			// unconditional -- not read from the intent -- so no producer of
 			// ConnectRestartIntent can put the process back in the browser
 			// path for a reauthentication restart.
@@ -979,7 +979,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedStart func(app.Config) error) (target string, dial client.DialConfig, cleanup func(), err error) {
 	noop := func() {}
 
-	// The two modes are PURE (ADR 0087): `mecatui connect ADDRESS` ALWAYS dials
+	// The two modes are PURE: `mecatui connect ADDRESS` ALWAYS dials
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
@@ -1019,7 +1019,7 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 	// operator-recoverable rather than discarded. This second SetDefault wins over the
 	// baseline for the embedded path. cmd/ mains are the only layer allowed to call
 	// slog.SetDefault (internal/ flows through the injected port.Diagnostics, ban-
-	// guarded). See docs/adr/0020-diagnostics.md.
+	// guarded).
 	slog.SetDefault(slog.New(slog.NewTextHandler(diagW, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg = applyTrustPrompt(cfg, diag)
@@ -1122,7 +1122,7 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 // (resolveTransport, well before tea.NewProgram(...).Run() ever enters the
 // alt-screen) stderr is still plain, unbuffered terminal output; a
 // diag.Log-routed notice would instead land only in the diagnostics FILE
-// (invisible, and dropped entirely under --quiet), defeating ADR 0338's
+// (invisible, and dropped entirely under --quiet), defeating the product-metrics
 // visible-disclosure requirement. This also runs BEFORE embed.Start, not
 // deferred to a check on the returned handles' FirstRun field after the
 // embedded server has started (which left a window where a failed
@@ -1350,12 +1350,12 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// models.default_provider: key (folded by foldOperatorDefaultProvider in app.Build).
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
 		SubagentModel:          cfg.subagentModel,
-		// Per-slot models (ADR 0030): the mecated flags mirror, mapped verbatim.
+		// Per-slot models: the mecated flags mirror, mapped verbatim.
 		// The *cliconfig.KeyValueList flag bindings are converted to the plain
 		// map[string]string app.Config expects (nil for an unset flag).
 		ModelAliases: cfg.modelAliases.AsMap(),
 		ModelSlots:   cfg.modelSlots.AsMap(),
-		// Subagent model router (ADR 0042): kill-switch. =false forces the router OFF
+		// Subagent model router: kill-switch. =false forces the router OFF
 		// (RouterDisabled); a bare flag / =true is a harmless no-op (the router stays
 		// governed by the taxonomy); unset leaves routing governed by the operator-tier
 		// models.router: taxonomy. Idempotent: safe to compute on both calls.
@@ -1387,7 +1387,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// can be inspected after the fact. --no-store opts out (in-memory store);
 		// --store-dir relocates it. See resolveStoreDir.
 		StoreDir: resolveStoreDir(cfg),
-		// Scheduled tasks ON by default (ADR 0073 decision 2, AC2.4): the TUI
+		// Scheduled tasks ON by default: the TUI
 		// inherits the on-by-default scheduler (the same !--no-scheduler fold the
 		// mecated cmd feeds), so the embedded server ticks and a due schedule
 		// auto-fires with no flag — the /schedule overlay's in-chat and manual
@@ -1470,7 +1470,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
-		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
+		// Reasoning-effort tier: operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
 		ReasoningEffortFlagSet: cfg.reasoningEffortFlagSet,
@@ -1483,7 +1483,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// Run.Approve → childAskRouter). It must NOT default headless (which would
 		// auto-deny — or LLM-adjudicate — a child ask the human is right there to
 		// answer). This is why the headless ask reviewer is a mecated-only flag
-		// (ADR 0089 removed the inert --subagent-ask-reviewer* flags from mecatui:
+		// (the inert --subagent-ask-reviewer* flags were removed from mecatui:
 		// the modal always sees the ask, so the reviewer never engages here — run
 		// a headless `mecated --headless --subagent-ask-reviewer …` and point
 		// `mecatui connect` at it to use the reviewer).
@@ -1750,7 +1750,7 @@ func (s *sessionAdapter) SetMode(ctx context.Context, id, mode string) (string, 
 	return s.cl.SetMode(ctx, id, mode)
 }
 
-// ForkSession implements the ui SessionCreator's fork seam (ADR 0068): the title
+// ForkSession implements the ui SessionCreator's fork seam: the title
 // stays inherited ("") — the /effort fork-resume switches effort ONLY, so the fork
 // keeps the source's title, provider, and model.
 func (s *sessionAdapter) ForkSession(ctx context.Context, srcID, reasoningEffort string) (string, error) {

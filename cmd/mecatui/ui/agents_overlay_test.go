@@ -40,7 +40,7 @@ func endSub(parent, child string, in, out int64, count int, stop string) client.
 
 // toolSubPreview builds a subagent.tool projection carrying an InnerKind + bounded
 // content (Detail for a tool.call/tool.result, Text for a message.delta) — the
-// ADR-0079 widened wire. count is the running tool total the event carries.
+// widened wire. count is the running tool total the event carries.
 func toolSubPreview(parent, child, innerKind, tool, content string, count int) client.SubagentMsg {
 	msg := toolSub(parent, child, tool, false, count)
 	msg.InnerKind = innerKind
@@ -53,7 +53,7 @@ func toolSubPreview(parent, child, innerKind, tool, content string, count int) c
 }
 
 // branchToolParPreview builds a parallel.branch_tool projection carrying an InnerKind
-// + bounded content (Detail / Text) — the ADR-0079 widened wire. count is the running
+// + bounded content (Detail / Text) — the widened wire. count is the running
 // tool total the event carries.
 func branchToolParPreview(parent string, idx int, innerKind, tool, content string, count int) client.ParallelMsg {
 	msg := branchToolPar(parent, idx, tool, false, count)
@@ -366,7 +366,7 @@ func TestEscClosesSubagentOverlay(t *testing.T) {
 }
 
 // TestSubagentOverlayBoundsChildContent is the client-side boundedness guard for the
-// Subagents tab under ADR 0079: the subagent.* projection now forwards child content
+// Subagents tab: the subagent.* projection now forwards child content
 // ONLY as bounded previews (the engine clamp-scrubs them; the wire ≤ 200 runes), and
 // the overlay must render them SANITIZED + TUI-capped — never raw, never unbounded.
 // It seeds a child whose goal, tool name, and PREVIEW fields carry a SENTINEL plus

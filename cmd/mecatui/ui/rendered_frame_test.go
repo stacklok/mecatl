@@ -13,10 +13,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-// TestADR_0301_RenderedFrameProvenanceMatchesLines pins ADR 0301's requirement
+// TestRenderedFrameProvenanceMatchesLines pins the requirement
 // that the actual incremental scrollback renderer returns one provenance row per
 // visible line without changing the viewport's existing bytes.
-func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
+func TestRenderedFrameProvenanceMatchesLines(t *testing.T) {
 	c := &conversation{}
 	c.addUser("hello")
 	c.startAssistant()
@@ -385,10 +385,10 @@ func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testin
 	}
 }
 
-// TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset pins canonical visible
+// TestReflowRestoresCanonicalVisibleTextOffset pins canonical visible
 // text offsets: a body anchor resolves to the same visible grapheme after a
 // terminal-width reflow, rather than retaining an unstable wrapped row number.
-func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
+func TestReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	c := &conversation{}
 	c.addUser("short")
 	c.startAssistant()
@@ -426,10 +426,10 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	}
 }
 
-// TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly pins the normal
+// TestScrollbackFrameRetainsLinearMetadataOnly pins the normal
 // collapsed streaming path: frame metadata tracks rows while cached rendered
 // strings remain the renderer's sole transcript representation.
-func TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
+func TestScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
 	for _, depth := range []int{64, 256} {
 		t.Run("depth", func(t *testing.T) {
 			c := &conversation{}

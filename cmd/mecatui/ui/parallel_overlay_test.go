@@ -301,7 +301,7 @@ func TestParallelBranchRowSeparatesSummaryAndActivity(t *testing.T) {
 }
 
 // TestParallelOverlayBoundsBranchContent is the client-side boundedness guard for the
-// Parallel group focus under ADR 0079: branch content reaches the overlay ONLY as
+// Parallel group focus: branch content reaches the overlay ONLY as
 // bounded previews (engine-clamped; the TUI caps them again) and the honesty note
 // states "bounded previews" — content is bounded, never hidden and never unbounded.
 func TestParallelOverlayBoundsBranchContent(t *testing.T) {
@@ -520,7 +520,7 @@ func TestParallelBranchTransientToolGlyph(t *testing.T) {
 }
 
 // branchStartParRouted is branchStartPar plus the opt-in model router's bare metadata
-// (a category label + a model id, ADR 0034) — set on branch_start only when the router
+// (a category label + a model id) — set on branch_start only when the router
 // classified the branch.
 func branchStartParRouted(parent string, idx int, label, goal, routedCat, routedModel string) client.ParallelMsg {
 	msg := branchStartPar(parent, idx, label, goal)
@@ -529,8 +529,8 @@ func branchStartParRouted(parent string, idx int, label, goal, routedCat, routed
 	return msg
 }
 
-// branchStartParModel is branchStartPar plus the generic model surface (issue #112 /
-// ADR 0035): the concrete model id the branch ACTUALLY ran on, for the non-routed case
+// branchStartParModel is branchStartPar plus the generic model surface (issue #112):
+// the concrete model id the branch ACTUALLY ran on, for the non-routed case
 // (inherited default / agent-def pin / per-call override).
 func branchStartParModel(parent string, idx int, label, goal, model string) client.ParallelMsg {
 	msg := branchStartPar(parent, idx, label, goal)
@@ -539,7 +539,7 @@ func branchStartParModel(parent string, idx int, label, goal, model string) clie
 }
 
 // TestParallelBranchRoutedMetadata asserts the opt-in model router's bare metadata
-// (category + model, ADR 0034) surfaces on a branch row in the group focus view as a
+// (category + model) surfaces on a branch row in the group focus view as a
 // muted "routed: <category> → <model>" cue — and is absent for an unrouted branch. It
 // rides the REAL wire path (Update → applyParallel) and carries no branch content
 // (gauntlet #7).

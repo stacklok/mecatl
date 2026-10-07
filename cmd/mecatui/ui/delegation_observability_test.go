@@ -1,7 +1,6 @@
 package ui
 
-// Scenario tests for the delegation observability convergence (ADR 0079, plan
-// delegation-observability-convergence Scenario 3): the mecatui Subagent and
+// Scenario tests for the delegation observability convergence: the mecatui Subagent and
 // Parallel surfaces render the BOUNDED previews the wire now carries, converge on
 // the Team trace format, and stop claiming content is hidden. Team-unique
 // structures stay Team-only.

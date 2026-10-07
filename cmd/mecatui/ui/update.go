@@ -2061,7 +2061,7 @@ func (m Model) onColorProfile(msg tea.ColorProfileMsg) Model {
 	return m
 }
 
-// onBackgroundColor is the light/dark auto-detect reducer (ADR 0280): it
+// onBackgroundColor is the light/dark auto-detect reducer: it
 // consumes the tea.BackgroundColorMsg Init requested via
 // tea.RequestBackgroundColor when Deps.ThemeAutoDetect was set. It disarms
 // themeAutoDetectArmed FIRST, so a duplicate or late response — a misbehaving
@@ -2082,7 +2082,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 }
 
 // switchTheme installs th as the active theme and resets every baked-in
-// consumer so nothing keeps rendering the old palette (ADR 0280): the input
+// consumer so nothing keeps rendering the old palette: the input
 // textarea and every overlay read m.deps.Theme fresh on each render, but the
 // renderer's glamour/block/join caches and the spinner's style are captured at
 // construction time and must be rebuilt explicitly.

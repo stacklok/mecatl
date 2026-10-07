@@ -157,7 +157,7 @@ type keyMap struct {
 	// overlay.
 	Help key.Binding
 
-	// Effort (f7) opens the /effort reasoning-effort picker (ADR 0055) — the
+	// Effort (f7) opens the /effort reasoning-effort picker — the
 	// same surface the /effort command opens. Control-modified so it never collides
 	// with textarea input. Like the /effort command it is idle-only and gated on
 	// caps.ModelSelection: openEffort returns the model unchanged (the key falls
@@ -299,7 +299,7 @@ func defaultKeys() keyMap {
 			key.WithKeys("f6"),
 			key.WithHelp("f6", "agents (subagents / parallel / teams)"),
 		),
-		// f7: open the /effort reasoning-effort picker (ADR 0055). A function key
+		// f7: open the /effort reasoning-effort picker. A function key
 		// keeps ctrl+e available for the textarea's line-end action; the picker stays
 		// idle-only and caps-gated inside openEffort, mirroring the /effort command.
 		Effort: key.NewBinding(

@@ -12,7 +12,7 @@ import (
 // a fleet lane, a parallel branch, a team member) retains for the expanded/focus
 // view, mirroring the line-cap idiom used elsewhere (e.g. maxToolResultLines).
 // Older entries are dropped once the cap is reached so a long investigation never
-// unbounds the card. Shared by all three delegation families (ADR 0079 — the trace
+// unbounds the card. Shared by all three delegation families (the trace
 // model is one shape).
 const maxTraceEntries = 12
 
@@ -37,7 +37,7 @@ const (
 
 // teamTrace is one capped entry in a delegation lane's trace — shared by the Team
 // member lanes, the Subagent inline/fleet lanes, and the Parallel branch lanes
-// (ADR 0079: the trace model converged on this one shape). It is either a message
+// (the trace model converged on this one shape). It is either a message
 // line (kind=teamTraceMessage, text set) or a tool chip (kind=teamTraceTool, name
 // + detail + isError set). detail is the server-bounded arg/result preview shown
 // next to the chip in the expanded view. All text is bounded server-side
@@ -120,19 +120,19 @@ type teamLane struct {
 	lead      bool
 	// routedCategory/routedModel are the opt-in model router's bare metadata for this
 	// member (a category label + a model id), set on team.start only when the router
-	// classified it (ADR 0031 / ADR 0034); "" when unrouted (no router, fail-soft miss,
+	// classified it; "" when unrouted (no router, fail-soft miss,
 	// or a DEFINED member that pinned its own model). BARE metadata — never member
 	// content — so gauntlet #7 holds.
 	routedCategory string
 	routedModel    string
-	// routingReason names WHY the router did not classify this member (issue #397 /
-	// ADR 0083); "" on a routed hit. BARE metadata — never member content.
+	// routingReason names WHY the router did not classify this member (issue #397);
+	// "" on a routed hit. BARE metadata — never member content.
 	routingReason string
-	// routingDecision is the configured router's immutable start snapshot (ADR 0352).
+	// routingDecision is the configured router's immutable start snapshot.
 	// Nil preserves historical events without reconstructing evidence.
 	routingDecision *client.RoutingDecision
-	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112 /
-	// ADR 0035), regardless of how it was chosen; == routedModel when routed. BARE
+	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112),
+	// regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never member content — so gauntlet #7 holds.
 	model string
 
@@ -203,7 +203,7 @@ type teamFinding struct {
 // collected ACROSS all Subagent cards into conversation.subagentFleet, so the footer
 // segment can show aggregate running/done counts and the f6 Subagents tab can
 // list one row per child regardless of where its inline card sits in scrollback. It
-// carries the BOUNDED previews the subagent.* events forward (ADR 0079) — bounded,
+// carries the BOUNDED previews the subagent.* events forward — bounded,
 // scrubbed, client-only (gauntlet #7 is about the conversation, not the client).
 //
 // current is the latest child tool NAME (the most-recent subagent.tool ToolName) —
@@ -218,11 +218,11 @@ type subagentLane struct {
 	childID         string
 	goal            string
 	background      bool
-	routedCategory  string // opt-in model router's category label (ADR 0031); "" when unrouted
-	routedModel     string // opt-in model router's chosen model id (ADR 0031); "" when unrouted
-	routingReason   string // WHY the router did not classify (issue #397 / ADR 0083); "" on a routed hit
+	routedCategory  string // opt-in model router's category label; "" when unrouted
+	routedModel     string // opt-in model router's chosen model id; "" when unrouted
+	routingReason   string // WHY the router did not classify (issue #397); "" on a routed hit
 	routingDecision *client.RoutingDecision
-	model           string // concrete model id the child ACTUALLY ran on (issue #112 / ADR 0035); == routedModel when routed
+	model           string // concrete model id the child ACTUALLY ran on (issue #112); == routedModel when routed
 	current         string // latest child tool name, "" when none yet
 	trace           []teamTrace
 	toolCount       int
@@ -540,8 +540,8 @@ func (c *conversation) hasSubagents() bool { return len(c.subagentFleet) > 0 }
 // parallelBranch is the per-branch projection of ONE Parallel branch, keyed by its 0-based
 // BranchIndex WITHIN a group. It mirrors subagentLane (a current tool, a capped trace,
 // terminal stats) but is GROUPED under a parallelGroup — a Parallel run is a fan-out group,
-// not a flat fleet. It carries the BOUNDED previews the parallel.* events forward
-// (ADR 0079) — bounded, scrubbed, client-only (gauntlet #7 is about the conversation).
+// not a flat fleet. It carries the BOUNDED previews the parallel.* events forward —
+// bounded, scrubbed, client-only (gauntlet #7 is about the conversation).
 // workspace is the branch's fork-root path (a handle, not content).
 type parallelBranch struct {
 	index int
@@ -553,16 +553,16 @@ type parallelBranch struct {
 	goal    string
 	// routedCategory/routedModel are the opt-in model router's bare metadata for this
 	// branch (a category label + a model id), set on branch_start only when the router
-	// classified it (ADR 0031 / ADR 0034); "" when unrouted. BARE metadata — never
+	// classified it; "" when unrouted. BARE metadata — never
 	// branch content — so gauntlet #7 holds.
 	routedCategory string
 	routedModel    string
-	// routingReason names WHY the router did not classify this branch (issue #397 /
-	// ADR 0083); "" on a routed hit. BARE metadata — never branch content.
+	// routingReason names WHY the router did not classify this branch (issue #397);
+	// "" on a routed hit. BARE metadata — never branch content.
 	routingReason   string
 	routingDecision *client.RoutingDecision
-	// model is the concrete model id this branch ACTUALLY ran on (issue #112 /
-	// ADR 0035), regardless of how it was chosen; == routedModel when routed. BARE
+	// model is the concrete model id this branch ACTUALLY ran on (issue #112),
+	// regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never branch content — so gauntlet #7 holds.
 	model      string
 	current    string // latest branch tool name, "" when none yet

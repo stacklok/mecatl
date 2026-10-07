@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-func TestADR_0247_UIStoresOnlyResult(t *testing.T) {
+func TestStatusLineUIStoresOnlyResult(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "model.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func containsField(fields []string, want string) bool {
 	return false
 }
 
-func TestADR_0247_SourceAdapterRearmsAndInstallsLatest(t *testing.T) {
+func TestStatusLineSourceAdapterRearmsAndInstallsLatest(t *testing.T) {
 	s := &statusSourceFake{changed: make(chan struct{}, 1)}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: s})
 	s.publish(customization.Result{Header: customization.Surface{Present: true, Spans: []customization.Span{{Text: "first"}}}})
@@ -230,7 +230,7 @@ func TestStatusCustomization_Scenario2_ReservedLanesAndResponsiveSelection(t *te
 		t.Fatalf("progress input = %#v", input.MainAgent)
 	}
 }
-func TestADR_0247_SourceResizeSubmitsCanonicalInput(t *testing.T) {
+func TestStatusLineSourceResizeSubmitsCanonicalInput(t *testing.T) {
 	s := &statusSourceFake{changed: make(chan struct{})}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: s, Server: "target", ConnectionMode: "embedded"})
 	m.phase = phaseIdle
