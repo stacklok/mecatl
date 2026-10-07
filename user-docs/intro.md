@@ -15,21 +15,69 @@ same core locally, as a shared service, or inside an application.
 
 ## How Mecatl fits together
 
-Use `mecatui` when you want to work with an agent from your terminal. It can
-start a private server for your local workspace or connect to a remote Mecatl
-service. Operators run that service with `mecated`, or with `mecak8s` when they
-need Kubernetes-native storage and coordination. Application builders can embed
-the Go engine, or connect through the TypeScript SDK and the gRPC or HTTP/SSE
-APIs.
+The same engine runs in each deployment. Choose where to host it and how you
+want to connect.
+
+### Desktop
+
+Run [mecatui](/mecatui/getting-started.md) to work in your local workspace.
+Its embedded, single-user `mecated` server hosts the engine, giving you a
+terminal client and local server together.
+
+```mermaid
+flowchart TB
+  subgraph desktop[Desktop]
+    subgraph tui[mecatui]
+      subgraph daemon[Embedded mecated]
+        desktop_engine[Engine]
+      end
+    end
+  end
+```
+
+### Standalone server
+
+Run [mecated](/operating/mecated.md) as a single-user service and connect with
+mecatui, Studio, or a third-party client. The server hosts the engine separately
+from your client.
 
 ```mermaid
 flowchart LR
-  T[Terminal user] --> U[mecatui]
-  A[Your application] --> I[Go engine or SDK/API]
-  O[Operator] --> D[mecated or mecak8s]
-  U --> R[Mecatl runtime]
-  I --> R
-  D --> R
+  client["Client<br/>mecatui, Studio, or third-party client"]
+  subgraph server[mecated]
+    server_engine[Engine]
+  end
+  client --> server
+```
+
+### Kubernetes
+
+Run [mecak8s](/operating/mecak8s.md) to host the engine in a Kubernetes
+cluster, with shared-team state, coordination, and scaling. Clients connect
+to the service provided by your operator. Multi-user support is being developed
+for `mecak8s`.
+
+```mermaid
+flowchart LR
+  client[Client]
+  subgraph cluster[Kubernetes]
+    subgraph server[mecak8s]
+      cluster_engine[Engine]
+    end
+  end
+  client --> server
+```
+
+### Your application
+
+[Embed the Go engine](/building/go/embed-engine.md) directly in your
+application to build your own agent experience.
+
+```mermaid
+flowchart TB
+  subgraph app[Your application]
+    app_engine[Engine]
+  end
 ```
 
 The runtime can be disposable while its session state and execution concerns
