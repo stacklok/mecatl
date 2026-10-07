@@ -34,7 +34,8 @@ go run ./cmd/mecademo    # offline session smoke test
 The root is one Go module; `engine/` is its own. Root `go test ./...` does not cross
 the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
 [`internal/`](internal/AGENTS.md), and [`website/`](website/AGENTS.md) have their own
-`AGENTS.md`. For how the system fits together, start at [`docs/READING.md`](docs/READING.md).
+`AGENTS.md`. When the code doesn't explain how parts fit together, read the chapter
+for that area from [`docs/READING.md`](docs/READING.md).
 
 ## Implementation boundaries
 
@@ -86,6 +87,7 @@ the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
   proposal. Small designs stay in the PR or issue description.
 - Markdown changes run `task docs`. User-facing changes update the owning
   `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
+  Changing behavior a `docs/` chapter describes updates that chapter.
 
 Path-scoped invariants live in `.claude/rules/*.md`, including test isolation
 (composition helpers and a test-owned `UserModelDir`).
