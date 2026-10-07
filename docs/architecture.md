@@ -33,7 +33,7 @@ dependency points inward, toward the domain:
 | Adapters | `engine/adapter/*`, `internal/adapter/*`, `provider/*`, `adapters/*` | Implementations of the ports, plus the API server that drives the loop |
 | Composition | `internal/app`, `cmd/*` | Wiring that picks concrete adapters and builds an engine and service |
 
-The eight packages in the first three rows are the engine's stable public API. Their exported
+The packages in the first three rows are the engine's stable public API. Their exported
 identifiers are snapshotted in `engine/api/*.txt`, and a change fails CI until the
 snapshot and [`engine/CHANGELOG.md`](../engine/CHANGELOG.md) are updated under the
 rules in [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md). The reference
@@ -42,7 +42,7 @@ adapters under `engine/adapter/` carry no such promise.
 ### Modules
 
 The repository is a Go workspace (`go.work`) of several modules. All of them build
-on a **go 1.27** toolchain.
+on the Go toolchain version that `go.work` declares.
 
 - **`engine`** is the core plus reference adapters. It never imports the root module,
   so a library consumer pulls in only a handful of small dependencies.

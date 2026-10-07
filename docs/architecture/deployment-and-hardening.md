@@ -186,7 +186,7 @@ the run. See [mecatequi](../../user-docs/building/deployment/mecatequi.md).
 
 ## Build and release
 
-The toolchain is **go 1.27** across all modules and the workspace. Releases build images
+All modules and the workspace share the Go version that `go.work` declares. Releases build images
 with ko, sign them with cosign, and attach an SBOM and SLSA provenance. `govulncheck`
 runs per module through a fail-closed gate on reachable findings
 (`.github/scripts/govulncheck-gate.go`), and Renovate keeps dependencies and SHA-pinned
