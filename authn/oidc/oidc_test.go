@@ -20,6 +20,172 @@ import (
 	"github.com/stacklok/toolhive-core/authn"
 )
 
+func TestExplicitJWKSDoesNotApproveIssuerAsNetworkEndpoint(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.srv.Certificate().Raw})
+	client, err := newPrivateHTTPSClient(t.Context(), Config{Issuer: "https://issuer.example.invalid", JWKSURI: fixture.srv.URL + "/keys", TrustedCAPEM: caPEM})
+	if err != nil {
+		t.Fatalf("newPrivateHTTPSClient: %v", err)
+	}
+	t.Cleanup(client.CloseIdleConnections)
+	req := httpRequest(t, http.MethodGet, "https://issuer.example.invalid/.well-known/openid-configuration")
+	if _, err := client.Do(req); err == nil || !strings.Contains(err.Error(), "not an approved endpoint") {
+		t.Fatalf("explicit JWKS client allowed issuer request: %v", err)
+	}
+}
+
+func TestExplicitJWKSValidatesDistinctIssuerWithoutResolvingIssuer(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	const unreachableIssuer = "https://issuer.example.invalid"
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.srv.Certificate().Raw})
+	validator, err := NewValidator(t.Context(), Config{
+		Issuer: unreachableIssuer, JWKSURI: fixture.srv.URL + "/keys", Audience: testAudience,
+		AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/run/oidc/ca.pem", TrustedCAPEM: caPEM,
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	t.Cleanup(func() { _ = validator.Close() })
+
+	if _, err := validator.Validate(t.Context(), fixture.tokenWithIssuer(t, unreachableIssuer, testAudience)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestKubernetesBootstrapDerivesIssuerWithAuthenticatedFixedEndpoints(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.srv.Certificate().Raw})
+	projected := fixture.tokenWithIssuer(t, fixture.srv.URL, testAudience)
+	calls := 0
+	validator, err := NewKubernetesValidator(t.Context(), Config{
+		Audience: testAudience, AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", TrustedCAPEM: caPEM,
+	}, KubernetesBootstrapConfig{
+		DiscoveryURL: fixture.srv.URL + "/.well-known/openid-configuration", JWKSURI: fixture.srv.URL + "/keys",
+		TokenSource: func() ([]byte, error) { calls++; return []byte(projected + "\n"), nil },
+	})
+	if err != nil {
+		t.Fatalf("NewKubernetesValidator: %v", err)
+	}
+	t.Cleanup(func() { _ = validator.Close() })
+	if _, err := validator.Validate(t.Context(), projected); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if calls < 2 { // discovery and JWKS each obtain a fresh projected token.
+		t.Fatalf("token source calls = %d, want at least 2", calls)
+	}
+}
+
+func TestKubernetesBootstrapRejectsIssuerMismatchAndSanitizesTokenErrors(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.srv.Certificate().Raw})
+	projected := fixture.tokenWithIssuer(t, fixture.srv.URL, testAudience)
+	_, err := NewKubernetesValidator(t.Context(), Config{Audience: testAudience, AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/run/ca.pem", TrustedCAPEM: caPEM}, KubernetesBootstrapConfig{
+		DiscoveryURL: fixture.srv.URL + "/.well-known/openid-configuration", JWKSURI: fixture.srv.URL + "/wrong-keys",
+		TokenSource: func() ([]byte, error) { return []byte(projected), nil },
+	})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("issuer/JWKS mismatch = %v, want ErrInvalidConfig", err)
+	}
+	secret := "projected-token-must-not-leak"
+	_, err = NewKubernetesValidator(t.Context(), Config{Audience: testAudience, AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/run/ca.pem", TrustedCAPEM: caPEM}, KubernetesBootstrapConfig{
+		DiscoveryURL: fixture.srv.URL + "/.well-known/openid-configuration", JWKSURI: fixture.srv.URL + "/keys",
+		TokenSource: func() ([]byte, error) { return nil, errors.New(secret) },
+	})
+	if !errors.Is(err, ErrInvalidConfig) || strings.Contains(err.Error(), secret) {
+		t.Fatalf("token-source error = %v, want sanitized ErrInvalidConfig", err)
+	}
+}
+
+func TestKubernetesBootstrapRequiresSameHTTPSOrigin(t *testing.T) {
+	for name, tc := range map[string]struct {
+		discovery string
+		jwks      string
+		wantErr   bool
+	}{
+		"same host with different paths": {
+			discovery: "https://kubernetes.example:443/.well-known/openid-configuration",
+			jwks:      "https://KUBERNETES.example/openid/v1/jwks",
+		},
+		"different host": {
+			discovery: "https://kubernetes.example/.well-known/openid-configuration",
+			jwks:      "https://other.example/openid/v1/jwks",
+			wantErr:   true,
+		},
+		"different effective port": {
+			discovery: "https://kubernetes.example/.well-known/openid-configuration",
+			jwks:      "https://kubernetes.example:8443/openid/v1/jwks",
+			wantErr:   true,
+		},
+		"non HTTPS": {
+			discovery: "http://kubernetes.example/.well-known/openid-configuration",
+			jwks:      "https://kubernetes.example/openid/v1/jwks",
+			wantErr:   true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := validateKubernetesEndpointOrigin(tc.discovery, tc.jwks)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateKubernetesEndpointOrigin() error = %v, want error: %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestKubernetesBearerTransportForwardsCloseIdleConnections(t *testing.T) {
+	closed := false
+	transport := kubernetesBearerTransport{next: closeIdleRoundTripper{closed: &closed}}
+
+	transport.CloseIdleConnections()
+
+	if !closed {
+		t.Fatal("CloseIdleConnections was not forwarded")
+	}
+}
+
+func TestKubernetesBearerTransportRejectsUnapprovedOrAnonymousRequests(t *testing.T) {
+	called := false
+	transport := kubernetesBearerTransport{next: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		called = req.Header.Get("Authorization") == "Bearer a.b.c"
+		return nil, errors.New("stop")
+	}), source: func() ([]byte, error) { return []byte("a.b.c"), nil }, endpoints: []string{"https://kubernetes.example/openid/v1/jwks"}}
+	approved := httpRequest(t, http.MethodGet, "https://kubernetes.example/openid/v1/jwks")
+	if _, err := transport.RoundTrip(approved); err == nil || !called {
+		t.Fatal("approved Kubernetes request did not receive a fresh Authorization header")
+	}
+	called = false
+	for _, req := range []*http.Request{
+		httpRequest(t, http.MethodPost, "https://kubernetes.example/openid/v1/jwks"),
+		httpRequest(t, http.MethodGet, "https://issuer-from-token.example/openid/v1/jwks"),
+	} {
+		if _, err := transport.RoundTrip(req); err == nil {
+			t.Fatal("unapproved Kubernetes request was allowed")
+		}
+	}
+	if called {
+		t.Fatal("unapproved request received an Authorization header")
+	}
+}
+
+type closeIdleRoundTripper struct {
+	closed *bool
+}
+
+func (closeIdleRoundTripper) RoundTrip(*http.Request) (*http.Response, error) { return nil, nil }
+func (r closeIdleRoundTripper) CloseIdleConnections()                         { *r.closed = true }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+func httpRequest(t *testing.T, method, rawURL string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, rawURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
 func TestAuthnConfigPreservesSecurityPolicy(t *testing.T) {
 	t.Parallel()
 	got := authnConfig(Config{
@@ -169,6 +335,10 @@ func newJWKSFixture(t *testing.T) *jwksFixture {
 	}
 	fixture := &jwksFixture{key: key}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": "https://" + r.Host, "jwks_uri": "https://discovered.example.invalid/keys"})
+	})
 	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
@@ -180,6 +350,23 @@ func newJWKSFixture(t *testing.T) *jwksFixture {
 	fixture.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(fixture.srv.Close)
 	return fixture
+}
+
+func TestReadyRejectsMalformedOrEmptyJWKS(t *testing.T) {
+	for _, body := range []string{"not-json", `{"keys":[]}`, `{"keys":[{"kid":"missing-material","kty":"RSA"}]}`} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer server.Close()
+			validator, err := NewValidator(t.Context(), Config{Issuer: server.URL, JWKSURI: server.URL, Audience: testAudience, HTTPClient: server.Client()})
+			if err != nil {
+				return // Constructor validation is an equally fail-closed JWKS readiness path.
+			}
+			defer validator.Close()
+			if err := validator.Ready(t.Context()); err == nil {
+				t.Fatal("Ready accepted unusable JWKS")
+			}
+		})
+	}
 }
 
 func TestPrivateHTTPSIssuerUsesHardenedDefaultClient(t *testing.T) {
