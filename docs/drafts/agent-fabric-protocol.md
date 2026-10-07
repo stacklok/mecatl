@@ -830,5 +830,5 @@ Practical notes for such an adapter:
 
 ---
 
-See also: [Extensibility](architecture/extensibility.md) for how mecatl
-consumes MCP and skills today, and the [documentation index](README.md).
+See also: [Extensibility](../architecture/extensibility.md) for how mecatl
+consumes MCP and skills today, and the [documentation index](../README.md).

@@ -64,10 +64,10 @@ new ownership boundary.
 ## Background: the current shape
 
 The engine dispatches tools through the generic `tool.Tool` interface in
-[`engine/tool/tool.go`](../engine/tool/tool.go). A tool receives a
+[`engine/tool/tool.go`](../../engine/tool/tool.go). A tool receives a
 `tool.Environment`, which currently identifies an execution namespace and
 carries a `Workspace` plus an optional namespace-bound `CommandRunner`; see
-[`engine/tool/environment.go`](../engine/tool/environment.go).
+[`engine/tool/environment.go`](../../engine/tool/environment.go).
 
 `Workspace` currently combines several responsibilities:
 
@@ -81,18 +81,18 @@ The built-in file tools coordinate the last responsibility explicitly. Read
 calls `ReadVersion` and records the returned version. Edit and existing-file
 Write look up the recorded version, read the current version, compare them, and
 then call `ReplaceFile`. This protocol is spread across
-[`engine/adapter/fstools/read.go`](../engine/adapter/fstools/read.go),
-[`engine/adapter/fstools/edit.go`](../engine/adapter/fstools/edit.go), and
-[`engine/adapter/fstools/write.go`](../engine/adapter/fstools/write.go).
+[`engine/adapter/fstools/read.go`](../../engine/adapter/fstools/read.go),
+[`engine/adapter/fstools/edit.go`](../../engine/adapter/fstools/edit.go), and
+[`engine/adapter/fstools/write.go`](../../engine/adapter/fstools/write.go).
 
 The `Session` aggregate already owns conversation history, lifecycle state,
 pending approval, cumulative usage, execution-environment identity, ownership,
 and other durable labels; see
-[`engine/session/session.go`](../engine/session/session.go). `port.SessionStore`
+[`engine/session/session.go`](../../engine/session/session.go). `port.SessionStore`
 loads and saves the complete aggregate through one backend-neutral interface,
 and `sessnap.Snapshot` is the shared JSON-friendly representation used by the
-in-tree stores; see [`engine/port/store.go`](../engine/port/store.go) and
-[`engine/adapter/sessnap/sessnap.go`](../engine/adapter/sessnap/sessnap.go).
+in-tree stores; see [`engine/port/store.go`](../../engine/port/store.go) and
+[`engine/adapter/sessnap/sessnap.go`](../../engine/adapter/sessnap/sessnap.go).
 
 PR #946 makes an important first separation: `Workspace` becomes content-only
 and a new `tool.ReadLedger` is carried separately by `Environment`. It also

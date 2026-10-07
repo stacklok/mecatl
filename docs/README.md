@@ -37,6 +37,4 @@ stay at or under 25 lines. `task docs` checks these limits.
 - [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, and operator/library routes).
 - [`architecture.md`](architecture.md) — the living architecture reference.
 - [Public documentation](../user-docs/intro.md) — canonical user-facing guidance and reference.
-- [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent
-  protocol for remote access to files, folders, and callable actions over
-  HTTP; not yet implemented in mecatl.
+- [Drafts](drafts/README.md) — proposals, not current behavior.
