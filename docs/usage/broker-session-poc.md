@@ -331,7 +331,7 @@ native rows remain subject to native retention rather than a new cleanup system.
 
 ## Next steps
 
-See [the handoff](../../.scratch/SESSION_API_POC.md) for the test commands,
+See [the retirement acceptance plan](../acceptance/broker-path-retirement.md) for the test commands,
 composition entrypoints and remaining delivery work.
 
 ## Troubleshooting

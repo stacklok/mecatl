@@ -134,6 +134,7 @@ type multiUpstreamMCP struct {
 	headers         []string
 	toolCalls       int
 	onCall          func()
+	structured      any
 }
 
 func newMultiUpstreamMCP(t *testing.T, name string) *multiUpstreamMCP {
@@ -144,11 +145,12 @@ func newMultiUpstreamMCP(t *testing.T, name string) *multiUpstreamMCP {
 		f.mu.Lock()
 		f.toolCalls++
 		onCall := f.onCall
+		structured := f.structured
 		f.mu.Unlock()
 		if onCall != nil {
 			onCall()
 		}
-		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: name}}}, nil, nil
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: name}}}, structured, nil
 	})
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

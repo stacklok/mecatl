@@ -132,7 +132,7 @@ type countingService struct {
 
 func (s *countingService) OpenSession(context.Context, *contract.SessionRef) (contract.SessionSnapshot, error) {
 	s.reads.Add(1)
-	cat, err := contract.NewCatalogue(contract.CatalogueRef(strings.Repeat("A", 43)), nil)
+	cat, err := contract.NewCatalogue(contract.CatalogueRef(strings.Repeat("A", 43)), "", nil)
 	return contract.SessionSnapshot{Ref: contract.SessionRef(strings.Repeat("A", 43)), ExpiresAt: time.Now().Add(time.Hour), Catalogue: cat}, err
 }
 

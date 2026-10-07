@@ -2673,7 +2673,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			}
 			return nil, openErr
 		}
-		if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(snapshot.Ref), session.BrokerCatalogueRef(snapshot.Catalogue.Ref()), snapshot.ExpiresAt, snapshot.Catalogue.ToolNames()); err != nil {
+		if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(snapshot.Ref), session.BrokerCatalogueRef(snapshot.Catalogue.Ref()), session.BrokerConnectionRef(snapshot.Catalogue.Connection()), snapshot.ExpiresAt, snapshot.Catalogue.ToolNames()); err != nil {
 			if closeFn != nil {
 				_ = closeFn()
 			}
@@ -8859,7 +8859,8 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 	s.removeRunState(id, st)
 	s.clearGuardrailReviewDetails(id)
 	if parked {
-		s.scheduleAuthorizationExpiry(id, pending, pendingOK)
+		access, _ := st.sess.BrokerAccess()
+		s.scheduleAuthorizationExpiry(id, pending, pendingOK, access.Current)
 	}
 }
 

@@ -86,6 +86,8 @@ type dispatchPark struct {
 	call          session.ToolCall
 	deferred      []session.ToolCall
 	requester     tool.AuthorizationRequester
+	broker        tool.Tool
+	attempt       session.BrokerAttempt
 	fatal         error
 }
 
@@ -104,6 +106,7 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 	}
 
 	i := 0
+	recorded := 0
 	for i < len(calls) {
 		c := calls[i]
 		t, known := e.lookupTool(r, c.Name)
@@ -118,13 +121,19 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 		if !readBatchable(t, known, c) {
 			res, park, cancelled := e.runOne(ctx, r, sess, env, turnIdx, c, t, known, enqueue)
 			if cancelled {
-				return completedDispatchResults(calls[:i], results), nil, true
+				return completedDispatchResults(calls[recorded:i], results), nil, true
 			}
 			if park != nil {
 				park.deferred = append([]session.ToolCall(nil), calls[i+1:]...)
-				return orderedDispatchResults(calls[:i], results), park, false
+				return orderedDispatchResults(calls[recorded:i], results), park, false
 			}
 			results[c.ID] = res
+			if _, broker := t.(tool.DurableBrokerInvocation); broker {
+				if err := e.recordBrokerResults(ctx, sess, orderedDispatchResults(calls[recorded:i+1], results)); err != nil {
+					return nil, &dispatchPark{call: c, fatal: err}, false
+				}
+				recorded = i + 1
+			}
 			i++
 			continue
 		}
@@ -153,17 +162,13 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 				e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
 				results[remaining.ID] = result
 			}
-			return completedDispatchResults(calls, results), nil, true
+			return completedDispatchResults(calls[recorded:], results), nil, true
 		}
 		i = j
 	}
 
 	// Re-assemble in original call order.
-	ordered := make([]session.ToolResult, len(calls))
-	for k, c := range calls {
-		ordered[k] = results[c.ID]
-	}
-	return ordered, nil, false
+	return orderedDispatchResults(calls[recorded:], results), nil, false
 }
 
 func completedDispatchResults(calls []session.ToolCall, results map[session.ToolCallID]session.ToolResult) []session.ToolResult {
@@ -1072,12 +1077,32 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 
 // postPreToolUse owns the authorization gate after ordinary permission and
 // PreToolUse have admitted the exact effective call.
-func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, *dispatchPark, bool) {
+func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (result session.ToolResult, park *dispatchPark, cancelled bool) {
 	if auth == nil || !auth.authorityStillValid(sess, c, env) {
 		res := session.NewToolError(c.ID, "tool was not executed: authority binding changed after admission")
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}
+	var prepared bool
+	var parked bool
+	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
+		var err error
+		ctx, err = e.prepareBrokerAttempt(ctx, sess, c, broker)
+		if err != nil {
+			res := session.NewToolError(c.ID, err.Error())
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+			return res, nil, false
+		}
+		prepared = true
+	}
+	defer func() {
+		if prepared && !parked {
+			if err := e.retireBrokerAttempt(ctx, sess, t); err != nil {
+				park = &dispatchPark{call: c, fatal: err}
+				cancelled = false
+			}
+		}
+	}()
 	if requester, ok := t.(tool.AuthorizationRequester); ok {
 		if !r.req.CanPresentAuthorization || e.deps.Role != "" {
 			res := session.NewToolError(c.ID, "external authorization cannot be presented by this run")
@@ -1102,8 +1127,19 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 				fatal: fmt.Errorf("request external authorization: %w", err),
 			}, false
 		}
+		if prepared {
+			attempt, _ := tool.BrokerInvocationFromContext(ctx)
+			if err := sess.AdmitBrokerInvocation(attempt); err != nil {
+				return session.ToolResult{}, &dispatchPark{call: c, fatal: err}, false
+			}
+			if err := e.saveRequired(ctx, sess); err != nil {
+				return session.ToolResult{}, &dispatchPark{call: c, fatal: err}, false
+			}
+		}
 		if required {
-			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester}, false
+			parked = true
+			attempt, _ := tool.BrokerInvocationFromContext(ctx)
+			return session.ToolResult{}, &dispatchPark{authorization: authorization, call: c, requester: requester, broker: t, attempt: attempt}, false
 		}
 	}
 	res, cancelled := e.execute(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
@@ -2025,15 +2061,21 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		r.children.safeEmit(ev)
 	}
 	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
-		ref, catalogue := broker.BrokerInvocationRefs()
-		if err = sess.FenceBrokerInvocation(ref, catalogue, c.ID, e.now()); err == nil {
-			if e.deps.Store == nil {
-				err = errors.New("broker invocation requires durable storage")
-			} else {
-				err = e.deps.Store.Save(ctx, sess)
+		attempt, framed := tool.BrokerInvocationFromContext(ctx)
+		if !framed {
+			err = errors.New("broker invocation requires prepared attempt")
+		} else {
+			err = sess.DispatchBrokerInvocation(attempt)
+			if err == nil {
+				err = e.saveRequired(ctx, sess)
 			}
 		}
 		if err != nil {
+			if framed {
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+				err = errors.Join(err, e.reconcileBrokerAttempt(cleanup, sess, broker, attempt))
+				cancel()
+			}
 			return session.NewToolError(c.ID, err.Error()), 0
 		}
 	}
@@ -2053,9 +2095,24 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	default:
 		res, err = t.Execute(ctx, c, env)
 	}
-	if err == nil && res.CallID == c.ID {
-		if _, ok := t.(tool.DurableBrokerInvocation); ok {
-			sess.RecordBrokerInvocationResult(c.ID)
+	if broker, ok := t.(tool.DurableBrokerInvocation); ok {
+		attempt, _ := tool.BrokerInvocationFromContext(ctx)
+		switch broker.BrokerInvocationDisposition(err) {
+		case session.BrokerAttemptCompleted:
+			if err == nil && res.CallID == c.ID {
+				err = sess.RecordBrokerInvocationResult(attempt, c.ID)
+			} else {
+				err = errors.New("broker completion did not match exact call")
+				_ = sess.SettleBrokerInvocation(attempt, session.BrokerAttemptUnknown)
+			}
+		case session.BrokerAttemptNotDispatched:
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+			err = errors.Join(err, e.reconcileBrokerAttempt(cleanup, sess, broker, attempt))
+			cancel()
+		default:
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+			err = errors.Join(err, sess.SettleBrokerInvocation(attempt, session.BrokerAttemptUnknown), e.saveRequired(cleanup, sess))
+			cancel()
 		}
 	}
 	if err != nil {

@@ -6,3 +6,6 @@ type BrokerSessionRef string
 
 // BrokerCatalogueRef identifies one immutable broker tool-authority snapshot.
 type BrokerCatalogueRef string
+
+// BrokerConnectionRef identifies a published connection across catalogue revisions.
+type BrokerConnectionRef string

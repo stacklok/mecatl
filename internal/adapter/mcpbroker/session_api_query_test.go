@@ -57,7 +57,7 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 	if query == nil || !query.ReadOnly() || !isAuth(query) || isSerial(query) {
 		t.Fatalf("native query markers not preserved: %T", query)
 	}
-	for _, tc := range []struct {
+	for i, tc := range []struct {
 		name, target, filter string
 		dispatch, failure    bool
 	}{
@@ -71,19 +71,25 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 			args, _ := json.Marshal(map[string]any{"server": "search", "tool": tc.target, "args": map[string]any{}, "jq_filter": tc.filter})
 			call := c.Call{ID: session.ToolCallID(tc.name), Name: "CallMcpWithQuery", Arguments: args}
 			before := calls.Load()
-			out, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call)
+			out, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Slot: uint32(i), Sequence: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if tc.dispatch {
-				if out.Kind != c.InvocationCompleted || out.Result.IsError != tc.failure || strings.Contains(out.Result.Content, "private-canary") {
+				if tc.failure && out.Kind != c.InvocationOutcomeUnknown {
+					t.Fatalf("uncertain query completed: %#v", out)
+				}
+				if !tc.failure && (out.Kind != c.InvocationCompleted || out.Result.IsError || strings.Contains(out.Result.Content, "private-canary")) {
 					t.Fatalf("projection result: %#v", out)
 				}
 				if !tc.failure && out.Result.Content != `"projected"` {
 					t.Fatalf("unfiltered or wrong result: %q", out.Result.Content)
 				}
-				if tc.failure && !strings.Contains(out.Result.Content, "automatic replay refused") {
-					t.Fatalf("uncertain query lost refusal: %q", out.Result.Content)
+				if tc.failure {
+					status, err := api.InspectAttempt(ctx, opened.Ref, c.BrokerAttempt{Slot: uint32(i), Sequence: 1})
+					if err != nil || status.Disposition != session.BrokerAttemptUnknown {
+						t.Fatalf("uncertain query lost slot fence: %#v %v", status, err)
+					}
 				}
 				if calls.Load() != before+1 {
 					t.Fatal("query did not dispatch exactly once")
@@ -92,18 +98,18 @@ func TestSessionAPIQueryNativeProjectionAndNoReplay(t *testing.T) {
 				t.Fatalf("invalid target/filter dispatched: %#v", out)
 			}
 			after := calls.Load()
-			if _, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call); err != nil || calls.Load() != after {
+			if _, err := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Slot: uint32(i), Sequence: 1}); err != nil || calls.Load() != after {
 				t.Fatalf("repeat redispatched: %v", err)
 			}
 		})
 	}
 	// Even if the attachment retains a route, the frozen catalogue is the ceiling.
 	st := api.states[opened.Ref]
-	limited, err := api.catalogue(st, c.CatalogueRef(apiRef()), []tool.Tool{}, st.record.Account)
+	limited, err := api.catalogue(st, c.CatalogueRef(apiRef()), c.ConnectionRef(st.record.Connection), []tool.Tool{}, st.record.Account)
 	if err != nil || len(limited.Tools()) != 0 {
 		t.Fatalf("empty publication exposed query: %v", err)
 	}
-	if _, err := api.DisconnectTools(ctx, opened.Ref, enrolled.Catalogue.Ref()); err != nil {
+	if _, err := api.DisconnectTools(ctx, opened.Ref, enrolled.Catalogue.Connection()); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := api.OpenSession(ctx, &opened.Ref)
@@ -146,7 +152,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 	}
 	st.record.Custody = &c.StagedCredentialCustody{RecoveryReference: string(staged.Recovery), ExpiresAt: staged.ExpiresAt, ProfileDigest: guard.ProfileDigest, Providers: guard.Providers}
 	st.record.Account, st.record.Connected, st.record.Connection = account, true, apiRef()
-	if err := api.save(ctx, st); err != nil {
+	if err := saveAPIRecord(t, api, ctx, st); err != nil {
 		t.Fatal(err)
 	}
 	delete(api.states, opened.Ref)
@@ -156,13 +162,24 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 	}
 	call := c.Call{ID: "protected-query", Name: "CallMcpWithQuery", Arguments: []byte(`{"server":"private","tool":"status","args":{},"jq_filter":"."}`)}
 	before := f.upstreamCalls.Load()
-	check, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "")
+	attempt := c.BrokerAttempt{Sequence: 1}
+	check, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", attempt)
 	if err != nil || !check.Ready || f.upstreamCalls.Load() != before {
 		t.Fatalf("native readiness must be nonexecuting: %#v %v", check, err)
 	}
-	out, err := api.InvokeTool(ctx, opened.Ref, recovered.Catalogue.Ref(), call)
+	out, err := api.InvokeTool(ctx, opened.Ref, recovered.Catalogue.Ref(), call, attempt)
 	if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError || f.upstreamCalls.Load() <= before {
 		t.Fatalf("protected native query: %#v result=%+v err=%v upstream_delta=%d", out, out.Result, err, f.upstreamCalls.Load()-before)
+	}
+	grant := api.states[opened.Ref].attachment.logical.recoveredCalls
+	for n := uint64(2); n <= 4100; n++ {
+		out, err := api.InvokeTool(ctx, opened.Ref, recovered.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: n})
+		if err != nil || out.Kind != c.InvocationCompleted || out.Result.IsError {
+			t.Fatalf("native same-grant call %d: %#v result=%+v %v", n, out, out.Result, err)
+		}
+	}
+	if api.states[opened.Ref].attachment.logical.recoveredCalls != grant || len(grant.executed) != 0 {
+		t.Fatal("native recovered grant rotated or accumulated lifetime claims")
 	}
 	// Changing an otherwise valid native identity must not bypass the enrolled account.
 	row.UpstreamSubject = "other-subject"
@@ -171,7 +188,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 	}
 	call.ID = "changed-account"
 	before = f.upstreamCalls.Load()
-	if _, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, ""); err == nil || f.upstreamCalls.Load() != before {
+	if _, err := api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", c.BrokerAttempt{Sequence: 4101}); err == nil || f.upstreamCalls.Load() != before {
 		t.Fatalf("changed account was accepted or dispatched: %v", err)
 	}
 	// Expired native tokens without refresh must park authorization, not invoke MCP.
@@ -181,7 +198,7 @@ func TestSessionAPIQueryProductionNativeReadinessAndAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	call.ID = "expired-grant"
-	check, err = api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "")
+	check, err = api.CheckAuthorization(ctx, opened.Ref, recovered.Catalogue.Ref(), &call, "", c.BrokerAttempt{Sequence: 4102})
 	if err != nil || check.Ready || check.Authorization == "" || f.upstreamCalls.Load() != before {
 		t.Fatalf("expired native grant must park: %#v %v", check, err)
 	}
@@ -216,7 +233,7 @@ func TestSessionAPIQueryDescriptorBindsFrozenTarget(t *testing.T) {
 	attachment, _ := attach(t, runtime, "descriptor-query")
 	st := &apiState{attachment: attachment}
 	api := &SessionAPI{process: &Process{}}
-	st.catalogue, err = api.catalogue(st, c.CatalogueRef(apiRef()), attachment.Tools(), [32]byte{})
+	st.catalogue, err = api.catalogue(st, c.CatalogueRef(apiRef()), c.ConnectionRef(apiRef()), attachment.Tools(), [32]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +247,7 @@ func TestSessionAPIQueryDescriptorBindsFrozenTarget(t *testing.T) {
 	if err != nil || original != descriptor(find(st.catalogue, "mcp__search__query")) {
 		t.Fatalf("query descriptor did not bind target: %v", err)
 	}
-	st.catalogue, err = c.NewCatalogue(c.CatalogueRef(apiRef()), nil)
+	st.catalogue, err = c.NewCatalogue(c.CatalogueRef(apiRef()), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

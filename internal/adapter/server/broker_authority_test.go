@@ -34,8 +34,15 @@ type contributionEnrollmentBroker struct {
 func (b *contributionEnrollmentBroker) BeginEnrollment(context.Context, c.SessionRef) (c.BeginEnrollmentOutcome, error) {
 	return c.BeginEnrollmentOutcome{Kind: c.EnrollmentCompletedKind, Catalogue: b.catalogue}, nil
 }
-func (b *contributionEnrollmentBroker) DisconnectTools(context.Context, c.SessionRef, c.CatalogueRef) (c.DisconnectResult, error) {
+func (b *contributionEnrollmentBroker) DisconnectTools(context.Context, c.SessionRef, c.ConnectionRef) (c.DisconnectResult, error) {
 	b.disconnects++
+	if b.initial.Connection() == "" {
+		cat, err := c.NewCatalogue(b.initial.Ref(), b.catalogue.Connection(), nil)
+		if err != nil {
+			return 0, err
+		}
+		b.initial = cat
+	}
 	return c.Disconnected, nil
 }
 
@@ -43,11 +50,11 @@ func TestBrokerAuthorityHostOverlapAndWithdrawal(t *testing.T) {
 	for _, grant := range []string{"none", "before", "after"} {
 		t.Run(grant, func(t *testing.T) {
 			store := &sessionBrokerFailStore{Store: memstore.New()}
-			empty, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(2)), nil)
+			empty, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(2)), "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			published, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(3)), []tool.Tool{brokerContributionDescriptor{name: "mcp__fixture__new"}})
+			published, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(3)), c.ConnectionRef(hostProofRef(5)), []tool.Tool{brokerContributionDescriptor{name: "mcp__fixture__new"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -132,11 +139,11 @@ func TestBrokerAuthorityEnrollmentSaveBarrier(t *testing.T) {
 	for _, mode := range []string{"definitive", "ambiguous"} {
 		t.Run(mode, func(t *testing.T) {
 			store := &sessionBrokerFailStore{Store: memstore.New()}
-			empty, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(2)), nil)
+			empty, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(2)), "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			published, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(3)), []tool.Tool{brokerContributionDescriptor{name: "mcp__fixture__new"}})
+			published, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(3)), c.ConnectionRef(hostProofRef(5)), []tool.Tool{brokerContributionDescriptor{name: "mcp__fixture__new"}})
 			if err != nil {
 				t.Fatal(err)
 			}

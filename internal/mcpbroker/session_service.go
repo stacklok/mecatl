@@ -17,15 +17,18 @@ import (
 type SessionService interface {
 	InspectConnectors(context.Context, SessionRef, CatalogueRef) (ConnectorInventory, error)
 	OpenSession(context.Context, *session.BrokerSessionRef) (SessionSnapshot, error)
-	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call) (InvocationOutcome, error)
+	CheckAuthorization(context.Context, SessionRef, CatalogueRef, *Call, AuthorizationRef, BrokerAttempt) (AuthorizationCheck, error)
+	InspectAttempt(context.Context, SessionRef, BrokerAttempt) (AttemptStatus, error)
+	AcknowledgeAttempt(context.Context, SessionRef, BrokerAttempt) (AttemptStatus, error)
+	InvokeTool(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef, Call, BrokerAttempt) (InvocationOutcome, error)
 	BeginAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (BrowserPrompt, error)
 	ObserveAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (FlowStatus, error)
-	CancelAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef) (CancelResult, error)
-	ResumeTool(context.Context, session.BrokerSessionRef, AuthorizationRef, session.BrokerCatalogueRef) (InvocationOutcome, error)
+	CancelAuthorization(context.Context, session.BrokerSessionRef, AuthorizationRef, BrokerAttempt) (CancelResult, error)
+	ResumeTool(context.Context, session.BrokerSessionRef, AuthorizationRef, session.BrokerCatalogueRef, BrokerAttempt) (InvocationOutcome, error)
 	BeginEnrollment(context.Context, session.BrokerSessionRef) (BeginEnrollmentOutcome, error)
 	ObserveEnrollment(context.Context, session.BrokerSessionRef, EnrollmentRef) (FlowStatus, error)
 	CancelEnrollment(context.Context, session.BrokerSessionRef, EnrollmentRef) (CancelResult, error)
-	DisconnectTools(context.Context, session.BrokerSessionRef, session.BrokerCatalogueRef) (DisconnectResult, error)
+	DisconnectTools(context.Context, session.BrokerSessionRef, ConnectionRef) (DisconnectResult, error)
 	DeleteSession(context.Context, session.BrokerSessionRef) (DeleteResult, error)
 }
 
@@ -50,6 +53,9 @@ func (a AuthorizationCheck) Valid() bool {
 // SessionRef and CatalogueRef are stable engine-owned public references.
 type SessionRef = session.BrokerSessionRef
 type CatalogueRef = session.BrokerCatalogueRef
+
+// ConnectionRef is the stable cleanup identity of a published connection.
+type ConnectionRef = session.BrokerConnectionRef
 
 // AuthorizationRef identifies a broker-owned authorization flow.
 type AuthorizationRef string
@@ -293,12 +299,12 @@ const (
 	Disconnected
 	// AlreadyDisconnected means there was no tool authority to withdraw.
 	AlreadyDisconnected
-	// CatalogueChanged means the expected catalogue no longer identifies the current connection authority.
-	CatalogueChanged
+	// ConnectionChanged means the expected connection no longer identifies the current cleanup authority.
+	ConnectionChanged
 )
 
 // Valid reports whether the disconnect outcome is defined.
-func (r DisconnectResult) Valid() bool { return r >= Disconnected && r <= CatalogueChanged }
+func (r DisconnectResult) Valid() bool { return r >= Disconnected && r <= ConnectionChanged }
 
 // DeleteResult is a closed session deletion outcome.
 type DeleteResult uint8

@@ -7,7 +7,7 @@ import (
 )
 
 func TestSessionEnrollmentConstructorCompletedArm(t *testing.T) {
-	cat, err := NewCatalogue(CatalogueRef(strings.Repeat("A", 43)), nil)
+	cat, err := NewCatalogue(CatalogueRef(strings.Repeat("A", 43)), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

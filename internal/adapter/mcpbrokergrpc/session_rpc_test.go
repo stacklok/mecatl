@@ -102,15 +102,15 @@ func TestSessionRPCNativeAnonymous(t *testing.T) {
 	if err != nil || inventory.Availability != c.AvailabilityAvailable || inventory.EnrollmentState != c.EnrollmentNotRequired || inventory.Connectors[0].ToolCount != 1 || requests.Load() != beforeCheck {
 		t.Fatalf("remote passive inspection: %#v %v", inventory, err)
 	}
-	check, err := remote.CheckAuthorization(t.Context(), saved, snapshot.Catalogue.Ref(), &call, "")
+	check, err := remote.CheckAuthorization(t.Context(), saved, snapshot.Catalogue.Ref(), &call, "", c.BrokerAttempt{Sequence: 1})
 	if err != nil || !check.Ready || calls.Load() != 0 || requests.Load() != beforeCheck {
 		t.Fatalf("preflight dispatched: %#v %v %d", check, err, calls.Load())
 	}
-	result, err := snapshot.Catalogue.Tools()[0].Execute(t.Context(), session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments}, tool.Environment{})
+	result, err := snapshot.Catalogue.Tools()[0].Execute(tool.WithBrokerInvocation(t.Context(), c.BrokerAttempt{Sequence: 1}), session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments}, tool.Environment{})
 	if err != nil || result.Content != "native-rpc" || calls.Load() != 1 {
 		t.Fatalf("wrapper invoke: %#v %v %d", result, err, calls.Load())
 	}
-	out, err := client.InvokeTool(t.Context(), &p.InvokeToolRequest{SessionRef: opened.Ref, CatalogueRef: cat.Ref, Call: &p.Call{Id: "one", Name: cat.Tools[0].Name, Arguments: []byte(`{}`)}})
+	out, err := client.InvokeTool(t.Context(), &p.InvokeToolRequest{Attempt: &p.Attempt{Sequence: 1}, SessionRef: opened.Ref, CatalogueRef: cat.Ref, Call: &p.Call{Id: "one", Name: cat.Tools[0].Name, Arguments: []byte(`{}`)}})
 	if err != nil || out.GetCompleted().GetContent() != "native-rpc" {
 		t.Fatalf("invoke: %v %v", out, err)
 	}
@@ -123,12 +123,12 @@ func TestSessionRPCNativeAnonymous(t *testing.T) {
 	if _, err = client.BeginAuthorization(t.Context(), &p.BeginAuthorizationRequest{SessionRef: opened.Ref, AuthorizationRef: fake}); status.Code(err) != codes.NotFound {
 		t.Fatalf("begin unknown auth: %v", err)
 	}
-	cancelled, err := client.CancelAuthorization(t.Context(), &p.CancelAuthorizationRequest{SessionRef: opened.Ref, AuthorizationRef: fake})
-	if err != nil || cancelled.Outcome != p.CancelOutcome_ALREADY_RESOLVED {
+	cancelled, err := client.CancelAuthorization(t.Context(), &p.CancelAuthorizationRequest{Attempt: &p.Attempt{Sequence: 1}, SessionRef: opened.Ref, AuthorizationRef: fake})
+	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("cancel auth: %v %v", cancelled, err)
 	}
-	out, err = client.ResumeTool(t.Context(), &p.ResumeToolRequest{SessionRef: opened.Ref, AuthorizationRef: fake, AdoptedCatalogue: cat.Ref})
-	if err != nil || out.GetNotDispatched().GetReason() != p.FailureReason_FAILURE_REASON_INTERRUPTED {
+	out, err = client.ResumeTool(t.Context(), &p.ResumeToolRequest{Attempt: &p.Attempt{Sequence: 1}, SessionRef: opened.Ref, AuthorizationRef: fake, AdoptedCatalogue: cat.Ref})
+	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("resume unknown: %v %v", out, err)
 	}
 	flow, err = client.ObserveEnrollment(t.Context(), &p.ObserveEnrollmentRequest{SessionRef: opened.Ref, EnrollmentRef: fake})
@@ -139,7 +139,7 @@ func TestSessionRPCNativeAnonymous(t *testing.T) {
 	if err != nil || cancelled.Outcome != p.CancelOutcome_ALREADY_RESOLVED {
 		t.Fatalf("cancel enrollment: %v %v", cancelled, err)
 	}
-	disconnected, err := client.DisconnectTools(t.Context(), &p.DisconnectToolsRequest{SessionRef: opened.Ref, ExpectedCatalogue: cat.Ref})
+	disconnected, err := client.DisconnectTools(t.Context(), &p.DisconnectToolsRequest{SessionRef: opened.Ref, ExpectedConnection: cat.GetConnectionRef()})
 	if err != nil || disconnected.Outcome != p.DisconnectOutcome_DISCONNECTED {
 		t.Fatalf("disconnect: %v %v", disconnected, err)
 	}

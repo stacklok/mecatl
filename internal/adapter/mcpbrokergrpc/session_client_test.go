@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	p "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	b "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	p "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	c "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -66,6 +66,40 @@ func fixtureSessionClient(t *testing.T, f *sessionClientFixture, deadline time.D
 	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
+func TestSessionClientConnectionReferenceValidation(t *testing.T) {
+	valid := testSessionRef(3)
+	empty, malformed := "", "bad"
+	for _, tc := range []struct {
+		name       string
+		connection *string
+		tools      bool
+		valid      bool
+	}{
+		{"never-connected", nil, false, true},
+		{"retained-disconnected", &valid, false, true},
+		{"published", &valid, true, true},
+		{"missing-published", nil, true, false},
+		{"empty-present", &empty, false, false},
+		{"malformed", &malformed, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := &p.Catalogue{Ref: testSessionRef(2), ConnectionRef: tc.connection}
+			if tc.tools {
+				cat.Tools = []*p.ToolDescriptor{{Name: "echo", Schema: []byte(`{}`)}}
+			}
+			fixture := &sessionClientFixture{snapshot: &p.SessionSnapshot{Ref: testSessionRef(1), ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)), Catalogue: cat}}
+			client := fixtureSessionClient(t, fixture, time.Second)
+			snapshot, err := client.OpenSession(t.Context(), nil)
+			if (err == nil) != tc.valid {
+				t.Fatalf("validation: %+v %v", snapshot, err)
+			}
+			if err == nil && snapshot.Catalogue.Connection() != c.ConnectionRef(cat.GetConnectionRef()) {
+				t.Fatal("connection projection lost")
+			}
+		})
+	}
+}
+
 func TestSessionClientMalformedInvocationFailsClosed(t *testing.T) {
 	unknown := &p.InvocationOutcome{Outcome: &p.InvocationOutcome_OutcomeUnknown{OutcomeUnknown: &emptypb.Empty{}}}
 	unknown.ProtoReflect().SetUnknown([]byte{0x98, 0x06, 0x01})
@@ -86,7 +120,7 @@ func TestSessionClientMalformedInvocationFailsClosed(t *testing.T) {
 				return response, nil
 			}}
 			client := fixtureSessionClient(t, f, time.Second)
-			out, err := client.InvokeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.CatalogueRef(testSessionRef(2)), c.Call{ID: "one", Name: "echo", Arguments: []byte(`{}`)})
+			out, err := client.InvokeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.CatalogueRef(testSessionRef(2)), c.Call{ID: "one", Name: "echo", Arguments: []byte(`{}`)}, c.BrokerAttempt{Sequence: 1})
 			if err == nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
 				t.Fatalf("out=%#v err=%v calls=%d", out, err, calls.Load())
 			}
@@ -110,9 +144,9 @@ func TestSessionClientNoRetry(t *testing.T) {
 				var out c.InvocationOutcome
 				var err error
 				if method == "resume" {
-					out, err = client.ResumeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.AuthorizationRef(testSessionRef(3)), c.CatalogueRef(testSessionRef(2)))
+					out, err = client.ResumeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.AuthorizationRef(testSessionRef(3)), c.CatalogueRef(testSessionRef(2)), c.BrokerAttempt{Sequence: 1})
 				} else {
-					out, err = client.InvokeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.CatalogueRef(testSessionRef(2)), c.Call{ID: "one", Name: "echo", Arguments: []byte(`{}`)})
+					out, err = client.InvokeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.CatalogueRef(testSessionRef(2)), c.Call{ID: "one", Name: "echo", Arguments: []byte(`{}`)}, c.BrokerAttempt{Sequence: 1})
 				}
 				if err == nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
 					t.Fatalf("out=%#v err=%v calls=%d", out, err, calls.Load())
@@ -132,7 +166,7 @@ func TestSessionClientMalformedControlsAndReferences(t *testing.T) {
 		{Outcome: &p.CheckAuthorizationResponse_NotDispatched{NotDispatched: &p.NonDispatch{Reason: 257}}},
 	} {
 		f.check = response
-		check, err := client.CheckAuthorization(t.Context(), c.SessionRef(ref), c.CatalogueRef(cat), nil, c.AuthorizationRef(auth))
+		check, err := client.CheckAuthorization(t.Context(), c.SessionRef(ref), c.CatalogueRef(cat), nil, c.AuthorizationRef(auth), c.BrokerAttempt{Sequence: 1})
 		if err == nil || check.Valid() {
 			t.Fatalf("malformed check accepted: %#v %v", check, err)
 		}
@@ -152,13 +186,13 @@ func TestSessionClientMalformedControlsAndReferences(t *testing.T) {
 	}
 	for _, value := range []p.CancelOutcome_Value{p.CancelOutcome_UNSPECIFIED, 257} {
 		f.cancel = &p.CancelOutcome{Outcome: value}
-		result, err := client.CancelAuthorization(t.Context(), c.SessionRef(ref), c.AuthorizationRef(auth))
+		result, err := client.CancelAuthorization(t.Context(), c.SessionRef(ref), c.AuthorizationRef(auth), c.BrokerAttempt{Sequence: 1})
 		if err == nil || result.Valid() {
 			t.Fatalf("fabricated cancel: %v %v", result, err)
 		}
 	}
 	f.cancel = &p.CancelOutcome{Outcome: p.CancelOutcome_ALREADY_RESOLVED}
-	result, err := client.CancelAuthorization(t.Context(), c.SessionRef(ref), c.AuthorizationRef(auth))
+	result, err := client.CancelAuthorization(t.Context(), c.SessionRef(ref), c.AuthorizationRef(auth), c.BrokerAttempt{Sequence: 1})
 	if err != nil || result != c.AlreadyResolved || f.cancelledRef != auth {
 		t.Fatalf("inexact cancel: %v %v %s", result, err, f.cancelledRef)
 	}
@@ -168,7 +202,7 @@ func TestSessionClientValidToolErrorIsNotFabricatedSuccess(t *testing.T) {
 		return &p.InvocationOutcome{Outcome: &p.InvocationOutcome_Completed{Completed: &b.ToolResult{CallId: r.Call.Id, IsError: true, Content: "upstream error"}}}, nil
 	}}
 	client := fixtureSessionClient(t, f, time.Second)
-	out, err := client.InvokeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.CatalogueRef(testSessionRef(2)), c.Call{ID: session.ToolCallID("one"), Name: "echo", Arguments: []byte(`{}`)})
+	out, err := client.InvokeTool(t.Context(), c.SessionRef(testSessionRef(1)), c.CatalogueRef(testSessionRef(2)), c.Call{ID: session.ToolCallID("one"), Name: "echo", Arguments: []byte(`{}`)}, c.BrokerAttempt{Sequence: 1})
 	if err != nil || out.Kind != c.InvocationCompleted || !out.Result.IsError {
 		t.Fatalf("error result lost: %#v %v", out, err)
 	}

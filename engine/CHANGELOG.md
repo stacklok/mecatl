@@ -13,6 +13,23 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Stable broker cleanup identity** — adds `BrokerConnectionRef` and
+  `BrokerAccess.Connection`, separate from execution catalogue revisions.
+  Added (minor); local approved F4 follow-up only.
+
+- **Broker invocation context metadata** — adds `tool.WithBrokerInvocation` and
+  `tool.BrokerInvocationFromContext` for host-assigned reusable attempts. Added
+  (minor); framing is not authorization or admission. The trusted coordinator
+  prepares and saves the exact occurrence before broker preflight.
+
+- **Staged reusable broker host state** — adds `BrokerAttempt`,
+  `BrokerHostAttempt`, closed `BrokerAttemptDisposition` constants,
+  `BrokerAccess.Current` / `AdmittedSequence`, byte-exact `BrokerCallDigest`, and
+  aggregate prepare/admit/dispatch/settle/verified-nonadmission/result-pair methods.
+  Restored unresolved attempts cannot dispatch and unknown remains fenced.
+  Added (minor), local approved follow-up only. Host slot-0 wiring uses these
+  aggregates; legacy ID state is retained only for fail-closed decoding.
+
 - **Local broker authority contributions** — adds optional
   `session.Authority.BrokerToolScope`, required `BrokerAccess.IndependentTools`
   and `BrokerTools`, and `CompleteWorkspaceEnrollmentWithBrokerCatalogue` for
@@ -371,6 +388,21 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Stable broker cleanup adoption** — `AdoptBrokerCatalogue` and
+  `CompleteWorkspaceEnrollmentWithBrokerCatalogue` require `BrokerConnectionRef`
+  immediately after the catalogue reference. Restoration validates the saved
+  connection without deriving cleanup authority from an execution catalogue.
+  Changed (breaking, pre-v1 minor); local approved F4 follow-up only.
+
+- **Reusable broker host execution** — `tool.DurableBrokerInvocation` now requires
+  typed passive inspection/acknowledgement and disposition classification.
+  `RecordBrokerInvocationResult` takes the exact attempt and call ID;
+  `FenceBrokerInvocation` is removed. Preparation
+  and dispatch are saved before preflight and execution respectively; completion
+  releases only the durably paired current occurrence. Legacy attempted/pending
+  broker state fails closed without migration. Changed (breaking, pre-v1 minor),
+  local approved follow-up only; unknown effects remain globally fenced.
 
 - **Local broker authority restoration** — remote experimental records without
   both contribution arrays now fail closed. Catalogue adoption and withdrawal

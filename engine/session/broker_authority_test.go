@@ -33,7 +33,7 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 				}
 			}
 			names := []string{"mcp__test__x", "mcp__test__y"}
-			if err := s.AdoptBrokerCatalogue(ref, cat, time.Unix(100, 0), names); err != nil {
+			if err := s.AdoptBrokerCatalogue(ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), names); err != nil {
 				t.Fatal(err)
 			}
 			names[0] = "mutated"
@@ -42,7 +42,7 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := s.FenceBrokerInvocation(ref, cat, "attempted", time.Unix(2, 0)); err != nil {
+			if _, err := s.PrepareBrokerInvocation(ref, cat, NewToolCall("attempted", "mcp__test__x", []byte(`{}`)), time.Unix(2, 0)); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.WithdrawBrokerAccess(); err != nil {
@@ -56,10 +56,10 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 				t.Fatalf("withdrawal tools: %v want %v", s.Authority.CapabilitySet.Tools, want)
 			}
 			a, _ := s.BrokerAccess()
-			if !a.Withdrawn || a.BrokerTools == nil || len(a.BrokerTools) != 0 || a.Pending != "attempted" || len(a.Attempted) != 1 {
+			if !a.Withdrawn || a.BrokerTools == nil || len(a.BrokerTools) != 0 || a.Current == nil || a.Current.CallID != "attempted" || a.Current.Phase != "reserved" {
 				t.Fatalf("withdrawal: %+v", a)
 			}
-			if err := s.AdoptBrokerCatalogue(ref, cat, time.Unix(100, 0), []string{"mcp__test__y"}); err == nil {
+			if err := s.AdoptBrokerCatalogue(ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), []string{"mcp__test__y"}); err == nil {
 				t.Fatal("ordinary adoption reopened withdrawal")
 			}
 			pending := PendingWorkspaceEnrollment{ID: "reenroll", RequiredServices: 1, ExpiresAt: time.Unix(100, 0)}
@@ -69,17 +69,17 @@ func TestBrokerAuthorityContributions(t *testing.T) {
 			before := s.Authority.Clone()
 			bad := pending
 			bad.RequiredServices++
-			if err := s.CompleteWorkspaceEnrollmentWithBrokerCatalogue(bad, ref, cat, time.Unix(100, 0), []string{"mcp__test__y"}); err == nil {
+			if err := s.CompleteWorkspaceEnrollmentWithBrokerCatalogue(bad, ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), []string{"mcp__test__y"}); err == nil {
 				t.Fatal("mismatched completion")
 			}
 			if !reflect.DeepEqual(before, s.Authority) {
 				t.Fatal("failed completion mutated authority")
 			}
-			if err := s.CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending, ref, cat, time.Unix(100, 0), []string{"mcp__test__y"}); err != nil {
+			if err := s.CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending, ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), []string{"mcp__test__y"}); err != nil {
 				t.Fatal(err)
 			}
 			a, _ = s.BrokerAccess()
-			if a.Withdrawn || a.Pending != "attempted" || len(a.Attempted) != 1 || !reflect.DeepEqual(a.IndependentTools, want) {
+			if a.Withdrawn || a.Current == nil || a.Current.CallID != "attempted" || a.Current.Phase != "reserved" || !reflect.DeepEqual(a.IndependentTools, want) {
 				t.Fatalf("reenrollment: %+v", a)
 			}
 			if _, ok := s.PendingWorkspaceEnrollment(); ok {
@@ -99,7 +99,7 @@ func TestBrokerAuthorityFiniteScopeAndExplicitGrant(t *testing.T) {
 			s := brokerAuthoritySession(t, &scope)
 			ref, cat := brokerAuthorityRefs()
 			names := []string{"mcp__test__x", "mcp__test__y", "*"}
-			if err := s.AdoptBrokerCatalogue(ref, cat, time.Unix(100, 0), names); err != nil {
+			if err := s.AdoptBrokerCatalogue(ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), names); err != nil {
 				t.Fatal(err)
 			}
 			a, _ := s.BrokerAccess()
@@ -112,7 +112,7 @@ func TestBrokerAuthorityFiniteScopeAndExplicitGrant(t *testing.T) {
 			if err := s.GrantToolAuthority([]string{"mcp__test__y"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.AdoptBrokerCatalogue(ref, cat, time.Unix(100, 0), names); err != nil {
+			if err := s.AdoptBrokerCatalogue(ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), names); err != nil {
 				t.Fatal(err)
 			}
 			a, _ = s.BrokerAccess()
@@ -144,7 +144,7 @@ func TestBrokerAuthorityRestoreValidation(t *testing.T) {
 	scope := []string{"mcp__test__x"}
 	s := brokerAuthoritySession(t, &scope)
 	ref, cat := brokerAuthorityRefs()
-	if err := s.AdoptBrokerCatalogue(ref, cat, time.Unix(100, 0), scope); err != nil {
+	if err := s.AdoptBrokerCatalogue(ref, cat, BrokerConnectionRef(cat), time.Unix(100, 0), scope); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

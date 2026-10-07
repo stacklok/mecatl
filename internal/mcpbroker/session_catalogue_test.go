@@ -79,7 +79,7 @@ func TestBrokerCatalogueFreezesDescriptorsAndPreservesDelegation(t *testing.T) {
 					candidate = &sessionCatalogueSerialTool{source}
 				}
 				input := []tool.Tool{candidate}
-				catalogue, err := mcpbroker.NewCatalogue(brokerRef(), input)
+				catalogue, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -147,7 +147,7 @@ func TestBrokerCatalogueFreezesDescriptorsAndPreservesDelegation(t *testing.T) {
 func TestBrokerCataloguePreservesWritableMarker(t *testing.T) {
 	spec := tool.ToolSpec{Name: "mutate", Schema: []byte(`{}`)}
 	source := &sessionCatalogueTool{spec: spec, advertised: spec, writable: true}
-	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), []tool.Tool{source})
+	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), []tool.Tool{source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestBrokerCatalogueRejectsMalformedDescriptors(t *testing.T) {
 		{"schema bound", tool.ToolSpec{Name: "search", Schema: []byte(`{"x":"` + strings.Repeat("a", 256*1024) + `"}`)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := mcpbroker.NewCatalogue(brokerRef(), []tool.Tool{&enrollmentTool{spec: tc.spec}}); err == nil {
+			if _, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), []tool.Tool{&enrollmentTool{spec: tc.spec}}); err == nil {
 				t.Fatal("accepted malformed descriptor")
 			}
 		})
@@ -189,13 +189,13 @@ func TestBrokerCatalogueRejectsInvalidSourcesAndBounds(t *testing.T) {
 		"plan only":             {&enrollmentPlanOnlyTool{enrollmentTool: *source}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mcpbroker.NewCatalogue(brokerRef(), tools); err == nil {
+			if _, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), tools); err == nil {
 				t.Fatal("accepted invalid tools")
 			}
 		})
 	}
 	for _, ref := range []session.BrokerCatalogueRef{"", "invalid", session.BrokerCatalogueRef(strings.Repeat("A", 42) + "B"), session.BrokerCatalogueRef(strings.Repeat("A", 44))} {
-		if _, err := mcpbroker.NewCatalogue(ref, nil); err == nil {
+		if _, err := mcpbroker.NewCatalogue(ref, "", nil); err == nil {
 			t.Fatalf("accepted invalid reference %q", ref)
 		}
 	}
@@ -203,22 +203,22 @@ func TestBrokerCatalogueRejectsInvalidSourcesAndBounds(t *testing.T) {
 	for i := range tools {
 		tools[i] = &enrollmentTool{spec: tool.ToolSpec{Name: fmt.Sprintf("tool%d", i), Schema: []byte(`{}`)}}
 	}
-	if _, err := mcpbroker.NewCatalogue(brokerRef(), tools); err != nil {
+	if _, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), tools); err != nil {
 		t.Fatalf("at tool limit: %v", err)
 	}
-	if _, err := mcpbroker.NewCatalogue(brokerRef(), append(tools, source)); err == nil {
+	if _, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), append(tools, source)); err == nil {
 		t.Fatal("accepted too many tools")
 	}
 	// Ref, name, schema and description jointly consume the catalogue byte limit.
 	atLimit := &enrollmentTool{spec: tool.ToolSpec{Name: "search", Schema: []byte(`{}`), Description: strings.Repeat("x", 2*1024*1024-len(brokerRef())-len("search")-2)}}
-	if _, err := mcpbroker.NewCatalogue(brokerRef(), []tool.Tool{atLimit}); err != nil {
+	if _, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), []tool.Tool{atLimit}); err != nil {
 		t.Fatalf("at byte limit: %v", err)
 	}
 	atLimit.spec.Description += "x"
-	if _, err := mcpbroker.NewCatalogue(brokerRef(), []tool.Tool{atLimit}); err == nil {
+	if _, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), []tool.Tool{atLimit}); err == nil {
 		t.Fatal("accepted oversized catalogue")
 	}
-	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), []tool.Tool{source})
+	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), mcpbroker.ConnectionRef(brokerRef()), []tool.Tool{source})
 	if err != nil {
 		t.Fatal(err)
 	}

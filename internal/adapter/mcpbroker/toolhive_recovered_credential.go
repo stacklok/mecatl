@@ -105,8 +105,19 @@ type recoveredCredentialSource struct {
 	dead     atomic.Bool
 }
 
+type recoveredOperationSource struct {
+	source *recoveredCredentialSource
+	ctx    context.Context
+}
+
+func (s recoveredOperationSource) Token() (*oauth2.Token, error) { return s.source.tokenFor(s.ctx) }
+
 func (s *recoveredCredentialSource) Token() (*oauth2.Token, error) {
-	if s.dead.Load() || !s.active() {
+	return s.tokenFor(context.Background())
+}
+
+func (s *recoveredCredentialSource) tokenFor(ctx context.Context) (*oauth2.Token, error) {
+	if ctx.Err() != nil || s.dead.Load() || !s.active() {
 		return nil, errors.New("mcpbroker: recovered credential unavailable")
 	}
 	s.mu.Lock()
@@ -117,15 +128,15 @@ func (s *recoveredCredentialSource) Token() (*oauth2.Token, error) {
 	}
 	s.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), recoveredCredentialIOTimeout)
+	ctx, cancel := context.WithTimeout(ctx, recoveredCredentialIOTimeout)
 	defer cancel()
 	token, err := s.issue(ctx)
-	if err != nil || token == nil || token.AccessToken == "" || !token.Expiry.After(time.Now()) || s.dead.Load() || !s.active() {
+	if err != nil || ctx.Err() != nil || token == nil || token.AccessToken == "" || !token.Expiry.After(time.Now()) || s.dead.Load() || !s.active() {
 		return nil, errors.New("mcpbroker: recovered credential unavailable")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dead.Load() || !s.active() {
+	if ctx.Err() != nil || s.dead.Load() || !s.active() {
 		return nil, errors.New("mcpbroker: recovered credential unavailable")
 	}
 	if s.token != nil && s.token.Expiry.After(time.Now()) {

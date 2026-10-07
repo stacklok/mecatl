@@ -46,7 +46,7 @@ func TestSessionBrokerConfigSwitchCannotReinterpretSavedAuthority(t *testing.T) 
 				t.Fatal(err)
 			}
 			if kind != "genuine-direct" {
-				if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), time.Now().Add(time.Hour), []string{name}); err != nil {
+				if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), session.BrokerConnectionRef(hostProofRef(5)), time.Now().Add(time.Hour), []string{name}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -59,7 +59,7 @@ func TestSessionBrokerConfigSwitchCannotReinterpretSavedAuthority(t *testing.T) 
 					t.Fatal(err)
 				}
 				a, _ := sess.BrokerAccess()
-				if err := sess.FenceBrokerInvocation(a.Session, a.Catalogue, call.ID, time.Now()); err != nil {
+				if _, err := sess.PrepareBrokerInvocation(a.Session, a.Catalogue, call, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -63,7 +63,7 @@ func TestSessionAPINativeProtectedReplacement(t *testing.T) {
 		t.Fatalf("connected replacement: %#v %v", connected, err)
 	}
 	call := c.Call{ID: "native-one", Name: "mcp__backend-a__whoami", Arguments: []byte(`{}`)}
-	out, err := api.InvokeTool(f.owner, opened.Ref, status.Catalogue.Ref(), call)
+	out, err := api.InvokeTool(f.owner, opened.Ref, status.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
 	if err != nil || out.Kind != c.InvocationCompleted {
 		t.Fatalf("native invoke: %#v %v", out, err)
 	}
@@ -77,16 +77,16 @@ func TestSessionAPINativeProtectedReplacement(t *testing.T) {
 		t.Fatalf("custody reopen: %#v %v", recovered, err)
 	}
 	assertNativeSessionCatalogue(t, recovered.Catalogue)
-	out, err = api2.InvokeTool(f.owner, opened.Ref, status.Catalogue.Ref(), call)
-	if err != nil || out.Reason != c.FailureCatalogueChanged {
+	out, err = api2.InvokeTool(f.owner, opened.Ref, status.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
+	if err != nil || out.Kind != c.InvocationOutcomeUnknown {
 		t.Fatalf("stale execution: %#v %v", out, err)
 	}
 	call.ID = "native-two"
-	out, err = api2.InvokeTool(f.owner, opened.Ref, recovered.Catalogue.Ref(), call)
+	out, err = api2.InvokeTool(f.owner, opened.Ref, recovered.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 2})
 	if err != nil || out.Kind != c.InvocationCompleted {
 		t.Fatalf("recovered execution: %#v %v", out, err)
 	}
-	result, err := api2.DisconnectTools(f.owner, opened.Ref, recovered.Catalogue.Ref())
+	result, err := api2.DisconnectTools(f.owner, opened.Ref, recovered.Catalogue.Connection())
 	if err != nil || result != c.Disconnected {
 		t.Fatalf("disconnect: %v %v", result, err)
 	}

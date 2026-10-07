@@ -25,6 +25,27 @@ func (t *durableSessionTool) BrokerInvocationRefs() (session.BrokerSessionRef, s
 	return session.BrokerSessionRef(t.ref), session.BrokerCatalogueRef(t.catalogue)
 }
 
+func (t *durableSessionTool) BrokerInvocationDisposition(err error) session.BrokerAttemptDisposition {
+	if b, ok := t.Tool.(interface {
+		BrokerInvocationDisposition(error) session.BrokerAttemptDisposition
+	}); ok {
+		return b.BrokerInvocationDisposition(err)
+	}
+	return session.BrokerAttemptUnknown
+}
+func (t *durableSessionTool) InspectBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
+		return b.InspectBrokerAttempt(ctx, attempt)
+	}
+	return tool.BrokerAttemptStatus{}, ErrFailedPrecondition
+}
+func (t *durableSessionTool) AcknowledgeBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
+		return b.AcknowledgeBrokerAttempt(ctx, attempt)
+	}
+	return tool.BrokerAttemptStatus{}, ErrFailedPrecondition
+}
+
 type durableSessionAuthTool struct {
 	*durableSessionTool
 	requester tool.AuthorizationRequester
@@ -62,14 +83,14 @@ func effectiveSessionBrokerTools(sess *session.Session, ref c.SessionRef, cat c.
 
 func (s *Service) adoptSessionBrokerCatalogue(ctx context.Context, sess *session.Session, cat c.Catalogue) error {
 	a, ok := sess.BrokerAccess()
-	if !ok || a.Withdrawn || cat == nil || !cat.Valid() {
+	if !ok || a.Withdrawn || cat == nil || !cat.Valid() || (a.Connection != "" && a.Connection != cat.Connection()) {
 		return ErrFailedPrecondition
 	}
 	candidate, err := brokerAuthorityCandidate(sess)
 	if err != nil {
 		return err
 	}
-	if err := candidate.AdoptBrokerCatalogue(a.Session, session.BrokerCatalogueRef(cat.Ref()), a.ExpiresAt, cat.ToolNames()); err != nil {
+	if err := candidate.AdoptBrokerCatalogue(a.Session, session.BrokerCatalogueRef(cat.Ref()), session.BrokerConnectionRef(cat.Connection()), a.ExpiresAt, cat.ToolNames()); err != nil {
 		return err
 	}
 	if err := s.saveSession(ctx, candidate); err != nil {
@@ -77,7 +98,7 @@ func (s *Service) adoptSessionBrokerCatalogue(ctx context.Context, sess *session
 		return errors.Join(errBrokerAuthoritySave, err)
 	}
 	// Preserve the parked run's aggregate and conversation identity after saving.
-	return sess.AdoptBrokerCatalogue(a.Session, session.BrokerCatalogueRef(cat.Ref()), a.ExpiresAt, cat.ToolNames())
+	return sess.AdoptBrokerCatalogue(a.Session, session.BrokerCatalogueRef(cat.Ref()), session.BrokerConnectionRef(cat.Connection()), a.ExpiresAt, cat.ToolNames())
 }
 
 var errBrokerAuthoritySave = errors.New("broker authority save failed; explicitly reload the session")
@@ -90,6 +111,45 @@ func brokerAuthorityCandidate(sess *session.Session) (*session.Session, error) {
 	return snapshot.Restore()
 }
 
+func (s *Service) reconcileSessionBrokerAttempt(ctx context.Context, sess *session.Session) error {
+	a, ok := sess.BrokerAccess()
+	if !ok || a.Current == nil {
+		return ErrFailedPrecondition
+	}
+	attempt := a.Current.Attempt
+	out, err := s.cfg.SessionBroker.InspectAttempt(ctx, c.SessionRef(a.Session), attempt)
+	if err != nil || !out.Valid() || out.Attempt != attempt {
+		return errors.Join(ErrFailedPrecondition, err)
+	}
+	if a.Current.Phase == "terminal" {
+		return ErrFailedPrecondition
+	}
+	candidate, err := brokerAuthorityCandidate(sess)
+	if err != nil {
+		return err
+	}
+	if out.Phase == "not_admitted" {
+		err = candidate.RejectUnadmittedBrokerInvocation(attempt)
+	} else {
+		if out.Phase == "reserved" || out.Phase == "parked" {
+			out, err = s.cfg.SessionBroker.AcknowledgeAttempt(ctx, c.SessionRef(a.Session), attempt)
+		}
+		if err != nil || !out.Valid() || out.Attempt != attempt || out.Phase != "terminal" || out.Disposition != session.BrokerAttemptNotDispatched {
+			return errors.Join(ErrFailedPrecondition, err)
+		}
+		err = candidate.SettleBrokerInvocation(attempt, session.BrokerAttemptNotDispatched)
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.saveSession(ctx, candidate); err != nil {
+		s.withdrawBrokerEngine(sess.ID)
+		return errors.Join(errBrokerAuthoritySave, err)
+	}
+	settled, _ := candidate.BrokerAccess()
+	return sess.RestoreBrokerAccess(settled)
+}
+
 func (s *Service) restoreSessionBrokerTools(ctx context.Context, sess *session.Session) ([]tool.Tool, error) {
 	a, ok := sess.BrokerAccess()
 	if !ok {
@@ -99,6 +159,11 @@ func (s *Service) restoreSessionBrokerTools(ctx context.Context, sess *session.S
 		return nil, nil
 	}
 	ref := c.SessionRef(a.Session)
+	if a.Current != nil && (a.Current.Phase != "terminal" || a.Current.Disposition == session.BrokerAttemptUnknown) {
+		if err := s.reconcileSessionBrokerAttempt(ctx, sess); err != nil {
+			return nil, err
+		}
+	}
 	snapshot, err := s.cfg.SessionBroker.OpenSession(ctx, &ref)
 	if err != nil {
 		return nil, err
@@ -139,10 +204,32 @@ func (s *Service) connectSessionBrokerLocked(ctx context.Context, id session.Ses
 	}
 	ref := c.SessionRef(a.Session)
 	pending, exists := sess.PendingWorkspaceEnrollment()
+	if a.Withdrawn && exists {
+		if _, err := s.cfg.SessionBroker.CancelEnrollment(ctx, ref, c.EnrollmentRef(pending.ID)); err != nil {
+			return WorkspaceEnrollmentProjection{}, err
+		}
+		candidate, err := brokerAuthorityCandidate(sess)
+		if err != nil {
+			return WorkspaceEnrollmentProjection{}, err
+		}
+		if err := candidate.AbortWorkspaceEnrollment(pending.ID); err != nil {
+			return WorkspaceEnrollmentProjection{}, err
+		}
+		if err := s.saveSession(ctx, candidate); err != nil {
+			return WorkspaceEnrollmentProjection{}, errors.Join(errBrokerAuthoritySave, err)
+		}
+		if err := sess.AbortWorkspaceEnrollment(pending.ID); err != nil {
+			return WorkspaceEnrollmentProjection{}, err
+		}
+		exists = false
+	}
 	if a.Withdrawn && !exists {
 		// Only explicit Connect can reopen withdrawal. Finish exact old-revision
 		// cleanup, then save the empty replacement revision before starting Begin.
-		result, err := s.cfg.SessionBroker.DisconnectTools(ctx, ref, c.CatalogueRef(a.Catalogue))
+		result := c.AlreadyDisconnected
+		if a.Connection != "" {
+			result, err = s.cfg.SessionBroker.DisconnectTools(ctx, ref, c.ConnectionRef(a.Connection))
+		}
 		if err != nil {
 			return WorkspaceEnrollmentProjection{}, err
 		}
@@ -153,10 +240,11 @@ func (s *Service) connectSessionBrokerLocked(ctx context.Context, id session.Ses
 		if err != nil {
 			return WorkspaceEnrollmentProjection{}, err
 		}
-		if snapshot.Ref != ref || !snapshot.ExpiresAt.Equal(a.ExpiresAt) || snapshot.Catalogue == nil || !snapshot.Catalogue.Valid() || len(snapshot.Catalogue.ToolNames()) != 0 {
+		if snapshot.Ref != ref || !snapshot.ExpiresAt.Equal(a.ExpiresAt) || snapshot.Catalogue == nil || !snapshot.Catalogue.Valid() || snapshot.Catalogue.Connection() != a.Connection || len(snapshot.Catalogue.ToolNames()) != 0 {
 			return WorkspaceEnrollmentProjection{}, ErrFailedPrecondition
 		}
 		a.Catalogue = session.BrokerCatalogueRef(snapshot.Catalogue.Ref())
+		a.Withdrawn = false // Explicit Connect durably opens only the empty intent.
 		candidate, err := brokerAuthorityCandidate(sess)
 		if err != nil {
 			return WorkspaceEnrollmentProjection{}, err
@@ -231,7 +319,7 @@ func (s *Service) connectSessionBrokerLocked(ctx context.Context, id session.Ses
 
 func (s *Service) publishSessionBrokerEnrollment(ctx context.Context, sess *session.Session, cat c.Catalogue) (WorkspaceEnrollmentProjection, error) {
 	a, ok := sess.BrokerAccess()
-	if !ok || cat == nil || !cat.Valid() {
+	if !ok || cat == nil || !cat.Valid() || cat.Connection() == "" {
 		return WorkspaceEnrollmentProjection{}, ErrFailedPrecondition
 	}
 	candidate, err := brokerAuthorityCandidate(sess)
@@ -250,7 +338,7 @@ func (s *Service) publishSessionBrokerEnrollment(ctx context.Context, sess *sess
 			return WorkspaceEnrollmentProjection{}, err
 		}
 	}
-	if err := candidate.CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending, a.Session, session.BrokerCatalogueRef(cat.Ref()), a.ExpiresAt, cat.ToolNames()); err != nil {
+	if err := candidate.CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending, a.Session, session.BrokerCatalogueRef(cat.Ref()), session.BrokerConnectionRef(cat.Connection()), a.ExpiresAt, cat.ToolNames()); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	tools := effectiveSessionBrokerTools(candidate, c.SessionRef(a.Session), cat, cat.Tools())
@@ -302,11 +390,6 @@ func (s *Service) DisconnectWorkspaceServices(ctx context.Context, id session.Se
 	if err != nil {
 		return err
 	}
-	if pending, ok := candidate.PendingWorkspaceEnrollment(); ok {
-		if err := candidate.AbortWorkspaceEnrollment(pending.ID); err != nil {
-			return err
-		}
-	}
 	if err := candidate.WithdrawBrokerAccess(); err != nil {
 		return err
 	}
@@ -315,11 +398,25 @@ func (s *Service) DisconnectWorkspaceServices(ctx context.Context, id session.Se
 		return errors.Join(errBrokerAuthoritySave, err)
 	}
 	s.withdrawBrokerEngine(id)
-	result, err := s.cfg.SessionBroker.DisconnectTools(ctx, c.SessionRef(a.Session), c.CatalogueRef(a.Catalogue))
+	if pending, ok := candidate.PendingWorkspaceEnrollment(); ok {
+		if _, err := s.cfg.SessionBroker.CancelEnrollment(ctx, c.SessionRef(a.Session), c.EnrollmentRef(pending.ID)); err != nil {
+			return err
+		}
+		if err := candidate.AbortWorkspaceEnrollment(pending.ID); err != nil {
+			return err
+		}
+		if err := s.saveSession(ctx, candidate); err != nil {
+			return errors.Join(errBrokerAuthoritySave, err)
+		}
+	}
+	if a.Connection == "" {
+		return nil
+	}
+	result, err := s.cfg.SessionBroker.DisconnectTools(ctx, c.SessionRef(a.Session), c.ConnectionRef(a.Connection))
 	if err != nil {
 		return err
 	}
-	if result == c.CatalogueChanged {
+	if result == c.ConnectionChanged {
 		return ErrFailedPrecondition
 	}
 	return nil
@@ -328,12 +425,14 @@ func (s *Service) DisconnectWorkspaceServices(ctx context.Context, id session.Se
 // sessionAuthorizationControl reuses the donor host's claim/continuation
 // machinery, but carries no native custody, handles or process identity.
 type sessionAuthorizationControl struct {
-	host *Service
-	ref  c.SessionRef
+	host    *Service
+	ref     c.SessionRef
+	sess    *session.Session
+	attempt session.BrokerAttempt
 }
 
 func (a *sessionAuthorizationControl) valid(auth session.ExternalAuthorization) bool {
-	return auth.Binding == session.AuthorizationBinding(a.ref)
+	return auth.Binding == session.AuthorizationBinding(a.ref) && a.attempt.Valid()
 }
 func (a *sessionAuthorizationControl) PresentAuthorization(ctx context.Context, auth session.ExternalAuthorization) (string, error) {
 	if !a.valid(auth) {
@@ -369,19 +468,25 @@ func (a *sessionAuthorizationControl) CancelAuthorization(ctx context.Context, a
 	if !a.valid(auth) {
 		return "", ErrFailedPrecondition
 	}
-	result, err := a.host.cfg.SessionBroker.CancelAuthorization(ctx, a.ref, c.AuthorizationRef(auth.ID))
+	result, err := a.host.cfg.SessionBroker.CancelAuthorization(ctx, a.ref, c.AuthorizationRef(auth.ID), a.attempt)
 	if err != nil {
 		return "", err
 	}
 	if result == c.Cancelled {
+		if err := a.host.reconcileSessionBrokerAttempt(ctx, a.sess); err != nil {
+			return "", err
+		}
 		return c.CancelCancelled, nil
 	}
 	return c.CancelAlreadyResolved, nil
 }
 func (s *Service) sessionBrokerResumeTools(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization) ([]tool.Tool, error) {
 	a, ok := sess.BrokerAccess()
-	if !ok || a.Withdrawn || claimed.Authorization.Binding != session.AuthorizationBinding(a.Session) {
+	if !ok || a.Withdrawn || a.Current == nil || a.Current.CallID != claimed.Call.ID || a.Current.Digest != session.BrokerCallDigest(claimed.Call) || claimed.Authorization.Binding != session.AuthorizationBinding(a.Session) {
 		return nil, ErrFailedPrecondition
+	}
+	if _, err := sess.ContinueBrokerInvocation(claimed.Call); err != nil {
+		return nil, errors.Join(ErrFailedPrecondition, s.reconcileSessionBrokerAttempt(ctx, sess))
 	}
 	ref := c.SessionRef(a.Session)
 	flow, err := s.cfg.SessionBroker.ObserveAuthorization(ctx, ref, c.AuthorizationRef(claimed.Authorization.ID))
@@ -394,7 +499,7 @@ func (s *Service) sessionBrokerResumeTools(ctx context.Context, sess *session.Se
 	if err := s.adoptSessionBrokerCatalogue(ctx, sess, flow.Catalogue); err != nil {
 		return nil, err
 	}
-	resume, err := s.cfg.SessionBroker.ResumeToolWrapper(ref, flow.Catalogue, claimed.Call.Name, claimed.Call.ID, c.AuthorizationRef(claimed.Authorization.ID))
+	resume, err := s.cfg.SessionBroker.ResumeToolWrapper(ref, flow.Catalogue, claimed.Call.Name, claimed.Call.ID, c.AuthorizationRef(claimed.Authorization.ID), a.Current.Attempt)
 	if err != nil {
 		return nil, err
 	}

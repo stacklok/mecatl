@@ -24,7 +24,8 @@ const sessionAPIPrefix = "mecatl:poc:broker-session:v1:"
 
 // SessionAPI is a single-replica PoC facade over the donor Process. Redis owns
 // lifecycle metadata only; all credentials remain in native encryptedAuthStorage.
-// The caller owns Process and Redis. Do not run two facades over one namespace.
+// The caller owns Process and the borrowed Redis client; the facade owns any
+// separate no-retry metadata writer. Do not run two facades over one namespace.
 type SessionAPI struct {
 	mu       sync.Mutex
 	process  *Process
@@ -37,8 +38,11 @@ type SessionAPI struct {
 	ctx      context.Context
 	workers  sync.WaitGroup
 	now      func() time.Time
+	metadata *redis.Client
 }
 type apiRecord struct {
+	WriteToken      string
+	Slots           [64]apiSlotRecord
 	Ref             c.SessionRef
 	Owner, Workload [32]byte
 	Incarnation     session.IncarnationID
@@ -59,13 +63,29 @@ type apiDescriptor struct {
 	ReadOnly bool
 }
 type apiState struct {
-	record     apiRecord
-	attachment *Attachment
-	catalogue  c.Catalogue
-	enrollment *apiEnrollment
-	parked     map[c.AuthorizationRef]*apiParked
-	receipts   map[session.ToolCallID]*apiReceipt
-	recovering bool
+	record         apiRecord
+	attachment     *Attachment
+	catalogue      c.Catalogue
+	enrollment     *apiEnrollment
+	parked         map[c.AuthorizationRef]*apiParked
+	receipts       [64]*apiReceipt
+	pendingWrite   *apiRecord
+	recovering     bool
+	recoveryRecord *apiRecord
+
+	// Mutable session data above is owned by ioGate. Registry snapshots and
+	// cancellation below are protected by SessionAPI.mu.
+	ioGate         chan struct{}
+	generation     uint64
+	invalidated    bool
+	opCancel       context.CancelFunc
+	snapshot       apiRecord
+	loaded         bool
+	deleted        bool
+	users          int
+	retained       bool
+	enrollmentRef  c.EnrollmentRef
+	authorizations map[c.AuthorizationRef]c.BrokerAttempt
 }
 type apiEnrollment struct {
 	ref    c.EnrollmentRef
@@ -74,24 +94,31 @@ type apiEnrollment struct {
 	status c.FlowStatus
 }
 type apiParked struct {
-	call       c.Call
-	native     session.ExternalAuthorization
-	connection string
-	descriptor [32]byte
-	account    [32]byte
-	completed  c.Catalogue
-	terminal   *c.FlowStatus
+	attempt        c.BrokerAttempt
+	call           c.Call
+	native         session.ExternalAuthorization
+	connection     string
+	descriptor     [32]byte
+	account        [32]byte
+	completed      c.Catalogue
+	terminal       *c.FlowStatus
+	cleanupPending bool
 }
 type apiReceipt struct {
-	digest  [32]byte
-	done    chan struct{}
-	outcome c.InvocationOutcome
+	attempt  c.BrokerAttempt
+	running  bool
+	check    *c.AuthorizationCheck
+	prepared chan struct{}
+	digest   [32]byte
+	done     chan struct{}
+	outcome  c.InvocationOutcome
 }
 
 var _ c.SessionService = (*SessionAPI)(nil)
 
 // NewSessionAPI requires verified owner context and an independently verified
-// workload resolver. Every configured backend must complete discovery before publication.
+// workload resolver and single-node Redis options (including through wrappers).
+// Every configured backend must complete discovery before publication.
 func NewSessionAPI(p *Process, r redis.UniversalClient, workload func(context.Context) *session.Principal) (*SessionAPI, error) {
 	if p == nil || r == nil || workload == nil {
 		return nil, c.ErrStateUnavailable
@@ -100,7 +127,20 @@ func NewSessionAPI(p *Process, r redis.UniversalClient, workload func(context.Co
 		return nil, c.ErrContinuityUnavailable
 	}
 	ctx, cancel := context.WithCancel(p.ctx)
-	return &SessionAPI{process: p, redis: r, workload: workload, owner: func(ctx context.Context) ([32]byte, error) {
+	options, ok := r.(interface{ Options() *redis.Options })
+	if !ok {
+		cancel()
+		return nil, c.ErrStateUnavailable
+	}
+	// Metadata writes must not retry: readback of one execution cannot fence a
+	// second execution still queued on another Redis connection.
+	var metadata *redis.Client
+	if options.Options().MaxRetries != 0 {
+		config := *options.Options()
+		config.MaxRetries = -1
+		metadata = redis.NewClient(&config)
+	}
+	return &SessionAPI{metadata: metadata, process: p, redis: r, workload: workload, owner: func(ctx context.Context) ([32]byte, error) {
 		return c.ContinuityPrincipalPartition(c.ContinuityPartitionOwner, session.PrincipalFromContext(ctx))
 	}, states: make(map[c.SessionRef]*apiState), ctx: ctx, cancel: cancel, now: time.Now}, nil
 }
@@ -130,8 +170,11 @@ func NewProcessSessionAPI(p *Process, owner func(context.Context) ([32]byte, err
 }
 
 func (s *SessionAPI) InspectConnectors(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef) (c.ConnectorInventory, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, release, err := s.operation(ctx, ref, apiControl{passive: true})
+	if err != nil {
+		return c.ConnectorInventory{}, err
+	}
+	defer release()
 	if !validAPIRef(string(ref)) || !validAPIRef(string(cat)) {
 		return c.ConnectorInventory{}, c.ErrStateUnavailable
 	}
@@ -140,9 +183,9 @@ func (s *SessionAPI) InspectConnectors(ctx context.Context, ref c.SessionRef, ca
 		return c.ConnectorInventory{}, c.ErrStateUnavailable
 	}
 	var record apiRecord
-	if st := s.states[ref]; st != nil {
+	if st := ctx.Value(apiOperationKey{}).(*apiOperation).state; st.loaded {
 		record = st.record
-		if st.catalogue == nil || st.catalogue.Ref() != cat {
+		if record.Catalogue != cat {
 			return c.ConnectorInventory{}, c.ErrStateUnavailable
 		}
 	} else {
@@ -153,14 +196,18 @@ func (s *SessionAPI) InspectConnectors(ctx context.Context, ref c.SessionRef, ca
 		if err != nil {
 			return c.ConnectorInventory{}, err
 		}
-		if json.Unmarshal(b, &record) != nil {
+		if json.Unmarshal(b, &record) != nil || !validAPISlots(b, record) {
 			return c.ConnectorInventory{}, c.ErrStateUnavailable
 		}
 	}
-	if record.Ref != ref || record.Owner != o || record.Workload != w || record.Profile != s.profile() || !s.now().Before(record.ExpiresAt) || record.Catalogue != cat {
+	if record.Ref != ref || (record.Connection != "" && !validAPIRef(record.Connection)) || ((record.Connected || record.Withdrawing) && record.Connection == "") || record.Owner != o || record.Workload != w || record.Profile != s.profile() || !s.now().Before(record.ExpiresAt) || record.Catalogue != cat {
 		return c.ConnectorInventory{}, c.ErrStateUnavailable
 	}
-	return s.process.Runtime.InspectConnectors(ctx, session.SessionID(record.Ref), record.Binding)
+	inventory, err := s.process.Runtime.InspectConnectors(ctx, session.SessionID(record.Ref), record.Binding)
+	if !s.validOperation(ctx) {
+		return c.ConnectorInventory{}, c.ErrStateUnavailable
+	}
+	return inventory, err
 }
 
 func (s *SessionAPI) Ready(ctx context.Context) error {
@@ -172,18 +219,25 @@ func (s *SessionAPI) Ready(ctx context.Context) error {
 func (s *SessionAPI) Close() error {
 	s.mu.Lock()
 	s.closed = true
+	for _, st := range s.states {
+		s.invalidateLocked(st)
+	}
 	s.cancel()
 	s.mu.Unlock()
 	s.workers.Wait()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	states := s.states
+	s.states = make(map[c.SessionRef]*apiState)
+	s.mu.Unlock()
 	var err error
-	for ref, st := range s.states {
+	for _, st := range states {
 		if st.attachment != nil {
 			_, e := st.attachment.Close(context.Background())
 			err = errors.Join(err, e)
 		}
-		delete(s.states, ref)
+	}
+	if s.metadata != nil {
+		err = errors.Join(err, s.metadata.Close())
 	}
 	return err
 }
@@ -199,7 +253,10 @@ func validAPIRef(v string) bool {
 	return err == nil && len(b) == 32 && len(v) == 43
 }
 func (s *SessionAPI) partitions(ctx context.Context) ([32]byte, [32]byte, error) {
-	if s.closed {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
 		return [32]byte{}, [32]byte{}, c.ErrStateUnavailable
 	}
 	o, err := s.owner(ctx)
@@ -214,6 +271,12 @@ func (s *SessionAPI) profile() [32]byte {
 	return sha256.Sum256(b)
 }
 func (s *SessionAPI) save(ctx context.Context, st *apiState) error {
+	if !s.validOperation(ctx) {
+		return c.ErrStateUnavailable
+	}
+	if st.pendingWrite != nil {
+		return c.ErrStateUnavailable
+	}
 	b, err := json.Marshal(st.record)
 	if err != nil {
 		return err
@@ -223,7 +286,14 @@ func (s *SessionAPI) save(ctx context.Context, st *apiState) error {
 		return c.ErrStateUnavailable
 	}
 	key := sessionAPIPrefix + string(st.record.Ref)
-	if err = s.redis.Set(ctx, key, b, ttl).Err(); err == nil {
+	if !s.validOperation(ctx) {
+		return c.ErrStateUnavailable
+	}
+	writer := s.redis
+	if s.metadata != nil {
+		writer = s.metadata
+	}
+	if err = writer.Set(ctx, key, b, ttl).Err(); err == nil {
 		return nil
 	}
 	// A lost write acknowledgement is not proof that adoption failed.
@@ -233,6 +303,7 @@ func (s *SessionAPI) save(ctx context.Context, st *apiState) error {
 	if readErr == nil && bytes.Equal(stored, b) {
 		return nil
 	}
+	st.pendingWrite = &st.record
 	return err
 }
 func (s *SessionAPI) assertion(st *apiState) c.CustodyAssertion {
@@ -244,82 +315,93 @@ func (s *SessionAPI) assertion(st *apiState) c.CustodyAssertion {
 	return c.CustodyAssertion{Guard: c.ContinuityGuard{SessionID: session.SessionID(r.Ref), SessionIncarnation: r.Incarnation, OwnerPartition: r.Owner, WorkloadPartition: r.Workload, ProfileDigest: r.Custody.ProfileDigest, Providers: r.Custody.Providers}, RecoveryReference: r.Custody.RecoveryReference, AttemptDeadline: deadline}
 }
 func (s *SessionAPI) empty(st *apiState) error {
-	cat, err := c.NewCatalogue(st.record.Catalogue, nil)
+	cat, err := c.NewCatalogue(st.record.Catalogue, c.ConnectionRef(st.record.Connection), nil)
 	st.catalogue = cat
 	return err
 }
 
 // Reap only identities already owned by this facade, never a caller-supplied ID.
 func (s *SessionAPI) reap(ctx context.Context) error {
-	for ref, st := range s.states {
-		expired := !s.now().Before(st.record.ExpiresAt)
-		if !expired {
-			err := s.redis.Get(ctx, sessionAPIPrefix+string(ref)).Err()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				return c.ErrStateUnavailable
-			}
-			expired = errors.Is(err, redis.Nil)
-		}
-		if !expired {
-			continue
-		}
-		if _, err := s.process.DeleteSession(ctx, session.SessionID(ref)); err != nil {
-			return err
-		}
-		if st.attachment != nil {
-			if _, err := st.attachment.Close(context.Background()); err != nil {
-				return err
-			}
-		}
-		delete(s.states, ref)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return c.ErrStateUnavailable
 	}
-	return nil
+	var expired []*apiState
+	for _, st := range s.states {
+		if st.loaded && !st.deleted && !s.now().Before(st.snapshot.ExpiresAt) {
+			s.invalidateLocked(st)
+			st.users++
+			s.workers.Add(1)
+			expired = append(expired, st)
+		}
+	}
+	s.mu.Unlock()
+	var result error
+	for _, st := range expired {
+		select {
+		case <-ctx.Done():
+			result = errors.Join(result, ctx.Err())
+			s.finishOwnership(st)
+			continue
+		case <-s.ctx.Done():
+			result = errors.Join(result, c.ErrStateUnavailable)
+			s.finishOwnership(st)
+			continue
+		case <-st.ioGate:
+		}
+		var err error
+		if st.pendingWrite != nil {
+			err = c.ErrStateUnavailable
+		} else {
+			_, err = s.process.DeleteSession(ctx, session.SessionID(st.record.Ref))
+			if err == nil && st.attachment != nil {
+				_, err = st.attachment.Close(ctx)
+			}
+			if err == nil {
+				s.mu.Lock()
+				st.deleted = true
+				s.mu.Unlock()
+			}
+		}
+		st.ioGate <- struct{}{}
+		s.finishOwnership(st)
+		result = errors.Join(result, err)
+	}
+	return result
 }
 
 func (s *SessionAPI) finishRecovery(ctx context.Context, st *apiState) error {
 	// Retain the exact handle and candidate revision across both save ambiguity
 	// and Commit cancellation. Abort would invalidate a possibly adopted binding.
-	if err := s.save(ctx, st); err != nil {
+	next := *st.recoveryRecord
+	next.Slots = st.record.Slots
+	if err := s.saveRecord(ctx, st, next); err != nil {
 		return err
 	}
 	if err := st.attachment.Commit(ctx); err != nil {
 		return err
 	}
-	cat, err := s.catalogue(st, st.record.Catalogue, st.attachment.Tools(), st.record.Account)
+	if !s.validOperation(ctx) {
+		return c.ErrStateUnavailable
+	}
+	cat, err := s.catalogue(st, st.record.Catalogue, c.ConnectionRef(st.record.Connection), st.attachment.Tools(), st.record.Account)
 	if err != nil {
 		return err
 	}
 	st.catalogue = cat
 	st.recovering = false
+	st.recoveryRecord = nil
 	return nil
 }
 
 func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, error) {
-	if !validAPIRef(string(ref)) {
-		return nil, c.ErrStateUnavailable
-	}
-	o, w, err := s.partitions(ctx)
+	st, err := s.metadataState(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	if err = s.reap(ctx); err != nil {
-		return nil, err
-	}
-	// Check durable existence even for cached handles: Redis failure is fail-closed.
-	b, err := s.redis.Get(ctx, sessionAPIPrefix+string(ref)).Bytes()
-	if err != nil {
-		return nil, c.ErrStateUnavailable
-	}
-	var record apiRecord
-	if json.Unmarshal(b, &record) != nil || record.Ref != ref || record.Owner != o || record.Workload != w || record.Profile != s.profile() || !s.now().Before(record.ExpiresAt) {
-		return nil, c.ErrStateUnavailable
-	}
-	st := s.states[ref]
-	if st == nil {
-		if len(s.states) >= 32 {
-			return nil, c.ErrCapacity
-		}
-		st = &apiState{record: record, parked: make(map[c.AuthorizationRef]*apiParked), receipts: make(map[session.ToolCallID]*apiReceipt)}
+	record := st.record
+	if st.catalogue == nil && !st.recovering {
 		if record.Withdrawing {
 			if err = s.disconnect(ctx, st); err != nil {
 				return nil, err
@@ -334,11 +416,21 @@ func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, er
 			if err != nil {
 				return nil, err
 			}
-			st.attachment = recovered.Attachment.(*Attachment)
-			st.record.Binding = st.attachment.Binding()
-			st.record.Catalogue = c.CatalogueRef(apiRef())
+			attachment := recovered.Attachment.(*Attachment)
+			attachment.mu.RLock()
+			tsid := attachment.verifiedTSID
+			attachment.mu.RUnlock()
+			account, accountErr := s.process.nativeAccount(ctx, tsid)
+			if accountErr != nil || account != record.Account {
+				_, closeErr := attachment.Close(context.WithoutCancel(ctx))
+				return nil, errors.Join(errors.New("mcpbroker: recovered account changed; disconnect before reconnecting"), accountErr, closeErr)
+			}
+			st.attachment = attachment
+			next := st.record
+			next.Binding = st.attachment.Binding()
+			next.Catalogue = c.CatalogueRef(apiRef())
+			st.recoveryRecord = &next
 			st.recovering = true
-			s.states[ref] = st
 			if err = s.finishRecovery(ctx, st); err != nil {
 				return nil, err
 			}
@@ -356,14 +448,16 @@ func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, er
 			if e != nil {
 				return nil, e
 			}
-			st.record.Catalogue = c.CatalogueRef(apiRef())
-			st.catalogue, err = s.catalogue(st, st.record.Catalogue, cat.Tools(), st.record.Account)
+			next := st.record
+			next.Catalogue = c.CatalogueRef(apiRef())
+			catalogue, err := s.catalogue(st, next.Catalogue, c.ConnectionRef(next.Connection), cat.Tools(), next.Account)
 			if err != nil {
 				return nil, err
 			}
-			if err = s.save(ctx, st); err != nil {
+			if err = s.saveRecord(ctx, st, next); err != nil {
 				return nil, err
 			}
+			st.catalogue = catalogue
 			st.attachment.logical.mu.Lock()
 			st.attachment.logical.completedEnrollment = completed
 			st.attachment.logical.mu.Unlock()
@@ -373,7 +467,6 @@ func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, er
 				return nil, err
 			}
 		}
-		s.states[ref] = st
 	}
 	if st.recovering {
 		if err = s.finishRecovery(ctx, st); err != nil {
@@ -391,8 +484,11 @@ func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, er
 		}
 	}
 	for _, p := range st.parked {
-		if p.terminal == nil && !s.now().Before(p.native.ExpiresAt) {
+		if p.terminal == nil && st.record.Slots[p.attempt.Slot].Phase == "parked" && !s.now().Before(p.native.ExpiresAt) {
 			if _, err := st.attachment.CancelAuthorization(ctx, p.native); err != nil {
+				return nil, err
+			}
+			if err := s.terminalSlot(ctx, st, p.attempt, c.FailureExpired); err != nil {
 				return nil, err
 			}
 			status := c.FlowStatus{Kind: c.FlowExpired}
@@ -403,50 +499,73 @@ func (s *SessionAPI) state(ctx context.Context, ref c.SessionRef) (*apiState, er
 	return st, nil
 }
 func (s *SessionAPI) attach(ctx context.Context, st *apiState) error {
-	if st.attachment != nil {
-		return nil
+	if st.attachment == nil {
+		a, _, err := s.process.AttachSession(ctx, session.SessionID(st.record.Ref))
+		if err != nil {
+			return err
+		}
+		st.attachment = a.(*Attachment)
 	}
-	a, _, err := s.process.AttachSession(ctx, session.SessionID(st.record.Ref))
-	if err != nil {
-		return err
+	next := st.record
+	next.Binding = st.attachment.Binding()
+	if next.Binding != st.record.Binding {
+		if err := s.saveRecord(ctx, st, next); err != nil {
+			return err
+		}
 	}
-	st.attachment = a.(*Attachment)
-	st.record.Binding = a.Binding()
-	if err = s.save(ctx, st); err != nil {
-		return err
-	}
-	return a.Commit(ctx)
+	return st.attachment.Commit(ctx)
 }
 func (s *SessionAPI) OpenSession(ctx context.Context, saved *c.SessionRef) (c.SessionSnapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var st *apiState
-	var err error
 	if saved != nil {
-		st, err = s.state(ctx, *saved)
-	} else {
-		o, w, e := s.partitions(ctx)
-		if e != nil {
-			return c.SessionSnapshot{}, e
+		ctx, release, err := s.operation(ctx, *saved, apiControl{})
+		if err != nil {
+			return c.SessionSnapshot{}, err
 		}
-		if e = s.reap(ctx); e != nil {
-			return c.SessionSnapshot{}, e
+		defer release()
+		st, err := s.state(ctx, *saved)
+		if err != nil {
+			return c.SessionSnapshot{}, err
 		}
-		if len(s.states) >= 32 {
-			return c.SessionSnapshot{}, c.ErrCapacity
+		return c.SessionSnapshot{Ref: st.record.Ref, ExpiresAt: st.record.ExpiresAt, Catalogue: st.catalogue}, nil
+	}
+	o, w, err := s.partitions(ctx)
+	if err != nil {
+		return c.SessionSnapshot{}, err
+	}
+	s.mu.Lock()
+	atCapacity := len(s.states) >= 32
+	s.mu.Unlock()
+	if atCapacity {
+		if err = s.reap(ctx); err != nil {
+			return c.SessionSnapshot{}, err
 		}
-		st = &apiState{record: apiRecord{Ref: c.SessionRef(apiRef()), Owner: o, Workload: w, Profile: s.profile(), Incarnation: session.NewIncarnationID(), Catalogue: c.CatalogueRef(apiRef()), ExpiresAt: s.now().Add(30 * 24 * time.Hour)}, parked: make(map[c.AuthorizationRef]*apiParked), receipts: make(map[session.ToolCallID]*apiReceipt)}
-		err = s.empty(st)
-		if err == nil {
-			err = s.save(ctx, st)
-		}
-		if err == nil {
-			s.states[st.record.Ref] = st
-		}
+	}
+	st := newAPIState(apiRecord{Ref: c.SessionRef(apiRef()), Owner: o, Workload: w, Profile: s.profile(), Incarnation: session.NewIncarnationID(), Catalogue: c.CatalogueRef(apiRef()), ExpiresAt: s.now().Add(30 * 24 * time.Hour)})
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return c.SessionSnapshot{}, c.ErrStateUnavailable
+	}
+	if len(s.states) >= 32 {
+		s.mu.Unlock()
+		return c.SessionSnapshot{}, c.ErrCapacity
+	}
+	s.states[st.record.Ref] = st
+	s.mu.Unlock()
+	ctx, release, err := s.operation(ctx, st.record.Ref, apiControl{})
+	if err != nil {
+		return c.SessionSnapshot{}, err
+	}
+	defer release()
+	if err = s.empty(st); err == nil {
+		err = s.saveRecord(ctx, st, st.record)
 	}
 	if err != nil {
 		return c.SessionSnapshot{}, err
 	}
+	s.mu.Lock()
+	st.loaded = true
+	s.mu.Unlock()
 	return c.SessionSnapshot{Ref: st.record.Ref, ExpiresAt: st.record.ExpiresAt, Catalogue: st.catalogue}, nil
 }
 
@@ -488,7 +607,7 @@ func (t *apiAuthorizationTool) RequestAuthorization(ctx context.Context, call se
 				}
 			}
 		} else if recovered != nil {
-			if _, err := recovered.Token(); err != nil {
+			if _, err := recovered.tokenFor(ctx); err != nil {
 				return session.ExternalAuthorization{}, false, err
 			}
 		} else {
@@ -507,7 +626,7 @@ func (t *apiAuthorizationTool) RequestAuthorization(ctx context.Context, call se
 	return t.protectedSessionTool.RequestAuthorization(ctx, call)
 }
 
-func (s *SessionAPI) catalogue(st *apiState, ref c.CatalogueRef, tools []tool.Tool, account [32]byte) (c.Catalogue, error) {
+func (s *SessionAPI) catalogue(st *apiState, ref c.CatalogueRef, connection c.ConnectionRef, tools []tool.Tool, account [32]byte) (c.Catalogue, error) {
 	tools = append([]tool.Tool(nil), tools...)
 	if s.process.custody != nil {
 		for i, candidate := range tools {
@@ -520,6 +639,9 @@ func (s *SessionAPI) catalogue(st *apiState, ref c.CatalogueRef, tools []tool.To
 	}
 	if len(tools) > 0 {
 		if query, ok := st.attachment.CallMcpWithQueryTool().(*attachmentQueryTool); ok {
+			// SessionAPI must retain the unknown-effect fence, unlike the donor's
+			// public model-visible tool-error path.
+			query.uncertaintyErrors = true
 			targets := make(map[string]route, len(tools))
 			for _, candidate := range tools {
 				if route, ok := st.attachment.lookupRoute(candidate.Spec().Name); ok {
@@ -545,15 +667,14 @@ func (s *SessionAPI) catalogue(st *apiState, ref c.CatalogueRef, tools []tool.To
 			tools = append(tools, query)
 		}
 	}
-	return c.NewCatalogue(ref, tools)
+	return c.NewCatalogue(ref, connection, tools)
 }
 
-func (s *SessionAPI) publish(ctx context.Context, st *apiState, tools []tool.Tool, enrollment c.WorkspaceEnrollmentRef) error {
-	next := st.record
-	next.Connected = true
-	if next.Connection == "" {
+func (s *SessionAPI) publish(ctx context.Context, st *apiState, next apiRecord, tools []tool.Tool, enrollment c.WorkspaceEnrollmentRef) error {
+	if !next.Connected {
 		next.Connection = apiRef()
 	}
+	next.Connected = true
 	if len(s.process.construction.protectedBackends) > 0 {
 		st.attachment.mu.RLock()
 		tsid := st.attachment.verifiedTSID
@@ -583,15 +704,12 @@ func (s *SessionAPI) publish(ctx context.Context, st *apiState, tools []tool.Too
 		}
 		next.Custody = &staged
 	}
-	cat, err := s.catalogue(st, c.CatalogueRef(apiRef()), tools, next.Account)
+	cat, err := s.catalogue(st, c.CatalogueRef(apiRef()), c.ConnectionRef(next.Connection), tools, next.Account)
 	if err != nil {
 		return err
 	}
 	next.Catalogue = cat.Ref()
-	old := st.record
-	st.record = next
-	if err = s.save(ctx, st); err != nil {
-		st.record = old
+	if err = s.saveRecord(ctx, st, next); err != nil {
 		return err
 	}
 	if next.Custody != nil {
@@ -599,12 +717,18 @@ func (s *SessionAPI) publish(ctx context.Context, st *apiState, tools []tool.Too
 			return err
 		}
 	}
+	if !s.validOperation(ctx) {
+		return c.ErrStateUnavailable
+	}
 	st.catalogue = cat
 	return nil
 }
 func (s *SessionAPI) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.BeginEnrollmentOutcome{}, err
+	}
+	defer release()
 	st, err := s.state(ctx, ref)
 	if err != nil {
 		return c.BeginEnrollmentOutcome{}, err
@@ -629,9 +753,13 @@ func (s *SessionAPI) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.B
 		if err != nil {
 			return c.BeginEnrollmentOutcome{}, err
 		}
-		st.record.Anonymous = nil
+		if !s.validOperation(ctx) {
+			return c.BeginEnrollmentOutcome{}, c.ErrStateUnavailable
+		}
+		next := st.record
+		next.Anonymous = nil
 		for _, r := range routes {
-			st.record.Anonymous = append(st.record.Anonymous, apiDescriptor{Backend: r.backend, Spec: copySpec(r.spec), ReadOnly: r.readOnly})
+			next.Anonymous = append(next.Anonymous, apiDescriptor{Backend: r.backend, Spec: copySpec(r.spec), ReadOnly: r.readOnly})
 		}
 		native := c.WorkspaceEnrollmentRef{ID: session.WorkspaceEnrollmentID(apiRef()), RequiredServices: uint32(len(s.process.construction.anonymous)), ExpiresAt: st.record.ExpiresAt}
 		completed := &completedWorkspaceEnrollment{ref: native, routes: routes}
@@ -639,7 +767,7 @@ func (s *SessionAPI) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.B
 		if e != nil {
 			return c.BeginEnrollmentOutcome{}, e
 		}
-		if err = s.publish(ctx, st, cat.Tools(), native); err != nil {
+		if err = s.publish(ctx, st, next, cat.Tools(), native); err != nil {
 			return c.BeginEnrollmentOutcome{}, err
 		}
 		st.attachment.logical.mu.Lock()
@@ -650,6 +778,9 @@ func (s *SessionAPI) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.B
 	p, err := st.attachment.BeginWorkspaceEnrollment(ctx)
 	if err != nil {
 		return c.BeginEnrollmentOutcome{}, err
+	}
+	if !s.validOperation(ctx) {
+		return c.BeginEnrollmentOutcome{}, c.ErrStateUnavailable
 	}
 	st.enrollment = &apiEnrollment{ref: c.EnrollmentRef(apiRef()), native: p.Ref, prompt: c.BrowserPrompt{URL: p.URL, ExpiresAt: p.Ref.ExpiresAt}, status: c.FlowStatus{Kind: c.FlowPending}}
 	return c.BeginEnrollmentOutcome{Kind: c.EnrollmentStartedKind, Started: &c.EnrollmentStarted{Ref: st.enrollment.ref, Prompt: st.enrollment.prompt}}, nil
@@ -667,8 +798,11 @@ func flow(status session.AuthorizationStatus) c.FlowStatus {
 	}
 }
 func (s *SessionAPI) ObserveEnrollment(ctx context.Context, ref c.SessionRef, e c.EnrollmentRef) (c.FlowStatus, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.FlowStatus{}, err
+	}
+	defer release()
 	st, err := s.state(ctx, ref)
 	if err != nil {
 		return c.FlowStatus{}, err
@@ -683,8 +817,11 @@ func (s *SessionAPI) ObserveEnrollment(ctx context.Context, ref c.SessionRef, e 
 	if err != nil {
 		return c.FlowStatus{}, err
 	}
+	if !s.validOperation(ctx) {
+		return c.FlowStatus{}, c.ErrStateUnavailable
+	}
 	if r.Status == c.WorkspaceEnrollmentConnected {
-		if err = s.publish(ctx, st, r.Catalogue.Tools(), r.Ref); err != nil {
+		if err = s.publish(ctx, st, st.record, r.Catalogue.Tools(), r.Ref); err != nil {
 			return c.FlowStatus{}, err
 		}
 		st.enrollment.status = c.FlowStatus{Kind: c.FlowCompleted, Catalogue: st.catalogue}
@@ -694,20 +831,33 @@ func (s *SessionAPI) ObserveEnrollment(ctx context.Context, ref c.SessionRef, e 
 	return st.enrollment.status, nil
 }
 func (s *SessionAPI) CancelEnrollment(ctx context.Context, ref c.SessionRef, e c.EnrollmentRef) (c.CancelResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, err := s.state(ctx, ref)
+	ctx, release, err := s.operation(ctx, ref, apiControl{enrollment: e})
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
 	if err != nil {
 		return 0, err
 	}
 	if st.enrollment == nil || st.enrollment.ref != e || st.enrollment.status.Kind != c.FlowPending {
+		if st.enrollment != nil && st.enrollment.ref == e && !st.record.Withdrawing {
+			s.rearm(ctx, st)
+		}
 		return c.AlreadyResolved, nil
 	}
+	if err := s.controlGeneration(ctx, st); err != nil {
+		return 0, err
+	}
 	r, err := st.attachment.CancelWorkspaceEnrollment(ctx, st.enrollment.native)
+	if !s.validOperation(ctx) {
+		return 0, c.ErrStateUnavailable
+	}
 	if err != nil {
 		return 0, err
 	}
 	st.enrollment.status = flow(session.AuthorizationStatus(r.Status))
+	s.rearm(ctx, st)
 	if r.Status == c.WorkspaceEnrollmentCancelled {
 		return c.Cancelled, nil
 	}
@@ -750,11 +900,13 @@ func find(cat c.Catalogue, name string) tool.Tool {
 	}
 	return nil
 }
-func callDigest(call c.Call) [32]byte { b, _ := json.Marshal(call); return sha256.Sum256(b) }
+func callDigest(call c.Call) [32]byte {
+	return session.BrokerCallDigest(session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
+}
 func validCall(call c.Call) bool {
 	return len(call.ID) > 0 && len(call.ID) <= 256 && utf8.ValidString(string(call.ID)) && len(call.Name) > 0 && len(call.Name) <= 256 && utf8.ValidString(call.Name) && len(call.Arguments) <= 256*1024 && json.Valid(call.Arguments)
 }
-func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call) (c.InvocationOutcome, *apiReceipt, error) {
+func (s *SessionAPI) nativePreflight(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
 	if err := ctx.Err(); err != nil {
 		return c.InvocationOutcome{}, nil, err
 	}
@@ -770,9 +922,6 @@ func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.
 			continue
 		}
 		active++
-		if p.call.ID == call.ID && callDigest(p.call) != callDigest(call) {
-			return noDispatch(c.FailureCallChanged), nil, nil
-		}
 	}
 	if cat != st.catalogue.Ref() || cat != st.record.Catalogue {
 		return noDispatch(c.FailureCatalogueChanged), nil, nil
@@ -789,13 +938,7 @@ func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.
 		return noDispatch(c.FailureCatalogueChanged), nil, nil
 	}
 	digest := callDigest(call)
-	if receipt := st.receipts[call.ID]; receipt != nil {
-		if receipt.digest != digest {
-			return noDispatch(c.FailureCallChanged), nil, nil
-		}
-		return c.InvocationOutcome{}, receipt, nil
-	}
-	if len(st.receipts) >= 64 || active >= 16 {
+	if active >= 16 {
 		return noDispatch(c.FailureCapacity), nil, nil
 	}
 	native := session.ToolCall{ID: call.ID, Name: call.Name, Args: append([]byte(nil), call.Arguments...)}
@@ -808,7 +951,7 @@ func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.
 					if !s.now().Before(p.native.ExpiresAt) {
 						return noDispatch(c.FailureExpired), nil, nil
 					}
-					if callDigest(p.call) == digest {
+					if p.attempt == attempt && callDigest(p.call) == digest {
 						return c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: ref}, nil, nil
 					}
 					return noDispatch(c.FailureAuthorizationFailed), nil, nil
@@ -816,13 +959,16 @@ func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.
 			}
 		}
 		auth, required, err := requester.RequestAuthorization(ctx, native)
+		if !s.validOperation(ctx) {
+			return c.InvocationOutcome{}, nil, c.ErrStateUnavailable
+		}
 		if err != nil {
 			return c.InvocationOutcome{}, nil, err
 		}
 		if required {
 			for ref, p := range st.parked {
 				if p.terminal == nil && p.native.ID == auth.ID && p.native.Binding == auth.Binding {
-					if callDigest(p.call) != digest {
+					if p.attempt != attempt || callDigest(p.call) != digest {
 						return noDispatch(c.FailureCallChanged), nil, nil
 					}
 					return c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: ref}, nil, nil
@@ -830,35 +976,125 @@ func (s *SessionAPI) prepareInvocation(ctx context.Context, st *apiState, cat c.
 			}
 			ref := c.AuthorizationRef(apiRef())
 			call.Arguments = append([]byte(nil), call.Arguments...)
-			st.parked[ref] = &apiParked{call: call, native: auth, connection: st.record.Connection, account: st.record.Account, descriptor: invocation}
+			st.parked[ref] = &apiParked{attempt: attempt, call: call, native: auth, connection: st.record.Connection, account: st.record.Account, descriptor: invocation}
 			return c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: ref}, nil, nil
 		}
 	}
 	return c.InvocationOutcome{}, nil, nil
 }
 
-func (s *SessionAPI) invoke(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call) (c.InvocationOutcome, *apiReceipt, error) {
-	out, existing, err := s.prepareInvocation(ctx, st, cat, call)
+func (s *SessionAPI) invoke(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
+	out, existing, err := s.prepareInvocation(ctx, st, cat, call, attempt)
 	if err != nil || existing != nil || out.Kind != "" {
 		return out, existing, err
 	}
+	return s.dispatchInvocation(ctx, st, cat, call, attempt)
+}
+
+func (s *SessionAPI) dispatchInvocation(ctx context.Context, st *apiState, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, *apiReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if saveErr := s.terminalSlot(cleanup, st, attempt, c.FailureInterrupted); saveErr != nil {
+			return c.InvocationOutcome{}, nil, saveErr
+		}
+		return noDispatch(c.FailureInterrupted), nil, nil
+	}
+	if cat != st.record.Catalogue || !st.record.Connected || st.catalogue == nil || cat != st.catalogue.Ref() {
+		if err := s.terminalSlot(ctx, st, attempt, c.FailureCatalogueChanged); err != nil {
+			return c.InvocationOutcome{}, nil, err
+		}
+		return noDispatch(c.FailureCatalogueChanged), nil, nil
+	}
 	t := find(st.catalogue, call.Name)
 	native := session.ToolCall{ID: call.ID, Name: call.Name, Args: append([]byte(nil), call.Arguments...)}
-	receipt := &apiReceipt{digest: callDigest(call), done: make(chan struct{})}
-	st.receipts[call.ID] = receipt
+	receipt := st.receipts[attempt.Slot]
+	slot := st.record.Slots[attempt.Slot]
+	if receipt == nil || slot.Sequence != attempt.Sequence || (slot.Phase != "reserved" && slot.Phase != "parked") || slot.Digest != callDigest(call) || t == nil {
+		return c.InvocationOutcome{}, nil, c.ErrStateUnavailable
+	}
+	durableCall := native
+	filter := ""
+	if call.Name == "CallMcpWithQuery" {
+		var err error
+		durableCall, filter, err = (&attachmentQueryTool{}).target(native)
+		if err != nil {
+			return c.InvocationOutcome{}, nil, err
+		}
+	}
+	if route, ok := st.attachment.lookupRoute(durableCall.Name); s.process.custody != nil && ok && route.broker {
+		st.attachment.mu.RLock()
+		tsid := st.attachment.verifiedTSID
+		st.attachment.mu.RUnlock()
+		ready, readinessErr := s.process.nativeGrantReady(ctx, tsid)
+		account, accountErr := s.process.nativeAccount(ctx, tsid)
+		if readinessErr != nil || accountErr != nil || !ready || account != st.record.Account || account == ([32]byte{}) {
+			if err := s.terminalSlot(ctx, st, attempt, c.FailureAuthorityWithdrawn); err != nil {
+				return c.InvocationOutcome{}, nil, err
+			}
+			return noDispatch(c.FailureAuthorityWithdrawn), nil, nil
+		}
+	}
+	slot.Phase = "dispatched"
+	if err := s.saveSlot(ctx, st, attempt, slot); err != nil {
+		return c.InvocationOutcome{}, nil, err
+	}
+	ctx = context.WithValue(ctx, durableNativeKey{}, &durableNativeCall{attachment: st.attachment, hash: callHash(durableCall), filter: filter})
 	// Cancellation changes only what the caller observes. Dispatch ownership and
 	// the bounded receipt outlive the caller; no retry ever executes a second time.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	stop := context.AfterFunc(s.ctx, cancel)
+	s.mu.Lock()
+	if s.closed || !s.workerGeneration(ctx, st) {
+		s.mu.Unlock()
+		cancel()
+		stop()
+		return c.InvocationOutcome{}, nil, c.ErrStateUnavailable
+	}
 	s.workers.Add(1)
+	st.users++
+	s.mu.Unlock()
+	receipt.running = true
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: string(st.record.Ref), Revision: string(cat)}, nofs.New(), memledger.New(), nil)
 	go func() {
-		defer s.workers.Done()
+		defer s.finishOwnership(st)
 		defer stop()
 		defer cancel()
 		out := c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
 		defer func() {
 			if recover() != nil {
+				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+			}
+			persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(runCtx), 2*time.Second)
+			defer persistCancel()
+			locked := false
+			if s.validOperation(persistCtx) {
+				select {
+				case <-st.ioGate:
+					locked = true
+				case <-persistCtx.Done():
+				}
+			}
+			if locked {
+				defer func() { st.ioGate <- struct{}{} }()
+			}
+			if locked && s.validOperation(persistCtx) && st.pendingWrite == nil {
+				slot := st.record.Slots[attempt.Slot]
+				slot.Phase, slot.Disposition = "terminal", session.BrokerAttemptUnknown
+				if out.Kind == c.InvocationCompleted {
+					slot.Disposition = session.BrokerAttemptCompleted
+				}
+				if err := s.saveSlot(persistCtx, st, attempt, slot); err != nil {
+					out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
+				}
+				for _, p := range st.parked {
+					if p.attempt == attempt {
+						p.call.Arguments = nil
+						terminal := c.FlowStatus{Kind: c.FlowCompleted, Catalogue: st.catalogue}
+						p.terminal = &terminal
+					}
+				}
+			} else {
 				out = c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}
 			}
 			receipt.outcome = out
@@ -886,13 +1122,19 @@ func waitReceipt(ctx context.Context, out c.InvocationOutcome, r *apiReceipt, er
 		return c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}, nil
 	}
 }
-func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, auth c.AuthorizationRef) (c.AuthorizationCheck, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, auth c.AuthorizationRef, attempt c.BrokerAttempt) (result c.AuthorizationCheck, resultErr error) {
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.AuthorizationCheck{}, err
+	}
+	defer release()
 	if err := ctx.Err(); err != nil {
 		return c.AuthorizationCheck{}, err
 	}
-	st, err := s.state(ctx, ref)
+	if !attempt.Valid() {
+		return c.AuthorizationCheck{}, c.ErrStateUnavailable
+	}
+	st, err := s.metadataState(ctx, ref)
 	if err != nil {
 		return c.AuthorizationCheck{}, err
 	}
@@ -901,9 +1143,16 @@ func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, c
 	}
 	if call == nil {
 		p := st.parked[auth]
-		if p == nil || p.terminal != nil {
+		if p == nil || p.attempt != attempt || p.terminal != nil || st.record.Slots[attempt.Slot].Phase != "parked" {
 			return c.AuthorizationCheck{Reason: c.FailureInterrupted}, nil
 		}
+		defer func() {
+			if resultErr == nil && result.Reason.Valid() {
+				if err := s.terminalSlot(ctx, st, attempt, result.Reason); err != nil {
+					result, resultErr = c.AuthorizationCheck{}, err
+				}
+			}
+		}()
 		if cat != st.record.Catalogue || cat != st.catalogue.Ref() {
 			return c.AuthorizationCheck{Reason: c.FailureCatalogueChanged}, nil
 		}
@@ -919,6 +1168,9 @@ func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, c
 			return c.AuthorizationCheck{Reason: c.FailureCatalogueChanged}, nil
 		}
 		status, err := st.attachment.AuthorizationStatus(ctx, p.native)
+		if !s.validOperation(ctx) {
+			return c.AuthorizationCheck{}, c.ErrStateUnavailable
+		}
 		if err != nil {
 			return c.AuthorizationCheck{}, err
 		}
@@ -933,8 +1185,8 @@ func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, c
 		}
 		return c.AuthorizationCheck{Authorization: auth, ExpiresAt: p.native.ExpiresAt}, nil
 	}
-	out, receipt, err := s.prepareInvocation(ctx, st, cat, *call)
-	if receipt != nil {
+	out, receipt, err := s.prepareInvocation(ctx, st, cat, *call, attempt)
+	if receipt != nil || out.Kind == c.InvocationCompleted || out.Kind == c.InvocationOutcomeUnknown {
 		return c.AuthorizationCheck{Reason: c.FailureInterrupted}, nil
 	}
 	if err != nil {
@@ -949,20 +1201,27 @@ func (s *SessionAPI) CheckAuthorization(ctx context.Context, ref c.SessionRef, c
 	return c.AuthorizationCheck{Ready: true}, nil
 }
 
-func (s *SessionAPI) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call c.Call) (c.InvocationOutcome, error) {
-	s.mu.Lock()
-	st, err := s.state(ctx, ref)
+func (s *SessionAPI) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	caller := ctx
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
 	if err != nil {
-		s.mu.Unlock()
 		return c.InvocationOutcome{}, err
 	}
-	out, r, err := s.invoke(ctx, st, cat, call)
-	s.mu.Unlock()
-	return waitReceipt(ctx, out, r, err)
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		release()
+		return c.InvocationOutcome{}, err
+	}
+	out, r, err := s.invoke(ctx, st, cat, call, attempt)
+	release()
+	return waitReceipt(caller, out, r, err)
 }
 func (s *SessionAPI) BeginAuthorization(ctx context.Context, ref c.SessionRef, a c.AuthorizationRef) (c.BrowserPrompt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.BrowserPrompt{}, err
+	}
+	defer release()
 	st, err := s.state(ctx, ref)
 	if err != nil {
 		return c.BrowserPrompt{}, err
@@ -972,11 +1231,17 @@ func (s *SessionAPI) BeginAuthorization(ctx context.Context, ref c.SessionRef, a
 		return c.BrowserPrompt{}, c.ErrAuthorizationNotFound
 	}
 	u, err := st.attachment.PresentAuthorization(ctx, p.native)
+	if !s.validOperation(ctx) {
+		return c.BrowserPrompt{}, c.ErrStateUnavailable
+	}
 	return c.BrowserPrompt{URL: u, ExpiresAt: p.native.ExpiresAt}, err
 }
 func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef, a c.AuthorizationRef) (c.FlowStatus, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
+	if err != nil {
+		return c.FlowStatus{}, err
+	}
+	defer release()
 	st, err := s.state(ctx, ref)
 	if err != nil {
 		return c.FlowStatus{}, err
@@ -995,12 +1260,18 @@ func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef,
 		return c.FlowStatus{Kind: c.FlowCompleted, Catalogue: p.completed}, nil
 	}
 	status, err := st.attachment.AuthorizationStatus(ctx, p.native)
+	if !s.validOperation(ctx) {
+		return c.FlowStatus{}, c.ErrStateUnavailable
+	}
 	if err != nil {
 		return c.FlowStatus{}, err
 	}
 	if status != session.AuthorizationGranted {
 		status := flow(status)
 		if status.Kind != c.FlowPending {
+			if err := s.terminalSlot(ctx, st, p.attempt, c.FailureAuthorizationFailed); err != nil {
+				return c.FlowStatus{}, err
+			}
 			p.terminal = &status
 			p.call.Arguments = nil
 		}
@@ -1022,11 +1293,8 @@ func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef,
 		if e != nil || p.account == ([32]byte{}) || account != p.account {
 			terminal := c.FlowStatus{Kind: c.FlowFailed, Reason: c.FailureAuthorityWithdrawn}
 			p.terminal = &terminal
-			// Keep the original call refused even after its parked tombstone is evicted.
-			if len(st.receipts) < 64 {
-				receipt := &apiReceipt{digest: callDigest(p.call), done: make(chan struct{}), outcome: noDispatch(c.FailureAuthorityWithdrawn)}
-				close(receipt.done)
-				st.receipts[p.call.ID] = receipt
+			if err := s.terminalSlot(ctx, st, p.attempt, c.FailureAuthorityWithdrawn); err != nil {
+				return c.FlowStatus{}, err
 			}
 			p.call.Arguments = nil
 			return terminal, nil
@@ -1042,27 +1310,51 @@ func (s *SessionAPI) ObserveAuthorization(ctx context.Context, ref c.SessionRef,
 		}
 		st.attachment.mu.RUnlock()
 	}
-	if err = s.publish(ctx, st, tools, native); err != nil {
+	if err = s.publish(ctx, st, st.record, tools, native); err != nil {
 		return c.FlowStatus{}, err
 	}
 	p.completed = st.catalogue
 	return c.FlowStatus{Kind: c.FlowCompleted, Catalogue: st.catalogue}, nil
 }
-func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, a c.AuthorizationRef) (c.CancelResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, err := s.state(ctx, ref)
+func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, a c.AuthorizationRef, attempt c.BrokerAttempt) (c.CancelResult, error) {
+	if !attempt.Valid() || !validAPIRef(string(a)) {
+		return 0, c.ErrStateUnavailable
+	}
+	ctx, release, err := s.operation(ctx, ref, apiControl{authorization: a, attempt: attempt})
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
 	if err != nil {
 		return 0, err
 	}
 	p := st.parked[a]
-	if p == nil || p.terminal != nil {
+	if p == nil || p.attempt != attempt {
+		return 0, c.ErrStateUnavailable
+	}
+	if err := s.controlGeneration(ctx, st); err != nil {
+		return 0, err
+	}
+	if (p.terminal != nil || st.record.Slots[attempt.Slot].Phase != "parked") && !p.cleanupPending {
+		s.rearm(ctx, st)
 		return c.AlreadyResolved, nil
 	}
+	if !p.cleanupPending {
+		if err := s.terminalSlot(ctx, st, attempt, c.FailureInterrupted); err != nil {
+			return 0, err
+		}
+		p.cleanupPending = true
+	}
 	r, err := st.attachment.CancelAuthorization(ctx, p.native)
+	if !s.validOperation(ctx) {
+		return 0, c.ErrStateUnavailable
+	}
 	if err != nil {
 		return 0, err
 	}
+	p.cleanupPending = false
+	s.rearm(ctx, st)
 	if r == c.CancelCancelled {
 		status := c.FlowStatus{Kind: c.FlowCancelled}
 		p.terminal = &status
@@ -1071,70 +1363,112 @@ func (s *SessionAPI) CancelAuthorization(ctx context.Context, ref c.SessionRef, 
 	}
 	return c.AlreadyResolved, nil
 }
-func (s *SessionAPI) ResumeTool(ctx context.Context, ref c.SessionRef, a c.AuthorizationRef, cat c.CatalogueRef) (c.InvocationOutcome, error) {
-	s.mu.Lock()
-	st, err := s.state(ctx, ref)
+func (s *SessionAPI) ResumeTool(ctx context.Context, ref c.SessionRef, a c.AuthorizationRef, cat c.CatalogueRef, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	if !attempt.Valid() {
+		return c.InvocationOutcome{}, c.ErrStateUnavailable
+	}
+	caller := ctx
+	ctx, release, err := s.operation(ctx, ref, apiControl{})
 	if err != nil {
-		s.mu.Unlock()
+		return c.InvocationOutcome{}, err
+	}
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		release()
 		return c.InvocationOutcome{}, err
 	}
 	p := st.parked[a]
-	if p == nil || p.terminal != nil {
-		s.mu.Unlock()
-		return noDispatch(c.FailureInterrupted), nil
+	if p == nil || p.attempt != attempt {
+		release()
+		return c.InvocationOutcome{}, c.ErrStateUnavailable
 	}
-	if s.process.custody != nil && (p.completed == nil || p.account == ([32]byte{}) || p.account != st.record.Account) {
-		s.mu.Unlock()
-		return noDispatch(c.FailureAuthorityWithdrawn), nil
+	slot := st.record.Slots[attempt.Slot]
+	if slot.Phase == "dispatched" || slot.Phase == "terminal" {
+		if slot.Phase == "dispatched" {
+			r := st.receipts[attempt.Slot]
+			release()
+			return waitReceipt(caller, c.InvocationOutcome{}, r, nil)
+		}
+		status, err := s.slotStatus(st, attempt)
+		release()
+		if status.Outcome != nil {
+			return *status.Outcome, err
+		}
+		return c.InvocationOutcome{Kind: c.InvocationOutcomeUnknown}, err
 	}
-	if cat != st.catalogue.Ref() {
-		s.mu.Unlock()
-		return noDispatch(c.FailureCatalogueChanged), nil
+	reason := c.FailureUnspecified
+	switch {
+	case p.terminal != nil:
+		reason = c.FailureInterrupted
+	case s.process.custody != nil && (p.completed == nil || p.account == ([32]byte{}) || p.account != st.record.Account):
+		reason = c.FailureAuthorityWithdrawn
+	case st.catalogue == nil || cat != st.catalogue.Ref():
+		reason = c.FailureCatalogueChanged
+	case !s.now().Before(p.native.ExpiresAt):
+		reason = c.FailureExpired
+	case p.connection != st.record.Connection || !st.record.Connected:
+		reason = c.FailureAuthorityWithdrawn
+	default:
+		t := find(st.catalogue, p.call.Name)
+		invocation, e := st.invocationDescriptor(t, p.call)
+		if e != nil || invocation != p.descriptor {
+			reason = c.FailureCatalogueChanged
+		} else {
+			status, e := st.attachment.AuthorizationStatus(ctx, p.native)
+			if e != nil || status != session.AuthorizationGranted {
+				reason = c.FailureAuthorizationFailed
+			}
+		}
 	}
-	if !s.now().Before(p.native.ExpiresAt) {
-		s.mu.Unlock()
-		return noDispatch(c.FailureExpired), nil
+	if reason.Valid() {
+		err := s.terminalSlot(ctx, st, attempt, reason)
+		release()
+		if err != nil {
+			return c.InvocationOutcome{}, err
+		}
+		return noDispatch(reason), nil
 	}
-	if p.connection != st.record.Connection || !st.record.Connected {
-		s.mu.Unlock()
-		return noDispatch(c.FailureAuthorityWithdrawn), nil
-	}
-	t := find(st.catalogue, p.call.Name)
-	invocation, err := st.invocationDescriptor(t, p.call)
-	if err != nil || invocation != p.descriptor {
-		s.mu.Unlock()
-		return noDispatch(c.FailureCatalogueChanged), nil
-	}
-	status, err := st.attachment.AuthorizationStatus(ctx, p.native)
-	if err != nil || status != session.AuthorizationGranted {
-		s.mu.Unlock()
-		return noDispatch(c.FailureAuthorizationFailed), err
-	}
-	out, r, err := s.invoke(ctx, st, cat, p.call)
-	s.mu.Unlock()
-	return waitReceipt(ctx, out, r, err)
+	out, r, err := s.dispatchInvocation(ctx, st, cat, p.call, attempt)
+	release()
+	return waitReceipt(caller, out, r, err)
 }
 func (s *SessionAPI) disconnect(ctx context.Context, st *apiState) error {
-	// Persist withdrawal before touching native grants. Even uncertain cleanup
-	// cannot make public calls reach the old catalogue again.
-	oldCustody := st.record.Custody
-	st.record.Connected = false
-	st.record.Withdrawing = true
-	st.record.Connection = ""
-	st.record.Account = [32]byte{}
-	st.record.Anonymous = nil
-	st.record.Catalogue = c.CatalogueRef(apiRef())
-	if err := s.save(ctx, st); err != nil {
+	// Keep custody, binding and cleanup identity until the final durable save.
+	if st.pendingWrite != nil {
+		return c.ErrStateUnavailable
+	}
+	if !st.record.Withdrawing {
+		next := st.record
+		next.Connected, next.Withdrawing = false, true
+		next.Catalogue = c.CatalogueRef(apiRef())
+		for i, slot := range next.Slots {
+			if slot.Phase == "reserved" || slot.Phase == "parked" {
+				slot.Phase, slot.Disposition, slot.Reason = "terminal", session.BrokerAttemptNotDispatched, c.FailureInterrupted
+				next.Slots[i] = slot
+			}
+		}
+		if err := s.saveRecord(ctx, st, next); err != nil {
+			return err
+		}
+	}
+	for _, parked := range st.parked {
+		slot := st.record.Slots[parked.attempt.Slot]
+		if slot.Phase == "terminal" && slot.Disposition == session.BrokerAttemptNotDispatched {
+			parked.call.Arguments = nil
+			status := c.FlowStatus{Kind: c.FlowFailed, Reason: slot.Reason}
+			parked.terminal = &status
+		}
+	}
+	if err := s.empty(st); err != nil {
 		return err
 	}
-	_ = s.empty(st)
-	if st.enrollment != nil && st.enrollment.status.Kind == c.FlowPending {
+	if st.enrollment != nil && st.enrollment.status.Kind == c.FlowPending && st.attachment != nil {
 		if _, err := st.attachment.CancelWorkspaceEnrollment(ctx, st.enrollment.native); err != nil {
 			return err
 		}
 	}
-	if oldCustody != nil {
-		if err := s.process.TombstoneCredentialCustody(ctx, s.assertion(st)); err != nil && s.now().Before(oldCustody.ExpiresAt) {
+	if custody := st.record.Custody; custody != nil {
+		if err := s.process.TombstoneCredentialCustody(ctx, s.assertion(st)); err != nil && s.now().Before(custody.ExpiresAt) {
 			return err
 		}
 	}
@@ -1146,53 +1480,96 @@ func (s *SessionAPI) disconnect(ctx context.Context, st *apiState) error {
 			return err
 		}
 	}
+	next := st.record
+	next.Binding, next.Custody, next.Withdrawing = "", nil, false
+	next.Account, next.Anonymous = [32]byte{}, nil
+	if err := s.saveRecord(ctx, st, next); err != nil {
+		return err
+	}
+	st.completeDisconnect()
+	return nil
+}
+func (st *apiState) completeDisconnect() {
 	st.attachment = nil
-	st.record.Binding = ""
-	st.record.Custody = nil
-	st.record.Withdrawing = false
+	st.recovering = false
+	st.recoveryRecord = nil
 	st.enrollment = nil
 	st.parked = make(map[c.AuthorizationRef]*apiParked)
-	return s.save(ctx, st)
 }
-func (s *SessionAPI) DisconnectTools(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef) (c.DisconnectResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, err := s.state(ctx, ref)
+func (s *SessionAPI) DisconnectTools(ctx context.Context, ref c.SessionRef, connection c.ConnectionRef) (c.DisconnectResult, error) {
+	if !validAPIRef(string(connection)) {
+		return 0, c.ErrStateUnavailable
+	}
+	ctx, release, err := s.operation(ctx, ref, apiControl{connection: connection})
 	if err != nil {
 		return 0, err
 	}
-	if !st.record.Connected && st.attachment == nil && st.enrollment == nil {
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		return 0, err
+	}
+	if string(connection) != st.record.Connection {
+		return c.ConnectionChanged, nil
+	}
+	// A later provisional enrollment is not owned by this old cleanup ref.
+	if !st.record.Connected && !st.record.Withdrawing {
+		s.rearm(ctx, st)
 		return c.AlreadyDisconnected, nil
 	}
-	if cat != st.catalogue.Ref() {
-		return c.CatalogueChanged, nil
+	if err = s.controlGeneration(ctx, st); err != nil {
+		return 0, err
 	}
 	if err = s.disconnect(ctx, st); err != nil {
 		return 0, err
 	}
+	s.rearm(ctx, st)
 	return c.Disconnected, nil
 }
 func (s *SessionAPI) DeleteSession(ctx context.Context, ref c.SessionRef) (c.DeleteResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, err := s.state(ctx, ref)
+	ctx, release, err := s.operation(ctx, ref, apiControl{delete: true})
 	if err != nil {
-		if validAPIRef(string(ref)) {
-			o, w, e := s.partitions(ctx)
-			_ = o
-			_ = w
-			if e == nil && errors.Is(s.redis.Get(ctx, sessionAPIPrefix+string(ref)).Err(), redis.Nil) {
-				return c.AlreadyAbsent, nil
+		return 0, err
+	}
+	defer release()
+	st, err := s.metadataState(ctx, ref)
+	if err != nil {
+		st = ctx.Value(apiOperationKey{}).(*apiOperation).state
+		if st.pendingWrite != nil {
+			return 0, err
+		}
+		if !errors.Is(s.redis.Get(ctx, sessionAPIPrefix+string(ref)).Err(), redis.Nil) {
+			return 0, err
+		}
+		if st.loaded {
+			if _, err = s.process.DeleteSession(ctx, session.SessionID(ref)); err != nil {
+				return 0, err
+			}
+			if st.attachment != nil {
+				if _, err = st.attachment.Close(ctx); err != nil {
+					return 0, err
+				}
 			}
 		}
+		s.mu.Lock()
+		st.deleted = true
+		s.mu.Unlock()
+		return c.AlreadyAbsent, nil
+	}
+	if err = s.controlGeneration(ctx, st); err != nil {
 		return 0, err
 	}
 	if err = s.disconnect(ctx, st); err != nil {
 		return 0, err
+	}
+	if !s.validOperation(ctx) || st.pendingWrite != nil {
+		return 0, c.ErrStateUnavailable
 	}
 	if err = s.redis.Del(ctx, sessionAPIPrefix+string(ref)).Err(); err != nil {
 		return 0, err
 	}
-	delete(s.states, ref)
+	s.mu.Lock()
+	st.deleted = true
+	s.mu.Unlock()
 	return c.Deleted, nil
 }

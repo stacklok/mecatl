@@ -126,7 +126,7 @@ func TestSessionAPIInspectConnectorsPassive(t *testing.T) {
 			t.Fatal("invalid references accepted")
 		}
 	}
-	if _, err := api.DisconnectTools(owner, opened.Ref, cat); err != nil {
+	if _, err := api.DisconnectTools(owner, opened.Ref, enrolled.Catalogue.Connection()); err != nil {
 		t.Fatal(err)
 	}
 	withdrawn := api.states[opened.Ref].record.Catalogue

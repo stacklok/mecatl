@@ -437,7 +437,7 @@ func (p *Process) RecoverCredentialAttachment(ctx context.Context, assertion con
 		return contract.RecoveredCredentialAttachment{}, continuityCustodyError(ctx, err)
 	}
 	logical = handle.logical
-	if _, err := source.Token(); err != nil {
+	if _, err := source.tokenFor(ctx); err != nil {
 		_ = handle.Abort(context.Background())
 		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
 	}
@@ -446,7 +446,7 @@ func (p *Process) RecoverCredentialAttachment(ctx context.Context, assertion con
 		_ = handle.Abort(context.Background())
 		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
 	}
-	if _, err := handle.FreezeAuthenticatedCatalogue(ctx, ref, p, source, p.reservedToolNames); err != nil {
+	if _, err := handle.FreezeAuthenticatedCatalogue(ctx, ref, p, recoveredOperationSource{source: source, ctx: ctx}, p.reservedToolNames); err != nil {
 		_ = handle.Abort(context.Background())
 		return contract.RecoveredCredentialAttachment{}, continuityCustodyError(ctx, err)
 	}

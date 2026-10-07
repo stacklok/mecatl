@@ -73,7 +73,7 @@ func TestBrokerAuthoritySnapshotAndFold(t *testing.T) {
 					t.Fatal(err)
 				}
 				ref := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-				if err := s.AdoptBrokerCatalogue(session.BrokerSessionRef(ref), session.BrokerCatalogueRef(ref), time.Unix(100, 0), []string{"mcp__test__x"}); err != nil {
+				if err := s.AdoptBrokerCatalogue(session.BrokerSessionRef(ref), session.BrokerCatalogueRef(ref), session.BrokerConnectionRef(ref), time.Unix(100, 0), []string{"mcp__test__x"}); err != nil {
 					t.Fatal(err)
 				}
 				if withdrawn {
@@ -138,13 +138,15 @@ func TestBrokerAuthorityPersistenceFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	if err := s.AdoptBrokerCatalogue(session.BrokerSessionRef(ref), session.BrokerCatalogueRef(ref), time.Unix(100, 0), scope); err != nil {
+	if err := s.AdoptBrokerCatalogue(session.BrokerSessionRef(ref), session.BrokerCatalogueRef(ref), session.BrokerConnectionRef(ref), time.Unix(100, 0), scope); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*sessnap.Snapshot)
 	}{
+		{"missing connection", func(s *sessnap.Snapshot) { s.BrokerAccess.Connection = "" }},
+		{"malformed connection", func(s *sessnap.Snapshot) { s.BrokerAccess.Connection = "invalid" }},
 		{"missing independent", func(s *sessnap.Snapshot) { s.BrokerAccess.IndependentTools = nil }},
 		{"missing broker", func(s *sessnap.Snapshot) { s.BrokerAccess.BrokerTools = nil }},
 		{"duplicate scope", func(s *sessnap.Snapshot) {

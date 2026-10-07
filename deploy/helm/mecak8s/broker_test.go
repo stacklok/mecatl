@@ -181,6 +181,68 @@ func TestUnifiedChartIdleAndDirectRoutes(t *testing.T) {
 	}
 }
 
+func TestBrokerPathRetirement_RenderedHostConfigConfidentialIsolation(t *testing.T) {
+	const clientID = "synthetic-confidential-client-canary"
+	const secretName = "synthetic-confidential-secret-canary"
+	const secretKey = "synthetic-client-secret-key-canary"
+	values, err := os.ReadFile("ci/broker-mcp-values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := strings.NewReplacer("broker-client", clientID, "github-oauth", secretName, "key: client-secret", "key: "+secretKey).Replace(string(values))
+	rendered, err := renderMCPValues(t, input)
+	if err != nil {
+		t.Fatal(err, rendered)
+	}
+	agent := deploymentFromRender(t, rendered)
+	hostConfig := configMapFromRender(t, rendered, agent.Name+"-mcp").Data["settings.yaml"]
+	if hostConfig == "" {
+		t.Fatal("rendered host settings are empty")
+	}
+	broker := brokerDeploymentFromRender(t, rendered)
+	brokerConfig := configMapFromRender(t, rendered, broker.Name+"-config").Data["broker.json"]
+	cfg := brokerConfigFromRender(t, rendered)
+	const secretFile = "/var/run/mecabroker/mcp-oauth/0/client-secret"
+	if len(cfg.Profiles) != 1 || cfg.Profiles[0].OAuth.ClientMode != "preregistered" || cfg.Profiles[0].OAuth.ClientID != clientID || cfg.Profiles[0].OAuth.ClientSecretFile != secretFile {
+		t.Fatal("rendered broker lost confidential client configuration")
+	}
+	var found bool
+	for _, volume := range broker.Spec.Template.Spec.Volumes {
+		if volume.Secret != nil && volume.Secret.SecretName == secretName {
+			for _, item := range volume.Secret.Items {
+				if item.Key == secretKey && item.Path == "client-secret" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("rendered broker lost synthetic credential reference")
+	}
+	brokerDeployment, err := yaml.Marshal(broker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The chart accepts Secret references, not raw client secrets. Plant the
+	// actual broker output in actual host bytes to prove the absence oracle.
+	for _, tc := range []struct {
+		name, output string
+		wantLeak     bool
+	}{
+		{"host-settings", hostConfig, false},
+		{"host-deployment", agentDeploymentYAML(t, rendered), false},
+		{"contaminated-host-settings", hostConfig + brokerConfig + string(brokerDeployment), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, canary := range []string{clientID, secretName, secretKey, secretFile} {
+				if leaked := strings.Contains(tc.output, canary); leaked != tc.wantLeak {
+					t.Fatalf("confidential configuration %q leak=%v, want %v", canary, leaked, tc.wantLeak)
+				}
+			}
+		})
+	}
+}
+
 func TestUnifiedChartMixedOAuthNoneAndSecretIsolation(t *testing.T) {
 	values, err := os.ReadFile("ci/broker-mcp-values.yaml")
 	if err != nil {

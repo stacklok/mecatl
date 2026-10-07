@@ -117,7 +117,7 @@ func TestSingletonBrokerRemediation_Scenario3_PublicListenerBoundsRejectBeforeCa
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := remote.InvokeTool(t.Context(), snapshot.Ref, snapshot.Catalogue.Ref(), contract.Call{ID: "call", Name: "read", Arguments: []byte(`{}`)})
+	out, err := remote.InvokeTool(t.Context(), snapshot.Ref, snapshot.Catalogue.Ref(), contract.Call{ID: "call", Name: "read", Arguments: []byte(`{}`)}, contract.BrokerAttempt{Sequence: 1})
 	if err != nil || out.Result == nil || out.Result.Content != "ok" || executes.Load() != 1 {
 		t.Fatalf("bounded gRPC invocation = %#v, %v; dispatches=%d", out, err, executes.Load())
 	}
@@ -128,7 +128,7 @@ type boundedSessionService struct {
 	executes *atomic.Int32
 }
 
-func (s *boundedSessionService) InvokeTool(ctx context.Context, _ contract.SessionRef, _ contract.CatalogueRef, call contract.Call) (contract.InvocationOutcome, error) {
+func (s *boundedSessionService) InvokeTool(ctx context.Context, _ contract.SessionRef, _ contract.CatalogueRef, call contract.Call, _ contract.BrokerAttempt) (contract.InvocationOutcome, error) {
 	s.executes.Add(1)
 	select {
 	case <-time.After(40 * time.Millisecond):

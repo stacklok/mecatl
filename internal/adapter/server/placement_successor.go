@@ -218,8 +218,12 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	var builtEngine *sessionEngine
 	if s.cfg.SessionBroker != nil {
 		snapshot, openErr := s.cfg.SessionBroker.OpenSession(mutationCtx, nil)
-		if openErr != nil { return "", openErr }
-		if err := created.AdoptBrokerCatalogue(session.BrokerSessionRef(snapshot.Ref), session.BrokerCatalogueRef(snapshot.Catalogue.Ref()), snapshot.ExpiresAt, snapshot.Catalogue.ToolNames()); err != nil { return "", err }
+		if openErr != nil {
+			return "", openErr
+		}
+		if err := created.AdoptBrokerCatalogue(session.BrokerSessionRef(snapshot.Ref), session.BrokerCatalogueRef(snapshot.Catalogue.Ref()), session.BrokerConnectionRef(snapshot.Catalogue.Connection()), snapshot.ExpiresAt, snapshot.Catalogue.ToolNames()); err != nil {
+			return "", err
+		}
 	}
 	governanceRoot, err := PlacementGovernanceRoot(binding)
 	if err != nil {

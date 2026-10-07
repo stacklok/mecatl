@@ -21,7 +21,7 @@ import (
 // SessionHostClient is an adapter client helper, not a public service contract.
 type SessionHostClient interface {
 	c.SessionService
-	ResumeToolWrapper(c.SessionRef, c.Catalogue, string, session.ToolCallID, c.AuthorizationRef) (tool.Tool, error)
+	ResumeToolWrapper(c.SessionRef, c.Catalogue, string, session.ToolCallID, c.AuthorizationRef, c.BrokerAttempt) (tool.Tool, error)
 }
 
 // NewSessionRemoteFactory shares the TLS/projected-token contract and never

@@ -27,6 +27,18 @@ func (*brokerFenceTestTool) DispatchSerialTool() {}
 func (t *brokerFenceTestTool) BrokerInvocationRefs() (session.BrokerSessionRef, session.BrokerCatalogueRef) {
 	return t.ref, t.cat
 }
+func (t *brokerFenceTestTool) BrokerInvocationDisposition(err error) session.BrokerAttemptDisposition {
+	if err == nil {
+		return session.BrokerAttemptCompleted
+	}
+	return session.BrokerAttemptUnknown
+}
+func (*brokerFenceTestTool) InspectBrokerAttempt(context.Context, session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	return tool.BrokerAttemptStatus{}, errors.New("inspection unavailable")
+}
+func (*brokerFenceTestTool) AcknowledgeBrokerAttempt(context.Context, session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	return tool.BrokerAttemptStatus{}, errors.New("acknowledgement unavailable")
+}
 func (t *brokerFenceTestTool) Execute(_ context.Context, c session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	t.calls++
 	return session.NewToolResult(c.ID, "ok"), t.err
@@ -50,7 +62,7 @@ func TestBrokerInvocationFenceSaveFailureAndCrashUnknown(t *testing.T) {
 			if err := sess.BindAuthority(session.Authority{Provenance: "fixture"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := sess.AdoptBrokerCatalogue(ref, cat, time.Now().Add(time.Hour), []string{"remote"}); err != nil {
+			if err := sess.AdoptBrokerCatalogue(ref, cat, session.BrokerConnectionRef(cat), time.Now().Add(time.Hour), []string{"remote"}); err != nil {
 				t.Fatal(err)
 			}
 			deps := Deps{Store: store}
@@ -60,7 +72,11 @@ func TestBrokerInvocationFenceSaveFailureAndCrashUnknown(t *testing.T) {
 			e := NewEngine(deps)
 			remote := &brokerFenceTestTool{ref: ref, cat: cat, err: errors.New("outcome unknown")}
 			call := session.NewToolCall("original", "remote", []byte(`{}`))
-			result, _ := e.timeExecute(t.Context(), &Run{}, sess, tool.Environment{}, 0, call, remote, time.Time{})
+			ctx, prepareErr := e.prepareBrokerAttempt(t.Context(), sess, call, remote)
+			result := session.NewToolError(call.ID, "preparation failed")
+			if prepareErr == nil {
+				result, _ = e.timeExecute(ctx, &Run{}, sess, tool.Environment{}, 0, call, remote, time.Time{})
+			}
 			if !result.IsError {
 				t.Fatal("unknown/save failure invented success")
 			}
@@ -75,14 +91,14 @@ func TestBrokerInvocationFenceSaveFailureAndCrashUnknown(t *testing.T) {
 				t.Fatal(err)
 			}
 			a, _ := restored.BrokerAccess()
-			if a.Pending != call.ID {
+			if a.Current == nil || a.Current.CallID != call.ID || a.Current.Disposition != session.BrokerAttemptUnknown {
 				t.Fatal("unresolved invocation not durable")
 			}
-			if err := restored.AdoptBrokerCatalogue(ref, cat, time.Now().Add(time.Hour), []string{"remote"}); err != nil {
+			if err := restored.AdoptBrokerCatalogue(ref, cat, session.BrokerConnectionRef(cat), time.Now().Add(time.Hour), []string{"remote"}); err != nil {
 				t.Fatal(err)
 			}
 			// Even a newly generated call ID after model/crash repair cannot dispatch.
-			if err := restored.FenceBrokerInvocation(ref, cat, "different-id", time.Now()); err == nil {
+			if _, err := restored.PrepareBrokerInvocation(ref, cat, session.NewToolCall("different-id", "remote", []byte(`{}`)), time.Now()); err == nil {
 				t.Fatal("unknown crash auto-reexecuted")
 			}
 		})

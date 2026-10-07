@@ -48,6 +48,18 @@ func (t *lifecycleTool) Spec() tool.ToolSpec {
 	}
 	return tool.ToolSpec{Name: "protected", Schema: schema}
 }
+func (t *lifecycleTool) BrokerInvocationDisposition(err error) session.BrokerAttemptDisposition {
+	if err == nil {
+		return session.BrokerAttemptCompleted
+	}
+	return session.BrokerAttemptUnknown
+}
+func (*lifecycleTool) InspectBrokerAttempt(_ context.Context, a session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	return tool.BrokerAttemptStatus{Attempt: a, Phase: "reserved"}, nil
+}
+func (*lifecycleTool) AcknowledgeBrokerAttempt(_ context.Context, a session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	return tool.BrokerAttemptStatus{Attempt: a, Phase: "terminal", Disposition: session.BrokerAttemptNotDispatched}, nil
+}
 func (t *lifecycleTool) ReadOnly() bool { return t.readOnly }
 func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	t.calls.Add(1)
@@ -172,11 +184,17 @@ type lifecycleBroker struct {
 	catalogue  brokercontract.Catalogue
 }
 
+func (b *lifecycleBroker) InspectAttempt(_ context.Context, _ brokercontract.SessionRef, a brokercontract.BrokerAttempt) (brokercontract.AttemptStatus, error) {
+	return brokercontract.AttemptStatus{Attempt: a, Phase: "parked"}, nil
+}
+func (b *lifecycleBroker) AcknowledgeAttempt(_ context.Context, _ brokercontract.SessionRef, a brokercontract.BrokerAttempt) (brokercontract.AttemptStatus, error) {
+	return brokercontract.AttemptStatus{Attempt: a, Phase: "terminal", Disposition: session.BrokerAttemptNotDispatched}, nil
+}
 func (b *lifecycleBroker) OpenSession(context.Context, *brokercontract.SessionRef) (brokercontract.SessionSnapshot, error) {
 	if b.attachErr != nil {
 		return brokercontract.SessionSnapshot{}, b.attachErr
 	}
-	cat, err := brokercontract.NewCatalogue(brokercontract.CatalogueRef(hostProofRef(2)), b.attachment.Tools())
+	cat, err := brokercontract.NewCatalogue(brokercontract.CatalogueRef(hostProofRef(2)), brokercontract.ConnectionRef(hostProofRef(5)), b.attachment.Tools())
 	return brokercontract.SessionSnapshot{Ref: brokercontract.SessionRef(hostProofRef(1)), Catalogue: cat, ExpiresAt: b.expires}, err
 }
 func (b *lifecycleBroker) BeginAuthorization(ctx context.Context, _ brokercontract.SessionRef, _ brokercontract.AuthorizationRef) (brokercontract.BrowserPrompt, error) {
@@ -211,7 +229,7 @@ func (b *lifecycleBroker) ObserveAuthorization(ctx context.Context, _ brokercont
 		if err != nil {
 			return brokercontract.FlowStatus{}, err
 		}
-		cat, err = brokercontract.NewCatalogue(brokercontract.CatalogueRef(hostProofRef(3)), tools)
+		cat, err = brokercontract.NewCatalogue(brokercontract.CatalogueRef(hostProofRef(3)), brokercontract.ConnectionRef(hostProofRef(5)), tools)
 		if err != nil {
 			return brokercontract.FlowStatus{}, err
 		}
@@ -219,7 +237,7 @@ func (b *lifecycleBroker) ObserveAuthorization(ctx context.Context, _ brokercont
 	}
 	return brokercontract.FlowStatus{Kind: kind, Catalogue: cat}, nil
 }
-func (b *lifecycleBroker) CancelAuthorization(ctx context.Context, _ brokercontract.SessionRef, _ brokercontract.AuthorizationRef) (brokercontract.CancelResult, error) {
+func (b *lifecycleBroker) CancelAuthorization(ctx context.Context, _ brokercontract.SessionRef, _ brokercontract.AuthorizationRef, _ brokercontract.BrokerAttempt) (brokercontract.CancelResult, error) {
 	if b.attachErr != nil {
 		return 0, b.attachErr
 	}
@@ -235,7 +253,7 @@ func (b *lifecycleBroker) CancelAuthorization(ctx context.Context, _ brokercontr
 	}
 	return 0, err
 }
-func (b *lifecycleBroker) ResumeToolWrapper(_ brokercontract.SessionRef, cat brokercontract.Catalogue, name string, _ session.ToolCallID, _ brokercontract.AuthorizationRef) (tool.Tool, error) {
+func (b *lifecycleBroker) ResumeToolWrapper(_ brokercontract.SessionRef, cat brokercontract.Catalogue, name string, _ session.ToolCallID, _ brokercontract.AuthorizationRef, _ brokercontract.BrokerAttempt) (tool.Tool, error) {
 	for _, t := range cat.Tools() {
 		if t.Spec().Name == name {
 			return t, nil
@@ -438,7 +456,7 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	if err := sess.BindAuthority(authority); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), broker.expires, []string{"protected"}); err != nil {
+	if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), session.BrokerConnectionRef(hostProofRef(5)), broker.expires, []string{"protected"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.BeginTurn(); err != nil {
@@ -447,12 +465,20 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call, deferred})); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := sess.PrepareBrokerInvocation(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), call, now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.AdmitBrokerInvocation(session.BrokerAttempt{Sequence: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if err := sess.PauseForAuthorization(pending); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
+	access, _ := sess.BrokerAccess()
+	svc.authorizationExpiry[sess.ID] = &authorizationExpiry{original: access.Current, authorizationID: pending.Authorization.ID}
 	return lifecycleFixture{
 		svc: svc, store: store, broker: broker, attach: attachment, pending: pending,
 		builtTools: &builtTools, builtSpecs: &builtSpecs, providerContext: providerContext,
@@ -1505,7 +1531,7 @@ func TestMCPAuthorizationExpiryAndCancelRaceHasOneResolution(t *testing.T) {
 		return timer
 	}
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, clock, factory)
-	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true)
+	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true, f.svc.authorizationExpiry["authorization-session"].original)
 	timer := <-created
 	clockMu.Lock()
 	now = f.pending.Authorization.ExpiresAt
@@ -1560,7 +1586,7 @@ func TestMCPAuthorizationExpiryRetriesTransientFailure(t *testing.T) {
 	}
 	transient := errors.New("broker retry")
 	f := newLifecycleFixture(t, session.AuthorizationPending, transient, clock, factory)
-	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true)
+	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true, f.svc.authorizationExpiry["authorization-session"].original)
 	first := <-created
 	clockMu.Lock()
 	now = f.pending.Authorization.ExpiresAt
@@ -1612,7 +1638,7 @@ func TestScheduleAuthorizationExpiryUsesInMemoryPendingDespiteFailingStore(t *te
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, factory)
 	f.svc.cfg.Store = alwaysFailStore{f.store}
 
-	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true)
+	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true, f.svc.authorizationExpiry["authorization-session"].original)
 
 	select {
 	case <-created:
@@ -1625,8 +1651,9 @@ func TestScheduleAuthorizationExpiryWarnsWhenNoInMemoryPending(t *testing.T) {
 	diag := &lifecycleDiagnostics{}
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	f.svc.cfg.Diagnostics = diag
+	f.svc.stopAuthorizationExpiry("authorization-session")
 
-	f.svc.scheduleAuthorizationExpiry("authorization-session", session.PendingAuthorization{}, false)
+	f.svc.scheduleAuthorizationExpiry("authorization-session", session.PendingAuthorization{}, false, nil)
 
 	if !diag.contains("authorization expiry scheduling skipped: no pending authorization in the finished run's session") {
 		t.Fatalf("missing skipped-scheduling diagnostic: %v", diag.messages)
@@ -2236,7 +2263,7 @@ func TestMCPAuthorizationBindingMismatchDoesNotInterrupt(t *testing.T) {
 	}
 }
 
-func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *testing.T) {
+func TestMCPAuthorizationCloseSessionSaveFailureWithdrawsCachedAuthorityForRetry(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
@@ -2267,7 +2294,7 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 	f.svc.mu.Lock()
 	retained := f.svc.sessionEngines[loaded.ID] != nil
 	f.svc.mu.Unlock()
-	if !retained || !diagnostics.contains("persist external authorization settlement failed") {
+	if retained || !diagnostics.contains("cancel external authorization during settlement failed") {
 		t.Fatalf("retained=%t diagnostics=%v", retained, diagnostics.messages)
 	}
 
@@ -2329,7 +2356,7 @@ func TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure(t *testing.T) {
 	if !complete {
 		t.Fatal("one session's settlement failure aborted Close instead of completing it")
 	}
-	if !diagnostics.contains("persist external authorization settlement failed") {
+	if !diagnostics.contains("cancel external authorization during settlement failed") {
 		t.Fatalf("missing settlement-failure diagnostic: %v", diagnostics.messages)
 	}
 

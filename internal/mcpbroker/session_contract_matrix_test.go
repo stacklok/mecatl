@@ -26,26 +26,30 @@ func TestSessionWireDescriptorFields(t *testing.T) {
 		"ResultPart":                  "block_kind:1:string media_kind:2:string mime_type:3:string data:4:bytes url:5:string text:6:string name:7:string title:8:string description:9:string size:10:int64 audience:11:string priority:12:double last_modified:13:string",
 		"OpenSessionRequest":          "saved_ref:1:string",
 		"SessionSnapshot":             "ref:1:string expires_at:2:message catalogue:3:message",
-		"Catalogue":                   "ref:1:string tools:2:message",
+		"Catalogue":                   "ref:1:string connection_ref:3:string tools:2:message",
 		"Call":                        "id:1:string name:2:string arguments:3:bytes",
-		"InvokeToolRequest":           "session_ref:1:string catalogue_ref:2:string call:3:message",
-		"CheckAuthorizationRequest":   "session_ref:1:string catalogue_ref:2:string call:3:message authorization_ref:4:string",
+		"Attempt":                     "slot:1:uint32 sequence:2:uint64",
+		"InspectAttemptRequest":       "session_ref:1:string attempt:2:message",
+		"AcknowledgeAttemptRequest":   "session_ref:1:string attempt:2:message",
+		"AttemptStatus":               "attempt:1:message phase:2:string disposition:3:string outcome:4:message",
+		"InvokeToolRequest":           "session_ref:1:string catalogue_ref:2:string call:3:message attempt:4:message",
+		"CheckAuthorizationRequest":   "attempt:5:message session_ref:1:string catalogue_ref:2:string call:3:message authorization_ref:4:string",
 		"FlowRef":                     "ref:1:string expires_at:2:message",
 		"InvocationOutcome":           "completed:1:message authorization_required:2:string not_dispatched:3:message outcome_unknown:4:message",
 		"CheckAuthorizationResponse":  "ready:1:message authorization_required:2:message not_dispatched:3:message",
 		"BeginAuthorizationRequest":   "session_ref:1:string authorization_ref:2:string",
 		"ObserveAuthorizationRequest": "session_ref:1:string authorization_ref:2:string",
-		"CancelAuthorizationRequest":  "session_ref:1:string authorization_ref:2:string",
+		"CancelAuthorizationRequest":  "attempt:3:message session_ref:1:string authorization_ref:2:string",
 		"BrowserPrompt":               "url:1:string expires_at:2:message",
 		"FlowStatus":                  "pending:1:message completed:2:message cancelled:3:message expired:4:message failed:5:enum",
 		"CancelOutcome":               "outcome:1:enum",
-		"ResumeToolRequest":           "session_ref:1:string authorization_ref:2:string adopted_catalogue:3:string",
+		"ResumeToolRequest":           "attempt:4:message session_ref:1:string authorization_ref:2:string adopted_catalogue:3:string",
 		"BeginEnrollmentRequest":      "session_ref:1:string",
 		"EnrollmentStarted":           "ref:1:string prompt:2:message",
 		"BeginEnrollmentResponse":     "started:1:message already_connected:2:message completed:3:message",
 		"ObserveEnrollmentRequest":    "session_ref:1:string enrollment_ref:2:string",
 		"CancelEnrollmentRequest":     "session_ref:1:string enrollment_ref:2:string",
-		"DisconnectToolsRequest":      "session_ref:1:string expected_catalogue:2:string",
+		"DisconnectToolsRequest":      "session_ref:1:string expected_connection:2:string",
 		"DisconnectOutcome":           "outcome:1:enum",
 		"DeleteSessionRequest":        "session_ref:1:string",
 		"DeleteOutcome":               "outcome:1:enum",
@@ -90,6 +94,7 @@ func TestSessionWireDescriptorFields(t *testing.T) {
 	}
 	service := file.Services().ByName("SessionService")
 	bindings := map[string]string{
+		"InspectAttempt": "InspectAttemptRequest:AttemptStatus", "AcknowledgeAttempt": "AcknowledgeAttemptRequest:AttemptStatus",
 		"InspectConnectors": "InspectConnectorsRequest:InspectConnectorsResponse",
 		"OpenSession":       "OpenSessionRequest:SessionSnapshot", "InvokeTool": "InvokeToolRequest:InvocationOutcome", "CheckAuthorization": "CheckAuthorizationRequest:CheckAuthorizationResponse",
 		"BeginAuthorization": "BeginAuthorizationRequest:BrowserPrompt", "ObserveAuthorization": "ObserveAuthorizationRequest:FlowStatus", "CancelAuthorization": "CancelAuthorizationRequest:CancelOutcome",
@@ -179,7 +184,7 @@ func TestSessionWireValidationAnnotations(t *testing.T) {
 			field := message.Fields().Get(j)
 			rules, _ := proto.GetExtension(field.Options(), validate.E_Field).(*validate.FieldRules)
 			name := string(field.Name())
-			if name == "ref" || strings.HasSuffix(name, "_ref") || name == "adopted_catalogue" || name == "expected_catalogue" || name == "authorization_required" && field.Kind() == protoreflect.StringKind {
+			if name == "ref" || strings.HasSuffix(name, "_ref") || name == "adopted_catalogue" || name == "expected_connection" || name == "authorization_required" && field.Kind() == protoreflect.StringKind {
 				if rules.GetString().GetLen() != 43 || rules.GetString().GetPattern() != "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$" {
 					t.Fatalf("%s reference bounds missing", field.FullName())
 				}
@@ -190,6 +195,12 @@ func TestSessionWireValidationAnnotations(t *testing.T) {
 			}
 			if field.Kind() == protoreflect.EnumKind && (!rules.GetEnum().GetDefinedOnly() || len(rules.GetEnum().GetNotIn()) != 1 || rules.GetEnum().GetNotIn()[0] != 0) {
 				t.Fatalf("%s not closed", field.FullName())
+			}
+			if field.FullName() == "mecatl.broker.v1.AttemptStatus.outcome" {
+				if rules.GetRequired() {
+					t.Fatal("attempt status outcome must remain optional")
+				}
+				continue
 			}
 			if field.Kind() == protoreflect.MessageKind && field.ContainingOneof() == nil && !field.IsList() && !rules.GetRequired() {
 				t.Fatalf("%s no longer required", field.FullName())
@@ -213,7 +224,7 @@ func TestSessionWireValidationAnnotations(t *testing.T) {
 	for name, values := range map[string][]string{
 		"FailureReason":     {"FAILURE_REASON_UNSPECIFIED", "FAILURE_REASON_CATALOGUE_CHANGED", "FAILURE_REASON_AUTHORITY_WITHDRAWN", "FAILURE_REASON_CAPACITY", "FAILURE_REASON_INTERRUPTED", "FAILURE_REASON_AUTHORIZATION_FAILED", "FAILURE_REASON_CALL_CHANGED", "FAILURE_REASON_EXPIRED"},
 		"CancelOutcome":     {"UNSPECIFIED", "CANCELLED", "ALREADY_RESOLVED"},
-		"DisconnectOutcome": {"UNSPECIFIED", "DISCONNECTED", "ALREADY_DISCONNECTED", "CATALOGUE_CHANGED"},
+		"DisconnectOutcome": {"UNSPECIFIED", "DISCONNECTED", "ALREADY_DISCONNECTED", "CONNECTION_CHANGED"},
 		"DeleteOutcome":     {"UNSPECIFIED", "DELETED", "ALREADY_ABSENT"},
 	} {
 		enum := file.Enums().ByName("FailureReason")

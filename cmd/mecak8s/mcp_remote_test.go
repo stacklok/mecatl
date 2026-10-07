@@ -48,7 +48,7 @@ func TestMecak8sCanonicalSessionBrokerComposition(t *testing.T) {
 type rotationSessionService struct{ c.SessionService }
 
 func (rotationSessionService) OpenSession(context.Context, *c.SessionRef) (c.SessionSnapshot, error) {
-	cat, err := c.NewCatalogue(c.CatalogueRef(strings.Repeat("A", 43)), nil)
+	cat, err := c.NewCatalogue(c.CatalogueRef(strings.Repeat("A", 43)), "", nil)
 	return c.SessionSnapshot{Ref: c.SessionRef(strings.Repeat("A", 43)), Catalogue: cat, ExpiresAt: time.Now().Add(time.Hour)}, err
 }
 

@@ -35,10 +35,14 @@ type sessionBrokerFailStore struct {
 	*memstore.Store
 	fail      atomic.Bool
 	ambiguous atomic.Bool
+	phase     atomic.Value
 }
 
 func (s *sessionBrokerFailStore) Save(ctx context.Context, sess *session.Session) error {
-	if s.fail.Load() {
+	phase, _ := s.phase.Load().(string)
+	a, _ := sess.BrokerAccess()
+	phaseFailure := phase != "" && a.Current != nil && a.Current.Phase == phase
+	if s.fail.Load() || phaseFailure {
 		if s.ambiguous.Load() {
 			if err := s.Store.Save(ctx, sess); err != nil {
 				return err
@@ -102,14 +106,20 @@ type sessionBrokerCleanupClient struct {
 	begins  int
 }
 
-func (client *sessionBrokerCleanupClient) DisconnectTools(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef) (c.DisconnectResult, error) {
+func (client *sessionBrokerCleanupClient) DisconnectTools(ctx context.Context, ref c.SessionRef, cat c.ConnectionRef) (c.DisconnectResult, error) {
 	if client.fail {
 		return 0, errors.New("injected cleanup failure")
 	}
 	if client.changed {
-		return c.CatalogueChanged, nil
+		return c.ConnectionChanged, nil
 	}
 	return client.SessionHostClient.DisconnectTools(ctx, ref, cat)
+}
+func (client *sessionBrokerCleanupClient) CancelEnrollment(ctx context.Context, ref c.SessionRef, enrollment c.EnrollmentRef) (c.CancelResult, error) {
+	if client.fail {
+		return 0, errors.New("injected enrollment cleanup failure")
+	}
+	return client.SessionHostClient.CancelEnrollment(ctx, ref, enrollment)
 }
 func (client *sessionBrokerCleanupClient) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
 	client.begins++
@@ -117,10 +127,29 @@ func (client *sessionBrokerCleanupClient) BeginEnrollment(ctx context.Context, r
 }
 
 func TestSessionBrokerHostNativeAnonymousSaveRestoreAndFence(t *testing.T) {
+	testSessionBrokerHostNativeOccurrences(t, 1)
+}
+
+func TestBrokerPathRetirement_FollowupHostOccurrence(t *testing.T) {
+	testSessionBrokerHostNativeOccurrences(t, 70)
+}
+
+func testSessionBrokerHostNativeOccurrences(t *testing.T, count int) {
+	t.Helper()
 	var calls atomic.Int32
+	store := &sessionBrokerFailStore{Store: memstore.New()}
 	upstream := sdk.NewServer(&sdk.Implementation{Name: "host-proof", Version: "test"}, nil)
-	sdk.AddTool(upstream, &sdk.Tool{Name: "echo"}, func(context.Context, *sdk.CallToolRequest, struct{}) (*sdk.CallToolResult, any, error) {
-		calls.Add(1)
+	sdk.AddTool(upstream, &sdk.Tool{Name: "echo"}, func(ctx context.Context, _ *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, any, error) {
+		sequence := calls.Add(1)
+		durable, err := store.Load(ctx, "broker-session-host")
+		if err != nil {
+			t.Error(err)
+			return nil, nil, err
+		}
+		a, _ := durable.BrokerAccess()
+		if a.Current == nil || a.Current.Phase != "dispatched" || a.Current.Attempt.Slot != 0 || a.Current.Attempt.Sequence != uint64(sequence) {
+			t.Errorf("upstream invoked before exact durable dispatch: %+v", a.Current)
+		}
 		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "native"}}}, nil, nil
 	})
 	httpServer := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return upstream }, &sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
@@ -141,8 +170,20 @@ func TestSessionBrokerHostNativeAnonymousSaveRestoreAndFence(t *testing.T) {
 	}
 	defer api.Close()
 	client := sessionBrokerRPCClient(t, api, &session.Principal{Issuer: "https://owner.test", Subject: "owner"})
-	store := &sessionBrokerFailStore{Store: memstore.New()}
-	provider := mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("once", "mcp__echo__echo", []byte(`{}`))), mockllm.TextTurn("done"))
+	var turns []mockllm.Turn
+	repeated := count
+	if count > 1 {
+		turns = append(turns, mockllm.ToolCallTurn(
+			session.NewToolCall("first", "mcp__echo__echo", []byte(`{}`)),
+			session.NewToolCall("second", "mcp__echo__echo", []byte(`{}`)),
+		))
+		repeated -= 2
+	}
+	for range repeated {
+		turns = append(turns, mockllm.ToolCallTurn(session.NewToolCall("once", "mcp__echo__echo", []byte(`{}`))))
+	}
+	turns = append(turns, mockllm.TextTurn("done"))
+	provider := mockllm.New(turns...)
 	var advertised int
 	svc := sessionBrokerTestHost(t, client, store, provider, func(tools []tool.Tool) { advertised = len(tools) })
 	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
@@ -216,7 +257,7 @@ func TestSessionBrokerHostNativeAnonymousSaveRestoreAndFence(t *testing.T) {
 		}
 	}
 	second.FinishRun(created.ID, run)
-	if calls.Load() != 1 {
+	if calls.Load() != int32(count) {
 		t.Fatalf("native calls=%d", calls.Load())
 	}
 	saved, err = store.Load(t.Context(), created.ID)
@@ -224,11 +265,11 @@ func TestSessionBrokerHostNativeAnonymousSaveRestoreAndFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	fenced, _ := saved.BrokerAccess()
-	if len(fenced.Attempted) != 1 || fenced.Attempted[0] != "once" {
-		t.Fatalf("missing crash fence: %+v", fenced)
+	if fenced.Current == nil || fenced.Current.CallID != "once" || fenced.Current.Disposition != session.BrokerAttemptCompleted || fenced.AdmittedSequence != uint64(count) {
+		t.Fatalf("missing crash fence: %+v current=%+v", fenced, fenced.Current)
 	}
-	if err := saved.FenceBrokerInvocation(fenced.Session, fenced.Catalogue, "once", time.Now()); err == nil {
-		t.Fatal("crash replay admitted")
+	if _, err := saved.PrepareBrokerInvocation(fenced.Session, fenced.Catalogue, session.NewToolCall("once", "mcp__echo__echo", []byte(`{}`)), time.Now()); err != nil {
+		t.Fatal("durably paired occurrence prevented provider ID reuse")
 	}
 	cleanup := &sessionBrokerCleanupClient{SessionHostClient: client, fail: true}
 	second.cfg.SessionBroker = cleanup
@@ -269,10 +310,10 @@ func TestSessionBrokerHostNativeAnonymousSaveRestoreAndFence(t *testing.T) {
 	}
 	saved, _ = store.Load(t.Context(), created.ID)
 	reconnected, _ := saved.BrokerAccess()
-	if reconnected.Withdrawn || reconnected.Session != withdrawn.Session || reconnected.Catalogue == withdrawn.Catalogue || len(reconnected.Attempted) != len(withdrawn.Attempted) {
+	if reconnected.Withdrawn || reconnected.Session != withdrawn.Session || reconnected.Catalogue == withdrawn.Catalogue || reconnected.AdmittedSequence != withdrawn.AdmittedSequence {
 		t.Fatal("reconnect lost exact identity/revision or replay fence")
 	}
-	if err := saved.FenceBrokerInvocation(withdrawn.Session, withdrawn.Catalogue, "stale", time.Now()); err == nil {
+	if _, err := saved.PrepareBrokerInvocation(withdrawn.Session, withdrawn.Catalogue, session.NewToolCall("stale", "mcp__echo__echo", []byte(`{}`)), time.Now()); err == nil {
 		t.Fatal("old revision admitted after reconnect")
 	}
 	if err := second.DeleteSession(t.Context(), created.ID); err != nil {
@@ -319,8 +360,8 @@ func TestSessionBrokerHostPendingDisconnectSafeIntent(t *testing.T) {
 	}
 	saved, _ = store.Load(t.Context(), created.ID)
 	access, _ = saved.BrokerAccess()
-	if _, ok := saved.PendingWorkspaceEnrollment(); ok || !access.Withdrawn {
-		t.Fatal("pending cleared without durable withdrawal")
+	if _, ok := saved.PendingWorkspaceEnrollment(); !ok || !access.Withdrawn {
+		t.Fatal("failed cancellation lost durable pending cleanup intent")
 	}
 	begins := client.begins
 	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err == nil || client.begins != begins {

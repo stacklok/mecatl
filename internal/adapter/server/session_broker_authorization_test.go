@@ -54,11 +54,21 @@ func (b *sessionHostAuthBroker) OpenSession(context.Context, *c.SessionRef) (c.S
 func (b *sessionHostAuthBroker) BeginEnrollment(context.Context, c.SessionRef) (c.BeginEnrollmentOutcome, error) {
 	return c.BeginEnrollmentOutcome{Kind: c.EnrollmentCompletedKind, Catalogue: b.initial}, nil
 }
-func (b *sessionHostAuthBroker) CheckAuthorization(_ context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, auth c.AuthorizationRef) (c.AuthorizationCheck, error) {
+func (b *sessionHostAuthBroker) CheckAuthorization(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, auth c.AuthorizationRef, attempt c.BrokerAttempt) (c.AuthorizationCheck, error) {
 	if ref != b.ref {
 		return c.AuthorizationCheck{}, errors.New("wrong session")
 	}
 	if call != nil {
+		durable, err := b.store.Load(ctx, "broker-session-host")
+		if err != nil {
+			return c.AuthorizationCheck{}, err
+		}
+		a, _ := durable.BrokerAccess()
+		exact := session.NewToolCall(call.ID, call.Name, call.Arguments)
+		if a.Current == nil || a.Current.Attempt != attempt || a.Current.Phase != "reserved" || a.Current.Digest != session.BrokerCallDigest(exact) {
+			b.t.Errorf("preflight before exact durable preparation: %+v", a.Current)
+			return c.AuthorizationCheck{}, errors.New("missing durable preparation")
+		}
 		b.parked = *call
 		b.parked.Arguments = append([]byte(nil), call.Arguments...)
 		return c.AuthorizationCheck{Authorization: b.auth, ExpiresAt: b.expires}, nil
@@ -71,38 +81,48 @@ func (b *sessionHostAuthBroker) CheckAuthorization(_ context.Context, ref c.Sess
 func (b *sessionHostAuthBroker) ObserveAuthorization(context.Context, c.SessionRef, c.AuthorizationRef) (c.FlowStatus, error) {
 	return c.FlowStatus{Kind: c.FlowCompleted, Catalogue: b.granted}, nil
 }
-func (b *sessionHostAuthBroker) ResumeTool(_ context.Context, ref c.SessionRef, auth c.AuthorizationRef, cat c.CatalogueRef) (c.InvocationOutcome, error) {
+func (b *sessionHostAuthBroker) ResumeTool(_ context.Context, ref c.SessionRef, auth c.AuthorizationRef, cat c.CatalogueRef, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
 	b.resumes++
 	durable, err := b.store.Load(context.Background(), "broker-session-host")
 	if err != nil {
 		b.t.Fatal(err)
 	}
 	a, _ := durable.BrokerAccess()
-	if a.Session != ref || a.Catalogue != cat || a.Pending != b.parked.ID || len(a.Attempted) != 1 || auth != b.auth {
+	if a.Session != ref || a.Catalogue != cat || a.Current == nil || a.Current.CallID != b.parked.ID || a.Current.Attempt != attempt || a.Current.Digest != session.BrokerCallDigest(session.NewToolCall(b.parked.ID, b.parked.Name, b.parked.Arguments)) || a.Current.Phase != "dispatched" || auth != b.auth {
 		b.t.Fatalf("resume before exact durable adoption/fence: %+v", a)
 	}
 	result := session.NewToolResult(b.parked.ID, string(b.parked.Arguments))
 	return c.InvocationOutcome{Kind: c.InvocationCompleted, Result: &result}, nil
 }
-func (b *sessionHostAuthBroker) CancelAuthorization(context.Context, c.SessionRef, c.AuthorizationRef) (c.CancelResult, error) {
+func (b *sessionHostAuthBroker) CancelAuthorization(context.Context, c.SessionRef, c.AuthorizationRef, c.BrokerAttempt) (c.CancelResult, error) {
 	return c.Cancelled, nil
 }
 
-func (b *sessionHostAuthBroker) InvokeTool(context.Context, c.SessionRef, c.CatalogueRef, c.Call) (c.InvocationOutcome, error) {
+func (b *sessionHostAuthBroker) InspectAttempt(_ context.Context, _ c.SessionRef, attempt c.BrokerAttempt) (c.AttemptStatus, error) {
+	if b.resumes > 0 {
+		return c.AttemptStatus{Attempt: attempt, Phase: "terminal", Disposition: session.BrokerAttemptCompleted}, nil
+	}
+	return c.AttemptStatus{Attempt: attempt, Phase: "parked"}, nil
+}
+func (b *sessionHostAuthBroker) AcknowledgeAttempt(_ context.Context, _ c.SessionRef, attempt c.BrokerAttempt) (c.AttemptStatus, error) {
+	return c.AttemptStatus{Attempt: attempt, Phase: "terminal", Disposition: session.BrokerAttemptNotDispatched}, nil
+}
+
+func (b *sessionHostAuthBroker) InvokeTool(context.Context, c.SessionRef, c.CatalogueRef, c.Call, c.BrokerAttempt) (c.InvocationOutcome, error) {
 	b.t.Error("host invoked instead of exact Resume")
 	return c.InvocationOutcome{}, errors.New("unexpected invoke")
 }
 
 func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *testing.T) {
-	for _, mode := range []string{"resume", "definitive", "ambiguous"} {
-		fail := mode != "resume"
+	for _, mode := range []string{"resume", "definitive", "ambiguous", "restart", "prepare-definitive", "prepare-ambiguous", "dispatch-save-failure", "completion-save-failure"} {
+		fail := mode == "definitive" || mode == "ambiguous"
 		t.Run(mode, func(t *testing.T) {
 			store := &sessionBrokerFailStore{Store: memstore.New()}
-			initial, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(2)), []tool.Tool{sessionHostAuthDescriptor{}})
+			initial, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(2)), c.ConnectionRef(hostProofRef(5)), []tool.Tool{sessionHostAuthDescriptor{}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			granted, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(3)), []tool.Tool{sessionHostAuthDescriptor{}, brokerContributionDescriptor{name: "mcp__fixture__new"}})
+			granted, err := c.NewCatalogue(c.CatalogueRef(hostProofRef(3)), c.ConnectionRef(hostProofRef(5)), []tool.Tool{sessionHostAuthDescriptor{}, brokerContributionDescriptor{name: "mcp__fixture__new"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,6 +138,10 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 			if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
 				t.Fatal(err)
 			}
+			if mode == "prepare-definitive" || mode == "prepare-ambiguous" {
+				store.phase.Store("reserved")
+				store.ambiguous.Store(mode == "prepare-ambiguous")
+			}
 			run, err := svc.StartInteractiveRunContent(t.Context(), created.ID, "call", nil)
 			if err != nil {
 				t.Fatal(err)
@@ -130,12 +154,38 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
+			if mode == "prepare-definitive" || mode == "prepare-ambiguous" {
+				if broker.parked.ID != "" || broker.resumes != 0 {
+					t.Fatal("failed preparation save reached broker preflight")
+				}
+				a, _ := saved.BrokerAccess()
+				if mode == "prepare-ambiguous" && (a.Current == nil || a.Current.Phase != "reserved" || a.AdmittedSequence != 0) {
+					t.Fatalf("ambiguous allocation lost unresolved fence: %+v", a)
+				}
+				return
+			}
 			pending, ok := saved.PendingAuthorization()
 			if !ok {
 				t.Fatalf("not parked: %s", saved.State)
 			}
 			if string(broker.parked.Arguments) != string(exact) || broker.resumes != 0 {
 				t.Fatal("preflight executed or changed bytes")
+			}
+			if mode == "restart" {
+				replacement := sessionBrokerTestHost(t, client, store, mockllm.New(mockllm.TextTurn("must not run")), nil)
+				_, err := replacement.RecheckMCPAuthorization(t.Context(), created.ID, MCPAuthorizationControl{SessionID: created.ID, AuthorizationID: pending.Authorization.ID})
+				if err == nil || broker.resumes != 0 {
+					t.Fatal("replacement host automatically resumed saved authorization")
+				}
+				durable, err := store.Load(t.Context(), created.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ := durable.BrokerAccess()
+				if a.Current == nil || a.Current.Disposition != session.BrokerAttemptNotDispatched {
+					t.Fatalf("replacement failed passive non-dispatch settlement: %+v", a.Current)
+				}
+				return
 			}
 			if fail {
 				store.ambiguous.Store(mode == "ambiguous")
@@ -165,6 +215,12 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 				}
 				return
 			}
+			if mode == "dispatch-save-failure" {
+				store.phase.Store("dispatched")
+			}
+			if mode == "completion-save-failure" {
+				store.phase.Store("terminal")
+			}
 			result, err := svc.RecheckMCPAuthorization(t.Context(), created.ID, MCPAuthorizationControl{SessionID: created.ID, AuthorizationID: pending.Authorization.ID})
 			if err != nil {
 				t.Fatal(err)
@@ -175,6 +231,26 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 			for range result.Run.Events() {
 			}
 			svc.FinishRun(created.ID, result.Run)
+			if mode == "dispatch-save-failure" || mode == "completion-save-failure" {
+				durable, err := store.Load(t.Context(), created.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ := durable.BrokerAccess()
+				if mode == "dispatch-save-failure" {
+					if broker.resumes != 0 || a.Current == nil || a.Current.Disposition != session.BrokerAttemptNotDispatched {
+						t.Fatalf("dispatch save failure executed or lost non-dispatch settlement: calls=%d current=%+v", broker.resumes, a.Current)
+					}
+				} else {
+					if broker.resumes != 1 || a.Current == nil || a.Current.Phase != "dispatched" {
+						t.Fatalf("unsaved completion released exact occurrence: calls=%d current=%+v", broker.resumes, a.Current)
+					}
+					if _, err := durable.PrepareBrokerInvocation(a.Session, a.Catalogue, pending.Call, time.Now()); err == nil {
+						t.Fatal("same-ID paired history released unsaved completion")
+					}
+				}
+				return
+			}
 			if broker.resumes != 1 || string(broker.parked.Arguments) != string(exact) {
 				t.Fatalf("resume count/bytes: %d %q", broker.resumes, broker.parked.Arguments)
 			}
@@ -183,7 +259,7 @@ func TestSessionBrokerHostAuthorizationExactResumeAndAdoptionSaveFailure(t *test
 				t.Fatal(err)
 			}
 			a, _ := durable.BrokerAccess()
-			if a.Pending != "" {
+			if a.Current == nil || a.Current.Disposition != session.BrokerAttemptCompleted {
 				t.Fatal("paired completion did not release unresolved fence")
 			}
 		})

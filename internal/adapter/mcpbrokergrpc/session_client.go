@@ -86,7 +86,7 @@ func wireCall(call c.Call) (*p.Call, error) {
 	return &p.Call{Id: string(call.ID), Name: call.Name, Arguments: append([]byte(nil), call.Arguments...)}, nil
 }
 func (s *SessionClient) catalogue(ref c.SessionRef, wire *p.Catalogue) (c.Catalogue, error) {
-	if !cleanSessionWire(wire) || !sessionRef(wire.Ref) || len(wire.Tools) > 1024 {
+	if !cleanSessionWire(wire) || !sessionRef(wire.Ref) || (wire.ConnectionRef != nil && !sessionRef(*wire.ConnectionRef)) || len(wire.Tools) > 1024 {
 		return nil, errSessionWire
 	}
 	tools := make([]tool.Tool, 0, len(wire.Tools))
@@ -99,7 +99,7 @@ func (s *SessionClient) catalogue(ref c.SessionRef, wire *p.Catalogue) (c.Catalo
 		base := &sessionRemoteTool{client: s, ref: ref, catalogue: c.CatalogueRef(wire.Ref), spec: tool.ToolSpec{Name: d.Name, Description: d.Description, Schema: append([]byte(nil), d.Schema...)}, readOnly: d.ReadOnly}
 		tools = append(tools, sessionToolMarkers(base, d.AuthorizationCapable, d.DispatchSerial))
 	}
-	return c.NewCatalogue(c.CatalogueRef(wire.Ref), tools)
+	return c.NewCatalogue(c.CatalogueRef(wire.Ref), c.ConnectionRef(wire.GetConnectionRef()), tools)
 }
 func (s *SessionClient) OpenSession(ctx context.Context, saved *c.SessionRef) (c.SessionSnapshot, error) {
 	r := &p.OpenSessionRequest{}
@@ -161,7 +161,10 @@ func decodeSessionInvocation(out *p.InvocationOutcome, id session.ToolCallID) (c
 	}
 	return frozen, nil
 }
-func (s *SessionClient) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call c.Call) (c.InvocationOutcome, error) {
+func (s *SessionClient) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call c.Call, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	if !attempt.Valid() {
+		return unknownInvocation(errSessionWire)
+	}
 	if err := sessionRefs(string(ref), string(cat)); err != nil {
 		return unknownInvocation(err)
 	}
@@ -171,29 +174,35 @@ func (s *SessionClient) InvokeTool(ctx context.Context, ref c.SessionRef, cat c.
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.executeDeadline)
 	defer cancel()
-	out, err := s.rpc.InvokeTool(ctx, &p.InvokeToolRequest{SessionRef: string(ref), CatalogueRef: string(cat), Call: wire}, grpc.MaxRetryRPCBufferSize(0))
+	out, err := s.rpc.InvokeTool(ctx, &p.InvokeToolRequest{SessionRef: string(ref), CatalogueRef: string(cat), Call: wire, Attempt: attemptToWire(attempt)}, grpc.MaxRetryRPCBufferSize(0))
 	if err != nil {
 		return unknownInvocation(err)
 	}
 	return decodeSessionInvocation(out, call.ID)
 }
-func (s *SessionClient) ResumeTool(ctx context.Context, ref c.SessionRef, auth c.AuthorizationRef, cat c.CatalogueRef) (c.InvocationOutcome, error) {
+func (s *SessionClient) ResumeTool(ctx context.Context, ref c.SessionRef, auth c.AuthorizationRef, cat c.CatalogueRef, attempt c.BrokerAttempt) (c.InvocationOutcome, error) {
+	if !attempt.Valid() {
+		return unknownInvocation(errSessionWire)
+	}
 	if err := sessionRefs(string(ref), string(auth), string(cat)); err != nil {
 		return unknownInvocation(err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.executeDeadline)
 	defer cancel()
-	out, err := s.rpc.ResumeTool(ctx, &p.ResumeToolRequest{SessionRef: string(ref), AuthorizationRef: string(auth), AdoptedCatalogue: string(cat)}, grpc.MaxRetryRPCBufferSize(0))
+	out, err := s.rpc.ResumeTool(ctx, &p.ResumeToolRequest{SessionRef: string(ref), AuthorizationRef: string(auth), AdoptedCatalogue: string(cat), Attempt: attemptToWire(attempt)}, grpc.MaxRetryRPCBufferSize(0))
 	if err != nil {
 		return unknownInvocation(err)
 	}
 	return decodeSessionInvocation(out, "")
 }
-func (s *SessionClient) CheckAuthorization(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, auth c.AuthorizationRef) (c.AuthorizationCheck, error) {
+func (s *SessionClient) CheckAuthorization(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef, call *c.Call, auth c.AuthorizationRef, attempt c.BrokerAttempt) (c.AuthorizationCheck, error) {
+	if !attempt.Valid() {
+		return c.AuthorizationCheck{}, errSessionWire
+	}
 	if err := sessionRefs(string(ref), string(cat)); err != nil {
 		return c.AuthorizationCheck{}, err
 	}
-	r := &p.CheckAuthorizationRequest{SessionRef: string(ref), CatalogueRef: string(cat)}
+	r := &p.CheckAuthorizationRequest{SessionRef: string(ref), CatalogueRef: string(cat), Attempt: attemptToWire(attempt)}
 	if (call == nil) == (auth == "") {
 		return c.AuthorizationCheck{}, errSessionWire
 	}
@@ -327,13 +336,16 @@ func decodeSessionCancel(out *p.CancelOutcome, err error) (c.CancelResult, error
 	}
 	return c.CancelResult(out.Outcome), nil
 }
-func (s *SessionClient) CancelAuthorization(ctx context.Context, ref c.SessionRef, auth c.AuthorizationRef) (c.CancelResult, error) {
+func (s *SessionClient) CancelAuthorization(ctx context.Context, ref c.SessionRef, auth c.AuthorizationRef, attempt c.BrokerAttempt) (c.CancelResult, error) {
+	if !attempt.Valid() {
+		return 0, errSessionWire
+	}
 	if err := sessionRefs(string(ref), string(auth)); err != nil {
 		return 0, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.rpcDeadline)
 	defer cancel()
-	return decodeSessionCancel(s.rpc.CancelAuthorization(ctx, &p.CancelAuthorizationRequest{SessionRef: string(ref), AuthorizationRef: string(auth)}, grpc.MaxRetryRPCBufferSize(0)))
+	return decodeSessionCancel(s.rpc.CancelAuthorization(ctx, &p.CancelAuthorizationRequest{SessionRef: string(ref), AuthorizationRef: string(auth), Attempt: attemptToWire(attempt)}, grpc.MaxRetryRPCBufferSize(0)))
 }
 func (s *SessionClient) BeginEnrollment(ctx context.Context, ref c.SessionRef) (c.BeginEnrollmentOutcome, error) {
 	if err := sessionRefs(string(ref)); err != nil {
@@ -400,13 +412,13 @@ func (s *SessionClient) CancelEnrollment(ctx context.Context, ref c.SessionRef, 
 	defer cancel()
 	return decodeSessionCancel(s.rpc.CancelEnrollment(ctx, &p.CancelEnrollmentRequest{SessionRef: string(ref), EnrollmentRef: string(e)}, grpc.MaxRetryRPCBufferSize(0)))
 }
-func (s *SessionClient) DisconnectTools(ctx context.Context, ref c.SessionRef, cat c.CatalogueRef) (c.DisconnectResult, error) {
-	if err := sessionRefs(string(ref), string(cat)); err != nil {
+func (s *SessionClient) DisconnectTools(ctx context.Context, ref c.SessionRef, connection c.ConnectionRef) (c.DisconnectResult, error) {
+	if err := sessionRefs(string(ref), string(connection)); err != nil {
 		return 0, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.rpcDeadline)
 	defer cancel()
-	out, err := s.rpc.DisconnectTools(ctx, &p.DisconnectToolsRequest{SessionRef: string(ref), ExpectedCatalogue: string(cat)}, grpc.MaxRetryRPCBufferSize(0))
+	out, err := s.rpc.DisconnectTools(ctx, &p.DisconnectToolsRequest{SessionRef: string(ref), ExpectedConnection: string(connection)}, grpc.MaxRetryRPCBufferSize(0))
 	if err != nil {
 		return 0, err
 	}

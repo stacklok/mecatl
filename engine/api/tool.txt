@@ -4,6 +4,8 @@
     ifacemethod func (AuthorizationRequester).RequestAuthorization(context.Context, session.ToolCall) (authorization session.ExternalAuthorization, required bool, err error)
     ifacemethod func (BoundedWorkspaceRangeReader).ReadVersionRangeBounded(ctx context.Context, path string, offset int64, maxBytes int64, totalLimit int64) ([]byte, FileVersion, int64, error)
     ifacemethod func (BoundedWorkspaceReader).ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
+    ifacemethod func (BrokerAttemptControl).AcknowledgeBrokerAttempt(context.Context, session.BrokerAttempt) (BrokerAttemptStatus, error)
+    ifacemethod func (BrokerAttemptControl).InspectBrokerAttempt(context.Context, session.BrokerAttempt) (BrokerAttemptStatus, error)
     ifacemethod func (CommandEnvironmentRunner).RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error)
     ifacemethod func (CommandEnvironmentStreamer).RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error)
     ifacemethod func (CommandRunner).Run(ctx context.Context, command string) (CommandResult, error)
@@ -12,6 +14,7 @@
     ifacemethod func (CommandTemporaryScopeStreamer).RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error)
     ifacemethod func (Disclosable).Advertised() ToolSpec
     ifacemethod func (DispatchSerial).DispatchSerialTool()
+    ifacemethod func (DurableBrokerInvocation).BrokerInvocationDisposition(error) session.BrokerAttemptDisposition
     ifacemethod func (DurableBrokerInvocation).BrokerInvocationRefs() (session.BrokerSessionRef, session.BrokerCatalogueRef)
     ifacemethod func (EnvironmentForker).Fork(ctx context.Context, base Environment, label string) (child Environment, cleanup func() error, advisory string, err error)
     ifacemethod func (EnvironmentMerger).Merge(ctx context.Context, child Environment, parent Environment) error
@@ -93,6 +96,7 @@ const SkillOriginUser SkillOrigin = "user"
 const TemporaryScopeManaged TemporaryScope = "managed"
 const TemporaryScopeSystem TemporaryScope = "system"
 const ToolSearchName untyped string = "ToolSearch"
+func BrokerInvocationFromContext(ctx context.Context) (session.BrokerAttempt, bool)
 func CanonicalMemoryText(value string) string
 func DecodeFileVersion(encoded string) FileVersion
 func DirectiveShapedUserMemory(value string) bool
@@ -113,6 +117,7 @@ func ValidateMemoryContentWrite(key string, value string, description string, at
 func ValidateMemoryEntry(entry MemoryEntry) error
 func ValidateMemoryEntryWrite(entry MemoryEntry, attribution MemoryAttribution) error
 func ValidateMemoryWrite(key string, value string) error
+func WithBrokerInvocation(ctx context.Context, attempt session.BrokerAttempt) context.Context
 func WithMemoryAttribution(ctx context.Context, attribution MemoryAttribution) context.Context
 func WithMemorySource(ctx context.Context, source MemorySource) context.Context
 type AgentDef struct{Name string; Description string; Tools []string; DisallowedTools []string; Model string; Provider string; PermissionMode string; MaxTurns int; MaxToolCalls int; Color string; Skills []string; MCPServers []AgentMCPServer; Hooks map[string]string; Memory string; Body string; Origin AgentOrigin}
@@ -123,6 +128,8 @@ type AuthorityResourceResolver interface{AuthorityResourcePath(path string) (tar
 type AuthorizationRequester interface{AbortAuthorization(context.Context, session.ExternalAuthorization) error; RequestAuthorization(context.Context, session.ToolCall) (authorization session.ExternalAuthorization, required bool, err error); Tool}
 type BoundedWorkspaceRangeReader interface{ReadVersionRangeBounded(ctx context.Context, path string, offset int64, maxBytes int64, totalLimit int64) ([]byte, FileVersion, int64, error)}
 type BoundedWorkspaceReader interface{ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)}
+type BrokerAttemptControl interface{AcknowledgeBrokerAttempt(context.Context, session.BrokerAttempt) (BrokerAttemptStatus, error); InspectBrokerAttempt(context.Context, session.BrokerAttempt) (BrokerAttemptStatus, error)}
+type BrokerAttemptStatus struct{Attempt session.BrokerAttempt; Phase string; Disposition session.BrokerAttemptDisposition}
 type Catalog struct{}
 type CommandEnvironmentOverlay struct{TempDir string; GoTempDir string; TestHomeMarker string}
 type CommandEnvironmentRunner interface{RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error); CommandRunner}
@@ -134,7 +141,7 @@ type CommandTemporaryScopeRunner interface{RunWithTemporaryScope(ctx context.Con
 type CommandTemporaryScopeStreamer interface{RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error); CommandStreamer}
 type Disclosable interface{Advertised() ToolSpec; Tool}
 type DispatchSerial interface{DispatchSerialTool(); Tool}
-type DurableBrokerInvocation interface{BrokerInvocationRefs() (session.BrokerSessionRef, session.BrokerCatalogueRef); DispatchSerial}
+type DurableBrokerInvocation interface{BrokerInvocationDisposition(error) session.BrokerAttemptDisposition; BrokerInvocationRefs() (session.BrokerSessionRef, session.BrokerCatalogueRef); DispatchSerial; BrokerAttemptControl}
 type Environment struct{}
 type EnvironmentForker interface{Fork(ctx context.Context, base Environment, label string) (child Environment, cleanup func() error, advisory string, err error)}
 type EnvironmentMerger interface{Merge(ctx context.Context, child Environment, parent Environment) error}

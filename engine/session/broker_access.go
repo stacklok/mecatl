@@ -10,14 +10,17 @@ import (
 // BrokerAccess contains only public stable references and host execution fences.
 // Attempted calls are never replayed, including after an uncertain result.
 type BrokerAccess struct {
-	Session          BrokerSessionRef   `json:"session"`
-	Catalogue        BrokerCatalogueRef `json:"catalogue"`
-	ExpiresAt        time.Time          `json:"expires_at"`
-	Withdrawn        bool               `json:"withdrawn,omitempty"`
-	Attempted        []ToolCallID       `json:"attempted,omitempty"`
-	Pending          ToolCallID         `json:"pending,omitempty"`
-	IndependentTools []string           `json:"independent_tools"`
-	BrokerTools      []string           `json:"broker_tools"`
+	Session          BrokerSessionRef    `json:"session"`
+	Connection       BrokerConnectionRef `json:"connection,omitempty"`
+	Catalogue        BrokerCatalogueRef  `json:"catalogue"`
+	ExpiresAt        time.Time           `json:"expires_at"`
+	Withdrawn        bool                `json:"withdrawn,omitempty"`
+	Attempted        []ToolCallID        `json:"attempted,omitempty"`
+	Pending          ToolCallID          `json:"pending,omitempty"`
+	IndependentTools []string            `json:"independent_tools"`
+	BrokerTools      []string            `json:"broker_tools"`
+	AdmittedSequence uint64              `json:"admitted_sequence,omitempty"`
+	Current          *BrokerHostAttempt  `json:"current,omitempty"`
 }
 
 func validBrokerReference(s string) bool {
@@ -31,17 +34,13 @@ func (s *Session) BrokerAccess() (BrokerAccess, bool) {
 		return BrokerAccess{}, false
 	}
 	a := *s.brokerAccess
+	if a.Current != nil {
+		current := *a.Current
+		a.Current = &current
+	}
 	a.Attempted = slices.Clone(a.Attempted)
 	a.IndependentTools = slices.Clone(a.IndependentTools)
 	a.BrokerTools = slices.Clone(a.BrokerTools)
-	if a.Pending != "" && a.Pending == s.brokerCompleted && s.Conversation != nil {
-		for _, message := range s.Conversation.Messages {
-			if message.Role == RoleTool && message.ToolResult != nil && message.ToolResult.CallID == a.Pending {
-				a.Pending = ""
-				break
-			}
-		}
-	}
 	return a, true
 }
 
@@ -50,10 +49,16 @@ func (s *Session) RestoreBrokerAccess(a BrokerAccess) error {
 	if err := s.validateBrokerAccess(a, s.Authority); err != nil {
 		return err
 	}
+	if a.Current != nil {
+		current := *a.Current
+		a.Current = &current
+	}
 	a.Attempted = slices.Clone(a.Attempted)
 	a.IndependentTools = slices.Clone(a.IndependentTools)
 	a.BrokerTools = slices.Clone(a.BrokerTools)
 	s.brokerAccess = &a
+	s.brokerAttemptCompleted = BrokerAttempt{}
+	s.brokerAttemptRestored = a.Current != nil && a.Current.Phase != "terminal"
 	return nil
 }
 
@@ -77,18 +82,14 @@ func (s *Session) validateBrokerAccess(a BrokerAccess, authority Authority) erro
 			return errors.New("session: broker authority projection mismatch")
 		}
 	}
-	if !validBrokerReference(string(a.Session)) || !validBrokerReference(string(a.Catalogue)) || a.ExpiresAt.IsZero() || len(a.Attempted) > 64 || s.ExternalBinding != "" || s.brokerCredentialCustody != nil || !s.authorityBound {
+	if !validBrokerReference(string(a.Session)) || !validBrokerReference(string(a.Catalogue)) || (a.Connection != "" && !validBrokerReference(string(a.Connection))) || (len(a.BrokerTools) > 0 && a.Connection == "") || a.ExpiresAt.IsZero() || len(a.Attempted) > 64 || s.ExternalBinding != "" || s.brokerCredentialCustody != nil || !s.authorityBound {
 		return errors.New("session: invalid broker access")
 	}
-	seen := make(map[ToolCallID]bool)
-	for _, id := range a.Attempted {
-		if id == "" || len(id) > 256 || seen[id] {
-			return errors.New("session: invalid broker attempt")
-		}
-		seen[id] = true
+	if len(a.Attempted) != 0 || a.Pending != "" {
+		return errors.New("session: obsolete broker attempt state; create a new session")
 	}
-	if a.Pending != "" && !seen[a.Pending] {
-		return errors.New("session: invalid pending broker invocation")
+	if err := validateBrokerHostAttempt(a); err != nil {
+		return err
 	}
 	if s.brokerAccess != nil && s.brokerAccess.Session != a.Session {
 		return errors.New("session: broker session cannot change")
@@ -97,7 +98,7 @@ func (s *Session) validateBrokerAccess(a BrokerAccess, authority Authority) erro
 }
 
 // AdoptBrokerCatalogue installs exact authority while preserving all replay fences.
-func (s *Session) AdoptBrokerCatalogue(ref BrokerSessionRef, catalogue BrokerCatalogueRef, expires time.Time, names []string) error {
+func (s *Session) AdoptBrokerCatalogue(ref BrokerSessionRef, catalogue BrokerCatalogueRef, connection BrokerConnectionRef, expires time.Time, names []string) error {
 	if !ValidWorkspaceEnrollmentToolNames(names) {
 		return errors.New("session: invalid broker tool authority")
 	}
@@ -108,7 +109,7 @@ func (s *Session) AdoptBrokerCatalogue(ref BrokerSessionRef, catalogue BrokerCat
 	if !ok {
 		a.IndependentTools = unionToolNames(s.Authority.CapabilitySet.Tools, nil)
 	}
-	a.Session, a.Catalogue, a.ExpiresAt = ref, catalogue, expires
+	a.Session, a.Catalogue, a.Connection, a.ExpiresAt = ref, catalogue, connection, expires
 	a.BrokerTools = []string{}
 	for _, name := range names {
 		if s.Authority.BrokerToolScope == nil || slices.Contains(*s.Authority.BrokerToolScope, name) {
@@ -148,27 +149,6 @@ func unionToolNames(first, second []string) []string {
 		}
 	}
 	return out
-}
-
-// FenceBrokerInvocation must be saved before dispatch. It deliberately cannot
-// distinguish a crashed completed call from an unresolved one and never retries.
-func (s *Session) FenceBrokerInvocation(ref BrokerSessionRef, catalogue BrokerCatalogueRef, id ToolCallID, now time.Time) error {
-	a, ok := s.BrokerAccess()
-	if !ok || a.Withdrawn || (a.Pending != "" && s.brokerCompleted != a.Pending) || a.Session != ref || a.Catalogue != catalogue || !a.ExpiresAt.After(now) || id == "" || len(id) > 256 || slices.Contains(a.Attempted, id) || len(a.Attempted) >= 64 {
-		return errors.New("session: broker invocation fenced; do not repeat an uncertain operation")
-	}
-	a.Attempted = append(a.Attempted, id)
-	a.Pending = id
-	s.brokerCompleted = ""
-	return s.RestoreBrokerAccess(a)
-}
-
-// RecordBrokerInvocationResult releases the fence only when the engine later
-// records the paired result. A crash before that save remains unresolved.
-func (s *Session) RecordBrokerInvocationResult(id ToolCallID) {
-	if s.brokerAccess != nil && s.brokerAccess.Pending == id {
-		s.brokerCompleted = id
-	}
 }
 
 // WithdrawBrokerAccess durably fences every old catalogue and completion.

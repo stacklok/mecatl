@@ -13,6 +13,7 @@ import (
 
 // Catalogue seals a broker authority snapshot; neither its slice nor tool specs can be mutated through accessors.
 type Catalogue interface {
+	Connection() ConnectionRef
 	Ref() session.BrokerCatalogueRef
 	Tools() []tool.Tool
 	ToolNames() []string
@@ -21,15 +22,16 @@ type Catalogue interface {
 }
 
 type brokerCatalogue struct {
-	ref   session.BrokerCatalogueRef
-	tools []tool.Tool
-	names []string
+	connection ConnectionRef
+	ref        session.BrokerCatalogueRef
+	tools      []tool.Tool
+	names      []string
 }
 
 // NewCatalogue freezes executable descriptors, retaining read-only, serial,
 // authorization, disclosure, and execution-metadata behavior. It does not grant authority.
-func NewCatalogue(ref session.BrokerCatalogueRef, tools []tool.Tool) (Catalogue, error) {
-	if !validBrokerRef(string(ref)) || len(tools) > 1024 {
+func NewCatalogue(ref session.BrokerCatalogueRef, connection ConnectionRef, tools []tool.Tool) (Catalogue, error) {
+	if !validBrokerRef(string(ref)) || (connection != "" && !validBrokerRef(string(connection))) || (len(tools) > 0 && connection == "") || len(tools) > 1024 {
 		return nil, ErrInvalidWorkspaceCatalogue
 	}
 	frozen := make([]tool.Tool, 0, len(tools))
@@ -74,11 +76,12 @@ func NewCatalogue(ref session.BrokerCatalogueRef, tools []tool.Tool) (Catalogue,
 			frozen = append(frozen, &base)
 		}
 	}
-	return &brokerCatalogue{ref: ref, tools: frozen, names: names}, nil
+	return &brokerCatalogue{ref: ref, connection: connection, tools: frozen, names: names}, nil
 }
 
 func (*brokerCatalogue) brokerCatalogue()                  {}
 func (c *brokerCatalogue) Valid() bool                     { return c != nil }
+func (c *brokerCatalogue) Connection() ConnectionRef       { return c.connection }
 func (c *brokerCatalogue) Ref() session.BrokerCatalogueRef { return c.ref }
 func (c *brokerCatalogue) Tools() []tool.Tool              { return append([]tool.Tool(nil), c.tools...) }
 func (c *brokerCatalogue) ToolNames() []string             { return append([]string(nil), c.names...) }
@@ -89,6 +92,27 @@ type catalogueTool struct {
 	frozenTool
 	advertised tool.ToolSpec
 	readOnly   bool
+}
+
+func (t *catalogueTool) BrokerInvocationDisposition(err error) session.BrokerAttemptDisposition {
+	if b, ok := t.Tool.(interface {
+		BrokerInvocationDisposition(error) session.BrokerAttemptDisposition
+	}); ok {
+		return b.BrokerInvocationDisposition(err)
+	}
+	return session.BrokerAttemptUnknown
+}
+func (t *catalogueTool) InspectBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
+		return b.InspectBrokerAttempt(ctx, attempt)
+	}
+	return tool.BrokerAttemptStatus{}, ErrStateUnavailable
+}
+func (t *catalogueTool) AcknowledgeBrokerAttempt(ctx context.Context, attempt session.BrokerAttempt) (tool.BrokerAttemptStatus, error) {
+	if b, ok := t.Tool.(tool.BrokerAttemptControl); ok {
+		return b.AcknowledgeBrokerAttempt(ctx, attempt)
+	}
+	return tool.BrokerAttemptStatus{}, ErrStateUnavailable
 }
 
 func (t *catalogueTool) ReadOnly() bool            { return t.readOnly }

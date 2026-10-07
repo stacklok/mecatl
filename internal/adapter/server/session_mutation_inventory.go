@@ -97,6 +97,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"ensureAuthorizationRequiredLogged":     {SessionMutationLeaseProven, "called only from resolveAuthorizationLocked/settleAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
 	"DisconnectWorkspaceServices":           {SessionMutationLeaseOwned, "authorizes the idle session under runEntryMu and acquires its mutation lease before save and exact withdrawal"},
 	"adoptSessionBrokerCatalogue":           {SessionMutationLeaseProven, "called from leased restore, enrollment or exact authorization continuation before advertising"},
+	"sessionBrokerEnrollmentTarget":         {SessionMutationLeaseProven, "called only by leased enrollment controls; reopens the aggregate before their durable save"},
 	"connectSessionBrokerLocked":            {SessionMutationLeaseProven, "called only by connectWorkspaceServicesLocked under run-entry lock and lease"},
 	"publishSessionBrokerEnrollment":        {SessionMutationLeaseProven, "called only by the leased enrollment control; saves before engine registration"},
 	"ConnectWorkspaceServices":              {SessionMutationLeaseOwned, "runs under runEntryMu with the idle-only, no-active-run precondition and acquires the session mutation lease before persisting"},

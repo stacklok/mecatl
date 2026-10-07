@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -17,7 +18,7 @@ import (
 func reviewAPI(t *testing.T) (*SessionAPI, *continuityProofFixture, context.Context) {
 	t.Helper()
 	f := newContinuityProofFixture(t, time.Now().Add(time.Minute))
-	client := redis.NewClient(&redis.Options{Addr: f.mini.Addr()})
+	client := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: f.mini.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	api, err := NewSessionAPI(f.process, client, func(context.Context) *session.Principal {
 		return &session.Principal{Issuer: "https://workload.test", Subject: "client"}
@@ -41,9 +42,15 @@ func TestSessionAPIReviewPendingDisconnect(t *testing.T) {
 	}
 	u, _ := url.Parse(pending.Started.Prompt.URL)
 	a := api.states[opened.Ref].attachment
-	result, err := api.DisconnectTools(ctx, opened.Ref, opened.Catalogue.Ref())
-	if err != nil || result != c.Disconnected {
-		t.Fatalf("disconnect pending: %v %v", result, err)
+	if _, err := api.DisconnectTools(ctx, opened.Ref, ""); err == nil {
+		t.Fatal("never-published enrollment accepted empty cleanup authority")
+	}
+	if api.states[opened.Ref].attachment != a {
+		t.Fatal("invalid cleanup touched provisional attachment")
+	}
+	result, err := api.CancelEnrollment(ctx, opened.Ref, pending.Started.Ref)
+	if err != nil || result != c.Cancelled {
+		t.Fatalf("cancel pending: %v %v", result, err)
 	}
 	if code := callback(t, f.process.Runtime, "old-code", u.Query().Get("state")).Code; code == http.StatusOK {
 		t.Fatal("old callback accepted")
@@ -56,8 +63,8 @@ func TestSessionAPIReviewPendingDisconnect(t *testing.T) {
 	if err != nil || fresh.Started == nil || fresh.Started.Ref == pending.Started.Ref || fresh.Started.Prompt.URL == pending.Started.Prompt.URL {
 		t.Fatalf("fresh enrollment: %#v %v", fresh, err)
 	}
-	if api.states[opened.Ref].attachment == a {
-		t.Fatal("reused withdrawn attachment")
+	if api.states[opened.Ref].attachment != a {
+		t.Fatal("enrollment cancellation unexpectedly replaced attachment")
 	}
 }
 
@@ -141,10 +148,12 @@ func TestSessionAPIReviewAbsentDeleteReleasesOwnedCache(t *testing.T) {
 type reviewSaveRedis struct {
 	redis.UniversalClient
 	mode   string
+	sets   int
 	cancel context.CancelFunc
 }
 
 func (r *reviewSaveRedis) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.StatusCmd {
+	r.sets++
 	if !strings.HasPrefix(key, sessionAPIPrefix) || r.mode == "" {
 		return r.UniversalClient.Set(ctx, key, value, ttl)
 	}
@@ -179,9 +188,10 @@ func TestSessionAPIReviewRecoveryRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			st.record.Custody = &c.StagedCredentialCustody{RecoveryReference: string(staged.Recovery), ExpiresAt: staged.ExpiresAt, ProfileDigest: guard.ProfileDigest, Providers: guard.Providers}
+			st.record.Account = sessionAPIProofAccount(t, f)
 			st.record.Connected = true
 			st.record.Connection = apiRef()
-			if err = api.save(ctx, st); err != nil {
+			if err = saveAPIRecord(t, api, ctx, st); err != nil {
 				t.Fatal(err)
 			}
 			delete(api.states, opened.Ref)
@@ -211,7 +221,23 @@ func TestSessionAPIReviewRecoveryRetry(t *testing.T) {
 			if cached := api.states[opened.Ref]; cached != nil {
 				original = cached.attachment
 			}
+			if mode == "before" {
+				if _, err := api.OpenSession(ctx, &opened.Ref); err == nil {
+					t.Fatal("unresolved recovery write reopened authority")
+				}
+				candidate, err := json.Marshal(api.states[opened.Ref].pendingWrite)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := faulty.UniversalClient.Set(ctx, sessionAPIPrefix+string(opened.Ref), candidate, time.Hour).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sets := faulty.sets
 			retry, err := api.OpenSession(ctx, &opened.Ref)
+			if faulty.sets != sets {
+				t.Fatal("recovery retry issued a redundant identical SET")
+			}
 			if err != nil || len(retry.Catalogue.Tools()) != 2 || find(retry.Catalogue, "CallMcpWithQuery") == nil {
 				t.Fatalf("exact recovery retry: %#v %v", retry, err)
 			}

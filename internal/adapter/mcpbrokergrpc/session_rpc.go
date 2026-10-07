@@ -13,12 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// authorizationChecker is a private adapter preflight capability, not a
-// SessionService operation or replay authority.
-type authorizationChecker interface {
-	CheckAuthorization(context.Context, c.SessionRef, c.CatalogueRef, *c.Call, c.AuthorizationRef) (c.AuthorizationCheck, error)
-}
-
 // SessionRPC exposes broker-owned sessions behind verified workload middleware.
 type SessionRPC struct {
 	p.UnimplementedSessionServiceServer
@@ -60,7 +54,12 @@ func sessionCatalogue(cat c.Catalogue) (*p.Catalogue, error) {
 	if err != nil {
 		return nil, status.Error(codes.Internal, "invalid descriptors")
 	}
-	return &p.Catalogue{Ref: string(cat.Ref()), Tools: d}, nil
+	wire := &p.Catalogue{Ref: string(cat.Ref()), Tools: d}
+	if cat.Connection() != "" {
+		connection := string(cat.Connection())
+		wire.ConnectionRef = &connection
+	}
+	return wire, nil
 }
 func sessionPrompt(prompt c.BrowserPrompt) (*p.BrowserPrompt, error) {
 	if !prompt.Valid() {
@@ -169,11 +168,10 @@ func (s *SessionRPC) CheckAuthorization(ctx context.Context, r *p.CheckAuthoriza
 	default:
 		return nil, invalid("missing check target")
 	}
-	checker, ok := s.service.(authorizationChecker)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "authorization preflight unavailable")
+	if !wireAttemptValid(r.GetAttempt()) {
+		return nil, invalid("invalid attempt")
 	}
-	out, err := checker.CheckAuthorization(ctx, c.SessionRef(r.SessionRef), c.CatalogueRef(r.CatalogueRef), call, auth)
+	out, err := s.service.CheckAuthorization(ctx, c.SessionRef(r.SessionRef), c.CatalogueRef(r.CatalogueRef), call, auth, attemptFromWire(r.Attempt))
 	if err != nil {
 		return nil, sessionError(err)
 	}
@@ -197,7 +195,10 @@ func (s *SessionRPC) InvokeTool(ctx context.Context, r *p.InvokeToolRequest) (*p
 	if err != nil {
 		return nil, invalid("invalid call")
 	}
-	return sessionInvocation(s.service.InvokeTool(ctx, c.SessionRef(r.SessionRef), c.CatalogueRef(r.CatalogueRef), c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}))
+	if !wireAttemptValid(r.GetAttempt()) {
+		return nil, invalid("invalid attempt")
+	}
+	return sessionInvocation(s.service.InvokeTool(ctx, c.SessionRef(r.SessionRef), c.CatalogueRef(r.CatalogueRef), c.Call{ID: call.ID, Name: call.Name, Arguments: call.Args}, attemptFromWire(r.Attempt)))
 }
 func (s *SessionRPC) BeginAuthorization(ctx context.Context, r *p.BeginAuthorizationRequest) (*p.BrowserPrompt, error) {
 	if r == nil || !sessionRef(r.SessionRef) || !sessionRef(r.AuthorizationRef) {
@@ -219,13 +220,19 @@ func (s *SessionRPC) CancelAuthorization(ctx context.Context, r *p.CancelAuthori
 	if r == nil || !sessionRef(r.SessionRef) || !sessionRef(r.AuthorizationRef) {
 		return nil, invalid("invalid flow reference")
 	}
-	return sessionCancel(s.service.CancelAuthorization(ctx, c.SessionRef(r.SessionRef), c.AuthorizationRef(r.AuthorizationRef)))
+	if !wireAttemptValid(r.GetAttempt()) {
+		return nil, invalid("invalid attempt")
+	}
+	return sessionCancel(s.service.CancelAuthorization(ctx, c.SessionRef(r.SessionRef), c.AuthorizationRef(r.AuthorizationRef), attemptFromWire(r.Attempt)))
 }
 func (s *SessionRPC) ResumeTool(ctx context.Context, r *p.ResumeToolRequest) (*p.InvocationOutcome, error) {
 	if r == nil || !sessionRef(r.SessionRef) || !sessionRef(r.AuthorizationRef) || !sessionRef(r.AdoptedCatalogue) {
 		return nil, invalid("invalid resume reference")
 	}
-	return sessionInvocation(s.service.ResumeTool(ctx, c.SessionRef(r.SessionRef), c.AuthorizationRef(r.AuthorizationRef), c.CatalogueRef(r.AdoptedCatalogue)))
+	if !wireAttemptValid(r.GetAttempt()) {
+		return nil, invalid("invalid attempt")
+	}
+	return sessionInvocation(s.service.ResumeTool(ctx, c.SessionRef(r.SessionRef), c.AuthorizationRef(r.AuthorizationRef), c.CatalogueRef(r.AdoptedCatalogue), attemptFromWire(r.Attempt)))
 }
 func (s *SessionRPC) BeginEnrollment(ctx context.Context, r *p.BeginEnrollmentRequest) (*p.BeginEnrollmentResponse, error) {
 	if r == nil || !sessionRef(r.SessionRef) {
@@ -268,10 +275,10 @@ func (s *SessionRPC) CancelEnrollment(ctx context.Context, r *p.CancelEnrollment
 	return sessionCancel(s.service.CancelEnrollment(ctx, c.SessionRef(r.SessionRef), c.EnrollmentRef(r.EnrollmentRef)))
 }
 func (s *SessionRPC) DisconnectTools(ctx context.Context, r *p.DisconnectToolsRequest) (*p.DisconnectOutcome, error) {
-	if r == nil || !sessionRef(r.SessionRef) || !sessionRef(r.ExpectedCatalogue) {
-		return nil, invalid("invalid catalogue reference")
+	if r == nil || !sessionRef(r.SessionRef) || !sessionRef(r.ExpectedConnection) {
+		return nil, invalid("invalid connection reference")
 	}
-	out, err := s.service.DisconnectTools(ctx, c.SessionRef(r.SessionRef), c.CatalogueRef(r.ExpectedCatalogue))
+	out, err := s.service.DisconnectTools(ctx, c.SessionRef(r.SessionRef), c.ConnectionRef(r.ExpectedConnection))
 	if err != nil {
 		return nil, sessionError(err)
 	}

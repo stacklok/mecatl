@@ -329,6 +329,16 @@ wiring.
 
 ## ToolHive broker OAuth
 
+The local experimental SessionService broker uses a stable connection reference
+for disconnecting workspace services. A broker replacement can refresh its tool
+catalog without changing that cleanup reference. Disconnect first saves withdrawn
+host authority, then cleans up the broker connection; a cleanup error leaves the
+tools unavailable. Explicit reconnection publishes a fresh connection reference.
+Repeating cleanup for the previous disconnected connection leaves a pending new
+enrollment intact, and cleanup for that previous connection cannot withdraw a
+newly published connection. This experimental path is not a released deployment
+contract.
+
 In `mecak8s` broker mode, each session starts one opaque enrollment, and
 ToolHive authorizes the configured protected upstreams sequentially. ToolHive
 owns upstream callback state, code exchange, refresh, and provider-specific

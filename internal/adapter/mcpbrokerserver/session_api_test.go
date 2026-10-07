@@ -32,6 +32,10 @@ type sessionProductionRedis struct {
 	unready atomic.Bool
 }
 
+func (r *sessionProductionRedis) Options() *redis.Options {
+	return r.UniversalClient.(*redis.Client).Options()
+}
+
 func (r *sessionProductionRedis) Close() error {
 	r.closed.Add(1)
 	return r.UniversalClient.Close()

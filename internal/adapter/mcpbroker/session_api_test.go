@@ -30,11 +30,15 @@ import (
 // Supplemental native Runtime proof for parked calls; the composed tests below
 // separately prove the real Process/encrypted-custody and MCP execution path.
 func TestSessionAPINativeAuthorizationRetainsExactBytes(t *testing.T) {
-	t.Run("tool", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false) })
-	t.Run("query", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, true) })
+	t.Run("cancel-retry", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "cancel-retry") })
+	t.Run("ack-retry", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "ack-retry") })
+	t.Run("tool", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "") })
+	t.Run("query", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, true, "") })
+	t.Run("stale-adoption", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, false, "catalogue") })
+	t.Run("query-target-drift", func(t *testing.T) { sessionAPINativeAuthorizationRetainsExactBytes(t, true, "descriptor") })
 }
 
-func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
+func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool, refusal string) {
 	t.Helper()
 	var requests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "status", &requests)
@@ -44,7 +48,7 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 	}
 	defer process.Close()
 	db := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: db.Addr()})
+	client := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: db.Addr()})
 	defer client.Close()
 	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://owner.test", Subject: "owner"})
 	api, err := NewSessionAPI(process, client, func(context.Context) *session.Principal {
@@ -99,11 +103,11 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 	st.record.Connected = true
 	st.record.Connection = apiRef()
 	st.record.Catalogue = c.CatalogueRef(apiRef())
-	st.catalogue, err = api.catalogue(st, st.record.Catalogue, a.Tools(), st.record.Account)
+	st.catalogue, err = api.catalogue(st, st.record.Catalogue, c.ConnectionRef(st.record.Connection), a.Tools(), st.record.Account)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = api.save(owner, st); err != nil {
+	if err = saveAPIRecord(t, api, owner, st); err != nil {
 		t.Fatal(err)
 	}
 	rpc, err := mcpbrokergrpc.NewSessionRPC(api)
@@ -145,6 +149,8 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 		call.Name = "CallMcpWithQuery"
 		call.Arguments = []byte(`{ "server" : "private", "tool" : "create", "args" : { "title" : "original" }, "jq_filter" : ".keep" }`)
 	}
+	attempt := c.BrokerAttempt{Sequence: 1}
+	owner = tool.WithBrokerInvocation(owner, attempt)
 	requester := find(snapshot.Catalogue, call.Name).(tool.AuthorizationRequester)
 	authRequest, required, err := requester.RequestAuthorization(owner, session.ToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
 	out := c.InvocationOutcome{Kind: c.InvocationAuthorizationRequired, Authorization: c.AuthorizationRef(authRequest.ID)}
@@ -156,7 +162,48 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 	if err := requester.AbortAuthorization(owner, foreign); err == nil {
 		t.Fatal("abort accepted foreign binding")
 	}
-	cancelled, err := remote.CancelAuthorization(owner, opened.Ref, out.Authorization)
+	if refusal == "cancel-retry" || refusal == "ack-retry" {
+		parked := st.parked[out.Authorization]
+		a.logical.mu.Lock()
+		transaction, err := a.lookupAuthorizationLocked(parked.native)
+		if err != nil {
+			a.logical.mu.Unlock()
+			t.Fatal(err)
+		}
+		callbackState := transaction.state
+		a.logical.mu.Unlock()
+		deadline, stop := context.WithTimeout(owner, 50*time.Millisecond)
+		defer stop()
+		underlying := api.redis
+		api.redis = &cancelDeadlineRedis{UniversalClient: underlying}
+		_, err = api.CancelAuthorization(deadline, opened.Ref, out.Authorization, attempt)
+		api.redis = underlying
+		if !errors.Is(err, context.DeadlineExceeded) || st.record.Slots[attempt.Slot].Phase != "terminal" {
+			t.Fatalf("native cleanup deadline: %v slot=%+v", err, st.record.Slots[attempt.Slot])
+		}
+		if _, err := api.CancelAuthorization(owner, opened.Ref, out.Authorization, c.BrokerAttempt{Sequence: attempt.Sequence + 1}); err == nil {
+			t.Fatal("cleanup retry accepted different attempt")
+		}
+		if _, err := api.AcknowledgeAttempt(owner, opened.Ref, c.BrokerAttempt{Sequence: attempt.Sequence + 1}); err == nil {
+			t.Fatal("ack cleanup accepted different attempt")
+		}
+		if refusal == "ack-retry" {
+			if _, err := api.AcknowledgeAttempt(owner, opened.Ref, attempt); err != nil {
+				t.Fatal(err)
+			}
+		} else if _, err := api.CancelAuthorization(owner, opened.Ref, out.Authorization, attempt); err != nil {
+			t.Fatal(err)
+		}
+		status, err := a.AuthorizationStatus(owner, parked.native)
+		if err != nil || status != session.AuthorizationCancelled {
+			t.Fatalf("retry left callback live: %v %v", status, err)
+		}
+		if err := native.handleCallback(owner, "fixture-code", callbackState); err == nil {
+			t.Fatal("cancelled callback installed grant")
+		}
+		return
+	}
+	cancelled, err := remote.CancelAuthorization(owner, opened.Ref, out.Authorization, attempt)
 	if err != nil || cancelled != c.Cancelled {
 		t.Fatalf("cancel: %v %v", cancelled, err)
 	}
@@ -170,12 +217,13 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 	for _, mode := range []string{"cancel", "expire"} {
 		t.Run("capacity-"+mode, func(t *testing.T) {
 			for i := 0; i < 20; i++ {
-				check, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "")
+				attempt.Sequence++
+				check, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "", attempt)
 				if err != nil || check.Authorization == "" {
 					t.Fatalf("cycle %d: %#v %v", i, check, err)
 				}
 				if mode == "cancel" {
-					if _, err := remote.CancelAuthorization(owner, opened.Ref, check.Authorization); err != nil {
+					if _, err := remote.CancelAuthorization(owner, opened.Ref, check.Authorization, attempt); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -191,7 +239,7 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 					api.mu.Unlock()
 				}
 				exactResumeRef.Store(string(check.Authorization))
-				out, err := remote.ResumeTool(owner, opened.Ref, check.Authorization, st.catalogue.Ref())
+				out, err := remote.ResumeTool(owner, opened.Ref, check.Authorization, st.catalogue.Ref(), attempt)
 				if err != nil || out.Kind != c.InvocationNotDispatched || calls.Load() != 0 {
 					t.Fatalf("old resume: %#v %v", out, err)
 				}
@@ -205,11 +253,13 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 		t.Fatalf("unbounded terminal records: %d", parkedCount)
 	}
 	exactResumeRef.Store(string(out.Authorization))
-	old, err := remote.ResumeTool(owner, opened.Ref, out.Authorization, st.catalogue.Ref())
-	if err != nil || old.Kind != c.InvocationNotDispatched || calls.Load() != 0 {
+	old, err := remote.ResumeTool(owner, opened.Ref, out.Authorization, st.catalogue.Ref(), c.BrokerAttempt{Sequence: 1})
+	if err == nil || calls.Load() != 0 {
 		t.Fatalf("evicted/cancelled ref resumed: %#v %v", old, err)
 	}
-	check, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "")
+	attempt.Sequence++
+	owner = tool.WithBrokerInvocation(owner, attempt)
+	check, err := remote.CheckAuthorization(owner, opened.Ref, st.catalogue.Ref(), &call, "", attempt)
 	if err != nil || check.Authorization == "" || calls.Load() != 0 {
 		t.Fatalf("fresh preflight: %#v %v", check, err)
 	}
@@ -232,37 +282,37 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 	if err != nil || again.Catalogue.Ref() != flow.Catalogue.Ref() {
 		t.Fatal("observation replaced completed catalogue")
 	}
-	out, err = remote.ResumeTool(owner, opened.Ref, auth, opened.Catalogue.Ref())
-	if err != nil || out.Reason != c.FailureCatalogueChanged || calls.Load() != 0 {
-		t.Fatalf("adoption fence: %#v %v", out, err)
-	}
-	if query {
-		api.mu.Lock()
-		saved := st.catalogue
-		changed := saved.Tools()
-		for i, candidate := range changed {
-			if candidate.Spec().Name == "mcp__private__create" {
-				changed[i] = queryDescriptorDrift{candidate}
+	if refusal != "" {
+		adopted := flow.Catalogue.Ref()
+		if refusal == "catalogue" {
+			adopted = opened.Catalogue.Ref()
+		} else {
+			changed := st.catalogue.Tools()
+			for i, candidate := range changed {
+				if candidate.Spec().Name == "mcp__private__create" {
+					changed[i] = queryDescriptorDrift{candidate}
+				}
+			}
+			st.catalogue, err = c.NewCatalogue(adopted, st.catalogue.Connection(), changed)
+			if err != nil {
+				t.Fatal(err)
 			}
 		}
-		st.catalogue, err = c.NewCatalogue(saved.Ref(), changed)
-		api.mu.Unlock()
-		if err != nil {
-			t.Fatal(err)
-		}
-		check, err := api.CheckAuthorization(owner, opened.Ref, saved.Ref(), nil, auth)
-		if err != nil || check.Reason != c.FailureCatalogueChanged || calls.Load() != 0 {
-			t.Fatalf("query target drift preflight: %#v %v", check, err)
-		}
-		out, err := remote.ResumeTool(owner, opened.Ref, auth, saved.Ref())
+		out, err := remote.ResumeTool(owner, opened.Ref, auth, adopted, attempt)
 		if err != nil || out.Reason != c.FailureCatalogueChanged || calls.Load() != 0 {
-			t.Fatalf("query target drift resume: %#v %v", out, err)
+			t.Fatalf("refusal: %#v %v", out, err)
 		}
-		api.mu.Lock()
-		st.catalogue = saved
-		api.mu.Unlock()
+		status, err := remote.InspectAttempt(owner, opened.Ref, attempt)
+		if err != nil || status.Disposition != session.BrokerAttemptNotDispatched {
+			t.Fatalf("refusal left admitted slot busy: %#v %v", status, err)
+		}
+		return
 	}
-	resumedTool, err := remote.ResumeToolWrapper(opened.Ref, flow.Catalogue, call.Name, call.ID, auth)
+	status, err := remote.InspectAttempt(owner, opened.Ref, attempt)
+	if err != nil || status.Phase != "parked" || calls.Load() != 0 {
+		t.Fatalf("parked inspection: %#v %v", status, err)
+	}
+	resumedTool, err := remote.ResumeToolWrapper(opened.Ref, flow.Catalogue, call.Name, call.ID, auth, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,19 +321,35 @@ func sessionAPINativeAuthorizationRetainsExactBytes(t *testing.T, query bool) {
 	if err != nil || required || calls.Load() != 0 || resumedChecks.Load() != 1 {
 		t.Fatalf("resumed preflight: %v %v calls=%d checks=%d", required, err, calls.Load(), resumedChecks.Load())
 	}
+	frozenCall := st.parked[auth].call
 	result, err := resumedTool.Execute(owner, resumedCall, tool.Environment{})
 	if err != nil || result.Content != "authorized" || string(executed) != string(original) || calls.Load() != 1 {
 		t.Fatalf("resume exact bytes: err=%v calls=%d", err, calls.Load())
 	}
-	out, err = remote.ResumeTool(owner, opened.Ref, auth, flow.Catalogue.Ref())
+	out, err = remote.ResumeTool(owner, opened.Ref, auth, flow.Catalogue.Ref(), attempt)
 	if err != nil || out.Kind != c.InvocationCompleted || calls.Load() != 1 {
 		t.Fatalf("resume receipt: %#v %v", out, err)
+	}
+	// Reuse the same provider ID and native grant beyond the donor ledger bound.
+	grant := a.logical.grants["private"]
+	for i := 0; i < 4100; i++ {
+		attempt.Sequence++
+		repeated, err := remote.InvokeTool(owner, opened.Ref, flow.Catalogue.Ref(), frozenCall, attempt)
+		if err != nil || repeated.Kind != c.InvocationCompleted {
+			t.Fatalf("slot reuse %d: %#v %v", i, repeated, err)
+		}
+	}
+	if a.logical.grants["private"] != grant || len(grant.executed) != 0 || calls.Load() != 4101 {
+		t.Fatal("slot path rotated grant or used lifetime ledger")
+	}
+	if len(st.parked) != 0 || st.record.Slots[0].Sequence != attempt.Sequence {
+		t.Fatal("unbounded parked state or lost sequence")
 	}
 }
 
 func TestSessionAPIStableLifetimeOutlivesNativeCustody(t *testing.T) {
 	f := newContinuityProofFixture(t, time.Now().Add(time.Minute))
-	client := redis.NewClient(&redis.Options{Addr: f.mini.Addr()})
+	client := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: f.mini.Addr()})
 	defer client.Close()
 	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://owner.test", Subject: "owner"})
 	api, err := NewSessionAPI(f.process, client, func(context.Context) *session.Principal {
@@ -304,9 +370,10 @@ func TestSessionAPIStableLifetimeOutlivesNativeCustody(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.record.Custody = &c.StagedCredentialCustody{RecoveryReference: string(staged.Recovery), ExpiresAt: staged.ExpiresAt, ProfileDigest: guard.ProfileDigest, Providers: guard.Providers}
+	st.record.Account = sessionAPIProofAccount(t, f)
 	st.record.Connected = true
 	st.record.Connection = apiRef()
-	if err = api.save(owner, st); err != nil {
+	if err = saveAPIRecord(t, api, owner, st); err != nil {
 		t.Fatal(err)
 	}
 	delete(api.states, opened.Ref)
@@ -354,7 +421,7 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); handler.ServeHTTP(w, r) }))
 	defer server.Close()
 	db := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: db.Addr()})
+	client := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: db.Addr()})
 	defer client.Close()
 	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://owner.test", Subject: "owner"})
 	workload := func(context.Context) *session.Principal {
@@ -396,14 +463,14 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 		t.Fatalf("nonreplacement: %#v %v", again, err)
 	}
 	call := c.Call{ID: "one", Name: enrolled.Catalogue.ToolNames()[0], Arguments: []byte(`{ "value": "exact" }`)}
-	stale, err := api.InvokeTool(owner, opened.Ref, opened.Catalogue.Ref(), call)
+	stale, err := api.InvokeTool(owner, opened.Ref, opened.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
 	if err != nil || stale.Reason != c.FailureCatalogueChanged {
 		t.Fatalf("stale: %#v %v", stale, err)
 	}
 	ctx, cancel := context.WithCancel(owner)
 	done := make(chan c.InvocationOutcome, 1)
 	go func() {
-		o, e := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call)
+		o, e := api.InvokeTool(ctx, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
 		if e != nil {
 			done <- c.InvocationOutcome{}
 			return
@@ -420,13 +487,13 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 		t.Fatalf("cancel: %#v", out)
 	}
 	close(release)
-	out, err := api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call)
+	out, err := api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
 	if err != nil || out.Kind != c.InvocationCompleted || out.Result.Content != "exact" || calls.Load() != 1 {
 		t.Fatalf("receipt: %#v %v calls=%d", out, err, calls.Load())
 	}
 	changed := call
 	changed.Arguments = []byte(`{"value":"changed"}`)
-	out, err = api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), changed)
+	out, err = api.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), changed, c.BrokerAttempt{Sequence: 1})
 	if err != nil || out.Reason != c.FailureCallChanged || calls.Load() != 1 {
 		t.Fatalf("changed call: %#v %v", out, err)
 	}
@@ -447,20 +514,20 @@ func TestSessionAPIAnonymousNativeLifecycle(t *testing.T) {
 	if err != nil || recovered.Ref != opened.Ref || len(recovered.Catalogue.Tools()) != 2 || find(recovered.Catalogue, "CallMcpWithQuery") == nil || recovered.Catalogue.Ref() == enrolled.Catalogue.Ref() {
 		t.Fatalf("reopen: %#v %v", recovered, err)
 	}
-	out, err = api2.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call)
-	if err != nil || out.Reason != c.FailureCatalogueChanged || calls.Load() != 1 {
+	out, err = api2.InvokeTool(owner, opened.Ref, enrolled.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
+	if err != nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
 		t.Fatalf("restart replay: %#v %v", out, err)
 	}
-	disconnected, err := api2.DisconnectTools(owner, opened.Ref, enrolled.Catalogue.Ref())
-	if err != nil || disconnected != c.CatalogueChanged {
+	disconnected, err := api2.DisconnectTools(owner, opened.Ref, c.ConnectionRef(apiRef()))
+	if err != nil || disconnected != c.ConnectionChanged {
 		t.Fatalf("wrong disconnect: %v %v", disconnected, err)
 	}
-	disconnected, err = api2.DisconnectTools(owner, opened.Ref, recovered.Catalogue.Ref())
+	disconnected, err = api2.DisconnectTools(owner, opened.Ref, enrolled.Catalogue.Connection())
 	if err != nil || disconnected != c.Disconnected {
 		t.Fatalf("disconnect: %v %v", disconnected, err)
 	}
-	out, err = api2.InvokeTool(owner, opened.Ref, recovered.Catalogue.Ref(), call)
-	if err != nil || out.Kind != c.InvocationNotDispatched || calls.Load() != 1 {
+	out, err = api2.InvokeTool(owner, opened.Ref, recovered.Catalogue.Ref(), call, c.BrokerAttempt{Sequence: 1})
+	if err != nil || out.Kind != c.InvocationOutcomeUnknown || calls.Load() != 1 {
 		t.Fatalf("withdrawn: %#v %v", out, err)
 	}
 	api3, err := NewSessionAPI(process2, client, workload)
@@ -495,7 +562,7 @@ func TestSessionAPIAnonymousAllRequiredFailure(t *testing.T) {
 	}
 	defer process.Close()
 	db := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: db.Addr()})
+	client := redis.NewClient(&redis.Options{MaxRetries: -1, Addr: db.Addr()})
 	defer client.Close()
 	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://owner.test", Subject: "owner"})
 	api, err := NewSessionAPI(process, client, func(context.Context) *session.Principal {

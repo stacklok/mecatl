@@ -45,7 +45,7 @@ func connectorService(t *testing.T, owner *session.Principal) (*Service, *sessio
 	if err := sess.BindAuthority(session.Authority{Provenance: "test", CapabilitySet: governance.CapabilitySet{FileSystem: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), time.Now().Add(time.Hour), nil); err != nil {
+	if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), "", time.Now().Add(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(t.Context(), sess); err != nil {

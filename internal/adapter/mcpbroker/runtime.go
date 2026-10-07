@@ -956,6 +956,9 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		return session.ToolResult{}, err
 	}
 	call.Args = append(json.RawMessage(nil), call.Args...)
+	if claim, ok := ctx.Value(durableNativeKey{}).(*durableNativeCall); ok {
+		opCtx = context.WithValue(opCtx, durableNativeKey{}, claim)
+	}
 	if t.route.broker {
 		return t.executeBroker(opCtx, call)
 	}

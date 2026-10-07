@@ -22,7 +22,7 @@ import (
 
 type authoritySessionClient struct{ c.SessionService }
 
-func (authoritySessionClient) ResumeToolWrapper(c.SessionRef, c.Catalogue, string, session.ToolCallID, c.AuthorizationRef) (tool.Tool, error) {
+func (authoritySessionClient) ResumeToolWrapper(c.SessionRef, c.Catalogue, string, session.ToolCallID, c.AuthorizationRef, c.BrokerAttempt) (tool.Tool, error) {
 	return nil, errors.New("unexpected authorization in anonymous authority proof")
 }
 

@@ -183,6 +183,10 @@ func operationName(method string) string {
 		return "disconnect_tools"
 	case brokerv1.SessionService_DeleteSession_FullMethodName:
 		return "delete_session"
+	case brokerv1.SessionService_InspectAttempt_FullMethodName:
+		return "inspect_attempt"
+	case brokerv1.SessionService_AcknowledgeAttempt_FullMethodName:
+		return "acknowledge_attempt"
 	case brokerv1.SessionService_InspectConnectors_FullMethodName:
 		return "inspect_connectors"
 	default:

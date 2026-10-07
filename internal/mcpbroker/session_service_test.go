@@ -41,7 +41,7 @@ func TestSessionInvocationOutcomeArms(t *testing.T) {
 }
 
 func TestSessionFlowStatusArms(t *testing.T) {
-	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), nil)
+	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestSessionFlowStatusArms(t *testing.T) {
 }
 
 func TestSessionEnrollmentOutcomeArms(t *testing.T) {
-	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), nil)
+	catalogue, err := mcpbroker.NewCatalogue(brokerRef(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

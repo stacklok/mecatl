@@ -6,7 +6,8 @@
     method func (*Session).Abandon() error
     method func (*Session).AbortAuthorization(reason string) ([]ToolResult, error)
     method func (*Session).AbortWorkspaceEnrollment(id WorkspaceEnrollmentID) error
-    method func (*Session).AdoptBrokerCatalogue(ref BrokerSessionRef, catalogue BrokerCatalogueRef, expires time.Time, names []string) error
+    method func (*Session).AdmitBrokerInvocation(attempt BrokerAttempt) error
+    method func (*Session).AdoptBrokerCatalogue(ref BrokerSessionRef, catalogue BrokerCatalogueRef, connection BrokerConnectionRef, expires time.Time, names []string) error
     method func (*Session).AdoptRecoveredBrokerCatalogue(expectedRecoveryReference string, expectedExternalBinding ExternalBinding, replacementExternalBinding ExternalBinding, exactTools []string) error
     method func (*Session).ApplyTitleGeneration(generation TitleGenerationState, attempts []TitleAttempt)
     method func (*Session).BeginRun(runID string)
@@ -22,11 +23,12 @@
     method func (*Session).Complete() error
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
     method func (*Session).CompleteWorkspaceEnrollmentWithBinding(pending PendingWorkspaceEnrollment, binding ExternalBinding, exactTools []string) error
-    method func (*Session).CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending PendingWorkspaceEnrollment, ref BrokerSessionRef, catalogue BrokerCatalogueRef, expires time.Time, names []string) error
+    method func (*Session).CompleteWorkspaceEnrollmentWithBrokerCatalogue(pending PendingWorkspaceEnrollment, ref BrokerSessionRef, catalogue BrokerCatalogueRef, connection BrokerConnectionRef, expires time.Time, names []string) error
+    method func (*Session).ContinueBrokerInvocation(call ToolCall) (BrokerAttempt, error)
+    method func (*Session).DispatchBrokerInvocation(attempt BrokerAttempt) error
     method func (*Session).Fail() error
     method func (*Session).FailedStepRetryPending() (RetryMetadata, bool)
     method func (*Session).FailureMetadata() RetryMetadata
-    method func (*Session).FenceBrokerInvocation(ref BrokerSessionRef, catalogue BrokerCatalogueRef, id ToolCallID, now time.Time) error
     method func (*Session).GrantToolAuthority(names []string) error
     method func (*Session).Incarnation() IncarnationID
     method func (*Session).InstallBrokerCredentialCustody(pending PendingWorkspaceEnrollment, custody BrokerCredentialCustody, now time.Time) error
@@ -40,10 +42,12 @@
     method func (*Session).PendingAsk() (PendingAsk, bool)
     method func (*Session).PendingAuthorization() (PendingAuthorization, bool)
     method func (*Session).PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool)
+    method func (*Session).PrepareBrokerInvocation(ref BrokerSessionRef, catalogue BrokerCatalogueRef, call ToolCall, now time.Time) (BrokerAttempt, error)
     method func (*Session).PrepareFailedStepRetry() error
+    method func (*Session).ReattachBrokerAuthorization(call ToolCall, attempt BrokerAttempt) error
     method func (*Session).RecordAssistant(m Message) error
     method func (*Session).RecordAuxiliaryUsage(usage AuxiliaryUsage)
-    method func (*Session).RecordBrokerInvocationResult(id ToolCallID)
+    method func (*Session).RecordBrokerInvocationResult(attempt BrokerAttempt, id ToolCallID) error
     method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
     method func (*Session).RecordHarnessPrompt(text string) error
     method func (*Session).RecordLastError(cause string) error
@@ -59,6 +63,7 @@
     method func (*Session).RecordedStopReason() (StopReason, bool)
     method func (*Session).Recover() error
     method func (*Session).Rehome(ref EnvironmentRef) error
+    method func (*Session).RejectUnadmittedBrokerInvocation(attempt BrokerAttempt) error
     method func (*Session).RenameTitle(text string) error
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
@@ -80,6 +85,7 @@
     method func (*Session).SetTitle(text string)
     method func (*Session).SetTitleGeneration(state TitleGenerationState)
     method func (*Session).SetUsageAttribution(providerID string, modelID string)
+    method func (*Session).SettleBrokerInvocation(attempt BrokerAttempt, disposition BrokerAttemptDisposition) error
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
     method func (*Session).TitleAttempts() []TitleAttempt
@@ -94,6 +100,7 @@
     method func (AuthorizationResolution).Status() AuthorizationStatus
     method func (AuthorizationResolution).Valid() bool
     method func (AuxiliaryUsage).Merge(other AuxiliaryUsage) AuxiliaryUsage
+    method func (BrokerAttempt).Valid() bool
     method func (BrokerCredentialCustody).Active(now time.Time) bool
     method func (BrokerCredentialCustody).Clone() BrokerCredentialCustody
     method func (BrokerCredentialCustody).ExpiresAt() time.Time
@@ -138,6 +145,9 @@ const BlockImage BlockKind = "image"
 const BlockResourceLink BlockKind = "resource_link"
 const BlockStructuredContent BlockKind = "structured"
 const BlockText BlockKind = "text"
+const BrokerAttemptCompleted BrokerAttemptDisposition = "completed"
+const BrokerAttemptNotDispatched BrokerAttemptDisposition = "not_dispatched"
+const BrokerAttemptUnknown BrokerAttemptDisposition = "unknown"
 const BrokerRecoveryReferenceBytes untyped int = 43
 const CompactionSummaryMarker untyped string = "[conversation compacted]"
 const EnvKindLocal EnvironmentKind = "local"
@@ -308,6 +318,7 @@ const VerdictStringAllowAlways untyped string = "allow_always"
 const VerdictStringAllowOnce untyped string = "allow_once"
 const VerdictStringDeny untyped string = "deny"
 func ActivityOf(messages []Message) ActivityState
+func BrokerCallDigest(call ToolCall) [32]byte
 func CanonicalNetworkAttempt(in NetworkAttemptPayload, id SessionID, runSerial int64, turn int) (NetworkAttemptPayload, bool)
 func ClampTitle(s string) string
 func CloneMessages(msgs []Message) []Message
@@ -378,9 +389,13 @@ type AuthorizationResolution struct{}
 type AuthorizationStatus string
 type AuxiliaryUsage struct{Buckets map[UsageKind]TokenUsage}
 type BlockKind string
-type BrokerAccess struct{Session BrokerSessionRef "json:\"session\""; Catalogue BrokerCatalogueRef "json:\"catalogue\""; ExpiresAt time.Time "json:\"expires_at\""; Withdrawn bool "json:\"withdrawn,omitempty\""; Attempted []ToolCallID "json:\"attempted,omitempty\""; Pending ToolCallID "json:\"pending,omitempty\""; IndependentTools []string "json:\"independent_tools\""; BrokerTools []string "json:\"broker_tools\""}
+type BrokerAccess struct{Session BrokerSessionRef "json:\"session\""; Connection BrokerConnectionRef "json:\"connection,omitempty\""; Catalogue BrokerCatalogueRef "json:\"catalogue\""; ExpiresAt time.Time "json:\"expires_at\""; Withdrawn bool "json:\"withdrawn,omitempty\""; Attempted []ToolCallID "json:\"attempted,omitempty\""; Pending ToolCallID "json:\"pending,omitempty\""; IndependentTools []string "json:\"independent_tools\""; BrokerTools []string "json:\"broker_tools\""; AdmittedSequence uint64 "json:\"admitted_sequence,omitempty\""; Current *BrokerHostAttempt "json:\"current,omitempty\""}
+type BrokerAttempt struct{Slot uint32 "json:\"slot\""; Sequence uint64 "json:\"sequence\""}
+type BrokerAttemptDisposition string
 type BrokerCatalogueRef string
+type BrokerConnectionRef string
 type BrokerCredentialCustody struct{}
+type BrokerHostAttempt struct{Attempt BrokerAttempt "json:\"attempt\""; CallID ToolCallID "json:\"call_id\""; Digest [32]byte "json:\"digest\""; Phase string "json:\"phase\""; Disposition BrokerAttemptDisposition "json:\"disposition,omitempty\""}
 type BrokerSessionRef string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}

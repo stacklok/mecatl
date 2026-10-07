@@ -31,7 +31,7 @@ func TestRetiredHostBrokerStateFailsBeforeActivationOrMutation(t *testing.T) {
 					sess.ExternalBinding = "persisted-old-binding"
 				}
 				if marker == "conflicting-pending" {
-					if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), time.Now().Add(time.Hour), nil); err != nil {
+					if err := sess.AdoptBrokerCatalogue(session.BrokerSessionRef(hostProofRef(1)), session.BrokerCatalogueRef(hostProofRef(2)), "", time.Now().Add(time.Hour), nil); err != nil {
 						t.Fatal(err)
 					}
 				}
