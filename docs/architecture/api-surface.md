@@ -100,11 +100,11 @@ v1 enforces required checks in the Go server (protovalidate runtime is deferred)
 | `POST /v1/sessions/{id}/fork` | `ForkSession` | history-carrying successor; optional ephemeral worktree selector and model overrides |
 | `GET /v1/models` | `ListModels` | JSON selectable-model inventory (available providers only, secret-free) |
 | `POST /v1/sessions/{id}/prompt` | start a run | `text/event-stream`; each event is `data: <proto Event as JSON>` |
-| `POST /v1/sessions/{id}/approve` | `Run.Approve` | resolves the paused ask (verdict or legacy `allow`) |
-| `POST /v1/sessions/{id}/cancel` | `Run.Cancel` | cancels the in-flight run |
+| `POST /v1/sessions/{id}/controls/resolve-ask` | `Service.ResolveRunAsk` | resolves the paused ask on the exact `expected_run_id` (`deny` / `allow_once` / `allow_always`) |
+| `POST /v1/sessions/{id}/controls/cancel` | `Service.CancelRun` | cancels the exact `expected_run_id` run |
 | `POST /v1/sessions/{id}/cancel-child` | `Run.CancelChild` | cancels ONE child of the in-flight run |
-| `POST /v1/sessions/{id}/steer` | `Service.Steer` | unary steer acknowledgement; a promoted follow-up returns its `run_id` and is drained in the background |
-| `POST /v1/sessions/{id}/cancel-steer` | `Service.CancelSteer` | retracts the pending steer bundle; optional strict `expected_run_id` guard |
+| `POST /v1/sessions/{id}/controls/steer` | `Service.SteerRun` | unary steer on the exact `expected_run_id` run; never promotes, a too-late or stale steer is `409 stale_run_control` |
+| `POST /v1/sessions/{id}/controls/cancel-steer` | `Service.CancelRunSteer` | retracts the pending steer bundle on the exact `expected_run_id` run |
 | `DELETE /v1/sessions/{id}` | `CloseSession` | frees the per-session engine slot |
 | `GET /v1/agents` · `/v1/skills` · `/v1/commands` · `/v1/soul` · `/v1/usermodel` | the inventory RPCs | read-only snapshots |
 | `GET /v1/mcp/resources` · `/v1/mcp/resources/read` · `/v1/mcp/prompts` · `POST /v1/mcp/prompts/get` · `GET /v1/mcp/sources` · `/v1/mcp/toolhive/groups` | MCP passthrough | mirrors the gRPC MCP family |

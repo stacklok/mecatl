@@ -1751,9 +1751,12 @@ record, the scheduler's `SetDeliverFireResult` callback
 (`deliverFireResult`, `internal/app/scheduler_delivery_run.go`) renders the
 outcome as a **fenced-untrusted** harness note (`renderFireDelivery` —
 `governance.FenceUntrusted` + `NeutraliseFraming`, never a live instruction), enqueues
-it to a DURABLE per-session pending-delivery queue (`port.DeliveryQueue`, a
-sidecar-backed `FileDeliveryQueue`; the exactly-once ledger is session-scoped and
-survives restart), and delivers it into the origin: an idle/completed/cancelled/
+it to a per-session pending-delivery queue (`port.DeliveryQueue`, built by
+`buildDeliveryQueue` in `internal/app/build.go`). With a local store directory it is
+the sidecar-backed `FileDeliveryQueue`, whose session-scoped exactly-once ledger
+survives restart; Redis-backed deployments, and a file queue that fails to build,
+use an in-memory queue whose pending notes are lost on restart. It then delivers
+the note into the origin: an idle/completed/cancelled/
 failed origin is driven through the existing `StartRunContent` → `loadAndReopen`
 funnel (recording the note as ordinary user history); a busy or awaiting origin
 keeps the note queued and the loop drains it at the next turn boundary
@@ -2017,9 +2020,10 @@ second queue or historical sweep.
 ## Caller identity
 
 Caller identity (ADR 0204, issue #367)
-threads *who asked* through the harness. It is **attribution, not isolation**:
-every durable artifact learns its owner, and nothing is yet refused on identity
-grounds. The thread has four segments.
+threads *who asked* through the harness. On its own it is **attribution**: every
+durable artifact learns its owner. Refusal on identity grounds comes only from
+[caller ownership enforcement](#caller-ownership-enforcement), which is active
+when an OIDC verifier is wired. The thread has four segments.
 
 **It enters at the edge, and only there.** `internal/adapter/server/authn.go`
 (`PrincipalValidator`) is the seam: the gRPC interceptor and the HTTP middleware

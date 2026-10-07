@@ -262,9 +262,10 @@ On the wire, `ResumeApproval` carries the three-way `verdict` enum; the legacy
 
 This ties directly to the API: the gRPC `Converse` stream carries the verdict in
 a `ResumeApproval` frame on the **same** stream emitting events (no out-of-band
-correlation), and the HTTP surface uses `POST /v1/sessions/{id}/approve`. Both
-land on `Run.Approve`. The `Service` keeps a registry of in-flight `*agent.Run`
-keyed by session id so the verdict reaches the right run
+correlation), and the HTTP surface uses `POST /v1/sessions/{id}/controls/resolve-ask`
+addressed by `expected_run_id` (`Service.ResolveRunAsk`, which resolves a live run
+through `Run.ResolveOrdinaryAsk` or a persisted awaiting run from its snapshot).
+The `Service` keeps a registry of in-flight `*agent.Run` keyed by session id so the verdict reaches the right run
 (`server/service.go`: `LookupRun`).
 
 ## Plan-approval gate
@@ -402,12 +403,12 @@ gRPC `Converse` controls or unary HTTP controls. The pieces:
   terminal outcome is reported inline as the `steer.outcome` ack
   (`promoted=true`) — never an orphaned relay, never an ack after close.
 - **The unary HTTP control pair** (`internal/adapter/server/http.go`).
-  `POST /v1/sessions/{id}/steer` and `POST
-  /v1/sessions/{id}/cancel-steer` call the same Service owners as gRPC. HTTP
-  stays deterministically unary when a terminal-race steer promotes: the JSON
-  acknowledgement carries the new `run_id`, while a request-detached relay
-  records and drains that run in the background before deregistering it. The
-  `http_steer` compatibility feature advertises this transport surface.
+  `POST /v1/sessions/{id}/controls/steer` and `POST
+  /v1/sessions/{id}/controls/cancel-steer` (`Service.SteerRun` /
+  `Service.CancelRunSteer`) address one exact `expected_run_id` run and never
+  promote: a steer that misses its run, including one that loses the terminal
+  race, returns `409 stale_run_control`. The `http_steer` and
+  `prompt_free_controls` compatibility features advertise these routes.
 - **The `message_id` watermark correlation.** Steer frames carry a
   client-minted `message_id` (`contracts/proto/mecatl/v1/harness.proto`). The
   engine inbox parks the id with the text and media in one mutex-guarded bundle.

@@ -224,6 +224,43 @@ the [subagents & teams](subagents-and-teams.md) 4-step child-ask model.
 `ReadOnlyShell` classifies a command line as read-only for plan-mode gating and
 is deliberately a SEPARATE, unchanged classifier.
 
+### Command-runner environment and credential grants
+
+Every command runner starts from the process environment minus secrets
+(`internal/adapter/envscrub`): all `MECATL_*` names, the provider, web-search, and
+forge credentials the harness knows (`DenyExact`), and secret-shaped names
+(`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_PASSWD`, `AWS_*`, `AZURE_*`,
+`GOOGLE_APPLICATION_CREDENTIALS`). The rest of the toolchain environment survives.
+
+An operator can deliberately restore named external CLI credentials with the
+operator-only `command_runner.environment.inherit` list in the user-global
+`settings.yaml` (`internal/adapter/permconfig`); a project-tier `command_runner:` block
+is ignored with a warning. Composition (`internal/app/command_runner.go`) applies the
+grant through `envscrub.ScrubWithInherited`, which restores only names that are present,
+listed, and not reserved. Which runners see a grant:
+
+| Runner | Granted names |
+| --- | --- |
+| Built-in main Shell runner, including local alternate-placement roots (`buildCommandRunnerForRoot`) | Yes |
+| Direct-write Subagent (`directWriteCommandRunner`, the parent's main runner) | Yes, by construction; this is not an isolation boundary |
+| Hardened child runners: read-only and isolated force-copy Subagents, Team members, Parallel branches (`newHardenedRunnerForRoot`) | No: `gitenv.Scrub(envscrub.Scrub(...))` |
+| Internal Git: fork-time and dirty-overlay Git (`internal/adapter/forker`), Git snapshots, worktree discovery | No: same unconditional scrub |
+| MicroVM manager operations (`internal/adapter/microvmmanager`) | No: `envscrub.Scrub` |
+| Custom placement providers | Not rewritten; the provider owns its complete `tool.Environment` |
+
+Harness credentials are never restorable: every `MECATL_*` name (including server and
+driver auth tokens), the provider and web-search keys in `envscrub.NonOverridableExact`,
+every environment name an operator credential reference points at
+(`Resolver.OperatorCredentialEnvironmentNames`: the credential-store key and MCP
+static-bearer/OAuth references), and `MCP_<SERVER>_TOKEN` for each configured MCP server.
+A grant names variables, never values; an absent granted name produces a name-only
+warning at startup.
+
+The scrub is name-based environment hygiene, not an OS sandbox. A granted credential is
+ambient authority for every main-shell command that permissions allow; it does not
+protect same-user files or processes. Operators who need stronger isolation use a
+dedicated OS identity or a container or VM sandbox.
+
 ### Workspace trust (`internal/app/trust.go`, `internal/adapter/workspacetrust`)
 
 Whether a *project's* contributions are admitted — the **project authority set** —

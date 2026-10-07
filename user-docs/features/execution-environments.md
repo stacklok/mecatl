@@ -80,11 +80,11 @@ removed before a command runs.
 
 ## Persistence and reattachment
 
-The environment identity is persisted with a session snapshot. Mecatl
-reconstructs local and no-FS environments. A non-local identity can be
-reattached only when the deployment supplies an `EnvironmentResolver`; a missing
-resolver, mismatched identity, or nil workspace returns an error instead of
-using a local workspace.
+The environment identity is persisted with a session snapshot. When a session
+resumes, Mecatl reattaches that exact identity through the deployment's
+placement provider. If the provider can't reattach it, or returns a different
+environment, the run fails with an error instead of falling back to a local
+workspace.
 
 ## Native Kubernetes lifecycle and retention
 

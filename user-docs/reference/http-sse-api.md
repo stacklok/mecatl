@@ -78,12 +78,12 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`DELETE /v1/sessions/{id}`|—|`204` — close the session, releasing its per-session resources (not physical stored-session deletion)|
 |`POST /v1/sessions/{id}/prompt`|`{text}`|`200` `text/event-stream` of events; rejected while failed-step retry intent is pending|
 |`POST /v1/sessions/{id}/retry`|no body|`200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible|
-|`POST /v1/sessions/{id}/approve`|`{ask_id, allow}`|`204`|
+|`POST /v1/sessions/{id}/controls/resolve-ask`|`{expected_run_id, ask_id, verdict, review_id?, guardrail_kind?}`; `verdict` is `deny`, `allow_once`, or `allow_always`|`200` `{run_id, ask_id}`; `409 stale_run_control` when the run is no longer live|
 |`POST /v1/sessions/{id}/plan:approve`|`{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}`|`200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](https://github.com/stacklok/mecatl/blob/7c7206e8d6a1d5bc76a258ba24c07cf2d34a6e03/docs/adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session|
-|`POST /v1/sessions/{id}/cancel`|—|`204`|
+|`POST /v1/sessions/{id}/controls/cancel`|`{expected_run_id}`|`200` `{run_id}`; `409 stale_run_control` when the run is no longer live|
 |`POST /v1/sessions/{id}/cancel-child`|`{child_id}`|`204`; `404` for an unknown / already-finished child|
-|`POST /v1/sessions/{id}/steer`|`{text?, parts?, message_id?, expected_run_id?}`; text or at least one part is required|`200` `{outcome, message_id?, promoted?, run_id?}`|
-|`POST /v1/sessions/{id}/cancel-steer`|optional `{message_id?, expected_run_id?}`|`200` `{outcome, message_id?}`|
+|`POST /v1/sessions/{id}/controls/steer`|`{expected_run_id, text?, parts?, message_id?}`; text or at least one part is required|`200` `{outcome, run_id, message_id}`; `409 stale_run_control` when the run is no longer live|
+|`POST /v1/sessions/{id}/controls/cancel-steer`|`{expected_run_id, message_id?}`|`200` `{outcome, run_id, message_id}`; `409 stale_run_control` when the run is no longer live|
 |`POST /v1/sessions/{id}/clear`|`{"worktree_selector":"..."}` optional|`201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement|
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
 
@@ -360,18 +360,25 @@ safe.
 
 ### Approve / deny a pending ask
 
+Run controls address one exact run. Every event a run emits carries that run's
+`run_id`; pass it as `expected_run_id`. Check for the `prompt_free_controls`
+feature before using the `controls/*` routes.
+
 When the stream emits a `permission.ask` with an `ask.ask_id`, resolve it on a
 **second** connection while the SSE stream is still open:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/approve \
-       -d '{"ask_id":"<ask_id-from-the-event>","allow":true}'
-# 204 No Content
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/resolve-ask \
+       -H 'Content-Type: application/json' \
+       -d '{"expected_run_id":"<run_id-from-the-event>","ask_id":"<ask_id-from-the-event>","verdict":"allow_once"}'
+{"run_id":"<run_id>","ask_id":"<ask_id>"}
 ```
 
-Set `"allow":false` to deny (the model receives the denial reason and adapts).
-If there is no in-flight run for the session you get `404`
-`{"error":"no in-flight run for session"}`.
+`verdict` is `allow_once`, `allow_always`, or `deny`. On a deny, the model
+receives the denial reason and adapts. A contextual guardrail ask also needs the
+`review_id` and `guardrail_kind` it was presented with. If the named run has
+finished or been replaced, the server returns `409` with the problem code
+`stale_run_control`.
 
 ### Approve a presented plan (`plan:approve`)
 
@@ -408,32 +415,34 @@ headless/cross-process composition of resume + continuation into one stream.
 ### Cancel a run
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel
-# 204 No Content
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/cancel \
+       -H 'Content-Type: application/json' \
+       -d '{"expected_run_id":"<run-id>"}'
+{"run_id":"<run-id>"}
 ```
 
-The run terminates with a `result` whose `stop` is `cancelled`. No in-flight run
-→ `404` `{"error":"no in-flight run for session"}`.
+The run terminates with a `result` whose `stop` is `cancelled`. If the named run
+is no longer live, the server returns `409 stale_run_control`.
 
 ### Steer a running session
 
 A steer injects operator input into an in-flight run. The run commits it at the
 next turn boundary, after any current model response and tool batch settle. HTTP
-clients use the unary `steer` and `cancel-steer` routes. gRPC clients use the
-`steer` and `steer_cancel` arms on the bidirectional `Converse` stream. ACP does
-not support steer.
+clients use the unary `controls/steer` and `controls/cancel-steer` routes. gRPC
+clients use the `steer` and `steer_cancel` arms on the bidirectional `Converse`
+stream. ACP does not support steer.
 
 Check for both the runtime `steer` capability and the `http_steer` compatibility
 feature before using the HTTP routes. The feature prevents clients from probing
 older servers by 404.
 
-Send text, multimodal parts, or both:
+Send text, multimodal parts, or both, addressed to the run by its `run_id`:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/steer \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/steer \
        -H 'Content-Type: application/json' \
-       -d '{"text":"Use the existing parser","message_id":"client-42","expected_run_id":"<run-id>"}'
-{"outcome":"accepted","message_id":"client-42"}
+       -d '{"expected_run_id":"<run-id>","text":"Use the existing parser","message_id":"client-42"}'
+{"outcome":"accepted","run_id":"<run-id>","message_id":"client-42"}
 ```
 
 The `parts` array uses the same `{kind, mime_type, data?, url?}` content blocks
@@ -443,37 +452,26 @@ as an HTTP prompt. The selected provider must support every supplied media kind.
 returns `accepted`, and later fragments return `appended`. The eventual `steer`
 event echoes the latest message ID as a watermark for the committed bundle.
 
-`expected_run_id` makes the operation strict. If that run is absent, has
-finished, or has been replaced, the server returns `409` with the problem code
-`stale_run_control`. It never promotes a strict steer to another run.
-
-Without `expected_run_id`, a steer that loses the terminal race is promoted to a
-new follow-up run. The response remains JSON, not SSE:
-
-```json
-{ "outcome": "too_late", "promoted": true, "run_id": "<new-run-id>" }
-```
-
-The server drains and records the promoted run in the background. Use the
-session watch API with the returned run ID when the client needs its events.
+A steer never moves to another run. If the named run is absent, has finished,
+has been replaced, or reaches its end before the steer can be committed, the
+server returns `409` with the problem code `stale_run_control`. To continue
+after that, send a new prompt.
 
 Retract a pending bundle before it reaches a turn boundary:
 
 ```sh
-$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel-steer \
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/controls/cancel-steer \
        -H 'Content-Type: application/json' \
-       -d '{"message_id":"cancel-42","expected_run_id":"<run-id>"}'
-{"outcome":"retracted","message_id":"cancel-42"}
+       -d '{"expected_run_id":"<run-id>","message_id":"cancel-42"}'
+{"outcome":"retracted","run_id":"<run-id>","message_id":"cancel-42"}
 ```
 
-An empty cancel-steer body is valid and unqualified. It returns
-`{"outcome":"none_pending"}` when no bundle can be retracted. A qualified
-cancel-steer returns `409 stale_run_control` when the named run is absent or no
-longer active.
+When no bundle can be retracted, the outcome is `none_pending`. A cancel-steer
+for a run that is absent or no longer active returns `409 stale_run_control`.
 
-Both HTTP routes decode JSON strictly. Unknown fields, trailing JSON, a missing
-steer payload, invalid content, and an overlong `message_id` return `400`.
-Bodies larger than 32 MiB return `413`. Stale strict controls return `409`.
+All `controls/*` routes decode JSON strictly. Unknown fields, trailing JSON, a
+missing `expected_run_id`, a missing steer payload, invalid content, and an
+overlong `message_id` return `400`. Bodies larger than 32 MiB return `413`.
 
 ### ACP over stdio (`mecated acp`)
 
