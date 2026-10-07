@@ -274264,6 +274264,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791378112328,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c",
+          "message": "docs: ADR-reference cleanup, rule hygiene, module AGENTS.md files (#2148)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T08:55:44-04:00",
+          "tree_id": "16f395ee7d85d4153b40f184cb41b405fbef72c9",
+          "url": "https://github.com/stacklok/mecatl/commit/443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c"
+        },
+        "date": 1791378818372,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -397736,6 +397770,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791378813767,
+  "lastUpdate": 1791378819162,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
