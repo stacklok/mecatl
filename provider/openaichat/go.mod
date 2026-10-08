@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
