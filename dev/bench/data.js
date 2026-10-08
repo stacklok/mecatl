@@ -285362,6 +285362,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791482828929,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e692a049648c172dac3bb4b377c8242489a0031d",
+          "message": "chore(deps): update typescript sdk (#1956)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T20:24:45+02:00",
+          "tree_id": "d6aff9c6d60c4681b9d1321e498632a19813a41f",
+          "url": "https://github.com/stacklok/mecatl/commit/e692a049648c172dac3bb4b377c8242489a0031d"
+        },
+        "date": 1791484621967,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -413577,6 +413611,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791484618826,
+  "lastUpdate": 1791484622936,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
