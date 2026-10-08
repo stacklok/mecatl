@@ -292,6 +292,87 @@ func TestDreamSanitizedDismissAndRegenerationBack(t *testing.T) {
 	}
 }
 
+func TestDreamPlanPresentationSeparatesBlocksAndStylesFields(t *testing.T) {
+	plan := &client.DreamPlan{
+		Target: client.DreamTargetProjectMemory, PlannedOperationCount: 1, SourceCount: 2,
+		Operations: []client.DreamOperation{{
+			Kind: "synthesis", ExactDuplicateEligible: true,
+			Survivor: client.DreamParticipant{Key: "keep", Value: "survivor value", Description: "survivor description"},
+			Sources: []client.DreamParticipant{
+				{Key: "drop-1", Value: "source value", Description: "source description"},
+				{Key: "drop-2", Value: "second value", Description: "second description"},
+			},
+			Replacement: client.DreamReplacement{Value: "replacement", Description: "replacement description"}, Reason: "because",
+		}},
+	}
+	for _, th := range []theme.Theme{theme.New("aztec", theme.AztecPalette()), theme.Solar()} {
+		t.Run(th.Name, func(t *testing.T) {
+			rows := renderDreamPlan(th, plan, 120, true, true, "")
+			styled := strings.Join(rows, "\n")
+			if !strings.Contains(styled, th.Style("overlayTitle").Render("operation 1 — kind: synthesis")) {
+				t.Fatal("operation title did not use the heading style")
+			}
+			for _, want := range []string{
+				th.Style("muted").Render("target:") + th.Style("toolArgs").Render(" project memory"),
+				"│ " + th.Style("muted").Render("survivor key:") + th.Style("toolArgs").Render(" \"keep\""),
+			} {
+				if !strings.Contains(styled, want) {
+					t.Errorf("missing typed label/value styles %q", want)
+				}
+			}
+			plain := strings.Split(ansi.Strip(styled), "\n")
+			index := func(prefix string) int {
+				for i, line := range plain {
+					if strings.HasPrefix(line, prefix) {
+						return i
+					}
+				}
+				t.Fatalf("missing %q in %q", prefix, plain)
+				return 0
+			}
+			for _, prefix := range []string{"Exact duplicates", "operation 1", "│ survivor key", "│ source 1 key", "│ source 2 key", "│ replacement value", "│ reason"} {
+				i := index(prefix)
+				if i == 0 || plain[i-1] != "" {
+					t.Errorf("%q is not separated by a blank row: %q", prefix, plain)
+				}
+			}
+		})
+	}
+}
+
+func TestDreamPlanFieldsRetainTrustMarkersAndGeometry(t *testing.T) {
+	payload := "hostile: value\n" + strings.Repeat("e\u0301👩‍👩‍👧‍👦界 ", 8)
+	plan := &client.DreamPlan{Operations: []client.DreamOperation{{
+		Kind: "synthesis", Survivor: client.DreamParticipant{Key: payload, Value: payload, Description: payload},
+		Sources:     []client.DreamParticipant{{Key: payload, Value: payload, Description: payload}},
+		Replacement: client.DreamReplacement{Value: payload, Description: payload}, Reason: payload,
+	}}}
+	th := theme.New("aztec", theme.AztecPalette())
+	for _, width := range []int{16, 24, 80} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			rows := dreamPhysicalRows(renderDreamPlan(th, plan, width, true, true, ""), width)
+			for _, row := range rows {
+				if ansi.StringWidth(row) > width {
+					t.Fatalf("row exceeds width %d: %q", width, row)
+				}
+				plain := ansi.Strip(row)
+				if strings.Contains(plain, "hostile:") || strings.Contains(plain, "👩") || strings.Contains(plain, "e\u0301") {
+					if !strings.HasPrefix(plain, "│ ") {
+						t.Fatalf("untrusted value lost its frame: %q", plain)
+					}
+				}
+			}
+			plain := ansi.Strip(strings.Join(rows, "\n"))
+			compact := strings.NewReplacer(" ", "", "\n", "", "│", "").Replace(plain)
+			for _, want := range []string{"hostile:value", "👩\\u200d👩\\u200d👧\\u200d👦", "replacementvalue:", "reason:"} {
+				if !strings.Contains(compact, want) {
+					t.Errorf("missing complete field content %q", want)
+				}
+			}
+		})
+	}
+}
+
 func TestDreamReaderLongIndicatorFitsCard(t *testing.T) {
 	plan := &client.DreamPlan{Operations: make([]client.DreamOperation, 130)}
 	s := &dreamState{view: dreamReview, plan: plan, viewport: new(bounded.Viewport), deps: surfaceDeps{theme: theme.New("aztec", theme.AztecPalette()), marks: defaultHelpKeys()}}

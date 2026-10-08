@@ -515,7 +515,7 @@ func dreamReaderLines(st dreamState, caps client.Capabilities, width int) []stri
 			capability = caps.ManualDream.UserModel
 		}
 	}
-	return renderDreamPlan(st.plan, width, capability.Decide, st.canGenerate(), capability.UnavailableReason)
+	return renderDreamPlan(st.deps.theme, st.plan, width, capability.Decide, st.canGenerate(), capability.UnavailableReason)
 }
 
 func dreamPhysicalRows(lines []string, width int) []string {
@@ -557,24 +557,32 @@ func dreamTargetLine(selected bool, label string, capability client.DreamTargetC
 	return mark + label + " — " + state
 }
 
-func renderDreamPlan(plan *client.DreamPlan, width int, canDecide, canGenerate bool, unavailableReason string) []string {
+func renderDreamPlan(th theme.Theme, plan *client.DreamPlan, width int, canDecide, canGenerate bool, unavailableReason string) []string {
 	if plan == nil {
 		return []string{"No plan returned."}
 	}
 	budget := max(1, width)
-	lines := []string{"target: " + dreamTargetLabel(plan.Target), "expires: " + plan.ExpiresAt.Format("2006-01-02 15:04:05 MST"), fmt.Sprintf("planned operations: %d  planned sources: %d", plan.PlannedOperationCount, plan.SourceCount), "Exact duplicates keep the survivor unchanged.", "Synthesized replacements write the displayed replacement and retire displayed sources atomically per operation."}
-	for i := range lines {
-		lines[i] = wrapCardText(lines[i], budget)
+	lines := []string{
+		dreamInfoField(th, "target", dreamTargetLabel(plan.Target)),
+		dreamInfoField(th, "expires", plan.ExpiresAt.Format("2006-01-02 15:04:05 MST")),
+		dreamInfoField(th, "planned operations", strconv.Itoa(plan.PlannedOperationCount)),
+		dreamInfoField(th, "planned sources", strconv.Itoa(plan.SourceCount)),
+		"", "Exact duplicates keep the survivor unchanged.", "Synthesized replacements write the displayed replacement and retire displayed sources atomically per operation.",
 	}
 	for i, op := range plan.Operations {
-		lines = append(lines, "", wrapCardText(fmt.Sprintf("operation %d — kind: %s", i+1, op.Kind), budget), fmt.Sprintf("exact-duplicate eligible: %t", op.ExactDuplicateEligible))
-		lines = append(lines, renderDreamParticipant("survivor", op.Survivor, width)...)
+		lines = append(lines, "", th.Style("overlayTitle").Render(wrapCardText(fmt.Sprintf("operation %d — kind: %s", i+1, op.Kind), budget)))
+		lines = append(lines, dreamInfoField(th, "exact-duplicate eligible", strconv.FormatBool(op.ExactDuplicateEligible)))
+		lines = append(lines, "")
+		lines = append(lines, renderDreamParticipant(th, "survivor", op.Survivor, width)...)
 		for j, source := range op.Sources {
-			lines = append(lines, renderDreamParticipant(fmt.Sprintf("source %d", j+1), source, width)...)
+			lines = append(lines, "")
+			lines = append(lines, renderDreamParticipant(th, fmt.Sprintf("source %d", j+1), source, width)...)
 		}
-		lines = append(lines, framedDreamField("replacement value", op.Replacement.Value, width-12)...)
-		lines = append(lines, framedDreamField("replacement description", op.Replacement.Description, width-12)...)
-		lines = append(lines, framedDreamField("reason", op.Reason, width-12)...)
+		lines = append(lines, "")
+		lines = append(lines, framedDreamField(th, "replacement value", op.Replacement.Value, width-12)...)
+		lines = append(lines, framedDreamField(th, "replacement description", op.Replacement.Description, width-12)...)
+		lines = append(lines, "")
+		lines = append(lines, framedDreamField(th, "reason", op.Reason, width-12)...)
 	}
 	var actions []string
 	if canDecide {
@@ -592,13 +600,17 @@ func renderDreamPlan(plan *client.DreamPlan, width int, canDecide, canGenerate b
 	return append(lines, append([]string{""}, actions...)...)
 }
 
-func renderDreamParticipant(label string, p client.DreamParticipant, width int) []string {
-	lines := framedDreamField(label+" key", p.Key, width-12)
-	lines = append(lines, framedDreamField(label+" value", p.Value, width-12)...)
-	return append(lines, framedDreamField(label+" description", p.Description, width-12)...)
+func dreamInfoField(th theme.Theme, label, value string) string {
+	return th.Style("muted").Render(label+":") + th.Style("toolArgs").Render(" "+terminaltext.Sanitize(value))
 }
 
-func framedDreamField(label, value string, width int) []string {
+func renderDreamParticipant(th theme.Theme, label string, p client.DreamParticipant, width int) []string {
+	lines := framedDreamField(th, label+" key", p.Key, width-12)
+	lines = append(lines, framedDreamField(th, label+" value", p.Value, width-12)...)
+	return append(lines, framedDreamField(th, label+" description", p.Description, width-12)...)
+}
+
+func framedDreamField(th theme.Theme, label, value string, width int) []string {
 	width = max(12, width)
 	var out []string
 	for _, physical := range strings.Split(value, "\n") {
@@ -608,11 +620,13 @@ func framedDreamField(label, value string, width int) []string {
 			wrapped = []string{"\"\""}
 		}
 		for i, line := range wrapped {
-			prefix := "│   "
 			if i == 0 {
-				prefix = "│ " + label + ": "
+				// Keep the provenance marker literal and unstyled: dreamPhysicalRows
+				// recognizes it before rewrapping model-derived values.
+				out = append(out, "│ "+th.Style("muted").Render(label+":")+th.Style("toolArgs").Render(" "+line))
+				continue
 			}
-			out = append(out, prefix+line)
+			out = append(out, "│   "+th.Style("toolArgs").Render(line))
 		}
 	}
 	return out
