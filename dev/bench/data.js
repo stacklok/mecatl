@@ -317408,6 +317408,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791491003492,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "34f485da08490d538944314966b98a76bb333190",
+          "message": "feat: add provider-aware model aliases and delegation selectors (#2019)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T16:07:38-07:00",
+          "tree_id": "8fe714b17430fd45c48610c52418bf2825d0e51b",
+          "url": "https://github.com/stacklok/mecatl/commit/34f485da08490d538944314966b98a76bb333190"
+        },
+        "date": 1791501556420,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3263.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 63,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -415144,6 +415183,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791501553731,
+  "lastUpdate": 1791501557088,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
