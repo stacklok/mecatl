@@ -2,18 +2,22 @@
 // @vitest-environment happy-dom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import { routeTree } from "../../routeTree.gen";
 import { KnowledgeWorkspace } from "./knowledge-workspace";
 import { resetPublicationNotice } from "./learned-skills";
 
-vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children, params }: { children: React.ReactNode; params?: { item: string } }) => (
-    <a href={`/workspace/skills/configured/${params?.item}`}>{children}</a>
-  ),
-}));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+function testRouter() {
+  return createRouter({
+    history: createMemoryHistory({ initialEntries: ["/workspace/skills"] }),
+    routeTree,
+  });
+}
 
 let root: Root | undefined;
 
@@ -56,11 +60,13 @@ async function render(runtime: unknown) {
   root = createRoot(container);
   await act(async () =>
     root?.render(
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
-        <KnowledgeWorkspace onItemChange={() => {}} onViewChange={() => {}} view="configured" />
-      </QueryClientProvider>,
+      <RouterContextProvider router={testRouter()}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <KnowledgeWorkspace onItemChange={() => {}} onViewChange={() => {}} view="configured" />
+        </QueryClientProvider>
+      </RouterContextProvider>,
     ),
   );
   await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
@@ -121,16 +127,18 @@ async function renderLearned(handler: (request: Request, calls: string[]) => unk
   root = createRoot(container);
   await act(async () =>
     root?.render(
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
-        <KnowledgeWorkspace
-          item="skill-1"
-          onItemChange={() => {}}
-          onViewChange={() => {}}
-          view="learned"
-        />
-      </QueryClientProvider>,
+      <RouterContextProvider router={testRouter()}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <KnowledgeWorkspace
+            item="skill-1"
+            onItemChange={() => {}}
+            onViewChange={() => {}}
+            view="learned"
+          />
+        </QueryClientProvider>
+      </RouterContextProvider>,
     ),
   );
   await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
@@ -257,11 +265,13 @@ it("warns when an action was recorded but publishing it failed", async () => {
   root = createRoot(remounted);
   await act(async () =>
     root?.render(
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
-        <KnowledgeWorkspace onItemChange={() => {}} onViewChange={() => {}} view="learned" />
-      </QueryClientProvider>,
+      <RouterContextProvider router={testRouter()}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <KnowledgeWorkspace onItemChange={() => {}} onViewChange={() => {}} view="learned" />
+        </QueryClientProvider>
+      </RouterContextProvider>,
     ),
   );
   await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));

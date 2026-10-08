@@ -1,25 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AuthGate } from "./auth-gate";
-
-vi.mock("@mecatl-studio/contracts/query", () => ({
-  getAuthSessionOptions: () => ({}),
-  getPublicStatusOptions: () => ({}),
-}));
-vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ isPending: true, isError: false }),
-  useQueryClient: () => ({}),
-}));
 
 describe("AuthGate frame", () => {
   it("keeps one empty global status slot and one card in the initial public shell", () => {
     const markup = renderToStaticMarkup(
-      <AuthGate>
-        <div data-ready-route="">Workspace route</div>
-      </AuthGate>,
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthGate>
+          <div data-ready-route="">Workspace route</div>
+        </AuthGate>
+      </QueryClientProvider>,
     );
     const slot = markup.indexOf("data-shell-global-status");
     const gradient = markup.indexOf("data-shell-gradient");

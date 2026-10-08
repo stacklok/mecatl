@@ -9,7 +9,7 @@ import {
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
-import { studioBuildId } from "./build-info.js";
+import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
 import type { ActivityLimits } from "./config.js";
 import { requestBodyLimit } from "./http/body-limit.js";
 import type { AppEnv } from "./http/env.js";
@@ -98,6 +98,8 @@ export interface AppDependencies {
   readonly storage?: StorageService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
+  /** The release stamp reported by About; defaults to the one baked into the bundle. */
+  readonly studioBuildId?: string;
   /** How long a feature request waits for compatibility negotiation before `503`. */
   readonly readinessTimeoutMs?: number;
   readonly security?: SecurityOptions;
@@ -106,6 +108,7 @@ export interface AppDependencies {
 }
 
 export function createApp(dependencies: AppDependencies = {}) {
+  const studioBuildId = dependencies.studioBuildId ?? bakedStudioBuildId;
   // Every route's request validation fails as RFC 9457 problem details, never
   // the validator's raw error object; a route may still install its own hook.
   const app = new OpenAPIHono<AppEnv>({

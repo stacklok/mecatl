@@ -11,13 +11,28 @@ export const csrfCookieName = "studio_csrf";
 export const csrfHeaderName = "X-Studio-CSRF";
 
 const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-let recoveryState: RecoveryState = {
+const initialRecoveryState: RecoveryState = {
   identityEpoch: 0,
   phase: "checking",
   workspaceMounted: false,
 };
+let recoveryState = initialRecoveryState;
 let recoveryInterceptorInstalled = false;
 const authFailureListeners = new Set<() => void>();
+
+/**
+ * Returns this module and the shared generated client to their import-time
+ * state: recovery phase, auth listeners and every installed interceptor. Test
+ * hooks call it so one test file's interceptors never reach the next.
+ */
+export function resetApiClientState(): void {
+  recoveryState = initialRecoveryState;
+  recoveryInterceptorInstalled = false;
+  authFailureListeners.clear();
+  client.interceptors.request.clear();
+  client.interceptors.response.clear();
+  client.interceptors.error.clear();
+}
 
 export function setRequestRecoveryState(state: RecoveryState): void {
   recoveryState = state;
