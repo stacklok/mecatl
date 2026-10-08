@@ -1,5 +1,5 @@
 // Command allocsgate is the allocs/op regression gate for the perf CI workflow
-// (docs/adr/0019-perf-tracking.md Phase 3; .github/workflows/perf.yml). It compares
+// (docs/perf-tracking.md "Regression gating"; .github/workflows/perf.yml). It compares
 // two `go test -bench -benchmem` outputs and FAILS (exit 1) iff some benchmark's
 // allocs/op rose beyond an epsilon (delta >= 1 whole alloc AND > 2 %).
 //

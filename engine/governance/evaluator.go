@@ -157,9 +157,10 @@ func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) 
 		return Rule{}, false
 	}
 	return Rule{
-		// ScopeUser is the LOWEST precedence (largest Scope value); a learned allow
-		// can never out-rank a configured rule. Precedence only breaks SAME-effect
-		// ties anyway, and deny/ask always beat allow regardless of scope.
+		// ScopeUser is the lowest configured precedence (only ScopeBuiltinDefault
+		// sits below it); a learned allow can never out-rank a configured rule.
+		// Precedence only breaks SAME-effect ties anyway, and deny/ask always beat
+		// allow regardless of scope.
 		Scope:   ScopeUser,
 		Tool:    tool,
 		Pattern: pattern,

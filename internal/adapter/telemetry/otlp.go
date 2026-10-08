@@ -283,7 +283,8 @@ func newMetricPushReader(ctx context.Context, cfg OTLPConfig) (*sdkmetric.Period
 // Prometheus text exposition format, suitable for mounting at /metrics. It is a
 // thin wrapper over promhttp that keeps the handler construction (and the
 // promhttp.HandlerOpts choice) in one place; the composition root still names
-// *prometheus.Registry to wire the handler, which architecture.md §2 permits.
+// *prometheus.Registry to wire the handler, which the layering rules permit
+// for composition code (docs/architecture.md).
 func MetricsHandler(reg *prometheus.Registry) http.Handler {
 	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }

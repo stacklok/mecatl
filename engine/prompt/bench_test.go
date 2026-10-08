@@ -15,7 +15,7 @@ var sinkLayered prompt.Layered
 // BenchmarkBuild measures the per-turn prompt assembly cost over the small,
 // representative catalog the unit tests use (Read/Edit/Shell). This is the hot
 // path: prompt.Build runs once per turn inside Engine.buildRequest. allocs/op is
-// the gated KPI (see docs/adr/0019-perf-tracking.md).
+// the gated KPI (see docs/perf-tracking.md).
 func BenchmarkBuild(b *testing.B) {
 	cfg := prompt.Config{
 		Tools: sampleTools(),

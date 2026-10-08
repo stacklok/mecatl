@@ -840,8 +840,8 @@ tasks:
   bench:
     desc: |
       Run the hot-path testing.B microbenchmarks on the engine packages
-      (manual / CI target — NOT part of `task test`). This is Phase 1 of the
-      perf-regression roadmap (docs/adr/0019-perf-tracking.md): it fills the
+      (manual / CI target — NOT part of `task test`). This is the microbenchmark
+      half of perf-regression tracking (docs/perf-tracking.md): it fills the
       allocs/op baseline and is the source a `benchstat` comparison runs over.
       Capture two runs and diff them with benchstat
       (go install golang.org/x/perf/cmd/benchstat@latest), e.g.:
@@ -866,9 +866,9 @@ tasks:
   perf:scenarios:
     desc: |
       Run the OFFLINE, deterministic scenario benchmarks (manual / CI target —
-      NOT part of `task test`). This is Phase 2 of the perf-regression roadmap
-      (docs/adr/0019-perf-tracking.md): whole-loop runs through the real engine over
-      mockllm + memfs/memstore that catch the failure modes the Phase 1
+      NOT part of `task test`). This is the scenario half of perf-regression
+      tracking (docs/perf-tracking.md): whole-loop runs through the real engine over
+      mockllm + memfs/memstore that catch the failure modes the
       microbenchmarks miss — long-session allocation budget, goroutine hygiene
       under delegation, token/cache regressions, compaction churn — PLUS the
       mecatui scrollback render path.
@@ -916,7 +916,7 @@ tasks:
   pgo:collect:
     desc: |
       Collect a PROVISIONAL OFFLINE CPU profile for Profile-Guided Optimization
-      (Phase 4 of the perf-regression roadmap, docs/adr/0019-perf-tracking.md).
+      (docs/perf-tracking.md, "Profile-guided optimization").
       Manual target — NOT part of `task build`/`task test`.
 
       It runs the offline scenario + engine-agent benchmarks under CPU profiling
@@ -932,7 +932,7 @@ tasks:
       no real provider, SSE, or network coverage in it. It is a MECHANISM check
       and a local experiment, NOT the profile to commit as cmd/mecated/default.pgo.
       The production refresh path (curl mecated's loopback pprof endpoint, merge,
-      drop in cmd/mecated/default.pgo) is documented in perf-tracking.md Phase 4.
+      drop in cmd/mecated/default.pgo) is documented in perf-tracking.md "Profile-guided optimization".
 
       The merge is SAMPLE-WEIGHTED: -benchtime=Nx fixes the ITERATION count, not
       wall-time, and the whole-loop scenarios run ~100x longer per op than the
@@ -940,7 +940,7 @@ tasks:
       That is fine here — the scenarios are the more production-representative
       workload, and this is a throwaway provisional artifact, so balance is a
       non-goal. (The PRODUCTION path is different: a fixed `?seconds=N` on every
-      capture DOES equalize wall-time there — see perf-tracking.md Phase 4.)
+      capture DOES equalize wall-time there — see perf-tracking.md "Profile-guided optimization".)
     vars:
       PGOITERS: '{{.PGOITERS | default "200x"}}'
     cmds:
@@ -965,7 +965,7 @@ tasks:
           echo "  Trained on the mockllm path only: NO real provider / SSE /"
           echo "  network coverage. This is NOT the production profile."
           echo "  Do NOT commit it as cmd/mecated/default.pgo."
-          echo "  Production refresh path: docs/adr/0019-perf-tracking.md Phase 4."
+          echo "  Production refresh path: docs/perf-tracking.md, Profile-guided optimization."
           echo "============================================================"
         silent: true
 

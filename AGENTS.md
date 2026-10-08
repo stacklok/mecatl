@@ -34,7 +34,8 @@ go run ./cmd/mecademo    # offline session smoke test
 The root is one Go module; `engine/` is its own. Root `go test ./...` does not cross
 the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
 [`internal/`](internal/AGENTS.md), and [`website/`](website/AGENTS.md) have their own
-`AGENTS.md`.
+`AGENTS.md`. When the code doesn't explain how parts fit together, read the chapter
+for that area from [`docs/READING.md`](docs/READING.md).
 
 ## Implementation boundaries
 
@@ -81,8 +82,11 @@ the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
 - Stage explicit paths, never `git add -A`. End commits with `Co-Authored-By`.
   Humans alone merge PRs.
 - Generated files change only via `task generate`, never by hand.
+- `docs/drafts/` holds proposals and work records, not current behavior; don't rely
+  on it for how Mecatl works.
 - Markdown changes run `task docs`. User-facing changes update the owning
   `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
+  Changing behavior a `docs/` chapter describes updates that chapter.
 
 Path-scoped invariants live in `.claude/rules/*.md`, including test isolation
 (composition helpers and a test-owned `UserModelDir`).
