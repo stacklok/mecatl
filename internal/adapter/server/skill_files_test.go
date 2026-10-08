@@ -213,19 +213,19 @@ func TestHTTPSkillFiles(t *testing.T) {
 	}
 
 	var read mecatlv1.ReadSkillFileResponse
-	path := "/v1/skills/files/content?name=deploy&file=" + url.QueryEscape("references/api.md")
+	path := "/v1/skills/files/read?name=deploy&file=" + url.QueryEscape("references/api.md")
 	if code := httpGet(t, srv, path, &read); code != 200 || read.GetContent() != "API notes" {
 		t.Fatalf("read status/content = %d %q", code, read.GetContent())
 	}
 
 	for path, want := range map[string]int{
-		"/v1/skills/files":                                                  400, // name missing
-		"/v1/skills/files?name=nope":                                        404,
-		"/v1/skills/files/content?name=deploy":                              400, // file missing
-		"/v1/skills/files/content?name=deploy&file=..%2Fetc%2Fpasswd":       400,
-		"/v1/skills/files/content?name=deploy&file=references%2Fmissing.md": 404,
-		"/v1/skills/files/content?name=deploy&file=big%2Fhuge.txt":          413,
-		"/v1/skills/files/content?name=deploy&file=data%2Fblob.bin":         422,
+		"/v1/skills/files":                                               400, // name missing
+		"/v1/skills/files?name=nope":                                     404,
+		"/v1/skills/files/read?name=deploy":                              400, // file missing
+		"/v1/skills/files/read?name=deploy&file=..%2Fetc%2Fpasswd":       400,
+		"/v1/skills/files/read?name=deploy&file=references%2Fmissing.md": 404,
+		"/v1/skills/files/read?name=deploy&file=big%2Fhuge.txt":          413,
+		"/v1/skills/files/read?name=deploy&file=data%2Fblob.bin":         422,
 	} {
 		var ignored mecatlv1.ReadSkillFileResponse
 		if code := httpGet(t, srv, path, &ignored); code != want {

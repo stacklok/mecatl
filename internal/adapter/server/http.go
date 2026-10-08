@@ -117,7 +117,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/agents", h.listAgents)
 	h.mux.HandleFunc("GET /v1/skills", h.listSkills)
 	h.mux.HandleFunc("GET /v1/skills/files", h.listSkillFiles)
-	h.mux.HandleFunc("GET /v1/skills/files/content", h.readSkillFile)
+	h.mux.HandleFunc("GET /v1/skills/files/read", h.readSkillFile)
 	h.mux.HandleFunc("GET /v1/skills/learned", h.listLearnedSkills)
 	h.mux.HandleFunc("GET /v1/skills/learned/changes", h.listSkillChanges)
 	h.mux.HandleFunc("GET /v1/skills/learned/{id}", h.getLearnedSkill)
@@ -2080,7 +2080,7 @@ func (h *HTTPHandler) listSkillFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ListSkillFilesResponse{Files: files})
 }
 
-// readSkillFile handles GET /v1/skills/files/content?name=&file=.
+// readSkillFile handles GET /v1/skills/files/read?name=&file=.
 func (h *HTTPHandler) readSkillFile(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	name, file := query.Get("name"), query.Get("file")

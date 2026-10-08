@@ -799,7 +799,7 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "ReadSkillFile",
     grpc: grpc(HarnessService.method.readSkillFile),
-    http: http("GET", "/v1/skills/files/content", [], ["name", "file"], "none", "json"),
+    http: http("GET", "/v1/skills/files/read", [], ["name", "file"], "none", "json"),
   }),
   rpc({
     key: "HarnessService.GetSoul",

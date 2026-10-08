@@ -48,44 +48,47 @@ import (
 // invalid logical name is InvalidArgument and never content; an unknown file is NotFound;
 // a non-text file is refused rather than returned as repaired garbage.
 // SPEC: a learned skill lists exactly one file, "SKILL.md", and its body is the
-// published version's body. (No test yet: needs the real catalog, not a fake source.)
-// SPEC: files resolve through the caller's own skill view. (No test yet; same reason.)
-// Tested already: listing order and sizes, unknown skill, reading SKILL.md and an asset,
+// published version's body. Tested through the real daemon wiring in internal/app
+// (TestBuildSkillFilesResolveThroughTheCallersOwnView) and the real catalog in
+// engine/adapter/skillfs (TestSourceForPartitionsIsTheCallersOwnView).
+// SPEC: files resolve through the caller's own skill view: another caller's learned skill is
+// NotFound. Tested by the same two tests.
+// Also tested here: listing order and sizes, unknown skill, reading SKILL.md and an asset,
 // invalid names, unknown file, oversize, non-text, the HTTP mirror, and the cap constant.
 //
-// ASSUMPTION: the RPC names, and calling the body "SKILL.md" rather than exposing it
-// through a separate GetSkillBody.
-// ASSUMPTION: access class KindDerived (the skill name can only come from ListSkills,
-// which is already classified), not KindSharedInfrastructure. Do not copy ListSkills'
-// classification rationale, "identical for every caller": it predates caller-published
-// learned skills and is no longer accurate for the live view. The two entries go in
-// classification.go's serviceAccessTable, beside ListSkills.
-// ASSUMPTION: an oversize file is an error (ResourceExhausted), not a truncated success
-// with a flag.
-// ASSUMPTION: only name and size are exposed per file; the engine's advisory
-// "executable" bit is dropped so a client never implies a skill file can be run.
+// DECISION: the RPCs are named ListSkillFiles and ReadSkillFile, and the body is exposed as the
+// file "SKILL.md" rather than through a separate GetSkillBody. Reason: a client lists and shows
+// one uniform set of files. Rejected: an engine-aligned GetSkill plus ReadSkillAsset, which makes
+// every client special-case the body.
+// DECISION: access class KindCallerOwned: the boundary resolves the skill through the verified
+// caller's own view and treats a skill outside it as absent, like ListLearnedSkills. Rejected:
+// KindDerived (the name is not an unforgeable handle, a caller can ask for any name) and
+// KindSharedInfrastructure (the live view is no longer identical for every caller, so ListSkills'
+// own rationale does not carry over). The two entries sit in classification.go beside ListSkills.
+// DECISION: an oversize file is an error (ResourceExhausted, HTTP 413), not a truncated success
+// with a flag. Reason: a truncated file would look complete to a client that ignores the flag.
+// DECISION: only name and size are exposed per file; the engine's advisory "executable" bit is
+// dropped so a client never implies a skill file can be run.
 // DECISION: both RPCs also have HTTP routes, GET /v1/skills/files?name= and
-// GET /v1/skills/files/content?name=&file=, with the file name as a query parameter.
-// Reason: the SDK's RPC catalog pins the exact set of gRPC-only methods (ADR 0304), so a
-// unary read RPC cannot ship without a route; and the natural GET /v1/skills/{name}/files
-// panics at registration, because ServeMux sees it as ambiguous with
-// GET /v1/skills/learned/{id}. Logical file names also contain slashes, which are awkward
-// in a path segment. Rejected: gRPC only, and a {name}/files path.
-//
-// ASSUMPTION: the HTTP shape above (literal "files" segment, query parameters) is the one
-// to keep.
+// GET /v1/skills/files/read?name=&file=, with the file name as a query parameter (the precedent is
+// GET /v1/mcp/resources/read?server=&uri=). Reason: the SDK's RPC catalog pins the exact set of
+// gRPC-only methods (ADR 0304), so a unary read RPC cannot ship without a route; and the natural
+// GET /v1/skills/{name}/files panics at registration, because ServeMux sees it as ambiguous with
+// GET /v1/skills/learned/{id}. Logical file names also contain slashes, which are awkward in a
+// path segment. Rejected: gRPC only, and a {name}/files path.
 //
 // TERM: SKILL.md — in this API, the skill's instruction BODY: the text after the
 // frontmatter. Avoid: "the file on disk"; the frontmatter (name, description, license,
 // allowed-tools) is not part of it.
-// ASSUMPTION: SKILL.md should be the frontmatter-stripped body, because tool.SkillSource
-// has no accessor for the raw file and the Skill tool itself loads only the body. The
-// cost: the Files view cannot show a skill's frontmatter, and the listed size is the
-// body's size, not the file's size on disk.
-// ASSUMPTION: a new capability flag (skill_files) gates the feature, rather than
-// reusing the skills flag, so a client can tell "skills exist" from "files are readable"
-// on an older daemon.
-//
+// DECISION: SKILL.md is the frontmatter-stripped body, because tool.SkillSource has no accessor
+// for the raw file and the Skill tool itself loads only the body. Accepted cost: the Files view
+// cannot show a skill's frontmatter, and the listed size is the body's size, not the file's size
+// on disk.
+// DECISION: no new feature identifier or capability flag gates these RPCs. Reason: no client
+// runs against a daemon that predates them; Studio and the daemon ship together, and against an
+// older daemon the call simply fails. Rejected: a
+// skill_files entry in the compatibility features, which would be a permanent public string
+// (features are stable once published) with nothing to detect yet.
 
 const (
 	// skillBodyFile is the logical name under which the instruction body is listed and read.
