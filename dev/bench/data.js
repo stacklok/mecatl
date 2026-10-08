@@ -315820,6 +315820,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791482116015,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "51d5842054db946002743a7f9644b64e02b51153",
+          "message": "fix(studio): make Badge identical to the prototype (#2212)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T19:45:32+02:00",
+          "tree_id": "cb852f95f87e096d0437a01814911d6190176f8c",
+          "url": "https://github.com/stacklok/mecatl/commit/51d5842054db946002743a7f9644b64e02b51153"
+        },
+        "date": 1791482832866,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 74,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -413100,6 +413139,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791482829682,
+  "lastUpdate": 1791482833997,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
