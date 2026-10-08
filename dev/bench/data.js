@@ -284288,6 +284288,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791480661500,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5cecfab42230cbb59f0b7df1eae93b41602ae463",
+          "message": "feat(studio): add shadcn primitives from the prototype and upstream shadcn (#2211)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T19:21:22+02:00",
+          "tree_id": "3709374f2f607c5931af8232a4623aa83a6b413d",
+          "url": "https://github.com/stacklok/mecatl/commit/5cecfab42230cbb59f0b7df1eae93b41602ae463"
+        },
+        "date": 1791481383869,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -412044,6 +412078,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791481380458,
+  "lastUpdate": 1791481384906,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
