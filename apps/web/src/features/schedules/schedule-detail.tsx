@@ -81,10 +81,9 @@ export function scheduleFirePollInterval(
  * authenticated BFF. Direct browser access to the daemon or SDK was rejected
  * because the BFF owns capability negotiation and caller identity.
  *
- * DECISION: Match the prototype by navigating a fire's session into the chat
- * workspace. Reusing the conversation view preserves its transcript rendering,
- * tool-call presentation, and URL; a schedule-specific dialog was rejected as a
- * duplicate, visually inconsistent transcript surface.
+ * DECISION: Match the prototype's navigation contract by linking a fire's
+ * session into the chat workspace. Transcript presentation belongs to chat;
+ * a schedule-specific dialog was rejected as a duplicate transcript surface.
  */
 export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const queryClient = useQueryClient();
