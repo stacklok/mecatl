@@ -63,6 +63,12 @@ type Snapshot struct {
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
 	// Parts).
 	Profile string `json:"profile,omitempty"`
+	// AgentDefinitionName is the session's opaque write-once agent-definition
+	// binding label (ADR 0353). omitempty keeps a pre-0353 snapshot with no
+	// "agent_definition_name" key decoding to "" (an ordinary session) —
+	// additive, no format-tag bump, same round-trip discipline as
+	// Profile/ProviderID/ModelID.
+	AgentDefinitionName string `json:"agent_definition_name,omitempty"`
 	// ProviderID and ModelID are the session's opaque neutral provider+model
 	// selector pair. omitempty keeps a v1 snapshot with no key decoding to the empty
 	// pair ("server default") — additive, no version bump. Persisting them lets a
@@ -294,6 +300,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		EnvironmentRef:         s.EnvironmentRef,
 		Placement:              s.Placement,
 		Profile:                s.Profile,
+		AgentDefinitionName:    s.AgentDefinitionName,
 		ProviderID:             s.ProviderID,
 		ModelID:                s.ModelID,
 		ReasoningEffort:        s.ReasoningEffort,
@@ -363,6 +370,13 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	if err := restored.RestoreSessionMetadata(s.Kind, s.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
+
+	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
+	// restoreAuthority below) rejects a bind that claims this label without a
+	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
+	// as the real create path already sequences it (newCreatedSession stamps the
+	// label before setSessionLabels/RestoreLabels ever binds authority).
+	restored.AgentDefinitionName = s.AgentDefinitionName
 
 	if err := restoreAuthority(restored, s.Authority); err != nil {
 		return nil, err

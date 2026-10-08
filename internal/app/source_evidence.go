@@ -90,18 +90,19 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 		return unavailable()
 	}
 	reconstructed, err := eventsource.Fold(eventsource.SessionMeta{
-		ID:              sess.ID,
-		Mode:            sess.Mode,
-		Limits:          sess.Limits,
-		EnvironmentRef:  sess.EnvironmentRef,
-		Placement:       sess.Placement,
-		Profile:         sess.Profile,
-		ProviderID:      sess.ProviderID,
-		ModelID:         sess.ModelID,
-		ReasoningEffort: sess.ReasoningEffort,
-		Kind:            sess.Kind,
-		Relationship:    sess.Relationship,
-		CreatedAt:       sess.CreatedAt,
+		ID:                  sess.ID,
+		Mode:                sess.Mode,
+		Limits:              sess.Limits,
+		EnvironmentRef:      sess.EnvironmentRef,
+		Placement:           sess.Placement,
+		Profile:             sess.Profile,
+		AgentDefinitionName: sess.AgentDefinitionName,
+		ProviderID:          sess.ProviderID,
+		ModelID:             sess.ModelID,
+		ReasoningEffort:     sess.ReasoningEffort,
+		Kind:                sess.Kind,
+		Relationship:        sess.Relationship,
+		CreatedAt:           sess.CreatedAt,
 	}, func(yield func(session.Event, error) bool) {
 		for _, event := range runEvents {
 			if !yield(event, nil) {

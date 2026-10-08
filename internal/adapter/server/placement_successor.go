@@ -202,6 +202,13 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if !bound {
 		authority = session.Authority{}
 	}
+	// agent_definition_name is a fixed, session-lifetime label (ADR 0353) —
+	// Fork/Clear always inherit it unconditionally, Profile-style, with no
+	// request-side override field (AC2.3). setSessionLabels (used above by the
+	// create path's newCreatedSession) deliberately does not stamp it; this
+	// successor path never goes through newCreatedSession, so it is stamped
+	// directly here instead.
+	created.AgentDefinitionName = source.AgentDefinitionName
 	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority); err != nil {
 		return "", err
 	}
@@ -249,6 +256,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 	profile := profileForSession(created)
+	// An agent-bound successor (ADR 0353) never gets an MCPBroker incarnation —
+	// AC2.4, mirroring AC1.10's create-time skip: the def's own resolved
+	// mcpServers: is the exclusive MCP scope, never widened by the deployment's
+	// broker-granted tools.
+	agentBound := created.AgentDefinitionName != ""
 	var (
 		builtEngine     *sessionEngine
 		broker          *localBrokerAttachment
@@ -259,7 +271,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// id are the ones the factory receives. The binding is stamped on the
 	// successor before its first durable publication; broker commit happens only
 	// after that publication succeeds.
-	if s.cfg.MCPBroker != nil {
+	if s.cfg.MCPBroker != nil && !agentBound {
 		broker, err = s.openBrokerAttachment(mutationCtx, created.ID, "", false)
 		if err != nil {
 			return "", err
@@ -271,9 +283,23 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err != nil {
 		return "", err
 	}
-	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot) {
-		if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
-			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+	// An agent-bound successor ALWAYS needs its own per-session engine rebuild
+	// (mirroring createSession's definitelyPerSession/needPerSession checks),
+	// even when neither MCPBroker nor sessionNeedsPerFactory would otherwise
+	// trigger one (e.g. no selector, default profile, workspace == the shared
+	// engine root) — otherwise the successor would carry NO per-session engine
+	// at all and would fall back to the deployment's default catalog the first
+	// time it runs, never the def's own restricted one (AC2.3).
+	if agentBound || s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot) {
+		switch {
+		case agentBound:
+			if s.cfg.AgentDefSessionEngine == nil {
+				return "", fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
+			}
+		default:
+			if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
+				return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+			}
 		}
 		if broker != nil {
 			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), true, inheritedSource)

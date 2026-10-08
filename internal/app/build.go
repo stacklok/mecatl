@@ -2776,7 +2776,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		SessionEngineWithTools: assets.sessionFactoryWithTools,
 		SessionContextEngine:   assets.sessionContextFactory,
 		DebugSessionEngine:     debugSessionEngineFactory(cfg, reg, provider, store, eventLog, policy, assets.globalMgr, assets.mcpRuntimes),
-		DebugMCP:               debugMCPAvailable(assets),
+		// AgentDefSessionEngine (ADR 0353): binds a session's root to a named
+		// AgentDef, built from the SAME collaborators as SessionEngineWithTools.
+		AgentDefSessionEngine: assets.agentDefSessionEngine,
+		DebugMCP:              debugMCPAvailable(assets),
 		// ModeNeedsEngine: tells the Service whether a session's
 		// PermissionMode would resolve a model DIFFERING from the shared engine's model
 		// (cfg.Model) — i.e. whether a plan slot is configured AND it resolves to a
@@ -4514,6 +4517,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the UNWRAPPED hooks: the Phase-2b reviewer fires once per MAIN-engine Stop,
 	// not per per-session stop (one of the two sanctioned per-session deltas).
 	assets.sessionFactoryWithTools = sessionEngineFactoryWithTools(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
+	// agentDefSessionEngine (ADR 0353, Task B): the SAME collaborators as
+	// sessionFactoryWithTools above, so an agent-bound session's guardrail
+	// wiring and governance audience are byte-identical to any other main
+	// session (AC1.6).
+	assets.agentDefSessionEngine = agentDefSessionEngineFactory(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	if cfg.harnessResolver != nil {
 		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool, forkSource session.SessionID) (server.SessionEngineResult, error) {
 			// Reject an invalid selector before principal-scoped source binding creates
@@ -8455,8 +8463,11 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 					"member", spec.Name, "agent", def.Name, "skill", name, "source", reg.Detail(def.Name))
 			}
 			// Persistent per-agent memory (issue #33): the team-member path shares the
-			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here too.
-			memHead, _ := resolveAgentMemoryHead(cfg, def)
+			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here
+			// too. A team member has no placement of its own distinct from its parent's,
+			// so "project" tier binds to cfg.Workspace, unchanged (resolveAgentMemoryHead's
+			// sessionRoot docs).
+			memHead, _ := resolveAgentMemoryHead(cfg, def, cfg.Workspace)
 			pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
 			mode = resolvePermissionMode(cfg.diag(), def)
 			// A def's `hooks:` scope lifecycle hooks to this member's engine. A def that

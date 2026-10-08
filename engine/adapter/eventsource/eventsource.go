@@ -90,6 +90,10 @@ type SessionMeta struct {
 	Placement session.PlacementMetadata
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
+	// AgentDefinitionName optionally binds the session's root to a named
+	// AgentDef (ADR 0353); "" is an ordinary, non-agent-bound session. Write-once
+	// creation label, opaque to the fold — mirrors Profile's discipline exactly.
+	AgentDefinitionName string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// ("" / "" = server default).
 	ProviderID string
@@ -190,6 +194,11 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
+	// restoreAuthority below) rejects a bind that claims this label without a
+	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
+	// as the real create path already sequences it.
+	s.AgentDefinitionName = meta.AgentDefinitionName
 	if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}

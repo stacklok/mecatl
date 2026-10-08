@@ -151,6 +151,10 @@ type catalogAssets struct {
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
 	guardrailGrants          interface{ ClearSession(string) }
 	sessionContextFactory    server.SessionContextEngineFactory
+	// agentDefSessionEngine binds a session's root to a named AgentDef (ADR
+	// 0353): built alongside sessionFactoryWithTools (same collaborators),
+	// threaded onto server.Config.AgentDefSessionEngine by Build.
+	agentDefSessionEngine server.AgentDefSessionEngineFactory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the

@@ -593,6 +593,12 @@ message CreateSessionRequest {
   // policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md:
   // "No stdio MCP, ever" — mecatl never spawns an MCP server process).
   repeated McpServerSpec mcp_servers = 11;
+
+  // agent_definition_name optionally binds this session's root to a named
+  // AgentDef (ADR 0353). Empty (the default) is byte-identical to today's
+  // behavior: the deployment's default explorer session. The resolved name is
+  // echoed back verbatim on CreateSessionResponse.resolved_agent_definition_name.
+  string agent_definition_name = 12;
 }
 
 // McpServerSpec is one client-provided MCP server on CreateSessionRequest. It
@@ -863,6 +869,11 @@ message CreateSessionResponse {
   ResolvedModel resolved_model = 4;
   // placement is bounded display-only metadata, never reusable authority.
   PlacementMetadata placement = 5;
+
+  // resolved_agent_definition_name echoes the bound agent_definition_name
+  // VERBATIM (mirroring resolved_model), the same server-owns-resolution
+  // discipline: empty when the request never set agent_definition_name.
+  string resolved_agent_definition_name = 6;
 }
 
 // PlacementMetadata is safe display data. It never contains a filesystem path,

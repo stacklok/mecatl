@@ -122,6 +122,47 @@ func TestRestoreRejectsIncompleteAuthorityClaims(t *testing.T) {
 	}
 }
 
+// TestSessionScopedAgentIdentity_RestoreRejectsAgentBoundSnapshotWithoutCeiling
+// pins a hardening found by external review: a persisted snapshot claiming
+// agent_definition_name without a bound Ceiling would otherwise restore as
+// agent-bound-by-label yet fully widenable in practice (GrantToolAuthority /
+// CompleteWorkspaceEnrollment treat a nil Ceiling as unrestricted) — exactly
+// the non-widenable-ceiling guarantee ADR 0353 exists to provide. Restore must
+// reject this combination outright, not restore a silently-unsafe session.
+// Mutation-verified: this test failed (restored successfully) before
+// AgentDefinitionName was restored ahead of authority and BindAuthority's
+// agent-bound-requires-Ceiling check was added.
+func TestSessionScopedAgentIdentity_RestoreRejectsAgentBoundSnapshotWithoutCeiling(t *testing.T) {
+	t.Parallel()
+	const snapshotPrefix = `{"id":"agent-bound-no-ceiling","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z","agent_definition_name":"escalator",`
+
+	t.Run("agent-bound label with a Ceiling-less authority is rejected", func(t *testing.T) {
+		restored, err := sessnap.Unmarshal([]byte(snapshotPrefix +
+			`"authority":{"capability_set":{"tools":["Read"]},"provenance":"agent-def:test"}}`))
+		if err == nil {
+			t.Fatal("agent-bound snapshot without a Ceiling restored successfully")
+		}
+		if restored != nil {
+			t.Fatal("agent-bound snapshot without a Ceiling returned a session")
+		}
+	})
+
+	t.Run("agent-bound label WITH a matching Ceiling restores fine (positive control)", func(t *testing.T) {
+		restored, err := sessnap.Unmarshal([]byte(snapshotPrefix +
+			`"authority":{"capability_set":{"tools":["Read"]},"provenance":"agent-def:test","ceiling":{"tools":["Read"]}}}`))
+		if err != nil {
+			t.Fatalf("agent-bound snapshot with a consistent Ceiling: restore failed: %v", err)
+		}
+		if restored.AgentDefinitionName != "escalator" {
+			t.Fatalf("AgentDefinitionName = %q, want escalator", restored.AgentDefinitionName)
+		}
+		got, bound := restored.BoundAuthority()
+		if !bound || got.Ceiling == nil {
+			t.Fatalf("bound=%v Ceiling=%v, want a bound authority with a non-nil Ceiling", bound, got.Ceiling)
+		}
+	})
+}
+
 func TestAuthorityTerminalRecoveryPreservesSet(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

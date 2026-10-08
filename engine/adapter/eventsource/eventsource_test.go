@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -59,6 +60,58 @@ func TestEventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	if _, bound := legacy.BoundAuthority(); bound {
 		t.Fatal("authority-absent legacy fold restored as bound")
 	}
+}
+
+// TestSessionScopedAgentIdentity_FoldRejectsAgentBoundMetaWithoutCeiling pins
+// the eventsource counterpart to sessnap's equivalent hardening: SessionMeta
+// claiming AgentDefinitionName without a bound Ceiling would otherwise fold
+// into a session routed everywhere as agent-bound yet fully widenable in
+// practice (GrantToolAuthority/CompleteWorkspaceEnrollment treat a nil Ceiling
+// as unrestricted). Fold must reject this combination, not silently restore an
+// unsafe session. Mutation-verified: this test failed (folded successfully)
+// before AgentDefinitionName was restored ahead of authority in Fold.
+func TestSessionScopedAgentIdentity_FoldRejectsAgentBoundMetaWithoutCeiling(t *testing.T) {
+	t.Parallel()
+
+	t.Run("agent-bound label with a Ceiling-less authority is rejected", func(t *testing.T) {
+		m := meta()
+		m.AgentDefinitionName = "escalator"
+		m.Authority = &session.Authority{
+			CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+			Provenance:    "agent-def:test",
+		}
+		restored, err := eventsource.Fold(m, seq(nil))
+		if err == nil {
+			t.Fatal("agent-bound meta without a Ceiling folded successfully")
+		}
+		if restored != nil {
+			t.Fatal("agent-bound meta without a Ceiling returned a session")
+		}
+		if !errors.Is(err, eventsource.ErrReconstruct) {
+			t.Fatalf("error = %v, want ErrReconstruct", err)
+		}
+	})
+
+	t.Run("agent-bound label WITH a matching Ceiling folds fine (positive control)", func(t *testing.T) {
+		m := meta()
+		m.AgentDefinitionName = "escalator"
+		m.Authority = &session.Authority{
+			CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+			Provenance:    "agent-def:test",
+			Ceiling:       &governance.CapabilitySet{Tools: []string{"Read"}},
+		}
+		restored, err := eventsource.Fold(m, seq(nil))
+		if err != nil {
+			t.Fatalf("agent-bound meta with a consistent Ceiling: fold failed: %v", err)
+		}
+		if restored.AgentDefinitionName != "escalator" {
+			t.Fatalf("AgentDefinitionName = %q, want escalator", restored.AgentDefinitionName)
+		}
+		got, bound := restored.BoundAuthority()
+		if !bound || got.Ceiling == nil {
+			t.Fatalf("bound=%v Ceiling=%v, want a bound authority with a non-nil Ceiling", bound, got.Ceiling)
+		}
+	})
 }
 
 // ev is a terse Event constructor.
