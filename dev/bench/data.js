@@ -310262,6 +310262,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791452964339,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0efb31712d46a64e5e8c7b82bb9152e1c99a3dcb",
+          "message": "chore: remove dead ADR references and fix stale code comments (#2169)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T05:54:15-04:00",
+          "tree_id": "4da3eeacfa59a9424aa0e117312ce55c28c51471",
+          "url": "https://github.com/stacklok/mecatl/commit/0efb31712d46a64e5e8c7b82bb9152e1c99a3dcb"
+        },
+        "date": 1791453999051,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3274,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 75,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -405946,6 +405985,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791453995207,
+  "lastUpdate": 1791453999922,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
