@@ -307,6 +307,20 @@ needed, is still a Kubernetes Secret. Agent-facing shells receive a scrubbed
 environment so MCP/provider credentials are not exposed through Shell. See the
 [Kubernetes deployment guide](/operating/mecak8s.md) for the Secret wiring.
 
+## Preregistered client secrets
+
+A preregistered client takes its secret from exactly one of two sources, in
+both global and broker mode:
+
+- `secret_env`: the name of a `MECATL_*` environment variable.
+- `secret_file`: an absolute path to a regular file of at most 64 KiB.
+  Surrounding whitespace is trimmed.
+
+Setting both is an error, as is setting neither. Never put the secret value in
+settings YAML. Keep a secret file outside the workspace with restrictive
+permissions (mode `0400`): agent shell commands run as the same user, so they
+can read any file whose path they know.
+
 ## ToolHive broker OAuth
 
 In `mecak8s` broker mode, each session starts one opaque enrollment, and

@@ -734,8 +734,10 @@ type MCPOAuthClientProfile struct {
 type MCPPreregisteredClientProfile struct {
 	// ID is the required preregistered OAuth client identifier.
 	ID string `yaml:"id"`
-	// SecretEnv is a MECATL_* environment variable name containing the client secret.
+	// SecretEnv is a MECATL_* environment variable name containing the client secret; mutually exclusive with SecretFile.
 	SecretEnv string `yaml:"secret_env"`
+	// SecretFile is an absolute path to a regular file containing the client secret; mutually exclusive with SecretEnv.
+	SecretFile string `yaml:"secret_file"`
 }
 
 // MCPCIMDClientProfile contains the HTTPS client-id metadata document URL.
@@ -1074,7 +1076,7 @@ func (c *MCPOAuthClientProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (c *MCPPreregisteredClientProfile) strictFields() map[string]any {
-	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv}
+	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv, "secret_file": &c.SecretFile}
 }
 
 // UnmarshalYAML strictly decodes preregistered client metadata.
@@ -1085,7 +1087,19 @@ func (c *MCPPreregisteredClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.id", c.ID); err != nil {
 		return err
 	}
-	return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+	if mappingHasKey(node, "secret_env") && mappingHasKey(node, "secret_file") {
+		return errors.New("mcp.servers[].auth.oauth.client.preregistered: secret_env and secret_file are mutually exclusive")
+	}
+	if mappingHasKey(node, "secret_env") {
+		return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.secret_file", c.SecretFile); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(c.SecretFile) {
+		return errors.New("mcp.servers[].auth.oauth.client.preregistered.secret_file must be absolute")
+	}
+	return nil
 }
 
 func (c *MCPCIMDClientProfile) strictFields() map[string]any {

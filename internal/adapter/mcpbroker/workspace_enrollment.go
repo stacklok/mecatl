@@ -162,8 +162,8 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	// to the shared resolveClientSecret (rather than re-deriving it here) so the
 	// already-populated raw target.clientSecret (the confidential embedded
 	// broker's own client secret, set once at construction) is never bypassed
-	// in favor of a secretEnv lookup that a target like this one never has.
-	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth.resolveSecret)
+	// in favor of a secret-file or environment read that a target like this one never has.
+	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth)
 	if err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}

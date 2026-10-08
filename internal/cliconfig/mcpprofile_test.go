@@ -173,18 +173,19 @@ func TestLocalMCPProfileLifecycleIsIdempotentAndTerminal(t *testing.T) {
 
 func TestLoadMCPProfilesSharesLocalStoreAndRejectsBadKeysSafely(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "credentials")
+	clientSecretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(clientSecretFile, []byte("client-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	local := func(name string) permconfig.MCPServerProfile {
 		oauth := environmentOAuth()
-		oauth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretEnv: "MECATL_CLIENT_SECRET"}}
+		oauth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretFile: clientSecretFile}}
 		oauth.Credentials = permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: root, KeyEnv: "MECATL_KEY"}}
 		return permconfig.MCPServerProfile{Name: name, URL: "https://" + name + ".example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: oauth}}
 	}
 	section := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{local("one"), local("two")}}
 	secret := "canary-key-value-never-in-error"
-	if _, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: section, LookupEnv: func(name string) (string, bool) {
-		if name == "MECATL_CLIENT_SECRET" {
-			return "client-secret", true
-		}
+	if _, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: section, LookupEnv: func(_ string) (string, bool) {
 		return secret, true
 	}}); !errors.Is(err, ErrMCPProfileSecret) {
 		t.Fatalf("bad key error = %v", err)
@@ -192,10 +193,7 @@ func TestLoadMCPProfilesSharesLocalStoreAndRejectsBadKeysSafely(t *testing.T) {
 		t.Fatalf("error leaked key: %v", err)
 	}
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: section, LookupEnv: func(name string) (string, bool) {
-		if name == "MECATL_CLIENT_SECRET" {
-			return "client-secret", true
-		}
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: section, LookupEnv: func(_ string) (string, bool) {
 		return key, true
 	}})
 	if err != nil {
@@ -208,6 +206,35 @@ func TestLoadMCPProfilesSharesLocalStoreAndRejectsBadKeysSafely(t *testing.T) {
 	client := profiles.Servers[0].OAuth.Client.Preregistered
 	if client == nil || client.ClientSecretAuth == nil || client.ClientID != "client-id" || client.ClientSecretAuth.ClientSecret != "client-secret" || client.Issuer != "https://issuer.example" {
 		t.Fatalf("preregistered client = %#v", client)
+	}
+}
+
+func TestLoadMCPProfilesSecretFileErrorsPreserveSafeReason(t *testing.T) {
+	const canary = "secret-value-not-in-error"
+	path := filepath.Join(t.TempDir(), "client-secret")
+	oauth := environmentOAuth()
+	oauth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretFile: path}}
+	section := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{{Name: "client", URL: "https://mcp.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: oauth}}}}
+	for _, tc := range []struct {
+		name, reason string
+		data         []byte
+		write        bool
+	}{
+		{name: "missing", reason: "open client secret file"},
+		{name: "empty", reason: "is empty", data: []byte(" \n"), write: true},
+		{name: "oversized", reason: "exceeds 64 KiB", data: append([]byte(canary), make([]byte, 64<<10)...), write: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.write {
+				if err := os.WriteFile(path, tc.data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: section})
+			if !errors.Is(err, ErrMCPProfileSecret) || !strings.Contains(err.Error(), tc.reason) || strings.Contains(err.Error(), canary) {
+				t.Fatalf("secret file error = %v", err)
+			}
+		})
 	}
 }
 
@@ -238,8 +265,12 @@ func TestLoadMCPProfilesRejectsUnlistedCIMDOrigin(t *testing.T) {
 func TestLoadMCPProfileSecretErrorsAreActionableAndRedacted(t *testing.T) {
 	const canary = "secret-value-canary"
 	root := filepath.Join(t.TempDir(), "credentials")
+	clientSecretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(clientSecretFile, []byte("client-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	localOAuth := environmentOAuth()
-	localOAuth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretEnv: "MECATL_CLIENT"}}
+	localOAuth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretFile: clientSecretFile}}
 	localOAuth.Credentials = permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: root, KeyEnv: "MECATL_KEY"}}
 	environment := environmentOAuth()
 	cases := []struct {
@@ -247,16 +278,10 @@ func TestLoadMCPProfileSecretErrorsAreActionableAndRedacted(t *testing.T) {
 		profile               *permconfig.MCPOAuthProfile
 		lookup                func(string) (string, bool)
 	}{
-		{name: "unset local key", field: "auth.oauth.credentials.local.key_env", expected: "exactly 32 bytes", profile: localOAuth, lookup: func(name string) (string, bool) {
-			if name == "MECATL_CLIENT" {
-				return "client-secret", true
-			}
+		{name: "unset local key", field: "auth.oauth.credentials.local.key_env", expected: "exactly 32 bytes", profile: localOAuth, lookup: func(_ string) (string, bool) {
 			return "", false
 		}},
-		{name: "malformed local key", field: "auth.oauth.credentials.local.key_env", expected: "canonical padded base64", profile: localOAuth, lookup: func(name string) (string, bool) {
-			if name == "MECATL_CLIENT" {
-				return "client-secret", true
-			}
+		{name: "malformed local key", field: "auth.oauth.credentials.local.key_env", expected: "canonical padded base64", profile: localOAuth, lookup: func(_ string) (string, bool) {
 			return canary, true
 		}},
 		{name: "unset environment credential", field: "auth.oauth.credentials.environment.credential_env", expected: "provision", profile: environment, lookup: func(string) (string, bool) { return "", false }},
@@ -311,7 +336,11 @@ func TestDirectDCRProfileScopeAndStorePolicy(t *testing.T) {
 	}
 
 	preregistered := newProfile(filepath.Join(t.TempDir(), "preregistered"))
-	preregistered.Auth.OAuth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretEnv: "MECATL_CLIENT"}}
+	clientSecretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(clientSecretFile, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preregistered.Auth.OAuth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretFile: clientSecretFile}}
 	preregistered.Auth.OAuth.Scopes = []string{"read"}
 	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{preregistered}}, LookupEnv: func(name string) (string, bool) {
 		if name == "MECATL_CLIENT" {
