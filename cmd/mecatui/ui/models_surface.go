@@ -474,8 +474,7 @@ func modelCapSegments(mi client.ModelInfo) []string {
 		segs = append(segs, renderfmt.HumanizeTokens(mi.ContextLimit))
 	}
 	// Mark a row mecatl sends no cache breakpoint for. The row stays
-	// SELECTABLE, and marking rather than hiding was the explicit decision
-	// recorded in the acceptance plan.
+	// SELECTABLE; marking rather than hiding is deliberate.
 	//
 	// Since decision 1 arms the breakpoint on every Responses endpoint, the only
 	// way to see PromptCached=false is a server started with --no-prompt-cache.

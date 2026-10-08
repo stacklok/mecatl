@@ -1,6 +1,6 @@
 package server_test
 
-// Scenario 3 of docs/acceptance/steer-while-running.md: the LOST TERMINAL RACE —
+// Steer while running: the LOST TERMINAL RACE —
 // a steer arrives for a session whose run is already terminal (the user's "still
 // running" belief lagged the real state). The Service-level routing decision
 // (Service.Steer) either enqueues the text to the LIVE run's steer inbox or, on a

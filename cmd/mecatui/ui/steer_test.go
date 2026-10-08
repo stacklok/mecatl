@@ -12,7 +12,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-// Scenario 6 of docs/acceptance/steer-while-running.md (the mecatui half): the
+// Steer while running (the mecatui half): the
 // capability-driven flip. When the server advertises Capabilities.Steer, `enter`
 // mid-run sends a `steer` frame on the Converse stream (not a local stage) and the
 // queue card reflects the AUTHORITATIVE echoed/acked state; when the capability is

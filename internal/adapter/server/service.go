@@ -5990,9 +5990,9 @@ func (s *Service) notifySteerPromotionRegistered() {
 // steer that already drained at a turn boundary is ordinary recorded history and
 // cannot be retracted (the engine reports none_pending then: the drain won). A
 // session with no live run reports none_pending (there is no inbox to retract
-// from — the steer that would be pending is already lost with its run, the
-// best-effort in-memory contract the docs/acceptance/steer-while-running.md
-// Scenario-2 contract records). expectedRunID has the same optional strictness
+// from — the steer that would be pending is already lost with its run; the
+// inbox is a best-effort in-memory contract). expectedRunID has the same
+// optional strictness
 // as the other run controls: when set, no absent or replacement run may be
 // touched. The wire's steer_cancel message_id never crosses the Service (the
 // ack-side echo is the caller's own frame field), so the signature stays

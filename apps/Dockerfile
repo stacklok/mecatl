@@ -11,7 +11,7 @@
 # @stacklok-oss/mecatl-sdk from npm and never reaches into sdk/typescript, so the
 # Go repository root is not part of this image at all.
 #
-# Shape (multi-stage; AC5.1 of docs/acceptance/studio-bootstrap.md):
+# Shape (multi-stage):
 #   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.4.2 via
 #                corepack (the `packageManager` pin in package.json; Node 25+
 #                no longer bundles corepack, so it is installed first), a frozen

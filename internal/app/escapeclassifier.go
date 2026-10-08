@@ -8,12 +8,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapeclassifier.go is the path-escape-posture Scenario 1 seam
-// (docs/acceptance/path-escape-posture.md): a PURE composition-layer
-// classification answering "is this FS-tool call an out-of-root escape?" It
-// changes NO behaviour — a later wave's root-aware wrapping
-// port.PermissionPolicy consumes it; here it only needs to exist and be proven
-// to agree with the tool body. The classifier is composition, not domain, per
+// escapeclassifier.go is the path-escape-posture classification seam: a PURE
+// composition-layer classification answering "is this FS-tool call an
+// out-of-root escape?" It changes NO behaviour — the root-aware wrapping
+// port.PermissionPolicy in escapepolicy.go consumes it; this file only has to
+// agree with the tool body. The classifier is composition, not domain, per
 // the layering rule: the escape *decision* is a posture/policy concern, while
 // engine/tool keeps FileSystem/Workspace (the port↔tool cycle gotcha).
 //

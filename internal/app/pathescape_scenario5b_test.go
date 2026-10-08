@@ -13,8 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// pathescape_scenario5b_test.go pins AC5.1b/AC5.1c
-// (docs/acceptance/path-escape-posture.md Scenario 5): the base-SHARING
+// pathescape_scenario5b_test.go pins that the base-SHARING
 // (nil-forker) read-only Subagent child — wired whenever Shell is disabled
 // (--no-shell / an empty shell / the issue-#40 untrusted-workspace gate nils the
 // sandboxed runner) — must NOT inherit the main session's relaxed workspace.
