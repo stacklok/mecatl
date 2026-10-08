@@ -24,10 +24,10 @@ func deprecationLines(cfg config) []string {
 	return strings.Split(out, "\n")
 }
 
-// TestADR_0375_DeprecatedAliasesStillResolve pins AC6.1 for mecatui: --mode,
+// TestDeprecatedAliasesStillResolve pins that, in mecatui, --mode,
 // --posture, and --yolo resolve exactly as before and each emits exactly one
 // deprecation WARN naming --permission-mode. --trust-project is not deprecated.
-func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
+func TestDeprecatedAliasesStillResolve(t *testing.T) {
 	cases := []struct {
 		name        string
 		args        []string
@@ -94,10 +94,10 @@ func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
 	})
 }
 
-// TestADR_0375_PermissionModeConflictsWithAliases pins that --permission-mode
+// TestPermissionModeConflictsWithAliases pins that --permission-mode
 // combined with any deprecated alias is a startup error telling the operator to
 // pass one, and that an unknown token fails fast naming the valid set.
-func TestADR_0375_PermissionModeConflictsWithAliases(t *testing.T) {
+func TestPermissionModeConflictsWithAliases(t *testing.T) {
 	for _, alias := range [][]string{{"--mode", "plan"}, {"--posture", "auto"}, {"--yolo"}} {
 		args := append([]string{"--mock", "--workspace", "/abs", "--permission-mode", "plan"}, alias...)
 		_, _, err := parseTransportFlagsTest(t, modeLocal, args)
@@ -117,10 +117,10 @@ func TestADR_0375_PermissionModeConflictsWithAliases(t *testing.T) {
 	}
 }
 
-// TestADR_0375_ConnectRefusesPostureHalf pins the connect behaviour: the session
+// TestConnectRefusesPostureHalf pins the connect behaviour: the session
 // half of a token applies to this client's sessions, while a non-strict posture
 // half is refused because the posture belongs to the remote server.
-func TestADR_0375_ConnectRefusesPostureHalf(t *testing.T) {
+func TestConnectRefusesPostureHalf(t *testing.T) {
 	_, cfg, err := parseTransportFlagsTest(t, modeConnect, []string{"--permission-mode", "accept-edits"})
 	if err != nil {
 		t.Fatalf("session-only token under connect: %v", err)
@@ -139,9 +139,9 @@ func TestADR_0375_ConnectRefusesPostureHalf(t *testing.T) {
 	}
 }
 
-// TestADR_0375_VocabularyMatchesComposition keeps the TUI's display copy of the
+// TestVocabularyMatchesComposition keeps the TUI's display copy of the
 // token table identical to the composition layer's contract.
-func TestADR_0375_VocabularyMatchesComposition(t *testing.T) {
+func TestVocabularyMatchesComposition(t *testing.T) {
 	vocab := ui.PermissionModeVocabulary()
 	names := app.PermissionModeNames()
 	if len(vocab) != len(names) {
@@ -163,11 +163,11 @@ func TestADR_0375_VocabularyMatchesComposition(t *testing.T) {
 	}
 }
 
-// TestADR_0375_DefaultsReproduceCurrentBehaviour pins AC6.3 for mecatui end to
-// end: the parsed flags build the real embedded server, the real client creates a
-// session through the real sessionAdapter, and the server-reported posture and
-// session mode match what mecatui produced before ADR 0375.
-func TestADR_0375_DefaultsReproduceCurrentBehaviour(t *testing.T) {
+// TestDefaultsReproduceCurrentBehaviour pins, for mecatui end to end, that the
+// parsed flags build the real embedded server, the real client creates a session
+// through the real sessionAdapter, and the server-reported posture and session
+// mode match what mecatui produced before the permission-mode vocabulary.
+func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 	cases := []struct {
 		name        string
 		args        []string

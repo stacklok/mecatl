@@ -228,7 +228,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	free := freeLoopbackPort(t)
 	cfg, err := parseFlags([]string{
 		"--mock",           // offline: no provider key in CI
-		"--guardrails=off", // the auto default must declare its checker choice (ADR 0375)
+		"--guardrails=off", // the auto default must declare its checker choice
 		"--redis-url", mr.Addr(),
 		"--redis-allow-plaintext", // disposable miniredis fixture
 		"--metrics-addr", free,
@@ -340,7 +340,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 
 	cfg, err := parseFlags([]string{
 		"--mock",
-		"--guardrails=off", // the auto default must declare its checker choice (ADR 0375)
+		"--guardrails=off", // the auto default must declare its checker choice
 		"--redis-url", mr.Addr(),
 		"--redis-allow-plaintext", // disposable miniredis fixture
 		"--grpc-addr", "127.0.0.1:0",

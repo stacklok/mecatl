@@ -56,7 +56,7 @@ func deprecationWarnings(t *testing.T, argv ...string) []string {
 	return out
 }
 
-func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
+func TestDeprecatedAliasesStillResolve(t *testing.T) {
 	cases := []struct {
 		name  string
 		alias []string
@@ -94,7 +94,7 @@ func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
 	}
 }
 
-func TestADR_0375_AliasCombinationsStillResolve(t *testing.T) {
+func TestAliasCombinationsStillResolve(t *testing.T) {
 	cases := []struct {
 		name        string
 		argv        []string
@@ -129,7 +129,7 @@ func TestADR_0375_AliasCombinationsStillResolve(t *testing.T) {
 	}
 }
 
-func TestADR_0375_DefaultsReproduceCurrentBehaviour(t *testing.T) {
+func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		argv []string
@@ -156,7 +156,7 @@ func TestADR_0375_DefaultsReproduceCurrentBehaviour(t *testing.T) {
 	}
 }
 
-func TestADR_0375_PermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
+func TestPermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
 	for _, argv := range [][]string{
 		{"--permission-mode", "auto", "--posture", "auto"},
 		{"--posture", "strict", "--permission-mode", "default"},
@@ -182,7 +182,7 @@ func TestADR_0375_PermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
 	}
 }
 
-func TestADR_0375_PermissionModeHitsRootRefusalFastPath(t *testing.T) {
+func TestPermissionModeHitsRootRefusalFastPath(t *testing.T) {
 	for _, tok := range []string{"auto", "yolo"} {
 		cfg, err := parseFlags([]string{"--permission-mode", tok})
 		if err != nil {
@@ -202,7 +202,7 @@ func TestADR_0375_PermissionModeHitsRootRefusalFastPath(t *testing.T) {
 	}
 }
 
-func TestADR_0375_PermissionModeHelpNamesBothHalvesAndEveryToken(t *testing.T) {
+func TestPermissionModeHelpNamesBothHalvesAndEveryToken(t *testing.T) {
 	for _, want := range append(app.PermissionModeNames(), "process-wide", "new sessions") {
 		if !strings.Contains(permissionModeHelp, want) {
 			t.Fatalf("--permission-mode help lacks %q: %s", want, permissionModeHelp)

@@ -126,7 +126,7 @@ inputs:
     default: ${{ github.workspace }}
   permission-mode:
     description: >-
-      Permission mode (ADR 0375) → --permission-mode: one of plan, default, accept-edits,
+      Permission mode → --permission-mode: one of plan, default, accept-edits,
       trusted, trusted-accept-edits, auto, yolo. Empty (the input default) resolves to
       "auto", the documented CI mode (allow-all, child injection-defence ON), unless the
       deprecated `posture` input is set. "default" would CANCEL the run on the first
