@@ -12,14 +12,7 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  BookOpen,
-  Copy,
-  ExternalLink,
-  Keyboard,
-  LifeBuoy,
-  Search,
-} from "lucide-react";
+import { BookOpen, Copy, ExternalLink, Keyboard, LifeBuoy, Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AuthControl } from "../../components/shell/auth-control";
 import { PageShell } from "../../components/shell/page-shell";

@@ -1,53 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GetUserMemoryResponse } from "@mecatl-studio/contracts/generated";
-import { getUserMemoryOptions, listUserMemoryOptions } from "@mecatl-studio/contracts/query";
+import { getUserMemoryOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
 import { MemoryConsolidation } from "../knowledge/memory-consolidation";
-import { StateCard } from "../knowledge/state-card";
+import { FactsAboutYou } from "../memory/facts-about-you";
 
-/** Settings → Memory: the facts the agent has remembered about this user. */
+/**
+ * Settings → Memory below the stores card: the remembered facts, then the
+ * consolidation review, which hides itself when the agent cannot consolidate.
+ */
 export function MemorySettings() {
-  const query = useQuery(listUserMemoryOptions());
-  if (query.isPending) return <StateCard text="Loading memory…" />;
-  if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
-  if (!query.data.supported)
-    return <StateCard text={query.data.reason} title="Memory is disabled" />;
-  if (query.data.items.length === 0)
-    return (
-      <StateCard
-        icon="memory"
-        text="The agent has not stored any durable facts for this user yet."
-        title="Nothing remembered yet"
-      />
-    );
   return (
     <>
+      <FactsAboutYou />
       <MemoryConsolidation />
-      <div className="mb-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
-        <span>
-          {query.data.items.length} remembered fact{query.data.items.length === 1 ? "" : "s"}
-        </span>
-        <span>{query.data.sizeBytes} bytes</span>
-      </div>
-      <div className="divide-y overflow-hidden rounded-xl border bg-card">
-        {query.data.items.map((entry) => (
-          <Link
-            className="block w-full p-4 text-left hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand"
-            key={entry.key}
-            search={{ item: entry.key }}
-            to="/workspace/memory"
-          >
-            <span className="break-all font-medium">{entry.key}</span>
-            <span className="mt-1 block text-sm text-muted-foreground">
-              {entry.description || "No description recorded."}
-            </span>
-          </Link>
-        ))}
-      </div>
     </>
   );
 }
