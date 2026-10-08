@@ -16,3 +16,4 @@ rely on them for how Mecatl works.
 | [contextual-guardrails-capacity.md](contextual-guardrails-capacity.md) | Juan Antonio Osorio | Work record of capacity calibration evidence for contextual guardrails. | **2026-11-06** |
 | [session-commit-history.md](session-commit-history.md) | Joe Beda | Design discussion for authoritative committed session history, recovery, and shared client interaction. | **2026-11-06** |
 | [session-commit-history.modelith.md](session-commit-history.modelith.md) | Joe Beda | Rendered companion domain model for the session-history design, with [YAML source](session-commit-history.modelith.yaml). | **2026-11-06** |
+| [session-commit-history-prior-art.md](session-commit-history-prior-art.md) | Joe Beda | Prior-art research shortlist and comparison questions; not a completed survey. | **2026-11-06** |

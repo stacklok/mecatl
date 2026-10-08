@@ -119,7 +119,7 @@ A durable request for an authorized decision gating work in an exact `Run`. Mult
 
 ### `Run`
 
-One admitted execution driving a `Session` through model turns and tools. A `Run` has stable identity distinct from session identity and is server-owned rather than owned by the connection that requested it.
+A sequence of model turns within a `Session`, continued through requested tool calls and their results. In the normal course, the model ends the `Run` with a terminal response rather than requesting more tools; cancellation, failure, limits, and interruption can also end it. A `Run` has stable identity distinct from session identity and is server-owned rather than owned by the connection that requested it.
 
 **Invariants**
 
