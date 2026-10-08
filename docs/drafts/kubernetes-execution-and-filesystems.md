@@ -5,7 +5,7 @@ components/modules of the harness are separated by contract boundaries which may
 example of this is that the agent loop may run in a different process than the execution environment (where tools like `Shell`
 actually run). This provides an interesting security property: the loop can keep credentials and permission checks outside
 the shell. But, as mentioned, this separation needs clear contracts between services. The [cloud-native harness
-explanation](../../user-docs/building/cloud-native-harness.md) describes the broader design. The [agent
+explanation](../../user-docs/cloud-native-harness.md) describes the broader design. The [agent
 identity][identity-draft] and [scoped resource grants][grant-draft] drafts describe a
 possible future identity system for agents that takes into account the delegation chain.
 
@@ -417,7 +417,7 @@ before claiming support; a full qualification plan belongs with its implementati
 [context-admission]: ../../internal/app/project_ingestion.go
 [context-microvm]: ../../internal/app/execution.go
 [templates]: https://github.com/stacklok/mecatl/issues/2109
-[k8s-lifecycle]: ../../user-docs/features/execution-environments.md#native-kubernetes-lifecycle-and-retention
+[k8s-lifecycle]: ../../user-docs/features/security-and-execution/execution-environments.md#native-kubernetes-lifecycle-and-retention
 [inotify]: https://man7.org/linux/man-pages/man7/inotify.7.html
 [nfs]: https://man7.org/linux/man-pages/man5/nfs.5.html#DATA_AND_METADATA_COHERENCE
 [ceph]: https://docs.ceph.com/en/latest/cephfs/posix/
