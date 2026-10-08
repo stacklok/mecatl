@@ -8,6 +8,7 @@ import {
   readUserScopedItem,
   reconcileAccount,
 } from "../../lib/account-storage";
+import { spyOnLocalStorage } from "../../test-storage";
 import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
 
 beforeEach(() => clearUserScopedStorage());
@@ -42,7 +43,7 @@ describe("local canvas", () => {
     expect(fetch).not.toHaveBeenCalled();
     bob.unmount();
 
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    spyOnLocalStorage("setItem").mockImplementation(() => {
       throw new Error("storage unavailable");
     });
     const memory = renderHook(() => useLocalCanvas("session/b"));
@@ -51,7 +52,6 @@ describe("local canvas", () => {
     expect(readUserScopedItem("studio.chat.canvas.session%2Fb")).toBe("In-memory notes");
     expect(fetch).not.toHaveBeenCalled();
     memory.unmount();
-    setItem.mockRestore();
     vi.unstubAllGlobals();
   });
 });

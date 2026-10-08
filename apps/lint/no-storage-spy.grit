@@ -1,0 +1,11 @@
+language js
+
+or {
+  `vi.spyOn(Storage.prototype, $method)`,
+  `vi.spyOn(window.localStorage, $method)`,
+  `vi.spyOn(window.sessionStorage, $method)`,
+  `vi.spyOn(localStorage, $method)`,
+  `vi.spyOn(sessionStorage, $method)`
+} as $call where {
+  register_diagnostic(span=$call, message="Do not spy on Web Storage directly: under happy-dom a Storage.prototype spy is silently ignored once the method has been called, and vi.restoreAllMocks() never restores a spy on localStorage, so it breaks later files. Use spyOnLocalStorage() from src/test-storage.ts. See the NO-ISOLATE RULES in apps/web/src/test-setup.ts.", severity="error")
+}
