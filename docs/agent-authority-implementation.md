@@ -523,8 +523,8 @@ not close consent or durable-audit gaps.
 ## Delivery references
 
 Issue numbers are planning references, not runtime evidence. For shipped behavior,
-use [architecture.md](architecture.md); for alternatives, [agent-identity-model.md](agent-identity-model.md)
-and [agent-identity-outbound.md](agent-identity-outbound.md). Delivery proofs belong
+use [architecture.md](architecture.md); for alternatives, [agent-identity-model.md](drafts/agent-identity-model.md)
+and [agent-identity-outbound.md](drafts/agent-identity-outbound.md). Delivery proofs belong
 in acceptance plans, decisions in ADRs and shipped/deferred status in
 [PRODUCTION-READINESS.md](design/PRODUCTION-READINESS.md). Historical handovers are
 conversation snapshots, not the evolving contract.
