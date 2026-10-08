@@ -311453,6 +311453,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791455408793,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b041d4a7464dc7516ee441a8b1e4218879ccb5f9",
+          "message": "feat(studio): add session inspection panels and minimap (#1942)\n\nCo-authored-by: Daniel Kantor <kd@stacklok.com>\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T13:05:13+02:00",
+          "tree_id": "b06bc66d43df5746320a501c1e0def0b59bd9033",
+          "url": "https://github.com/stacklok/mecatl/commit/b041d4a7464dc7516ee441a8b1e4218879ccb5f9"
+        },
+        "date": 1791458216759,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3252,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 52,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -407479,6 +407518,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791458213989,
+  "lastUpdate": 1791458217503,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
