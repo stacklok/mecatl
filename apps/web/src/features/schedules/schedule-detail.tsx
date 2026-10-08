@@ -45,7 +45,6 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { pageTitleClass } from "../../lib/typography";
-import { TranscriptDialog } from "../chat/transcript-dialog";
 import { describeCron } from "./cron-builder";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 
@@ -82,14 +81,10 @@ export function scheduleFirePollInterval(
  * authenticated BFF. Direct browser access to the daemon or SDK was rejected
  * because the BFF owns capability negotiation and caller identity.
  *
- * SPEC: A fire transcript opened here is an inspection surface: navigation may
- * fetch transcript and activity but must not offer actions that start, mutate,
- * retry, approve, rename, fork, clear, or delete its scheduled session.
- *
- * DECISION: Match prototype PR #45 by opening a dedicated read-only transcript
- * dialog from the run log. Ordinary chat and route state were rejected because
- * this inspection must expose no composer or session mutation controls and must
- * preserve schedule-detail context.
+ * DECISION: Match the prototype by navigating a fire's session into the chat
+ * workspace. Reusing the conversation view preserves its transcript rendering,
+ * tool-call presentation, and URL; a schedule-specific dialog was rejected as a
+ * duplicate, visually inconsistent transcript surface.
  */
 export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const queryClient = useQueryClient();
@@ -111,23 +106,8 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const action = useMutation(actOnScheduleMutation());
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [transcript, setTranscript] = useState<{ sessionId: string; title: string }>();
   const [error, setError] = useState<string>();
-  const transcriptOpener = useRef<HTMLButtonElement | null>(null);
   const actionMenuRef = useRef<HTMLButtonElement | null>(null);
-
-  function openTranscript(fire: ScheduleFire, opener: HTMLButtonElement) {
-    transcriptOpener.current = opener;
-    setTranscript({
-      sessionId: fire.sessionId,
-      title: `${scheduleName} — ${fire.firedAt ? formatDate(fire.firedAt) : "scheduled execution"}`,
-    });
-  }
-
-  function closeTranscript() {
-    setTranscript(undefined);
-    queueMicrotask(() => transcriptOpener.current?.focus());
-  }
 
   function closeDelete() {
     setConfirmDelete(false);
@@ -309,7 +289,6 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
           error={fires.isError ? errorMessage(fires.error) : undefined}
           fires={fires.data?.items}
           loading={fires.isPending}
-          onViewTranscript={openTranscript}
         />
       </section>
 
@@ -323,15 +302,6 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
             await refresh();
           }}
           schedule={schedule}
-        />
-      )}
-
-      {transcript && (
-        <TranscriptDialog
-          onOpenChange={(open) => !open && closeTranscript()}
-          open
-          sessionId={transcript.sessionId}
-          title={transcript.title}
         />
       )}
 
@@ -359,12 +329,10 @@ function ScheduleFireHistory({
   error,
   fires,
   loading,
-  onViewTranscript,
 }: {
   error?: string;
   fires?: ScheduleFire[];
   loading: boolean;
-  onViewTranscript: (fire: ScheduleFire, opener: HTMLButtonElement) => void;
 }) {
   const [sortKey, setSortKey] = useState<FireSortKey>("fired");
   const [direction, setDirection] = useState<SortDirection>("desc");
@@ -423,12 +391,10 @@ function ScheduleFireHistory({
                 </TableCell>
                 <TableCell className="px-4 py-3 text-right">
                   {fire.sessionId ? (
-                    <Button
-                      onClick={(event) => onViewTranscript(fire, event.currentTarget)}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      View transcript
+                    <Button asChild size="sm" variant="ghost">
+                      <Link search={{ sessionId: fire.sessionId }} to="/workspace/chat">
+                        View transcript
+                      </Link>
                     </Button>
                   ) : (
                     <span className="text-muted-foreground">—</span>
@@ -458,12 +424,10 @@ function ScheduleFireHistory({
               <FireOutcome fire={fire} compact />
             </div>
             {fire.sessionId && (
-              <Button
-                onClick={(event) => onViewTranscript(fire, event.currentTarget)}
-                size="sm"
-                variant="outline"
-              >
-                View transcript
+              <Button asChild size="sm" variant="outline">
+                <Link search={{ sessionId: fire.sessionId }} to="/workspace/chat">
+                  View transcript
+                </Link>
               </Button>
             )}
           </article>
