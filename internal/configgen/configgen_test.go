@@ -110,10 +110,10 @@ func authoritativeKeys() []string {
 	collect("mcp.servers.auth.oauth.tools", permconfig.MCPStaticToolProfile{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
-	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
+	// output-economy is absent: the setting was REMOVED (a
 	// clean break) and MUST NOT appear in generated artifacts (pinned by
 	// TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts).
-	// reasoning-effort is likewise a bare scalar Config field (ADR 0055).
+	// reasoning-effort is likewise a bare scalar Config field.
 	keys = append(keys, "reasoning-effort")
 	// plan-mode-auto-approve is likewise a bare scalar Config field (operator-tier
 	// only).
@@ -232,7 +232,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"mode: broker", "mode: none", "mode: oauth", "mode: oauth2",
 		"authorization_endpoint: https://github.com/login/oauth/authorize",
 		"token_endpoint: https://github.com/login/oauth/access_token",
-		"secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET", "token_env: MECATL_MCP_STATIC_TOKEN",
+		"secret_file: /var/run/secrets/mecatl/github-mcp-client-secret", "token_env: MECATL_MCP_STATIC_TOKEN",
 		"key_env: MECATL_MCP_CREDENTIAL_KEY",
 		"- name: get_issue", "input_schema:", "read_only: true",
 	} {
@@ -247,7 +247,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"`mcp.servers[].auth.oauth.upstream.mode`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint`",
-		"`mcp.servers[].auth.oauth.client.preregistered.secret_env`",
+		"`mcp.servers[].auth.oauth.client.preregistered.secret_file`",
 		"`mcp.servers[].auth.oauth.client.cimd.document_url`",
 		"`mcp.servers[].auth.oauth.credentials.environment.credential_env`",
 		"`mcp.servers[].auth.oauth.network.private_origins`",
@@ -366,7 +366,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"permissions":            configgen.TierProject,  // allow/ask/deny + subagent: project-settable (allows trust-gated)
 		"guardrails":             configgen.TierOperator, // operator-only: a project cannot weaken a security checker
 		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
-		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
+		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"providers":              configgen.TierOperator, // operator-only: a project cannot choose LLM endpoints or auth posture
 		"credential_store":       configgen.TierOperator, // operator-only: OIDC credential custody is host authority

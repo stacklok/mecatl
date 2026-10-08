@@ -127,9 +127,9 @@ func waitExactPlanProceed(t *testing.T, svc *server.Service, id session.SessionI
 	t.Fatal("approved plan did not complete exactly one fresh proceed run")
 }
 
-// TestADR_0366_ExactPlanControlRequiresDurableEventLog keeps a deployment
+// TestExactPlanControlRequiresDurableEventLog keeps a deployment
 // without durable failure recording from accepting a server-owned plan verdict.
-func TestADR_0366_ExactPlanControlRequiresDurableEventLog(t *testing.T) {
+func TestExactPlanControlRequiresDurableEventLog(t *testing.T) {
 	store := memstore.New()
 	parked := makePlanControlSession(t, "exact-plan-no-event-log")
 	if err := store.Save(t.Context(), parked); err != nil {
@@ -171,9 +171,9 @@ func TestADR_0366_ExactPlanControlRequiresDurableEventLog(t *testing.T) {
 	}
 }
 
-// TestADR_0366_LiveAndRestoredExactPlanAsk proves exact authority and
+// TestLiveAndRestoredExactPlanAsk proves exact authority and
 // server-owned continuation on both sides of a restart.
-func TestADR_0366_LiveAndRestoredExactPlanAsk(t *testing.T) {
+func TestLiveAndRestoredExactPlanAsk(t *testing.T) {
 	t.Run("unopted live run keeps client continuation ownership", func(t *testing.T) {
 		llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"one"}`)))
 		svc := planApprovalService(t, llm, allowRules())
@@ -271,10 +271,10 @@ func TestADR_0366_LiveAndRestoredExactPlanAsk(t *testing.T) {
 	})
 }
 
-// TestADR_0366_OptedInPlanAndScopedGuardrailInStream proves that the same
+// TestOptedInPlanAndScopedGuardrailInStream proves that the same
 // opted-in Converse run can resolve an exact guardrail hold while its plan gate
 // remains reserved for the strict run-and-ask control.
-func TestADR_0366_OptedInPlanAndScopedGuardrailInStream(t *testing.T) {
+func TestOptedInPlanAndScopedGuardrailInStream(t *testing.T) {
 	store := memstore.New()
 	read := &scriptTool{name: "Read", readOnly: true, content: "reviewed result"}
 	cat := tool.NewCatalog()
@@ -1245,7 +1245,7 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 	})
 }
 
-func TestADR_0366_HeadlessAutoApproveUsesExactOwnership(t *testing.T) {
+func TestHeadlessAutoApproveUsesExactOwnership(t *testing.T) {
 	store := memstore.New()
 	llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"one"}`)), mockllm.TextTurn("executed"))
 	cat := tool.NewCatalog()

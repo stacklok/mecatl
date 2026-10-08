@@ -10,8 +10,8 @@ import (
 )
 
 // soulsnapshot.go is the composition-layer PROJECTION of the resolved soul + the
-// LIVE user-model lister into the server adapter's wire types (issue #14, Phase 3,
-// Item 3 — the read-only /soul + /usermodel TUI inspection panels). It is the one
+// LIVE user-model lister into the server adapter's wire types (issue #14 — the
+// read-only /soul + /usermodel TUI inspection panels). It is the one
 // place the soul/user-model adapters meet the server's GetSoul/GetUserModel seams,
 // so the server adapter never reaches into the soul adapter's loader or the
 // composition-layer soulMeta type. It adds NO write path: soulSnapshot READS the

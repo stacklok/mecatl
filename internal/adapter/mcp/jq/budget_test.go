@@ -40,12 +40,12 @@ func withTinyBudget(t *testing.T, budget uint64, interval time.Duration) {
 // post-loop overBudget check, so a watchdog that trips too late is reported as an
 // output-cap overrun — which is exactly the distinction this test exists to pin.
 //
-// # Why the parameters are what they are (this test used to be flaky)
+// # Why the parameters are what they are
 //
-// It previously ran `[range(1e9)]` on a deadline-free ctx (so Run applied its 5s
-// DefaultTimeout) with an 8 MiB budget, and asserted `elapsed <= 2*time.Second`.
-// Two independent load-sensitivities, both observed to fail under a saturated
-// parallel `-race` suite while passing in isolation and on a re-run:
+// Running `[range(1e9)]` on a deadline-free ctx (so Run applies its 5s
+// DefaultTimeout) with an 8 MiB budget and asserting `elapsed <= 2*time.Second`
+// is flaky. Two independent load-sensitivities, both observed to fail under a
+// saturated parallel `-race` suite while passing in isolation and on a re-run:
 //
 //  1. The wall-clock assertion was a LATENCY BUDGET, not the invariant. Removed —
 //     the error-identity assertions below prove which limiter fired, with no timing

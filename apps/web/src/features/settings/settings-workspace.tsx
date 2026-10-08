@@ -15,17 +15,16 @@ import { Link } from "@tanstack/react-router";
 import {
   BookOpen,
   BrainCircuit,
-  Cloud,
   Copy,
   ExternalLink,
   Keyboard,
-  Laptop,
   LifeBuoy,
+  type LucideIcon,
   Search,
-  Server,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AuthControl } from "../../components/shell/auth-control";
+import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -38,6 +37,7 @@ import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
 import { MemorySettings } from "./memory-settings";
+import { Note, SettingsCard } from "./settings-card";
 import {
   connectionMessage,
   freshDeploymentQuery,
@@ -105,227 +105,196 @@ export function SettingsWorkspace({
         : null);
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
-        <Link
-          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
-          search={{ sessionId: undefined }}
-          to="/workspace/chat"
+    <PageShell>
+      <h1 className={pageTitleClass()}>Settings</h1>
+
+      <div className="mt-7 sm:hidden">
+        <label className="text-xs font-medium text-muted-foreground" htmlFor="settings-section">
+          Settings section
+        </label>
+        <select
+          className="mt-2 min-h-11 w-full rounded-lg border border-control-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          id="settings-section"
+          onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
+          value={section}
         >
-          ← Chats
-        </Link>
-        <h1 className={pageTitleClass()}>Settings</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Review your preferences and the settings managed by this deployment.
-        </p>
+          {settingsGroups.map((group) => (
+            <optgroup key={group.title} label={group.title}>
+              {group.items.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
 
-        <div className="mt-7 sm:hidden">
-          <label className="text-xs font-medium text-muted-foreground" htmlFor="settings-section">
-            Settings section
-          </label>
-          <select
-            className="mt-2 min-h-11 w-full rounded-lg border border-control-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            id="settings-section"
-            onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
-            value={section}
-          >
+      <div className="mt-7 flex items-start gap-8">
+        <nav aria-label="Settings sections" className="hidden w-40 shrink-0 sm:block">
+          <ul className="space-y-4">
             {settingsGroups.map((group) => (
-              <optgroup key={group.title} label={group.title}>
-                {group.items.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-
-        <div className="mt-7 flex items-start gap-8">
-          <nav aria-label="Settings sections" className="hidden w-40 shrink-0 sm:block">
-            <ul className="space-y-4">
-              {settingsGroups.map((group) => (
-                <li key={group.title}>
-                  <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {group.title}
-                  </p>
-                  <ul className="space-y-1">
-                    {group.items.map((item) => (
-                      <li key={item.value}>
-                        <button
-                          aria-current={section === item.value ? "page" : undefined}
-                          className={`min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-brand ${section === item.value ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
-                          onClick={() => onSectionChange?.(item.value)}
-                          type="button"
-                        >
-                          {item.label}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </nav>
-
-          <div className="min-w-0 flex-1 space-y-6">
-            {section === "profile" && (
-              <>
-                <IdentitySettings />
-                <ProfileSession />
-              </>
-            )}
-            {section === "agent" && (
-              <>
-                <AgentSettings />
-                <Section icon={Server} title="Agent behavior">
-                  <SourceNote source="authenticated BFF runtime" owner="deployment" />
-                  {runtimeState ? (
-                    <StateCard text={runtimeState} />
-                  ) : (
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      Steering during a run is{" "}
-                      {runtime.data?.capabilities.steer ? "available" : "not enabled"}. Agent
-                      behavior is managed by this deployment.
-                    </p>
-                  )}
-                </Section>
-              </>
-            )}
-            {section === "appearance" && <InterfaceSettings />}
-            {section === "providers" &&
-              (inventoryState ? (
-                <StateCard text={inventoryState} />
-              ) : (
-                settings.data && <ProviderInventory settings={settings.data} />
-              ))}
-            {section === "models" &&
-              (inventoryState ? (
-                <StateCard text={inventoryState} />
-              ) : (
-                settings.data && (
-                  <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
-                )
-              ))}
-            {section === "about" &&
-              (inventoryState ? (
-                <StateCard text={inventoryState} />
-              ) : (
-                runtime.data &&
-                settings.data && <AboutAgent runtime={runtime.data} settings={settings.data} />
-              ))}
-            {section === "memory" &&
-              (runtimeState ? (
-                <StateCard text={runtimeState} />
-              ) : (
-                <>
-                  <Section icon={BrainCircuit} title="Memory">
-                    <SourceNote
-                      source="authenticated user-memory BFF reads"
-                      owner="personal facts"
-                    />
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Memory store configuration is managed by this deployment. Approved
-                      consolidation plans can be generated and applied below.
-                    </p>
-                  </Section>
-                  <MemorySettings />
-                </>
-              ))}
-            {section === "learning" &&
-              (runtimeState ? (
-                <StateCard text={runtimeState} />
-              ) : (
-                <>
-                  <Section icon={BrainCircuit} title="Learning settings">
-                    <SourceNote
-                      source="authenticated learning-proposal and reflection BFF reads"
-                      owner="personal decisions"
-                    />
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      You can review proposals below. Learning configuration is managed by this
-                      deployment and is read-only here.
-                    </p>
-                  </Section>
-                  <LearningReview />
-                </>
-              ))}
-            {section === "storage" &&
-              (runtimeState ? (
-                <StateCard text={runtimeState} />
-              ) : (
-                <>
-                  <SourceNote source="authenticated BFF storage health" owner="deployment" />
-                  <StorageSettings />
-                </>
-              ))}
-            {section === "permissions" && (
-              <Section icon={Server} title="Permissions">
-                <SourceNote source="authenticated BFF runtime capability" owner="deployment" />
-                {runtimeState ? (
-                  <StateCard text={runtimeState} />
-                ) : (
-                  <dl className="mt-4">
-                    <Fact label="Permission posture">
-                      {runtime.data?.capabilities.posture || "Not reported"}
-                    </Fact>
-                  </dl>
-                )}
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Permission posture is managed by this deployment.
+              <li key={group.title}>
+                <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {group.title}
                 </p>
-              </Section>
-            )}
-            {section === "mcp-tools" && (
-              <Section icon={Server} title="MCP tools">
-                <SourceNote source="authenticated BFF runtime capability" owner="deployment" />
+                <ul className="space-y-1">
+                  {group.items.map((item) => (
+                    <li key={item.value}>
+                      <button
+                        aria-current={section === item.value ? "page" : undefined}
+                        className={`min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-brand ${section === item.value ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                        onClick={() => onSectionChange?.(item.value)}
+                        type="button"
+                      >
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <div className="min-w-0 max-w-3xl flex-1 space-y-6">
+          {section === "profile" && (
+            <>
+              <IdentitySettings />
+              <ProfileSession />
+            </>
+          )}
+          {section === "agent" && (
+            <>
+              <AgentSettings />
+              <SettingsCard title="Agent behavior">
                 {runtimeState ? (
                   <StateCard text={runtimeState} />
                 ) : (
-                  <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <Fact label="MCP support">
-                      {runtime.data?.capabilities.mcp ? "Available" : "Not enabled"}
-                    </Fact>
-                    <Fact label="Connector status">
-                      {runtime.data?.capabilities.mcpConnectorStatus ? "Available" : "Not enabled"}
-                    </Fact>
-                  </dl>
+                  <Note>
+                    Steering during a run is{" "}
+                    {runtime.data?.capabilities.steer ? "available" : "not enabled"}. Agent behavior
+                    is managed by this deployment.
+                  </Note>
                 )}
-                <p className="mt-3 text-sm text-muted-foreground">
+              </SettingsCard>
+            </>
+          )}
+          {section === "appearance" && <InterfaceSettings />}
+          {section === "providers" &&
+            (inventoryState ? (
+              <StateCard text={inventoryState} />
+            ) : (
+              settings.data && <ProviderInventory settings={settings.data} />
+            ))}
+          {section === "models" &&
+            (inventoryState ? (
+              <StateCard text={inventoryState} />
+            ) : (
+              settings.data && (
+                <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
+              )
+            ))}
+          {section === "about" &&
+            (inventoryState ? (
+              <StateCard text={inventoryState} />
+            ) : (
+              runtime.data &&
+              settings.data && <AboutAgent runtime={runtime.data} settings={settings.data} />
+            ))}
+          {section === "memory" &&
+            (runtimeState ? (
+              <StateCard text={runtimeState} />
+            ) : (
+              <>
+                <Section icon={BrainCircuit} title="Memory">
+                  <SourceNote source="authenticated user-memory BFF reads" owner="personal facts" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Memory store configuration is managed by this deployment. Approved consolidation
+                    plans can be generated and applied below.
+                  </p>
+                </Section>
+                <MemorySettings />
+              </>
+            ))}
+          {section === "learning" &&
+            (runtimeState ? (
+              <StateCard text={runtimeState} />
+            ) : (
+              <>
+                <SettingsCard title="Learning settings">
+                  <Note>
+                    You can review proposals below. Learning configuration is managed by this
+                    deployment and is read-only here.
+                  </Note>
+                </SettingsCard>
+                <LearningReview />
+              </>
+            ))}
+          {section === "storage" &&
+            (runtimeState ? <StateCard text={runtimeState} /> : <StorageSettings />)}
+          {section === "permissions" && (
+            <SettingsCard title="Permissions">
+              {runtimeState ? (
+                <StateCard text={runtimeState} />
+              ) : (
+                <dl>
+                  <Fact label="Permission posture">
+                    {runtime.data?.capabilities.posture || "Not reported"}
+                  </Fact>
+                </dl>
+              )}
+              <div className="mt-3">
+                <Note>Permission posture is managed by this deployment.</Note>
+              </div>
+            </SettingsCard>
+          )}
+          {section === "mcp-tools" && (
+            <SettingsCard title="MCP tools">
+              {runtimeState ? (
+                <StateCard text={runtimeState} />
+              ) : (
+                <dl className="grid gap-3 sm:grid-cols-2">
+                  <Fact label="MCP support">
+                    {runtime.data?.capabilities.mcp ? "Available" : "Not enabled"}
+                  </Fact>
+                  <Fact label="Connector status">
+                    {runtime.data?.capabilities.mcpConnectorStatus ? "Available" : "Not enabled"}
+                  </Fact>
+                </dl>
+              )}
+              <div className="mt-3">
+                <Note>
                   MCP setup is managed by this deployment. Studio does not yet show the tool
                   inventory.
-                </p>
-              </Section>
-            )}
-            {section === "diagnostics" &&
-              (inventoryState ? (
-                <StateCard text={inventoryState} />
+                </Note>
+              </div>
+            </SettingsCard>
+          )}
+          {section === "diagnostics" &&
+            (inventoryState ? (
+              <StateCard text={inventoryState} />
+            ) : (
+              runtime.data &&
+              settings.data && (
+                <DiagnosticsSettings runtime={runtime.data} settings={settings.data} />
+              )
+            ))}
+          {section === "labs" && (
+            <SettingsCard title="Labs">
+              {runtimeState ? (
+                <StateCard text={runtimeState} />
               ) : (
-                runtime.data &&
-                settings.data && (
-                  <DiagnosticsSettings runtime={runtime.data} settings={settings.data} />
-                )
-              ))}
-            {section === "labs" && (
-              <Section icon={Server} title="Labs">
-                <SourceNote
-                  source="Studio availability and authenticated BFF runtime"
-                  owner="deployment"
-                />
-                {runtimeState ? (
-                  <StateCard text={runtimeState} />
-                ) : (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    No Labs features are available in Studio yet. This runtime is{" "}
-                    {runtime.data?.mock ? "a local mock" : "a connected agent"}.
-                  </p>
-                )}
-              </Section>
-            )}
-          </div>
+                <Note>
+                  No Labs features are available in Studio yet. This runtime is{" "}
+                  {runtime.data?.mock ? "a local mock" : "a connected agent"}.
+                </Note>
+              )}
+            </SettingsCard>
+          )}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -357,12 +326,11 @@ function ProfileSession() {
       : undefined;
 
   return (
-    <Section icon={Server} title="Sign-in session">
-      <SourceNote source="BFF auth session" owner="read-only account identity" />
+    <SettingsCard title="Sign-in session">
       {sessionState ? (
         <StateCard text={sessionState} />
       ) : (
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        <dl className="grid gap-3 sm:grid-cols-2">
           <Fact label="Session status">
             {session.data?.status === "authenticated" ? "Signed in" : "Sign-in not required"}
           </Fact>
@@ -376,14 +344,13 @@ function ProfileSession() {
           {account && <Fact label="Account reference">{account}</Fact>}
         </dl>
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
 function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse }) {
   return (
-    <Section icon={Server} title="Providers">
-      <SourceNote source="authenticated BFF model inventory" owner="deployment" />
+    <SettingsCard title="Providers">
       <ul className="space-y-1 text-sm text-muted-foreground">
         {managementNotes(settings.management).map((note) => (
           <li key={note}>{note}</li>
@@ -420,7 +387,7 @@ function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse 
           })}
         </div>
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -442,12 +409,11 @@ function ModelInventory({
   }, [search, settings.models]);
 
   return (
-    <Section icon={BrainCircuit} title="Models">
-      <SourceNote source="authenticated BFF model inventory" owner="deployment" />
-      <p className="mt-2 text-sm text-muted-foreground">
+    <SettingsCard title="Models">
+      <Note>
         Visible is a personal preference stored in this browser. Default model and routing are
         managed by the deployment.
-      </p>
+      </Note>
       <dl className="mt-4 grid gap-3 sm:grid-cols-2">
         <Fact label="Default model">Managed by deployment; not reported to Studio.</Fact>
         <Fact label="Routing">
@@ -488,7 +454,7 @@ function ModelInventory({
           ))}
         </div>
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -560,15 +526,11 @@ function AboutAgent({
 }) {
   const [copyStatus, setCopyStatus] = useState("");
   return (
-    <Section icon={runtime.source === "local" ? Laptop : Cloud} title="About">
-      <SourceNote
-        source="authenticated BFF runtime and settings inventory"
-        owner="deployment and Studio build"
-      />
-      <p className="mt-3 text-sm text-muted-foreground">
+    <SettingsCard title="About">
+      <Note>
         Studio is the browser client. Its build and installed SDK are reported separately from the
         connected daemon.
-      </p>
+      </Note>
       <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Fact label="Studio build">{reported(runtime.studioBuildId)}</Fact>
         <Fact label="SDK version">{reported(runtime.sdkVersion)}</Fact>
@@ -629,7 +591,7 @@ function AboutAgent({
       <div className="mt-2 divide-y border-t">
         <AuthControl />
       </div>
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -642,12 +604,8 @@ function DiagnosticsSettings({
 }) {
   const storage = useQuery(getStorageHealthOptions());
   return (
-    <Section icon={Server} title="Diagnostics">
-      <SourceNote
-        source="authenticated BFF runtime, settings inventory, and storage health"
-        owner="deployment"
-      />
-      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+    <SettingsCard title="Diagnostics">
+      <dl className="grid gap-3 sm:grid-cols-2">
         <Fact label="Runtime connection">{runtime.connection}</Fact>
         <Fact label="Runtime source">{runtime.source}</Fact>
         <Fact label="Daemon implementation">{settings.serverImplementation || "Not reported"}</Fact>
@@ -664,10 +622,10 @@ function DiagnosticsSettings({
           Storage health: {storage.data.available ? "Available" : "Unavailable"}.
         </p>
       )}
-      <p className="mt-3 text-sm text-muted-foreground">
-        Logs and usage are managed by this deployment and are not available here.
-      </p>
-    </Section>
+      <div className="mt-3">
+        <Note>Logs and usage are managed by this deployment and are not available here.</Note>
+      </div>
+    </SettingsCard>
   );
 }
 
@@ -677,7 +635,7 @@ function Section({
   title,
 }: {
   children: ReactNode;
-  icon: typeof Server;
+  icon: LucideIcon;
   title: string;
 }) {
   return (

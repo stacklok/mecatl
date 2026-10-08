@@ -164,12 +164,12 @@ type Config struct {
 	// keeps the CLI/default). The composition layer parses the string; permconfig only
 	// reads the scalar.
 	Posture string `yaml:"posture"`
-	// Models holds the per-slot model config (ADR 0030): the `models.slots` /
+	// Models holds the per-slot model config: the `models.slots` /
 	// `models.aliases` maps, the session `default`, and the operator-tier `allowlist`
 	// cap. At the OPERATOR tier (user-global + CLI) all fields are honoured. At the
-	// PROJECT tier (Phase 4) a models: block is honoured WITHIN the operator allowlist
+	// PROJECT tier a models: block is honoured WITHIN the operator allowlist
 	// on a TRUSTED workspace (slots/aliases/default only); with no operator allowlist
-	// it stays WARN-ignored (the opt-in — byte-identical to pre-Phase-4), and a
+	// it stays WARN-ignored (the opt-in), and a
 	// project-tier allowlist: key is always ignored with a WARN (non-wideable cap).
 	// The TOP `models:` mapping is parsed STRICTLY (an unknown key like `slotz:`
 	// errors), the inner slots/aliases maps stay free-form (composition validates the
@@ -186,7 +186,7 @@ type Config struct {
 	// permconfig only reads the scalar.
 	ReasoningEffort string `yaml:"reasoning-effort"`
 	// PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue
-	// #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY
+	// #206). Like Posture/ReasoningEffort it is honoured ONLY
 	// from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve:
 	// key is IGNORED with a WARN (operator-tier only — a project repo enabling
 	// autonomous plan approval is a security DOWNGRADE). false = absent (the resolver
@@ -734,8 +734,10 @@ type MCPOAuthClientProfile struct {
 type MCPPreregisteredClientProfile struct {
 	// ID is the required preregistered OAuth client identifier.
 	ID string `yaml:"id"`
-	// SecretEnv is a MECATL_* environment variable name containing the client secret.
+	// SecretEnv is a MECATL_* environment variable name containing the client secret; mutually exclusive with SecretFile.
 	SecretEnv string `yaml:"secret_env"`
+	// SecretFile is an absolute path to a regular file containing the client secret; mutually exclusive with SecretEnv.
+	SecretFile string `yaml:"secret_file"`
 }
 
 // MCPCIMDClientProfile contains the HTTPS client-id metadata document URL.
@@ -1074,7 +1076,7 @@ func (c *MCPOAuthClientProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (c *MCPPreregisteredClientProfile) strictFields() map[string]any {
-	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv}
+	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv, "secret_file": &c.SecretFile}
 }
 
 // UnmarshalYAML strictly decodes preregistered client metadata.
@@ -1085,7 +1087,19 @@ func (c *MCPPreregisteredClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.id", c.ID); err != nil {
 		return err
 	}
-	return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+	if mappingHasKey(node, "secret_env") && mappingHasKey(node, "secret_file") {
+		return errors.New("mcp.servers[].auth.oauth.client.preregistered: secret_env and secret_file are mutually exclusive")
+	}
+	if mappingHasKey(node, "secret_env") {
+		return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.secret_file", c.SecretFile); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(c.SecretFile) {
+		return errors.New("mcp.servers[].auth.oauth.client.preregistered.secret_file must be absolute")
+	}
+	return nil
 }
 
 func (c *MCPCIMDClientProfile) strictFields() map[string]any {
@@ -1633,14 +1647,13 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding
+// ModelsSection is the `models:` YAML subtree: a per-slot model-binding
 // map, an alias map, a session-default binding, and the operator-tier allowlist cap.
 // The TOP mapping is parsed STRICTLY (unknown keys error); the inner Slots/Aliases
 // maps are free-form name→selector (composition validates the slot names fail-soft
 // via knownSlotNames).
 //
-// The block appears at BOTH tiers but the tiers differ in what they may carry
-// (Phase 4):
+// The block appears at BOTH tiers but the tiers differ in what they may carry:
 //   - OPERATOR tier (user-global + CLI): all four fields. The Allowlist is the
 //     non-wideable cap on what a PROJECT may bind; Slots/Aliases/Default are the
 //     operator's own bindings (never capped — the operator is authoritative).
@@ -1689,7 +1702,7 @@ type ModelsSection struct {
 	// Allowlist is the OPERATOR-TIER, non-wideable cap: the set of
 	// model selectors (alias names and/or concrete ids) a PROJECT-tier models: block
 	// may bind to. An empty/absent allowlist means project models stay WARN-ignored
-	// (the opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
+	// (the opt-in: no cap ⇒ no project override). It is
 	// honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored
 	// with a WARN (a project cannot widen its own cap).
 	Allowlist []string `yaml:"allowlist"`
@@ -1766,7 +1779,7 @@ func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0352):
+// RouterSection is the `models.router:` operator-tier subtree:
 // the semantic delegated-model taxonomy and its explicitly selected classifier backend.
 // Composition maps the backend's exact category choice through the same local
 // category-to-model alias machinery.
@@ -1799,7 +1812,7 @@ type RouterSection struct {
 	Disabled bool `yaml:"disabled"`
 }
 
-// RouterCategory is one routing category in the operator taxonomy (ADR 0031): a name,
+// RouterCategory is one routing category in the operator taxonomy: a name,
 // a one-line description the classifier reads, and the model selector the category maps
 // to. A category with an empty Name or Description is WARN-dropped fail-soft in
 // composition (foldOperatorModelRouter) — a category the classifier cannot describe or
@@ -1879,7 +1892,7 @@ func (r *RouterSection) strictFields() map[string]any {
 	}
 }
 
-// UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
+// UnmarshalYAML decodes the models.router: mapping STRICTLY: an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
 func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
 	r.Backend = "llm"
@@ -1921,7 +1934,7 @@ func (m *ModelsSection) strictFields() map[string]any {
 	}
 }
 
-// UnmarshalYAML decodes the models: mapping STRICTLY (ADR 0030): an unknown key
+// UnmarshalYAML decodes the models: mapping STRICTLY: an unknown key
 // inside the models subtree is a parse error — a typo like `slotz:` or `aliasez:`
 // must not silently drop a whole binding map. Same rationale as GuardrailsSection.
 func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {

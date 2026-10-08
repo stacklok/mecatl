@@ -18,7 +18,7 @@ import (
 // newTestServer it does not pre-register resources/prompts — the test adds what
 // it needs. The httptest listener close is self-registered via t.Cleanup so it
 // runs AFTER the *Server.Close cleanup (LIFO), which is required now that the
-// standalone SSE GET stream is enabled (ADR 0057): closing the listener while
+// standalone SSE GET stream is enabled: closing the listener while
 // the SDK's handleSSE goroutine is still attached wedges httptest.Server.Close.
 func newMutableTestServer(t *testing.T) (string, *mcpsdk.Server) {
 	t.Helper()
@@ -90,8 +90,8 @@ func TestReconciliationCandidateListProjectionStaysFrozenAfterNotification(t *te
 	}
 }
 
-// TestToolListChangedNotificationRefreshesSnapshot is the Phase-1 acceptance
-// test (ADR 0057): with the standalone SSE stream enabled, adding a tool
+// TestToolListChangedNotificationRefreshesSnapshot is the acceptance
+// test: with the standalone SSE stream enabled, adding a tool
 // server-side fires notifications/tools/list_changed, the handler sets the
 // toolsDirty flag, and the next Tools() lazily re-lists and picks up the new
 // tool.

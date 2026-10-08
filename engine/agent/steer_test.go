@@ -165,7 +165,7 @@ func TestSteer_RecordedAndRehydrated(t *testing.T) {
 	}
 
 	// Persist the emitted stream to the durable log the way the relay does, then
-	// fold it back — ADR-0038 rehydration. The steer's EvUserPrompt must be in
+	// fold it back — event-log rehydration. The steer's EvUserPrompt must be in
 	// the stream so the fold rebuilds the user turn.
 	for _, ev := range evs {
 		if err := eventLog.Append(context.Background(), sess.ID, ev); err != nil {

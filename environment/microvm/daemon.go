@@ -62,8 +62,7 @@ var errLifecycleProtocol = errors.New("invalid microvmd lifecycle protocol reque
 // Create, resolve, and fork retain their connection until terminal release and
 // return an AcquisitionID. Workspace, exec, fork, and merge requests require a
 // live acquisition and its complete Binding. Detach and owned deletion must use
-// the acquisition's retained connection. See the private lifecycle v4 contract in
-// docs/acceptance/microvm-execution-environments.md for the exact exchange rules.
+// the acquisition's retained connection. Those are the lifecycle v4 exchange rules.
 type LifecycleRequest struct {
 	Version       uint16             `json:"version"`
 	Operation     LifecycleOperation `json:"operation"`

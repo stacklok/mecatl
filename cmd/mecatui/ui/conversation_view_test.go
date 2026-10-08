@@ -11,7 +11,7 @@ func anchorFrame(rows ...renderedRow) renderedFrame {
 	return renderedFrame{lines: make([]string, len(rows)), provenance: rows}
 }
 
-func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
+func TestAnchorFallbackIsDeterministic(t *testing.T) {
 	// The old frame remains authoritative until refreshView captures its visible
 	// anchor, even though rendering the replacement reuses scratch backing.
 	m := newCoalesceModel(t)
@@ -138,7 +138,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
+func TestAnchorCardAndChangedFilesAppendixFallback(t *testing.T) {
 	collapsed := anchorFrame(
 		renderedRow{blockID: 7, region: conversationRegionChrome, row: 0},
 		renderedRow{blockID: 7, region: conversationRegionResult, sourceOffset: 0, text: true},
@@ -187,7 +187,7 @@ func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
 	}
 }
 
-func TestADR_0301_BottomAlignedAnchorPromotesTailFollow(t *testing.T) {
+func TestBottomAlignedAnchorPromotesTailFollow(t *testing.T) {
 	vp := viewport.New()
 	vp.SetHeight(2)
 	view := conversationView{mode: anchored, anchor: readingAnchor{blockID: 2, region: conversationRegionBody, sourceOffset: 0, text: true}}
@@ -209,7 +209,7 @@ func TestADR_0301_BottomAlignedAnchorPromotesTailFollow(t *testing.T) {
 	}
 }
 
-func TestADR_0301_InterBlockSeparatorAnchorsAdjacentContent(t *testing.T) {
+func TestInterBlockSeparatorAnchorsAdjacentContent(t *testing.T) {
 	m := newCoalesceModel(t)
 	m.conv.addUser("first")
 	m.conv.addUser(strings.Repeat("middle content ", 12))

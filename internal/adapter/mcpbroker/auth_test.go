@@ -33,7 +33,7 @@ func protectedConfig(tokenURL string) mcpauthority.BrokerConfig {
 				Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
 					AuthorizationEndpoint: "https://accounts.example/authorize", TokenEndpoint: tokenURL,
 				}},
-				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretEnv: "MECATL_TEST_CLIENT_SECRET"}},
+				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretFile: "testdata/client-secret"}},
 				Scopes: []string{"issues:write"}, RequestRefreshToken: true,
 			}},
 		}},
@@ -74,7 +74,7 @@ func newProtectedHarness(t *testing.T, tokenServer *httptest.Server) *protectedH
 		},
 		WithAuthorizedCaller(authorized),
 		WithOAuthLoopbackForTest(t, roots),
-		WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "client-secret", nil }),
+		WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "client-secret", nil }),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func callback(t *testing.T, runtime *Runtime, code, state string) *httptest.Resp
 	return recorder
 }
 
-func TestADR_0310_LazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) {
+func TestLazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("requesting lazy authorization must not contact discovery or token endpoints")
 	}))
@@ -161,7 +161,7 @@ func TestADR_0310_LazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) 
 	}
 }
 
-func TestADR_0326_LazyGrantReplacesDeclaredMetadata(t *testing.T) {
+func TestLazyGrantReplacesDeclaredMetadata(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
@@ -231,7 +231,7 @@ func TestADR_0326_LazyGrantReplacesDeclaredMetadata(t *testing.T) {
 	}
 }
 
-func TestADR_0326_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
+func TestLazyGrantRefreshFailureIsAtomic(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
@@ -338,14 +338,14 @@ func TestADR_0326_LazyGrantRefreshFailureIsAtomic(t *testing.T) {
 	assertStatic("process-close race")
 }
 
-// TestADR_0326_LazyGrantRefreshRejectsInvalidUndeclaredMetadata pins the
+// TestLazyGrantRefreshRejectsInvalidUndeclaredMetadata pins the
 // validation-ordering fix: an invalid/oversized undeclared authenticated
 // definition must abort the whole refresh, not be silently dropped while a
 // valid declared subset still publishes. Before the fix,
 // stageAuthenticatedDeclaredRoutes filtered to declared names BEFORE calling
 // validateAuthenticatedRoute, so an undeclared definition never reached the
 // shared admission boundary at all.
-func TestADR_0326_LazyGrantRefreshRejectsInvalidUndeclaredMetadata(t *testing.T) {
+func TestLazyGrantRefreshRejectsInvalidUndeclaredMetadata(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
@@ -380,14 +380,14 @@ func TestADR_0326_LazyGrantRefreshRejectsInvalidUndeclaredMetadata(t *testing.T)
 	}
 }
 
-// TestADR_0326_LazyGrantRefreshRetryReusesPublishedSnapshot pins the
+// TestLazyGrantRefreshRetryReusesPublishedSnapshot pins the
 // transactional-retry fix: once a grant refresh has published a catalogue for
 // a given granted transaction, a retry against the SAME transaction (as a
 // caller does after restoring the claim following a downstream
 // session-engine rebuild failure) must reuse that exact snapshot rather than
 // re-running live authenticated discovery, which could return different
 // metadata on a second call.
-func TestADR_0326_LazyGrantRefreshRetryReusesPublishedSnapshot(t *testing.T) {
+func TestLazyGrantRefreshRetryReusesPublishedSnapshot(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
@@ -841,7 +841,7 @@ func TestAttachmentCloseWaitsForRequestAuthorization(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(ctx context.Context, _ string) (string, error) {
 			close(entered)
 			select {
 			case <-release:
@@ -916,7 +916,7 @@ func TestRuntimeCloseAndDrainWaitsForActiveOperations(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-release
 			return "client-secret", nil
@@ -983,7 +983,7 @@ func TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-hang // ignores ctx cancellation on purpose: a genuinely wedged op
 			return "client-secret", nil

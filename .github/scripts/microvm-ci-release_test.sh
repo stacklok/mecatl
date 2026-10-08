@@ -249,6 +249,8 @@ fi
 printf '%s\n' "$publish_host_section" | grep -F '${binary_name}-${VERSION}-${platform}' >/dev/null
 printf '%s\n' "$publish_host_section" | grep -F 'binary: [mecated, mecatui]' >/dev/null
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseVersion' >/dev/null
+printf '%s\n' "$publish_host_section" | grep -F 'github.com/stacklok/mecatl/internal/buildinfo.BuildID=${VERSION}' >/dev/null
+printf '%s\n' "$publish_host_section" | grep -F 'Verify native host binary version' >/dev/null
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseStampRequired=release' >/dev/null
 require '[ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-release.sh ]' "$release"
 
@@ -260,9 +262,9 @@ mkdir -p "$test_tmp/oci-digest"
 CGO_ENABLED=0 GOWORK=off go -C "$repo_root/environment/microvm" build -trimpath -buildvcs=false -ldflags='-buildid=' \
   -o "$test_tmp/oci-digest/digest" ./cmd/mecatl-oci-tree-digest
 
-# Functional host-stamp/entrypoint contract: both real binaries consume the same
-# defaults through their package-specific version symbol. Mecated exercises its offline
-# administration entrypoint; mecatui proves the stamp reaches embedded app composition.
+# Functional host-stamp/entrypoint contract: both real binaries consume their
+# package-specific microVM stamps and expose the canonical BuildID. Mecated additionally
+# exercises its offline administration entrypoint.
 host_scratch="$test_tmp/host-entrypoint"
 mkdir -p "$host_scratch/home" "$host_scratch/config" "$host_scratch/data" "$host_scratch/state" "$host_scratch/runtime"
 host_version=v0.0.0-host-contract
@@ -273,8 +275,18 @@ binary=mecated
 version_symbol=main.microVMReleaseVersion
 wrong_version_symbol=main.version
 go build -trimpath -buildvcs=false \
-  -ldflags="-X ${version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -ldflags="-X ${version_symbol}=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   -o "$host_scratch/$binary" "./cmd/$binary"
+test "$("$host_scratch/$binary" --version)" = "$binary $host_version"
+
+go build -trimpath -buildvcs=false \
+  -ldflags="-X ${version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -o "$host_scratch/$binary-missing-build-id" "./cmd/$binary"
+if test "$("$host_scratch/$binary-missing-build-id" --version)" = "$binary $host_version"; then
+  echo "$binary accepted a missing build ID stamp" >&2
+  exit 1
+fi
+
 HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
   XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
   "$host_scratch/$binary" microvm status --output json >"$host_scratch/$binary.json"
@@ -302,8 +314,16 @@ fi
 # mecatui has no administration frontend. Verify its package-specific linker
 # symbols feed embedded app composition without starting KVM or an interactive TUI.
 go test -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
-  -ldflags="-X main.version=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -ldflags="-X main.version=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   ./cmd/mecatui
+
+# The release binary must also expose the canonical BuildID.
+binary=mecatui
+version_symbol=main.version
+go build -trimpath -buildvcs=false \
+  -ldflags="-X ${version_symbol}=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+  -o "$host_scratch/$binary" "./cmd/$binary"
+test "$("$host_scratch/$binary" --version)" = "$binary $host_version"
 
 expected_status=$(printf '{"backend":"microvm-local","configured":false,"running":false,"state":"unconfigured","error":"","remediation":"Not configured; run '\''mecated microvm doctor'\'' to check host readiness.","socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
 test "$(cat "$host_scratch/mecated.json")" = "$expected_status"

@@ -12,7 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// The watch delivery phases (ADR 0250 decision 5). They are OPEN STRINGS on the
+// The watch delivery phases. They are OPEN STRINGS on the
 // wire, not an enum — the same discipline the event `type`/`stop` fields carry —
 // so adding a phase is a minor SDK release rather than a wire-compat event, and
 // an older client decoding a new value gets a string it can pass through rather
@@ -29,11 +29,11 @@ const (
 	// WatchPhaseGap marks a position where a durable append is KNOWN to have
 	// failed.
 	//
-	// It is a PHASE rather than an event kind, and that is the whole point of ADR
-	// 0250 decision 5: a gap is a fact about DELIVERY, not something that happened
+	// It is a PHASE rather than an event kind, and that is the whole point:
+	// a gap is a fact about DELIVERY, not something that happened
 	// in the run. Making it a session.Event would leak it into the event taxonomy,
 	// the proto Event message, the kind-parity gate, and every consumer that folds
-	// events into a session. TestADR_0250_GapAddsNoEventKind asserts that absence
+	// events into a session. TestGapAddsNoEventKind asserts that absence
 	// structurally, because "just add an EvGap so clients can render it" is a
 	// natural-sounding change that would silently relocate a delivery concern into
 	// the domain.
@@ -42,7 +42,7 @@ const (
 
 // watchDeliveryBuffer bounds ONE watcher's undelivered envelopes.
 //
-// This is the "bounded delivery state" ADR 0250 decision 7 requires. It is
+// This is the required "bounded delivery state". It is
 // deliberately generous enough that an ordinarily-busy client rides out a burst
 // (a tool-heavy turn emits deltas far faster than a browser renders them) and
 // deliberately finite, because the alternative to a bound is an unbounded
@@ -102,7 +102,7 @@ var ErrWatchUnsupported = errors.New("server: the configured event log does not 
 // ErrWatchLagging means a watch was terminated because its client fell behind
 // the bounded delivery buffer for longer than the grace.
 //
-// TERMINATING is the point (ADR 0250 decision 7). Service.Subscribe, the
+// TERMINATING is the point. Service.Subscribe, the
 // pre-cursor live registry, DROPS events for a slow subscriber: the stream stays
 // open and the client never learns it is missing data. A durable cursor exists
 // precisely so that the honest alternative is available — end the stream, and let
@@ -119,8 +119,8 @@ var ErrWatchLagging = errors.New("server: watch terminated because the client fe
 // the watch's stream is known to be incomplete.
 var ErrActivityGap = errors.New("server: a durable event-log append failed; this watch has a delivery gap")
 
-// ActivityGapError is the process-local, GUARANTEED tier of ADR 0250 decision
-// 6's three-tier append-gap guarantee: when an append fails, every watcher in
+// ActivityGapError is the process-local, GUARANTEED tier of the
+// three-tier append-gap guarantee: when an append fails, every watcher in
 // the failing process terminates with this error and its cursor never advances.
 //
 // Like ErrWatchLagging it carries no cursor, for the same reason: the client's
@@ -233,7 +233,7 @@ func (s *Service) unregisterWatch(id session.SessionID, reg *watchRegistration) 
 
 // faultWatchers terminates every watcher attached to id with a delivery gap.
 //
-// This is ADR 0250 decision 6's guaranteed, process-local tier. It runs on the
+// This is the append-gap guarantee's guaranteed, process-local tier. It runs on the
 // appending thread and is therefore deliberately cheap.
 func (s *Service) faultWatchers(id session.SessionID) {
 	s.watchMu.Lock()
@@ -275,7 +275,7 @@ func (s *Service) closeWatches() {
 
 // WatchSessionEvents is the DURABLE replay-then-follow read: it replays a
 // session's log from after the given cursor, announces the transition, and
-// follows the tail until the caller stops (issue #821, ADR 0250).
+// follows the tail until the caller stops (issue #821).
 //
 // It is ONE operation on purpose. The two existing read paths cannot be composed
 // into it without a hole: port.EventLog.Read is a complete durable replay with no
@@ -501,7 +501,7 @@ func watchEnvelopeFor(rec port.LogRecord, phase, runID string) (WatchEnvelope, b
 	return WatchEnvelope{Event: &ev, Cursor: rec.Cursor, Phase: phase}, true
 }
 
-// noteAppendGap runs ADR 0250 decision 6's two reachable tiers after a durable
+// noteAppendGap runs the append-gap guarantee's two reachable tiers after a durable
 // append failed, in order of reach.
 //
 // It is called from appendEvent — the one persistence chokepoint — and it never
@@ -512,7 +512,7 @@ func watchEnvelopeFor(rec port.LogRecord, phase, runID string) (WatchEnvelope, b
 // It adds NO diagnostics line of its own. The append failure is already reported
 // (RunEventRecorder's sticky WARN; the manual-compaction WARN), a landed gap
 // marker is owned by the gap PHASE its watchers observe, and the residual —
-// a marker that could not land either — is documented in ADR 0250 rather than
+// a marker that could not land either — is an accepted residual rather than
 // logged twice per incident.
 func (s *Service) noteAppendGap(ctx context.Context, id session.SessionID, log port.CursorEventLog, cause error) {
 	// The reason is a backend error string bound for a DURABLE RECORD, and it stops

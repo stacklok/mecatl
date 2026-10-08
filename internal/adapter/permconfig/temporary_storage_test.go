@@ -82,7 +82,7 @@ func TestTemporaryStorageExplicitConfigIsNotAnOverride(t *testing.T) {
 	}
 }
 
-func TestADR_0281_ProjectTemporaryStorageIgnored(t *testing.T) {
+func TestProjectTemporaryStorageIgnored(t *testing.T) {
 	const operator = "temporary_storage:\n  mode: managed\n  managed_root: operator-root\n  command_reap_after: 2h\n"
 	const project = "temporary_storage:\n  mode: system\n  managed_root: project-root\n  command_reap_after: 1m\n"
 	var buf bytes.Buffer

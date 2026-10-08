@@ -222,7 +222,7 @@ func TestRegistryCaseInsensitive(t *testing.T) {
 }
 
 // TestSolarReturnsBuiltinLightTheme asserts theme.Solar() (the light-theme
-// auto-detect fallback, ADR 0280) always returns the built-in "solar" theme —
+// auto-detect fallback) always returns the built-in "solar" theme —
 // byte-identical to resolving "solar" through a fresh registry — regardless of
 // any user override loaded under the same name.
 func TestSolarReturnsBuiltinLightTheme(t *testing.T) {

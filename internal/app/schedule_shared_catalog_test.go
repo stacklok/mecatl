@@ -13,9 +13,9 @@ import (
 // TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools pins AC2.1
 // (schedule-shared-catalog plan, Scenario 2): the build-time SHARED catalog of a
 // store-backed Build carries BOTH schedule tools — Schedule (mutating) and
-// ScheduleQuery (read-only) — exactly like the six memory tools (ADR 0073
-// decision 1: "registered in the catalog for every session that has a backing
-// ScheduleStore"). ADR 0076 made the schedule manager store-shaped (resolvable
+// ScheduleQuery (read-only) — exactly like the six memory tools (registered
+// in the catalog for every session that has a backing
+// ScheduleStore). The schedule manager is store-shaped (resolvable
 // BEFORE buildEngine), so assets.scheduleManagerFactory is bound EAGERLY and
 // registerScheduleTool fires on the build-time pass — the late bind (a factory
 // set after server.NewService) left the default-profile shared-engine fast path
@@ -81,7 +81,7 @@ func TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools(t *testin
 			}
 			name := callNames[ev.ToolResult.CallID]
 			if strings.Contains(ev.ToolResult.Content, "unknown tool") {
-				t.Errorf("the shared engine's catalog rejected a scripted %q call as unknown — the build-time assembly must register it (eager scheduleManagerFactory bind, ADR 0076); result: %q", name, ev.ToolResult.Content)
+				t.Errorf("the shared engine's catalog rejected a scripted %q call as unknown — the build-time assembly must register it (eager scheduleManagerFactory bind); result: %q", name, ev.ToolResult.Content)
 				continue
 			}
 			executed[name] = true
@@ -89,7 +89,7 @@ func TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools(t *testin
 	}
 	for _, name := range []string{agent.ScheduleToolName, agent.ScheduleQueryToolName} {
 		if !executed[name] {
-			t.Errorf("no executed EvToolResult for %q on a shared-engine session — the build-time assembly must register it (eager scheduleManagerFactory bind, ADR 0076)", name)
+			t.Errorf("no executed EvToolResult for %q on a shared-engine session — the build-time assembly must register it (eager scheduleManagerFactory bind)", name)
 		}
 	}
 }

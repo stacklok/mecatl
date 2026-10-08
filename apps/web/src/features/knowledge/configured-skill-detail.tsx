@@ -3,6 +3,7 @@
 import { listConfiguredSkillsOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { PageShell } from "../../components/shell/page-shell";
 import { Button } from "../../components/ui/button";
 import { pageTitleClass } from "../../lib/typography";
 import { cn } from "../../lib/utils";
@@ -33,38 +34,34 @@ export function ConfiguredSkillDetail({ name }: { name: string }) {
     );
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-7 sm:px-8 sm:py-10">
-        <BackLink />
-        <div className="space-y-3">
-          <h1
-            className={pageTitleClass(
-              "break-words text-[44px] leading-[1.05] max-[500px]:text-3xl",
-            )}
-          >
-            {humanizeSkillName(skill.name)}
-          </h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <MetaPill className="font-mono">{skill.name}</MetaPill>
-            {skill.agentOwned && skill.ownerAgent && <MetaPill>by {skill.ownerAgent}</MetaPill>}
-            {skill.agentOwned && skill.activeVersion && (
-              <MetaPill className="font-mono">{skill.activeVersion}</MetaPill>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-10 lg:flex-row lg:items-start">
-          <aside className="flex w-full max-w-[465px] flex-col gap-6">
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold">Summary</h2>
-              <p className="text-base leading-relaxed text-muted-foreground">
-                {skill.description || NO_DESCRIPTION}
-              </p>
-            </div>
-          </aside>
+    <PageShell className="space-y-5">
+      <BackLink />
+      <div className="space-y-3">
+        <h1
+          className={pageTitleClass("break-words text-[44px] leading-[1.05] max-[500px]:text-3xl")}
+        >
+          {humanizeSkillName(skill.name)}
+        </h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <MetaPill className="font-mono">{skill.name}</MetaPill>
+          {skill.agentOwned && skill.ownerAgent && <MetaPill>by {skill.ownerAgent}</MetaPill>}
+          {skill.agentOwned && skill.activeVersion && (
+            <MetaPill className="font-mono">{skill.activeVersion}</MetaPill>
+          )}
         </div>
       </div>
-    </div>
+
+      <div className="flex flex-col gap-10 lg:flex-row lg:items-start">
+        <aside className="flex w-full max-w-[465px] flex-col gap-6">
+          <div className="space-y-3">
+            <h2 className="text-base font-semibold">Summary</h2>
+            <p className="text-base leading-relaxed text-muted-foreground">
+              {skill.description || NO_DESCRIPTION}
+            </p>
+          </div>
+        </aside>
+      </div>
+    </PageShell>
   );
 }
 

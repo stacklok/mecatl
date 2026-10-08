@@ -151,11 +151,9 @@ func resolveChildProvider(cfg Config, provReg *providerRegistry, def agents.Agen
 // re-derived LIVE-FIRST from the registry meta (live when present, catalog floor:
 // the SAME store the picker reads), so a child compacts on ITS model's window —
 // regardless of whether the child's model differs from the parent's. Issue #64:
-// a same-model child now resolves the parent's REAL window via the same resolver,
-// never the hardcoded 128k floor; before, an unchanged pair short-circuited to 0
-// and a same-model child of a 1M-context parent compacted at ~102k. (The
-// parent-pair is no longer an input — the rule keys solely on the child's resolved
-// pair.)
+// a same-model child resolves the parent's REAL window via the same resolver,
+// never the hardcoded 128k floor. (The parent-pair is not an input — the rule
+// keys solely on the child's resolved pair.)
 //
 // It returns a RESOLVE-AT-USE closure (reg.windowResolver), not an eager int, so a
 // child inherits the SAME live-first override→live→catalog→128k-floor resolution as
@@ -227,7 +225,7 @@ func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProvi
 //
 // The set is consulted ONLY by the engine's router gate (agent.WithRoutableAgents →
 // maybeRouteModel). It is layering-clean: only def NAME strings cross into engine/agent. A nil
-// reg (no agent source) yields nil → no def routes (byte-identical to pre-#286). It is SILENT
+// reg (no agent source) yields nil → no def routes. It is SILENT
 // (no diagnostics): the per-def provider/MCP WARNs are emitted by the actual engine build
 // (buildAgentSubagentEngines), so re-logging here would double-emit (the build-once discipline).
 func routableAgentNames(provReg *providerRegistry, reg *agents.Registry, parentProviderID string) []string {
@@ -438,7 +436,7 @@ func shellScopeMissReason(cfg Config) string {
 //  5. when allowMutating is false, drop any mutating (non-read-only) tool with a
 //     DISTINCT diagnostic — EXCEPT that when allowShell is true the Shell tool alone
 //     survives. allowMutating == true (a Mutating team member, which runs in an
-//     isolated force-copy fork; AND a writable specialist Subagent (ADR 0058), which
+//     isolated force-copy fork; AND a writable specialist Subagent, which
 //     keeps Edit/Write/Shell over the real parent workspace via the MAIN runner) keeps
 //     every mutating tool (Edit/Write/Shell). allowMutating == false + allowShell == true
 //     (a read-only team member that the supervisor will isolate in a git worktree)
@@ -791,7 +789,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// Resolve the def's (provider, model, window): a pinned-and-known provider
 		// switches the child engine (with its catalogued window); a def pinning no (or
 		// the same) provider inherits the parent's model AND its real resolved window
-		// (issue #64 — no longer the hardcoded 128k floor). The startup path threads the
+		// (issue #64 — not the hardcoded 128k floor). The startup path threads the
 		// startup-resolved (childProvider, model, windowFn) into buildAgentDefEngine; the
 		// per-call agent+model override path (buildAgentModelEngineFactory) resolves its OWN
 		// tuple to rebuild the SAME scoped engine on the override model.
@@ -852,7 +850,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // base is the AVAILABLE base toolset the def's catalog is scoped over
 // (baseSubagentTools(cfg)); allowMutating, when true, KEEPS workspace-mutating tools
 // (Edit/Write/Shell) over the real workspace instead of dropping them — a Mutating team
-// member (isolated force-copy fork) and a writable specialist Subagent (ADR 0058, direct-
+// member (isolated force-copy fork) and a writable specialist Subagent (direct-
 // write against the real parent workspace via the MAIN runner) both pass true, while a
 // read-only Subagent explorer and a read-only team member pass false (Edit/Write dropped;
 // Shell kept only when allowShell is true and the member is worktree-isolated). allowShell
@@ -986,8 +984,8 @@ func composeClose(d port.Diagnostics, errClose func() error, plainClose func()) 
 // the cache-stable StablePrefix while the standard mecatl framing AND the agency
 // contract remain. The delta is keyed on resolvedModel, NOT cfg.Model, the same
 // discipline as Env.Model: the def must reflect the model it will actually run on.
-// (Since issue #49 the contract itself is uniform across families, so the keying
-// no longer changes the contract text, but the resolvedModel still governs
+// (The contract itself is uniform across families (issue #49), so the keying
+// does not change the contract text, but the resolvedModel still governs
 // Env.Model and keeps the keying honest for any future per-model wording.) The
 // Env model is set to the caller's ALREADY-RESOLVED model
 // id (threaded in, not re-resolved): resolving it a second time here would re-run
@@ -1282,8 +1280,8 @@ func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
 		}
 		return agents.NewRegistry(defs)
 	}
-	// Project-tier agent defs are withheld when the project tier is not admitted
-	// (Phase 2a): untrusted, or the ingestion grant withheld
+	// Project-tier agent defs are withheld when the project tier is not admitted:
+	// untrusted, or the ingestion grant withheld
 	// (projectIngestionAdmitted). The user-tier + explicit defs stay active
 	// regardless ("ask the human" mode, not "do nothing").
 	if cfg.AgentsConventional && cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
@@ -1305,7 +1303,7 @@ func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
 		// Word the log by the structural Fatal split, never the overloaded
 		// "skipped": a Fatal SkipError means the def was DROPPED (excluded); a
 		// non-fatal one means it was KEPT but ADJUSTED (e.g. truncated). Both
-		// stay at WARN — a truncation is a visible adjustment, just no longer
+		// stay at WARN — a truncation is a visible adjustment, not
 		// mislabelled as a drop.
 		if s.Fatal {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def dropped", "path", s.Path, "reason", s.Reason)

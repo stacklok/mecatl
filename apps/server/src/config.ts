@@ -2,8 +2,7 @@
 
 /**
  * Studio-owned configuration (`STUDIO_*`). Settings that describe the mecatl
- * TARGET (`MECATL_*`) are parsed next door in `mecatl/runtime.ts`; the split
- * is ADR 0351 decision 5.
+ * TARGET (`MECATL_*`) are parsed next door in `mecatl/runtime.ts`.
  */
 
 export class ConfigurationError extends Error {
@@ -31,7 +30,7 @@ export interface ActivityLimits {
 }
 
 export interface StudioConfig {
-  /** Bounds on durable activity replay (see docs/acceptance/studio-chat.md). */
+  /** Bounds on durable activity replay. */
   readonly activity: ActivityLimits;
   /** Inside the released image, allow static-token or no-auth runtimes. */
   readonly allowUnauthenticated: boolean;

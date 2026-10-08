@@ -212,7 +212,7 @@ func TestSteer_TerminateWindowPromotes(t *testing.T) {
 	drainRun(t, run) // the run is now TERMINAL
 	// Deliberately do NOT svc.FinishRun(sess.ID, run) yet: the run stays
 	// REGISTERED, the exact terminate-window state (inbox closed, still live in
-	// the registry) that used to drop the steer.
+	// the registry) in which a steer must not be dropped.
 	if !svc.IsLive(sess.ID) {
 		t.Fatalf("precondition: the drained run must still be registered (the terminate window)")
 	}

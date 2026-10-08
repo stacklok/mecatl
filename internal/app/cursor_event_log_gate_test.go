@@ -26,7 +26,8 @@ import (
 
 // This file is Scenario 6's cross-backend gate: the acceptance criteria that are
 // claims about the SET of backends rather than about any one of them, sited here
-// for the same reason internal/app owns the ADR 0027 Phase 3 gate — the
+// for the same reason internal/app owns the store+log reconstruction gate
+// (phase3_gate_test.go) — the
 // composition layer is the only one permitted to import every adapter, and the
 // backends span two Go modules (memstore in engine/, the rest in the root).
 //
@@ -34,7 +35,7 @@ import (
 // individually, invoked from that backend's own package. These tests do NOT
 // restate it. They assert the things a per-backend run structurally cannot: that
 // the additive port left the legacy contract intact, that a gap is an envelope
-// rather than an event, and that the durable backends the ADR names are actually
+// rather than an event, and that the expected durable backends are actually
 // present in the set rather than quietly absent.
 
 // cursorBackend is one row of the gate's backend table.
@@ -143,13 +144,13 @@ func newDriverClient(t *testing.T, backend port.CursorEventLog) port.CursorEvent
 	return grpcdriver.NewEventLog(conn)
 }
 
-// requiredDurableCursorBackends is the set ADR 0250 obliges to prove durable,
+// requiredDurableCursorBackends is the set obliged to prove durable,
 // cross-process follow. It is asserted as a SET rather than left implicit so
 // that dropping a backend from the table fails loudly here instead of silently
 // reducing what AC6.5 covers.
 var requiredDurableCursorBackends = []string{"jsonlstore", "redisstore"}
 
-// TestADR_0250_EventLogContractUnbroken is AC6.2: existing port.EventLog
+// TestEventLogContractUnbroken is AC6.2: existing port.EventLog
 // behaviour is unchanged for every backend — the additive port breaks no
 // consumer.
 //
@@ -158,9 +159,9 @@ var requiredDurableCursorBackends = []string{"jsonlstore", "redisstore"}
 // would have been before cursors existed: same events, same order, nothing
 // extra. Cursors introduce two record shapes the legacy reader has never seen (a
 // gap marker, and on some backends a generation header), and every existing
-// consumer of Read — most importantly the event-sourced fold of ADR 0038 — would
+// consumer of Read — most importantly the event-sourced fold — would
 // be corrupted by either one leaking through.
-func TestADR_0250_EventLogContractUnbroken(t *testing.T) {
+func TestEventLogContractUnbroken(t *testing.T) {
 	ctx := context.Background()
 	for _, be := range cursorBackends(t) {
 		t.Run(be.name, func(t *testing.T) {
@@ -213,15 +214,15 @@ func TestADR_0250_EventLogContractUnbroken(t *testing.T) {
 	}
 }
 
-// TestADR_0250_GapMarkerIsEnvelopeNotEvent is AC6.7: a gap marker occupies an
+// TestGapMarkerIsEnvelopeNotEvent is AC6.7: a gap marker occupies an
 // append position and advances cursors, is surfaced by ReadAfter, and is skipped
 // by the legacy EventLog.Read.
 //
-// Decision 5 of ADR 0250 turns on a gap being a fact about DELIVERY rather than
+// Gap handling turns on a gap being a fact about DELIVERY rather than
 // something that happened in the run. That distinction is only real if the gap
 // carries no event: a gap whose Event field were populated would be an event in
 // all but name, and the first consumer to fold it would put it in a transcript.
-func TestADR_0250_GapMarkerIsEnvelopeNotEvent(t *testing.T) {
+func TestGapMarkerIsEnvelopeNotEvent(t *testing.T) {
 	ctx := context.Background()
 	for _, be := range cursorBackends(t) {
 		t.Run(be.name, func(t *testing.T) {
@@ -290,7 +291,7 @@ func TestADR_0250_GapMarkerIsEnvelopeNotEvent(t *testing.T) {
 	}
 }
 
-// TestADR_0250_CrossProcessWatchObservesAppends is AC6.5: a watcher holding one
+// TestCrossProcessWatchObservesAppends is AC6.5: a watcher holding one
 // handle observes durable appends made through another, for every backend whose
 // state outlives the process.
 //
@@ -301,7 +302,7 @@ func TestADR_0250_GapMarkerIsEnvelopeNotEvent(t *testing.T) {
 // server), so the handles share no Go state for the test to accidentally lean
 // on. An in-process channel registry — which is what mecatl's live Subscribe is
 // today — passes every other cursor subtest and fails this one.
-func TestADR_0250_CrossProcessWatchObservesAppends(t *testing.T) {
+func TestCrossProcessWatchObservesAppends(t *testing.T) {
 	ctx := context.Background()
 
 	covered := map[string]bool{}
@@ -371,7 +372,7 @@ func TestADR_0250_CrossProcessWatchObservesAppends(t *testing.T) {
 		})
 	}
 
-	// The set assertion: a durable backend the ADR names must be in the table,
+	// The set assertion: every expected durable backend must be in the table,
 	// not quietly missing. Without this, deleting a row silently narrows AC6.5
 	// to whatever happens to remain.
 	for _, name := range requiredDurableCursorBackends {
@@ -397,7 +398,7 @@ func readAll(t *testing.T, log port.CursorEventLog, id session.SessionID, after 
 	return out
 }
 
-// requiredCursorBackends is the full set ADR 0250 obliges to implement the port.
+// requiredCursorBackends is the full set obliged to implement the port.
 // Asserted as a SET so that dropping a backend from the table fails loudly here
 // rather than silently narrowing what AC6.1 covers.
 var requiredCursorBackends = []string{"memstore", "jsonlstore", "redisstore", "grpcdriver"}

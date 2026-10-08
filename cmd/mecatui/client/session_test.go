@@ -118,7 +118,7 @@ func TestGetSessionCapabilitiesFallsBackWhenCompatibilityInfoIsUnavailable(t *te
 }
 
 // TestSnapshotFromReadsState asserts snapshotFrom projects the proto Session's
-// State field (issue #245 Phase 1) — the picker row needs it to render an
+// State field (issue #245) — the picker row needs it to render an
 // "open existing session" affordance. Covers the populated and nil cases.
 func TestSnapshotFromReadsState(t *testing.T) {
 	snap := snapshotFrom(&mecatlv1.Session{State: "completed"})

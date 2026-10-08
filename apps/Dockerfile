@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 # SPDX-License-Identifier: Apache-2.0
 #
-# Mecatl Studio image — ghcr.io/stacklok/mecatl/studio (ADR 0351, decision 6:
-# "one image, one origin"). Published by the `publish-studio` job in
+# Mecatl Studio image — ghcr.io/stacklok/mecatl/studio: one image serving the
+# SPA and /api from one origin. Published by the `publish-studio` job in
 # .github/workflows/release.yml with the same cosign sign / SBOM attest /
 # build-provenance steps as the Slack bot image; built no-push on every relevant
 # PR by the `studio` CI job; built locally by `task studio:image`.
@@ -11,7 +11,7 @@
 # @stacklok-oss/mecatl-sdk from npm and never reaches into sdk/typescript, so the
 # Go repository root is not part of this image at all.
 #
-# Shape (multi-stage; AC5.1 of docs/acceptance/studio-bootstrap.md):
+# Shape (multi-stage):
 #   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.4.2 via
 #                corepack (the `packageManager` pin in package.json; Node 25+
 #                no longer bundles corepack, so it is installed first), a frozen
@@ -46,7 +46,7 @@
 # `studio` job runs the built image and fails when its Node major differs from
 # `engines` — a `latest` that moves to the next major cannot merge unnoticed.
 #
-# Runtime behaviour set here and relied on by apps/server (ADR 0351):
+# Runtime behaviour set here and relied on by apps/server:
 #   STUDIO_IMAGE=1        refuses the local spawn and mock runtime modes (a
 #                         container never ships mecated) and requires
 #                         STUDIO_ALLOW_UNAUTHENTICATED=1 for static-token /

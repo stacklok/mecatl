@@ -292,31 +292,6 @@ EOF
   kube -n execution-qualification wait --for=condition=Ready pod/network-fixture pod/network-intruder --timeout=2m
 fi
 
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  legacy_profiles="$state/legacy-profiles.yaml"
-  cat >"$legacy_profiles" <<EOF
-profiles:
-  go:
-    image: $workload_image
-    storageClass: standard
-    storageSize: 1Gi
-    cpuRequest: 50m
-    memoryRequest: 64Mi
-    cpuLimit: "1"
-    memoryLimit: 512Mi
-    ephemeralStorageRequest: 64Mi
-    ephemeralStorageLimit: 1Gi
-    tmpSizeLimit: 256Mi
-    runtimeClassName: qualification-runc
-    maxFileBytes: 5242880
-    maxCommandBytes: 1048576
-    maxCommandDuration: 5m
-    maxEnvironments: 20
-EOF
-  kube apply -f "$root/e2e/k8s_execution/fixture/legacyfixture/crd.yaml"
-  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
-fi
-
 kube -n execution-qualification create secret generic execution-security \
   --from-file=grant-k1.pem="$state/pki/grant-key.pem" --from-file=tls.crt="$state/pki/provider.crt" \
   --from-file=tls.key="$state/pki/provider.key" --from-file=clients.pem="$state/pki/ca.crt" --dry-run=client -o yaml | kube apply -f -
@@ -372,11 +347,6 @@ set -- upgrade --install mecatl-execution "$root/deploy/helm/mecatl-execution" \
 if [ -n "$runtime_values" ]; then
   set -- "$@" -f "$runtime_values"
 fi
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  # The production fixture deliberately installs the legacy CRD above and
-  # upgrades it explicitly after seeding the retained legacy allocations.
-  set -- "$@" --skip-crds
-fi
 helm_kube "$@" \
   --set fullnameOverride=mecatl-execution \
   --set-string provider.image="$provider_image" \
@@ -387,30 +357,6 @@ helm_kube "$@" \
   --set-string profiles.quota-cas.image="$workload_image" \
   --set-string profiles.quota-kube.image="$workload_image" \
   --wait --timeout=4m
-
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  # Establish the chart-owned authority before creating retained allocations.
-  # Seed the prototype under the old CRD only while every provider is quiesced.
-  kube -n execution-qualification scale deployment/mecatl-execution --replicas=0
-  kube -n execution-qualification wait --for=delete pod -l app.kubernetes.io/name=mecatl-execution --timeout=2m
-  legacy_start=$(date +%s)
-  dev go build -tags kind_execution_e2e -o "$state/legacyfixture" ./e2e/k8s_execution/fixture/legacyfixture
-  legacy_built=$(date +%s)
-  printf 'qualification deployment_step=legacyfixture_build elapsed=%ss\n' "$((legacy_built - legacy_start))"
-  dev env KUBECONFIG="$kubeconfig" "$state/legacyfixture" execution-qualification "$legacy_profiles" "$state/legacy-migration.json"
-  legacy_seeded=$(date +%s)
-  printf 'qualification deployment_step=legacyfixture_seed elapsed=%ss\n' "$((legacy_seeded - legacy_built))"
-  kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration pod/executor-legacy-migration-malformed pod/executor-legacy-migration-insecure --timeout=3m
-  legacy_ready=$(date +%s)
-  printf 'qualification deployment_step=legacyfixture_pods_ready elapsed=%ss\n' "$((legacy_ready - legacy_seeded))"
-  kube -n execution-qualification exec pod/executor-legacy-migration -- /bin/sh -c 'printf "prototype-data\n" > /workspace/migration-sentinel'
-  # Helm does not upgrade existing CRDs. Preserve the stored legacy references
-  # until the explicit CRD upgrade; the first production test then migrates them.
-  kube apply -f "$root/deploy/helm/mecatl-execution/crds/executionenvironment.yaml"
-  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
-  kube -n execution-qualification scale deployment/mecatl-execution --replicas=2
-  kube -n execution-qualification rollout status deployment/mecatl-execution --timeout=4m
-fi
 
 kube -n execution-qualification create configmap execution-mock --from-file=mock-script.json="$root/deploy/mecatl-execution-kind/mock-script.json" --dry-run=client -o yaml | kube apply -f -
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" \

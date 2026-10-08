@@ -51,6 +51,9 @@ func TestWrittenDaemonConfigsMatchStrictDecoderContracts(t *testing.T) {
 			if !reflect.DeepEqual(jsonShape(generated), jsonShape(contract)) {
 				t.Fatalf("generated config shape does not match %s\ngenerated: %#v\ncontract: %#v", tc.fixture, jsonShape(generated), jsonShape(contract))
 			}
+			if runtimeDir := generated["runtime_dir"]; runtimeDir != filepath.Join(paths.RuntimeDir, "generations") {
+				t.Fatalf("daemon runtime root = %v, want the budgeted generations directory", runtimeDir)
+			}
 			if _, present := generated["admission"]; present {
 				t.Fatal("generated config retained removed admission field")
 			}
@@ -90,6 +93,36 @@ func jsonShape(value any) any {
 	}
 }
 
+func shortRuntimeTestDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
+	if len(filepath.Join(canonicalRoot, "tmp", longestRuntimeSocketSuffix)) < DarwinSocketPathLimit {
+		return canonicalRoot
+	}
+
+	root, err = os.MkdirTemp("", "mv")
+	if err != nil {
+		t.Fatalf("create short runtime directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove short runtime directory: %v", err)
+		}
+	})
+	canonicalRoot, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("canonicalize short runtime directory: %v", err)
+	}
+	if len(filepath.Join(canonicalRoot, "tmp", longestRuntimeSocketSuffix)) >= DarwinSocketPathLimit {
+		t.Skipf("TMPDIR cannot provide a Darwin-safe runtime socket root: %q", canonicalRoot)
+	}
+	return canonicalRoot
+}
+
 func TestMicroVMUserBootstrap_Scenario1_SafeXDGDefaults(t *testing.T) {
 	home := t.TempDir()
 	paths, err := DefaultPaths(HostPaths{Home: home, UID: 1234, GOOS: "linux"})
@@ -117,6 +150,72 @@ func TestDefaultPathsBoundsDerivedRepositoryNetworkSocket(t *testing.T) {
 	}
 	if paths.RuntimeDir == filepath.Join("/dev/shm/daily-1234567", "mecatl-microvm") {
 		t.Fatalf("overlong XDG runtime directory was accepted: %q", paths.RuntimeDir)
+	}
+}
+
+func TestRuntimeSocketBudgetCanonicalizesAncestors(t *testing.T) {
+	// Keep the lexical path below the socket bound while a symlink expands it.
+	root := shortRuntimeTestDir(t)
+	canonicalRoot := root
+	realParent := filepath.Join(canonicalRoot, "private", "tmp")
+	if deficit := DarwinSocketPathLimit - len(filepath.Join(realParent, longestRuntimeSocketSuffix)); deficit >= 0 {
+		realParent = filepath.Join(realParent, strings.Repeat("x", deficit))
+	}
+	if err := os.MkdirAll(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "tmp")
+	if err := os.Symlink(realParent, alias); err != nil {
+		t.Fatal(err)
+	}
+	if len(filepath.Join(alias, longestRuntimeSocketSuffix)) >= DarwinSocketPathLimit {
+		t.Fatal("fixture must fit before canonicalization")
+	}
+	if fits, err := runtimeSocketsFit(alias); err != nil || fits {
+		t.Fatalf("expanded runtime path accepted: fits=%v, err=%v", fits, err)
+	}
+	if fits, err := runtimeSocketsFit(root); err != nil || !fits {
+		t.Fatalf("unexpanded runtime path rejected: fits=%v, err=%v", fits, err)
+	}
+	candidate := filepath.Join(alias, "not-created", "mecatl-microvm")
+	got, err := canonicalProspectivePath(candidate)
+	want := filepath.Join(realParent, "not-created", "mecatl-microvm")
+	if err != nil || got != want {
+		t.Fatalf("canonical path = %q, %v; want %q", got, err, want)
+	}
+	if _, err := os.Lstat(filepath.Join(realParent, "not-created")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("path resolution created state: %v", err)
+	}
+	paths, err := DefaultPaths(HostPaths{Home: root, XDGRuntimeDir: alias, UID: 1234, GOOS: "darwin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.RuntimeDir == filepath.Join(alias, "mecatl-microvm") {
+		t.Fatal("overlong canonical XDG path did not fall back")
+	}
+	if fits, err := runtimeSocketsFit(paths.RuntimeDir); err != nil || !fits {
+		t.Fatalf("fallback is not canonical-path safe: %v, %v", fits, err)
+	}
+
+	dangling := filepath.Join(root, "dangling")
+	if err := os.Symlink(filepath.Join(root, "absent"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DefaultPaths(HostPaths{Home: root, XDGRuntimeDir: dangling, UID: 1234}); err == nil {
+		t.Fatal("dangling XDG symlink was accepted")
+	}
+}
+
+func TestRuntimeSocketBudgetBoundary(t *testing.T) {
+	canonicalRoot := shortRuntimeTestDir(t)
+	root := canonicalRoot
+	for _, size := range []int{DarwinSocketPathLimit - 1, DarwinSocketPathLimit, DarwinSocketPathLimit + 1} {
+		nameLength := size - len(canonicalRoot) - len(longestRuntimeSocketSuffix) - 2
+		candidate := filepath.Join(root, strings.Repeat("x", nameLength))
+		fits, err := runtimeSocketsFit(candidate)
+		if err != nil || fits != (size < DarwinSocketPathLimit) {
+			t.Fatalf("%d-byte canonical socket: fits=%v, err=%v", size, fits, err)
+		}
 	}
 }
 

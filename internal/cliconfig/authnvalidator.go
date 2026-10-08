@@ -41,7 +41,7 @@ func errToSentinel(err error) error {
 }
 
 func defaultNewValidator(ctx context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
-	// authn/oidc must not touch the host OS (ADR 0206): this layer reads the CA
+	// authn/oidc must not touch the host OS: this layer reads the CA
 	// file and hands the parsed bytes down.
 	var caPEM []byte
 	if c.AllowPrivateHTTPSIssuer {

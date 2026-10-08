@@ -32,12 +32,11 @@ package agentfs
 
 import "github.com/stacklok/mecatl/engine/tool"
 
-// AgentDef is the pure value object for one agent definition. Phase C2 moved
-// the type WHOLESALE (minus the old Path locator, plus the Origin tier label)
-// to engine/tool as the payload of the tool.AgentDefSource port; this alias
-// keeps every existing literal and signature in this adapter and its
-// consumers compiling unmodified. Where a def was discovered is now the
-// adapter-private detail channel (Discovered.Detail / Registry.Detail), never
+// AgentDef is the pure value object for one agent definition. The type lives
+// in engine/tool as the payload of the tool.AgentDefSource port; this alias
+// keeps every literal and signature in this adapter and its consumers
+// compiling unmodified. Where a def was discovered is the adapter-private detail
+// channel (Discovered.Detail / Registry.Detail), never
 // a field on the value object.
 type AgentDef = tool.AgentDef
 

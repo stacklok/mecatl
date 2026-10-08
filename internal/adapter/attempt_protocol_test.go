@@ -19,8 +19,8 @@ func TestAttemptRepositoryProtocolHasOnlyLifecycleOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(protocol), "ADR-0250 watches session events only") {
-		t.Fatal("attempt repository protocol does not document that ADR-0250 watches session events only")
+	if !strings.Contains(string(protocol), "Durable event watches cover session events only") {
+		t.Fatal("attempt repository protocol does not document that durable event watches cover session events only")
 	}
 	wantRPCs := []string{
 		"CreateAttempt", "GetAttempt", "ListAttempts", "DiscoverAttemptWork", "AcquireAttemptClaim", "RenewAttemptClaim", "CheckpointAttempt",

@@ -596,7 +596,7 @@ func mapUsage(u responses.ResponseUsage) session.Usage {
 }
 
 // cacheWriteTokensFrom probes InputTokensDetails.RawJSON() for the
-// OpenAI/OpenRouter "cache_write_tokens" field (ADR 0100) — there is no typed
+// OpenAI/OpenRouter "cache_write_tokens" field — there is no typed
 // SDK field for it (openai-go v3.37.0's ResponseUsageInputTokensDetails only
 // types CachedTokens); OpenRouter's own docs confirm the field lives at
 // usage.input_tokens_details.cache_write_tokens on the Responses surface,

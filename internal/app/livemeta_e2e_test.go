@@ -95,10 +95,10 @@ func TestAnthropicLiveResolverPicksUpCeiling(t *testing.T) {
 	}
 }
 
-// TestADR_0016_MissingThinkingCapabilityUsesModelFallback proves incomplete
+// TestMissingThinkingCapabilityUsesModelFallback proves incomplete
 // custom Anthropic discovery remains unknown so the request adapter can use its
 // model-prefix floor rather than treating omitted metadata as unsupported.
-func TestADR_0016_MissingThinkingCapabilityUsesModelFallback(t *testing.T) {
+func TestMissingThinkingCapabilityUsesModelFallback(t *testing.T) {
 	for _, capabilities := range []string{
 		``,
 		`"capabilities":{}`,

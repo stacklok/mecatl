@@ -111,7 +111,7 @@ func TestSessionContinuityUX_Scenario5_RebindMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario4_SessionDetailsOpenWhileRunning(t *testing.T) {
+func TestSessionDetailsOpenWhileRunning(t *testing.T) {
 	cb := &fakeClipboard{}
 	m := newScenario5Model(t, cb)
 	m.sessionID = "full-running-session-id"
@@ -139,7 +139,7 @@ func TestADR_0344_Scenario4_SessionDetailsOpenWhileRunning(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario4_SessionDetailsDoNotInterruptRun(t *testing.T) {
+func TestSessionDetailsDoNotInterruptRun(t *testing.T) {
 	m := newScenario5Model(t, &fakeClipboard{})
 	m.sessionID = "live-session"
 	m.phase = phaseRunning
@@ -164,7 +164,7 @@ func TestADR_0344_Scenario4_SessionDetailsDoNotInterruptRun(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario4_NoSessionGuardRemains(t *testing.T) {
+func TestSessionDetailsNoSessionGuardRemains(t *testing.T) {
 	m := newScenario5Model(t, &fakeClipboard{})
 	m.sessionID = ""
 	m.phase = phaseRunning

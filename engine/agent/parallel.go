@@ -117,7 +117,7 @@ type ParallelTool struct {
 	childEngine *Engine
 
 	// engineFactory, when non-nil, mints a per-branch child engine for an OPT-IN
-	// model-router-classified model (ADR 0034), exactly the WithSubagentEngineFactory
+	// model-router-classified model, exactly the WithSubagentEngineFactory
 	// shape: a composition closure that RE-DERIVES the override branch engine's
 	// Compactor/TokenCounter/Env.Model/ContextWindow for the routed model (never a
 	// clone-and-swap). It is consulted ONLY when the parent run wired routeTask AND the
@@ -167,7 +167,7 @@ type ParallelTool struct {
 	// back into the parent workspace after the run — the opt-in (--parallel-auto-
 	// merge, default OFF) fast path that lets a delegated implementer's edits
 	// actually land without a manual copy/merge step. nil (the default) keeps the
-	// historical no-auto-merge boundary unchanged. Multi-branch runs NEVER
+	// no-auto-merge boundary. Multi-branch runs NEVER
 	// auto-merge (the boundary stays for fan-out). The merge is a POST-RUN step:
 	// it runs AFTER the winner is preserved and BEFORE Execute returns, so
 	// ParallelTool.ReadOnly() stays true (read-only fan-out keeps batching); but a
@@ -261,8 +261,8 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption {
 // SINGLE-BRANCH join=first winner's diff back into the parent workspace after
 // the run. It is the composition-owned, opt-in (--parallel-auto-merge, default
 // OFF) capability that lets a delegated implementer's edits actually land
-// without a manual copy/merge step. nil (the default) keeps the historical
-// no-auto-merge boundary unchanged.
+// without a manual copy/merge step. nil (the default) keeps the
+// no-auto-merge boundary.
 //
 // The merger fires ONLY for a single-branch run (len(tasks)==1) with a
 // successful winner under join=first/judge. Multi-branch runs and join=all
@@ -294,7 +294,7 @@ func WithParallelStore(store port.SessionStore) ParallelOption {
 }
 
 // WithParallelEngineFactory injects the composition-supplied factory that mints a per-branch
-// child engine on an OPT-IN model-router-classified model (ADR 0034). It is the EXACT shape
+// child engine on an OPT-IN model-router-classified model. It is the EXACT shape
 // WithSubagentEngineFactory takes (func(model string)(*Engine,bool)); the factory re-derives
 // the override branch engine's Compactor/TokenCounter/Env.Model/ContextWindow for the routed
 // model through the contamination-safe per-provider path (never a clone-and-swap). nil (the
@@ -383,7 +383,7 @@ func (*ParallelTool) Spec() tool.ToolSpec {
 // That is why ReadOnly() can safely return true even for mutating (Edit/Write/Shell)
 // children — for the SAME reason SubagentTool.ReadOnly() stays true: each tool isolates
 // its mutating child so the child's writes never touch the shared parent base.
-// Isolation, not catalog read-only-ness, is the boundary (after Phase 2 a Subagent child
+// Isolation, not catalog read-only-ness, is the boundary (a Subagent child
 // with Shell runs in its OWN git worktree exactly as a Parallel branch runs in its own
 // force-copy). The remaining distinction is only WHICH tools the child gets: a Parallel
 // branch keeps Edit/Write (it is meant to IMPLEMENT in its fork), while a Subagent child
@@ -464,10 +464,10 @@ type branchResult struct {
 	// orchestration/observability state only.
 	usage session.Usage
 
-	// cleanup tears down this branch's fork. Ownership is LIFTED out of runBranch's
-	// old defer (see runBranch) so Execute decides, per strategy, which forks to
-	// tear down and which to hand to the reaper: for "all" every fork is cleaned
-	// (today's behaviour); for "first"/"judge" every LOSER is cleaned and the
+	// cleanup tears down this branch's fork. Ownership sits outside runBranch
+	// (see runBranch) so Execute decides, per strategy, which forks to
+	// tear down and which to hand to the reaper: for "all" every fork is
+	// cleaned; for "first"/"judge" every LOSER is cleaned and the
 	// WINNER cleanup is retained by the reaper when wired (or dropped otherwise).
 	// A reaper already closing may invoke it immediately. nil when the fork failed before producing a tree. Not serialized — orchestration state only.
 	cleanup func() error
@@ -563,7 +563,7 @@ func (e branchEmitter) start(join string, branchCount int) {
 // branch (both empty when the router was off, missed, or the branch never started); they
 // ride the branch_start event exactly as SubagentPayload's routed fields ride subagent.start.
 // routingReason is the bare-metadata WHY-NOT (issue #397), empty on a routed hit. model is
-// the concrete MODEL id this branch ACTUALLY runs on (issue #112, ADR 0035), independent
+// the concrete MODEL id this branch ACTUALLY runs on (issue #112), independent
 // of whether the router fired — inherited default or routed. When routed,
 // model == routedModel.
 func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goal, routedCategory, routedModel, routingReason, model string, decision *session.RoutingDecision) {
@@ -625,7 +625,7 @@ func (e branchEmitter) end(join string, branchCount, winner int, usage session.U
 
 // branchTool builds the per-branch translation closure handed to drainChildObserved.
 // drainChildObserved (the SINGLE redaction chokepoint, shared with Subagent) emits ONLY
-// EvSubagentTool events carrying name+error+count plus the ADR-0079 bounded previews
+// EvSubagentTool events carrying name+error+count plus the bounded previews
 // (Text/Detail/InnerKind, all clamped by clampPreview); this closure RE-TAGS each into
 // a parallel.branch{branch_tool} event for branch i, copying only those already-redacted
 // fields — it opens NO new content path. branch_start/branch_end are emitted by the
@@ -750,8 +750,8 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 // carrying the right join-label be.end + the tool error) when the merge FAILED —
 // the caller returns it verbatim. Multi-branch runs (len(results) > 1) skip the
 // merge (the no-auto-merge boundary stays for fan-out) and return (false, nil).
-// A nil merger (the no-merger test path) also returns (false, nil), so the
-// historical no-auto-merge behaviour is byte-identical when unwired.
+// A nil merger (the no-merger test path) also returns (false, nil), so no
+// auto-merge happens when unwired.
 func (t *ParallelTool) autoMergeWinner(ctx context.Context, env tool.Environment, results []branchResult, winner int, join string, be branchEmitter, callID session.ToolCallID) (bool, *session.ToolResult) {
 	if t.autoMerger == nil || len(results) != 1 || results[winner].childRoot == "" {
 		return false, nil
@@ -1017,7 +1017,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	childID := string(t.childSessionID(caps.parentSessionID, callID, i))
 	res := branchResult{index: i, label: label, childID: childID, artifact: ArtifactHandle("artifact-" + childID)}
 
-	// OPT-IN model router (ADR 0034): classify this branch's composed prompt ONCE (each
+	// OPT-IN model router: classify this branch's composed prompt ONCE (each
 	// branch routes at most once — this is the only call site, on the per-branch
 	// goroutine) and select the engine the branch runs on. routedCategory/routedModel are
 	// bare metadata for branch_start; branchEngine is the routed override engine on a hit
@@ -1107,7 +1107,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		return res, session.StopError
 	}
 	res.childIncarnation = childSess.Incarnation()
-	// The branch is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// The branch is attributed to the PARENT session's owner,
 	// or carries delegated authority when the parent run is authority-bound.
 	if caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(childSess, caps.owner, delegatedAuthority); authorityErr != nil {
@@ -1203,7 +1203,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	return res, stop
 }
 
-// maybeRouteBranchModel consults the OPT-IN semantic model router (ADR 0034) for a branch
+// maybeRouteBranchModel consults the OPT-IN semantic model router for a branch
 // and returns the classified category + the ALREADY-RESOLVED concrete model id the branch
 // should run on (both empty when not routed). It mirrors maybeRouteModel (the Subagent
 // gate): GATING — a branch has no per-call model and no agent def, so the only precondition

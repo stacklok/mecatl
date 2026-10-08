@@ -52,7 +52,7 @@ type Lease struct {
 }
 
 // SessionLease is the OPTIONAL cross-process single-writer seam for session
-// state (ADR 0027 Phase 4, multi-replica readiness). It is discovered by type
+// state (multi-replica readiness). It is discovered by type
 // assertion exactly like PrunableStore: a store/backend that does not implement
 // it is simply never leased, and composition wires a lease ONLY when an operator
 // selects a backend by flag — the default path is byte-identical with no lease.

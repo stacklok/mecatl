@@ -1590,7 +1590,7 @@ func TestOneShotReArmOnStopError(t *testing.T) {
 
 // TestOneShotNoRetryNotReArmed: a one-shot with OneShotRetry=false (the default,
 // at-most-once) is NOT re-armed, even if its prior fire crashed (pending). This
-// pins the pre-Phase-2 behavior is unchanged for a non-opted-in one-shot.
+// pins at-most-once behavior for a non-opted-in one-shot.
 func TestOneShotNoRetryNotReArmed(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
@@ -1701,8 +1701,8 @@ func TestOneShotReArmBudgetExhausted(t *testing.T) {
 
 // TestOneShotReArmStoreWithoutInterface: a store that does NOT implement
 // ScheduleOneShotReArmer degrades gracefully — the re-arm scan is a nil-safe
-// type-assertion no-op (no panic, no re-arm). This pins the byte-identical
-// pre-Phase-2 fallback for a store that opted out of the re-arm seam.
+// type-assertion no-op (no panic, no re-arm). This pins the at-most-once
+// fallback for a store that opted out of the re-arm seam.
 func TestOneShotReArmStoreWithoutInterface(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}

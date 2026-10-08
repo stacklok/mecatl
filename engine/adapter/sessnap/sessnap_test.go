@@ -18,7 +18,7 @@ func runningSession(t *testing.T) *session.Session {
 	s := session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{
 		MaxTurns: 10, MaxToolCalls: 20, MaxConsecutiveFailures: 3,
 	}, time.Unix(1700000000, 0).UTC())
-	// Phase 1 inert labels + cumulative usage: exercised by every round-trip test
+	// Inert labels + cumulative usage: exercised by every round-trip test
 	// via assertEquivalent.
 	s.Profile = "no-fs"
 	s.ProviderID = "openrouter"
@@ -698,7 +698,7 @@ func TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty(t *testing.T) {
 }
 
 // TestSnapshotEnvironmentRefRoundTrip proves a non-zero EnvironmentRef survives
-// Marshal→Unmarshal (ADR 0214, issue #462 phase 3).
+// Marshal→Unmarshal (issue #462 phase 3).
 func TestSnapshotEnvironmentRefRoundTrip(t *testing.T) {
 	s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
 	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "inventory-v3"}

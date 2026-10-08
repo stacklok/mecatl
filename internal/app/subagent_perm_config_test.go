@@ -241,9 +241,9 @@ func TestAutoTierChildLoosensMutateFloorNotSubstitution(t *testing.T) {
 	}
 }
 
-// TestChildRulesFloorScopeNeutral pins the childRules() re-scope (allow-all at
-// ScopeBuiltinDefault instead of the legacy zero Scope) as behaviour-neutral
-// with no config: identical effects to the historical bare allow-all policy
+// TestChildRulesFloorScopeNeutral pins the childRules() scoping (allow-all at
+// ScopeBuiltinDefault rather than the zero Scope) as behaviour-neutral
+// with no config: identical effects to a bare allow-all policy
 // across the decision surface, and the floor allow-all never registers as a
 // CONFIGURED allow (no FlooredConfiguredAllow without a real config rule).
 func TestChildRulesFloorScopeNeutral(t *testing.T) {

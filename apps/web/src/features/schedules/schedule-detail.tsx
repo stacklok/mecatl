@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, ChevronDown, ChevronUp, Clock3, Pause, Play, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { PageShell } from "../../components/shell/page-shell";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,135 +98,130 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
 
   const busy = action.isPending || remove.isPending || update.isPending;
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-5xl px-4 py-7 sm:px-8 sm:py-10">
-        <Button asChild size="sm" variant="outline">
-          <Link search={{ schedule: undefined }} to="/workspace/schedules">
-            <ArrowLeft />
-            Back to scheduled
-          </Link>
-        </Button>
+    <PageShell className="max-w-5xl">
+      <Button asChild size="sm" variant="outline">
+        <Link search={{ schedule: undefined }} to="/workspace/schedules">
+          <ArrowLeft />
+          Back to scheduled
+        </Link>
+      </Button>
 
-        <div className="mt-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className={pageTitleClass("break-words")}>{schedule.name}</h1>
-              <StatusBadge status={schedule.status} />
-              <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
-              {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
-            </div>
-            <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-              {schedule.prompt}
-            </p>
+      <div className="mt-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className={pageTitleClass("break-words")}>{schedule.name}</h1>
+            <StatusBadge status={schedule.status} />
+            <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
+            {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <Button
-              disabled={busy || !canRunNow(schedule)}
-              onClick={() => void runAction("fire")}
-              size="sm"
-              variant="outline"
-            >
-              <Play />
-              Run now
-            </Button>
-            <Button
-              disabled={busy || !canTogglePause(schedule)}
-              onClick={() => void runAction(schedule.enabled ? "pause" : "resume")}
-              size="sm"
-              variant="outline"
-            >
-              {schedule.enabled ? <Pause /> : <Play />}
-              {schedule.enabled ? "Pause" : "Resume"}
-            </Button>
-            <Button disabled={busy} onClick={() => setEditing(true)} size="sm" variant="ghost">
-              Edit
-            </Button>
-            <Button
-              aria-label={`Delete ${schedule.name}`}
-              disabled={busy}
-              onClick={() => setConfirmDelete(true)}
-              size="icon"
-              variant="ghost"
-            >
-              <Trash2 />
-            </Button>
-          </div>
+          <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+            {schedule.prompt}
+          </p>
         </div>
-
-        {error && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
-        )}
-
-        <div className="mt-8 grid gap-5 sm:grid-cols-2">
-          <FactGroup title="Execution">
-            <Fact label="Mode" value={modeLabel(schedule.mode)} />
-            <Fact label="Write access" value={schedule.mutating ? "Writes allowed" : "Read-only"} />
-            <Fact label="Owner" value={schedule.owner || "Deployment default"} />
-            <Fact
-              label="Tools"
-              value={schedule.profile === "noFilesystem" ? "No filesystem" : "All"}
-            />
-            <Fact
-              label="Model"
-              value={
-                [schedule.providerId, schedule.modelId].filter(Boolean).join(" / ") ||
-                "Deployment default"
-              }
-            />
-          </FactGroup>
-          <FactGroup title="Trigger">
-            <Fact
-              label="Type"
-              value={schedule.trigger.kind === "cron" ? "Recurring" : "One time"}
-            />
-            {schedule.trigger.kind === "cron" ? (
-              <>
-                <Fact label="Cron expression" value={schedule.trigger.expression} />
-                <Fact label="Timezone" value={timezoneLabel(schedule.trigger.timezone)} />
-                <Fact
-                  label="Maximum runs"
-                  value={schedule.maxFires ? String(schedule.maxFires) : "Unlimited"}
-                />
-              </>
-            ) : (
-              <>
-                <Fact label="Runs at" value={formatDate(schedule.trigger.at)} />
-                <Fact
-                  label="Retry"
-                  value={
-                    schedule.oneShotRetry
-                      ? schedule.oneShotMaxRetries
-                        ? `Up to ${schedule.oneShotMaxRetries} times`
-                        : "Enabled without a fixed limit"
-                      : "Disabled"
-                  }
-                />
-              </>
-            )}
-            <Fact
-              label="Next run"
-              value={schedule.nextFireAt ? formatDate(schedule.nextFireAt) : "None"}
-            />
-            <Fact
-              label="Last run"
-              value={schedule.lastFireAt ? formatDate(schedule.lastFireAt) : "Never"}
-            />
-            <Fact label="Runs" value={String(schedule.fireCount)} />
-          </FactGroup>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button
+            disabled={busy || !canRunNow(schedule)}
+            onClick={() => void runAction("fire")}
+            size="sm"
+            variant="outline"
+          >
+            <Play />
+            Run now
+          </Button>
+          <Button
+            disabled={busy || !canTogglePause(schedule)}
+            onClick={() => void runAction(schedule.enabled ? "pause" : "resume")}
+            size="sm"
+            variant="outline"
+          >
+            {schedule.enabled ? <Pause /> : <Play />}
+            {schedule.enabled ? "Pause" : "Resume"}
+          </Button>
+          <Button disabled={busy} onClick={() => setEditing(true)} size="sm" variant="ghost">
+            Edit
+          </Button>
+          <Button
+            aria-label={`Delete ${schedule.name}`}
+            disabled={busy}
+            onClick={() => setConfirmDelete(true)}
+            size="icon"
+            variant="ghost"
+          >
+            <Trash2 />
+          </Button>
         </div>
-
-        <section className="mt-8">
-          <div className="flex items-center gap-2">
-            <Clock3 className="size-4 text-muted-foreground" />
-            <h2 className="font-semibold">Run history</h2>
-          </div>
-          <ScheduleFireHistory
-            error={fires.isError ? errorMessage(fires.error) : undefined}
-            fires={fires.data?.items}
-            loading={fires.isPending}
-          />
-        </section>
       </div>
+
+      {error && (
+        <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
+      )}
+
+      <div className="mt-8 grid gap-5 sm:grid-cols-2">
+        <FactGroup title="Execution">
+          <Fact label="Mode" value={modeLabel(schedule.mode)} />
+          <Fact label="Write access" value={schedule.mutating ? "Writes allowed" : "Read-only"} />
+          <Fact label="Owner" value={schedule.owner || "Deployment default"} />
+          <Fact
+            label="Tools"
+            value={schedule.profile === "noFilesystem" ? "No filesystem" : "All"}
+          />
+          <Fact
+            label="Model"
+            value={
+              [schedule.providerId, schedule.modelId].filter(Boolean).join(" / ") ||
+              "Deployment default"
+            }
+          />
+        </FactGroup>
+        <FactGroup title="Trigger">
+          <Fact label="Type" value={schedule.trigger.kind === "cron" ? "Recurring" : "One time"} />
+          {schedule.trigger.kind === "cron" ? (
+            <>
+              <Fact label="Cron expression" value={schedule.trigger.expression} />
+              <Fact label="Timezone" value={timezoneLabel(schedule.trigger.timezone)} />
+              <Fact
+                label="Maximum runs"
+                value={schedule.maxFires ? String(schedule.maxFires) : "Unlimited"}
+              />
+            </>
+          ) : (
+            <>
+              <Fact label="Runs at" value={formatDate(schedule.trigger.at)} />
+              <Fact
+                label="Retry"
+                value={
+                  schedule.oneShotRetry
+                    ? schedule.oneShotMaxRetries
+                      ? `Up to ${schedule.oneShotMaxRetries} times`
+                      : "Enabled without a fixed limit"
+                    : "Disabled"
+                }
+              />
+            </>
+          )}
+          <Fact
+            label="Next run"
+            value={schedule.nextFireAt ? formatDate(schedule.nextFireAt) : "None"}
+          />
+          <Fact
+            label="Last run"
+            value={schedule.lastFireAt ? formatDate(schedule.lastFireAt) : "Never"}
+          />
+          <Fact label="Runs" value={String(schedule.fireCount)} />
+        </FactGroup>
+      </div>
+
+      <section className="mt-8">
+        <div className="flex items-center gap-2">
+          <Clock3 className="size-4 text-muted-foreground" />
+          <h2 className="font-semibold">Run history</h2>
+        </div>
+        <ScheduleFireHistory
+          error={fires.isError ? errorMessage(fires.error) : undefined}
+          fires={fires.data?.items}
+          loading={fires.isPending}
+        />
+      </section>
 
       {editing && (
         <ScheduleForm
@@ -256,7 +252,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </PageShell>
   );
 }
 

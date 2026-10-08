@@ -72,10 +72,26 @@ function runEvent(kind: string, seq: number, text = "", payload?: unknown): RunS
 }
 
 const session = {
-  capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+  capabilities: {
+    copyId: true,
+    copyIdReason: "",
+    delete: true,
+    deleteReason: "",
+    fork: true,
+    forkReason: "",
+    inspect: true,
+    inspectReason: "",
+    publicChat: true,
+    publicChatReason: "",
+    rename: true,
+    renameReason: "",
+    viewTranscript: true,
+    viewTranscriptReason: "",
+  },
   createdAt: "2026-09-24T12:00:00.000Z",
   debugTargetSessionId: "",
   id: "chat-a",
+  kind: "main",
   modelId: "test-model",
   state: "running",
   title: "Chat chat-a",
@@ -176,6 +192,75 @@ afterEach(() => {
 });
 
 describe("mounted transcript streaming", () => {
+  it("keeps the chosen canvas panel mounted through a live delivery", async () => {
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    fireEvent.click(screen.getByRole("button", { name: "Open local canvas" }));
+    const panel = screen.getByRole("complementary", { name: "Local canvas" });
+    const body = screen.getByTestId("side-panel-body");
+    fireEvent.change(screen.getByRole("textbox", { name: "Local canvas" }), {
+      target: { value: "# Saved note" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    const edit = screen.getByRole("button", { name: "Edit" });
+    edit.focus();
+    body.scrollTop = 64;
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resize panel" }), {
+      key: "ArrowLeft",
+    });
+    const width = panel.style.getPropertyValue("--content-panel-width");
+
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A new live turn"));
+      activity.send(runEvent("message.delta", 2, "Live answer"));
+    });
+    expect(await screen.findByText("Live answer")).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+    expect(screen.getByTestId("side-panel-body")).toBe(body);
+    expect(screen.getByText("Saved note")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit" })).toBe(edit);
+    expect(document.activeElement).toBe(edit);
+    expect(body.scrollTop).toBe(64);
+    expect(panel.style.getPropertyValue("--content-panel-width")).toBe(width);
+  });
+
+  it("keeps a minimap selection above the bottom during live deltas", async () => {
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A question"));
+      activity.send(runEvent("message.delta", 2, "First answer"));
+    });
+    const scroll = screen.getByRole("region", {
+      name: "Conversation transcript",
+    }) as HTMLDivElement;
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, value: 900, writable: true },
+    });
+    scroll.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    Object.defineProperty(scroll, "scrollTo", {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        scroll.scrollTop = Number(options.top);
+      }),
+    });
+    const first = screen.getByText("A question").closest("article");
+    if (!first) throw new Error("Live prompt row missing");
+    first.getBoundingClientRect = () => ({ top: -750 }) as DOMRect;
+    fireEvent.click(screen.getByRole("button", { name: /^Jump to message 1:/u }));
+    expect(scroll.scrollTop).toBe(50);
+    expect(screen.getByRole("button", { name: "Scroll to latest message" })).toBeTruthy();
+    await act(async () => activity.send(runEvent("message.delta", 3, " continues")));
+    expect(await screen.findByText("First answer continues")).toBeTruthy();
+    expect(scroll.scrollTop).toBe(50);
+  });
+
   it("keeps a scrolled reader in place and resumes following after the jump action", async () => {
     const bff = new ActivityFixture();
     const activity = heldStream();
@@ -186,7 +271,7 @@ describe("mounted transcript streaming", () => {
       activity.send(runEvent("message.delta", 2, "First answer"));
     });
     const answer = await screen.findByText("First answer");
-    const scroll = answer.closest("div.overflow-y-auto") as HTMLDivElement | null;
+    const scroll = answer.closest("section.overflow-y-auto") as HTMLElement | null;
     expect(scroll).not.toBeNull();
     if (!scroll) throw new Error("Transcript scroll container is missing");
     let scrollHeight = 2000;

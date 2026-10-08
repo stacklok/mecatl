@@ -77,8 +77,8 @@ entities:
         ownership: owned
         role: posture is
         note: >
-          The `Session`'s `PermissionMode` governs its toolset and — via ADR 0030
-          Layer 3 — its effective `Model`: switching to plan mode re-resolves the
+          The `Session`'s `PermissionMode` governs its toolset and — through the
+          plan model slot — its effective `Model`: switching to plan mode re-resolves the
           plan slot to a strong-reasoning `Model` within the same `Provider`,
           between turns.
       - entity: Memory
@@ -491,7 +491,7 @@ entities:
       model. A `Session` runs against an effective `Model`; a `Subagent` or
       `TeamMember` may override it within the same `Provider`, and a
       `PermissionMode` change may re-resolve it within the same `Provider`
-      (plan mode → a strong-reasoning model, ADR 0030 Layer 3).
+      (plan mode → a strong-reasoning model via the plan slot).
     invariants:
       - id: model-override-stays-in-provider
         statement: >
@@ -571,14 +571,13 @@ entities:
   PermissionMode:
     definition: >
       A `Session`'s permission posture — default, plan, or acceptEdits — governing
-      which `Tools` may run and, via ADR 0030 Layer 3, the effective `Model`: in
+      which `Tools` may run and, through the plan model slot, the effective `Model`: in
       plan mode the `Session` re-resolves the plan slot to a strong-reasoning
       `Model` within the same `Provider`. Plan mode is enforced at two layers
       (catalog filter hides mutating `Tools`; evaluator gate hard-denies
-      mutations). `acceptEdits` is a declared-but-not-yet-implemented posture
-      (ADR 0022 Future work): it is carried as metadata and surfaced in mode
-      pickers, but the decision path treats it identically to `default`
-      (deny→ask→allow), so it auto-allows nothing today. It is a value object
+      mutations). `acceptEdits` auto-allows Edit and Write where only the
+      built-in approval floor would ask; configured asks and denies still win,
+      and Shell and every other `Tool` resolve as in `default`. It is a value object
       owned by exactly one `Session`; a control surface switches it out of band
       (e.g. ACP session/set_mode).
     relationships:
@@ -606,12 +605,12 @@ entities:
         statement: >
           The effective `Model` is fixed for the duration of a turn; a mode change
           re-resolves it only between turns, at the run-entry seam, never mid-stream.
-      - id: acceptedits-declared-not-implemented
+      - id: acceptedits-loosens-only-the-edit-floor
         statement: >
-          `acceptEdits` is carried as metadata and surfaced in mode pickers, but the
-          permission decision path never branches on it — it resolves identically to
-          `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real
-          auto-accept-edits tier is ADR 0022 Future work.
+          `acceptEdits` adds allow rules for Edit and Write above the built-in
+          floor, so it loosens only the built-in ask for those two `Tools`. It never
+          overrides a configured deny or ask, and every other `Tool`, including
+          Shell, resolves exactly as in `default`.
 
   PermissionRule:
     definition: >
@@ -834,7 +833,7 @@ entities:
       rehydration path), not only top up a snapshot (structural reconstruction; a
       pure fold is byte-identical-replay only for providers not using the opaque
       reasoning-replay fields — Reasoning/ProviderPhase/ToolCall.ItemID are not on
-      the event stream — see ADR 0038).
+      the event stream).
     relationships:
       - entity: Event
         cardinality: "1:n"
@@ -1061,14 +1060,15 @@ scenarios:
     invariants_touched:
       [plan-mode-invisible-tools, plan-mode-denies-mutations, deny-dominant]
 
-  - name: acceptEdits is carried but not enforced
+  - name: acceptEdits auto-allows file edits only
     actors: [Principal, Client]
     steps:
       - "`Client` switches the `Session`'s `PermissionMode` to acceptEdits between turns; the mode picker advertises it."
-      - "On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing) and the decision path resolves `ToolCalls` through the normal deny→ask→allow fold — identically to `default`."
-      - "A mutating `ToolCall` still surfaces a `PermissionAsk`; nothing is auto-allowed by the mode alone."
+      - "On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing)."
+      - "An Edit or Write `ToolCall` that only the built-in floor would ask about is allowed without a `PermissionAsk`."
+      - "A configured ask or deny for Edit or Write, and any mutating Shell `ToolCall`, still resolve through the normal deny→ask→allow fold."
     invariants_touched:
-      [acceptedits-declared-not-implemented, deny-dominant, toolcall-authorized-before-execute]
+      [acceptedits-loosens-only-the-edit-floor, deny-dominant, toolcall-authorized-before-execute]
 
   - name: The conversation is compacted without losing the task
     actors: [Principal]

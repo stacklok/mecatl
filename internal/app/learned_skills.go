@@ -221,9 +221,9 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 		// ponytail: this now also holds the lock across Pipeline.Process's
 		// Evaluator.Evaluate call (a possible LLM round trip), and
 		// learnedSkillPublication.lock is not ctx-aware (a bare channel wait) —
-		// so a slow evaluator now stalls any ListLearnedSkills/ListSkills/
-		// mutate/rollback call for the SAME partition for its duration, where it
-		// previously ran outside the lock. Correctness (no torn reads) outweighs
+		// so a slow evaluator stalls any ListLearnedSkills/ListSkills/
+		// mutate/rollback call for the SAME partition for its duration.
+		// Correctness (no torn reads) outweighs
 		// this; revisit with a ctx-aware wait if evaluator latency bites.
 		if assets.skillPublication != nil {
 			unlock := assets.skillPublication.lock(partition)

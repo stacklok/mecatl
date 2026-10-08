@@ -18,14 +18,12 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_scenario5_test.go pins the path-escape-posture Scenario 5
-// acceptance criteria (docs/acceptance/path-escape-posture.md): the
+// pathescape_scenario5_test.go pins the scope of the relax: the
 // out-of-root relax is SCOPED to the main session's workspace construction
 // only. A child engine (Subagent / team member / Parallel branch) never
 // inherits it — its workspace is built by the shared newForkWorkspace helper,
 // which never receives the relaxed options — and Glob/Grep stay
-// workspace-confined at every posture (patterns are not paths, ADR-0047 point
-// 5). This is a SCOPE boundary, not a trust boundary: it holds at every
+// workspace-confined at every posture (patterns are not paths). This is a SCOPE boundary, not a trust boundary: it holds at every
 // posture, for trusted and untrusted workspaces alike. All offline (mockllm +
 // a real osfs workspace under t.TempDir).
 //
@@ -113,7 +111,7 @@ func TestPathEscapePosture_Scenario5_ChildReadEscapeDenied(t *testing.T) {
 					parentReadOK = true
 				}
 				// The child's Read outcome rides the tool.RESULT projection
-				// (ADR 0079: the projection now also emits tool.call previews and
+				// (the projection now also emits tool.call previews and
 				// message/result text previews, so the ok/error outcome is
 				// attributed on the tool.result projection — a tool.call preview
 				// always reads IsError=false). Its IsError must be TRUE. If a
@@ -151,7 +149,7 @@ func TestPathEscapePosture_Scenario5_ChildReadEscapeDenied(t *testing.T) {
 // TestPathEscapePosture_Scenario5_GlobGrepConfined pins AC5.2: Glob and Grep
 // never serve out-of-root matches at any posture, including yolo. Patterns
 // are not paths — there is no parity argument for enumerating outside the
-// root (ADR-0047 point 5), so the relax never widens them. A ".." traversal
+// root, so the relax never widens them. A ".." traversal
 // pattern, an absolute out-of-root pattern, and a Grep pathGlob escaping the
 // root all return only in-root matches (or none), never the out-of-root
 // fixture, at EVERY posture.

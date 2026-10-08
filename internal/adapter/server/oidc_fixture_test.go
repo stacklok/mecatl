@@ -10,13 +10,13 @@ import (
 	"github.com/stacklok/mecatl/authn/oidc"
 )
 
-// TestADR_0205_InitialJWKSOutagePreventsValidatorStartup pins the authn
+// TestInitialJWKSOutagePreventsValidatorStartup pins the authn
 // module's fail-closed startup boundary: an unavailable initial JWKS fetch
 // prevents validator startup. The root server test
 // TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized independently
 // pins post-start outage mapping (gRPC Unavailable and HTTP 503), handler
 // exclusion, and the distinction from 401-class token rejection.
-func TestADR_0205_InitialJWKSOutagePreventsValidatorStartup(t *testing.T) {
+func TestInitialJWKSOutagePreventsValidatorStartup(t *testing.T) {
 	initial := httptest.NewTLSServer(http.NotFoundHandler())
 	url, client := initial.URL, initial.Client()
 	initial.Close()

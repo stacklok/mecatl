@@ -119,12 +119,12 @@ func TestDevelopmentReleaseInputsRemainBoundAfterPathReplacement(t *testing.T) {
 	writeOwnerOnly(t, bundle, []byte("replacement bundle"))
 	writeOwnerOnly(t, key, []byte("replacement key"))
 
-	ops := &DefaultOperations{GOOS: "linux", GOARCH: "amd64"}
+	ops := &DefaultOperations{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	manifest, err := ops.Download(context.Background(), request.Release, root, filepath.Join(root, "download"))
 	if err != nil {
 		t.Fatalf("download bound bundle: %v", err)
 	}
-	if filepath.Base(manifest) != "microvm-release-linux-amd64.json" {
+	if filepath.Base(manifest) != "microvm-release-"+runtime.GOOS+"-"+runtime.GOARCH+".json" {
 		t.Fatalf("manifest = %q", manifest)
 	}
 
@@ -169,18 +169,27 @@ func TestDevelopmentReleaseDescriptorSymlinkIsRejected(t *testing.T) {
 }
 
 func TestDevelopmentReleaseDownloadNeverUsesHTTP(t *testing.T) {
-	root := privateTempDir(t)
-	bundle := filepath.Join(root, "release.tar.gz")
-	writeDevelopmentBundle(t, bundle)
-	transport := &rejectHTTPTransport{}
-	ops := &DefaultOperations{HTTPClient: &http.Client{Transport: transport}, GOOS: "linux", GOARCH: "amd64"}
-	release := Release{bundlePath: bundle, SHA256: fileDigest(t, bundle)}
-	manifest, err := ops.Download(context.Background(), release, root, filepath.Join(root, "download"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if transport.called || filepath.Base(manifest) != "microvm-release-linux-amd64.json" {
-		t.Fatalf("local import used HTTP=%v manifest=%q", transport.called, manifest)
+	for _, platform := range []struct{ goos, goarch string }{{"linux", "amd64"}, {"darwin", "arm64"}} {
+		t.Run(platform.goos, func(t *testing.T) {
+			root := privateTempDir(t)
+			bundle := filepath.Join(root, "release.tar.gz")
+			name := "microvm-release-" + platform.goos + "-" + platform.goarch + ".json"
+			writeOwnerOnly(t, bundle, releaseBundle(t, name, []byte(`{"schema":"mecatl-microvm-release/v2"}`)))
+			transport := &rejectHTTPTransport{}
+			ops := &DefaultOperations{HTTPClient: &http.Client{Transport: transport}, GOOS: platform.goos, GOARCH: platform.goarch}
+			release := Release{bundlePath: bundle, SHA256: fileDigest(t, bundle)}
+			manifest, err := ops.Download(context.Background(), release, root, filepath.Join(root, "download"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transport.called || filepath.Base(manifest) != name {
+				t.Fatalf("local import used HTTP=%v manifest=%q", transport.called, manifest)
+			}
+			ops.GOOS, ops.GOARCH = "linux", "arm64"
+			if _, err := ops.Download(context.Background(), release, root, filepath.Join(root, "wrong-platform")); err == nil {
+				t.Fatal("bundle for another platform was accepted")
+			}
+		})
 	}
 }
 
@@ -255,13 +264,13 @@ func TestPreparedDevelopmentReleaseBundleIsImportable(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"microvm-release-linux-amd64.json", "install-microvm-release.sh"} {
+	for _, name := range []string{"microvm-release-" + runtime.GOOS + "-" + runtime.GOARCH + ".json", "install-microvm-release.sh"} {
 		if !entries[name] {
 			t.Fatalf("development bundle omitted %q", name)
 		}
 	}
 
-	ops := &DefaultOperations{GOOS: "linux", GOARCH: "amd64"}
+	ops := &DefaultOperations{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	root := privateTempDir(t)
 	manifest, err := ops.Download(context.Background(), request.Release, root, filepath.Join(root, "download"))
 	if err != nil {

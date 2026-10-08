@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0363_ContextualGuardrails_Scenario1_ApprovalOriginProtoProjection(t *testing.T) {
+func TestContextualGuardrails_Scenario1_ApprovalOriginProtoProjection(t *testing.T) {
 	review := &session.GuardrailReviewPayload{ReviewID: "r1", Job: "action", Assessment: "prohibited", Inspection: "complete", Disposition: "ask_action", ReasonCode: "authority-crossing", RuleID: "rule", RuleOrigin: "operator", CheckerProviderID: "review-provider", CheckerModelID: "review-model", Concerns: []session.GuardrailRef{{Ref: "c1", Category: "exfil"}}, Sources: []session.GuardrailRef{{Ref: "s1", Category: "tool-args"}}}
 	hook := toProto(session.Event{Type: session.EvHook, Hook: &session.HookPayload{Guardrail: review}}).GetHook().GetGuardrail()
 	if hook.GetReviewId() != "r1" || hook.GetCheckerProviderId() != "review-provider" || len(hook.GetConcerns()) != 1 {
@@ -39,7 +39,7 @@ func TestADR_0363_ContextualGuardrails_Scenario1_ApprovalOriginProtoProjection(t
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario5_NoContentLeak(t *testing.T) {
+func TestContextualGuardrails_Scenario5_NoContentLeak(t *testing.T) {
 	secret := "held-result-secret-token"
 	event := session.Event{Type: session.EvHook, Hook: &session.HookPayload{Guardrail: &session.GuardrailReviewPayload{
 		ReviewID: "r", Job: "inbound", Assessment: "prohibited", Inspection: "complete", Disposition: "withhold_result",

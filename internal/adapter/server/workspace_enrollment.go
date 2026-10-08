@@ -228,8 +228,8 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 			brokerUnlock()
 			return sess, nil, nil, err
 		}
-		// This seam is reached only from an explicit refresh (ADR 0335 Scenario
-		// 2): a binding lost to broker-process restart can never match again, so
+		// This seam is reached only from an explicit refresh:
+		// a binding lost to broker-process restart can never match again, so
 		// adopt a fresh live attachment rather than strand the session behind it.
 		// Ordinary run rehydration never calls rebind — a restored session with a
 		// mismatched binding simply builds its engine without broker tools.

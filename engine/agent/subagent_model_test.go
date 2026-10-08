@@ -44,7 +44,7 @@ func TestSubagentPerCallModelRoutesToFactory(t *testing.T) {
 }
 
 // TestSubagentPerCallModelCarriesOverrideOnStart asserts the generic Model field
-// (issue #112 / ADR 0035) on EvSubagentStart reflects the per-call `model` override —
+// (issue #112) on EvSubagentStart reflects the per-call `model` override —
 // the child engine minted for that model carries it as deps.Model, and Engine.Model()
 // surfaces it. The factory mints an engine whose Deps.Model IS the requested model
 // (mirroring composition's re-derivation), so the assertion proves the override flows

@@ -20,7 +20,7 @@ var processStart = time.Now()
 // value rather than panicking, so the snapshot tolerates version drift (the
 // metric set is documented as additive, but names have been renamed across
 // major Go versions). Keep this list curated and small — it is the read budget
-// Phase-2's MCP server inherits.
+// the perf MCP server inherits.
 const (
 	metricGoroutines      = "/sched/goroutines:goroutines"
 	metricHeapAllocsBytes = "/gc/heap/allocs:bytes"
@@ -32,8 +32,8 @@ const (
 
 // RuntimeSnapshot is a plain, JSON-serialisable view of the process runtime
 // state at one instant. It carries NO OTel/SDK types deliberately: it is the
-// reusable read contract that Phase-2's perf-over-MCP server projects directly
-// into tool output (decision 4 in docs/adr/0018-perf-observability.md). Treat the
+// reusable read contract that the perf MCP server projects directly
+// into tool output. Treat the
 // field set + JSON tags as a stable wire shape — additive changes only. One
 // deliberate exception on record: heap_alloc_bytes was RENAMED to
 // heap_allocs_total_bytes — the old key read as a live-heap gauge (the
@@ -80,7 +80,7 @@ type RuntimeSnapshot struct {
 	// GCPauseP99UpperBoundNs is the histogram BUCKET UPPER BOUND containing the
 	// ~p99 rank of the GC pause distribution, in nanoseconds, derived from the
 	// /gc/pauses histogram. It is a representative bucket bound, NOT an exact
-	// quantile — the field name says so deliberately so a Phase-2 consumer does
+	// quantile — the field name says so deliberately so a consumer does
 	// not over-trust the precision. Legitimately 0 before the first GC.
 	GCPauseP99UpperBoundNs uint64 `json:"gc_pause_p99_upper_bound_ns"`
 
@@ -95,7 +95,7 @@ type RuntimeSnapshot struct {
 	// actually present (and thus read) for this snapshot. It makes metric
 	// presence EXPLICIT: a name absent here was not published by this toolchain,
 	// whereas a name present here was read even if its value happens to be zero.
-	// Phase-2 consumers should test membership here rather than inferring absence
+	// Consumers should test membership here rather than inferring absence
 	// from a zero field. The runtime counters (Goroutines/NumCPU/GOMAXPROCS/
 	// UptimeSeconds) and RSSBytes are always populated and are NOT listed here —
 	// Available tracks only the runtime/metrics-derived fields.
@@ -248,7 +248,7 @@ var expvarPublishOnce sync.Once
 //
 // expvar's default handler still also exposes "memstats" and "cmdline" (the
 // package registers them in init). That is acceptable on the loopback admin
-// surface; the curated mecatl_runtime var is the one Phase-2 reads.
+// surface; the curated mecatl_runtime var is the one consumers should read.
 func ExpvarHandler() http.Handler {
 	expvarPublishOnce.Do(func() {
 		expvar.Publish("mecatl_runtime", expvar.Func(func() any {
@@ -259,8 +259,8 @@ func ExpvarHandler() http.Handler {
 }
 
 // MarshalSnapshotJSON is a small convenience used by tests and any caller that
-// wants the snapshot bytes directly (Phase-2 reduces server-side instead of
-// shipping the raw blob, but the JSON form is the canonical interchange).
+// wants the snapshot bytes directly (the perf MCP server reduces server-side instead
+// of shipping the raw blob, but the JSON form is the canonical interchange).
 func MarshalSnapshotJSON(s RuntimeSnapshot) ([]byte, error) {
 	return json.Marshal(s)
 }

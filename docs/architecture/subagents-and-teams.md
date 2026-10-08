@@ -1,248 +1,172 @@
-# Subagents & teams
+# Subagents, teams, and parallel work
 
-> Part of the [mecatl architecture guide](../architecture.md).
+> Part of the [Mecatl architecture guide](../architecture.md).
 
-**What this covers:** the `Subagent` tool (child agent loops, per-call knobs: fork, read-write, background, resume, output_schema, model/agent overrides), the 4-step child permission-ask model, background subagents + `SubagentStatus`, per-child cancel, and agent teams (`Supervisor`/`TeamTool`) as a coordinating delegation family.
+The parent agent hands work to child loops through three tools. Each child runs
+[the agent loop](agent-loop.md) on an engine that `internal/app` builds with a narrower catalog.
+The tools live in `engine/agent`; team coordination state lives in `engine/team`. For arguments
+and flags, see [the user guide](../../user-docs/features/agent-behavior/subagents-and-teams.md).
 
-**Prerequisites:** [the agent loop](agent-loop.md) — the Subagent tool delegates to child loops built from the same loop.
+| Tool | Intent | Child workspace | Returns to the parent |
+| --- | --- | --- | --- |
+| `Subagent` | One focused task | Read-only worktree, or the real tree in direct-write mode | One summary |
+| `Parallel` | Competing or independent implementations | A writable full copy per branch | Joined summaries |
+| `Team` | Specialists that must coordinate | An isolated workspace per member | The lead's synthesis |
 
-**Follow-on:** [parallelism](parallelism.md) — the sibling delegation family (fork-join branches).
+## What every child shares
 
-`SubagentTool` is a `tool.Tool` (catalog name `Subagent`) that delegates a focused,
-self-contained task (multi-step investigation or build/test/git work) to a **child agent loop**. Its `Execute`:
-1. **Workspace selection.** When a child forker is wired (`WithChildForker` — the
-   composition root wires it **iff** the child catalog includes Shell) it forks the
-   incoming `ws` into an **isolated git worktree** (the forker DEFAULT mode — shares
-   the base repo's `.git`, so the child sees full history) and runs the child there;
-   the worktree is torn down after the child drains. Without a forker the child has
-   no Shell and runs against the **parent** `ws`, exactly as before. A fork **failure**
-   on the wired path is a tool **error**, never a silent fallback to the shared `ws`
-   (running the child's Shell in the shared base is the exact hazard isolation exists
-   to prevent).
-2. Builds a **fresh** child `session.New(...)` — own conversation, own (tighter)
-   `Limits` (`defaultChildLimits`: 500 turns / 2000 tool calls / 5 failures, issue #50 —
-   deliberately far below the main session's 2000/8000 default so a delegation fan-out
-   stays bounded),
-   scoped to the **run** workspace root (the worktree when forked, else the parent).
-   **On `resume`** (a Subagent call carrying `resume: <agentId>`) it instead RELOADS the
-   persisted child by that id and recovers its terminal state — `completed` → `Reopen()`,
-   `cancelled` → `Interrupt()` (history-repair), `failed` → `Recover()` (history-repair;
-   ADR 0200, issue #318 — matching the main session's `failed → Recover → idle` seam, since
-   a long-running direct-write child accumulates applied mutations and discarding it costs
-   more than a main session's transcript). Only a NON-terminal state — a snapshot still
-   recorded `running` — is refused. It then
-   re-homes the session onto the fresh fork (`session.Session.Rehome`) and prepends an honest
-   resume note: the read-only **staleness** note (the conversation survives, the workspace
-   does NOT) or, only when this call is `mode:"read-write"` AND the resumed snapshot's
-   persisted workspace IS the real parent root, the **edits-survived** note. That second
-   condition is deliberate: a previously read-only child's worktree was torn down, so
-   resuming it `read-write` must not claim its edits are still in place. Resume runs on the
-   **default explorer engine only** (rejected with `agent`/`model`); an in-flight guard
-   rejects a concurrent run on the same id.
-3. Runs the child via the injected
-   `childEngine.Run(ctx, child, runWS, RunRequest{Text: prompt, ...})`. The
-   request also carries every per-run override — notably the tighten-only
-   `MaxRunTokensOverride` and the structured-output `ExtraTools` overlay — so
-   retries and salvage drives copy the base request and replace only `Text`
-   rather than dropping run-scoped controls.
-4. **Drains the child's entire Event stream inside `Execute`**
-   (`drainChildObserved` — the single redaction chokepoint all three delegation
-   families share), relaying only the REDACTED, bounded-preview
-   `subagent.start/tool/end` projection (ADR 0079; [the domain model](domain-model.md)) and **returning only the final
-   summary string** as one `ToolResult` (gauntlet #7) — no child transcript
-   ever enters the parent conversation.
+**A fresh, bounded session, and no nesting.** Each child gets its own `session.Session` and
+limits (`defaultChildLimits`, tighter than a main session's); per-call caps only tighten. Child
+catalogs never contain `Subagent`, `Parallel`, `Team`, or `ToolSearch`, so a child cannot delegate.
 
-**Per-call knobs (`subagentArgs`).** Beyond `prompt`/`description`/`agent`, a Subagent call may
-supply: `max_turns`/`max_tool_calls`/`max_run_tokens` (TIGHTEN-ONLY caps — the model can
-make its child stricter than the operator's bound, never looser; `max_run_tokens` is the
-cumulative input+output run-budget arg;
-**default: inherited/unlimited**); `timeout_ms` (a
-wall-clock deadline → a time-budget tool error); `model` (pin THIS child to a specific
-provider model — minted via the composition-supplied `WithSubagentEngineFactory` closure
-through the contamination-safe `newChildEngineForProvider` path, NEVER a clone-and-swap;
-mutually exclusive with `agent`); and `output_schema` (a model-authored JSON schema —
-the child is given a synthetic `SubmitResult` tool whose params ARE the schema, must
-call it to deliver, and the submitted payload is validated by `session.ValidateJSON`
-with a bounded correction-retry, NO `tool_choice` forcing). The Subagent RESULT is labelled
-by terminal reason (success / `[subagent stopped: …]` note / structured-output
-validation error / error) and carries an `agentId: <childID>` trailer on every terminal
-(model-visible, mirroring the Team-id line) so the parent can discover the child id and
-read its persisted transcript via the read-only `InspectSubagent` tool (the id is used
-verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up prompt
-(default engine only). Resume notes distinguish where this call runs from
-whether earlier edits survived. A writable resume uses the edits-survived note
-only when the prior valid `EnvironmentRef` exactly equals the parent's ref,
-including `Revision`; a path match alone is insufficient. Read-only resumes use
-a fresh throwaway environment. EVERY terminal is resumable, `failed`
-included (ADR 0200): a failed child recovers through `session.Session.Recover`, and its
-error result carries a store-gated resume hint so the model can discover the path — the
-hint states what actually carries over (conversation yes, workspace no). A direct-write
-child's failure/timeout instead carries ONE combined resume-or-discard decision that names
-`mode:"read-write"` explicitly, because `writable` is taken from the CURRENT call only: a
-bare `resume` returns the read-only explorer, which can neither see nor finish the partial
-edits sitting in the operator's tree.
-`fork: true` (issue #34) seeds the child from a DEEP COPY of the parent conversation
-(via `session.ForkSnapshot` — trailing fork-call orphan stripped — and the idle-only
-`session.Session.SeedHistory`) instead of an empty context, TRUST-NEUTRAL (carried
-VERBATIM, no re-fence — the child inherits the parent's EXACT raw message posture, the
-main loop records tool results unfenced anyway, and the read-only explorer sandbox adds
-no new untrusted ingress; re-fencing would also bust the byte-stable prompt-cache
-prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
-`model`/`agent`/`resume`; a forked child runs on the parent's engine).
-`mode: "read-write"` (ADR 0077, superseding 0040's writable path; closed set
-`{"","read-only","read-write"}`, default read-only) runs the child DIRECTLY against
-the REAL parent workspace with Edit/Write — NO fork, NO copy, NO merge-back. Its
-Edit/Write/Shell mutate the real tree IN PLACE, exactly as the main agent does, and
-git is the rollback layer — the "delegate one task and land its edits" path
-(default-wired, no flag; rejected with `background`, with explicit `agent`+`model` together
-(v1 scope limit), and under the no-FS profile; `read-write`+`agent` alone runs the named
-specialist WRITABLE when the deployment wires the writable-specialist factory). An unpinned,
-same-provider named specialist is eligible for semantic routing: the routed engine preserves
-its scoped catalog/prompt/skills, Edit/Write authority, MAIN runner, and per-definition limits.
-Pinned definitions, `fork`, and `resume` bypass routing; inline MCP remains unsupported on
-this per-call writable path, and an unavailable routed target falls back to the ordinary
-writable specialist with truthful routing metadata (ADR 0242). The result text honestly notes the edits landed directly (review with `git
-diff`/`git status`); a crashed/cancelled child can leave PARTIAL edits behind
-(recoverable via git — the accepted direct-write trade-off). When
-neither `agent` nor `model` pins one, a def-less child runs on the global
-`--subagent-model` default (the analogue of `CLAUDE_CODE_SUBAGENT_MODEL`; a concrete
-id or a `--model-alias` name, resolved same-provider; precedence `def.Model >
---subagent-model > parent model`, empty inheriting the parent's). None of
-these widen `port.LLMRequest` — they are `subagentArgs`/`RunRequest`/factory concerns.
+**Narrowed authority.** All three families derive the child's capability set through
+`deriveDelegatedAuthority`. It intersects the parent's set with the candidate and any specialist
+ceiling, applies caller tightening, and consumes one delegation hop. It runs before the tool
+acquires an engine, workspace, or session, so a refusal leaves nothing to clean up. A resume
+consumes no hop; it only checks that the persisted authority still fits inside the current
+parent's. The child inherits the owner recorded on the parent session, never the current caller.
 
-**Background, SubagentStatus & per-child cancel (`docs/adr/0015-background-subagents.md`).**
-`background: true` DETACHES the child, RUN-scoped: the call returns an immediate
-started-result (agentId trailer first) and a goroutine owns fork → drive → persist →
-result-stash in the parent `Run`'s **child-run registry** (`childRunRegistry` — every
-run registers ALL children of all three families under their child session ids). The
-result body's sole channel is the read-only **`SubagentStatus`** tool (no args → this
-run's roster; `agent_id` → state + the stored body, delivered exactly once; `wait_ms`
-parks up to 120s) — a turn-boundary harness NOTICE (ids + stop labels only, nothing
-child-authored) tells the model when a background child finishes, and ONE
-background-pending nudge defers a would-be clean end so results aren't silently lost.
-At run end live background children are cancelled, joined (bounded two-phase drain),
-sealed (`safeEmit` makes post-seal child emits no-ops), and persisted — resumable
-next run. The registry also powers **per-child cancel**: `Run.CancelChild(childID)`
-(gRPC `ConverseRequest.cancel_child`, HTTP `POST /v1/sessions/{id}/cancel-child`,
-mecatui's `x` key) cancels ONE subagent / parallel branch / team member without
-touching the run, retracting any permission ask the child had parked
-(`permission.retract`); the child persists and stays resumable. The headless
-RunTeam path has its own member cancel: the `CancelTeammate(team_id, member)` unary
-(HTTP `POST /v1/teams/{id}/members/cancel`, issue #29) reaches a running team's
-member directly through `Supervisor.CancelMember` — no parent registry on that path.
+**Context isolation.** `Subagent` and `Parallel` drain the child's event stream inside the tool
+call (`drainChildObserved`) and return only the final text. No child transcript enters the parent
+conversation. Clients see a separate projection of bounded, scrubbed previews, and a child's
+`permission.ask` is dropped from it because the reason can carry secrets. Team members stream
+bounded previews instead, because a team is meant to be watched. Child text that reaches the
+parent model is framing-neutralized, so a child cannot forge a harness fence or header. Child
+sessions persist under disjoint ID prefixes (`subagent-`, `parallel-`, `team-<teamID>-<member>`),
+and the parent pulls a transcript on demand with `InspectSubagent` or `InspectMember`.
 
-Dedicated session debugging does not reuse `InspectSubagent`'s raw child-id input. The
-`InspectSession related` view traverses validated Subagent, Parallel, Team, and scheduled
-relationships from one authorized root only when both parent/origin ID and opaque persisted
-incarnation match, and returns opaque incarnation-bound handles only for
-retained descendants admitted by the deployment's ownership posture. When ownership is
-enforced, equality is stable issuer+subject identity rather than display/grant metadata;
-without enforcement, owner comparisons are omitted. `delegation` projects typed lifecycle and parent-result facts;
-pruned children remain visible only as content-free tombstones, including across same-ID
-recreation, and retained child
-transcripts are read through revalidated scope handles. This keeps unrelated session IDs
-unprobeable and makes retention gaps explicit (ADR 0258).
+**One registry per parent run.** Every child, plus background `Shell` jobs, registers in the run's
+child registry (`childregistry.go`). `Run.CancelChild` uses it to cancel one child without stopping
+the run, retracting any permission ask that child had parked.
 
-**Background Shell jobs ride the same registry as a NON-delegation family**
-(`docs/adr/0201-background-bash.md`). A `background: true` call on the `Shell`
-tool registers a `bash-cmd` entry (`bashcmd-<callID>` — a bare process, NO child
-session/engine, no `subagent.*` events, no InspectSubagent/resume), returns the
-job id immediately, and detaches the drive; the run-scoped cancel-at-end drain,
-the turn-boundary notice, and the background-pending nudge all cover it (the
-notice/nudge are family-aware: the subagent clause keeps its exact wording and a
-"background command(s) …" clause naming `ShellStatus` is appended only when shell
-jobs are among the finished/live). The registry is SHARED but the two status
-tools project it DISJOINTLY: `SubagentStatus` filters bash-cmd entries out, the
-read-only **`ShellStatus`** tool (registered iff Shell is, including in child
-catalogs) serves ONLY bash-cmd jobs — roster (ids+state+stop only), per-job
-command + retained 64 KiB output tail (live) or exactly-once collected result
-(done), `wait_ms` park, `cancel` verb. A child (Subagent/explorer/team member)
-gets the same background-capable `Shell` and its paired `ShellStatus` against its
-OWN run's registry, but never `SubagentStatus`. See [ports](ports.md) for the tool/streaming seam.
+**Permissions.** Children use an allow-all floor plus subagent-scoped rules, and never learn rules.
+An interactive parent surfaces an unresolved ask and routes the verdict back by the child's
+namespaced ask ID. Headless, an optional reviewer may approve one call (never a configured Ask);
+otherwise the ask is denied with the real cause. [Governance](governance.md) has the details.
 
-The child is a **read-only explorer with a shell** by default — capability flows down
-from the parent (which has Shell); isolation, not catalog read-only-ness, is the
-security boundary:
-- The composition layer wires `childEngine` with **Read/Grep/Glob plus Shell**
-  (`buildChildEngine` registers Shell via the **sandboxed** runner —
-  `buildSandboxedCommandRunner`, the SAME hardening team members get, since the
-  worktree shares the parent `.git`), **never `Subagent`/`Parallel`/`ToolSearch`** (no
-  recursion / fan-out) and **never Edit/Write** (the read-only explorer inspects, it
-  does not edit the project). A `mode:"read-write"` call instead runs the SEPARATE
-  `writableChildEngine` (`buildWritableSubagentChildEngine`: the explorer surface +
-  **Edit/Write**, over the REAL parent workspace + the MAIN session's command runner
-  `buildCommandRunner` — main-session parity, NO fork — ADR 0077); it is NOT isolated
-  (`isolated:false`, so the A2 isolation auto-approve does not apply to its Shell) and
-  git is the rollback. A `read-write`+`agent` call routes through
-  `agentWritableFactory` (`buildAgentWritableEngineFactory`) on the definition's resolved
-  model, or—when the definition is unpinned and same-provider—through
-  `agentWritableModelFactory` (the routed half of `buildAgentWritableEngineFactories`) on the semantic
-  router's pick. Both rebuild the specialist with `allowMutating=true` over the MAIN runner,
-  preserving its prompt/skills/catalog and per-def limits (ADR 0058/0239). A routed factory
-  decline falls back to the ordinary writable specialist and reports the unavailable target
-  rather than claiming the routed model ran. Per-def Subagent engines keep Shell via `scopedToolNamesMode`'s
-  `allowShell` and share the one read-only `SubagentTool` forker. With no runner
-  (`--no-shell`) the child is a Shell-less read-only explorer and no forker is wired — the
-  original behaviour. The policy is **allow-all** so the child never prompts a human
-  (`internal/app`: `buildSubagentTool` / `buildChildEngine` /
-  `buildWritableSubagentChildEngine` / `buildAgentSubagentEngines`).
-- `SubagentTool.ReadOnly()` stays **`true`**, letting the parent run read-only `Subagent`
-  calls concurrently with other read-only tools. This is safe because a read-only
-  child's (mutating-classified) Shell writes land in the **isolated worktree**, never the
-  shared base the parent's other read-only calls race over; the only shared surface is
-  the `.git` object DB/refs (git-locked; config-driven code-exec vectors neutralised via
-  `gitenv`).
-  A `mode:"read-write"` call WILL mutate the parent IN PLACE during its run (direct-write,
-  ADR 0077), so it declares `MutatesParent(call)==true` and the dispatcher runs it
-  **alone, mutate-serial** — never batched with a sibling read it could tear.
-  `MutatesParent` is decoupled from any merger (there is none); the
-  `parentMutatingCaller` seam and the `SerializingMerger` are reused only by Parallel's
-  single-branch merge (ADR 0040).
-- `WithMaxConcurrentChildren` (default 8; `WithMaxConcurrentSubagentShells` is a
-  deprecated alias) sizes the **child concurrency gate**, acquired at the top of
-  `run()` for ALL children (forking and forker-less) — Subagent is read-parallel, so
-  the model can fan many out; each child consumes a session + an LLM slot (and, when
-  forked, a worktree). Foreground acquisition blocks; a **background** child's
-  acquisition is **fail-fast** (a full gate is a model-addressable error listing the
-  live background ids — a background child holds its slot across turns, so blocking
-  could deadlock the model against itself).
-- A child's permission ask resolves through the **4-step model** (see CLAUDE.md's
-  subagent-shell gotcha): read-only-substitution and isolation auto-approve resolve
-  most asks in `governance`; what remains is **surfaced to the human** when the parent
-  run is interactive (the child parks; `Run.Approve` routes the verdict by the
-  child-namespaced askID) or **auto-denied with an accurate model-facing message**
-  when headless — never a blanket deny.
-- The child run is bounded by the parent `ctx`; `SubagentStop` fires
-  best-effort (on a detached short-lived context if the parent is already
-  cancelled). `NewSubagentTool` panics on a nil child Engine.
+## Subagent
 
-This mirrors the **team-member** worktree treatment (§ below): same `gitenv`
-hardening, same untrusted-`.gitattributes` residual. The workspace-trust gate
-**shipped** (issue #40), shared by both: an **untrusted** workspace nils the
-sandboxed runner, so read-only subagents and team members get NO shell there —
-an honest Spec note tells the model, and the gate is narrated once at build.
-Mutating members / Parallel branches keep their hardened force-copy shells
-(force-copy forking runs no git, so the fork-time checkout hazard the gate
-closes cannot fire there).
+### Read-only explorer by default
 
-A free-text Subagent result is never a silent "(subagent produced no summary)" on
-an empty terminal (issue #48/#152): a bounded two-stage recovery runs first — one
-wrap-up turn, then a fallback digest of the child's last non-empty assistant
-text — before the placeholder is ever shown, and the eventual result still names
-the stop reason honestly.
+Isolation, not the absence of mutating tools, is the security boundary. With `Shell` available,
+the default child gets Read, Grep, Glob, and `Shell` in a throwaway git worktree that shares the
+parent `.git` (full history). The forker mirrors uncommitted changes into it so the child sees
+what the operator sees; if that fails, the worktree resets to clean `HEAD` and the child is told.
+Because `.git` is shared, the shell runs with an environment that `internal/adapter/gitenv` scrubs
+of config-driven code execution (hooks, pager, fsmonitor, external diff). The forker's own
+`git worktree add` runs under the same scrub, so the base repository's `post-checkout`
+hook doesn't fire at fork time. An untrusted workspace
+gets no worktree shell, because creating the worktree runs a checkout a hostile repository could
+abuse. A failed fork is a tool error, never a fallback to the shared tree. Without a shell, the
+child reads the parent tree through a confined view without the main session's out-of-root reads.
 
-## Prerequisites
+### Modes, by intent
 
-- [The agent loop the children run](agent-loop.md)
+- **Start clean** (default). The child sees only its prompt.
+- **Continue from here** (`fork`). The child starts from a deep copy of the parent conversation,
+  with the dangling fork call stripped so tool pairing stays valid. History is copied verbatim,
+  not re-fenced, to keep the provider prompt-cache prefix stable. A fork runs on the parent's
+  engine, so it excludes `model`, `agent`, and `resume`.
+- **Land edits** (`mode: "read-write"`). See [the next section](#direct-write-children-and-the-barrier).
+- **Keep working meanwhile** (`background`). The call returns at once. Taking a concurrency slot
+  (`defaultMaxConcurrentChildren`) fails fast instead of blocking, because a background child
+  holds its slot across turns and a blocked call could deadlock the model against itself. The
+  result arrives once, through `SubagentStatus`; a turn-boundary notice and a single nudge keep it
+  from being lost. At run end, live background children are cancelled, joined, and persisted.
+- **Pick up a previous child** (`resume`). The tool reloads the child and recovers it from
+  completed, cancelled, or failed, repairing history as needed. The conversation survives but the
+  workspace does not, so the child gets a fresh fork and a staleness note. Only a writable resume
+  whose persisted environment ref exactly equals the parent's, revision included, is told its
+  edits survived. A guard rejects a second concurrent run on the same ID.
 
-## Follow-on reading
+### Direct-write children and the barrier
 
-- [Parallelism — fork-join delegation](parallelism.md)
+A `mode: "read-write"` child runs against the real parent environment with Edit, Write, and
+`Shell`. Nothing is forked or merged: edits land in place and git is the rollback. Its shell uses
+the main session's command runner, because it acts on the real repository and must resolve
+exactly as the main session does. For the same reason it is not treated as isolated when its
+permission asks are resolved.
+
+`SubagentTool.ReadOnly()` stays `true` so read-only delegations batch concurrently. A direct-write
+call instead reports `MutatesParent(call) == true` (`parentMutatingCaller` in `dispatch.go`). The
+dispatcher then pulls it out of the concurrent read batch and runs it alone, behind the same
+barrier as any mutating tool. Otherwise a sibling Read or Grep in the batch could observe a
+half-written tree. Direct-write also refuses `background`, so it cannot race the parent's edits.
+A crashed child can leave partial edits; its failure result offers a resume-or-discard choice
+that names `mode: "read-write"`, since a bare resume returns a read-only explorer.
+
+## Parallel: fork-join
+
+`Parallel` forks one branch per task (16 maximum, 8 at once) and joins the results. Each branch
+gets a force-copy of the workspace with its own `.git`, plus Edit, Write, and `Shell`, so
+concurrent writes are safe. Force-copy forking runs no git, so the trust gate does not apply,
+but the branch shell is still hardened because git later runs over the copied `.git`.
+
+- `all` (default) returns every summary and removes every fork.
+- `first` returns the first successful branch and cancels the rest.
+- `judge` (alias `best`) has a judge on the session model pick one branch from the summaries only.
+  A misbehaving judge falls back to the first success.
+
+A `first` or `judge` winner is kept in a process-wide LRU (`forkreaper.go`) and reported as an
+opaque artifact handle until eviction or graceful shutdown removes it. A single-branch `first`
+or `judge` call merges the winner into the parent by default through
+`tool.EnvironmentMerger`. The merger refuses patches that touch `.gitattributes`, diffs without
+textconv so the fork's git config cannot run code in the parent, never forces on conflict, and is
+serialized process-wide. Such a call reports `MutatesParent`, so it also runs alone. Multi-branch
+calls never merge.
+
+## Teams
+
+`engine/team` is a pure, in-memory aggregate behind one mutex: a roster, a dependency-aware task
+list, per-member mailboxes, and a findings ledger, each capped. Messages come only from roster
+members or the reserved operator sender, so neither can impersonate the other.
+
+`agent.Supervisor` drives members in rounds. Each round it plans which members have work (a
+pending message, or a claimable task for non-leads), runs those turns concurrently, then reopens
+each session, so messages arrive at turn boundaries and never mid-turn. The team ends when a round
+plans no work; a round cap and a per-member lifetime turn budget bound a team that never
+converges. Members coordinate through `SendMessage`, `AddTask`, `ClaimTask`, `CompleteTask`,
+`ListTasks`, and `RecordFinding`, and peer messages and task text are fenced as untrusted. The
+first member is the lead. Its final synthesis turn reads the findings ledger, a digest of member
+output, and its inbox, all fenced and never full transcripts; that report is the deliverable.
+
+| Member | Workspace | Tools |
+| --- | --- | --- |
+| Mutating | Force-copy fork with its own `.git` | Edit, Write, `Shell` |
+| Read-only, trusted workspace | Git worktree with uncommitted changes mirrored | Read tools, hardened `Shell` |
+| Read-only, no worktree shell | Shares the base tree | Read tools only |
+
+No member workspace is merged back, and the supervisor rejects a base-sharing member whose catalog
+holds a mutating tool. A team token budget sums all members and is checked between rounds: once
+crossed, no new round starts, but the current round and the synthesis finish. It is separate from
+the per-engine run-token ceiling, which counts only that engine's own session, so a delegation
+tree can exceed that ceiling in total.
+
+Teams run through the `Team` tool and the headless gRPC `CreateTeam`, `RunTeam`, and
+`CancelTeammate` calls. Both paths share one member-engine factory, so they cannot drift.
+
+## Where child workspaces come from
+
+`tool.EnvironmentForker` (`engine/tool/isolation.go`) is the isolation seam. A fork returns a
+complete child `Environment` (workspace, runner bound to the child namespace, fresh read ledger)
+that never writes back to the base. `forker.KindRouter` (`internal/adapter/forker`) picks a
+forker by the parent environment's kind; the microVM backend plugs in here. An unknown remote
+kind fails instead of falling back to the host filesystem, which would split workspace and runner.
+
+Delegation never accepts placement input. The model-facing schemas have no workspace, path, or
+selector argument, and an `engine/agent` test enforces that. `Subagent` and `Parallel` share
+or server-fork the parent environment, and `Team` derives member environments from the owning
+session. Results and events carry opaque handles, never fork roots or exact environment refs, and
+those handles cannot be replayed as the worktree selectors that session placement uses.
+
+The no-filesystem profile keeps `Subagent` and `Team` but gives children a file-less catalog
+(memory, web fetch, MCP) with no forker, no shell, and no direct-write mode, and drops `Parallel`.
+The remote-execution profile omits all three tools.
 
 ## Related
 
-- [Providers — per-subagent provider routing](providers.md)
-
----
-
-[← Architecture guide](../architecture.md)
+- [The agent loop](agent-loop.md): dispatch and the read-parallel, mutate-serial barrier.
+- [Governance](governance.md): child permission resolution, workspace trust, and fences.
+- [Providers](providers.md): child model selection and the semantic router.
+- [MicroVM environments](microvm-environments.md): server-owned placement and child worktrees.
+- [Subagents, teams, and parallel work](../../user-docs/features/agent-behavior/subagents-and-teams.md): user-facing arguments and flags.

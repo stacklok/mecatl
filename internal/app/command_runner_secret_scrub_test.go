@@ -109,10 +109,9 @@ func TestPlacementRunnerScrubsSecretsForAlternateRoot(t *testing.T) {
 }
 
 // TestSandboxedCommandRunnerScrubsSecrets confirms the hardened (sandboxed
-// subagent/team-member/force-copy) runner is ALSO secret-safe — it was previously
-// only git-scrubbed (gitenv.Scrub drops GIT_*/PAGER, never secrets), so the same
-// exfiltration was reachable from a read-only subagent shell. envscrub now layers
-// under gitenv for every hardened runner.
+// subagent/team-member/force-copy) runner is ALSO secret-safe: gitenv.Scrub alone
+// drops only GIT_*/PAGER, never secrets, so envscrub layers under gitenv for
+// every hardened runner to keep secrets out of a read-only subagent shell.
 func TestSandboxedCommandRunnerScrubsSecrets(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "sk-or-MUST-NOT-LEAK")
 	t.Setenv("EXA_API_KEY", "exa-MUST-NOT-LEAK")

@@ -1,5 +1,5 @@
 // Package scheduler is the in-process tick loop for the scheduled-tasks
-// feature (issue #189, Phase 1e). It is the composition-layer owner of:
+// feature (issue #189). It is the composition-layer owner of:
 //
 //   - the leader-lease on the well-known `port.SchedulerLeaderLeaseID`
 //     ("__scheduler__") so that, in a multi-replica deployment, at most one
@@ -14,12 +14,12 @@
 // `internal/adapter/server.Service`, the loop NEVER imports `engine/agent` or
 // `internal/adapter/server`. The FireFunc seam is how composition injects the
 // run-entry funnel (Service.CreateSessionWithProfile + Service.StartRunContent
-// with subagent-grade RunRequest) in Phase 1f. A unit test supplies a stub
+// with subagent-grade RunRequest). A unit test supplies a stub
 // FireFunc that records fires.
 //
 // The loop reads `now` from an injected `port.Clock` (deterministic tests) and
 // logs through an injected `port.Diagnostics` (NEVER slog — the global-slog
-// ban in engine/ and internal/ applies here too; see ADR 0020).
+// ban in engine/ and internal/ applies here too).
 package scheduler
 
 import (
@@ -53,7 +53,7 @@ type FireFunc func(ctx context.Context, sched port.Schedule, now time.Time) (por
 // ErrFireNowOverlap is returned by FireNow when the schedule's singleton
 // overlap check found a prior fire still running (its session lease is held by
 // any replica). The fire was SKIPPED, not claimed — the caller (composition's
-// Service.FireNow) maps it to FailedPrecondition / 409 so a client distinguishes
+// Service.FireNow) maps it to FailedPrecondition / 412 so a client distinguishes
 // "overlapping fire rejected" from a genuine error. It mirrors the tick loop's
 // silent singleton skip, surfaced as an explicit error on the manual path (a
 // manual fire is a client-initiated request that deserves an explicit rejection,
@@ -78,7 +78,7 @@ var ErrFireNowExhausted = errors.New("scheduler: fire-now rejected (one-shot alr
 // redirect. Nil-lease (single-replica) schedulers are always the leader.
 var ErrNotLeader = errors.New("scheduler: not the leader (a peer replica is; retry against the leader)")
 
-// Config wires the scheduler. All fields are set by composition (Phase 1f);
+// Config wires the scheduler. All fields are set by composition;
 // the unit tests construct one directly with a stub Fire.
 type Config struct {
 	// Store is the durable schedule registry. Required.
@@ -101,7 +101,7 @@ type Config struct {
 	// Lease == nil.
 	LeaseRenewInterval time.Duration
 	// Fire is the composition-supplied run-entry callback. Composition wires
-	// this in Phase 1f; for Phase 1e's unit tests a stub records fires. Required.
+	// it; unit tests supply a stub that records fires. Required.
 	Fire FireFunc
 	// CanProcess admits only schedules this scheduler may touch. A nil function
 	// preserves the compatibility path. OIDC composition supplies a predicate that
@@ -144,11 +144,10 @@ type Config struct {
 	// decides the kind; the callback decides where it lands. The ctx is the
 	// firing caller's, so the durable append can attribute the event to whoever
 	// acted (a tick fire descends from Start's system-principal root; a manual
-	// FireNow keeps its requester) — ADR 0204 decision 5.
+	// FireNow keeps its requester).
 	EmitScheduleEvent func(ctx context.Context, payload session.SchedulePayload)
 	// ScheduleMetrics is the OPTIONAL composition-injected metrics callback
-	// (issue #233, Phase 2b). It is nil-safe (nil = no metrics recorded — the
-	// byte-identical no-metrics path). The scheduler invokes it from
+	// (issue #233). It is nil-safe (nil = no metrics recorded). The scheduler invokes it from
 	// fireClaimed (fired/failed, with the Claim→terminal duration) and
 	// fireOne/FireNow (skipped, duration 0). Composition wires it over the
 	// telemetry adapter's Metrics.EmitSchedule — the scheduler pkg stays
@@ -157,10 +156,10 @@ type Config struct {
 	// labels the outcome; duration > 0 only for a fired/failed fire.
 	ScheduleMetrics func(payload session.SchedulePayload, duration time.Duration)
 	// DeliverFireResult is the OPTIONAL composition-injected callback
-	// (ADR 0075, fire-result-delivery) the scheduler invokes from fireClaimed
+	// (fire-result delivery) the scheduler invokes from fireClaimed
 	// AFTER RecordFire, to route a fire's terminal result back into its origin
-	// conversation. It is nil-safe (nil = the byte-identical no-delivery path,
-	// matching the pre-ADR-0075 pull-only posture). Composition wires it to
+	// conversation. It is nil-safe (nil = no delivery; results are
+	// pull-only). Composition wires it to
 	// deliverFireResult(svc, queue) which: skips an empty OriginSessionID (no
 	// delivery), renders the note (renderFireDelivery), enqueues it to the
 	// durable DeliveryQueue, and drives a delivery run into an idle/completed/
@@ -172,14 +171,13 @@ type Config struct {
 	// The scheduler invokes it for fired/failed fires alike (a failed fire may
 	// still have an origin that should know it errored); the callback decides
 	// whether to deliver based on the stop reason (it may skip a StopError
-	// fire's delivery, or deliver it — the ADR does not mandate either).
+	// fire's delivery, or deliver it — either is allowed).
 	DeliverFireResult func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)
 	// ReconcileStaleFire is the OPTIONAL composition-injected callback
-	// (issue #386 Phase 4b, the stale-fire reconciler) the scheduler invokes
+	// (issue #386, the stale-fire reconciler) the scheduler invokes
 	// from the tick loop's reconcile scan when it DETECTS a stale in-flight
 	// fire — a claimed-but-never-terminal fire left behind by a crashed
-	// process (acceptance criterion #7). It is nil-safe (nil = the
-	// byte-identical no-reconcile path, the pre-Phase-4b posture): detection
+	// process. It is nil-safe (nil = the no-reconcile path): detection
 	// is store-only (the scheduler CAN do it — it reads ScheduleStore + the
 	// leader-lease/isPriorFireLive seam it already has), but the SETTLE
 	// (session-load + cancel + RecordFire) needs Service methods the scheduler
@@ -217,8 +215,8 @@ type Config struct {
 // Defaults. The leader-lease defaults mirror the run-entry lease defaults
 // (defaultLeaseTTL = 30s, renewer at TTL/3, Acquire bounded by
 // leaseAcquireTimeout = 5s) so the two lease owners in the process share one
-// posture; the tick interval is a conservative 30s poll (the in-memory
-// lookahead a future phase may add is DERIVED, the store is ground truth).
+// posture; the tick interval is a conservative 30s poll (the store is ground
+// truth; there is no in-memory lookahead).
 const (
 	defaultLeaderLeaseTTL     = 30 * time.Second
 	defaultTickInterval       = 30 * time.Second
@@ -285,7 +283,7 @@ var standbyLogInterval = 5 * time.Minute
 var stopLeadershipJoinTimeout = 5 * time.Second
 
 // staleFireWindow is the staleness threshold the stale-fire reconciler
-// (issue #386 Phase 4b) applies to a claimed-but-never-terminal fire when the
+// (issue #386) applies to a claimed-but-never-terminal fire when the
 // schedule has no explicit FireDeadline. A fire whose LastFireStartedAt (the
 // crash-after-session case) or LastFireAt (the crash-after-Claim case, where
 // LastFireStartedAt is zero — RecordFireStart never ran) is older than this
@@ -446,8 +444,8 @@ func (s *Scheduler) SetEmitScheduleEvent(cb func(ctx context.Context, payload se
 }
 
 // SetScheduleMetrics sets the OPTIONAL composition-injected metrics callback
-// (issue #233, Phase 2b). It is the late-bind seam, parallel to
-// SetEmitScheduleEvent: a nil callback is the byte-identical no-metrics path.
+// (issue #233). It is the late-bind seam, parallel to
+// SetEmitScheduleEvent: a nil callback records no metrics.
 // Composition calls it after SetFire (so the FireFunc is bound) and before
 // Start (so the callback is in place when the first tick fires).
 func (s *Scheduler) SetScheduleMetrics(cb func(payload session.SchedulePayload, duration time.Duration)) {
@@ -460,9 +458,9 @@ func (s *Scheduler) SetScheduleMetrics(cb func(payload session.SchedulePayload, 
 }
 
 // SetDeliverFireResult wires the OPTIONAL composition-injected fire-result
-// delivery callback (ADR 0075). Composition calls it after SetFire (so the
-// FireFunc is bound) and before Start. nil is the byte-identical no-delivery
-// path (the pre-ADR-0075 pull-only posture). The scheduler invokes it from
+// delivery callback. Composition calls it after SetFire (so the
+// FireFunc is bound) and before Start. nil is the no-delivery
+// path (results are pull-only). The scheduler invokes it from
 // fireClaimed AFTER RecordFire, with the schedule + the fire record.
 func (s *Scheduler) SetDeliverFireResult(cb func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) {
 	s.mu.Lock()
@@ -474,9 +472,9 @@ func (s *Scheduler) SetDeliverFireResult(cb func(ctx context.Context, sched port
 }
 
 // SetReconcileStaleFire wires the OPTIONAL composition-injected stale-fire
-// reconcile callback (issue #386 Phase 4b). Composition calls it after
+// reconcile callback (issue #386). Composition calls it after
 // SetFire (so the FireFunc is bound) and before Start. nil is the
-// byte-identical no-reconcile path (the pre-Phase-4b posture): the reconcile
+// no-reconcile path: the reconcile
 // scan is a nil-safe skip when the callback is unwired. The scheduler invokes
 // it from the tick loop's reconcile scan (reconcileStaleFires, called from
 // tickOnce) for each detected stale in-flight fire, with the schedule whose
@@ -542,7 +540,7 @@ func New(cfg Config) *Scheduler {
 //     ticker and PROMOTES when the current leader's lease lapses (crash/TTL)
 //     or is released. This is the multi-replica availability contract: a
 //     standby replica must SERVE (report ready, answer RPCs) and take over
-//     when the leader dies — it must NOT crash (the pre-ADR-0073 on-by-default
+//     when the leader dies — it must NOT crash (the earlier on-by-default
 //     bug where a non-leader's Start returned ErrLeaseHeld and the process
 //     exited, CrashLooping the replica).
 //
@@ -558,9 +556,9 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 	// The lifecycle root has no caller: every context the tick, fire, delivery
 	// and reconcile paths use descends from here (context.WithoutCancel keeps
-	// values), so this ONE wrap runs them all as the explicit system principal
-	// (ADR 0204 decision 7). FireNow is deliberately NOT wrapped — a manual fire
-	// keeps its requester's identity.
+	// values), so this ONE wrap runs them all as the explicit system principal.
+	// FireNow is deliberately NOT wrapped — a manual fire keeps its requester's
+	// identity.
 	ctx = syscaller.Context(ctx, syscaller.RootScheduler)
 	if s.cfg.Fire == nil {
 		s.started.Store(false)
@@ -931,7 +929,7 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		s.diag.Log(ctx, port.LevelWarn, "schedule store Due failed", "err", err.Error())
 		return
 	}
-	// One-shot crash-loss retry (ADR 0059 Phase 2). A one-shot with
+	// One-shot crash-loss retry. A one-shot with
 	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
 	// recorded a successful outcome (a crash mid-fire, or a fire that ended
 	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
@@ -939,21 +937,19 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	// filters Enabled=true), so this is a separate scan. The re-arm check is in
 	// the tick loop's scan, NOT in the fire path itself (the fire path knows
 	// nothing of re-arm — it only fires what Claim advanced). A store that does
-	// not implement ScheduleOneShotReArmer degrades to at-most-once
-	// (byte-identical pre-Phase-2).
+	// not implement ScheduleOneShotReArmer degrades to at-most-once.
 	//
 	// This runs on EVERY tick, BEFORE the len(due)==0 early return — a quiet
 	// one-shot-only deployment (no due cron to "spark" the tick past the early
 	// return) must still re-arm a crashed one-shot. Without this ordering a
 	// crashed one-shot in a quiet deployment stalls indefinitely.
 	s.maybeReArmOneShots(ctx, now)
-	// Stale-fire reconciliation (issue #386 Phase 4b, acceptance criterion #7):
+	// Stale-fire reconciliation (issue #386):
 	// scan for claimed-but-never-terminal fires left behind by a crashed
 	// process and settle them via the composition-injected callback. Runs on
 	// EVERY tick, BEFORE the len(due)==0 early return — a quiet deployment
 	// (no due cron) must still reconcile a crashed fire. Nil callback = the
-	// byte-identical no-reconcile path (pre-Phase-4b posture). See
-	// reconcileStaleFires.
+	// no-reconcile path. See reconcileStaleFires.
 	s.reconcileStaleFires(ctx, now)
 	if len(due) == 0 {
 		return
@@ -964,16 +960,16 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 	// others). So we swallow per-fire errors inside fireOne and never return a
 	// non-nil error from the errgroup.
 	//
-	// KNOWN PHASE-1 LIMITATION (issue #189): fireOne drives each fire to a
+	// KNOWN LIMITATION (issue #189): fireOne drives each fire to a
 	// TERMINAL EvResult (a full agent session — potentially minutes), and this
 	// g.Wait() blocks the tick goroutine until the whole due batch completes.
 	// While blocked the loop cannot re-poll Due (time.Ticker drops intervening
 	// ticks), so a long-running fire delays every OTHER schedule by up to its
 	// duration. This does NOT affect at-most-once (Claim advances NextFireAt
 	// before Fire, so no slot double-fires) — only fire LATENCY under a slow
-	// co-scheduled run. Acceptable for Phase 1's small schedule counts; a later
-	// phase decouples Claim/advance from the drive (hand fires to a background
-	// pool, don't await terminal in the tick). Tracked as a Phase-2 follow-up.
+	// co-scheduled run. Acceptable for small schedule counts. Decoupling
+	// Claim/advance from the drive (hand fires to a background pool, don't await
+	// terminal in the tick) is not implemented.
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(s.cfg.MaxConcurrentFires)
 	for _, sched := range due {
@@ -1170,10 +1166,10 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 		s.diag.Log(ctx, port.LevelWarn, "scheduler: RecordFire failed",
 			"schedule", claimed.Spec.Name, "fire", fire.ID, "err", err.Error())
 	}
-	// Fire-result delivery (ADR 0075, fire-result-delivery): AFTER RecordFire,
+	// Fire-result delivery: AFTER RecordFire,
 	// route the fire's terminal result back into its origin conversation. The
 	// callback is composition-injected (DeliverFireResult); nil is the
-	// byte-identical no-delivery path (the pre-ADR-0075 pull-only posture). A
+	// byte-identical no-delivery path (the earlier pull-only posture). A
 	// delivery error WARNs inside the callback and NEVER fails the fire — the
 	// fire is already recorded; delivery is a decoupled side-channel.
 	if s.cfg.DeliverFireResult != nil {
@@ -1346,7 +1342,7 @@ func (s *Scheduler) IsDraining() bool {
 // after the backoff elapses.
 const oneShotReArmBackoff = 1 * time.Minute
 
-// maybeReArmOneShots is the one-shot crash-loss retry path (ADR 0059 Phase 2).
+// maybeReArmOneShots is the one-shot crash-loss retry path.
 // It scans ALL schedules (List) for a disabled one-shot with OneShotRetry=true
 // that did not record a successful outcome, and re-arms it (up to
 // OneShotMaxRetries). The re-arm lives in the tick loop's scan, NOT in the fire
@@ -1361,7 +1357,7 @@ const oneShotReArmBackoff = 1 * time.Minute
 // a successful one-shot, now done). If OneShotRetryCount >= OneShotMaxRetries the
 // re-arm is NOT attempted (the retry budget is exhausted; the one-shot is
 // permanently done). A store that does not implement ScheduleOneShotReArmer
-// degrades to at-most-once (byte-identical pre-Phase-2) — the scan is skipped.
+// degrades to at-most-once — the scan is skipped.
 func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
 	reArmer, ok := s.cfg.Store.(port.ScheduleOneShotReArmer)
 	if !ok {
@@ -1455,8 +1451,7 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 	return fire.Stop == session.StopError
 }
 
-// reconcileStaleFires is the stale-fire reconciler scan (issue #386 Phase 4b,
-// acceptance criterion #7). It scans ALL schedules (List) for a
+// reconcileStaleFires is the stale-fire reconciler scan (issue #386). It scans ALL schedules (List) for a
 // claimed-but-never-terminal fire left behind by a crashed process and hands
 // each detected stale one to the composition-injected ReconcileStaleFire
 // callback, which settles it (RecordFire a terminal StopError fire + settle
@@ -1487,14 +1482,13 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 // staleFireWindow (defaultFireTimeout-scale + a grace). A freshly-claimed fire
 // within the window is NOT flagged (it is in flight, not crashed).
 //
-// Nil callback = the byte-identical no-reconcile path (pre-Phase-4b posture):
-// the scan is a nil-safe skip. Detection must NOT flag a genuinely-live fire
+// Nil callback = the no-reconcile path: the scan is a nil-safe skip. Detection must NOT flag a genuinely-live fire
 // (lease held → skip) and must NOT race a fire that is concurrently being
 // recorded by a peer (the lease check is the authoritative liveness oracle;
 // the window is the fallback).
 func (s *Scheduler) reconcileStaleFires(ctx context.Context, now time.Time) {
 	if s.cfg.ReconcileStaleFire == nil {
-		return // byte-identical no-reconcile path (pre-Phase-4b posture).
+		return // no-reconcile path.
 	}
 	all, err := s.cfg.Store.List(ctx)
 	if err != nil {

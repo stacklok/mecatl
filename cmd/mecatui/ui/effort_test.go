@@ -11,9 +11,9 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// Tests for the /effort picker (ADR 0055): a tiny SELECTING enum overlay that
-// FORK-RESUMES the session onto a peer at the chosen reasoning-effort tier (ADR
-// 0068) — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
+// Tests for the /effort picker: a tiny SELECTING enum overlay that
+// FORK-RESUMES the session onto a peer at the chosen reasoning-effort tier
+// — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
 // Renders purely from client state (no proto in ui).
 
 // pressEffortKey routes a key through onEffortKey, asserting it was handled.
@@ -61,7 +61,7 @@ func TestRunEffortOpensPicker(t *testing.T) {
 	}
 }
 
-// TestEffortPickerWarnsOnNoReasoningModel (ADR 0055 UX): when the CURRENT effective
+// TestEffortPickerWarnsOnNoReasoningModel: when the CURRENT effective
 // model is KNOWN (in the loaded inventory) to lack reasoning support, the picker shows
 // a degrade warning — so a user who restarts for an unattainable tier is acknowledged
 // in the UI, not only the server log. A reasoning-capable model shows NO warning, and
@@ -160,7 +160,7 @@ func TestEffortEscCloses(t *testing.T) {
 	}
 }
 
-// TestEffortPickForksDirectly is the load-bearing behavioural test (ADR 0068): it
+// TestEffortPickForksDirectly is the load-bearing behavioural test: it
 // opens the picker, moves to a real tier, presses enter ONCE, and asserts the
 // switchEffort fork-resume handoff fired DIRECTLY — no confirm step — with the
 // selection synchronously applied (model preserved, effort changed, recorded as
@@ -221,7 +221,7 @@ func TestEffortPickForksDirectly(t *testing.T) {
 }
 
 // TestEffortPickPreservesTranscript is the HEADLINE regression guard against
-// re-introducing resetSession (ADR 0068): a fork-resume must leave m.conv (the
+// re-introducing resetSession: a fork-resume must leave m.conv (the
 // conversation transcript) UNCHANGED across the switch + the SessionReadyMsg
 // rebind — the fork carries the conversation server-side, so the client must NOT
 // wipe it. Asserts the transcript, the session-id rebind to the fork id, and the
@@ -273,8 +273,8 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	}
 }
 
-// TestEffortPickFailureLeavesSourceOpen asserts the recoverable failure path (ADR
-// 0068): a failed fork does NOT close the source session — the old session is still
+// TestEffortPickFailureLeavesSourceOpen asserts the recoverable failure path:
+// a failed fork does NOT close the source session — the old session is still
 // the user's live one — and the recoverable reducer leaves the app idle with
 // enter-to-retry armed.
 func TestEffortPickFailureLeavesSourceOpen(t *testing.T) {
@@ -326,7 +326,7 @@ func TestEffortPickFailureRetryDoesNotDiscardSource(t *testing.T) {
 }
 
 // TestEffortPickRefetchFailureKeepsFork covers the post-fork GetSession-refetch
-// failure leg (ADR 0068): the fork SUCCEEDS (the peer session exists) but the
+// failure leg: the fork SUCCEEDS (the peer session exists) but the
 // resolved-model refetch fails. The app must DEGRADE gracefully — recoverable
 // (restartFailed armed, the fork origin recorded for a re-fork retry), NOT stuck in
 // phaseConnecting and NOT fatal — and the source session IS closed (the fork itself

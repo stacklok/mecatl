@@ -99,7 +99,7 @@ func TestOperatorContextWindowsHonouredAndProjectIgnored(t *testing.T) {
 }
 
 // TestOperatorModelsFromCLIHonoured pins that an OPERATOR-TIER (CLI explicit)
-// models: block is honoured and parsed faithfully (ADR 0030).
+// models: block is honoured and parsed faithfully.
 func TestOperatorModelsFromCLIHonoured(t *testing.T) {
 	env := envWithExplicit("/etc/mecatl/models.yaml", operatorModelsYAML)
 	r := newWithEnv(Options{ExplicitFiles: []string{"/etc/mecatl/models.yaml"}}, env)
@@ -119,7 +119,7 @@ func TestOperatorModelsFromCLIHonoured(t *testing.T) {
 	}
 }
 
-// TestProjectModelsIgnoredWithWarn pins the operator-tier gate (ADR 0030): a
+// TestProjectModelsIgnoredWithWarn pins the operator-tier gate: a
 // project-tier models: block is IGNORED with a WARN (re-pointing a slot from a
 // project repo is deferred to the allowlist-capped Layer-3 work).
 func TestProjectModelsIgnoredWithWarn(t *testing.T) {
@@ -155,7 +155,7 @@ models:
 `
 
 // TestOperatorRouterParsed pins that an operator-tier models.router: subtree is parsed
-// faithfully (ADR 0031): the classifier slot, default category, and category list.
+// faithfully: the classifier slot, default category, and category list.
 func TestOperatorRouterParsed(t *testing.T) {
 	env := envWithExplicit("/etc/mecatl/router.yaml", operatorRouterYAML)
 	r := newWithEnv(Options{ExplicitFiles: []string{"/etc/mecatl/router.yaml"}}, env)
@@ -178,7 +178,7 @@ func TestOperatorRouterParsed(t *testing.T) {
 	}
 }
 
-// TestOperatorRouterDisabledParsed pins the ADR 0042 YAML kill-switch: `disabled: true`
+// TestOperatorRouterDisabledParsed pins the YAML kill-switch: `disabled: true`
 // inside models.router: parses to RouterSection.Disabled (mirroring guardrails: disabled).
 func TestOperatorRouterDisabledParsed(t *testing.T) {
 	const yamlCfg = `
@@ -204,11 +204,11 @@ models:
 	}
 }
 
-// TestADR_0352_Scenario1_OperatorAuthority pins that a project-tier models.router: is
+// TestRouterOperatorAuthority pins that a project-tier models.router: is
 // OPERATOR-TIER ONLY — stripped with a WARN, never honoured. The operator allowlist is
 // present (so the project block is otherwise opt-in eligible and trusted), proving the
 // router strip is its OWN gate, not a side effect of the opt-in.
-func TestADR_0352_Scenario1_OperatorAuthority(t *testing.T) {
+func TestRouterOperatorAuthority(t *testing.T) {
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)
 
@@ -267,7 +267,7 @@ models:
 	}
 }
 
-// TestModelsStrictUnknownKeyRejected pins the strict parse (ADR 0030): a typo'd key
+// TestModelsStrictUnknownKeyRejected pins the strict parse: a typo'd key
 // inside the models: subtree is a parse error (so a binding map can't be silently
 // dropped), surfaced through the per-file skip.
 func TestModelsStrictUnknownKeyRejected(t *testing.T) {
@@ -283,7 +283,7 @@ models:
 	}
 }
 
-// TestModelsDefaultProviderParsed pins that models.default_provider (Wave 2b) parses
+// TestModelsDefaultProviderParsed pins that models.default_provider parses
 // faithfully from the operator tier and rides the SAME ModelsSection as models.default,
 // exposed via OperatorModelPolicy().DefaultProvider. An unknown key inside models:
 // (e.g. default_providr) is a strict-parse error, so a typo cannot silently disable

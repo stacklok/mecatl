@@ -145,7 +145,7 @@ func TestEmbeddedReadinessCallbacksReachFirstSessionModel(t *testing.T) {
 	}
 }
 
-// TestResolveThemeAutoDetect pins the light/dark auto-detect gate (ADR 0280):
+// TestResolveThemeAutoDetect pins the light/dark auto-detect gate:
 // armed only when no explicit theme was given AND stdout is a real terminal —
 // every other combination (explicit theme, redirected stdout, or both) must
 // leave it disarmed, since an explicit --theme/MECATUI_THEME always wins and a

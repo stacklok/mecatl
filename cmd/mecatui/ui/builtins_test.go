@@ -77,7 +77,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // caps.Soul && the soul collaborator wired; /memory needs caps.UserModel &&
 // the user-model collaborator wired; /models needs caps.ModelSelection && the model
 // lister wired; /worktrees needs caps.Worktrees && the worktree lister wired
-// (issue #102); /effort is gated identically to /models and follows it (ADR 0055).
+// (issue #102); /effort is gated identically to /models and follows it.
 // The fixed order is clear, help, quit, session, mcp, agents, team, skills, soul, memory,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {

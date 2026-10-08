@@ -21,7 +21,7 @@ one self-contained pnpm workspace (pnpm 12.4.2, Node 26, see `package.json`):
 | `web/` (`@mecatl-studio/web`)         | A Vite + React SPA. Calls only the BFF's `/api/v1`; imports neither the SDK nor daemon protocol types.                                                                  |
 | `contracts/` (`@mecatl-studio/contracts`) | Zod schemas, the generated `openapi.json`, and the generated Hey API / TanStack Query client. Generated files are committed and drift-gated.                        |
 
-The architecture guide has a [Mecatl Studio](../docs/architecture.md#mecatl-studio)
+The architecture guide has a [Mecatl Studio](../docs/architecture/api-surface.md#mecatl-studio)
 section.
 
 ## Boundary

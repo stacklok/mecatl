@@ -149,14 +149,9 @@ provider workflow is unsupported. Do not remove the retention or executor
 finalizers manually; follow the operator's external-fencing runbook when the
 provider cannot independently observe terminal compute.
 
-Persisted prototype resources use an explicit administrator migration. Normal
-operations reject schema versions other than 2. `MigrateEnvironment` accepts
-only recognized versions 0 and 1, verifies the exact live Pod and PVC
-identities, and requires a healthy, idle environment. Unknown or malformed state
-is retained unchanged rather than reset. Completed migration receipts expire
-when executor replacement publishes a new Pod identity. After replacement,
-retrying the old migration operation returns a conflict with either the original
-or replacement UID.
+Only execution-environment schema version 2 is supported. Old, missing, unknown,
+or mismatched schema versions are rejected; no migration is provided. Unsupported
+objects and their workspace data are not automatically upgraded, reset, or deleted.
 
 ### Production security material
 
@@ -222,8 +217,8 @@ absent or empty list preserves self-administration only. The creator need not
 remain in the client allowlist.
 
 The scope applies to `RetireEnvironment`, `ReplaceExecutor`,
-`RecoverEnvironment`, `DeleteRetiredEnvironment`, `MigrateEnvironment`, and
-`RevokeEnvironment`. It preserves each operation's exact owner and identity
+`RecoverEnvironment`, `DeleteRetiredEnvironment`, and `RevokeEnvironment`. It
+preserves each operation's exact owner and identity
 checks and grants no `mayAttestOwner`, attach, file, command, run, or reference
 authority. Scope order does not change the authority digest; adding or removing
 a creator does. Follow the
@@ -290,8 +285,8 @@ same-release reinstalls. A missing ledger with retained allocations is not a new
 installation: do not bootstrap it at generation 1. See the
 [provider lifecycle procedure](/operating/mecak8s/execution-provider-lifecycle.md#upgrade-uninstall-and-reinstall-the-execution-provider)
 for ownership checks, retained network protection, and quiesced CRD/provider
-upgrade order. Schema-2 environment migration remains an explicit operation;
-complete it before enabling new sessions.
+upgrade order. Verify that retained environments use schema version 2 before
+enabling new sessions.
 
 ## Limitations
 

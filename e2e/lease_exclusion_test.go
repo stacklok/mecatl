@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// leaseExclusionSpecs is the cloud-native Phase 4 LIVE scenario: cross-process
+// leaseExclusionSpecs is the lease-exclusion LIVE scenario: cross-process
 // single-writer enforcement via a SHARED single-host flock session lease. TWO
 // real mecated processes share one --store-dir AND one --session-lease-dir
 // (modelling two replicas over one store). Replica A drives a session to a parked

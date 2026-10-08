@@ -962,7 +962,7 @@ func (r *Registry) FindTarget(target string) (Connection, error) {
 // unrevoked.
 func normalizeConnection(conn Connection) (Connection, error) {
 	// Programmatic legacy callers predate the persisted policy. They enroll with
-	// the historical private posture; JSON input itself remains strict.
+	// the private posture; JSON input itself remains strict.
 	if conn.IssuerAddressPolicy == "" {
 		conn.IssuerAddressPolicy = IssuerAddressPolicyPrivate
 	}

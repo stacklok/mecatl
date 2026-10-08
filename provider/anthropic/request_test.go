@@ -534,7 +534,7 @@ func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
 	}
 }
 
-// --- ADR 0100: conversation cache breakpoints -------------------------------
+// --- Conversation cache breakpoints ---------------------------------------
 
 // turn0Fragment builds a RoleUser message that matches prompt.IsInjectedTurn0Fragment
 // via the SAME "Project instructions (" marker prefix builder.go's

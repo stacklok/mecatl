@@ -324,8 +324,8 @@ func TestProjectTeamTasksEvent(t *testing.T) {
 }
 
 // TestProjectTeamEventAlwaysHasMember pins the EvTeamMember contract invariant: a
-// per-member projection ALWAYS sets Member (the task-wide snapshot now rides its own
-// EvTeamTasks event, so it can no longer produce a memberless EvTeamMember). Drive
+// per-member projection ALWAYS sets Member (the task-wide snapshot rides its own
+// EvTeamTasks event, so it cannot produce a memberless EvTeamMember). Drive
 // every projectTeamEvent-producing inner kind and assert Member is populated.
 func TestProjectTeamEventAlwaysHasMember(t *testing.T) {
 	cases := []session.Event{

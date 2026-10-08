@@ -312,6 +312,11 @@ policy, corrupt configuration, live prior daemon with an unavailable socket, or
 uncertain process identity fails without rewriting active configuration,
 deleting state, or replacing repository data.
 
+The manager checks socket-path lengths after resolving directory symlinks, including
+macOS's `/tmp` alias. If `$XDG_RUNTIME_DIR` would produce an overlong repository
+socket, it selects the owner-only `/tmp/mv-<UID>` directory instead. It refuses
+startup if that fallback also exceeds the socket-path limit.
+
 ## Next steps
 
 - [Operate mecated](/operating/mecated.md) to configure the host service.

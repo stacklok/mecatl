@@ -53,6 +53,30 @@ export interface TranscriptRowState {
   streaming: boolean;
 }
 
+/** Shared visibility rule for rendered rows and their minimap targets. */
+export function isVisibleTranscriptMessage(
+  message: ChatMessage,
+  showToolCalls: boolean,
+  streaming: boolean,
+  delegations: DelegationActivity[] | undefined,
+  approvals: ApprovalRequest[],
+): boolean {
+  if (message.role === "user" || streaming) return true;
+  return Boolean(
+    message.content ||
+      message.delivery ||
+      message.images?.length ||
+      message.reasoning ||
+      ((showToolCalls || approvals.some((approval) => messageOwnsApproval(message, approval))) &&
+        message.tools?.length) ||
+      message.authorizations?.length ||
+      delegations?.length ||
+      message.failure ||
+      hasVisibleStopReason(message.stopReason ?? "") ||
+      message.turnStat,
+  );
+}
+
 /** Object identity is stable for historical rows while the active row receives deltas. */
 export function shouldUpdateTranscriptRow(
   previous: TranscriptRowState,
@@ -74,12 +98,14 @@ interface TranscriptRowProps extends TranscriptRowState {
   onOpenActivity?: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
   onOpenThread?: (message: ChatMessage) => void;
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
+  onRelinkThread?: (message: ChatMessage) => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
   onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
   planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   threadDisabled: boolean;
+  legacyThreadSessionId?: string;
   threadSessionId?: string;
   userName: string;
 }
@@ -91,9 +117,11 @@ function TranscriptRow({
   approvals,
   delegations,
   message,
+  legacyThreadSessionId,
   onOpenActivity,
   onOpenThread,
   onReviewAuthorization,
+  onRelinkThread,
   onPreviewImage,
   onPreviewTool,
   onRespondToApproval,
@@ -111,19 +139,8 @@ function TranscriptRow({
     : user
       ? userName
       : agentName;
-  const hasContent =
-    message.content ||
-    message.delivery ||
-    message.images?.length ||
-    message.reasoning ||
-    ((showToolCalls || approvals?.some((approval) => messageOwnsApproval(message, approval))) &&
-      message.tools?.length) ||
-    message.authorizations?.length ||
-    (delegations && delegations.length > 0) ||
-    message.failure ||
-    hasVisibleStopReason(message.stopReason ?? "") ||
-    message.turnStat;
-  if (!user && !streaming && !hasContent) return null;
+  if (!isVisibleTranscriptMessage(message, showToolCalls, streaming, delegations, approvals ?? []))
+    return null;
 
   return (
     <article
@@ -308,6 +325,17 @@ function TranscriptRow({
           {threadSessionId ? "Open thread" : "Reply in thread"}
         </button>
       )}
+      {onRelinkThread && legacyThreadSessionId && (
+        <button
+          aria-label={`Relink older side thread ${legacyThreadSessionId} to this message`}
+          className="mt-2 rounded px-1 text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+          disabled={threadDisabled}
+          onClick={() => onRelinkThread(message)}
+          type="button"
+        >
+          Relink older thread
+        </button>
+      )}
     </article>
   );
 }
@@ -321,8 +349,10 @@ const MemoTranscriptRow = memo(
     previous.threadDisabled === next.threadDisabled &&
     previous.threadSessionId === next.threadSessionId &&
     previous.onOpenActivity === next.onOpenActivity &&
+    previous.legacyThreadSessionId === next.legacyThreadSessionId &&
     previous.onOpenThread === next.onOpenThread &&
     previous.onReviewAuthorization === next.onReviewAuthorization &&
+    previous.onRelinkThread === next.onRelinkThread &&
     previous.onPreviewImage === next.onPreviewImage &&
     previous.onPreviewTool === next.onPreviewTool &&
     previous.approvalDisabled === next.approvalDisabled &&
@@ -340,6 +370,7 @@ export interface ChatTranscriptProps {
   onOpenActivity?: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
   onOpenThread?: (message: ChatMessage) => void;
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
+  onRelinkThread?: (message: ChatMessage) => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
@@ -348,6 +379,7 @@ export interface ChatTranscriptProps {
   showToolCalls: boolean;
   streamingMessageId?: string;
   threadDisabled?: boolean;
+  legacyThreadSessionIdForMessage?: (message: ChatMessage) => string | undefined;
   threadSessionIdForMessage?: (message: ChatMessage) => string | undefined;
   userName?: string;
 }
@@ -363,6 +395,7 @@ export function ChatTranscript({
   onOpenActivity,
   onOpenThread,
   onReviewAuthorization,
+  onRelinkThread,
   onPreviewImage,
   onPreviewTool,
   onRespondToApproval,
@@ -371,6 +404,7 @@ export function ChatTranscript({
   showToolCalls,
   streamingMessageId,
   threadDisabled = false,
+  legacyThreadSessionIdForMessage,
   threadSessionIdForMessage,
   userName = "You",
 }: ChatTranscriptProps) {
@@ -379,6 +413,7 @@ export function ChatTranscript({
     approvalUncertain,
     onOpenActivity,
     onOpenThread,
+    onRelinkThread,
     onPreviewImage,
     onPreviewTool,
     onReviewAuthorization,
@@ -391,6 +426,7 @@ export function ChatTranscript({
     approvalUncertain,
     onOpenActivity,
     onOpenThread,
+    onRelinkThread,
     onPreviewImage,
     onPreviewTool,
     onReviewAuthorization,
@@ -417,6 +453,10 @@ export function ChatTranscript({
   );
   const openThread = useCallback(
     (message: ChatMessage) => actions.current.onOpenThread?.(message),
+    [],
+  );
+  const relinkThread = useCallback(
+    (message: ChatMessage) => actions.current.onRelinkThread?.(message),
     [],
   );
   const respondToApproval = useCallback(
@@ -454,10 +494,12 @@ export function ChatTranscript({
           approvals={approvalsForMessage(message, approvals)}
           delegations={delegationsByMessageId?.[message.id]}
           key={message.id}
+          legacyThreadSessionId={legacyThreadSessionIdForMessage?.(message)}
           message={message}
           onOpenActivity={onOpenActivity ? openActivity : undefined}
           onOpenThread={onOpenThread ? openThread : undefined}
           onReviewAuthorization={onReviewAuthorization ? reviewAuthorization : undefined}
+          onRelinkThread={onRelinkThread ? relinkThread : undefined}
           onPreviewImage={onPreviewImage ? previewImage : undefined}
           onPreviewTool={onPreviewTool ? previewTool : undefined}
           onRespondToApproval={onRespondToApproval ? respondToApproval : undefined}

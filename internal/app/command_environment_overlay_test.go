@@ -10,11 +10,11 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// TestADR_0281_TempOverlayPreservesSecretScrub pins the command-environment
+// TestTempOverlayPreservesSecretScrub pins the command-environment
 // overlay boundary: each foreground and streaming invocation may receive only
 // its temporary-storage values, while the composition-provided secret scrub
 // remains in effect. The same overlay must reach both runner paths.
-func TestADR_0281_TempOverlayPreservesSecretScrub(t *testing.T) {
+func TestTempOverlayPreservesSecretScrub(t *testing.T) {
 	for _, name := range []string{
 		"OPENROUTER_API_KEY",    // provider
 		"GH_TOKEN",              // GitHub

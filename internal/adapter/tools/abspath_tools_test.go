@@ -14,7 +14,7 @@ import (
 )
 
 // abspath_tools_test.go is the tool-level e2e of absolute-path resolution
-// (issue #154 / ADR 0047) over a REAL osfs.Workspace: it drives absolute in-root
+// (issue #154) over a REAL osfs.Workspace: it drives absolute in-root
 // paths through the REAL Read/Edit/Write/Glob tools, not just the Workspace
 // methods. A regression in how the tools thread the path, or in the ledger seam
 // under the real Edit flow, would not be caught by the osfs unit tests alone.

@@ -105,7 +105,7 @@ func TestScreenToContentMapsRowToLine(t *testing.T) {
 	top := convTopRow(m)
 	// The body-top is the header's RENDERED height (not a magic number); assert the
 	// relationship. At width 100 with default deps the header is 2 rows, so this is
-	// still 2 — behaviour unchanged — but the test no longer hardcodes it.
+	// 2, but the test does not hardcode it.
 	if want := lipgloss.Height(m.renderHeader()); top != want {
 		t.Fatalf("convTopRow = %d, want %d (rendered header height)", top, want)
 	}
@@ -815,8 +815,8 @@ func openSelectionSGR(t *testing.T, m Model) string {
 
 // styledLines is the per-line result of styleSelection over content, split on "\n",
 // using the model's "selection" theme style — the render-level basis for the
-// migrated byteRanges tests (they used to assert on the native SetHighlights byte
-// ranges; the highlight is now an app-owned per-line splice).
+// byteRanges tests (the highlight is an app-owned per-line splice, not native
+// SetHighlights byte ranges).
 func styledLines(m Model, content string, sel selection) []string {
 	styled := styleSelection(content, sel, m.deps.Theme.Style("selection"))
 	return strings.Split(styled, "\n")

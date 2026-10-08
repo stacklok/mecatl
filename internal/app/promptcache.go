@@ -8,8 +8,8 @@ import (
 	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
-// cacheDialectFor is the PURE (id, baseURL) -> openai.CacheDialect gate (ADR
-// 0100) for the openai (Responses) adapter, shared by the openai, openrouter,
+// cacheDialectFor is the PURE (id, baseURL) -> openai.CacheDialect gate
+// for the openai (Responses) adapter, shared by the openai, openrouter,
 // and toolhive-gateway entries (all three ride newOpenAICompatEntry). It is
 // NEVER keyed on providerID alone: an operator can point the "openai" id at a
 // non-canonical OpenAI-compatible endpoint (vLLM/LiteLLM) via
@@ -61,7 +61,7 @@ func openaichatCacheDialectFor(id, baseURL string, cfg Config) openaichat.CacheD
 }
 
 // normaliseAnthropicCacheTTL validates cfg.AnthropicCacheTTL
-// (--anthropic-cache-ttl, ADR 0100) against the two values Anthropic's
+// (--anthropic-cache-ttl) against the two values Anthropic's
 // ephemeral cache_control TTL accepts: "5m" (the API's own default) and "1h".
 // "" (the flag's zero value — it is optional) normalises silently to "" (no
 // WARN: an unset flag is not a mistake). Any OTHER value also normalises to
@@ -92,7 +92,7 @@ func normaliseAnthropicCacheTTL(cfg Config) string {
 // three cannot diverge (a base-URL override does not change it). Custom
 // anthropic-messages definitions are unknown endpoints that may reject ttl, so
 // they keep the API default (""). --no-prompt-cache also keeps "" so it still
-// reproduces the pre-ADR-0100 wire byte-for-byte.
+// reproduces the uncached wire byte-for-byte.
 func anthropicCacheTTLFor(id, operatorTTL string, cfg Config) string {
 	if operatorTTL != "" {
 		return operatorTTL

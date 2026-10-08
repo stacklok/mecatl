@@ -379,7 +379,7 @@ test("packed tarball carries dist and license only", () => {
 });
 
 test("native HTTP/2 options publish their Node declaration dependency", () => {
-  expect(packageJson.dependencies["@types/node"]).toBe("24.13.3");
+  expect(packageJson.dependencies["@types/node"]).toBe("24.19.1");
   expect(packedFiles.get("package/dist/node-transport.d.ts")?.toString("utf8")).toContain(
     '/// <reference types="node" preserve="true" />',
   );

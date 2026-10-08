@@ -14,8 +14,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// modelRouterSpecs covers the semantic subagent model router (ADR 0031; enable model
-// ADR 0042) LIVE: a mecated whose operator settings.yaml defines a models.router taxonomy
+// modelRouterSpecs covers the semantic subagent model router LIVE: a mecated whose operator settings.yaml defines a models.router taxonomy
 // (the taxonomy is the enable — no flag needed) must, on a real plain Subagent delegation,
 // classify the task and mint the child on the chosen category's model.
 //
@@ -25,7 +24,7 @@ import (
 //
 // HOW THE ASSERTION WORKS. The harness observes the routed model on the wire:
 // `RoutedCategory`/`RoutedModel` ride the `subagent.start` event payload
-// (`routed_category`/`routed_model` proto fields, ADR 0031 / #97 / #110), so the spec
+// (`routed_category`/`routed_model` proto fields, #97 / #110), so the spec
 // asserts the OBSERVABLE facts that together prove the feature is wired and did not
 // wedge: (A) the build-once "subagent model router ACTIVE" INFO names the category
 // count + classifier model (logModelRouterFacts) — i.e. the router was wired, not
@@ -87,7 +86,7 @@ func modelRouterSpecs() {
 					"        model: large-cat\n"
 				gomega.Expect(os.WriteFile(settings, []byte(cfg), 0o600)).To(gomega.Succeed())
 
-				// ADR 0042: the taxonomy in settings.yaml enables the router — no flag.
+				// The taxonomy in settings.yaml enables the router — no flag.
 				spawn, err := harness.NewLocalWith(
 					"--permission-config", settings,
 				)

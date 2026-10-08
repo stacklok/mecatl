@@ -126,14 +126,14 @@ type AgentDef struct {
 	// Memory is the OPTIONAL persistent per-agent memory TIER selector. It is a
 	// raw string, NEVER a path or locator (same discipline as Origin/Model/
 	// Provider): the composition layer resolves the tier to a concrete directory.
-	//   ""        => no memory (cold start, today's behaviour);
+	//   ""        => no memory (cold start);
 	//   "user"    => a cross-project per-agent dir under the XDG config base;
 	//   "project" => workspace-relative, trust-gated like other project-tier
 	//                artifacts (read only when the workspace is trusted).
 	// The dir's MEMORY.md head is injected (read-only in v1) into the def's
 	// system prompt at startup, so the specialist accumulates domain knowledge
-	// across sessions. A scoped write path is deliberately deferred; the
-	// directory scheme is forward-compatible with adding it later.
+	// across sessions. There is deliberately no scoped write path; the
+	// directory scheme is forward-compatible with adding one.
 	Memory string
 	// Body is the markdown content of the definition: the specialist's full
 	// instructions, composed into the engine's system prompt by the composition

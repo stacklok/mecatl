@@ -5,6 +5,7 @@ import { getProviderSettingsOptions, getRuntimeOptions } from "@mecatl-studio/co
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
 import {
   connectionMessage,
@@ -77,23 +78,21 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-4xl px-4 py-7 sm:px-8 sm:py-10">
-        <Link
-          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
-          params={{ section: "providers" }}
-          search={{ item: undefined }}
-          to="/workspace/settings/$section"
-        >
-          ← Providers
-        </Link>
-        <h1 className="mt-5 break-all text-3xl font-semibold tracking-tight">{providerId}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Source: authenticated BFF provider detail. Configuration is managed by the deployment.
-        </p>
-        <div className="mt-7">{content}</div>
-      </div>
-    </div>
+    <PageShell className="max-w-4xl">
+      <Link
+        className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+        params={{ section: "providers" }}
+        search={{ item: undefined }}
+        to="/workspace/settings/$section"
+      >
+        ← Providers
+      </Link>
+      <h1 className="mt-5 break-all text-3xl font-semibold tracking-tight">{providerId}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Configuration is managed by the deployment.
+      </p>
+      <div className="mt-7">{content}</div>
+    </PageShell>
   );
 }
 

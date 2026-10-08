@@ -52,15 +52,14 @@ const (
 type Provider struct {
 	client oai.ChatCompletionService
 	// effort is the reasoning-effort token stamped on every request's
-	// reasoning_effort field (ADR 0055). Empty (and "auto"/unknown) OMITS the
+	// reasoning_effort field. Empty (and "auto"/unknown) OMITS the
 	// field — the provider default applies. Composition supplies an already-
 	// normalised neutral token; unlike the openai (Responses) adapter this
 	// endpoint accepts xhigh/max, so they are NOT clamped to high.
 	effort string
 	// cacheDialect selects which provider-side prompt-cache wire dialect
-	// (ADR 0100) buildParams (method) emits. "" (CacheDialectNone, the zero
-	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
-	// wire.
+	// buildParams (method) emits. "" (CacheDialectNone, the zero value) emits
+	// no cache hints at all — the byte-identical wire without cache hints.
 	cacheDialect CacheDialect
 	// openCodeSessionHeader enables the OpenCode-specific session header without
 	// changing the generic adapter's wire behavior.
@@ -94,7 +93,7 @@ func WithBaseURL(url string) Option {
 }
 
 // WithReasoningEffort sets the reasoning-effort token stamped on every request's
-// reasoning_effort field (ADR 0055). Empty/"auto"/unknown OMITS the field. It is
+// reasoning_effort field. Empty/"auto"/unknown OMITS the field. It is
 // an adapter-CONSTRUCTION Option, not a port.LLMRequest field — the per-session
 // engine factory re-mints the adapter when a session's effort differs from the
 // operator default.

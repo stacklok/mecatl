@@ -217,7 +217,7 @@ func childEngineWithBudget(t *testing.T, llm *mockllm.Provider, budget int) *age
 }
 
 // TestStructuredOutputBudgetTripsAcrossDrives is the cross-attempt-brake guard
-// (cloud-native Phase 1, QA SHOULD-ADD): a structured-output child whose per-attempt
+// (QA SHOULD-ADD): a structured-output child whose per-attempt
 // usage is BELOW the MaxRunTokens ceiling but ACCUMULATES across the in-call Reopens
 // must trip StopBudget — proving the cumulative sess.Usage carries across the
 // driveChild Reopens (resetToIdle preserves Usage) rather than each attempt re-granting

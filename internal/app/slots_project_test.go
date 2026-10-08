@@ -62,7 +62,7 @@ models:
   default: gpt-4o-mini
 `
 
-// TestFoldProjectModelBindingsWithinCap pins the Phase-4 happy path (ADR 0030): a TRUSTED
+// TestFoldProjectModelBindingsWithinCap pins the Phase-4 happy path: a TRUSTED
 // project re-binds default/slot/alias to ALLOWLISTED values and they are APPLIED.
 func TestFoldProjectModelBindingsWithinCap(t *testing.T) {
 	const projectYAML = `

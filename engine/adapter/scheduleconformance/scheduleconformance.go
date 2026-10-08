@@ -1,7 +1,7 @@
 // Package scheduleconformance provides a shared conformance test suite for the
-// port.ScheduleStore interface (scheduled-tasks issue #189, Phase 1b). Adapters
-// (the in-memory reference memschedulestore, a future JSONL store, the gRPC
-// driver client over bufconn, the k8s-backed store) call Run with a factory
+// port.ScheduleStore interface (scheduled-tasks issue #189). Adapters
+// (the in-memory reference memschedulestore, the JSONL and Redis stores, and the
+// gRPC driver client over bufconn) call Run with a factory
 // that constructs a fresh store, and the suite exercises only the
 // port.ScheduleStore interface through the port's value types.
 //
@@ -78,7 +78,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 				MaxFires:       3,
 				Mutating:       true,
 				CreatedAt:      time.Unix(1_700_000_000, 0),
-				// The captured owner (ADR 0204 decision 6) must survive the
+				// The captured owner must survive the
 				// round-trip on EVERY transport — a schedule outlives its origin
 				// session, so the store is the only place the attribution lives.
 				Owner: &session.Principal{

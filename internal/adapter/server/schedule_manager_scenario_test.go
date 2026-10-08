@@ -19,8 +19,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestScheduleSharedCatalog_Scenario1_ManagerIsStoreShaped pins AC1.1
-// (ADR 0076): the schedule manager is STORE-SHAPED — constructable from a
+// TestScheduleSharedCatalog_Scenario1_ManagerIsStoreShaped pins AC1.1:
+// the schedule manager is STORE-SHAPED — constructable from a
 // port.SessionStore + a now-func ALONE (no *server.Service value required,
 // resolvable before buildEngine). A store that backs no ScheduleStore (the
 // in-memory memstore) yields a nil/absent manager — the honest no-scheduling
@@ -32,7 +32,7 @@ func TestScheduleSharedCatalog_Scenario1_ManagerIsStoreShaped(t *testing.T) {
 	nowFunc := func() time.Time { return now }
 
 	// A store-backed manager is constructable with no *server.Service anywhere
-	// (the pre-Service shape ADR 0076 names) — over a real jsonlstore so the
+	// (the pre-Service shape) — over a real jsonlstore so the
 	// ScheduleStore type-assertion is exercised against the real adapter, not
 	// a fixture that could drift.
 	store, err := jsonlstore.New(t.TempDir())
@@ -106,7 +106,7 @@ func TestScheduleSharedCatalog_Scenario1_ServiceDelegates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore.New: %v", err)
 	}
-	// The PRE-SERVICE manager composition builds before buildEngine (ADR 0076):
+	// The PRE-SERVICE manager composition builds before buildEngine:
 	// constructed from the store alone and HANDED to the Service.
 	mgr := server.NewScheduleManager(server.ScheduleManagerConfig{
 		Store: store,

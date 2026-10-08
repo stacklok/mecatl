@@ -6,11 +6,11 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// TestADR_0301_UIBlockIdentityResetsWithConversation pins ADR 0301's client-local
+// TestUIBlockIdentityResetsWithConversation pins the client-local
 // document identity: blocks and the changed-files appendix receive monotonic
 // identities from their conversation, while a reconstructed conversation begins a
 // new document.
-func TestADR_0301_UIBlockIdentityResetsWithConversation(t *testing.T) {
+func TestUIBlockIdentityResetsWithConversation(t *testing.T) {
 	var c conversation
 	c.addUser("first")
 	c.startAssistant()

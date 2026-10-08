@@ -231,7 +231,7 @@ func TestResumableSessionStatusMetrics_Scenario2_LegacySnapshotCompatibility(t *
 	}
 }
 
-func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
+func TestRoutingDecisionWireAndDebugger(t *testing.T) {
 	zero := 0.0
 	decision := &session.RoutingDecision{
 		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
@@ -312,7 +312,7 @@ func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 }
 
-func TestADR_0352_Scenario6_RealProducerRelayReloadDebugger(t *testing.T) {
+func TestRoutingDecisionRealProducerRelayReloadDebugger(t *testing.T) {
 	store := memstore.New()
 	log := memstore.NewEventLog()
 	child := agent.NewEngine(agent.Deps{
@@ -587,10 +587,10 @@ func TestToProtoTable(t *testing.T) {
 		},
 		{
 			// Routed-category metadata is BARE metadata (a label + a model id), set on
-			// subagent.start only when the opt-in model router classified the delegation
-			// (ADR 0031). It must round-trip to the proto fields verbatim — gauntlet #7
-			// holds (no child content crosses). The generic Model field (issue #112 / ADR
-			// 0035) equals RoutedModel when routed.
+			// subagent.start only when the opt-in model router classified the delegation.
+			// It must round-trip to the proto fields verbatim — gauntlet #7
+			// holds (no child content crosses). The generic Model field (issue #112)
+			// equals RoutedModel when routed.
 			name: "subagent.start routed",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 200, Turn: 1,
 				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
@@ -606,7 +606,7 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
-			// The generic Model field (issue #112 / ADR 0035) is set UNCONDITIONALLY —
+			// The generic Model field (issue #112) is set UNCONDITIONALLY —
 			// here for the inherited/default case (no router fired, routed fields empty).
 			// It must round-trip verbatim; bare metadata, gauntlet #7.
 			name: "subagent.start inherited model",
@@ -638,7 +638,7 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
-			// ADR 0079 bounded previews: the tool/message preview fields (Text / Detail /
+			// Bounded previews: the tool/message preview fields (Text / Detail /
 			// InnerKind) the delegation chokepoint now populates on subagent.tool events
 			// round-trip verbatim over the wire. Already redacted upstream (clamped in
 			// engine/agent), so the mapper copies them unchanged; inner_kind is a STRING
@@ -745,7 +745,7 @@ func TestToProtoTable(t *testing.T) {
 				}
 				// Routed-category metadata is BARE metadata (a label + a model id), set on the
 				// team.start roster entry only when the opt-in model router classified the
-				// member (ADR 0031 / ADR 0034). It must round-trip verbatim — gauntlet #7 holds
+				// member. It must round-trip verbatim — gauntlet #7 holds
 				// (no member content crosses). The lead was unrouted (both empty).
 				if r[0].GetRoutedCategory() != "" || r[0].GetRoutedModel() != "" {
 					t.Fatalf("team.start unrouted lead carries routed metadata: %+v", r[0])
@@ -756,7 +756,7 @@ func TestToProtoTable(t *testing.T) {
 				if r[1].GetRoutedCategory() != "large" || r[1].GetRoutedModel() != "anthropic/claude-opus-4" {
 					t.Fatalf("team.start routed member metadata mismatch: %+v", r[1])
 				}
-				// The generic Model field (issue #112 / ADR 0035) round-trips for BOTH
+				// The generic Model field (issue #112) round-trips for BOTH
 				// members: the routed worker's Model == RoutedModel, and the unrouted lead
 				// carries its inherited model with empty routed fields.
 				if r[0].GetModel() != "openai/gpt-4.5" {
@@ -988,20 +988,20 @@ func TestToProtoTable(t *testing.T) {
 					t.Fatalf("parallel branch_start child_id = %q, want parallel-p1-1", p.GetChildId())
 				}
 				// Routed-category metadata is BARE metadata (a label + a model id), set on
-				// branch_start only when the opt-in model router classified the branch (ADR
-				// 0031 / ADR 0034). It round-trips verbatim — gauntlet #7 holds (no branch
+				// branch_start only when the opt-in model router classified the branch.
+				// It round-trips verbatim — gauntlet #7 holds (no branch
 				// content crosses).
 				if p.GetRoutedCategory() != "small" || p.GetRoutedModel() != "openai/gpt-4.1-mini" {
 					t.Fatalf("parallel branch_start routed metadata mismatch: %+v", p)
 				}
-				// The generic Model field (issue #112 / ADR 0035) equals RoutedModel when routed.
+				// The generic Model field (issue #112) equals RoutedModel when routed.
 				if p.GetModel() != "openai/gpt-4.1-mini" || p.GetModel() != p.GetRoutedModel() {
 					t.Fatalf("parallel branch_start Model should equal RoutedModel when routed: %+v", p)
 				}
 			},
 		},
 		{
-			// The generic Model field (issue #112 / ADR 0035) for the inherited/default
+			// The generic Model field (issue #112) for the inherited/default
 			// branch case (no router fired, routed fields empty). Round-trips verbatim.
 			name: "parallel.branch branch_start inherited model",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 41, Turn: 1,
@@ -1035,7 +1035,7 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
-			// ADR 0079 bounded previews: the branchTool re-tag now projects Text / Detail /
+			// Bounded previews: the branchTool re-tag now projects Text / Detail /
 			// InnerKind on branch_tool events; they round-trip verbatim (already clamped
 			// upstream in engine/agent). inner_kind is a STRING passthrough.
 			name: "parallel.branch branch_tool with bounded previews",

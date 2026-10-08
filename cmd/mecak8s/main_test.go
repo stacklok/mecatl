@@ -28,7 +28,7 @@ import (
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
 
-func TestADR_0294_TerminationBudgetFitsPodGracePeriod(t *testing.T) {
+func TestTerminationBudgetFitsPodGracePeriod(t *testing.T) {
 	cfg, err := parseFlags(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestParseFlagsK8sDefaults(t *testing.T) {
 	if def.reasoningEffortFlagSet {
 		t.Error("reasoningEffortFlagSet default = true, want false (flag not given)")
 	}
-	// The cadence-floor security default (ADR 0073, the panel-review repair):
+	// The cadence-floor security default:
 	// --scheduler-min-interval defaults to 1m (NOT 0/off), so the on-by-default
 	// scheduler + the floor-Allow Schedule tool cannot mint an unbounded
 	// tight-cadence recurring fire out of the box.
@@ -277,9 +277,9 @@ func TestMecak8sDefaultsToNoFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	// No --workspace: the default is a file-less deployment. The flag no longer
-	// defaults to the process cwd, so a container root can never become the agent
-	// workspace by omission (the reason this used to force cfg.workspace = "/").
+	// No --workspace: the default is a file-less deployment. The flag does not
+	// default to the process cwd, so a container root can never become the agent
+	// workspace by omission.
 	if cfg.workspace != "" {
 		t.Fatalf("default workspace = %q, want empty (file-less by default)", cfg.workspace)
 	}
@@ -396,7 +396,7 @@ func TestMecak8sFixtureRunsNoFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	// No --workspace: file-less by default (the flag no longer defaults to cwd, so
+	// No --workspace: file-less by default (the flag does not default to cwd, so
 	// the container root cannot become the agent workspace by omission).
 	cfg.sessionLeaseK8sNamespace = ""
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
@@ -492,7 +492,7 @@ func TestBuildOverRedisDrivesRunToCompletion(t *testing.T) {
 	}
 }
 
-// TestDrainRejectsNewRunsViaComposition asserts the drain gate (ADR 0048)
+// TestDrainRejectsNewRunsViaComposition asserts the drain gate
 // works through the composition-built Service: after Drain, StartRun returns
 // ErrUnavailable and IsDraining reports true. It exercises the IsDraining
 // method the /readyz ReadyFunc closes over.

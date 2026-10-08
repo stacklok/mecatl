@@ -1,5 +1,5 @@
 // Package memschedulestore is the in-memory reference port.ScheduleStore
-// (scheduled-tasks issue #189, Phase 1b): the offline, clock-injected
+// (scheduled-tasks issue #189): the offline, clock-injected
 // single-process schedule registry the conformance suite validates and that
 // composition can wire as the default-store opt-in. It keeps per-schedule
 // Spec+State records and per-fire ScheduleFire records in mutex-guarded maps
@@ -68,7 +68,7 @@ type Store struct {
 var _ port.ScheduleStore = (*Store)(nil)
 
 // compile-time assertion that Store satisfies the OPTIONAL ScheduleOneShotReArmer
-// seam (ADR 0059 Phase 2 — the at-least-once one-shot re-arm). A store that does
+// seam (the at-least-once one-shot re-arm). A store that does
 // not implement it degrades to at-most-once (byte-identical pre-Phase-2).
 var _ port.ScheduleOneShotReArmer = (*Store)(nil)
 
@@ -493,8 +493,8 @@ func (s *Store) ListFires(_ context.Context, scheduleName string) ([]port.Schedu
 	return out, nil
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It atomically: re-enables the schedule (Enabled=true),
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule.
+// It atomically: re-enables the schedule (Enabled=true),
 // sets NextFireAt to nextFire, and increments OneShotRetryCount. The atomicity
 // (the single mutex) is the re-arm fence: two concurrent re-arms cannot
 // double-increment the counter or double-enable. The not-found case wraps

@@ -19,7 +19,7 @@ import (
 // hookApprovalStub is a port.HookRunner that returns an ASKABLE block
 // (HookOutcome{Block, AskApproval}) on the FIRST PreToolUse for the matched tool,
 // counting how many times Run fired the PreToolUse phase. It models the guardrails
-// adapter's approve-once refinement (ADR 0062) WITHOUT pulling in the modelhook
+// adapter's approve-once refinement WITHOUT pulling in the modelhook
 // adapter (the engine tree stays self-contained). A non-matching phase/tool returns
 // an empty (allow) outcome. When learner is set, it ALSO implements
 // port.HookApprovalLearner and records the learned event, modelling the session

@@ -17,7 +17,7 @@ type prefixMemo struct {
 	hash   string
 }
 
-// promptCacheKey derives the prompt_cache_key (ADR 0100):
+// promptCacheKey derives the prompt_cache_key:
 //
 //	"mecatl-" + hex(sha256(stablePrefix))[:12] + "-" + hex(sha256(anchorText))[:8]
 //
@@ -42,12 +42,12 @@ func (p *Provider) promptCacheKey(stablePrefix string, msgs []session.Message) s
 // single atomic.Pointer — compared by string equality (a memcmp, far cheaper
 // than re-hashing) rather than an unbounded map keyed on a 10-30KB string.
 //
-// When the Provider carries a cacheKeySalt (ADR 0346) the digest covers
+// When the Provider carries a cacheKeySalt the digest covers
 // salt ‖ 0x00 ‖ prefix. The NUL separator is a domain separator: without it a
 // (salt, prefix) pair could collide with a different split of the same bytes,
 // and a salt is exactly the sort of value an attacker would like to confuse
 // with prefix content. An EMPTY salt hashes the bare prefix, byte-identical to
-// ADR 0100.
+// the unsalted derivation.
 //
 // The memo still keys on prefix alone: the salt is fixed for the Provider's
 // lifetime, so it cannot vary between two hits on the same memo entry.

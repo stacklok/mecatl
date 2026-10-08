@@ -460,9 +460,8 @@
 #   # Allowlist is the OPERATOR-TIER, non-wideable cap: the set of model selectors (alias
 #   # names and/or concrete ids) a PROJECT-tier models: block may bind to. An empty/absent
 #   # allowlist means project models stay WARN-ignored (the opt-in: no cap ⇒ no project
-#   # override, byte-identical to pre-Phase-4). It is honoured ONLY from the operator
-#   # tiers; a project-tier allowlist: key is ignored with a WARN (a project cannot widen
-#   # its own cap).
+#   # override). It is honoured ONLY from the operator tiers; a project-tier allowlist:
+#   # key is ignored with a WARN (a project cannot widen its own cap).
 #   allowlist: []
 #   # Router is the OPERATOR-TIER semantic Subagent model-router taxonomy: a classifier
 #   # slot, the routing categories, the default category, and the YAML kill-switch. It is
@@ -572,8 +571,12 @@
 #| mutually exclusive global or session-broker authority; broker mode carries its
 #| callback configuration and neutral route declarations. Authentication is a closed
 #| none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2
-#| endpoints; all secret-shaped values are MECATL_* environment references, never values
-#| in YAML. Project mcp blocks are ignored with a value-free warning.
+#| endpoints; preregistered clients take the client secret from secret_file (an absolute
+#| path) or secret_env (a MECATL_* environment variable name), in either mode; never put
+#| secret values in YAML. Keep secret files outside the workspace (mode 0400
+#| recommended): agent shell commands run as the same user and can read a known file
+#| path. Other secret-shaped values are MECATL_* environment references. Project mcp
+#| blocks are ignored with a value-free warning.
 # mcp:
 #   # Mode selects global or broker authority. Empty uses the command-root default.
 #   mode: ""
@@ -610,7 +613,8 @@
 #|               mode: preregistered
 #|               preregistered:
 #|                 id: mecatl-github-mcp
-#|                 secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET
+#|                 secret_file: /var/run/secrets/mecatl/github-mcp-client-secret
+#|                 # or: secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET
 #|             scopes: [repo]
 #|             request_refresh_token: true
 #|             network: {}

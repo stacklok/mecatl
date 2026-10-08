@@ -259,7 +259,7 @@ func TestHarnessPublishedCloseRequiresExplicitLoad(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_SameOwnerSessionsStayDistinct(t *testing.T) {
+func TestHarnessContext_SameOwnerSessionsStayDistinct(t *testing.T) {
 	first := harnessExecutionBinding(t, "first", "FIRST-INSTRUCTIONS", "FIRST-COMMAND")
 	second := harnessExecutionBinding(t, "second", "SECOND-INSTRUCTIONS", "SECOND-COMMAND")
 	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{first.Ref: first, second.Ref: second}}
@@ -299,7 +299,7 @@ func TestADR_0359_HarnessContext_Scenario6_SameOwnerSessionsStayDistinct(t *test
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_DynamicExactSourceAcquisition(t *testing.T) {
+func TestHarnessContext_DynamicExactSourceAcquisition(t *testing.T) {
 	t.Run("scheduled fire and restart", testExecutionSourceScheduledRestart)
 	binding := harnessExecutionBinding(t, "reserved", "RESERVED-INSTRUCTIONS", "RESERVED-COMMAND")
 	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{binding.Ref: binding}}
@@ -421,7 +421,7 @@ func testExecutionSourceScheduledRestart(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_AcquisitionFailureIsolation(t *testing.T) {
+func TestHarnessContext_AcquisitionFailureIsolation(t *testing.T) {
 	t.Run("service attempt boundaries", testExecutionSourceFailureBoundaries)
 	binding := harnessExecutionBinding(t, "retry", "RETRY-INSTRUCTIONS", "RETRY-COMMAND")
 	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{binding.Ref: binding}}
@@ -631,7 +631,7 @@ func testExecutionSourceSelectionFactory(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_NonselectedSourcesDoNotAttachExecution(t *testing.T) {
+func TestHarnessContext_NonselectedSourcesDoNotAttachExecution(t *testing.T) {
 	t.Run("real factory selection", testExecutionSourceSelectionFactory)
 	reg := HarnessSourceRegistration[prompt.InstructionAssembler]{ID: "bad", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 		return hcAssembler("x"), nil, nil

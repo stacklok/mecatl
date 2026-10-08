@@ -10,7 +10,7 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
-func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
+func TestToolResultAvailabilityClientConfirmationAndReplacement(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = applyAll(m, client.ToolCallMsg{ID: "fast", Name: "Read"}, client.ToolCallMsg{ID: "slow", Name: "Grep"}, client.ToolProgressMsg{Text: "working"})
 	available := &mecatlv1.Event{Type: "tool.result.available", ToolResult: &mecatlv1.ToolResult{CallId: "fast", Content: "available", Blocks: []*mecatlv1.ContentBlock{{Kind: mecatlv1.ContentBlock_KIND_RESOURCE_LINK, Name: "item", Url: "https://example.invalid/item"}}}}

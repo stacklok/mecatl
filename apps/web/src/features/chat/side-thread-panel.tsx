@@ -24,20 +24,12 @@ import {
   ArrowUp,
   Copy,
   LoaderCircle,
-  Maximize2,
   Mic,
   MicOff,
   MoreHorizontal,
-  PanelRightClose,
   Square,
 } from "lucide-react";
-import {
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import {
   DropdownMenu,
@@ -50,7 +42,6 @@ import {
 import { Textarea } from "../../components/ui/textarea";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
-import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import {
   defaultAgentName,
   useAgentAvatar,
@@ -84,6 +75,7 @@ import {
   type RunStreamEnd,
   runStreamEnd,
 } from "./run-stream";
+import { SidePanelShell } from "./side-panel-shell";
 import { registerThreadSession } from "./thread-map";
 import { useVoiceInput } from "./use-voice-input";
 import { VerdictLedger } from "./verdict-ledger";
@@ -115,9 +107,7 @@ export function SideThreadPanel({
   const recovery = useAuthRecovery();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const width = usePanelWidth("contentPreview");
   const [activeSessionId, setActiveSessionId] = useState(sessionId);
-  const [maximized, setMaximized] = useState(false);
   const [showTools, setShowTools] = useState(true);
   const [prompt, setPrompt] = useState("");
   const [escapeClearHint, setEscapeClearHint] = useState(false);
@@ -180,21 +170,6 @@ export function SideThreadPanel({
     runActive: run.isRunning && Boolean(run.runId),
   });
 
-  function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
-    event.currentTarget.focus();
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width.value;
-    const resize = (moveEvent: PointerEvent) =>
-      width.setValue(startWidth - moveEvent.clientX + startX);
-    const finish = () => {
-      window.removeEventListener("pointermove", resize);
-      window.removeEventListener("pointerup", finish);
-    };
-    window.addEventListener("pointermove", resize);
-    window.addEventListener("pointerup", finish);
-  }
-
   async function forkToModel(
     nextModel: { id: string; providerId: string },
     reasoningEffort: string,
@@ -242,42 +217,8 @@ export function SideThreadPanel({
 
   return (
     <EscapeHintContext.Provider value={escapeAsk}>
-      <button
-        aria-label="Close thread"
-        className="absolute inset-0 z-30 bg-black/35 min-[760px]:hidden"
-        onClick={onClose}
-        type="button"
-      />
-      <aside
-        aria-label="Thread"
-        data-chat-surface="thread"
-        className={
-          maximized
-            ? "fixed inset-0 z-50 flex flex-col bg-background"
-            : "absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
-        }
-        style={
-          maximized ? undefined : ({ "--content-panel-width": `${width.value}px` } as CSSProperties)
-        }
-        ref={threadRoot}
-      >
-        {!maximized && (
-          <button
-            aria-label="Resize thread panel"
-            className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none border-0 bg-transparent p-0 hover:bg-brand/20 min-[760px]:block"
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft") width.setValue(width.value + 12);
-              else if (event.key === "ArrowRight") width.setValue(width.value - 12);
-              else return;
-              event.preventDefault();
-            }}
-            onPointerDown={startResize}
-            title={`Resize thread panel (${minPanelWidth}–${maxPanelWidth}px)`}
-            type="button"
-          />
-        )}
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">Thread</h2>
+      <SidePanelShell
+        actions={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button aria-label="Thread options" size="icon" variant="ghost">
@@ -298,20 +239,16 @@ export function SideThreadPanel({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            aria-label={maximized ? "Restore thread panel" : "Maximize thread panel"}
-            onClick={() => setMaximized((current) => !current)}
-            size="icon"
-            variant="ghost"
-          >
-            <Maximize2 aria-hidden="true" className={maximized ? "rotate-180" : undefined} />
-          </Button>
-          <Button aria-label="Close thread" onClick={onClose} size="icon" variant="ghost">
-            <PanelRightClose aria-hidden="true" />
-          </Button>
-          {!escapeAsk && <span className="text-xs text-muted-foreground">Esc to Close</span>}
-        </header>
-
+        }
+        bodyClassName="flex flex-col overflow-hidden"
+        closeLabel="Close thread"
+        escapeHint={!escapeAsk}
+        maximizable
+        onClose={onClose}
+        rootRef={threadRoot}
+        surface="thread"
+        title="Thread"
+      >
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex min-h-full flex-col px-4 py-6">
             {run.messages.length === 0 ? (
@@ -474,7 +411,7 @@ export function SideThreadPanel({
             />
           </div>
         ) : null}
-      </aside>
+      </SidePanelShell>
     </EscapeHintContext.Provider>
   );
 }
