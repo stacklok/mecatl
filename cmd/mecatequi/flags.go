@@ -205,35 +205,7 @@ func parseFlags(argv []string) (flags, error) {
 		return flags{}, err
 	}
 
-	// Record whether --posture was set EXPLICITLY (vs the empty default) so
-	// composition lets CLI out-rank the operator-global settings.yaml posture: key.
-	fs.Visit(func(fl *flag.Flag) {
-		switch fl.Name {
-		case "posture":
-			f.postureFlagSet = true
-		case "permission-mode":
-			f.permissionModeFlagSet = true
-		case "shell":
-			f.shellFlagSet = true
-		case "subagent-model-router":
-			// Tri-state kill-switch: record that the flag was given so
-			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
-			f.subagentModelRouterSet = true
-		case "out-summary":
-			// Stdout-compact summary mode (issue #341): ONLY an EXPLICIT
-			// --out-summary=- selects it. The unset default also resolves to "-"
-			// but keeps the indented JSON — default behavior unchanged.
-			f.summaryCompact = f.outSummary == "-"
-		case "product-metrics":
-			f.productMetricsSet = true
-		}
-		if fl.Name == "reasoning-effort" {
-			f.reasoningEffortFlagSet = true
-		}
-		if fl.Name == "default-provider" {
-			f.defaultProviderFlagSet = true
-		}
-	})
+	recordExplicitFlags(fs, &f)
 	if err := validatePermissionModeFlags(f); err != nil {
 		return flags{}, err
 	}
@@ -288,6 +260,39 @@ func parseFlags(argv []string) (flags, error) {
 
 	f.providerCredentials = f.providerFlags.Resolve()
 	return f, nil
+}
+
+// recordExplicitFlags records which flags were set EXPLICITLY (vs their
+// defaults), e.g. so composition lets CLI out-rank the operator-global
+// settings.yaml posture: and permissionMode: keys.
+func recordExplicitFlags(fs *flag.FlagSet, f *flags) {
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "posture":
+			f.postureFlagSet = true
+		case "permission-mode":
+			f.permissionModeFlagSet = true
+		case "shell":
+			f.shellFlagSet = true
+		case "subagent-model-router":
+			// Tri-state kill-switch: record that the flag was given so
+			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
+			f.subagentModelRouterSet = true
+		case "out-summary":
+			// Stdout-compact summary mode (issue #341): ONLY an EXPLICIT
+			// --out-summary=- selects it. The unset default also resolves to "-"
+			// but keeps the indented JSON — default behavior unchanged.
+			f.summaryCompact = f.outSummary == "-"
+		case "product-metrics":
+			f.productMetricsSet = true
+		}
+		if fl.Name == "reasoning-effort" {
+			f.reasoningEffortFlagSet = true
+		}
+		if fl.Name == "default-provider" {
+			f.defaultProviderFlagSet = true
+		}
+	})
 }
 
 // configureFlags registers mecatequi's flags on fs. Keeping registration separate
