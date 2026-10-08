@@ -1358,6 +1358,24 @@ func (h *HarnessServer) ListSkills(ctx context.Context, _ *mecatlv1.ListSkillsRe
 	return &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(ctx)}, nil
 }
 
+// ListSkillFiles lists the readable files of one skill in the caller's skill view.
+func (h *HarnessServer) ListSkillFiles(ctx context.Context, req *mecatlv1.ListSkillFilesRequest) (*mecatlv1.ListSkillFilesResponse, error) {
+	files, err := h.svc.ListSkillFiles(ctx, req.GetName())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ListSkillFilesResponse{Files: files}, nil
+}
+
+// ReadSkillFile returns the text of one file of a skill in the caller's skill view.
+func (h *HarnessServer) ReadSkillFile(ctx context.Context, req *mecatlv1.ReadSkillFileRequest) (*mecatlv1.ReadSkillFileResponse, error) {
+	content, err := h.svc.ReadSkillFile(ctx, req.GetName(), req.GetFile())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ReadSkillFileResponse{Content: content}, nil
+}
+
 // ListModels returns models and provider statuses from one completed publication.
 func (h *HarnessServer) ListModels(ctx context.Context, _ *mecatlv1.ListModelsRequest) (*mecatlv1.ListModelsResponse, error) {
 	view := h.svc.ListModelSnapshot(ctx)

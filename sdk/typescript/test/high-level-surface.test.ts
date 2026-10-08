@@ -109,6 +109,8 @@ const HIGH_LEVEL_SURFACE = {
     operation: "Client.storage.getCleanupJob",
   },
   "HarnessService.ListSkills": { kind: "namespace", operation: "Client.skills.list" },
+  "HarnessService.ListSkillFiles": { kind: "namespace", operation: "Client.skills.listFiles" },
+  "HarnessService.ReadSkillFile": { kind: "namespace", operation: "Client.skills.readFile" },
   "HarnessService.GetSoul": { kind: "namespace", operation: "Client.soul.get" },
   "HarnessService.GetUserModel": { kind: "namespace", operation: "Client.userModel.get" },
   "HarnessService.ReflectSession": { kind: "namespace", operation: "Client.reflection.reflect" },
