@@ -6128,6 +6128,10 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		return nil, nil, result.inventory, nil, nil, 0, func() {}, func() {}
 	}
 	buildCandidate := mcpRuntimeCandidate(pinnedCtx)
+	buildFailures := map[string]error(nil)
+	if buildCandidate != nil {
+		buildFailures = buildCandidate.failures
+	}
 	mgr, buildRevision, buildAvailable := selectMCPBuildRuntime(buildCandidate, err)
 	for _, diagnostic := range result.diagnostics {
 		cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", diagnostic)
@@ -6137,14 +6141,13 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		reconciler.Close()
 		runtimes.close()
 	})
-	if err != nil {
-		// Reconcile reports the initiating waiter's outcome, but another successful
-		// cycle may publish before this construction pin is acquired. The pin is the
-		// sole authority for both manager and revision; keep its candidate coherent.
-		logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, err)
-		if buildAvailable {
-			cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", "initial waiter failed; using published runtime")
-		}
+	if err != nil || len(buildFailures) > 0 {
+		// A partial candidate remains usable, but each failed server still needs its
+		// mode-specific, operator-actionable diagnostic.
+		logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, buildFailures, err)
+	}
+	if err != nil && buildAvailable {
+		cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", "initial waiter failed; using published runtime")
 	}
 	if !buildAvailable {
 		if err != nil {
@@ -6155,7 +6158,7 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		}
 		return nil, runtimes, result.inventory, runtimes, reconciler, buildRevision, buildRelease, closeRuntime
 	}
-	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(buildCandidate.configs), "tools", len(mgr.Tools()))
+	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(mgr.Servers()), "tools", len(mgr.Tools()))
 	return mgr, runtimes, result.inventory, runtimes, reconciler, buildRevision, buildRelease, closeRuntime
 }
 
@@ -6172,23 +6175,30 @@ func selectMCPBuildRuntime(candidate *mcpReconcileCandidate, _ error) (*mcp.Mana
 	return candidate.manager, candidate.generation, true
 }
 
-func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, err error) {
+func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, failures map[string]error, err error) {
 	for _, sc := range configs {
-		switch mcp.OAuthDCRRecoveryCategoryOf(err) {
+		connectErr := failures[sc.Name]
+		if connectErr == nil && len(failures) == 0 {
+			connectErr = err
+		}
+		if connectErr == nil {
+			continue
+		}
+		switch mcp.OAuthDCRRecoveryCategoryOf(connectErr) {
 		case mcp.OAuthDCRRecoveryResetRequired:
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth DCR valid ready registration identity differs from current profile, principal, canonical resource, or exact issuer", "name", sc.Name, "remedy", "run "+mcpLoginRemedy(sc)+" --reset-dcr-registration")
-			return
+			continue
 		case mcp.OAuthDCRRecoveryPendingIdentityMismatch:
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth DCR pending registration identity mismatch", "name", sc.Name, "remedy", "restore the matching OAuth profile, principal, canonical resource, and exact issuer configuration, then run "+mcpLoginRemedy(sc)+" --retry-dcr-registration")
-			return
+			continue
 		}
-		if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {
+		if errors.Is(connectErr, mcp.ErrOAuthLoginRequired) || errors.Is(connectErr, mcp.ErrOAuthDCRRecoveryRequired) {
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth login required", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
-			return
+			continue
 		}
-		if sc.OAuth != nil && sc.OAuth.CredentialReader != nil && errors.Is(err, mcp.ErrOAuthUnavailable) {
+		if sc.OAuth != nil && sc.OAuth.CredentialReader != nil && errors.Is(connectErr, mcp.ErrOAuthUnavailable) {
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth environment credential unavailable", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
-			return
+			continue
 		}
 	}
 }

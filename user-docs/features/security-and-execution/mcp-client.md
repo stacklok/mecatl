@@ -89,8 +89,9 @@ structured JSON-RPC 400/404 responses and HTTP 429/502/503/504 responses. This
 avoids running a mutating operation twice when its first response is ambiguous.
 
 A reconnect keeps the operation's pinned runtime revision. Source reconciliation
-publishes a complete replacement only after all desired servers connect and list
-their tools, resources, and prompts successfully.
+publishes a replacement with the servers that connected and listed their tools,
+resources, and prompts successfully; failures are reported in source diagnostics.
+If all servers fail during a refresh, the last usable runtime stays active.
 
 ## Resources and prompts
 
@@ -182,6 +183,13 @@ removing existing authority.
 |-|-|-|
 |Global|Configured at process startup and shared by all sessions|`--mcp-server`, operator profiles, or ToolHive discovery|
 |Per-session|Created with one session and closed with it|Accepted only by deployments that advertise `mcp_servers_on_create`|
+
+Mecatl connects each global MCP server independently. If one server cannot
+initialize or list its tools, resources, or prompts, the available servers still
+provide their tools. Check the MCP source inventory for a diagnostic naming the
+unavailable server; connection errors have credential-bearing URL parts removed.
+Refresh the MCP inventory to retry failed connections. If no server can reconnect,
+Mecatl keeps the last published runtime until a usable replacement is ready.
 
 Per-session servers are added to the global catalog. The server limits how many
 per-session engines can remain open, so close sessions you no longer need with
