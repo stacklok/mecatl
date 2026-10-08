@@ -283572,6 +283572,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791473083170,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e70ad22da2813825ada7b9e7ac7dece852640d63",
+          "message": "test(studio): run vitest without isolation in web and server (#2203)",
+          "timestamp": "2026-10-08T18:28:54+02:00",
+          "tree_id": "67ae0f38b6e53d76d44b2851542fdc7c072d00df",
+          "url": "https://github.com/stacklok/mecatl/commit/e70ad22da2813825ada7b9e7ac7dece852640d63"
+        },
+        "date": 1791477650751,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -411022,6 +411056,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791477647552,
+  "lastUpdate": 1791477651588,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
