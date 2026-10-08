@@ -442,7 +442,8 @@ var errNoProvider = errors.New(
 // offline mockllm test/smoke path) regardless of the environment.
 //
 // It returns errNoProvider when no provider resolves credentials and the mock is
-// not selected. Startup logging emits one line per available provider with the
+// not selected, or an OIDC-not-enrolled error when the only configured providers
+// are unenrolled OIDC providers. Startup logging emits one line per available provider with the
 // provider id and base URL ONLY — NEVER the key (CWE-200; S5 verifies).
 func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, error) {
 	return buildProviderRegistryContext(context.Background(), cfg, detect)
@@ -610,10 +611,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// by CONFIG-DETECTED INTENT alone —
 	// resolveToolhiveIntent NEVER runs a network probe, so registration never
 	// blocks on (or is gated by) reachability (R1.1). With the family registered,
-	// len(entries)>0 even with ZERO provider keys, so errNoProvider no longer
-	// fires for a ToolHive-only operator — intended (zero-API-key onboarding).
-	// Issue #265: the intent now carries a routing mode — proxy (loopback,
-	// today's behaviour) or direct (gateway_url + in-process OIDC token).
+	// len(entries)>0 even with ZERO provider keys, so errNoProvider does not
+	// fire for a ToolHive-only operator — intended (zero-API-key onboarding).
+	// The intent carries a routing mode — proxy (loopback) or direct
+	// (gateway_url + in-process OIDC token).
 	if intent, ok := resolveToolhiveIntent(cfg); ok {
 		openAIEntry, anthropicEntry := newToolhiveEntries(cfg, intent, cfg.toolhiveConfigPath, meta)
 		entries[providerToolhive] = openAIEntry

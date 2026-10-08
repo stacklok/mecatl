@@ -1770,13 +1770,13 @@ func (s *Service) SetModelsRefresher(fn func(context.Context)) {
 // deliver the control to AND nothing to resume. The session state is still loadable
 // via GetSession.
 //
-// Since cloud-native Phase 2, an Approve/Deny against a runless AWAITING session is
-// NO LONGER ErrNoActiveRun: it re-enters the loop AT the ask and resumes
-// (resumeFromAwaiting). ErrNoActiveRun therefore now means "the session exists but is
-// in a terminal/idle state with nothing to resume" — idle, completed, cancelled, or
-// failed. A failed/cancelled session recovers only through a NEW prompt
-// (loadAndReopen → Recover/Interrupt), never through the approve seam. Cancel keeps
-// the original meaning for every state (no live run to cancel).
+// An Approve/Deny against a runless AWAITING session does not return
+// ErrNoActiveRun: it re-enters the loop AT the ask and resumes
+// (resumeFromAwaiting). For Approve/Deny, ErrNoActiveRun means "the session exists
+// but is in a terminal/idle state with nothing to resume" — idle, completed,
+// cancelled, or failed. A failed/cancelled session recovers only through a NEW
+// prompt (loadAndReopen → Recover/Interrupt), never through the approve seam.
+// Cancel returns it in every state with no live run to cancel.
 var ErrNoActiveRun = errors.New("server: no active run for session")
 
 // CreateSessionOption is a variadic option applied to a CreateSession* call
@@ -2021,8 +2021,10 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.Pe
 // CreateSessionWithProfile creates a session bound to an optional non-default
 // provider/model selector AND a tool-surface profile (issue #55), with no client
 // MCP. It is the gRPC/HTTP entry for a CreateSession request. The zero selector
-// + default profile delegates to the shared-engine fast path; a non-zero
-// selector OR the no-fs profile REQUIRES Config.SessionEngine (else
+// + default profile uses the shared engine unless Config.MCPBroker or
+// Config.LearnedSkills forces a per-session engine; a non-zero selector OR the
+// no-fs profile always needs one. A per-session engine REQUIRES
+// Config.SessionEngine or Config.SessionEngineWithTools (else
 // ErrInvalidArgument) and resolves through the factory (an unknown/unavailable
 // provider id surfaces as ErrInvalidArgument). Setting ModelID with an empty
 // ProviderID is rejected (a bare model on the env-derived default provider is
@@ -2978,12 +2980,14 @@ func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) (ClientMCPGrant,
 // PER-SESSION engine. It is the ACP session/new entry for an editor that supplies
 // mcpServers.
 //
-//   - With NO specs it delegates to CreateSession: the session uses the SHARED
-//     engine, with zero per-session overhead and no registry entry.
-//   - With specs it REQUIRES Config.SessionEngine (else ErrInvalidArgument: "client
-//     MCP not supported"); it builds the per-session engine via that factory, and
-//     on success registers it under the new session id so StartRun routes the
-//     session's runs to it. A factory error is returned as-is (the caller maps it).
+//   - With NO specs it takes the same path as CreateSession: the session uses the
+//     SHARED engine unless Config.MCPBroker or Config.LearnedSkills forces a
+//     per-session engine.
+//   - A per-session engine REQUIRES Config.SessionEngine or
+//     Config.SessionEngineWithTools (else ErrInvalidArgument: "per-session engine
+//     not supported"); it is built via that factory and, on success, registered
+//     under the new session id so StartRun routes the session's runs to it. A
+//     factory error is returned as-is (the caller maps it).
 //
 // The per-session engine's MCP manager is torn down by CloseSession (editor
 // disconnect) or by the Service's Close.
@@ -7606,10 +7610,10 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 //     streaming deltas and durably flushes them before this event when it is a
 //     boundary; client liveness never gates observation, so the post-disconnect
 //     tail still includes the terminal EvResult.
-//  2. skip the client wire for the seven log-only kinds (EvApproval,
-//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt, EvRequestManifest,
-//     EvAuthorizationRequired, EvAuthorizationResolved) — recorded above but
-//     NOT forwarded.
+//  2. skip the client wire for the five log-only kinds (EvApproval,
+//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt, EvRequestManifest)
+//     — recorded above but NOT forwarded. EvAuthorizationRequired and
+//     EvAuthorizationResolved ARE forwarded.
 //  3. on EvPermissionAsk: Persist (snapshot semantics, gated to the healthy
 //     path — the passed ctx, NOT the cancel-detached one) and — when autoApprove
 //     is true — MaybeAutoApprovePlan (the headless auto-approve observer).

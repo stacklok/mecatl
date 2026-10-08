@@ -1,10 +1,6 @@
 # Agent identity: mecatl as its own SPIFFE trust domain
 
-*Status: strawman / working draft. Speculative scoping, not a design record under
-ADR 0002 (no frozen decision here). Same
-tier as [`docs/scoped-resource-grants.md`](scoped-resource-grants.md). If this
-direction is ever committed, it becomes one or more ADRs and this doc gets
-superseded.*
+Same tier as [`docs/scoped-resource-grants.md`](scoped-resource-grants.md).
 
 This doc proposes how mecatl identifies **who is acting** in a multi-user,
 multi-session, autoscaled deployment: a user spawns an agent, the agent spawns

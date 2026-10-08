@@ -504,7 +504,7 @@ tasks:
           # journey: exact reattach plus lazy/no-fs allocation, multi-session
           # isolation, harness restart continuity, fail-closed daemon-state loss,
           # and direct-write versus isolated-child routing.
-          go test -count=1 -run '^Test(MicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
+          go test -count=1 -run '^Test(MicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
 
   test:
     desc: Run the complete offline test suite without the race detector
@@ -832,7 +832,7 @@ tasks:
       # The governance fuzzers live in the engine MODULE, so they run from engine/.
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
-      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyShell$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzAuthorityOperationsAreMonotone$' -fuzztime={{.FUZZTIME}}
       - cd provider/openai && go test ./ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
 

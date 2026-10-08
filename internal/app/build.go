@@ -9587,7 +9587,7 @@ func defaultRules() []governance.Rule {
 		// schedule does not itself mutate the workspace (the FIRE's posture is
 		// pinned at create-time by the Mutating/Mode invariant), so it is
 		// pre-approved but config-overridable to ask/deny in any scope. The
-		// cadence floor + the posture pin are the real guards (a later task);
+		// cadence floor + the posture pin are the real guards;
 		// this floor only governs whether the tool ASKS. The surface is TWO
 		// entries over the one seam (AC1.4): the mutating Schedule tool
 		// (create/pause/resume/delete/fire) and the read-only ScheduleQuery tool

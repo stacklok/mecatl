@@ -152,20 +152,17 @@ A **slot** routes one internal call to its own model. `resolveSlotModel` in
 `internal/app/slots.go` uses the slot's explicit binding, else the binding of the
 slot's default tier (`cheap`, `fast`, or `reasoning`), else nothing.
 
-| Slot | Routes | Default tier |
-| --- | --- | --- |
-| `compaction` | the compactor's summary call only | `cheap` |
-| `ask-reviewer` | the headless child-ask reviewer | `cheap` |
-| `guardrail` | the LLM guardrail checker; a binding, even via its tier, enables guardrails | `cheap` |
-| `reflection` | the learning reflection call | `cheap` |
-| `router` | the semantic router's classifier | `cheap` |
-| `title` | server-side session titles | none (opt-in) |
-| `synthesis` | reserved; accepted in settings but no call reads it yet | `cheap` |
-| `plan` | the session model while in plan mode | `reasoning` |
+Slots route internal housekeeping calls: compaction's summary, the headless
+child-ask reviewer, the LLM guardrail checker, learning reflection, the router's
+classifier, and server-side titles. Housekeeping slots default to the `cheap` tier.
+`title` has no default, so titles stay off until bound. Binding `guardrail`, even
+through its tier, turns guardrails on. `synthesis` is accepted but nothing reads it.
+[Model routing](../../user-docs/features/sessions/model-routing.md#configure-aliases-slots-and-task-routing)
+lists the keys and their settings.
 
 Slot resolution is fail-soft: an unknown slot key or an unresolvable selector logs
 one warning at Build and the call keeps the session model. The `plan` slot is the
-one slot on the mode axis. It swaps the model, never the provider, and takes effect
+one slot on the mode axis and defaults to `reasoning`. It swaps the model, never the provider, and takes effect
 at the next run entry: the server rebuilds or promotes the session's engine when the
 session's mode differs from the one the engine was built for.
 

@@ -529,23 +529,17 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 // applyScheduleDefaults applies the intended create-seam defaults to a spec:
 // Singleton defaults to true (overlapping fires of the same schedule are
 // suppressed); Misfire defaults to MisfireFireOnceNow (the zero value — a
-// missed slot fires once on catch-up — so no code is needed for it). A caller
-// may override Singleton by setting it explicitly; a bare bool has no "set"
-// marker, so the v1 seam applies the conservative default (true) when the
-// caller left it false. It is the SHARED helper both CreateSchedule and
+// missed slot fires once on catch-up — so no code is needed for it). A bare
+// bool has no "set" marker, so a false Singleton is always replaced with the
+// conservative default (true). It is the SHARED helper both CreateSchedule and
 // UpdateSchedule call so a PUT omitting singleton does not silently disable the
 // guard.
 func applyScheduleDefaults(spec *port.ScheduleSpec) {
 	if !spec.Singleton && !scheduleSingletonExplicit(*spec) {
-		// The bare bool has no "set" marker; the create-seam convention is that
-		// the DEFAULT is true. A wire layer that wants to express "false"
-		// explicitly passes Singleton=false, which we honor. There is no way to
-		// distinguish "unset" from "explicitly false" on a bare bool, so the
-		// create-seam applies the intended default (true) only when the wire
-		// layer signals it — for now, the v1 create-seam sets Singleton=true
-		// unconditionally (the conservative default), and a future wire field
-		// (singleton_optional / a pointer) will carry the explicit-override
-		// semantics. Documented honestly here.
+		// The bare bool has no "set" marker, so "unset" and "explicitly false"
+		// are indistinguishable: false is ALWAYS overridden to the conservative
+		// default (true). A caller cannot disable the singleton guard until a
+		// wire field (a *bool or sentinel) carries an explicit override.
 		spec.Singleton = true
 	}
 	// OneShotRetry default: when OneShotRetry is true and OneShotMaxRetries is 0

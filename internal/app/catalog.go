@@ -580,7 +580,8 @@ func scheduleManagerPresent(a catalogAssets) bool {
 // registerScheduleTool registers the model-facing Schedule tool when
 // the assets carry a scheduleManager — the conditional-registration gate that
 // keeps the tool present exactly when the session's store backs a
-// port.ScheduleStore and ABSENT (honest, not a stub) otherwise, agreeing with
+// port.ScheduleStore and the session is not a remote-execution profile (the
+// caller skips it when remote), and ABSENT (honest, not a stub) otherwise, agreeing with
 // ServerCapabilities.Scheduling. The SAME conditional-registration shape as
 // registerMemoryFamilies (a nil-asset check, never a stub). Registered in BOTH
 // profiles: managing a schedule is not a filesystem act (a no-fs session can

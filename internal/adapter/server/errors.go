@@ -56,8 +56,8 @@ var (
 	// ErrChildNotFound signals a CancelChild for a child id the session's
 	// in-flight run does not hold live — unknown, or already finished (the
 	// finished-as-you-pressed race). The wording is FAMILY-NEUTRAL ("child
-	// agent", never "subagent"): the same error will cover team-member and
-	// parallel-branch ids once their cancel wiring lands. Distinct from
+	// agent", never "subagent"): it covers subagent, parallel-branch,
+	// team-member, and background-shell child ids alike. Distinct from
 	// ErrNotFound (whose message names a session) so the HTTP /cancel-child
 	// mirror reports a child-appropriate message; adapters map it to the same
 	// codes.NotFound / HTTP 404.

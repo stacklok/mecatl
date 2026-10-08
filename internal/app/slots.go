@@ -22,20 +22,20 @@ const (
 	routerBackendJev = "jev"
 )
 
-// slots.go is the COMPOSITION-LAYER per-slot model resolver (Phase 1+2):
+// slots.go is the COMPOSITION-LAYER per-slot model resolver:
 // the "aliases as the spine" layer plus the `models.slots` map that binds named
 // pipeline functions to aliases. It is a pure composition concern — engine/agent
 // never sees a slot or an alias, only the already-resolved concrete model id.
 //
-// A SLOT is a named internal LLM call ("compaction", "ask-reviewer", "guardrail")
+// A SLOT is a named internal LLM call (e.g. "compaction", "ask-reviewer", "guardrail")
 // or a semantic TIER ("cheap", "fast", "reasoning"). resolveSlotModel maps a slot
 // name to a concrete model id THROUGH the existing alias machinery (lookupModelAlias),
 // so the two never drift: a slot value is itself an alias or a literal id, resolved
 // by the SAME grammar the agent-def `model:` path uses.
 //
 // THE BYTE-IDENTICAL GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
-// absent) resolveSlotModel returns ("", false) for every slot, and each of the three
-// routed call sites keeps its EXACT pre-feature behaviour (the session model). The
+// absent) resolveSlotModel returns ("", false) for every slot, and every routed call
+// site keeps its EXACT unrouted behaviour (the session model). The
 // posture is FAIL-SOFT throughout: a typo'd slot key, an unknown/inherit alias, or
 // any other miss WARNs and degrades to today's behaviour — a broken housekeeping
 // slot must never wedge a compaction / ask-review / guardrail call.
@@ -65,8 +65,7 @@ const (
 	// slotGuardrail routes the LLM-backed guardrail content checker (issue #27).
 	slotGuardrail  = "guardrail"
 	slotReflection = "reflection"
-	// slotSynthesis is DEFINED for completeness (team synthesis is the cheap tier's
-	// natural fourth consumer) but is deliberately NOT wired this slice — the lead
+	// slotSynthesis is DEFINED and accepted as a key but has NO consumer — the lead
 	// synthesis runs on the lead member's whole engine and lacks a clean seam.
 	slotSynthesis = "synthesis"
 	// slotTitle routes the opt-in server-owned title generator. It deliberately has
@@ -121,9 +120,8 @@ var knownSlotNames = map[string]struct{}{
 }
 
 // slotDefaultTier maps a slot to the semantic tier it falls through to when it has no
-// explicit binding. The three internal-call slots default to `cheap` (housekeeping
-// runs on the cheapest model unless the operator says otherwise — the ADR's immediate
-// token-savings win). The `plan` slot is the DELIBERATE divergence: it defaults to the
+// explicit binding. The internal-call slots default to `cheap` (housekeeping runs on
+// the cheapest model unless the operator says otherwise). The `plan` slot is the DELIBERATE divergence: it defaults to the
 // `reasoning` tier, because a plan-mode model is a STRONG-reasoning model, not a cheap
 // one. A slot absent here has no default tier (an explicit binding
 // is the only way to route it).
@@ -786,9 +784,9 @@ func logSlotConfigFacts(cfg Config) {
 	if len(cfg.ModelSlots) == 0 {
 		return
 	}
-	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotTitle, slotPlan, slotRouter} {
+	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotReflection, slotTitle, slotPlan, slotRouter} {
 		model, ok := resolveSlotModel(cfg, slot, cfg.Model)
-		// The three internal call-slots route a lightweight housekeeping call; the
+		// The internal call-slots route a lightweight housekeeping call; the
 		// plan slot instead re-resolves the SESSION model in plan
 		// mode (the opusplan pattern) — narrate it distinctly so the INFO is honest.
 		active := "model slot ACTIVE: this internal lightweight call runs on the slot model instead of the session model"

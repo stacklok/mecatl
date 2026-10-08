@@ -1,6 +1,6 @@
 # Surface migration — the general template (issue #555 Phase 2)
 
-**Status:** active migration template. **Scope:** the GENERAL migration template
+**Scope:** the GENERAL migration template
 for moving a `cmd/mecatui/ui` overlay (see [Developing the mecatui terminal UI](../tui.md)) onto the `surface` interface. Soul is the
 FIRST migrator (the proof-of-pattern that pins the interface); mcp, skills,
 /sessions, and /models are shipped migrations; section 6 is the checklist for the rest.
