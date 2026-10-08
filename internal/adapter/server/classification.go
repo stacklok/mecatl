@@ -366,6 +366,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ListToolHiveGroups":      {KindSharedInfrastructure, "derives group names from the same deployment-wide MCP source inventory as ListMcpSources"},
 	"ListAgents":              {KindSharedInfrastructure, "the deployment's configured agent-definition catalog, identical for every caller"},
 	"ListSkills":              {KindSharedInfrastructure, "the deployment's configured skill catalog, identical for every caller"},
+	"ListSkillFiles":          {KindCallerOwned, "resolves the skill through the verified caller's own skill view (deployment skills plus that caller's learned skills), and a skill outside it is absent"},
+	"ReadSkillFile":           {KindCallerOwned, "resolves the skill and file through the verified caller's own skill view, and a skill or file outside it is absent"},
 	"ListModelSnapshot":       {KindSharedInfrastructure, "the deployment's combined model/status publication, identical for every caller"},
 	"ListModels":              {KindSharedInfrastructure, "the deployment's model catalog/live listing, identical for every caller"},
 	"GetSoul":                 {KindSharedInfrastructure, "the deployment's configured soul, identical for every caller"},

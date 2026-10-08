@@ -2563,6 +2563,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			return out
 		},
+		SkillSourceFor: func(ctx context.Context) tool.SkillSource {
+			if assets.liveSkills == nil {
+				return nil
+			}
+			return assets.liveSkills.SourceForPartitions(learnedSkillPartitions(ctx, "", cfg)...)
+		},
 		LearnedSkills: assets.learnedSkills,
 		PublishLearnedSkills: func(ctx context.Context, partition learning.SkillPartition) error {
 			if assets.liveSkills == nil || assets.learnedSkills == nil {

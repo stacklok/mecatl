@@ -562,6 +562,10 @@ type Config struct {
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
 	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
+	// SkillSourceFor returns the read-only skill source for the caller's skill view, the
+	// view LiveSkills lists. It backs ListSkillFiles and ReadSkillFile. Nil, or a nil
+	// result, means skills are disabled.
+	SkillSourceFor func(context.Context) tool.SkillSource
 
 	// TitleGenerationEligible is the composition-resolved eligibility check for
 	// server-owned automatic title generation. Nil and false keep the durable
@@ -9177,16 +9181,7 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
-	partition, partitionErr := s.skillPartition(ctx, "")
-	if s.cfg.BeginSkillPublication != nil && partitionErr == nil {
-		unlock := s.cfg.BeginSkillPublication(partition)
-		defer unlock()
-	}
-	if s.cfg.PublishLearnedSkills != nil && partitionErr == nil {
-		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-		_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
-		cancel()
-	}
+	defer s.beginSkillRead(ctx)()
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)
 	}

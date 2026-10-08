@@ -272,10 +272,25 @@ var _ tool.Tool = LiveTool{}
 // NewLiveTool deliberately binds the deployment-only view. Learned entries must
 // be exposed through NewLiveToolForPartitions so Spec cannot leak another caller.
 func NewLiveTool(catalog *AtomicCatalog) LiveTool { return LiveTool{catalog: catalog} }
+
+// DECISION: a client-facing file read needs the same caller-scoped view the Skill tool
+// uses, so the catalog exports that view as a tool.SkillSource instead of the server
+// adapter reaching into CatalogSnapshot. Reason: snapshotSource is private and
+// AtomicCatalog's own SkillBody/ListSkillAssets/ReadSkillAsset bind the deployment-only
+// view, which would hide the caller's learned skills. Rejected: exporting snapshotSource.
 func NewLiveToolForPartitions(catalog *AtomicCatalog, partitions ...learning.SkillPartition) LiveTool {
 	return LiveTool{catalog: catalog, partitions: append([]learning.SkillPartition(nil), partitions...)}
 }
 func (t LiveTool) view() CatalogSnapshot { return t.catalog.View(t.partitions...) }
+
+// SourceForPartitions returns a read-only tool.SkillSource over one immutable view of the
+// given partitions: the deployment's skills plus those partitions' published learned skills,
+// the same view NewLiveToolForPartitions serves the Skill tool. A learned skill is body-only.
+func (c *AtomicCatalog) SourceForPartitions(partitions ...learning.SkillPartition) tool.SkillSource {
+	snapshot := c.View(partitions...)
+	return snapshotSource{snapshot: &snapshot}
+}
+
 func (t LiveTool) Spec() tool.ToolSpec {
 	snapshot := t.view()
 	return NewTool(snapshot.Metas, snapshotSource{&snapshot}).Spec()

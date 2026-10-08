@@ -116,6 +116,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/mcp/toolhive/groups", h.listToolHiveGroups)
 	h.mux.HandleFunc("GET /v1/agents", h.listAgents)
 	h.mux.HandleFunc("GET /v1/skills", h.listSkills)
+	h.mux.HandleFunc("GET /v1/skills/files", h.listSkillFiles)
+	h.mux.HandleFunc("GET /v1/skills/files/read", h.readSkillFile)
 	h.mux.HandleFunc("GET /v1/skills/learned", h.listLearnedSkills)
 	h.mux.HandleFunc("GET /v1/skills/learned/changes", h.listSkillChanges)
 	h.mux.HandleFunc("GET /v1/skills/learned/{id}", h.getLearnedSkill)
@@ -2061,6 +2063,37 @@ func (h *HTTPHandler) listAgents(w http.ResponseWriter, r *http.Request) {
 // listSkills handles GET /v1/skills.
 func (h *HTTPHandler) listSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(r.Context())})
+}
+
+// listSkillFiles handles GET /v1/skills/files?name=.
+func (h *HTTPHandler) listSkillFiles(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeServiceError(w, fmt.Errorf("%w: name is required", ErrInvalidArgument))
+		return
+	}
+	files, err := h.svc.ListSkillFiles(r.Context(), name)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.ListSkillFilesResponse{Files: files})
+}
+
+// readSkillFile handles GET /v1/skills/files/read?name=&file=.
+func (h *HTTPHandler) readSkillFile(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	name, file := query.Get("name"), query.Get("file")
+	if name == "" || file == "" {
+		writeServiceError(w, fmt.Errorf("%w: name and file are required", ErrInvalidArgument))
+		return
+	}
+	content, err := h.svc.ReadSkillFile(r.Context(), name, file)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.ReadSkillFileResponse{Content: content})
 }
 
 func (h *HTTPHandler) listLearnedSkills(w http.ResponseWriter, r *http.Request) {

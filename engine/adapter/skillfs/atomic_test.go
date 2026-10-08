@@ -211,3 +211,42 @@ func TestAtomicCatalogConcurrentReadersSeeCompleteGeneration(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+// SPEC: SourceForPartitions serves the caller's own view: the deployment's skills with their
+// assets, plus only that caller's learned skills, which are body-only. Another caller's learned
+// skill is not found, even under the same name as one of the caller's own.
+func TestSourceForPartitionsIsTheCallersOwnView(t *testing.T) {
+	ctx := context.Background()
+	alice := activeVersion("mine", "alice body")
+	alice.Partition = learning.SkillPartition{Principal: "alice"}
+	bob := activeVersion("theirs", "bob body")
+	bob.Partition = learning.SkillPartition{Principal: "bob"}
+	configured := atomicSource{
+		bodies: map[string]string{"deploy": "deploy body"},
+		assets: map[string][]tool.SkillAsset{"deploy": {{Name: "references/api.md", Size: 3}}},
+		data:   map[string][]byte{"deploy\x00references/api.md": []byte("api")},
+	}
+	catalog := skillfs.NewAtomicCatalog([]tool.SkillMeta{{Name: "deploy"}}, configured, []learning.SkillVersion{alice, bob})
+
+	source := catalog.SourceForPartitions(alice.Partition)
+
+	if body, err := source.SkillBody(ctx, "mine"); err != nil || body != "alice body" {
+		t.Fatalf("own learned body = %q, %v", body, err)
+	}
+	if assets, err := source.ListSkillAssets(ctx, "mine"); err != nil || len(assets) != 0 {
+		t.Fatalf("a learned skill must be body-only, got assets %v, err %v", assets, err)
+	}
+	if _, err := source.SkillBody(ctx, "theirs"); !errors.Is(err, tool.ErrSkillNotFound) {
+		t.Fatalf("another caller's learned skill: err = %v, want ErrSkillNotFound", err)
+	}
+	if assets, err := source.ListSkillAssets(ctx, "deploy"); err != nil || len(assets) != 1 || assets[0].Name != "references/api.md" {
+		t.Fatalf("configured skill assets = %v, err %v", assets, err)
+	}
+	if data, err := source.ReadSkillAsset(ctx, "deploy", "references/api.md"); err != nil || string(data) != "api" {
+		t.Fatalf("configured asset = %q, %v", data, err)
+	}
+	// A caller with no learned partition sees only the deployment's skills.
+	if _, err := catalog.SourceForPartitions().SkillBody(ctx, "mine"); !errors.Is(err, tool.ErrSkillNotFound) {
+		t.Fatalf("no-partition view leaked a learned skill: %v", err)
+	}
+}
