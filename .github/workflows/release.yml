@@ -432,8 +432,13 @@ jobs:
         run: |
           set -euo pipefail
           bundle="mecatl-microvm-${VERSION}-${PLATFORM}.tar.gz"
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-            --exclude="${bundle}" -C "dist/${PLATFORM}" -cf - . | gzip -n > "dist/${PLATFORM}/${bundle}"
+          (
+            cd "dist/${PLATFORM}"
+            export LC_ALL=C
+            shopt -s dotglob
+            tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+              --exclude="${bundle}" -cf - ./*
+          ) | gzip -n > "dist/${PLATFORM}/${bundle}"
           sha="$(sha256sum "dist/${PLATFORM}/${bundle}" | cut -d' ' -f1)"
           signing_ref="${{ needs.validate-release-ref.outputs.signing_ref }}"
           signing_ref="$(.github/scripts/validate-release-ref.sh "${VERSION}" "${signing_ref}")"
