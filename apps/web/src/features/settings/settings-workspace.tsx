@@ -15,14 +15,12 @@ import { Link } from "@tanstack/react-router";
 import {
   BookOpen,
   BrainCircuit,
-  Cloud,
   Copy,
   ExternalLink,
   Keyboard,
-  Laptop,
   LifeBuoy,
+  type LucideIcon,
   Search,
-  Server,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AuthControl } from "../../components/shell/auth-control";
@@ -39,6 +37,7 @@ import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
 import { MemorySettings } from "./memory-settings";
+import { Note, SettingsCard } from "./settings-card";
 import {
   connectionMessage,
   freshDeploymentQuery,
@@ -168,18 +167,17 @@ export function SettingsWorkspace({
           {section === "agent" && (
             <>
               <AgentSettings />
-              <Section icon={Server} title="Agent behavior">
-                <SourceNote source="authenticated BFF runtime" owner="deployment" />
+              <SettingsCard title="Agent behavior">
                 {runtimeState ? (
                   <StateCard text={runtimeState} />
                 ) : (
-                  <p className="mt-3 text-sm text-muted-foreground">
+                  <Note>
                     Steering during a run is{" "}
                     {runtime.data?.capabilities.steer ? "available" : "not enabled"}. Agent behavior
                     is managed by this deployment.
-                  </p>
+                  </Note>
                 )}
-              </Section>
+              </SettingsCard>
             </>
           )}
           {section === "appearance" && <InterfaceSettings />}
@@ -224,52 +222,39 @@ export function SettingsWorkspace({
               <StateCard text={runtimeState} />
             ) : (
               <>
-                <Section icon={BrainCircuit} title="Learning settings">
-                  <SourceNote
-                    source="authenticated learning-proposal and reflection BFF reads"
-                    owner="personal decisions"
-                  />
-                  <p className="mt-2 text-sm text-muted-foreground">
+                <SettingsCard title="Learning settings">
+                  <Note>
                     You can review proposals below. Learning configuration is managed by this
                     deployment and is read-only here.
-                  </p>
-                </Section>
+                  </Note>
+                </SettingsCard>
                 <LearningReview />
               </>
             ))}
           {section === "storage" &&
-            (runtimeState ? (
-              <StateCard text={runtimeState} />
-            ) : (
-              <>
-                <SourceNote source="authenticated BFF storage health" owner="deployment" />
-                <StorageSettings />
-              </>
-            ))}
+            (runtimeState ? <StateCard text={runtimeState} /> : <StorageSettings />)}
           {section === "permissions" && (
-            <Section icon={Server} title="Permissions">
-              <SourceNote source="authenticated BFF runtime capability" owner="deployment" />
+            <SettingsCard title="Permissions">
               {runtimeState ? (
                 <StateCard text={runtimeState} />
               ) : (
-                <dl className="mt-4">
+                <dl>
                   <Fact label="Permission posture">
                     {runtime.data?.capabilities.posture || "Not reported"}
                   </Fact>
                 </dl>
               )}
-              <p className="mt-3 text-sm text-muted-foreground">
-                Permission posture is managed by this deployment.
-              </p>
-            </Section>
+              <div className="mt-3">
+                <Note>Permission posture is managed by this deployment.</Note>
+              </div>
+            </SettingsCard>
           )}
           {section === "mcp-tools" && (
-            <Section icon={Server} title="MCP tools">
-              <SourceNote source="authenticated BFF runtime capability" owner="deployment" />
+            <SettingsCard title="MCP tools">
               {runtimeState ? (
                 <StateCard text={runtimeState} />
               ) : (
-                <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                <dl className="grid gap-3 sm:grid-cols-2">
                   <Fact label="MCP support">
                     {runtime.data?.capabilities.mcp ? "Available" : "Not enabled"}
                   </Fact>
@@ -278,11 +263,13 @@ export function SettingsWorkspace({
                   </Fact>
                 </dl>
               )}
-              <p className="mt-3 text-sm text-muted-foreground">
-                MCP setup is managed by this deployment. Studio does not yet show the tool
-                inventory.
-              </p>
-            </Section>
+              <div className="mt-3">
+                <Note>
+                  MCP setup is managed by this deployment. Studio does not yet show the tool
+                  inventory.
+                </Note>
+              </div>
+            </SettingsCard>
           )}
           {section === "diagnostics" &&
             (inventoryState ? (
@@ -294,20 +281,16 @@ export function SettingsWorkspace({
               )
             ))}
           {section === "labs" && (
-            <Section icon={Server} title="Labs">
-              <SourceNote
-                source="Studio availability and authenticated BFF runtime"
-                owner="deployment"
-              />
+            <SettingsCard title="Labs">
               {runtimeState ? (
                 <StateCard text={runtimeState} />
               ) : (
-                <p className="mt-3 text-sm text-muted-foreground">
+                <Note>
                   No Labs features are available in Studio yet. This runtime is{" "}
                   {runtime.data?.mock ? "a local mock" : "a connected agent"}.
-                </p>
+                </Note>
               )}
-            </Section>
+            </SettingsCard>
           )}
         </div>
       </div>
@@ -343,12 +326,11 @@ function ProfileSession() {
       : undefined;
 
   return (
-    <Section icon={Server} title="Sign-in session">
-      <SourceNote source="BFF auth session" owner="read-only account identity" />
+    <SettingsCard title="Sign-in session">
       {sessionState ? (
         <StateCard text={sessionState} />
       ) : (
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        <dl className="grid gap-3 sm:grid-cols-2">
           <Fact label="Session status">
             {session.data?.status === "authenticated" ? "Signed in" : "Sign-in not required"}
           </Fact>
@@ -362,14 +344,13 @@ function ProfileSession() {
           {account && <Fact label="Account reference">{account}</Fact>}
         </dl>
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
 function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse }) {
   return (
-    <Section icon={Server} title="Providers">
-      <SourceNote source="authenticated BFF model inventory" owner="deployment" />
+    <SettingsCard title="Providers">
       <ul className="space-y-1 text-sm text-muted-foreground">
         {managementNotes(settings.management).map((note) => (
           <li key={note}>{note}</li>
@@ -406,7 +387,7 @@ function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse 
           })}
         </div>
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -428,12 +409,11 @@ function ModelInventory({
   }, [search, settings.models]);
 
   return (
-    <Section icon={BrainCircuit} title="Models">
-      <SourceNote source="authenticated BFF model inventory" owner="deployment" />
-      <p className="mt-2 text-sm text-muted-foreground">
+    <SettingsCard title="Models">
+      <Note>
         Visible is a personal preference stored in this browser. Default model and routing are
         managed by the deployment.
-      </p>
+      </Note>
       <dl className="mt-4 grid gap-3 sm:grid-cols-2">
         <Fact label="Default model">Managed by deployment; not reported to Studio.</Fact>
         <Fact label="Routing">
@@ -474,7 +454,7 @@ function ModelInventory({
           ))}
         </div>
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -546,15 +526,11 @@ function AboutAgent({
 }) {
   const [copyStatus, setCopyStatus] = useState("");
   return (
-    <Section icon={runtime.source === "local" ? Laptop : Cloud} title="About">
-      <SourceNote
-        source="authenticated BFF runtime and settings inventory"
-        owner="deployment and Studio build"
-      />
-      <p className="mt-3 text-sm text-muted-foreground">
+    <SettingsCard title="About">
+      <Note>
         Studio is the browser client. Its build and installed SDK are reported separately from the
         connected daemon.
-      </p>
+      </Note>
       <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Fact label="Studio build">{reported(runtime.studioBuildId)}</Fact>
         <Fact label="SDK version">{reported(runtime.sdkVersion)}</Fact>
@@ -615,7 +591,7 @@ function AboutAgent({
       <div className="mt-2 divide-y border-t">
         <AuthControl />
       </div>
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -628,12 +604,8 @@ function DiagnosticsSettings({
 }) {
   const storage = useQuery(getStorageHealthOptions());
   return (
-    <Section icon={Server} title="Diagnostics">
-      <SourceNote
-        source="authenticated BFF runtime, settings inventory, and storage health"
-        owner="deployment"
-      />
-      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+    <SettingsCard title="Diagnostics">
+      <dl className="grid gap-3 sm:grid-cols-2">
         <Fact label="Runtime connection">{runtime.connection}</Fact>
         <Fact label="Runtime source">{runtime.source}</Fact>
         <Fact label="Daemon implementation">{settings.serverImplementation || "Not reported"}</Fact>
@@ -650,10 +622,10 @@ function DiagnosticsSettings({
           Storage health: {storage.data.available ? "Available" : "Unavailable"}.
         </p>
       )}
-      <p className="mt-3 text-sm text-muted-foreground">
-        Logs and usage are managed by this deployment and are not available here.
-      </p>
-    </Section>
+      <div className="mt-3">
+        <Note>Logs and usage are managed by this deployment and are not available here.</Note>
+      </div>
+    </SettingsCard>
   );
 }
 
@@ -663,7 +635,7 @@ function Section({
   title,
 }: {
   children: ReactNode;
-  icon: typeof Server;
+  icon: LucideIcon;
   title: string;
 }) {
   return (
