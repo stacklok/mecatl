@@ -283214,6 +283214,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791471397996,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "024ba883a53e82c24a6da7cf88de6ac63fba0ab3",
+          "message": "feat(mcp): accept client secrets from bounded files (#2188)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T17:12:23+02:00",
+          "tree_id": "339e4588990af32052561fef203e03461ef40466",
+          "url": "https://github.com/stacklok/mecatl/commit/024ba883a53e82c24a6da7cf88de6ac63fba0ab3"
+        },
+        "date": 1791473083170,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -410511,6 +410545,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791473080137,
+  "lastUpdate": 1791473084114,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
