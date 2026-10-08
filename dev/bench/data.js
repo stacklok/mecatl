@@ -278560,6 +278560,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791414400886,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0ccf581cb3a262d84dac5307f0c11c0050f9fba1",
+          "message": "refactor(execution): remove unused prototype migrations (#2159)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T10:04:37+03:00",
+          "tree_id": "b6fc56987ad63c59f1eb9307197936172d842445",
+          "url": "https://github.com/stacklok/mecatl/commit/0ccf581cb3a262d84dac5307f0c11c0050f9fba1"
+        },
+        "date": 1791443836143,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -403868,6 +403902,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791443833099,
+  "lastUpdate": 1791443836860,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
