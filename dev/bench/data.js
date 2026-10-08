@@ -315026,6 +315026,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791480665571,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5cecfab42230cbb59f0b7df1eae93b41602ae463",
+          "message": "feat(studio): add shadcn primitives from the prototype and upstream shadcn (#2211)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T19:21:22+02:00",
+          "tree_id": "3709374f2f607c5931af8232a4623aa83a6b413d",
+          "url": "https://github.com/stacklok/mecatl/commit/5cecfab42230cbb59f0b7df1eae93b41602ae463"
+        },
+        "date": 1791481387950,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3277,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 76.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -412078,6 +412117,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791481384906,
+  "lastUpdate": 1791481389316,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
