@@ -281424,6 +281424,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791458212829,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c4770e12dcbfc73298af47a90b06fe7406c5eeed",
+          "message": "chore: fix stale code comments, dead test patterns, and docs claims (#2190)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T07:56:33-04:00",
+          "tree_id": "7692f333e3600cb43241d56c289dbf2e895298a8",
+          "url": "https://github.com/stacklok/mecatl/commit/c4770e12dcbfc73298af47a90b06fe7406c5eeed"
+        },
+        "date": 1791461324602,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -407956,6 +407990,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791461321779,
+  "lastUpdate": 1791461325332,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
