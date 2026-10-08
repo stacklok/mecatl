@@ -285720,6 +285720,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791484621967,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9c5a23bb05dc08debf8e64a1efa816a6ff69a20c",
+          "message": "chore(deps): bump toolhive-core to v0.0.51 (#2215)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T21:12:40+02:00",
+          "tree_id": "9a787c89322708aef4562f611d3856646d6de55c",
+          "url": "https://github.com/stacklok/mecatl/commit/9c5a23bb05dc08debf8e64a1efa816a6ff69a20c"
+        },
+        "date": 1791487523145,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -414088,6 +414122,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791487520121,
+  "lastUpdate": 1791487523857,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
