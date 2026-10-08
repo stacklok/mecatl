@@ -1407,8 +1407,8 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 
 // createModeFromProto maps a CreateSession mode. Unlike modeFromProto, an
 // UNSPECIFIED mode stays empty so Service.createSession applies the server's
-// configured DefaultMode (the session half of the operator's permission mode,
-// ADR 0375), matching the HTTP create path.
+// configured DefaultMode (the session half of the operator's permission mode),
+// matching the HTTP create path.
 func createModeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	if m == mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED {
 		return ""

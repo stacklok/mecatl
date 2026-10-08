@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
+func TestDeprecatedAliasesStillResolve(t *testing.T) {
 	for _, tc := range []struct{ posture, token string }{
 		{"strict", "default"}, {"trusted", "trusted"}, {"auto", "auto"}, {"yolo", "yolo"},
 	} {
@@ -57,7 +57,7 @@ func TestADR_0375_DeprecatedAliasesStillResolve(t *testing.T) {
 	}
 }
 
-func TestADR_0375_PermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
+func TestPermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
 	_, err := parseFlags([]string{"--prompt", "x", "--permission-mode", "auto", "--posture", "auto"})
 	if err == nil || !strings.Contains(err.Error(), "pass only --permission-mode") {
 		t.Fatalf("--permission-mode with --posture err = %v, want a pass-one startup error", err)
@@ -183,12 +183,12 @@ func hasPair(argv []string, flag, value string) bool {
 	return false
 }
 
-// TestADR_0375_ShippedAllowAllDefaultsDeclareCheckerChoice pins ADR 0375 AC2.3
+// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the checker declaration
 // for the composite action and this repo's live workflow: whenever they run an
 // allow-all mode they pass a checker model or the explicit --guardrails off, so
 // the startup refusal never fires on a shipped default. It executes the action's
 // real bash body against a fake binary rather than grepping it.
-func TestADR_0375_ShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
+func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required to execute the composite action body")
 	}

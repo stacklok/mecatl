@@ -238,7 +238,7 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
-	// permissionMode is the ADR 0375 named token (--permission-mode). It writes the
+	// permissionMode is the named token (--permission-mode). It writes the
 	// embedded server's posture half (app.Config.PermissionMode) and this client's
 	// requested session mode. modeFlagSet/yoloFlagSet record the deprecated aliases
 	// so the combination error and the one-per-alias deprecation WARN key on what

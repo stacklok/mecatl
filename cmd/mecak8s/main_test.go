@@ -453,7 +453,7 @@ func TestBuildOverRedisDrivesRunToCompletion(t *testing.T) {
 		RedisAllowPlaintext:     true,
 		Interactive:             false, // mecak8s headless default (Interactive=!headless)
 		Posture:                 app.PostureAuto,
-		GuardrailsDisabled:      true, // allow-all declares its checker choice (ADR 0375)
+		GuardrailsDisabled:      true, // allow-all declares its checker choice
 		PermissionsConventional: false,
 		AgentsConventional:      false,
 		Diagnostics:             port.NopDiagnostics{},
@@ -627,7 +627,7 @@ func TestDrainHTTPRouting(t *testing.T) {
 func TestServeWiresSeparateDrainListener(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--mock",
-		"--guardrails=off", // the auto default must declare its checker choice (ADR 0375)
+		"--guardrails=off", // the auto default must declare its checker choice
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", freeLoopbackPort(t),
 		"--drain-addr", freeLoopbackPort(t),
