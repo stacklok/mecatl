@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -200,6 +201,86 @@ func TestDreamReviewActionsReceiptsAndExplicitRegenerate(t *testing.T) {
 		t.Fatal("confirmed regeneration did not call provider")
 	}
 }
+func TestDreamPlanReaderTraversesEveryField(t *testing.T) {
+	plan := &client.DreamPlan{
+		ID:                    "plan-sentinels",
+		Target:                client.DreamTargetUserModel,
+		PlannedOperationCount: 2,
+		SourceCount:           3,
+		ExpiresAt:             time.Date(2026, time.October, 8, 12, 34, 56, 0, time.UTC),
+		Operations: []client.DreamOperation{
+			{Kind: "first-kind", ExactDuplicateEligible: true, Survivor: client.DreamParticipant{Key: "K11", Value: "V11", Description: "D11"}, Sources: []client.DreamParticipant{{Key: "K12", Value: "V12", Description: "D12"}, {Key: "K13", Value: "V13", Description: "D13"}}, Replacement: client.DreamReplacement{Value: "R11", Description: "Q11"}, Reason: "Z11"},
+			{Kind: "second-kind", Survivor: client.DreamParticipant{Key: "K21", Value: "V21", Description: "D21"}, Sources: []client.DreamParticipant{{Key: "K22", Value: "V22", Description: "D22"}}, Replacement: client.DreamReplacement{Value: "R21", Description: "Q21"}, Reason: "Z21"},
+		},
+	}
+	caps := &client.ManualDreamCapabilities{UserModel: client.DreamTargetCapability{Generate: true, Decide: true}}
+	for _, size := range [][2]int{{90, 36}, {48, 26}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := dreamAt(t, dreamModel(t, &fakeDream{}, caps), dreamState{view: dreamReview, target: 1, plan: plan})
+			m = applyAll(m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			seen := ""
+			for range 500 {
+				seen += "\n" + ansi.Strip(m.View().Content)
+				before := dreamSurface(t, m).viewport.Offset()
+				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+				if dreamSurface(t, m).viewport.Offset() == before {
+					break
+				}
+			}
+			for _, want := range []string{
+				"target: user model", "expires: 2026-10-08 12:34:56 UTC", "planned operations: 2", "planned sources: 3",
+				"operation 1 — kind: first-kind", "operation 2 — kind: second-kind",
+				"exact-duplicate eligible: true", "exact-duplicate eligible: false",
+				"K11", "V11", "D11", "K12", "V12", "D12", "K13", "V13", "D13", "R11", "Q11", "Z11",
+				"K21", "V21", "D21", "K22", "V22", "D22", "R21", "Q21", "Z21",
+				"Exact duplicates keep", "a apply", "dismiss",
+			} {
+				if !strings.Contains(seen, want) {
+					t.Errorf("reader never reached %q", want)
+				}
+			}
+		})
+	}
+}
+
+func TestDreamPlanUsesPrimaryValuesAndStandardTargetSelection(t *testing.T) {
+	for _, th := range []theme.Theme{theme.New("aztec", theme.AztecPalette()), theme.Solar()} {
+		t.Run(th.Name, func(t *testing.T) {
+			plan := &client.DreamPlan{PlannedOperationCount: 2, SourceCount: 3, Operations: []client.DreamOperation{{Survivor: client.DreamParticipant{Key: "sentinel-key"}, Replacement: client.DreamReplacement{Value: "sentinel-value", Description: "sentinel-description"}, Reason: "sentinel-reason"}}}
+			lines := strings.Join(renderDreamPlan(th, plan, 80, true, false, ""), "\n")
+			for _, want := range []string{th.Style("viewport").Render(` "sentinel-key"`), th.Style("viewport").Render(` "sentinel-value"`), th.Style("viewport").Render(` "sentinel-description"`), th.Style("viewport").Render(` "sentinel-reason"`)} {
+				if !strings.Contains(lines, want) {
+					t.Errorf("Dream value did not use viewport text style: %q", ansi.Strip(want))
+				}
+			}
+			if strings.Contains(lines, th.Style("toolArgs").Render(" sentinel-value")) {
+				t.Fatal("Dream value retained muted toolArgs styling")
+			}
+
+			s := &dreamState{view: dreamTargets, target: 0, deps: surfaceDeps{theme: th, caps: client.Capabilities{ManualDream: &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true}, UserModel: client.DreamTargetCapability{Generate: true, Decide: true}}}, marks: defaultHelpKeys()}}
+			out, _ := s.Render(64, 30)
+			spinnerSample := th.Style("spinner").Render("x")
+			spinnerPrefix := spinnerSample[:strings.Index(spinnerSample, "x")]
+			mutedSample := th.Style("muted").Render("x")
+			mutedPrefix := mutedSample[:strings.Index(mutedSample, "x")]
+			if !strings.Contains(out, spinnerPrefix+"▶ project memory — available") {
+				t.Fatalf("selected Dream target does not use the standard spinner selection style: %q", out)
+			}
+			if !strings.Contains(out, mutedPrefix+"  user model — available") {
+				t.Fatal("unselected Dream target does not use the standard muted style")
+			}
+
+			wrapped := &dreamState{view: dreamTargets, target: 0, deps: surfaceDeps{theme: th, caps: client.Capabilities{ManualDream: &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, UnavailableReason: strings.Repeat("decision unavailable ", 8)}, UserModel: client.DreamTargetCapability{Generate: true, Decide: true}}}, marks: defaultHelpKeys()}}
+			out, _ = wrapped.Render(48, 40)
+			if count := strings.Count(ansi.Strip(out), "▶"); count != 1 {
+				t.Fatalf("cursor marker appeared on %d wrapped rows", count)
+			}
+			if count := strings.Count(out, spinnerPrefix); count < 2 {
+				t.Fatalf("selected styling did not cover wrapped target rows: %q", out)
+			}
+		})
+	}
+}
 func TestDreamUnknownDecisionErrorOffersSameDecisionRetry(t *testing.T) {
 	plan := client.DreamPlan{ID: "plan-transport", Target: client.DreamTargetProjectMemory}
 	f := &fakeDream{receipt: client.DreamReceipt{ID: plan.ID, Disposition: client.DreamDecisionDismiss}, err: status.Error(codes.Unavailable, "lost transport\x1b[31m")}
@@ -313,8 +394,8 @@ func TestDreamPlanPresentationSeparatesBlocksAndStylesFields(t *testing.T) {
 				t.Fatal("operation title did not use the heading style")
 			}
 			for _, want := range []string{
-				th.Style("muted").Render("target:") + th.Style("toolArgs").Render(" project memory"),
-				"│ " + th.Style("muted").Render("survivor key:") + th.Style("toolArgs").Render(" \"keep\""),
+				th.Style("muted").Render("target:") + th.Style("viewport").Render(" project memory"),
+				"│ " + th.Style("muted").Render("survivor key:") + th.Style("viewport").Render(" \"keep\""),
 			} {
 				if !strings.Contains(styled, want) {
 					t.Errorf("missing typed label/value styles %q", want)
@@ -330,11 +411,18 @@ func TestDreamPlanPresentationSeparatesBlocksAndStylesFields(t *testing.T) {
 				t.Fatalf("missing %q in %q", prefix, plain)
 				return 0
 			}
-			for _, prefix := range []string{"Exact duplicates", "operation 1", "│ survivor key", "│ source 1 key", "│ source 2 key", "│ replacement value", "│ reason"} {
+			for _, prefix := range []string{"Exact duplicates", "operation 1", "│ source 1 key", "│ source 2 key", "│ replacement value", "│ reason"} {
 				i := index(prefix)
 				if i == 0 || plain[i-1] != "" {
 					t.Errorf("%q is not separated by a blank row: %q", prefix, plain)
 				}
+			}
+			survivor := index("│ survivor key")
+			if survivor == 0 || strings.HasPrefix(plain[survivor-1], "operation") || plain[survivor-1] == "" {
+				t.Errorf("survivor should directly follow operation metadata: %q", plain)
+			}
+			if count := strings.Count(ansi.Strip(styled), "planned operations:"); count != 1 || !strings.Contains(plain[index("planned operations:")], "planned sources: 2") {
+				t.Errorf("plan counts are not combined on one row: %q", plain)
 			}
 		})
 	}

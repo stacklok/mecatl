@@ -361,8 +361,8 @@ func (s *dreamState) targetLayout(width, height int) (before, after []string, ca
 	}
 	caps := s.deps.caps.ManualDream
 	items := []bounded.ListItem{
-		{ID: client.DreamTargetProjectMemory, Text: dreamTargetLine(false, "project memory", caps.ProjectMemory)},
-		{ID: client.DreamTargetUserModel, Text: dreamTargetLine(false, "user model", caps.UserModel)},
+		{ID: client.DreamTargetProjectMemory, Text: dreamTargetLine("project memory", caps.ProjectMemory)},
+		{ID: client.DreamTargetUserModel, Text: dreamTargetLine("user model", caps.UserModel)},
 	}
 	s.list.SetGeometry(width, capacity, 0, bounded.Wrap)
 	s.list.SetItems(items)
@@ -382,18 +382,14 @@ func (s *dreamState) renderTargets(width, height int) (string, []ClickableRegion
 		body = append(body, ansi.Cut(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d items", view.Above)), 0, width)+"\x1b[0m")
 	}
 	for _, row := range view.Rows {
-		if s.target < 0 || row.ItemIndex != s.target {
-			row.Selected, row.CursorMarker = false, false
-		}
-		style := s.deps.theme.Style("muted")
-		if row.ItemIndex == s.target {
-			style = s.deps.theme.Style("overlayTitle")
-		}
-		y := len(body)
-		presentation := presentListRow(row, style, s.deps.theme.Style("muted"))
-		body = append(body, ansi.Cut(presentation.Style.Render(presentation.Text), 0, width)+"\x1b[0m")
 		caps := s.deps.caps.ManualDream
 		enabled := row.ItemIndex == 0 && caps.ProjectMemory.Generate || row.ItemIndex == 1 && caps.UserModel.Generate
+		if !enabled || s.target < 0 || row.ItemIndex != s.target {
+			row.Selected, row.CursorMarker = false, false
+		}
+		y := len(body)
+		presentation := presentListRow(row, s.deps.theme.Style("spinner"), s.deps.theme.Style("muted"))
+		body = append(body, ansi.Cut(presentation.Style.Render(presentation.Text), 0, width)+"\x1b[0m")
 		if enabled && s.deps.hits != nil {
 			id := s.deps.hits.allocate()
 			x1 := min(width, ansi.StringWidth(body[y]))
@@ -536,11 +532,7 @@ func dreamPhysicalRows(lines []string, width int) []string {
 	return rows
 }
 
-func dreamTargetLine(selected bool, label string, capability client.DreamTargetCapability) string {
-	mark := "  "
-	if selected {
-		mark = "> "
-	}
+func dreamTargetLine(label string, capability client.DreamTargetCapability) string {
 	state := "available"
 	switch {
 	case !capability.Generate:
@@ -554,7 +546,7 @@ func dreamTargetLine(selected bool, label string, capability client.DreamTargetC
 			state += ": " + reflectionDisplayText(capability.UnavailableReason, 120)
 		}
 	}
-	return mark + label + " — " + state
+	return label + " — " + state
 }
 
 func renderDreamPlan(th theme.Theme, plan *client.DreamPlan, width int, canDecide, canGenerate bool, unavailableReason string) []string {
@@ -565,14 +557,12 @@ func renderDreamPlan(th theme.Theme, plan *client.DreamPlan, width int, canDecid
 	lines := []string{
 		dreamInfoField(th, "target", dreamTargetLabel(plan.Target)),
 		dreamInfoField(th, "expires", plan.ExpiresAt.Format("2006-01-02 15:04:05 MST")),
-		dreamInfoField(th, "planned operations", strconv.Itoa(plan.PlannedOperationCount)),
-		dreamInfoField(th, "planned sources", strconv.Itoa(plan.SourceCount)),
+		dreamInfoField(th, "planned operations", strconv.Itoa(plan.PlannedOperationCount)) + "  " + dreamInfoField(th, "planned sources", strconv.Itoa(plan.SourceCount)),
 		"", "Exact duplicates keep the survivor unchanged.", "Synthesized replacements write the displayed replacement and retire displayed sources atomically per operation.",
 	}
 	for i, op := range plan.Operations {
 		lines = append(lines, "", th.Style("overlayTitle").Render(wrapCardText(fmt.Sprintf("operation %d — kind: %s", i+1, op.Kind), budget)))
 		lines = append(lines, dreamInfoField(th, "exact-duplicate eligible", strconv.FormatBool(op.ExactDuplicateEligible)))
-		lines = append(lines, "")
 		lines = append(lines, renderDreamParticipant(th, "survivor", op.Survivor, width)...)
 		for j, source := range op.Sources {
 			lines = append(lines, "")
@@ -601,7 +591,7 @@ func renderDreamPlan(th theme.Theme, plan *client.DreamPlan, width int, canDecid
 }
 
 func dreamInfoField(th theme.Theme, label, value string) string {
-	return th.Style("muted").Render(label+":") + th.Style("toolArgs").Render(" "+terminaltext.Sanitize(value))
+	return th.Style("muted").Render(label+":") + th.Style("viewport").Render(" "+terminaltext.Sanitize(value))
 }
 
 func renderDreamParticipant(th theme.Theme, label string, p client.DreamParticipant, width int) []string {
@@ -623,10 +613,10 @@ func framedDreamField(th theme.Theme, label, value string, width int) []string {
 			if i == 0 {
 				// Keep the provenance marker literal and unstyled: dreamPhysicalRows
 				// recognizes it before rewrapping model-derived values.
-				out = append(out, "│ "+th.Style("muted").Render(label+":")+th.Style("toolArgs").Render(" "+line))
+				out = append(out, "│ "+th.Style("muted").Render(label+":")+th.Style("viewport").Render(" "+line))
 				continue
 			}
-			out = append(out, "│   "+th.Style("toolArgs").Render(line))
+			out = append(out, "│   "+th.Style("viewport").Render(line))
 		}
 	}
 	return out

@@ -61,7 +61,13 @@ converting an overlay. A closed surface must not receive late results or leak
 keyboard and wheel events into the conversation.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
-and selected-row styling. Let the surface own item semantics and activation.
+and selected-row styling. Follow `/models`: use the `spinner` accent style for
+selected rows and `muted` for unselected rows. The `▶` cursor appears only on the
+first visible physical row of the selected item; selected styling covers all its
+wrapped rows. Optional current or default status cells remain distinct from the
+cursor. `presentListRow` owns the gutter and cursor/status markers; surfaces must
+not embed those markers or their padding in item text. Let the surface own item
+semantics and activation.
 Keep unavailable entries visible when that explains the available choices, but
 exclude them from selection and activation.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
