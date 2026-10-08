@@ -2,7 +2,7 @@
 
 import { client as apiClient } from "@mecatl-studio/contracts/client";
 import { cleanup } from "@testing-library/react";
-import { afterEach, vi } from "vitest";
+import { afterEach, beforeEach, onTestFinished, vi } from "vitest";
 import { clearUserScopedStorage } from "./lib/account-storage";
 import { resetApiClientState } from "./lib/api-client";
 
@@ -83,9 +83,20 @@ afterEach(() => {
   cleanup();
   resetApiClientState();
   apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
-  clearUserScopedStorage(realLocal, realSession);
-  realLocal?.clear();
-  realSession?.clear();
   // The text selection lives on the shared document; addRange() is a no-op while one exists.
   realWindow?.getSelection()?.removeAllRanges();
+});
+
+// DECISION: storage is reset from an `onTestFinished` registered here, not from
+// `afterEach`. vitest runs `onTestFinished` callbacks after `afterEach` hooks,
+// and last-registered first, so this one (registered before any test body
+// runs) fires after a test's own restores, e.g. `spyOnLocalStorage`. Reset from
+// `afterEach` while such a spy is active and `clearUserScopedStorage` fails,
+// leaving `account-storage` quarantined for the next file's first test.
+beforeEach(() => {
+  onTestFinished(() => {
+    clearUserScopedStorage(realLocal, realSession);
+    realLocal?.clear();
+    realSession?.clear();
+  });
 });
