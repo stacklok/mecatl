@@ -312644,6 +312644,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791462046591,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bd786183d0c66a7de6b8bb4aeb852f84beda381f",
+          "message": "fix(microvm): accept harmless release archive root entries (#2189)\n\nOmit synthetic root entries from future MicroVM release bundles and narrowly accept canonical empty root directories in existing bundles without weakening artifact verification.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T15:40:14+03:00",
+          "tree_id": "4ef1bb7dcf92b290f92efe89c22731594e83550f",
+          "url": "https://github.com/stacklok/mecatl/commit/bd786183d0c66a7de6b8bb4aeb852f84beda381f"
+        },
+        "date": 1791463953333,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3271,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 70,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -409012,6 +409051,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791463950370,
+  "lastUpdate": 1791463954380,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
