@@ -191,9 +191,11 @@ for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings
 
-Press `shift+tab` to cycle the session through `default`, `plan`, and
-`accept-edits`. The modes that change the server's posture, such as `auto`, are
-set at launch with `--permission-mode`. See
+Press `shift+tab` to cycle through every permission mode. `default`, `plan`,
+and `accept-edits` apply immediately. A mode that raises the server's posture,
+such as `auto`, needs a restart. The cycle marks it blocked, holds prompts and
+edits, and says what to configure and how to relaunch. Press `esc` to return
+to the mode the session is running. See
 [Change the mode after launch](/features/security-and-execution/permissions-and-posture.md#change-the-mode-after-launch).
 
 |Command|Result|

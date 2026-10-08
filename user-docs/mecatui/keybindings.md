@@ -27,7 +27,7 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
 |`ctrl+t`|Open `/toolcalls` for the current session; approval requests use it for details.|
 |`f9`|Reveal conversation details: reasoning, turn stats, changed files, permanent error details, and benign guardrail notices. Tool results stay in `/toolcalls`.|
-|`shift+tab`|Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field.|
+|`shift+tab`|Cycle every permission mode: **default → plan → accept-edits → trusted → trusted-accept-edits → auto → yolo → default**. A mode that raises the posture needs a restart: it shows as blocked, prompts and edits are held, and `esc` returns to the running mode. In an MCP prompt argument form, it instead moves to the previous required field.|
 |`ctrl+g`|Select all prompt text.|
 |`ctrl+a` / `ctrl+e`|Move to the start / end of the current prompt line.|
 |`ctrl+p`|Move to the previous prompt line.|

@@ -296,18 +296,4 @@ func TestModeHelpers(t *testing.T) {
 	if got := ModeString(ModeFromString("accept-edits")); got != "accept-edits" {
 		t.Fatalf("accept-edits round trip = %q", got)
 	}
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"default", "plan"},
-		{"plan", "accept-edits"},
-		{"accept-edits", "default"},
-		{"", "plan"},
-	}
-	for _, tc := range cases {
-		if got := NextMode(tc.in); got != tc.want {
-			t.Errorf("NextMode(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
 }

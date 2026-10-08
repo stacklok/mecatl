@@ -745,18 +745,6 @@ func ModeString(m mecatlv1.PermissionMode) string {
 	}
 }
 
-// NextMode returns the next mode in the TUI's cycle order.
-func NextMode(mode string) string {
-	switch ModeString(ModeFromString(mode)) {
-	case ModeDefaultString:
-		return modePlanString
-	case modePlanString:
-		return "accept-edits"
-	default:
-		return ModeDefaultString
-	}
-}
-
 // loadCAPool reads a PEM CA bundle into a cert pool for server verification.
 func loadCAPool(path string) (*x509.CertPool, error) {
 	pem, err := os.ReadFile(path) //nolint:gosec // operator-supplied CA path

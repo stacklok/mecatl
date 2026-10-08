@@ -110,23 +110,36 @@ change it for its own session.
 
 ### Change the mode after launch
 
-In `mecatui`, press `shift+tab` to cycle the active session through **default →
-plan → accept-edits → default**. You can remap the `ModeSwitch` action in the
-client keymap or with `--keymap`; see [Keybindings](/mecatui/keybindings.md).
+In `mecatui`, press `shift+tab` to cycle through every mode: **default → plan →
+accept-edits → trusted → trusted-accept-edits → auto → yolo → default**. You
+can remap the `ModeSwitch` action in the client keymap or with `--keymap`; see
+[Keybindings](/mecatui/keybindings.md).
 
-Cycling changes only the session mode, never the posture. If you start in
-`auto` and cycle to `plan` and back to `default`, every tool is still allowed
-without asking. The `mecatui` header shows the session mode and, whenever the
-posture is above `strict`, the posture as well (`trusted`, `auto`, or `yolo`).
+What happens when the cycle lands on a mode depends on the posture the server
+is running:
 
-`mecatui` has no control that selects `trusted`, `trusted-accept-edits`,
-`auto`, or `yolo` at runtime. Those modes set the posture, so they need a
-restart of the process that hosts the server:
+- **Same posture.** The mode applies immediately. Under `trusted`, landing on
+  `trusted-accept-edits` switches the session to `accept-edits`.
+- **Lower posture.** The session mode applies, but the posture stays until a
+  restart. If you start in `auto` and cycle to `plan`, every tool is still
+  allowed without asking, and the footer says so.
+- **Higher posture.** The mode is blocked, because the posture is fixed when
+  the server starts. The header shows it as, for example, `mode auto blocked`.
+  The prompt area says what the mode needs: a restart, and for `auto` and
+  `yolo` also a guardrails checker, such as `guardrails.model` in your
+  user-global `settings.yaml`. While a mode is blocked you can't type, send,
+  or paste, and queued prompts are held. Your draft is kept. Press `esc` to go
+  back to the mode the session is running, or `shift+tab` to move on.
+
+The restart a posture change needs depends on how you connect:
 
 - With the embedded server, quit and relaunch `mecatui` with the new
   `--permission-mode` value.
 - Under `mecatui connect`, the server operator changes `mecated`'s
   configuration and restarts it. Relaunching the client changes nothing.
+
+The `mecatui` header shows the session mode and, whenever the posture is above
+`strict`, the posture as well (`trusted`, `auto`, or `yolo`).
 
 Press `?` in `mecatui` to see every mode, the two things each one sets, and the
 restart that applies to your connection.

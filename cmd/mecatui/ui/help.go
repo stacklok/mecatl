@@ -265,11 +265,10 @@ func PermissionModeVocabulary() []PermissionModeEntry {
 
 // writeHelpPermissionModes lists every permission-mode token with its two
 // halves, states that the posture half is process-wide while the session half is
-// only a new-session default, that cycling the session mode never changes the
-// posture, and whose restart a posture change needs.
-// Runtime selection of a posture from the TUI is deliberately not offered.
+// only a new-session default, that cycling reaches every mode but cannot raise
+// the posture, and whose restart a posture change needs.
 func writeHelpPermissionModes(b *strings.Builder, th theme.Theme, hk helpKeys, embedded bool) {
-	b.WriteString("\n" + th.Style("muted").Render("Permission modes (--permission-mode, set at launch)") + "\n")
+	b.WriteString("\n" + th.Style("muted").Render("Permission modes (--permission-mode, or cycle with "+hk.modeSwitch+")") + "\n")
 	vocab := PermissionModeVocabulary()
 	rows := make([]helpRow, 0, len(vocab))
 	for _, e := range vocab {
@@ -279,7 +278,9 @@ func writeHelpPermissionModes(b *strings.Builder, th theme.Theme, hk helpKeys, e
 	writeHelpMutedLines(b, th,
 		"The posture half applies to the whole server and is fixed when it starts.",
 		"The session half is only the default for new sessions.",
-		"Cycling the session mode ("+hk.modeSwitch+") never changes the posture half.",
+		hk.modeSwitch+" cycles every mode. A mode that raises the posture needs a restart, and auto or yolo a guardrails checker;",
+		"cycling marks it blocked and holds prompts until you press "+hk.cancel+" to return or move on.",
+		"A mode below the posture applies its session half; the posture stays.",
 	)
 	if embedded {
 		writeHelpMutedLines(b, th,

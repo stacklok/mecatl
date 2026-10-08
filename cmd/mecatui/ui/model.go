@@ -816,6 +816,9 @@ type Model struct {
 	// immediate switch.
 	activeMode  string
 	pendingMode string
+	// modeCursor is where the ModeSwitch cycle over every permission mode last
+	// landed, including a mode that needs a restart and so changed nothing.
+	modeCursor modeCursor
 
 	// fullColor is true on a truecolor terminal, derived from the tea.ColorProfileMsg
 	// (msg.Profile == colorprofile.TrueColor) in the reducer. It gates the welcome

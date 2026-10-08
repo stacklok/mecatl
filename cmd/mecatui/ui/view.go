@@ -280,12 +280,22 @@ func (m Model) headerModelLabel() string {
 	return terminaltext.Sanitize(m.deps.Model)
 }
 
+// modeBlockedSuffix marks a mode the cycle landed on that needs a restart, in the
+// header's session mode and the input rail's mode key.
+const modeBlockedSuffix = " blocked"
+
 func (m Model) inputMode() string {
+	if m.modeBlocked() {
+		return m.currentModeToken() + modeBlockedSuffix
+	}
 	return client.ModeString(client.ModeFromString(m.desiredMode()))
 }
 
 func modeAccentStyle(th theme.Theme, mode string) lipgloss.Style {
 	s := lipgloss.NewStyle().Bold(true)
+	if strings.HasSuffix(mode, modeBlockedSuffix) {
+		return s.Foreground(th.Color("warning"))
+	}
 	mode = client.ModeString(client.ModeFromString(strings.TrimSuffix(mode, " pending")))
 	switch mode {
 	case "plan":
@@ -692,6 +702,9 @@ func (m Model) renderSteer() string {
 // chrome()), so the cache is re-keyed in the same step the mutation lands — there
 // is no window in which a hidden-state change can hide behind an unchanged key.
 func (m Model) renderInput() string {
+	if m.modeBlocked() {
+		return m.renderModeBlocked()
+	}
 	m.applyModeInputStyle()
 	li := m.prompt.LineInfo()
 	hasSelection := m.prompt.HasSelection()
