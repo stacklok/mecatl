@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -42,8 +44,9 @@ import (
 // skills adapter's discovery types (see Config.Skills).
 //
 // SPEC: ListSkillFiles of a name not in the caller's skill view is NotFound, never an
-// empty list. It returns "SKILL.md" first, then assets sorted by logical name, at most
-// 1,024 entries (the inventory bound the skills adapter and the remote driver share).
+// empty list. It returns "SKILL.md" first, then assets sorted by logical name. The
+// filesystem source already rejects a skill with more than 1,024 assets, so this API does not
+// truncate a listing.
 // SPEC: ReadSkillFile returns at most skillfs.MaxOutputBytes bytes of valid UTF-8; an
 // invalid logical name is InvalidArgument and never content; an unknown file is NotFound;
 // a non-text file is refused rather than returned as repaired garbage.
@@ -54,19 +57,26 @@ import (
 // SPEC: files resolve through the caller's own skill view: another caller's learned skill is
 // NotFound. Tested by the same two tests.
 // Also tested here: listing order and sizes, unknown skill, reading SKILL.md and an asset,
-// invalid names, unknown file, oversize, non-text, the HTTP mirror, and the cap constant.
+// invalid names, unknown file, the cap boundary, non-text (including NUL), body limits, the stable
+// error codes over HTTP, and that every read goes through the publication preface.
 //
 // DECISION: the RPCs are named ListSkillFiles and ReadSkillFile, and the body is exposed as the
 // file "SKILL.md" rather than through a separate GetSkillBody. Reason: a client lists and shows
 // one uniform set of files. Rejected: an engine-aligned GetSkill plus ReadSkillAsset, which makes
 // every client special-case the body.
+// DECISION: SkillFileInfo.instructions marks the body, and clients key off it, not off the name
+// "SKILL.md". Reason: the listed "SKILL.md" is the body WITHOUT its frontmatter, so it is not the
+// raw file; the name would otherwise permanently claim content it does not hold, and a future
+// raw-file accessor needs that name. Rejected: the name alone as the marker.
 // DECISION: access class KindCallerOwned: the boundary resolves the skill through the verified
 // caller's own view and treats a skill outside it as absent, like ListLearnedSkills. Rejected:
 // KindDerived (the name is not an unforgeable handle, a caller can ask for any name) and
-// KindSharedInfrastructure (the live view is no longer identical for every caller, so ListSkills'
-// own rationale does not carry over). The two entries sit in classification.go beside ListSkills.
-// DECISION: an oversize file is an error (ResourceExhausted, HTTP 413), not a truncated success
+// KindSharedInfrastructure (the live view is not identical for every caller; ListSkills' own entry
+// now says it adds the caller's learned skills, and its kind is left to a separate change). The two
+// entries sit in classification.go beside ListSkills.
+// DECISION: an oversize file is an error (FailedPrecondition, HTTP 422), not a truncated success
 // with a flag. Reason: a truncated file would look complete to a client that ignores the flag.
+// Rejected: 413 and ResourceExhausted, which the repo already uses for an oversized REQUEST body.
 // DECISION: only name and size are exposed per file; the engine's advisory "executable" bit is
 // dropped so a client never implies a skill file can be run.
 // DECISION: both RPCs also have HTTP routes, GET /v1/skills/files?name= and
@@ -84,28 +94,22 @@ import (
 // for the raw file and the Skill tool itself loads only the body. Accepted cost: the Files view
 // cannot show a skill's frontmatter, and the listed size is the body's size, not the file's size
 // on disk.
-// DECISION: no new feature identifier or capability flag gates these RPCs. Reason: no client
-// runs against a daemon that predates them; Studio and the daemon ship together, and against an
-// older daemon the call simply fails. Rejected: a
-// skill_files entry in the compatibility features, which would be a permanent public string
-// (features are stable once published) with nothing to detect yet.
+// DECISION: the skill_files feature identifier announces the pair (features.go: every additive
+// RPC is announced through features). Reason: the published SDK runs against arbitrary daemons,
+// and against one without these routes the call is a generic 404 that looks like skill_not_found.
+// The SDK only announces it; gating a call on it is left to a client that needs to.
 
 const (
 	// skillBodyFile is the logical name under which the instruction body is listed and read.
 	skillBodyFile = "SKILL.md"
-	// maxSkillFileEntries bounds a listing, matching the skills adapter's and the remote
-	// driver's inventory bound.
-	maxSkillFileEntries = 1_024
-	// maxSkillFileBytes is the most text ReadSkillFile returns. It equals the Skill tool's
-	// output cap (skillfs.MaxOutputBytes); a test keeps the two equal, because the server
-	// adapter does not import the skills adapter.
-	maxSkillFileBytes = 25_000
+	// maxSkillFileBytes is the most text ReadSkillFile returns: the Skill tool's own output cap.
+	maxSkillFileBytes = skillfs.MaxOutputBytes
 )
 
 var (
 	// ErrSkillFileTooLarge reports a file over maxSkillFileBytes. It is refused, not truncated.
 	ErrSkillFileTooLarge = errors.New("server: skill file is too large to read")
-	// ErrSkillFileNotText reports a file that is not valid UTF-8 text.
+	// ErrSkillFileNotText reports a file that is not text: invalid UTF-8, or containing a NUL byte.
 	ErrSkillFileNotText = errors.New("server: skill file is not valid text")
 )
 
@@ -154,11 +158,8 @@ func (s *Service) ListSkillFiles(ctx context.Context, name string) ([]*mecatlv1.
 		return nil, fmt.Errorf("skill %q: %w", name, err)
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].Name < assets[j].Name })
-	if len(assets) > maxSkillFileEntries-1 {
-		assets = assets[:maxSkillFileEntries-1]
-	}
 	files := make([]*mecatlv1.SkillFileInfo, 0, len(assets)+1)
-	files = append(files, &mecatlv1.SkillFileInfo{Name: skillBodyFile, Size: int64(len(body))})
+	files = append(files, &mecatlv1.SkillFileInfo{Name: skillBodyFile, Size: int64(len(body)), Instructions: true})
 	for _, asset := range assets {
 		files = append(files, &mecatlv1.SkillFileInfo{Name: asset.Name, Size: asset.Size})
 	}
@@ -210,7 +211,8 @@ func (s *Service) ReadSkillFile(ctx context.Context, name, file string) (string,
 	if len(data) > maxSkillFileBytes {
 		return "", fmt.Errorf("skill %q file %q is over the %d byte limit: %w", name, file, maxSkillFileBytes, ErrSkillFileTooLarge)
 	}
-	if !utf8.Valid(data) {
+	// A NUL byte makes a file binary even when it is valid UTF-8; the Skill tool refuses it too.
+	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
 		return "", fmt.Errorf("skill %q file %q: %w", name, file, ErrSkillFileNotText)
 	}
 	return string(data), nil
