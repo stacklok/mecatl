@@ -280708,6 +280708,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791454689561,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37583f5a714d20ee028507c39d11c208a3d685ba",
+          "message": "chore: drop stale acceptance-plan citations from code comments (#2187)\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T06:13:44-04:00",
+          "tree_id": "c072b4ecb00d1461693f3a2c943441313405dc2d",
+          "url": "https://github.com/stacklok/mecatl/commit/37583f5a714d20ee028507c39d11c208a3d685ba"
+        },
+        "date": 1791455403817,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -406934,6 +406968,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791455399859,
+  "lastUpdate": 1791455404557,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
