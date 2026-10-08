@@ -283930,6 +283930,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791477650751,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6947882e040fc6cb6a7c209af219713d41b0dfe3",
+          "message": "test(studio): reset storage after test-owned restores (#2214)\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T19:19:45+02:00",
+          "tree_id": "fc023e2e8179de294684309e891d3d837fc7d7e4",
+          "url": "https://github.com/stacklok/mecatl/commit/6947882e040fc6cb6a7c209af219713d41b0dfe3"
+        },
+        "date": 1791480661500,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -411533,6 +411567,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791480658240,
+  "lastUpdate": 1791480662183,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
