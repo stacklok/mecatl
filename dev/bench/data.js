@@ -279634,6 +279634,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791451349567,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d66b05bd20d27a1bba6e57635aaa5271cc7ec01",
+          "message": "docs: lean rewrite of contributor docs (#2157)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T05:37:36-04:00",
+          "tree_id": "03b739aca5c4327611fbd4750ad982c2ec2949bf",
+          "url": "https://github.com/stacklok/mecatl/commit/6d66b05bd20d27a1bba6e57635aaa5271cc7ec01"
+        },
+        "date": 1791452959773,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -405401,6 +405435,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791452956879,
+  "lastUpdate": 1791452961199,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
