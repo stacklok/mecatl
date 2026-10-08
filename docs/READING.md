@@ -1,8 +1,9 @@
 # mecatl — Progressive reading map
 
 This is the canonical reader map for this repo. It is a **self-contained index**
-organized by audience. Pick the row that fits. Every link points to an existing
-living guide (the code as it exists today) or a reference.
+organized by audience. Pick the row that fits. Architecture and usage links
+point to existing behavior; draft proposals are labeled explicitly and do not
+describe shipped contracts.
 
 These pages describe **current behavior**. Git history holds past design rationale.
 

@@ -1,0 +1,306 @@
+# yaml-language-server: $schema=https://modelith.sh/schema/domain-model/v1.json
+kind: DomainModel
+version: v1
+title: Committed session history and shared interaction
+description: >
+  A `Session` retains authoritative `CommittedHistory`, admits one active `Run`,
+  and exposes authorized `ClientProjection` views. `Client` and `Extension`
+  actions share admission semantics; source-scoped `SteerSlot` input and
+  `PermissionAsk` resolutions remain ordered and recoverable. The companion
+  [proposal](session-commit-history.md) owns rationale, open questions, and scope.
+
+entities:
+  Session:
+    definition: >
+      The durable conversation and unit of interaction. A `Session` survives
+      individual `Run` and `Client` lifetimes; its current continuation and
+      retained display facts derive from its `CommittedHistory`.
+    relationships:
+      - entity: CommittedHistory
+        cardinality: "1:1"
+        ownership: owned
+      - entity: Run
+        cardinality: "1:n"
+        ownership: owned
+      - entity: SteerSlot
+        cardinality: "1:n"
+        ownership: owned
+      - entity: PermissionAsk
+        cardinality: "1:n"
+        ownership: owned
+      - entity: Operation
+        cardinality: "1:n"
+        ownership: owned
+      - entity: OwnershipClaim
+        cardinality: "n:0..1"
+        note: >
+          An active delegation tree shares its root claim. Separately owned
+          peer sessions have separate claims.
+      - entity: Client
+        cardinality: "n:n"
+      - entity: ClientProjection
+        cardinality: "1:n"
+    invariants:
+      - id: one-active-run
+        statement: A `Session` admits at most one active `Run`, regardless of the producer requesting it.
+      - id: shared-control
+        statement: Multiple authorized `Client` callers may operate on one `Session`; each action is independently authorized and serialized, without an exclusive controller.
+      - id: deletion-gate
+        statement: Logical deletion denies `Session` reads and activation, fences writes, and prevents identity reuse, independently of physical purge timing.
+
+  CommittedHistory:
+    definition: >
+      The private, versioned, append-only ordered facts of a `Session`. An
+      accepted position establishes commitment under the storage adapter's
+      declared durability guarantee; transient observations are not history.
+    relationships:
+      - entity: ContinuationCheckpoint
+        cardinality: "1:n"
+    invariants:
+      - id: single-history-authority
+        statement: Continuation and retained display facts derive from `CommittedHistory`; summaries, checkpoints, and optional diagnostic logs are not separate authorities.
+      - id: fenced-append
+        statement: An append to `CommittedHistory` checks the expected head and rejects stale writers under the backend's declared operating mode; distributed appends atomically check the current epoch and unexpired `OwnershipClaim`, while single-process local storage enforces write serialization and available file-lock protection.
+      - id: retained-compaction-history
+        statement: Compaction changes model continuation but preserves earlier `CommittedHistory` for authorized display and forks.
+      - id: lost-commit-fails-closed
+        statement: Missing previously acknowledged `CommittedHistory` stops writes and confirmed projections; local memory cannot overwrite history to repair it.
+
+  OwnershipClaim:
+    definition: >
+      The renewable backend-authoritative right of one replica to execute and
+      append for a root `Session` and its delegation tree. Its epoch fences stale
+      writers; expiry determines authority, not whether external work stopped.
+    attributes:
+      - name: epoch
+        type: integer
+      - name: expiry
+        type: timestamp
+    invariants:
+      - id: claim-not-connection
+        statement: An `OwnershipClaim` follows executing work rather than `Client` connection count; idle or parked sessions may release it while readers remain connected.
+      - id: expiry-is-not-quiescence
+        statement: Expired `OwnershipClaim` authority does not prove tools or the former replica stopped; reacquisition advances the epoch and reconciles the durable head.
+
+  ContinuationCheckpoint:
+    definition: >
+      Materialized continuation state derived through a known position in
+      `CommittedHistory`. A checkpoint accelerates loading and may lag the head;
+      it is not an independently writable source of session truth.
+    invariants:
+      - id: checkpoint-plus-replay
+        statement: Loading at position C applies every `CommittedHistory` record after the `ContinuationCheckpoint` position P through C; missing or incompatible records fail explicitly.
+
+  Run:
+    definition: >
+      One admitted execution driving a `Session` through model turns and tools.
+      A `Run` has stable identity distinct from session identity and is
+      server-owned rather than owned by the connection that requested it.
+    invariants:
+      - id: explicit-prompt-conflict
+        statement: A competing prompt receives an explicit conflict identifying the active `Run`; it is neither silently queued nor reinterpreted as a steer.
+      - id: exact-run-no-promotion
+        statement: A steer qualified by `Run` identity cannot start or retarget another run; an unqualified steer may request eligible execution when idle.
+      - id: disconnect-not-cancel
+        statement: A `Client` disconnect does not cancel the `Run` or transfer control rights.
+      - id: intent-before-dispatch
+        statement: A `Run` commits the assistant tool request and each call's intent before dispatch, and commits the result before dependent model continuation.
+      - id: no-uncertain-tool-retry
+        statement: Recovery distinguishes requested-not-started tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain external action.
+
+  Client:
+    definition: >
+      An authenticated API consumer observing or acting on a `Session` under
+      caller-specific authorization. An interactive attachment can request
+      eligible work; a read-only observation cannot activate execution.
+    relationships:
+      - entity: ClientProjection
+        cardinality: "1:n"
+    invariants:
+      - id: observe-does-not-activate
+        statement: Reading `ClientProjection` history or subscribing to committed changes does not load an engine, acquire ownership, or start work.
+      - id: drafts-stay-local
+        statement: Unsubmitted composer text and approval responses remain `Client` local; submitted pending controls belong to server state.
+
+  ClientProjection:
+    definition: >
+      The authorized display view of `CommittedHistory` at a known position,
+      including shared pending controls and their committed dispositions.
+      Provisional observations may accompany the view but have no committed
+      resume position until confirmed.
+    derived: true
+    derivation: Authorized session facts and timeline items are projected from committed records at the requested position.
+    relationships:
+      - entity: CommittedHistory
+        cardinality: "n:1"
+    invariants:
+      - id: complete-view-then-follow
+        statement: A `ClientProjection` loads complete authorized history through C in bounded pages, then follows committed changes after C without a silent gap.
+      - id: authorization-not-token
+        statement: Every `ClientProjection` page, subscription, and detail read rechecks authority; private continuation material is not exposed by possession of a cursor.
+      - id: reflect-pending-controls
+        statement: Authorized `ClientProjection` reloads and committed updates reflect shared pending steer content, revision, and disposition, plus pending asks and their resolutions.
+
+  Extension:
+    definition: >
+      A trusted registered interpreter for namespaced, versioned session
+      records and derived state. An `Extension` owns its operation semantics
+      and can submit small steer hints through authorized session actions.
+    relationships:
+      - entity: Operation
+        cardinality: "1:n"
+      - entity: SteerSlot
+        cardinality: "0..1:n"
+        note: >
+          Each extension slot names exactly one registered extension. The user
+          slot has no extension, and each extension has at most one slot per
+          session even when it manages several operations.
+    invariants:
+      - id: trusted-extension-registration
+        statement: Only trusted registered `Extension` handlers declare record type, version, continuation criticality, and safe-point metadata; payload text cannot register authority.
+      - id: critical-extension-fails-closed
+        statement: Missing or incompatible continuation-critical `Extension` handlers block dependent execution, while core management and logical deletion remain possible.
+      - id: extension-slot-authority
+        statement: An `Extension` controls only its own `SteerSlot`; notification submission grants neither user-slot authority nor permission to answer asks or bypass execution gates.
+      - id: small-retrievable-hints
+        statement: An `Extension` steer is a size-capped hint pointing to authorized tools for full canonical results; replacement covers outstanding work without deleting `Operation` outcomes.
+
+  Operation:
+    definition: >
+      Session-scoped work with durable identity distinct from its originating
+      tool call and `Run`. An `Operation` records lifecycle and canonical
+      results through its `Extension`; its identity can span run boundaries.
+    relationships:
+      - entity: Run
+        cardinality: "n:1"
+        note: The originating run is correlation, not the operation's lifetime boundary.
+    invariants:
+      - id: operation-history-authority
+        statement: Continuation-relevant `Operation` state and canonical admitted results are reconstructible from committed extension records, not an independent mutable plugin snapshot.
+      - id: outcome-not-notification
+        statement: Coalescing an `Extension` steer or losing a run-admission race cannot erase a committed `Operation` outcome.
+      - id: active-operation-claim
+        statement: Active `Operation` execution and writes remain under the root `OwnershipClaim`, even without a foreground `Run`.
+
+  SteerSlot:
+    definition: >
+      One source's replaceable pending input within a `Session`. There is one
+      shared user slot and one slot per registered `Extension`; slots use the
+      same update, retraction, and consumption semantics without an instruction
+      queue or extension-defined subkeys.
+    relationships:
+      - entity: SteerRevision
+        cardinality: "1:n"
+        ownership: owned
+    actions:
+      - set pending input
+      - replace pending input
+      - retract pending input
+      - consume delivered revision
+    invariants:
+      - id: source-slot-isolation
+        statement: Updating or retracting one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot.
+      - id: revision-checked-edit
+        statement: Replacement and retraction name the expected `SteerSlot` revision, and stale edits conflict rather than overwrite a concurrent update.
+      - id: all-pending-together
+        statement: At the next eligible model-input boundary, every pending `SteerSlot` is delivered together in deterministic order, without interrupting an in-flight request or bypassing an approval.
+
+  SteerRevision:
+    definition: >
+      An identified committed version of a `SteerSlot`'s pending content and
+      disposition. Source attribution is server-stamped; consumption identifies
+      the exact revision delivered as model input.
+    invariants:
+      - id: commit-before-steer-delivery
+        statement: >
+          `SteerRevision` admission is committed before acknowledgement, and
+          model-input insertion and exact-revision consumption commit before
+          the model receives it.
+      - id: replacement-survives-consumption
+        statement: Consuming an older `SteerRevision` cannot clear a newer concurrently admitted replacement in the same slot.
+      - id: provenance-is-not-privilege
+        statement: The server distinguishes user from named extension, tool, or harness `SteerRevision` provenance; non-user content remains appropriately fenced data, not system or permission authority.
+
+  PermissionAsk:
+    definition: >
+      A durable request for an authorized decision gating work in an exact
+      `Run`. Multiple clients can see and answer the same ask without reserving
+      an exclusive responder; its committed resolution is session state.
+    relationships:
+      - entity: Run
+        cardinality: "n:1"
+    invariants:
+      - id: first-committed-approval-wins
+        statement: The first valid authorized committed `PermissionAsk` resolution wins; later conflicting answers receive the authoritative already-resolved outcome and cannot reverse it.
+      - id: durable-ask-is-not-execution
+        statement: A pending `PermissionAsk` can survive unloading and ownership release; resolving it rehydrates the exact ask through the authorized activation boundary.
+
+scenarios:
+  - name: Two clients race to start one run
+    actors: [Client]
+    steps:
+      - Two authorized `Client` callers request a prompt on the same eligible `Session`.
+      - The owner commits admission of one `Run` to `CommittedHistory`; the other caller receives a conflict identifying that run.
+      - The losing `Client` may explicitly submit an exact-run steer, which can fail stale if the run has already ended.
+      - Disconnecting the winning `Client` does not cancel the server-owned `Run`.
+    invariants_touched: [one-active-run, shared-control, explicit-prompt-conflict, exact-run-no-promotion, disconnect-not-cancel]
+
+  - name: Reload with a lagging checkpoint
+    actors: [Client]
+    steps:
+      - A `ContinuationCheckpoint` materializes `CommittedHistory` through P while the head has advanced to C.
+      - The server replays every record in (P,C] to reconstruct continuation, including compaction without deleting older history.
+      - A read-only `Client` loads authorized `ClientProjection` pages through C and subscribes after C without activating work.
+      - A missing previously acknowledged record fails the load rather than repairing history from local memory.
+    invariants_touched: [single-history-authority, checkpoint-plus-replay, retained-compaction-history, complete-view-then-follow, observe-does-not-activate, lost-commit-fails-closed]
+
+  - name: Continue editing a submitted steer on another client
+    actors: [Client]
+    steps:
+      - A `Client` submits input into the shared user `SteerSlot`; the server commits its `SteerRevision` before acknowledgement.
+      - Another authorized `Client` reloads pending content and revision through `ClientProjection` and replaces it using the expected revision.
+      - A stale update from the original `Client` conflicts, while unsent composer text remains local.
+    invariants_touched: [source-slot-isolation, revision-checked-edit, reflect-pending-controls, commit-before-steer-delivery, drafts-stay-local]
+
+  - name: User and extension input at one boundary
+    actors: [Client, Extension]
+    steps:
+      - A user `SteerSlot` and slots for two registered `Extension` sources contain pending hints.
+      - The active `Run` commits all pending `SteerRevision` input together in deterministic order at its next safe input boundary.
+      - The model receives server-stamped provenance distinguishing user, extension, tool, and harness sources without granting non-user content instruction authority.
+      - An `Extension` replacement committed after the delivery decision remains pending; consumption of its older revision cannot clear it.
+    invariants_touched: [all-pending-together, source-slot-isolation, provenance-is-not-privilege, replacement-survives-consumption, commit-before-steer-delivery]
+
+  - name: Several operation results coalesce into one hint
+    actors: [Extension]
+    steps:
+      - Several `Operation` outcomes commit through one `Extension` in a `Session`.
+      - The `Extension` replaces its sole pending `SteerSlot` with a small hint directing the agent to a tool that lists ready results.
+      - If idle, the unqualified steer requests eligible `Run` admission; a concurrent prompt may win without erasing the committed outcomes or pending hint.
+      - An active `Run` receives the hint at its next safe boundary and calls an authorized tool for full results; unrelated extension and user slots remain unchanged.
+    invariants_touched: [small-retrievable-hints, outcome-not-notification, operation-history-authority, extension-slot-authority, source-slot-isolation, one-active-run]
+
+  - name: Conflicting approval answers
+    actors: [Client]
+    steps:
+      - Two authorized `Client` callers observe the same pending `PermissionAsk` through their `ClientProjection` views.
+      - One valid answer commits first; a conflicting later answer receives the authoritative already-resolved decision.
+      - Both clients see the committed resolution; unsubmitted response text stays local.
+      - The ask may have been unloaded while waiting, so the authorized resolution first rehydrates it under the tree claim.
+    invariants_touched: [first-committed-approval-wins, reflect-pending-controls, drafts-stay-local, durable-ask-is-not-execution]
+
+  - name: Fenced takeover with uncertain external work
+    steps:
+      - A `Run` commits a tool request and per-call intent, then the replica loses its `OwnershipClaim` before recording the result.
+      - Expiry permits fenced acquisition with a new epoch but does not prove the external action stopped.
+      - A stale append fails; recovery distinguishes no-intent requests from intent-with-unknown-outcome calls and does not rerun the uncertain tool.
+      - Active `Operation` obligations remain under the root claim, and a missing continuation-critical `Extension` blocks dependent execution rather than claiming quiescence.
+    invariants_touched: [fenced-append, expiry-is-not-quiescence, intent-before-dispatch, no-uncertain-tool-retry, active-operation-claim, critical-extension-fails-closed, trusted-extension-registration]
+
+  - name: Readers do not pin ownership or bypass deletion
+    actors: [Client]
+    steps:
+      - An idle `Session` releases its `OwnershipClaim` while authorized `Client` readers remain subscribed to committed history.
+      - A cursor does not confer authority for a later `ClientProjection` page or detail read.
+      - Logical deletion gates all further session reads and activation even if physical history has not yet been purged.
+    invariants_touched: [claim-not-connection, authorization-not-token, deletion-gate]
