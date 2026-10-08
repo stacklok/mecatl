@@ -15,7 +15,7 @@
 // fingerprint (issue #14, Phase 3) is COMPUTED here (LoadWithMeta) but PERSISTED only
 // by the composition layer (internal/app/soulguard) — the adapter never writes.
 // A writable identity anchor is
-// the central trap the spike (docs/adr/0011-soul-and-user-model.md §4) warns against: a
+// the central trap to avoid: a
 // prompt injection that rewrites "who the agent is" would persist across every
 // future session. So identity is read-only-if-present and bootstrapped by hand
 // (a text editor), never by a tool. The soul is additionally injection-scanned

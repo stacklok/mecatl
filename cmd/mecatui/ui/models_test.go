@@ -89,7 +89,7 @@ func (f *handoffTranscriptLoader) GetSessionTranscript(_ context.Context, _ stri
 
 // only, neither, and a context-limit-absent row.
 func sampleModels() *fakeModels {
-	// PromptCached mirrors production for these providers (ADR 0346): the
+	// PromptCached mirrors production for these providers: the
 	// canonical openai and openrouter endpoints both resolve to a cache dialect.
 	// The UNCACHED contrast has its own fixture, uncachedModels.
 	return &fakeModels{models: []client.ModelInfo{
@@ -2366,9 +2366,9 @@ func TestFooterGatewayNoticeGolden(t *testing.T) {
 	compareGolden(t, "footer_gateway_notice.golden", []byte(got+"\n"))
 }
 
-// uncachedModels is the ADR 0346 contrast fixture: every row reports
+// uncachedModels is the prompt-cache contrast fixture: every row reports
 // PromptCached=false, which is the ONE shape composition can actually produce
-// now that decision 1 arms the breakpoint on every Responses endpoint. The flag
+// now that the breakpoint is armed on every Responses endpoint. The flag
 // behind it (--no-prompt-cache) is harness-wide, so a fixture marking a single
 // non-caching provider would encode a state the server cannot emit.
 func uncachedModels() *fakeModels {
@@ -2407,7 +2407,7 @@ func markedRowsFor(view, rowSubstring string) (found, marked bool) {
 // This is a RENDERER contract: it feeds PromptCached=false in directly, because
 // the renderer's job is to mark whatever false it is handed. Composition can
 // only produce false under --no-prompt-cache (a harness-wide switch), which the
-// sibling TestADR_0346_PromptCachedTrueWithoutDialect covers. The test name
+// sibling PromptCachedTrueWithoutDialect test in internal/app covers. The test name
 // keeps its Scenario2 prefix because the approved acceptance plan cites it
 // verbatim in AC3.5's verify line.
 func TestUnifiedPromptCache_Scenario2_PickerMarksUncachedRow(t *testing.T) {

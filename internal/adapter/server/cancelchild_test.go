@@ -451,8 +451,8 @@ func TestServiceCancelChildFallbacks(t *testing.T) {
 }
 
 // TestHTTPCancelChild pins the REST mirror: bad body → 400, missing child_id → 400,
-// unknown session → 404, known-but-runless session → 409 (the same surface shape as
-// /approve; the live-run path is covered end-to-end by the gRPC test).
+// unknown session → 404, known-but-runless session → 409 (the live-run path is
+// covered end-to-end by the gRPC test).
 func TestHTTPCancelChild(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), allowRules())
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))

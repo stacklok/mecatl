@@ -15,7 +15,7 @@
 # wrap the prompt body in the harness untrusted-data fence. The intended split-privilege
 # template (.github/workflows/mecatequi-example.yml) runs THIS action in a job that holds
 # ONLY the LLM key and NO GitHub write token; a separate, agent-code-free job publishes
-# the result. See docs/adr/0028-mecatequi.md.
+# the result. See user-docs/building/deployment/mecatequi.md.
 #
 # THE LLM KEY IS NOT AN INPUT. mecatequi reads provider secrets from the ENVIRONMENT
 # (e.g. OPENAI_API_KEY), never from a flag — so the caller sets the key in the calling
@@ -42,9 +42,8 @@
 # The action lives at .github/actions/mecatequi/, so the repo root is $GITHUB_ACTION_PATH/
 # ../../.. (where go.mod + cmd/mecatequi live). The "Set up Go" + "Acquire mecatequi binary"
 # steps are isolated so a future swap to a signed, checksum-verified release-asset download
-# is a contained change (drop both, add a download+verify). The signed-asset follow-up is
-# documented in docs/adr/0028-mecatequi.md §5. The `uses: …@<ref>` tag IS the version — there
-# is no version input (matlatl has none either).
+# is a contained change (drop both, add a download+verify). The `uses: …@<ref>` tag IS the
+# version — there is no version input (matlatl has none either).
 #
 # OMITTED INPUT — the ask-reviewer policy file. --subagent-ask-reviewer is surfaced (see
 # the input) so a posture:auto run can adjudicate a child's read-only substitution instead
@@ -214,7 +213,7 @@ inputs:
       is ALWAYS force-prepended regardless of the template — a custom template cannot drop it,
       and you must NOT add your own caveat line in the template or you get a duplicate.
       Substitution is literal + single-pass; unknown {{tokens}} are left intact. See
-      docs/adr/0028-mecatequi.md for the full placeholder list. NOTE: this action runs the AGENT
+      .github/mecatequi/pr-body.md.example for the full placeholder list. NOTE: this action runs the AGENT
       (no GitHub token); publish.sh runs in the separate privileged job, so a workflow that
       calls publish.sh directly threads this via the MQ_PR_BODY_TEMPLATE env — this input is
       the documented surface + the threading point when publish.sh is wrapped in a composite.

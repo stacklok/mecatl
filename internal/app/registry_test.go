@@ -49,7 +49,7 @@ func TestRegistryNProviders(t *testing.T) {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 	got := reg.Available()
-	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	// One OpenRouter credential registers BOTH protocol entries.
 	want := []string{"openai", "openrouter", "openrouter-anthropic"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Available() = %v, want %v", got, want)
@@ -251,7 +251,7 @@ func TestRegistryEnvDetectionSingle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	// One OpenRouter credential registers BOTH protocol entries.
 	if got := reg.Available(); !reflect.DeepEqual(got, []string{"openrouter", "openrouter-anthropic"}) {
 		t.Fatalf("Available() = %v, want [openrouter openrouter-anthropic]", got)
 	}
@@ -270,7 +270,7 @@ func TestRegistryEnvDetectionOpenRouterFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	// One OpenRouter credential registers BOTH protocol entries.
 	if got := reg.Available(); !reflect.DeepEqual(got, []string{"openrouter", "openrouter-anthropic"}) {
 		t.Fatalf("Available() = %v, want [openrouter openrouter-anthropic]", got)
 	}
@@ -289,7 +289,7 @@ func TestRegistryEnvDetectionMultiVar(t *testing.T) {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 	got := reg.Available()
-	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	// One OpenRouter credential registers BOTH protocol entries.
 	want := []string{"openai", "openrouter", "openrouter-anthropic"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Available() = %v, want %v (openrouter falls back to OPENAI_API_KEY)", got, want)

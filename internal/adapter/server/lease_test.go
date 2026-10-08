@@ -288,8 +288,7 @@ func TestLeaseHeldElsewhereRefusesRun(t *testing.T) {
 
 // TestCloseSessionClearsLostOwnershipAndReacquires: once this process's renewer
 // definitively loses a lease (ErrLeaseHeld on Renew), CloseSession is the
-// documented recovery path (docs/adr/0027-cloud-native.md List 1 row 27) — it
-// must actually clear the lostOwnership tombstone instead of deferring forever
+// documented recovery path — it must actually clear the lostOwnership tombstone instead of deferring forever
 // (the pre-fix bug: closeSessionAuthorized tried to reaffirm the already-lost
 // lease first, which failed the same way every time, so closeSessionLocal —
 // the only place that deletes lostOwnership — was never reached). A run started
@@ -401,8 +400,8 @@ func TestCloseSessionStillRefusedWhileLeaseHeldElsewhere(t *testing.T) {
 // acquireLease -> reaffirmLease. Before the fix, reaffirmLease fail-fasts on
 // the tombstone without ever attempting a real Acquire, so this is a
 // permanent deadlock recoverable only by a process restart or CloseSession
-// (docs/adr/0027-cloud-native.md List 1 row 27) — neither of which the sweep
-// can perform. The fix: once the tombstone is set, reaffirmLease attempts a
+// — neither of which the sweep can perform. The fix: once the tombstone is
+// set, reaffirmLease attempts a
 // real Acquire before giving up, and clears the tombstone on success.
 func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
 	lease := &fakeLease{}

@@ -77,7 +77,7 @@ var cacheHitWhitelist = map[string]bool{
 // on zero-TUI-code commits. Gating them at the shared 2% threshold false-positives;
 // the advisory suite keeps the trend visible without failing a PR. Their other
 // metrics (tokens_total, goroutine_delta) stay in SMALLER — those ARE deterministic
-// (always 0 for a render bench). Mirror this set in the docs/adr/0019 RENDER prose
+// (always 0 for a render bench). Mirror this set in the docs/perf-tracking.md render prose
 // + perf.yml when a new render bench is added.
 var renderAllocAdvisory = map[string]bool{
 	"tui_scrollback_view":        true,

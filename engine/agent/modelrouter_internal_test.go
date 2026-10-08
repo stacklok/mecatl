@@ -574,7 +574,7 @@ func TestRoutingReasonPayloadEventSafeAllowlist(t *testing.T) {
 	}
 }
 
-func TestADR_0352_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
+func TestRouterCanonicalOutcomeProjection(t *testing.T) {
 	canonical := []string{
 		RouterMissDegenerateInput,
 		RouterMissClassifierError,
@@ -1150,7 +1150,7 @@ func TestRouterBreakerSerializesConcurrentCalls(t *testing.T) {
 	}
 }
 
-// TestRouterBreakerSharedAcrossFamilies (ADR 0034): all three delegation families
+// TestRouterBreakerSharedAcrossFamilies: all three delegation families
 // (Subagent / Parallel branches / team members) route through the ONE caps.routeDecision the
 // dispatcher binds per run, so a mixed turn shares a SINGLE breaker + miss counter. Here a
 // Parallel fan-out of N branches and one Subagent-shaped call all consult the same

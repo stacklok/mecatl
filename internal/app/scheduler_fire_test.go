@@ -134,7 +134,7 @@ func TestSchedulerFire(t *testing.T) {
 
 	// (2) A session was persisted for the fire. The schedule's LastFireSessionID
 	// points at it (the FireFunc set it via RecordFire); load it from the session
-	// store. ADR 0059 decision #7 Phase-2: the fire id IS the session id, and it
+	// store. The fire id IS the session id, and it
 	// is "sched--"-prefixed (the fire path pre-mints it via newFireID and passes
 	// it as the WithSessionID override on CreateSessionWithProfile, so the
 	// persisted session carries the sched-- GC-retention family prefix).
@@ -452,7 +452,7 @@ func eventually(deadline time.Duration, f func() bool) bool {
 	return f()
 }
 
-// TestRenderCarriedContext is the Phase-2 carried-context gate (ADR 0059). A
+// TestRenderCarriedContext is the Phase-2 carried-context gate. A
 // prior session's conversation is rendered as a FENCED UNTRUSTED preamble:
 // the assistant text appears, wrapped in the governance.UntrustedFence markers
 // (<<<UNTRUSTED … <<<UNTRUSTED), so the carried context is data, not live
@@ -493,7 +493,7 @@ func TestRenderCarriedContext(t *testing.T) {
 }
 
 // TestRenderCarriedContextNeutralisesForgedFence is the prompt-injection guard
-// (ADR 0059 Phase 2): a prior session whose assistant text contains a forged
+// a prior session whose assistant text contains a forged
 // <<<UNTRUSTED marker (an attempt to close the quarantine fence early and break
 // out into trusted-instruction space) is NEUTRALISED by NeutraliseFraming (called
 // inside FenceUntrusted). The rendered preamble must NOT contain a raw
@@ -608,7 +608,7 @@ func TestNewFireIDSanitizesName(t *testing.T) {
 }
 
 // TestRenderCarriedContextRespectsRuneBudget pins that carried-context clamping
-// is RUNE-accurate, not byte-based (ADR 0059 Phase-2). The removed in-loop
+// is RUNE-accurate, not byte-based. The removed in-loop
 // early-exit compared b.Len() (BYTES) against carriedContextMaxRunes, so for
 // multi-byte UTF-8 it broke out after only ~budget/bytes-per-rune runes —
 // UNDER-filling the intended rune budget. The final clampRunes is now the single

@@ -48,7 +48,7 @@ func TestGuardrailCompositionReturnsExactProviderModelIdentity(t *testing.T) {
 	}
 }
 
-// TestSlotsByteIdenticalDefault is the G1 pin (ADR 0030): with NO slot configured
+// TestSlotsByteIdenticalDefault is the G1 pin: with NO slot configured
 // (cfg.ModelSlots == nil), every routed call site keeps its EXACT pre-feature
 // behaviour — the session model — and resolveSlotModel returns ("", false) for every
 // slot. This is the byte-identical guarantee the feature commits to.

@@ -374,7 +374,7 @@ func TestScheduleTool_NilManagerPanics(t *testing.T) {
 }
 
 // TestScheduleTool_MutatingCreateGatedByPlanMode pins the plan-mode gate the
-// Schedule tool carries (ADR 0073 decision 4, AC4.3): in a PLAN-MODE session a
+// Schedule tool carries (AC4.3): in a PLAN-MODE session a
 // mutating: true create is DENIED (the plan-mode hard-deny on mutations — the
 // plan-aware variant is what the plan-mode catalog advertises), while a
 // read-leaning (mutating: false) create is ALLOWED (a schedule CREATE does not

@@ -31,9 +31,9 @@ func managedLeaseConfig(t *testing.T, workspace, managedRoot string) Config {
 	}
 }
 
-// TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
+// TestForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
 // managed lease contract at the real command runner boundary.
-func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
+func TestForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	workspace := t.TempDir()
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	t.Setenv("OPENROUTER_API_KEY", "must-not-leak")
@@ -70,9 +70,9 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	}
 }
 
-// TestADR_0281_LeaseCleanupPreservesCommandOutcome pins that cleanup happens
+// TestLeaseCleanupPreservesCommandOutcome pins that cleanup happens
 // after the command outcome is fixed, including cancellation and deadline.
-func TestADR_0281_LeaseCleanupPreservesCommandOutcome(t *testing.T) {
+func TestLeaseCleanupPreservesCommandOutcome(t *testing.T) {
 	workspace := t.TempDir()
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	runner := buildCommandRunnerForRoot(managedLeaseConfig(t, workspace, managedRoot), workspace)
@@ -113,10 +113,10 @@ func TestADR_0281_LeaseCleanupPreservesCommandOutcome(t *testing.T) {
 	}
 }
 
-// TestADR_0281_GroupLivenessControlsImmediateCleanup pins the documented group
+// TestGroupLivenessControlsImmediateCleanup pins the documented group
 // boundary: a live managed group retains its lease, while an escaped process
 // does not block cleanup after the managed group exits.
-func TestADR_0281_GroupLivenessControlsImmediateCleanup(t *testing.T) {
+func TestGroupLivenessControlsImmediateCleanup(t *testing.T) {
 	workspace := t.TempDir()
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	runner := buildCommandRunnerForRoot(managedLeaseConfig(t, workspace, managedRoot), workspace)
@@ -142,9 +142,9 @@ func TestADR_0281_GroupLivenessControlsImmediateCleanup(t *testing.T) {
 	}
 }
 
-// TestADR_0281_TestHomeUsesValidatedLeaseMarker pins that only a real lease
+// TestHomeUsesValidatedLeaseMarker pins that only a real lease
 // directs process-wide test-home state beneath a managed command allocation.
-func TestADR_0281_TestHomeUsesValidatedLeaseMarker(t *testing.T) {
+func TestHomeUsesValidatedLeaseMarker(t *testing.T) {
 	ns, err := managedtemp.Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)
@@ -187,9 +187,9 @@ func TestADR_0281_TestHomeUsesValidatedLeaseMarker(t *testing.T) {
 	}
 }
 
-// TestADR_0281_ChildEnvironmentGetsDistinctAffinedLease pins that separate
+// TestChildEnvironmentGetsDistinctAffinedLease pins that separate
 // child namespace runners allocate separate managed workspace leases.
-func TestADR_0281_ChildEnvironmentGetsDistinctAffinedLease(t *testing.T) {
+func TestChildEnvironmentGetsDistinctAffinedLease(t *testing.T) {
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	parent := t.TempDir()
 	child := t.TempDir()

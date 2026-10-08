@@ -19,7 +19,7 @@ import (
 )
 
 // schedule_validation_test.go pins the two NEW create-seam validations the
-// on-by-default + in-chat-create posture needs (ADR 0073, schedule-tool task
+// on-by-default + in-chat-create posture needs (schedule-tool task
 // 03): the SchedulerMinInterval cadence floor (AC1.3) and the
 // provider+model selector rejection (AC1.2c). Both live in the SHARED seam
 // (validateScheduleSpec over the Service) so the Schedule tool's create AND

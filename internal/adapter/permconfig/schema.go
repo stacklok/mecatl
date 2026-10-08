@@ -164,7 +164,7 @@ type Config struct {
 	// keeps the CLI/default). The composition layer parses the string; permconfig only
 	// reads the scalar.
 	Posture string `yaml:"posture"`
-	// Models holds the per-slot model config (ADR 0030): the `models.slots` /
+	// Models holds the per-slot model config: the `models.slots` /
 	// `models.aliases` maps, the session `default`, and the operator-tier `allowlist`
 	// cap. At the OPERATOR tier (user-global + CLI) all fields are honoured. At the
 	// PROJECT tier (Phase 4) a models: block is honoured WITHIN the operator allowlist
@@ -1633,7 +1633,7 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding
+// ModelsSection is the `models:` YAML subtree: a per-slot model-binding
 // map, an alias map, a session-default binding, and the operator-tier allowlist cap.
 // The TOP mapping is parsed STRICTLY (unknown keys error); the inner Slots/Aliases
 // maps are free-form name→selector (composition validates the slot names fail-soft
@@ -1766,7 +1766,7 @@ func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0352):
+// RouterSection is the `models.router:` operator-tier subtree:
 // the semantic delegated-model taxonomy and its explicitly selected classifier backend.
 // Composition maps the backend's exact category choice through the same local
 // category-to-model alias machinery.
@@ -1799,7 +1799,7 @@ type RouterSection struct {
 	Disabled bool `yaml:"disabled"`
 }
 
-// RouterCategory is one routing category in the operator taxonomy (ADR 0031): a name,
+// RouterCategory is one routing category in the operator taxonomy: a name,
 // a one-line description the classifier reads, and the model selector the category maps
 // to. A category with an empty Name or Description is WARN-dropped fail-soft in
 // composition (foldOperatorModelRouter) — a category the classifier cannot describe or
@@ -1879,7 +1879,7 @@ func (r *RouterSection) strictFields() map[string]any {
 	}
 }
 
-// UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
+// UnmarshalYAML decodes the models.router: mapping STRICTLY: an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
 func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
 	r.Backend = "llm"
@@ -1921,7 +1921,7 @@ func (m *ModelsSection) strictFields() map[string]any {
 	}
 }
 
-// UnmarshalYAML decodes the models: mapping STRICTLY (ADR 0030): an unknown key
+// UnmarshalYAML decodes the models: mapping STRICTLY: an unknown key
 // inside the models subtree is a parse error — a typo like `slotz:` or `aliasez:`
 // must not silently drop a whole binding map. Same rationale as GuardrailsSection.
 func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {

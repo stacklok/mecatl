@@ -325,7 +325,7 @@ func enforceOwnerOnlySocket(path string) error {
 // field someone adds might be a token.
 //
 // It deliberately omits capabilities, authentication, and TLS detail, matching
-// the ADR 0245 privacy boundary that keeps configuration out of GetServerInfo. A
+// the privacy boundary that keeps configuration out of GetServerInfo. A
 // client that wants the operator-enabled capability set has an RPC for it, and
 // it is authenticated; the ready file is not.
 type readyDoc struct {
@@ -540,7 +540,7 @@ func (p lifetimePipe) watch() {
 
 // Close releases the descriptor. It does NOT join the watcher goroutine: the
 // goroutine is parked in a blocking read, and on a normal shutdown the process
-// is about to exit anyway. See the ADR 0027 List 1 row for this resource.
+// is about to exit anyway.
 func (p lifetimePipe) Close() {
 	if p.file != nil {
 		_ = p.file.Close()
@@ -548,7 +548,7 @@ func (p lifetimePipe) Close() {
 }
 
 // listenerIsNetworkBoundary reports whether an ENABLED API listener puts the
-// harness on a network, which is what decides workspace authority (ADR 0237).
+// harness on a network, which is what decides workspace authority.
 //
 //   - UNIX SOCKET: not a boundary. Reachability is filesystem permission on a
 //     path this host owns — strictly narrower than loopback TCP, which any local

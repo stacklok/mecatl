@@ -63,7 +63,7 @@ const (
 // bare *Engine) is how a def's permissionMode reaches the supervisor's per-member
 // session.
 //
-// routedModel is the OPT-IN model router's classification (ADR 0034) — the
+// routedModel is the OPT-IN model router's classification — the
 // ALREADY-RESOLVED concrete model id for an UNDEFINED member, "" otherwise (no router, a
 // miss, or a DEFINED member whose def pins its own model). It is the same shape as
 // agent.TeamMemberEngineFactory so one factory satisfies both. On the gRPC RunTeam path
@@ -535,13 +535,13 @@ func (s *Service) claimTeamStart(ctx context.Context, teamID string, ts *teamSta
 // runs it on the request goroutine and forwards events to the stream.
 //
 // Like the per-session run-entry funnel (acquireLease), RunTeam honours the
-// drain gate (ADR 0048, mecak8s): once Drain is armed a draining replica
+// drain gate (mecak8s): once Drain is armed a draining replica
 // refuses a NEW team run BEFORE the phase flip / team claim so a shutting-down
 // pod steers team traffic to a survivor. An in-flight RunTeam is NOT cancelled
 // by Drain itself (that is the bounded GracefulStop's job). The gate starts
 // false — byte-identical default when Drain has not been called.
 func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.TeamEvent)) (agent.TeamOutcome, error) {
-	// Drain gate (ADR 0048, mecak8s): refuse new team runs on a draining
+	// Drain gate (mecak8s): refuse new team runs on a draining
 	// replica before claiming the team — mirrors acquireLease's check.
 	if s.draining.Load() {
 		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrUnavailable, teamID)

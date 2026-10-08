@@ -135,8 +135,7 @@ func (s *EventStream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 	readEventLoop(ctx, s.recv.Recv, out, s.bearerBacked, s.classifyAuth)
 }
 
-// StreamSessionLive opens the LIVE per-session event stream (ADR 0075
-// Scenario 5): the server pushes events including the three log-only kinds
+// StreamSessionLive opens the LIVE per-session event stream: the server pushes events including the three log-only kinds
 // (approval/user_prompt/compaction.archive) as they occur — principally
 // fire-result delivery notes for the active session. It wraps the returned
 // server stream in an EventStream. The SAME projection path (EventToMsg →

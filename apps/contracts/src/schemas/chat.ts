@@ -42,7 +42,7 @@ export const listSessionsResponseSchema = z.object({
 
 export const createSessionRequestSchema = z.object({
   /**
-   * Binds this session as an AI-debug chat over that target (ADR 0254): the
+   * Binds this session as an AI-debug chat over that target: the
    * daemon requires the no-fs profile and authorizes the target itself.
    */
   debugTargetSessionId: z.string().trim().min(1).max(256).optional(),

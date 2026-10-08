@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Taskfile for Mecatl Studio (apps/), included in the root Taskfile as `studio:`.
-# The workspace is self-contained (ADR 0351): its own pnpm lockfile, pnpm pin
+# The workspace is self-contained: its own pnpm lockfile, pnpm pin
 # (`packageManager` in package.json), Biome config, and Dockerfile. Nothing here
 # reaches into sdk/typescript — Studio consumes only the published
 # @stacklok-oss/mecatl-sdk.

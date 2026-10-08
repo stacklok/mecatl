@@ -19,7 +19,7 @@
 //
 // The loop reads `now` from an injected `port.Clock` (deterministic tests) and
 // logs through an injected `port.Diagnostics` (NEVER slog — the global-slog
-// ban in engine/ and internal/ applies here too; see ADR 0020).
+// ban in engine/ and internal/ applies here too).
 package scheduler
 
 import (
@@ -53,7 +53,7 @@ type FireFunc func(ctx context.Context, sched port.Schedule, now time.Time) (por
 // ErrFireNowOverlap is returned by FireNow when the schedule's singleton
 // overlap check found a prior fire still running (its session lease is held by
 // any replica). The fire was SKIPPED, not claimed — the caller (composition's
-// Service.FireNow) maps it to FailedPrecondition / 409 so a client distinguishes
+// Service.FireNow) maps it to FailedPrecondition / 412 so a client distinguishes
 // "overlapping fire rejected" from a genuine error. It mirrors the tick loop's
 // silent singleton skip, surfaced as an explicit error on the manual path (a
 // manual fire is a client-initiated request that deserves an explicit rejection,
@@ -144,7 +144,7 @@ type Config struct {
 	// decides the kind; the callback decides where it lands. The ctx is the
 	// firing caller's, so the durable append can attribute the event to whoever
 	// acted (a tick fire descends from Start's system-principal root; a manual
-	// FireNow keeps its requester) — ADR 0204 decision 5.
+	// FireNow keeps its requester).
 	EmitScheduleEvent func(ctx context.Context, payload session.SchedulePayload)
 	// ScheduleMetrics is the OPTIONAL composition-injected metrics callback
 	// (issue #233, Phase 2b). It is nil-safe (nil = no metrics recorded — the
@@ -157,10 +157,10 @@ type Config struct {
 	// labels the outcome; duration > 0 only for a fired/failed fire.
 	ScheduleMetrics func(payload session.SchedulePayload, duration time.Duration)
 	// DeliverFireResult is the OPTIONAL composition-injected callback
-	// (ADR 0075, fire-result-delivery) the scheduler invokes from fireClaimed
+	// (fire-result delivery) the scheduler invokes from fireClaimed
 	// AFTER RecordFire, to route a fire's terminal result back into its origin
 	// conversation. It is nil-safe (nil = the byte-identical no-delivery path,
-	// matching the pre-ADR-0075 pull-only posture). Composition wires it to
+	// matching the earlier pull-only posture). Composition wires it to
 	// deliverFireResult(svc, queue) which: skips an empty OriginSessionID (no
 	// delivery), renders the note (renderFireDelivery), enqueues it to the
 	// durable DeliveryQueue, and drives a delivery run into an idle/completed/
@@ -172,7 +172,7 @@ type Config struct {
 	// The scheduler invokes it for fired/failed fires alike (a failed fire may
 	// still have an origin that should know it errored); the callback decides
 	// whether to deliver based on the stop reason (it may skip a StopError
-	// fire's delivery, or deliver it — the ADR does not mandate either).
+	// fire's delivery, or deliver it — either is allowed).
 	DeliverFireResult func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)
 	// ReconcileStaleFire is the OPTIONAL composition-injected callback
 	// (issue #386 Phase 4b, the stale-fire reconciler) the scheduler invokes
@@ -460,9 +460,9 @@ func (s *Scheduler) SetScheduleMetrics(cb func(payload session.SchedulePayload, 
 }
 
 // SetDeliverFireResult wires the OPTIONAL composition-injected fire-result
-// delivery callback (ADR 0075). Composition calls it after SetFire (so the
+// delivery callback. Composition calls it after SetFire (so the
 // FireFunc is bound) and before Start. nil is the byte-identical no-delivery
-// path (the pre-ADR-0075 pull-only posture). The scheduler invokes it from
+// path (the earlier pull-only posture). The scheduler invokes it from
 // fireClaimed AFTER RecordFire, with the schedule + the fire record.
 func (s *Scheduler) SetDeliverFireResult(cb func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) {
 	s.mu.Lock()
@@ -542,7 +542,7 @@ func New(cfg Config) *Scheduler {
 //     ticker and PROMOTES when the current leader's lease lapses (crash/TTL)
 //     or is released. This is the multi-replica availability contract: a
 //     standby replica must SERVE (report ready, answer RPCs) and take over
-//     when the leader dies — it must NOT crash (the pre-ADR-0073 on-by-default
+//     when the leader dies — it must NOT crash (the earlier on-by-default
 //     bug where a non-leader's Start returned ErrLeaseHeld and the process
 //     exited, CrashLooping the replica).
 //
@@ -558,9 +558,9 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 	// The lifecycle root has no caller: every context the tick, fire, delivery
 	// and reconcile paths use descends from here (context.WithoutCancel keeps
-	// values), so this ONE wrap runs them all as the explicit system principal
-	// (ADR 0204 decision 7). FireNow is deliberately NOT wrapped — a manual fire
-	// keeps its requester's identity.
+	// values), so this ONE wrap runs them all as the explicit system principal.
+	// FireNow is deliberately NOT wrapped — a manual fire keeps its requester's
+	// identity.
 	ctx = syscaller.Context(ctx, syscaller.RootScheduler)
 	if s.cfg.Fire == nil {
 		s.started.Store(false)
@@ -931,7 +931,7 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		s.diag.Log(ctx, port.LevelWarn, "schedule store Due failed", "err", err.Error())
 		return
 	}
-	// One-shot crash-loss retry (ADR 0059 Phase 2). A one-shot with
+	// One-shot crash-loss retry. A one-shot with
 	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
 	// recorded a successful outcome (a crash mid-fire, or a fire that ended
 	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
@@ -1170,10 +1170,10 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 		s.diag.Log(ctx, port.LevelWarn, "scheduler: RecordFire failed",
 			"schedule", claimed.Spec.Name, "fire", fire.ID, "err", err.Error())
 	}
-	// Fire-result delivery (ADR 0075, fire-result-delivery): AFTER RecordFire,
+	// Fire-result delivery: AFTER RecordFire,
 	// route the fire's terminal result back into its origin conversation. The
 	// callback is composition-injected (DeliverFireResult); nil is the
-	// byte-identical no-delivery path (the pre-ADR-0075 pull-only posture). A
+	// byte-identical no-delivery path (the earlier pull-only posture). A
 	// delivery error WARNs inside the callback and NEVER fails the fire — the
 	// fire is already recorded; delivery is a decoupled side-channel.
 	if s.cfg.DeliverFireResult != nil {
@@ -1346,7 +1346,7 @@ func (s *Scheduler) IsDraining() bool {
 // after the backoff elapses.
 const oneShotReArmBackoff = 1 * time.Minute
 
-// maybeReArmOneShots is the one-shot crash-loss retry path (ADR 0059 Phase 2).
+// maybeReArmOneShots is the one-shot crash-loss retry path.
 // It scans ALL schedules (List) for a disabled one-shot with OneShotRetry=true
 // that did not record a successful outcome, and re-arms it (up to
 // OneShotMaxRetries). The re-arm lives in the tick loop's scan, NOT in the fire

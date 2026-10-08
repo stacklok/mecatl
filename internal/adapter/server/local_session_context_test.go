@@ -70,7 +70,7 @@ func saveLocalContextSession(t *testing.T, store *memstore.Store, id string, ref
 	}
 }
 
-func TestADR_0296_LocalContextRetainsServiceOwnedBinding(t *testing.T) {
+func TestLocalContextRetainsServiceOwnedBinding(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon")}
 	provider.reattach = func(req server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -100,7 +100,7 @@ func TestADR_0296_LocalContextRetainsServiceOwnedBinding(t *testing.T) {
 	}
 }
 
-func TestADR_0296_LocalContextUsesExactReattachment(t *testing.T) {
+func TestLocalContextUsesExactReattachment(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque-default", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon-launch")}
 	provider.reattach = func(req server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -136,7 +136,7 @@ func TestADR_0296_LocalContextUsesExactReattachment(t *testing.T) {
 	}
 }
 
-func TestADR_0296_LocalContextReturnsSelectedWorktreeRoot(t *testing.T) {
+func TestLocalContextReturnsSelectedWorktreeRoot(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque-worktree", Revision: "worktree-v3"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/embedded-daemon-workspace")}
 	provider.reattach = func(server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -154,7 +154,7 @@ func TestADR_0296_LocalContextReturnsSelectedWorktreeRoot(t *testing.T) {
 	}
 }
 
-func TestADR_0296_LocalContextOwnerIsolation(t *testing.T) {
+func TestLocalContextOwnerIsolation(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon")}
 	provider.reattach = func(server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -182,7 +182,7 @@ func TestADR_0296_LocalContextOwnerIsolation(t *testing.T) {
 	}
 }
 
-func TestADR_0296_LocalContextFailsClosedForIneligibleOrUnavailablePlacement(t *testing.T) {
+func TestLocalContextFailsClosedForIneligibleOrUnavailablePlacement(t *testing.T) {
 	local := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque-local", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(local, "/daemon")}
 	provider.reattach = func(req server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -209,7 +209,7 @@ func TestADR_0296_LocalContextFailsClosedForIneligibleOrUnavailablePlacement(t *
 	}
 }
 
-func TestADR_0296_LocalContextRejectsInvalidReattachment(t *testing.T) {
+func TestLocalContextRejectsInvalidReattachment(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon-default")}
 	provider.reattach = func(req server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -238,7 +238,7 @@ func TestADR_0296_LocalContextRejectsInvalidReattachment(t *testing.T) {
 	}
 }
 
-func TestADR_0296_LocalContextErrorsDoNotLeakPathOrEnvironmentRef(t *testing.T) {
+func TestLocalContextErrorsDoNotLeakPathOrEnvironmentRef(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "private-ref-id", Revision: "private-revision"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon")}
 	provider.reattach = func(server.PlacementReattachRequest) (server.PlacementBinding, error) {

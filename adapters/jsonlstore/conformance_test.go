@@ -161,7 +161,7 @@ func TestJSONLStoreEventLogConformance(t *testing.T) {
 }
 
 // TestJSONLStoreCursorEventLogConformance runs the shared CursorEventLog table
-// against the JSONL store — the on-disk half of ADR 0250's cross-process
+// against the JSONL store — the on-disk half of the cross-process cursor
 // obligation, where cursors are byte offsets and follow is size-polling.
 //
 // NewPair returns two Stores over the SAME directory, which is what makes the

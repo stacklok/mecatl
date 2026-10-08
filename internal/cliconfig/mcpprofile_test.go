@@ -279,7 +279,7 @@ func TestLoadMCPProfileSecretErrorsAreActionableAndRedacted(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRProfileScopeAndStorePolicy(t *testing.T) {
+func TestDirectDCRProfileScopeAndStorePolicy(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	newProfile := func(root string) permconfig.MCPServerProfile {
 		return permconfig.MCPServerProfile{

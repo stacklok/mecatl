@@ -48,7 +48,7 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		"Role":     "short role label",
 		"Mutating": "workspace mode flag",
 		"Lead":     "lead flag",
-		// OPT-IN model router (ADR 0034): a CATEGORY label (operator taxonomy name) and a
+		// OPT-IN model router: a CATEGORY label (operator taxonomy name) and a
 		// concrete MODEL id the member's engine was minted on — bare metadata, never the
 		// member's role/prompt or the classifier's reasoning.
 		"RoutedCategory": "router category label",
@@ -58,11 +58,11 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		// EMPTY on a routed hit — never the member's role/prompt or classifier output.
 		"RoutingReason":   "routing miss/gate reason label (bare metadata, empty on a hit)",
 		"RoutingDecision": "sanitized bounded classifier decision metadata",
-		// ADR 0352: trusted log-only exact lifetime correlation for the retained debugger
+		// Trusted log-only exact lifetime correlation for the retained debugger
 		// join. Neither field is projected to protobuf, HTTP, SDK, UI, or debugger JSON.
 		"MemberSessionID":   "private member session id correlation",
 		"MemberIncarnation": "private member incarnation correlation",
-		// ISSUE #112 / ADR 0035: the concrete MODEL id the member's engine ACTUALLY runs
+		// ISSUE #112: the concrete MODEL id the member's engine ACTUALLY runs
 		// on, regardless of how it was chosen — bare metadata, never member content.
 		"Model": "resolved concrete model id (bare metadata)",
 	})

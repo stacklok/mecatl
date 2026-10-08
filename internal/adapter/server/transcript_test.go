@@ -162,7 +162,7 @@ func TestSessionContinuityUX_Scenario3_AuthoritativeTranscript(t *testing.T) {
 	}
 }
 
-func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
+func TestTranscriptBackendErrorsAreRedacted(t *testing.T) {
 	const raw = "snapshot decode failed at /secret/backend/session.jsonl"
 	diag := &recordingDiagnostics{}
 	svc, err := newPlacementTestService(server.Config{
@@ -187,7 +187,7 @@ func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
 	}
 }
 
-func TestADR_0108_TranscriptAbsenceIsNotEmptySuccess(t *testing.T) {
+func TestTranscriptAbsenceIsNotEmptySuccess(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("snapshot decode failed")
 	for _, tc := range []struct {

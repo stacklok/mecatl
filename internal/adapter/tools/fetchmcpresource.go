@@ -87,8 +87,7 @@ const fetchMcpResourceMaxBody = toolkit.MaxOutputBytes + 1
 //
 // It is read-only (an outward read, no mutation), so it slots into the loop's
 // read-parallel dispatch path. Its http.Client is constructed PER CALL (a
-// bounded one-shot fetch), so it owns no outlives-a-call resource and needs
-// no CLOUD-NATIVE.md List 1 inventory row (ADR 0059 caveat).
+// bounded one-shot fetch), so it owns no outlives-a-call resource.
 //
 // The zero value is the production tool (per-call client). Tests inject a
 // custom http.Client via withHTTPClient to drive the fetch path offline.

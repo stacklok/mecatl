@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TestADR_0247_SourceOwnsDefaultSurfaces pins the source boundary:
+// TestSourceOwnsDefaultSurfaces pins the source boundary:
 // absent template surfaces are source-owned defaults, never a UI fallback.
-func TestADR_0247_SourceOwnsDefaultSurfaces(t *testing.T) {
+func TestSourceOwnsDefaultSurfaces(t *testing.T) {
 	source := NewDefaultSource(0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 

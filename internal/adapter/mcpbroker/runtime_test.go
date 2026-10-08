@@ -56,7 +56,7 @@ func TestCompileProducesStableNeutralCatalogue(t *testing.T) {
 	}
 }
 
-func TestADR_0298_CompileAdmitsMultipleOAuthRoutes(t *testing.T) {
+func TestCompileAdmitsMultipleOAuthRoutes(t *testing.T) {
 	config := protectedConfig("https://accounts.example/token")
 	second := config.Routes[0]
 	second.Name = "calendar"

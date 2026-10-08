@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Privileged local-client workspace-context API (ADR 0296).
+// Privileged local-client workspace-context API.
 //
 // This service is deliberately separate from HarnessService. It is registered only
 // for operator-enabled, local-client-trusted listeners; ordinary gRPC and HTTP

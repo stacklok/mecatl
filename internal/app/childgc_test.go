@@ -1455,7 +1455,7 @@ func TestBuildEnabledChildGCNarratesAndStops(t *testing.T) {
 	built.Close()
 }
 
-// --- Schedule-fire retention (ADR 0059 decision #7 Phase-2) -----------------
+// --- Schedule-fire retention -------------------------------------------------
 
 // TestScheduleFireGCAgePass pins the schedule-fire age pass: "sched--"-prefixed
 // sessions older than ScheduleFireRetention are deleted by the schedule-fire
@@ -1512,8 +1512,8 @@ func TestScheduleFireGCSkipsLive(t *testing.T) {
 	}
 }
 
-// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (ADR 0059
-// Phase-2, the symmetric peer of the main cap): with more sched-- fire sessions than
+// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (the
+// symmetric peer of the main cap): with more sched-- fire sessions than
 // scheduleFireMaxTotal, the OLDEST fire snapshots go first, the cap is store-wide,
 // and a LIVE fire is protected and excluded from the eligible cap slots.
 func TestScheduleFireGCCountCap(t *testing.T) {

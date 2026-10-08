@@ -92,7 +92,7 @@ type scheduleStore struct {
 var _ port.ScheduleStore = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
-// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+// ScheduleOneShotReArmer seam.
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
@@ -740,9 +740,9 @@ func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 	return out
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It atomically (under the shared mutex): re-enables the
-// schedule (Enabled=true), sets NextFireAt to nextFire, and increments
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule.
+// It atomically (under the shared mutex): re-enables the schedule
+// (Enabled=true), sets NextFireAt to nextFire, and increments
 // OneShotRetryCount, then writes the record atomically (temp file + rename). The
 // not-found case wraps ErrScheduleNotFound. The retry-budget gate is the CALLER's
 // responsibility. One-shot-only.

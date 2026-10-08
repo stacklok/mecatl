@@ -33,7 +33,7 @@ func validateDriverConfig(cfg Config) error {
 	if cfg.RedisURL == "" && (cfg.RedisUsernameFile != "" || cfg.RedisPasswordFile != "" || cfg.RedisTLSCAFile != "" || cfg.RedisTLS) {
 		return fmt.Errorf("--redis-username-file/--redis-password-file/--redis-tls-ca/--redis-tls require --redis-url: Redis connection material must not be silently ignored")
 	}
-	// Redis (ADR 0048, mecak8s) is a third store option, mutually exclusive with
+	// Redis (mecak8s) is a third store option, mutually exclusive with
 	// BOTH the local dir and the gRPC driver (one store per seam — a silent
 	// precedence would hide an operator mistake).
 	if cfg.RedisURL != "" && cfg.StoreDir != "" {

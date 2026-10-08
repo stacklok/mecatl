@@ -19,8 +19,7 @@ import (
 
 // teamretry_test.go covers the BOUNDED MEMBER RETRY — the last acceptance bullet of
 // issue #318 ("a team member that hits one transient stall still participates in later
-// rounds"), which ADR 0200 shipped its recovery half of and explicitly deferred. See
-// docs/adr/0200-resume-a-failed-subagent.md.
+// rounds"), deferred when resume of a failed subagent shipped.
 //
 // The three mechanisms it pins, all in engine/agent/teamsupervisor.go:
 //
@@ -478,10 +477,9 @@ func TestWithMemberErrorRetriesIgnoresNegative(t *testing.T) {
 //
 // It is also the only REACHABLE nonResumable shape, which is why the "a failed RECOVERY is
 // never retried" rule is asserted here rather than on a synthetic failed-Recover: with the
-// current state machine Recover-from-failed and Reopen-from-completed cannot fail (see
-// ADR 0200's Consequences), so `reopenErr != nil` is reachable only via a cancelled
-// member, whose Reopen is illegal by design. The `reopenErr == nil` conjunct in the retry
-// gate is therefore fail-closed defence for a future state, and this test covers the shape
+// current state machine Recover-from-failed and Reopen-from-completed cannot fail, so
+// `reopenErr != nil` is reachable only via a cancelled member, whose Reopen is illegal by
+// design. The `reopenErr == nil` conjunct in the retry gate is therefore fail-closed defence for a future state, and this test covers the shape
 // that exists today: the member is benched, not retried, even though its round did end
 // abnormally.
 //

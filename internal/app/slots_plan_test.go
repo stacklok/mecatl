@@ -18,7 +18,7 @@ import (
 )
 
 // TestPlanSlotDefaultTierIsReasoning pins the one DELIBERATE divergence in
-// slotDefaultTier (ADR 0030 Layer 3): the `plan` slot falls through to the `reasoning`
+// slotDefaultTier: the `plan` slot falls through to the `reasoning`
 // tier, NOT `cheap` like the three internal-call slots — a plan-mode model is a
 // strong-reasoning model. A regression that points plan at cheap would silently demote
 // planning turns to the cheapest model.
@@ -34,7 +34,7 @@ func TestPlanSlotDefaultTierIsReasoning(t *testing.T) {
 	}
 }
 
-// TestPlanSlotResolves pins the resolution paths for the `plan` slot (ADR 0030 Layer 3):
+// TestPlanSlotResolves pins the resolution paths for the `plan` slot:
 // an explicit binding, the reasoning-tier default fallthrough, and an alias. It reuses
 // resolveSlotModel UNCHANGED — the grammar is identical to the call-slots.
 func TestPlanSlotResolves(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPlanSlotByteIdenticalWhenUnconfigured(t *testing.T) {
 }
 
 // TestModeNeedsEngine pins the composition predicate wired into
-// server.Config.ModeNeedsEngine (ADR 0030 Layer 3): true ONLY for ModePlan when the
+// server.Config.ModeNeedsEngine: true ONLY for ModePlan when the
 // plan slot resolves to a model DIFFERING from the shared engine model; nil otherwise.
 func TestModeNeedsEngine(t *testing.T) {
 	t.Run("active plan slot ⇒ true only for plan", func(t *testing.T) {
@@ -149,8 +149,8 @@ func planFactory(t *testing.T, sessionModel, planModel string) server.SessionEng
 	return sessionEngineFactory(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
 }
 
-// TestSessionEngineFactoryPlanVsExecute is the FACTORY-level Phase 3 guard (ADR 0030
-// Layer 3): the SAME factory, the SAME zero selector, called with mode=ModePlan vs
+// TestSessionEngineFactoryPlanVsExecute is the FACTORY-level Phase 3 guard:
+// the SAME factory, the SAME zero selector, called with mode=ModePlan vs
 // mode=ModeDefault, resolves the engine to the PLAN model vs the SESSION model — and
 // stamps BuiltForMode from the one source. The provider is unchanged (fixed per
 // session); only the model differs.
@@ -251,7 +251,7 @@ func TestApplyPlanModePostureAppendsNote(t *testing.T) {
 }
 
 // TestPlanModeEngineSystemPromptContainsPlanApprovalContract is the
-// model-visible-discoverability gate for the plan-approval affordance (ADR 0070): a
+// model-visible-discoverability gate for the plan-approval affordance: a
 // gate whose correct operation depends on the model CALLING PresentPlan MUST ship with
 // a model-visible prompt instruction telling the model so, AND a test proving that
 // instruction lands in the built engine's system prompt via the REAL factory path — so

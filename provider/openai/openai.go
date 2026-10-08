@@ -43,7 +43,7 @@ const sessionIDHeaderName = "X-Mecatl-Session-ID"
 type Provider struct {
 	client responses.ResponseService
 	// effort is the reasoning-effort token stamped on every request's
-	// reasoning.effort field (ADR 0055). Empty (and "auto") means OMIT the field
+	// reasoning.effort field. Empty (and "auto") means OMIT the field
 	// entirely — the provider's own default applies, so a non-reasoning endpoint is
 	// never sent an effort it would reject. Composition supplies an ALREADY-CLAMPED
 	// neutral token (the openai xhigh/max→high clamp + its diagnostic live in
@@ -62,22 +62,21 @@ type Provider struct {
 	// no Parts always takes the legacy string path regardless.
 	caps *port.ProviderCapabilities
 	// cacheDialect selects which provider-side prompt-cache wire dialect
-	// (ADR 0100) buildParams (method) emits. "" (CacheDialectNone, the zero
-	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
-	// wire.
+	// buildParams (method) emits. "" (CacheDialectNone, the zero value) emits
+	// no cache hints at all — the byte-identical wire without cache hints.
 	cacheDialect CacheDialect
 	// cacheMemo memoises the last-seen (StablePrefix, hash) pair for
 	// promptCacheKey — see cachekey.go. A pointer (not embedded by value) so
 	// the zero-value Provider needs no initialisation.
 	cacheMemo atomic.Pointer[prefixMemo]
 	// cacheKeySalt is a per-process random value folded into the prompt_cache_key
-	// prefix hash (ADR 0346). "" (the Option unset) reproduces ADR 0100's exact
-	// derivation byte-for-byte, so a consumer that passes no Option is unchanged.
+	// prefix hash. "" (the Option unset) reproduces the unsalted derivation
+	// byte-for-byte, so a consumer that passes no Option is unchanged.
 	cacheKeySalt string
 	// breakpoints arms the protocol-native explicit prompt-cache breakpoint
-	// (ADR 0346). DELIBERATELY independent of cacheDialect: the dialect is an
+	// DELIBERATELY independent of cacheDialect: the dialect is an
 	// endpoint-identity gate, and gating the breakpoint on it would reproduce
-	// the exact bug ADR 0346 fixes — composition resolves an unrecognised
+	// the exact bug the breakpoint fixes — composition resolves an unrecognised
 	// endpoint (the ToolHive gateway included) to CacheDialectNone, which is
 	// where an explicit-ask model most needs the ask. Governed only by
 	// --no-prompt-cache.
@@ -120,7 +119,7 @@ func WithBaseURL(url string) Option {
 }
 
 // WithReasoningEffort sets the reasoning-effort token stamped on every request's
-// reasoning.effort field (ADR 0055). The value is a NEUTRAL composition token,
+// reasoning.effort field. The value is a NEUTRAL composition token,
 // ALREADY CLAMPED for OpenAI (xhigh/max are clamped to high in composition, with a
 // diagnostic, because this adapter has no port.Diagnostics). Empty (and "auto")
 // OMITS the field — the provider default applies. It is an adapter-CONSTRUCTION

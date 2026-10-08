@@ -90,7 +90,7 @@ const maxStateBytes = 1 << 20 // 1 MiB
 var stateSubpath = filepath.Join("mecatui", "models.yaml")
 
 // modelSelectionEntry is one persisted (provider, model, effort) tuple on disk. The
-// reasoningEffort field (ADR 0055) is omitempty + backward-compatible: an old file
+// reasoningEffort field is omitempty + backward-compatible: an old file
 // with no key loads "" (the auto/unset tier), and an "auto"/unset pick (the picker
 // maps auto→"" before persisting) writes no key, keeping the file clean.
 type modelSelectionEntry struct {

@@ -11,8 +11,8 @@ import (
 )
 
 // effort.go is the /effort picker — a tiny SELECTING overlay (cursor + enter) for
-// the reasoning-effort tier (ADR 0055). Enter on a tier applies DIRECTLY via a
-// FORK-RESUME (ADR 0068): the server forks the session's conversation onto a peer
+// the reasoning-effort tier. Enter on a tier applies DIRECTLY via a
+// FORK-RESUME: the server forks the session's conversation onto a peer
 // session at the new effort, so the transcript SURVIVES — no confirm step (the
 // switch is non-destructive, so it is never a teardown warning), no wipe. It is
 // much simpler than /models: a FIXED enum, no filter; the only RPC is the fork
@@ -114,7 +114,7 @@ func effortCursorFor(current string) int {
 
 // currentModelNoReasoning reports whether the CURRENT effective model is KNOWN (from
 // the loaded /models inventory) to NOT support reasoning — so a picked effort tier
-// would be DROPPED by the server's capability gate (ADR 0055). It is the TUI half of
+// would be DROPPED by the server's capability gate. It is the TUI half of
 // that gate's acknowledgement (UX): the picker warns up front so a user who restarts
 // the session for an effort they can't get is not left guessing (the server-side
 // degrade only logs). It is CONSERVATIVE — true ONLY when the model is found in the
@@ -173,8 +173,8 @@ func (m Model) onEffortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 
 // chooseEffort handles enter on the cursor row: it builds a selection carrying the
 // CURRENT provider/model (so the model is PRESERVED — only the effort changes) plus
-// the picked effort, then fires the switchEffort FORK-RESUME handoff DIRECTLY (ADR
-// 0068) — no confirm step: the fork is non-destructive (the transcript survives on
+// the picked effort, then fires the switchEffort FORK-RESUME handoff DIRECTLY
+// — no confirm step: the fork is non-destructive (the transcript survives on
 // the peer session), so there is nothing to warn about. A cursor past the enum end
 // is a no-op (defensive).
 func (m Model) chooseEffort() (tea.Model, tea.Cmd, bool) {
@@ -193,7 +193,7 @@ func (m Model) chooseEffort() (tea.Model, tea.Cmd, bool) {
 // model the server resolved, falling back to the pending createModelSelection) so the model
 // is preserved across the restart, with the new effort applied. When no model is
 // known yet (older server / mid-connect) it carries the bare effort over the
-// server-default provider — meaningful on its own (ADR 0055: effort rides the
+// server-default provider — meaningful on its own (effort rides the
 // server-default provider), so this is not a zero selection.
 func (m Model) effortSelection(effort string) client.ModelSelection {
 	sel := client.ModelSelection{
@@ -236,7 +236,7 @@ func renderEffortPanel(th theme.Theme, st effortState, current string, noReasoni
 		}
 		b.WriteString(renderRow(th, marker+effortRowText(tier), i == st.cursor) + "\n")
 	}
-	// UX (ADR 0055): when the current model is KNOWN to lack reasoning support, warn
+	// UX: when the current model is KNOWN to lack reasoning support, warn
 	// that a chosen tier will be ignored — so a switch for an unattainable effort is
 	// acknowledged in the picker, not only in the (invisible) server log.
 	if noReasoning {

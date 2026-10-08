@@ -83,7 +83,7 @@ func TestSessionTitleGeneration_Scenario5_RecordsTokenUsage(t *testing.T) {
 	}
 }
 
-func TestADR_0284_TitleUsageDoesNotSpendRunBudget(t *testing.T) {
+func TestTitleUsageDoesNotSpendRunBudget(t *testing.T) {
 	s := newTestSession(Limits{MaxTurns: 1})
 	before := s.UsageFor(UsageKindMain)
 	s.RecordTokenUsage(UsageKindSessionTitle, "", "", Usage{InputTokens: 500, OutputTokens: 500})

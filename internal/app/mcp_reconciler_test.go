@@ -404,7 +404,7 @@ func TestDeferredRuntimeDrainAutomaticallyReconcilesAndPublishes(t *testing.T) {
 	}
 }
 
-func TestADR_0355_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
+func TestReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	if maxMCPReconcileSources <= 0 || maxMCPReconcileServers <= 0 || maxMCPActiveListEntries <= 0 || maxMCPCandidatePages <= 0 || maxMCPCandidateBytes <= 0 || maxMCPRetainedRuntimes <= 0 || maxMCPReconcileCycleDuration <= 0 {
 		t.Fatal("every reconciliation dimension must have an independent finite bound")
 	}

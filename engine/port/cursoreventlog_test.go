@@ -12,7 +12,7 @@ import (
 
 // encodedEnvelope mirrors the cursor's on-the-wire shape so these tests can build
 // a cursor that is structurally valid but semantically wrong — the determined
-// client ADR 0250 says the opaque encoding must survive.
+// client the opaque encoding must survive.
 type encodedEnvelope struct {
 	V string `json:"v"`
 	S string `json:"s"`
@@ -29,18 +29,18 @@ func encodeEnvelope(t *testing.T, e encodedEnvelope) Cursor {
 	return Cursor(base64.RawURLEncoding.EncodeToString(raw))
 }
 
-// TestADR_0250_StaleGenerationCursorExpires is AC6.3: a cursor from a prior log
+// TestStaleGenerationCursorExpires pins that a cursor from a prior log
 // generation yields ErrCursorExpired, never silent degradation or wrong data.
 //
 // It exercises DecodeCursor directly rather than through a backend. The shared
 // conformance suite proves each backend PROPAGATES the outcome; this proves the
-// single decision itself, which ADR 0250 deliberately sited in port so that four
+// single decision itself, which is deliberately sited in port so that four
 // backends could not drift into four generation policies.
 //
 // The failure this forbids is not an error. A positional cursor into a rebuilt
 // log resolves happily to a real record that is simply not the one the client
 // last saw, so the only observable symptom is wrong data much later.
-func TestADR_0250_StaleGenerationCursorExpires(t *testing.T) {
+func TestStaleGenerationCursorExpires(t *testing.T) {
 	const sid = session.SessionID("cursor-unit-session")
 	issued := EncodeCursor(sid, "gen-A", "42")
 
@@ -101,7 +101,7 @@ func TestADR_0250_StaleGenerationCursorExpires(t *testing.T) {
 	})
 }
 
-// TestADR_0250_TamperedCursorRejected is AC6.4: a tampered or malformed cursor is
+// TestTamperedCursorRejected pins that a tampered or malformed cursor is
 // rejected, never coerced to a position.
 //
 // Every case here could plausibly be "helpfully" treated as the beginning of the
@@ -109,7 +109,7 @@ func TestADR_0250_StaleGenerationCursorExpires(t *testing.T) {
 // corrupted in transit would receive a full replay it believes is an increment,
 // and the duplicate delivery would look like a harness bug rather than a
 // corrupted token.
-func TestADR_0250_TamperedCursorRejected(t *testing.T) {
+func TestTamperedCursorRejected(t *testing.T) {
 	const gen = "gen-A"
 	const sid = session.SessionID("cursor-unit-session")
 	issued := EncodeCursor(sid, gen, "42")
@@ -172,7 +172,7 @@ func TestADR_0250_TamperedCursorRejected(t *testing.T) {
 	})
 }
 
-// TestADR_0250_CursorEventLogIsAdditive pins the shape ADR 0250 decision 1 rests
+// TestCursorEventLogIsAdditive pins the shape the cursor design rests
 // on: CursorEventLog EXTENDS EventLog rather than replacing it, so every cursor
 // backend is usable anywhere an EventLog is expected and no existing consumer is
 // touched.
@@ -180,7 +180,7 @@ func TestADR_0250_TamperedCursorRejected(t *testing.T) {
 // The structural assertion is the point. "Additive" is easy to claim in a doc
 // comment and easy to break with one method signature change, and the breakage
 // surfaces at a distant call site rather than here.
-func TestADR_0250_CursorEventLogIsAdditive(t *testing.T) {
+func TestCursorEventLogIsAdditive(t *testing.T) {
 	cursorLog := reflect.TypeOf((*CursorEventLog)(nil)).Elem()
 	eventLog := reflect.TypeOf((*EventLog)(nil)).Elem()
 
@@ -200,7 +200,7 @@ func TestADR_0250_CursorEventLogIsAdditive(t *testing.T) {
 	}
 }
 
-// TestADR_0250_CursorIsSessionScoped pins the session half of the
+// TestCursorIsSessionScoped pins the session half of the
 // never-silently-wrong contract, raised in review on #868.
 //
 // A position means nothing on its own — it is an offset, an index, or a stream id
@@ -214,7 +214,7 @@ func TestADR_0250_CursorEventLogIsAdditive(t *testing.T) {
 //
 // The check lives in DecodeCursor so it is structural rather than per-backend: a
 // backend cannot forget it, and a new backend inherits it.
-func TestADR_0250_CursorIsSessionScoped(t *testing.T) {
+func TestCursorIsSessionScoped(t *testing.T) {
 	const (
 		a   = session.SessionID("session-a")
 		b   = session.SessionID("session-b")
@@ -266,7 +266,7 @@ func TestADR_0250_CursorIsSessionScoped(t *testing.T) {
 	})
 }
 
-// TestADR_0250_EncodeFailureIsFailClosed pins that a failed encode never yields
+// TestCursorEncodeFailureIsFailClosed pins that a failed encode never yields
 // the zero Cursor, raised in review on #868.
 //
 // EncodeCursor cannot return an error (four strings always marshal), so the
@@ -275,7 +275,7 @@ func TestADR_0250_CursorIsSessionScoped(t *testing.T) {
 // broken encode would turn an impossible bug into a silent full replay the
 // consumer believes is an increment. The fallback must instead be a value every
 // DecodeCursor rejects.
-func TestADR_0250_EncodeFailureIsFailClosed(t *testing.T) {
+func TestCursorEncodeFailureIsFailClosed(t *testing.T) {
 	if cursorEncodeFailed == "" {
 		t.Fatal("the encode-failure fallback is the zero Cursor, which means 'replay everything'")
 	}

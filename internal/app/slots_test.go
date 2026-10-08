@@ -11,7 +11,7 @@ import (
 )
 
 // TestResolveSlotModelTable pins resolveSlotModel's precedence and fail-soft posture
-// (ADR 0030): literal id / operator alias / built-in alias / default-tier fallthrough
+// literal id / operator alias / built-in alias / default-tier fallthrough
 // / unset / inherit-or-unknown. resolveSlotModel is SILENT (the misconfig WARN lives in
 // the build-once logSlotConfigFacts, not here): this test asserts it NEVER logs, so the
 // per-engine duplication trap can't regress.
@@ -90,7 +90,7 @@ func TestResolveSlotModelTable(t *testing.T) {
 	}
 }
 
-// TestCompactionSlotRoutesSummaryOnly pins E1 (ADR 0030): a compaction slot routes
+// TestCompactionSlotRoutesSummaryOnly pins E1: a compaction slot routes
 // ONLY the CascadeCompactor's summary model; the engine's own Model stays the session
 // model.
 func TestCompactionSlotRoutesSummaryOnly(t *testing.T) {
@@ -115,7 +115,7 @@ func TestCompactionSlotRoutesSummaryOnly(t *testing.T) {
 	}
 }
 
-// TestAskReviewerSlotSupersedesFlag pins E2 (ADR 0030): a configured ask-reviewer slot
+// TestAskReviewerSlotSupersedesFlag pins E2: a configured ask-reviewer slot
 // SUPERSEDES the flag's model, but a slot ALONE does not enable the reviewer (the flag
 // stays the on/off gate).
 func TestAskReviewerSlotSupersedesFlag(t *testing.T) {
@@ -147,9 +147,9 @@ func TestAskReviewerSlotSupersedesFlag(t *testing.T) {
 	}
 }
 
-// TestGuardrailSlotRoutesChecker pins E3 (ADR 0030) + the #159 enable widening: a
+// TestGuardrailSlotRoutesChecker pins E3 + the #159 enable widening: a
 // configured guardrail slot routes the checker model AND (alone) ENABLES guardrails
-// (configure = enable, ADR 0046). The slot supersedes the --guardrails-model value
+// (configure = enable). The slot supersedes the --guardrails-model value
 // when both are set.
 func TestGuardrailSlotRoutesChecker(t *testing.T) {
 	const sessionModel = "gpt-4o"
@@ -173,7 +173,7 @@ func TestGuardrailSlotRoutesChecker(t *testing.T) {
 		ModelAliases: map[string]string{"cheap": "slot-guard-id"},
 	}
 	if checker := buildGuardrailsChecker(noModel, nil, mockllm.New(mockllm.TextTurn("x")), "openai", sessionModel); checker == nil {
-		t.Fatalf("a guardrail slot WITHOUT --guardrails-model must now ENABLE the checker (ADR 0046)")
+		t.Fatalf("a guardrail slot WITHOUT --guardrails-model must now ENABLE the checker")
 	}
 	if m := checkerModel(t, noModel, sessionModel); m != "slot-guard-id" {
 		t.Fatalf("slot-only guardrail checker model = %q, want the slot model %q", m, "slot-guard-id")
@@ -197,7 +197,7 @@ func TestFoldOperatorModelSlotsNoResolverNoOp(t *testing.T) {
 	}
 }
 
-// TestFoldOperatorModelSlotsFromYAML pins the operator-tier fold (ADR 0030): the YAML
+// TestFoldOperatorModelSlotsFromYAML pins the operator-tier fold: the YAML
 // models.slots/models.aliases merge onto cfg, CLI wins PER KEY for both maps, and an
 // unknown INNER slot key is dropped fail-soft with a Build-once WARN (composition-layer
 // validation, distinct from the YAML strict-parse of unknown TOP keys).

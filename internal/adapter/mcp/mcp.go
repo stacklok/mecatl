@@ -638,7 +638,7 @@ func requestOrigin(u *url.URL) string {
 // session and the tool.Tool wrappers derived from the server's tool list, plus
 // the snapshots of the server's resources and prompts captured at connect.
 //
-// As of ADR 0057 the adapter holds the standalone SSE GET stream open per
+// The adapter holds the standalone SSE GET stream open per
 // connected server and subscribes to server-initiated
 // notifications/{tools,prompts,resources}/list_changed: a notification sets the
 // matching *Dirty flag, and the next read of Tools()/Resources()/Prompts()
@@ -648,18 +648,18 @@ func requestOrigin(u *url.URL) string {
 // (at worst one redundant refresh, never a lost update).
 //
 // Catalog mutation (live tool.Catalog refresh) is deliberately Phase 2 — it
-// gets its own ADR. In Phase 1, Tools() DOES re-list on dirty (so a per-session
+// gets its own design. In Phase 1, Tools() DOES re-list on dirty (so a per-session
 // catalog assembly that calls mgr.Tools() after a list_changed picks up the
 // fresh set), but the already-registered remoteTool specs in an existing session
 // are NOT updated — a tool the server dropped surfaces a tool-call error on
 // use. This means two sessions created around the same notification may see
 // different tool surfaces (a timing-dependent split); this is the accepted
-// Phase 1 trade-off, documented in ADR 0057.
+// Phase 1 trade-off.
 //
 // A dropped session (the SDK's ErrConnectionClosed / errSessionMissing, surfacing
 // as "session not found" / "connection closed") is re-established transparently
 // by withSession: a single bounded reconnect attempt per call, serialized under
-// mu so N concurrent failing calls produce ONE dial. See reconnect.go and ADR 0056.
+// mu so N concurrent failing calls produce ONE dial. See reconnect.go.
 type Server struct {
 	name       string
 	cfg        ServerConfig
@@ -673,7 +673,7 @@ type Server struct {
 	tools      []tool.Tool
 	resources  []Resource
 	prompts    []Prompt
-	// Phase 1 (ADR 0057): dirty flags set by the list-changed notification
+	// Dirty flags set by the list-changed notification
 	// handlers and cleared before the next lazy re-list. They are read-and-cleared
 	// under s.mu by the accessors; the re-list itself runs WITHOUT s.mu held
 	// (see refreshTools/refreshResources/refreshPrompts) because liveSession may
@@ -1029,11 +1029,11 @@ func (s *Server) dial(ctx context.Context, initialInteractiveLogin bool) (*mcpsd
 	transport := &mcpsdk.StreamableClientTransport{
 		Endpoint:   s.cfg.URL,
 		HTTPClient: s.httpClient,
-		// The standalone SSE GET stream is ENABLED (ADR 0057) so the server can
+		// The standalone SSE GET stream is ENABLED so the server can
 		// push notifications/* (tools|prompts|resources/list_changed). The SDK
 		// opens it after initialize and drains it on session.Close(), so a
 		// persistent goroutine per connected server is owned by the session and
-		// unwinds on Close (inventoried in ADR 0027 List 1).
+		// unwinds on Close.
 	}
 	if s.oauth != nil {
 		transport.OAuthHandler = s.oauth
@@ -1139,7 +1139,7 @@ func (s *Server) HasOAuthCredential() bool {
 func (s *Server) Name() string { return s.name }
 
 // Tools returns the wrapped remote tools exposed by this server. If a
-// notifications/tools/list_changed has fired since the last read (ADR 0057), the
+// notifications/tools/list_changed has fired since the last read, the
 // snapshot is lazily re-listed under a bounded context.Background() before
 // returning, so a post-notification caller sees the server's current tool set.
 // Reconciliation candidates are the exception: CandidateBudget marks a validated
@@ -1161,7 +1161,7 @@ func (s *Server) Tools() []tool.Tool {
 }
 
 // Resources returns the server's resource snapshot. Lazily re-listed on a
-// notifications/resources/list_changed (ADR 0057). See Tools() for the lock
+// notifications/resources/list_changed. See Tools() for the lock
 // discipline.
 func (s *Server) Resources() []Resource {
 	s.mu.Lock()
@@ -1178,7 +1178,7 @@ func (s *Server) Resources() []Resource {
 }
 
 // Prompts returns the server's prompt snapshot. Lazily re-listed on a
-// notifications/prompts/list_changed (ADR 0057). See Tools() for the lock
+// notifications/prompts/list_changed. See Tools() for the lock
 // discipline.
 func (s *Server) Prompts() []Prompt {
 	s.mu.Lock()
@@ -1657,7 +1657,7 @@ func (m *Manager) SelectedTools(names, ceiling []string) ([]tool.Tool, error) {
 // over a Provider translate those into model-facing tool errors, never aborting
 // a turn.
 type Provider interface {
-	// ListResources returns the resource snapshots. As of ADR 0057 these are
+	// ListResources returns the resource snapshots. These are
 	// lazily refreshed on a notifications/resources/list_changed (the first call
 	// after a notification pays a bounded synchronous re-list). server==""
 	// returns the union across all servers; a specific name returns just that
@@ -1665,7 +1665,7 @@ type Provider interface {
 	ListResources(ctx context.Context, server string) ([]Resource, error)
 	// ReadResource reads a single resource by URI from the named server.
 	ReadResource(ctx context.Context, server, uri string) (ResourceContents, error)
-	// ListPrompts returns the prompt snapshots. As of ADR 0057 these are lazily
+	// ListPrompts returns the prompt snapshots. These are lazily
 	// refreshed on a notifications/prompts/list_changed. server=="" returns the
 	// union across all servers.
 	ListPrompts(ctx context.Context, server string) ([]Prompt, error)

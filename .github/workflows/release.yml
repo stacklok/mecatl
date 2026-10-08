@@ -1,5 +1,5 @@
 # Publishes and signs the mecated, mecatui, and mecak8s images, the Slack bot
-# example image, the Mecatl Studio image (early access, ADR 0351), the mecak8s
+# example image, the Mecatl Studio image (early access), the mecak8s
 # Helm chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
 # stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
 # Nested persistence modules are NOT published by root v* releases. Ordinary
@@ -1305,7 +1305,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Build context is apps/ ONLY: Studio consumes the PUBLISHED
-      # @stacklok-oss/mecatl-sdk, never the in-tree SDK (ADR 0351), so the Go
+      # @stacklok-oss/mecatl-sdk, never the in-tree SDK, so the Go
       # root and sdk/typescript are not part of the image. The image is pushed
       # BY DIGEST, with no tag: nothing can pull it by name until the scan,
       # signature, attestations, and their verification below have all passed,

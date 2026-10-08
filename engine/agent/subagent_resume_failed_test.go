@@ -130,7 +130,7 @@ func TestSubagentResumeFailedRepairsOrphanedToolCall(t *testing.T) {
 // asserted through the REAL render path (a live parent loop's RECORDED tool result —
 // what the model actually reads), not the helper in isolation: a failed delegation now
 // TELLS the model it can be resumed, and names the handle to resume it with. Wiring
-// Recover without this would ship a capability the model cannot discover (ADR 0070).
+// Recover without this would ship a capability the model cannot discover.
 //
 // It also pins the ORDERING the hint's own wording depends on: the agentId line comes
 // BEFORE the hint, so "the agentId above" is literally accurate on the StopError layout
@@ -167,7 +167,7 @@ func TestSubagentFailedResultAdvertisesResume(t *testing.T) {
 // TestStorelessSubagentFailureDoesNotAdvertiseResume is the SECOND negative of the
 // discoverability rule, on the other precondition. validateResume's FIRST check is that a
 // session store is wired; a SubagentTool built without WithSubagentStore is a supported
-// construction for an engine-module consumer (ADR 0036), and in that deployment every
+// construction for an engine-module consumer, and in that deployment every
 // `resume` call is refused with "not supported in this deployment". Advertising the resume
 // path there would instruct the model to take an action that cannot succeed — the same
 // defect as advertising it for a Parallel branch id, just a different precondition.
@@ -279,7 +279,7 @@ func TestParentResumesFailedSubagentByTrailerID(t *testing.T) {
 }
 
 // TestWritableResumeNoteSaysEditsSurvive pins the harness note a resumed WRITABLE child
-// reads. A read-write child never forks (ADR 0041 — it edits the real tree in place), so
+// reads. A read-write child never forks (it edits the real tree in place), so
 // on resume its earlier edits are STILL THERE. The read-only note ("file changes … are
 // GONE") would be false, and false in the direction that defeats the point of #318: a
 // direct-write child recovered from a transient failure must build ON its partial edits,
@@ -409,7 +409,7 @@ func seedFailedChildInForkRoot(t *testing.T, store port.SessionStore, id session
 // It asserts BOTH axes, because they are independent and this cell is the only one where
 // they disagree. The earlier oracle asserted the edits axis and then required the
 // fresh-CHECKOUT wording — which is the OTHER axis, and false here: a mode:"read-write" call
-// never forks (prepareChildSession passes forker=nil, ADR 0041), so this child holds
+// never forks (prepareChildSession passes forker=nil), so this child holds
 // Edit/Write on the operator's REAL repository while being told it is in a scratch
 // checkout, and a child that believes that may rewrite or delete files to "start clean".
 //

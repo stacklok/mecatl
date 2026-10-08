@@ -34,7 +34,7 @@
 #   studio — the Mecatl Studio job (`studio`: apps/ lint, typecheck, test, the
 #          generated-artifact drift check, and a no-push image build of
 #          apps/Dockerfile). Studio is a self-contained pnpm workspace that
-#          consumes only the PUBLISHED @stacklok-oss/mecatl-sdk (ADR 0351), so
+#          consumes only the PUBLISHED @stacklok-oss/mecatl-sdk, so
 #          neither sdk/typescript/ nor contracts/ nor any Go change can alter it —
 #          relevant ONLY to apps/ and to the CI-control files that define the job
 #          and its task recipes (.github/, Taskfile.yml). Everything else is
@@ -58,7 +58,7 @@
 # and EVERY path is irrelevant. It never evaluates a path as shell code.
 #
 # Note on matching: POSIX `case` globs treat `*` as matching any string INCLUDING
-# `/`, so `docs/*.md` matches `docs/adr/nested.md` too and `sdk/typescript/*`
+# `/`, so `docs/*.md` matches `docs/architecture/nested.md` too and `sdk/typescript/*`
 # matches every path under it (same convention as docs-only-changes.sh and
 # macos-relevant-changes.sh).
 set -euo pipefail

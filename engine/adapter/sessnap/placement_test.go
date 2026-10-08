@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0291_SessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
+func TestSessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/root", Revision: "inventory-v7"}
 	sess := session.New("placement-only", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0).UTC())
 
@@ -48,7 +48,7 @@ func TestADR_0291_SessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
 	}
 }
 
-func TestADR_0291_UnknownPlacementFieldsAreIgnored(t *testing.T) {
+func TestUnknownPlacementFieldsAreIgnored(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/root", Revision: "inventory-v7"}
 	line := mustMarshal(t, session.New("placement", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0).UTC()))
 	var object map[string]json.RawMessage

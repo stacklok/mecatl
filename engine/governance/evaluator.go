@@ -34,7 +34,8 @@ var mutatingTools = map[string]bool{
 //
 // Resolution rules (doc 08 §10):
 //   - A Deny in ANY scope beats an Allow or Ask in ANY scope.
-//   - Otherwise an Ask in any scope beats an Allow.
+//   - Otherwise an Ask beats an Allow, except that a higher-scope Allow overrides
+//     an Ask from the built-in default floor (ScopeBuiltinDefault).
 //   - Among rules of the SAME effect, the highest-precedence Scope wins (its
 //     Reason is reported).
 //   - With no matching rule the result is Ask (the safe default: pause for the
@@ -149,8 +150,8 @@ func (e *Evaluator) EvaluateWith(tool string, args json.RawMessage, planMode boo
 //     than learn a tool-wide allow.
 //
 // When learnable, the returned Rule is {Tool, Pattern, Effect: Allow, Exact: true,
-// Scope: <lowest precedence>} — Exact so it matches literally (never via glob),
-// and lowest scope so it can never out-rank a configured rule of any effect.
+// Scope: ScopeUser} — Exact so it matches literally (never via glob), and the
+// lowest configured scope so it can never out-rank a configured rule of any effect.
 func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) {
 	pattern, ok := learnablePattern(tool, args)
 	if !ok || pattern == "" {
@@ -159,8 +160,8 @@ func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) 
 	return Rule{
 		// ScopeUser is the lowest configured precedence (only ScopeBuiltinDefault
 		// sits below it); a learned allow can never out-rank a configured rule.
-		// Precedence only breaks SAME-effect ties anyway, and deny/ask always beat
-		// allow regardless of scope.
+		// Precedence only breaks SAME-effect ties anyway: a configured deny or ask
+		// always beats it, and only a built-in default Ask yields to it.
 		Scope:   ScopeUser,
 		Tool:    tool,
 		Pattern: pattern,

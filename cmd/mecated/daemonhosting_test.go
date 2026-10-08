@@ -448,8 +448,7 @@ func TestSDKServerEnablers_Scenario8_HTTPDisabledRefusesPerfMCP(t *testing.T) {
 }
 
 // TestSDKServerEnablers_Scenario8_DisabledAndSocketListenersAreNotNetworkBoundaries
-// pins the workspace-authority consequence of the two new listener shapes
-// (ADR 0237).
+// pins the workspace-authority consequence of the two new listener shapes.
 //
 // A UNIX socket is reachable only through filesystem permission on one path, and
 // a disabled listener is reachable not at all — both strictly narrower than the
@@ -636,7 +635,7 @@ func TestSDKServerEnablers_Scenario8_ReadyFilePathIsValidated(t *testing.T) {
 //     is the one startup artefact a parent reads mechanically, so whatever ends
 //     up in it ends up in whatever that parent logs or attaches to a bug report.
 //     The list also records the deliberate omissions (capabilities,
-//     authentication, TLS) that keep it inside ADR 0245's privacy boundary.
+//     authentication, TLS) that keep operator configuration out of it.
 //   - BEHAVIOURAL: a daemon configured with a bearer token publishes a file
 //     containing no trace of it, logs nothing carrying it while starting, and
 //     does not leak it through any of the startup REJECTIONS either. AC8.4 names
@@ -653,7 +652,7 @@ func TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets(t *testing.T) {
 		tag := typ.Field(i).Tag.Get("json")
 		key, _, _ := strings.Cut(tag, ",")
 		if !wantJSONKeys[key] {
-			t.Errorf("readyDoc gained field %q (json %q) — the ready file is an unauthenticated local artefact and its field set is an allowlist; add it to wantJSONKeys only after confirming it can never carry a credential, and keep capabilities/auth/TLS out per ADR 0245", typ.Field(i).Name, key)
+			t.Errorf("readyDoc gained field %q (json %q) — the ready file is an unauthenticated local artefact and its field set is an allowlist; add it to wantJSONKeys only after confirming it can never carry a credential, and keep capabilities/auth/TLS out", typ.Field(i).Name, key)
 		}
 		delete(wantJSONKeys, key)
 	}
@@ -680,7 +679,7 @@ func TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets(t *testing.T) {
 	}
 	for _, forbidden := range []string{"auth", "token", "tls", "credential", "capabilit"} {
 		if strings.Contains(strings.ToLower(string(raw)), forbidden) {
-			t.Errorf("the ready file mentions %q; it must carry no authentication, TLS, or capability detail (ADR 0245):\n%s", forbidden, raw)
+			t.Errorf("the ready file mentions %q; it must carry no authentication, TLS, or capability detail:\n%s", forbidden, raw)
 		}
 	}
 

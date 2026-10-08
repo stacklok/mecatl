@@ -28,8 +28,7 @@ const (
 // It is the SINGLE mapping from a persisted IssuerAddressPolicy to a transport,
 // shared by login/refresh (oidcClient) and logout, so the two cannot drift.
 //
-// The two policies are genuinely different problems, not two settings of one
-// (ADR 0279):
+// The two policies are genuinely different problems, not two settings of one:
 //
 //   - private: the operator supplies an internal CA that legitimately signs MANY
 //     internal services, so TLS alone cannot say WHICH one answered. The scoped

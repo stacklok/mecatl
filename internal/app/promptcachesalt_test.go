@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-// TestADR_0346_CacheKeySaltedPerProcess pins the composition half of AC3.1: each
+// TestCacheKeySaltedPerProcess pins the composition half of AC3.1: each
 // process mints its own salt, so two installations cannot emit an identical
 // prompt_cache_key. The adapter half — that a distinct salt yields a distinct
-// key on the wire — is TestADR_0346_CacheKeySaltChangesKey in provider/openai.
-func TestADR_0346_CacheKeySaltedPerProcess(t *testing.T) {
+// key on the wire — is pinned in provider/openai/cachekey_salt_test.go.
+func TestCacheKeySaltedPerProcess(t *testing.T) {
 	a, b := newPromptCacheKeySalt(), newPromptCacheKeySalt()
 	if a == "" || b == "" {
 		t.Fatalf("salt must be non-empty when crypto/rand is healthy (a=%q b=%q)", a, b)
@@ -32,12 +32,12 @@ func TestADR_0346_CacheKeySaltedPerProcess(t *testing.T) {
 	}
 }
 
-// TestADR_0346_CacheKeySaltNeverPersistedOrLogged pins AC3.3 structurally: the
+// TestCacheKeySaltNeverPersistedOrLogged pins AC3.3 structurally: the
 // salt is a private Config field with no persistence or diagnostics path, and the
 // posture line — the one place composition narrates cache state — must not carry
 // it. A salt in a log or a snapshot would reinstate exactly the durable
 // correlatable identifier the salt exists to avoid.
-func TestADR_0346_CacheKeySaltNeverPersistedOrLogged(t *testing.T) {
+func TestCacheKeySaltNeverPersistedOrLogged(t *testing.T) {
 	cfg := orCfg()
 	cfg.promptCacheKeySalt = "SENTINEL-SALT-VALUE"
 	reg, err := buildProviderRegistry(cfg, noEnv)
@@ -56,7 +56,7 @@ func TestADR_0346_CacheKeySaltNeverPersistedOrLogged(t *testing.T) {
 	}
 }
 
-// TestADR_0346_OpenAICompatEntryRefusesRedirect pins AC5.1 for a generic
+// TestOpenAICompatEntryRefusesRedirect pins AC5.1 for a generic
 // openai-compat entry (openai / openrouter / openai-codex), which
 // newOpenAICompatEntry previously built with the SDK's default client. A 307
 // re-sends the BODY — system prompt, file contents, tool results — and Go only
@@ -65,12 +65,12 @@ func TestADR_0346_CacheKeySaltNeverPersistedOrLogged(t *testing.T) {
 // TWO independent layers now enforce this, and the assertion is deliberately the
 // security property (attacker hit count == 0) rather than either mechanism:
 // openai-go >= v3.54.0 refuses a cross-origin redirect in its own request layer
-// (internal/requestconfig/origin.go), and ADR 0346 additionally gives the entry
+// (internal/requestconfig/origin.go), and the composition additionally gives the entry
 // a RefuseRedirects client. The composition layer is what survives an SDK
 // downgrade or a future regression that drops the SDK guard, which is precisely
 // why it is worth having even though the SDK currently also refuses. Mirrors
 // TestGatewayInferenceRefusesRedirects, whose comment records the same history.
-func TestADR_0346_OpenAICompatEntryRefusesRedirect(t *testing.T) {
+func TestOpenAICompatEntryRefusesRedirect(t *testing.T) {
 	var attackerHits atomic.Int32
 	attacker := httptest.NewServer(terminalSSEHandler(&attackerHits))
 	defer attacker.Close()

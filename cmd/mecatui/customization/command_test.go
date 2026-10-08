@@ -251,7 +251,7 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T) {
+func TestStatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T) {
 	input := Input{
 		Version: ProtocolVersion,
 		Context: Context{
@@ -287,7 +287,7 @@ func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T)
 	}
 }
 
-func TestADR_0296_StatusCommandReceivesRootInInputAndCWD(t *testing.T) {
+func TestStatusCommandReceivesRootInInputAndCWD(t *testing.T) {
 	launch, workspace := t.TempDir(), t.TempDir()
 	physicalWorkspace := physicalPath(t, workspace)
 	expected := filepath.Join(launch, "expected-cwd")
@@ -324,7 +324,7 @@ func TestADR_0296_StatusCommandReceivesRootInInputAndCWD(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusCommandUsesHelperParentWhenContextUnavailable(t *testing.T) {
+func TestStatusCommandUsesHelperParentWhenContextUnavailable(t *testing.T) {
 	command := Command{Path: "/opt/helpers/../bin/mecatui-status", LaunchDir: "/launch/fallback"}
 	if got, want := commandCWD(command, Input{}), "/opt/bin"; got != want {
 		t.Fatalf("command CWD = %q, want helper parent %q", got, want)

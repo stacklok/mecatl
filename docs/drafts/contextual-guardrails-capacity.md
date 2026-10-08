@@ -37,9 +37,9 @@ The trajectory benchmark drives one fact beyond both finite production constrain
 
 AC6.4 is executable production behavior, not a prose assertion:
 
-- `internal/app/contextual_reviewer_protocol_test.go` (`TestADR_0363_ContextualGuardrails_Scenario2_CapacityBeforeAllocation`) proves an oversized evidence read is rejected before backend access.
+- `internal/app/contextual_reviewer_protocol_test.go` (`TestContextualGuardrails_CapacityBeforeAllocation`) proves an oversized evidence read is rejected before backend access.
 - `internal/app/contextual_capacity_task6_test.go` (`TestContextualReviewEvidenceCalibrationBeforeAllocation`) proves aggregate handle/byte exhaustion performs no body read and cannot validate as acceptable.
-- `engine/agent/contextual_capacity_task6_internal_test.go` (`TestADR_0363_ContextualGuardrails_Scenario6_ImplementationCalibration`) checks the selected production capacities, trajectory incomplete behavior, held-result pre-clone rejection, and race-clean cancellation cleanup.
+- `engine/agent/contextual_capacity_task6_internal_test.go` (`TestContextualGuardrails_ImplementationCalibration`) checks the selected production capacities, trajectory incomplete behavior, held-result pre-clone rejection, and race-clean cancellation cleanup.
 - `internal/adapter/server/contextual_guardrails_task5_test.go` (`TestReviewDetailRegistryCapacityAndCleanup`) checks finite transient-detail admission and cleanup.
 
 AC6.5 is the separate human inspection of this report: selected values and units, rationale, experiment output, and exact executable artifacts. The paired corpus and report protocol live in `internal/app/testdata/contextual_guardrails_corpus.v1.json`, `internal/app/testdata/contextual_guardrails_baseline.v1.json`, and `internal/adapter/guardraileval/eval.go`. Offline fixture outcomes explicitly set `efficacy_established=false`; a live runner refuses execution unless its caller supplies both an explicit route and operator spend authorization. No live comparison was run here.

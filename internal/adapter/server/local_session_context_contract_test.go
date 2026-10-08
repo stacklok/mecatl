@@ -20,7 +20,7 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
-func TestADR_0296_PrivilegedProtoSurfaceIsNarrow(t *testing.T) {
+func TestPrivilegedProtoSurfaceIsNarrow(t *testing.T) {
 	services := mecatlv1.File_mecatl_v1_local_session_context_proto.Services()
 	if services.Len() != 1 {
 		t.Fatalf("privileged service count = %d, want 1", services.Len())
@@ -48,7 +48,7 @@ func TestADR_0296_PrivilegedProtoSurfaceIsNarrow(t *testing.T) {
 	}
 }
 
-func TestADR_0296_UnregisteredServiceIsUnimplemented(t *testing.T) {
+func TestUnregisteredServiceIsUnimplemented(t *testing.T) {
 	lis := bufconn.Listen(1 << 20)
 	grpcServer := grpc.NewServer()
 	defer grpcServer.Stop()
@@ -74,7 +74,7 @@ func TestADR_0296_UnregisteredServiceIsUnimplemented(t *testing.T) {
 	}
 }
 
-func TestADR_0296_PublicPathInventoryRemainsClosed(t *testing.T) {
+func TestPublicPathInventoryRemainsClosed(t *testing.T) {
 	for _, message := range []protoreflect.ProtoMessage{
 		&mecatlv1.CreateSessionRequest{}, &mecatlv1.CreateSessionResponse{}, &mecatlv1.Session{},
 		&mecatlv1.SessionSummary{}, &mecatlv1.PlacementMetadata{}, &mecatlv1.ListWorktreesRequest{},
@@ -99,7 +99,7 @@ func TestADR_0296_PublicPathInventoryRemainsClosed(t *testing.T) {
 		}
 	}
 
-	svc := newADR0291Service(t)
+	svc := newPlacementContractService(t)
 	created, err := NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

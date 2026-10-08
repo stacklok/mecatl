@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0294_HTTPCreateSessionDerivedAffinity(t *testing.T) {
+func TestHTTPCreateSessionDerivedAffinity(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 	for _, tc := range []struct {
 		name, body string
@@ -121,7 +121,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 	}
 }
 
-func TestADR_0294_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestHTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -163,7 +163,7 @@ func TestADR_0294_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	}
 }
 
-func TestADR_0294_HTTPDecodedPathEquality(t *testing.T) {
+func TestHTTPDecodedPathEquality(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -185,7 +185,7 @@ func TestADR_0294_HTTPDecodedPathEquality(t *testing.T) {
 	}
 }
 
-func TestADR_0294_AffinityHeaderGrantsNoAuthority(t *testing.T) {
+func TestAffinityHeaderGrantsNoAuthority(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model"})
 	svc, err := server.NewService(server.Config{
 		Engine: engine, Store: memstore.New(), PlacementProvider: testPlacementProvider{root: "/ws"}, PlacementScope: "test", SharedEngineRoot: "/ws", OwnershipEnforced: true,

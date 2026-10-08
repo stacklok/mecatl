@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestProjectModelBindingsE2E is the offline end-to-end (ADR 0030 Phase 4): app.Build over
+// TestProjectModelBindingsE2E is the offline end-to-end (Phase 4): app.Build over
 // a memfs-less tempdir workspace seeding .mecatl/settings.yaml project models, an operator
 // allowlist supplied via PermissionConfigs (the explicit/CLI tier), TrustProject:true, and
 // a mock provider. It asserts the build-once INFO lines show the ACCEPTED in-cap binding

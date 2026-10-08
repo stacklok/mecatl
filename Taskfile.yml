@@ -114,7 +114,7 @@ tasks:
   api:check:
     desc: |
       The api-compat gate — fail if the engine module's public API surface (the
-      seven core packages) drifts from the committed engine/api/*.txt snapshots.
+      eight core packages) drifts from the committed engine/api/*.txt snapshots.
       See engine/COMPATIBILITY.md. (Also runs under `task test` via ./...)
     cmds:
       - go test ./internal/apicheck
@@ -560,10 +560,9 @@ tasks:
   test:engine-standalone:
     desc: |
       Prove the engine module builds + tests with NO workspace and NO host-repo
-      deps (GOWORK=off): the importable core's tiny dependency closure
-      (doublestar + x/sync + goleak) is self-contained. This is the hygiene gate
-      that an external consumer's `go get github.com/stacklok/mecatl/engine`
-      experience depends on — see docs/adr/0036-engine-module.md.
+      deps (GOWORK=off): the importable core's small dependency closure is
+      self-contained. This is the hygiene gate that an external consumer's
+      `go get github.com/stacklok/mecatl/engine` experience depends on.
     cmds:
       - cd engine && GOWORK=off go build ./...
       - cd engine && GOWORK=off go test ./...

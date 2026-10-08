@@ -1,4 +1,4 @@
-# kind-based k8s e2e suite for mecak8s (ADR 0048).
+# kind-based k8s e2e suite for mecak8s.
 #
 # Spins a real kind cluster + Redis StatefulSet + two storage-free mecak8s agent
 # replicas and asserts lease exclusion, graceful failover, session persistence,

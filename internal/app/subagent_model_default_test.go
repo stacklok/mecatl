@@ -572,8 +572,7 @@ func TestRegisterParallelToolThreadsStore(t *testing.T) {
 }
 
 // TestSubagentModelRoutesChildToCheapModel is the end-to-end proof through the REAL
-// composition (app.Build → server.Service, the providerConstructor mock seam — see
-// docs/adr/0016-multi-provider.md §2): with --subagent-model configured, a turn that
+// composition (app.Build → server.Service, the providerConstructor mock seam): with --subagent-model configured, a turn that
 // delegates to the default Subagent explorer sends the CHILD's LLM request with the
 // cheap model while the PARENT's requests stay on the session model. All offline.
 func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {

@@ -25,12 +25,12 @@
 // synthesized buffer-keyed over delegated reads. The same overlay is restored on
 // session/load after exact placement reattachment. Without the caps, both paths
 // use the composition-owned placement environment; ACP cwd is only an equality
-// assertion and never constructs the root. See the ADR for the hybrid's residual
-// (grep sees disk).
+// assertion and never constructs the root. The hybrid's residual is that grep
+// sees disk.
 //
-// SCOPE — the following are DEFERRED to later phases and documented in
-// docs/adr/0001-acp-adapter.md (Phase 2/3 landed diff blocks, allow_always rule
-// learning, session/load + replay, modes, and slash commands — see the ADR):
+// SCOPE — the following are DEFERRED to later phases (Phase 2/3 landed diff
+// blocks, allow_always rule learning, session/load + replay, modes, and slash
+// commands):
 //   - grep/glob over editor BUFFERS (the fs/* hybrid searches disk).
 //   - DURABLE / broader-granularity learned permissions (today: in-memory,
 //     per-session, tool + exact-pattern only).

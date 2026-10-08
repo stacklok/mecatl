@@ -39,7 +39,7 @@ func baselineSlogWriter(quiet bool) io.Writer {
 // host-embedded branch in resolveTransport installs a SECOND default over the file
 // writer, which wins for that path; this baseline stands for the client-only modes.
 // cmd/ mains are the only layer permitted to call slog.SetDefault (internal/ flows
-// through the injected port.Diagnostics, ban-guarded). See docs/adr/0020-diagnostics.md.
+// through the injected port.Diagnostics, ban-guarded).
 func installBaselineSlog(quiet bool) {
 	w := baselineSlogWriter(quiet)
 	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))

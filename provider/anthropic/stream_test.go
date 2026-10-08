@@ -191,7 +191,7 @@ func TestUsageCacheReadSubsetOfInput(t *testing.T) {
 }
 
 // TestUsageCacheWriteSubsetOfInput mirrors TestUsageCacheReadSubsetOfInput for
-// cache WRITES (ADR 0100): every Usage chunk produced from the recorded
+// cache WRITES: every Usage chunk produced from the recorded
 // fixtures must satisfy CacheWriteTokens <= InputTokens, the same
 // CacheWriteTokens ⊂ InputTokens contract the fold in translateMessageStop
 // guarantees (Anthropic's raw input_tokens excludes cache_creation_input_tokens

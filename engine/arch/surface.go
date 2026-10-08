@@ -9,7 +9,7 @@ package arch
 const modulePrefix = "github.com/stacklok/mecatl/"
 
 // CorePackages is the SINGLE SOURCE OF TRUTH for the engine module's eight
-// compatibility-committed core packages (engine/COMPATIBILITY.md, ADR 0037),
+// compatibility-committed core packages (engine/COMPATIBILITY.md),
 // as full module-internal import paths. Listed high→low in the layering order:
 // domain leaves (session, governance) → domain (tool, prompt) → port → team →
 // application (agent).

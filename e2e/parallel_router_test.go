@@ -14,8 +14,8 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// parallelRouterSpecs covers the semantic model router (ADR 0031; enable model ADR 0042;
-// extended to PARALLEL BRANCHES by issue #100) LIVE: a mecated whose operator settings.yaml
+// parallelRouterSpecs covers the semantic model router (extended to PARALLEL
+// BRANCHES by issue #100) LIVE: a mecated whose operator settings.yaml
 // defines a models.router taxonomy (the taxonomy is the enable) must, on a real Parallel
 // fan-out, classify each branch's task and mint that branch on the chosen category's model.
 //
@@ -25,7 +25,7 @@ import (
 //
 // HOW THE ASSERTION WORKS. The harness observes the routed model on the wire:
 // `RoutedCategory`/`RoutedModel` ride the `parallel.branch{branch_start}` event payload
-// (`routed_category`/`routed_model` proto fields on the `Parallel` message, ADR 0034 /
+// (`routed_category`/`routed_model` proto fields on the `Parallel` message,
 // issue #100), so the spec asserts the OBSERVABLE facts that together prove the parallel
 // family's routing FIRED and did not wedge:
 //
@@ -106,7 +106,7 @@ func parallelRouterSpecs() {
 					"        model: large-cat\n"
 				gomega.Expect(os.WriteFile(settings, []byte(cfg), 0o600)).To(gomega.Succeed())
 
-				// ADR 0042: the taxonomy in settings.yaml enables the router — no flag.
+				// The taxonomy in settings.yaml enables the router — no flag.
 				spawn, err := harness.NewLocalWith(
 					"--permission-config", settings,
 				)
@@ -165,7 +165,7 @@ func parallelRouterSpecs() {
 
 				// (C) Each routed branch_start carries the routed model the classifier picked
 				// for that branch — the PER-BRANCH WIRE assertion (RoutedCategory/RoutedModel
-				// on the parallel.branch{branch_start} event, ADR 0034). Branch 0's task is a
+				// on the parallel.branch{branch_start} event). Branch 0's task is a
 				// trivial single-step lookup → "small" (the cheap lane); branch 1's task is a
 				// deep multi-step analysis → "large". The fields are populated only on a
 				// successful classification, so this is the deterministic per-branch proof

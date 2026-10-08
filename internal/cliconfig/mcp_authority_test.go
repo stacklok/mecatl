@@ -173,7 +173,7 @@ func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
 	}
 }
 
-func TestADR_0298_BrokerAuthorityAdmitsMultipleOAuthProfilesInOrder(t *testing.T) {
+func TestBrokerAuthorityAdmitsMultipleOAuthProfilesInOrder(t *testing.T) {
 	first := brokerOAuthRoute()
 	first.Name = "github"
 	second := brokerOAuthRoute()

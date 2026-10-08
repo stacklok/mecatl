@@ -318,7 +318,7 @@ func TestAttemptWorkerReflectionFailureClassification(t *testing.T) {
 	}
 }
 
-func TestADR_0259_AbstentionIsASeparateTerminalOutcome(t *testing.T) {
+func TestAbstentionIsASeparateTerminalOutcome(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
@@ -367,7 +367,7 @@ func TestADR_0259_AbstentionIsASeparateTerminalOutcome(t *testing.T) {
 	}
 }
 
-func TestADR_0259_AttemptReconciliationIsIdempotent(t *testing.T) {
+func TestAttemptReconciliationIsIdempotent(t *testing.T) {
 	t.Parallel()
 	clock := &attemptWorkerClock{now: time.Unix(20, 0)}
 	repo, partition, record := newAttemptWorkerRecord(t, clock)
@@ -423,7 +423,7 @@ func TestADR_0259_AttemptReconciliationIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestADR_0259_CanonicalArtifactIdentitySurvivesRestart(t *testing.T) {
+func TestCanonicalArtifactIdentitySurvivesRestart(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	clock := &attemptWorkerClock{now: time.Unix(50, 0)}
@@ -511,7 +511,7 @@ func TestADR_0259_CanonicalArtifactIdentitySurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestADR_0259_IncompleteTerminalEvidenceRemainsRetryable(t *testing.T) {
+func TestIncompleteTerminalEvidenceRemainsRetryable(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(45, 0)}
 	repository, partition, created := newAttemptWorkerRecord(t, clock)
 	worker := attemptWorker{
@@ -575,7 +575,7 @@ func TestAttemptRecoveryTransientSetupRetriesAreBoundedAcrossRestart(t *testing.
 	}
 }
 
-func TestADR_0259_IndependentDownstreamCommitReconcilesAfterClaimLoss(t *testing.T) {
+func TestIndependentDownstreamCommitReconcilesAfterClaimLoss(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	clock := &attemptWorkerClock{now: time.Unix(40, 0)}

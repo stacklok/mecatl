@@ -3,7 +3,7 @@ package tool
 import "context"
 
 // EnvironmentForker is the environment-isolation seam for fork-join parallelism
-// (harness pattern 8, ADR 0211). It produces an isolated CHILD Environment (Workspace +
+// (harness pattern 8). It produces an isolated CHILD Environment (Workspace +
 // command runner bound to the child namespace + ref) derived from a base
 // Environment so a forked agent loop can read — and, when its catalog allows
 // it, WRITE — without racing on, or mutating, the shared base tree.
@@ -63,7 +63,7 @@ type EnvironmentForker interface {
 // and join=first/judge applies the winner's diff to the parent), so a
 // delegated implementer's edits actually LAND without a manual copy/merge
 // step. (The writable Subagent does NOT use this seam — mode:"read-write"
-// edits the parent tree directly during the run; see ADR 0041.)
+// edits the parent tree directly during the run.)
 //
 // It replaces the former ForkMerger (issue #462). Merge now receives the CHILD
 // and PARENT Environments (not a forkRoot string + parent Workspace): the
@@ -86,8 +86,8 @@ type EnvironmentForker interface {
 //     not the fork's — the fork's content is untrusted child-authored data,
 //     but applying a diff is a parent-side operation (the same trust the
 //     parent's own Edit/Write carries). Composition decides whether to wire a
-//     merger at all — when wired, auto-merge is DEFAULT-ON (no flag; see ADR
-//     0039). The composition-injected merger is SERIALIZED process-wide (a
+//     merger at all — when wired, auto-merge is DEFAULT-ON (no flag).
+//     The composition-injected merger is SERIALIZED process-wide (a
 //     single mutex in a serializing decorator) so concurrent merges from
 //     Parallel never interleave their writes into a parent workspace.
 //   - nil merger (the default) means no auto-merge: the historical no-auto-merge

@@ -16,7 +16,7 @@ func TestRepositoryGuestMountsSharedObjectsReadOnly(t *testing.T) {
 	}
 }
 
-func TestADR_0224_GuestGitMetadataHasConfinedMount(t *testing.T) {
+func TestGuestGitMetadataHasConfinedMount(t *testing.T) {
 	mounts := guestMounts()
 	for _, mount := range mounts {
 		if mount.tag != "mecatl-git-metadata" {

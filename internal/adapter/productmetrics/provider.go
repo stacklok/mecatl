@@ -65,7 +65,7 @@ const exportInterval = 30 * time.Minute
 // build) that instead created the install-id file first, then failed here,
 // would leave that file behind — so a LATER release build's genuine first
 // export would read it back and report firstRun=false, silently skipping
-// the disclosure notice ADR 0338 requires before that first export.
+// the disclosure notice required before that first export.
 func Available() bool { return bakedKey != "" }
 
 // SetBakedKeyForTest overrides bakedKey for the duration of a test and
@@ -179,8 +179,8 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	// provider exports). This was removed once (see git history) over
 	// unbounded-cardinality concerns on the Prometheus-remote-write
 	// destination (stacklok/infra#5604), then reinstated after the actual
-	// cost was sized against real AMP pricing and accepted — see the ADR's
-	// cost-analysis section for the numbers. mecak8s provisions this value
+	// cost was sized against real AMP pricing and accepted (see
+	// Config.InstallID for the numbers). mecak8s provisions this value
 	// differently (a stable per-Helm-release ConfigMap, not this package's
 	// local install-id file — see internal/cliconfig's mecak8s wiring and
 	// deploy/helm/mecak8s/templates/install-id-configmap.yaml), since a

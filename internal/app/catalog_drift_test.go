@@ -75,7 +75,7 @@ func fullyLoadedCfg(t *testing.T) Config {
 		EnableTeams:      true,
 		MCPResourceTools: true,
 		Diagnostics:      port.NopDiagnostics{},
-		// StoreDir (ADR 0073/0076): a jsonlstore backs a ScheduleStore, so the
+		// StoreDir: a jsonlstore backs a ScheduleStore, so the
 		// fully-loaded catalog carries the Schedule + ScheduleQuery family and
 		// the anti-drift pin exercises it for real (memstore keeps them
 		// honestly absent — TestScheduleTool_RegisteredOnlyWhenStoreBacked).
@@ -112,7 +112,7 @@ var requiredFamilyTools = []string{
 	"ReadMcpResource",
 	"CallMcpWithQuery",
 	"mcp__globe__echo", // the server-global MCP mount itself
-	// Schedule + ScheduleQuery (ADR 0073/0076, AC2.3): the eager factory bind
+	// Schedule + ScheduleQuery (AC2.3): the eager factory bind
 	// registers them in BOTH catalogs over the SAME gate, so the name-set
 	// equality covers them with NO schedule carve-out. fullyLoadedCfg backs a
 	// ScheduleStore (StoreDir → jsonlstore) so the family pin exercises the
@@ -122,7 +122,7 @@ var requiredFamilyTools = []string{
 	agent.ScheduleQueryToolName, // "ScheduleQuery"
 }
 
-// eagerScheduleFactoryForTest mirrors buildEngine's eager bind (ADR 0076): the
+// eagerScheduleFactoryForTest mirrors buildEngine's eager bind: the
 // manager is resolved from the store BEFORE any catalog assembly and the
 // captured factory is what buildCatalog binds onto the assets. Tests that call
 // buildCatalog directly (the drift/nofs guards) pass this so the shared

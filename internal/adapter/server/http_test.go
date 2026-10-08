@@ -191,7 +191,8 @@ func TestHTTPPromptSSE(t *testing.T) {
 }
 
 // TestHTTPApprove mirrors the gRPC headline test over HTTP: a prompt pauses on
-// a permission.ask; a concurrent POST /approve resolves it; the run completes.
+// a permission.ask; a concurrent POST /controls/resolve-ask resolves it; the run
+// completes.
 func TestHTTPApprove(t *testing.T) {
 	write := &scriptTool{name: "Write", readOnly: false, content: "wrote"}
 	llm := mockllm.New(
@@ -215,7 +216,8 @@ func TestHTTPApprove(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Read the SSE stream incrementally; when the ask arrives, POST /approve.
+	// Read the SSE stream incrementally; when the ask arrives, POST
+	// /controls/resolve-ask.
 	r := bufio.NewReader(resp.Body)
 	var events []*mecatlv1.Event
 	var approved bool

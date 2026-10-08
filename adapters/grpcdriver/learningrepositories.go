@@ -10,8 +10,8 @@ import (
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 )
 
-// LearningRepositoryOwnershipMode declares the driver's explicit ADR-0213
-// ownership posture. Zero is invalid for configured learning drivers.
+// LearningRepositoryOwnershipMode declares the driver's explicit ownership
+// posture. Zero is invalid for configured learning drivers.
 type LearningRepositoryOwnershipMode uint8
 
 const (
@@ -20,14 +20,14 @@ const (
 	LearningRepositoryOwnershipTrusted LearningRepositoryOwnershipMode = iota + 1
 	// LearningRepositoryOwnershipEnforced is reserved for future negotiation.
 	// Current composition treats it only as deployment-trusted because the raw
-	// repository RPCs do not yet implement ADR-0213 authenticated ownership.
+	// repository RPCs do not yet implement authenticated ownership.
 	LearningRepositoryOwnershipEnforced
 )
 
 // LearningRepositoryCapabilities is the closed set required to select one
 // remote distributed-learning backend. It deliberately excludes attempt watch:
-// ADR-0250 watches session events only; advisory notifications need a separate
-// durable attempt-change-feed ADR.
+// durable event watches cover session events only; advisory notifications need
+// a separate durable attempt-change feed.
 type LearningRepositoryCapabilities struct {
 	AttemptRepository                 bool
 	ProposalRepository                bool

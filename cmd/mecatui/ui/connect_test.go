@@ -166,7 +166,7 @@ func TestConnectListFailureIsSanitized(t *testing.T) {
 }
 
 // TestReauthenticateIntentCarriesNoBrowserState pins that ConnectRestartIntent
-// itself carries no NoBrowser field: ADR 0271's contract that the recovery
+// itself carries no NoBrowser field: the contract that the recovery
 // overlay never opens a browser is now enforced unconditionally at the
 // cmd/mecatui composition boundary (restartFromConnectIntentWith), not by a
 // value threaded through the intent.

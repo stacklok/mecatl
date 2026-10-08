@@ -92,7 +92,7 @@ func (c *toolhiveWireCapture) snapshot() (paths, auth, xAPI []string, nativeBody
 		append([]string(nil), c.xAPIKeys...), c.nativeBody, c.responsesBody, c.responsesHits
 }
 
-func TestADR_0325_ProtocolSpecificWireRouting(t *testing.T) {
+func TestProtocolSpecificWireRouting(t *testing.T) {
 	capture := &toolhiveWireCapture{}
 	gateway := httptest.NewServer(http.HandlerFunc(capture.handler))
 	defer gateway.Close()

@@ -567,7 +567,7 @@ func TestParseFlagsNoMouse(t *testing.T) {
 }
 
 // TestParseFlagsThemeResolution asserts cfg.theme (the light-theme
-// auto-detect gate's input, ADR 0280 — resolveThemeAutoDetect treats an empty
+// auto-detect gate's input — resolveThemeAutoDetect treats an empty
 // cfg.theme as "no explicit theme") stays empty with none given, and picks up
 // a theme name from either --theme or the MECATUI_THEME fallback.
 func TestParseFlagsThemeResolution(t *testing.T) {
@@ -1417,7 +1417,7 @@ func TestEmbeddedConfigMapsPosture(t *testing.T) {
 }
 
 // TestParseFlagsSubagentModelRouter covers the --subagent-model-router kill-switch
-// (ADR 0042) end-to-end through mecatui's embeddedConfig: the router is enabled by the
+// end-to-end through mecatui's embeddedConfig: the router is enabled by the
 // models.router: taxonomy, so the bool flag only sets RouterDisabled when given as
 // =false. Unset → set==false → RouterDisabled==false (taxonomy governs); bare/=true →
 // set==true/value==true, RouterDisabled stays false (a harmless no-op, does NOT disable);

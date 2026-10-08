@@ -24,7 +24,7 @@ type config struct {
 	// transportMode is the resolved canonical transport mode (local/connect)
 	// threaded explicitly from resolveInvocation through parse and validate.
 	// It drives the transport path (no-probe/no-embed) and the
-	// trust/provider/posture validation gating (ADR 0087).
+	// trust/provider/posture validation gating.
 	transportMode transportMode
 	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for the
 	// bare/local mode). Set by resolveInvocation; consumed by resolveTransport.
@@ -114,8 +114,8 @@ type config struct {
 	defaultProvider        string
 	defaultModel           string
 	defaultProviderFlagSet bool
-	// modelAliases / modelSlots mirror the mecated flags for the embedded server
-	// (ADR 0030): modelAliases maps a short alias to a concrete id; modelSlots binds
+	// modelAliases / modelSlots mirror the mecated flags for the embedded server:
+	// modelAliases maps a short alias to a concrete id; modelSlots binds
 	// an internal lightweight call (compaction/guardrail; the ask-reviewer slot is
 	// inert here — mecatui runs interactive, so the headless child-ask reviewer never
 	// engages) or a tier (cheap/fast/reasoning) to a selector resolved THROUGH
@@ -124,7 +124,7 @@ type config struct {
 	// #93: the type lives in cliconfig so the two mains cannot drift).
 	modelAliases *cliconfig.KeyValueList
 	modelSlots   *cliconfig.KeyValueList
-	// Subagent model router (ADR 0031; enable model per ADR 0042, embedded server
+	// Subagent model router (embedded server
 	// only): the router is ENABLED by an operator-tier models.router: taxonomy in the
 	// user-global settings.yaml (the guardrails-parity enable model). The
 	// --subagent-model-router flag is a KILL-SWITCH: subagentModelRouter holds its value
@@ -207,7 +207,7 @@ type config struct {
 	// contextWindowOverride mirrors mecated's embedded-server-only escape hatch.
 	contextWindowOverride int
 
-	// Provider-side prompt caching (ADR 0100), embedded server only. Mirrors
+	// Provider-side prompt caching, embedded server only. Mirrors
 	// mecated's --no-prompt-cache / --anthropic-cache-ttl, mapped onto
 	// app.Config.PromptCacheDisabled / app.Config.AnthropicCacheTTL in main.go.
 	noPromptCache     bool
@@ -226,7 +226,7 @@ type config struct {
 	// (ignored under `mecatui connect`). When set it injects a single
 	// ScopeCLI allow-all rule that suppresses the built-in mutate-ask floor; a Deny
 	// in any scope and any deliberately configured Ask still apply. Refused as root
-	// outside a declared sandbox (see validate). See docs/adr/0022-allow-all-posture.md.
+	// outside a declared sandbox (see validate).
 	allowAllTools bool
 
 	// posture is the graduated operator posture ladder for the EMBEDDED server only
@@ -237,7 +237,7 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
-	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055) for
+	// reasoningEffort is the operator-tier reasoning-effort default for
 	// the EMBEDDED server. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so CLI out-ranks the operator-global settings.yaml
 	// reasoning-effort: key. Mapped onto app.Config.ReasoningEffort/
@@ -340,9 +340,8 @@ type config struct {
 	skillsDir string
 	noSkills  bool
 
-	// Embedded-server perf observability (decision 7 in
-	// docs/adr/0018-perf-observability.md; used only when hosting an in-process
-	// server). OFF by default. perf arms the loopback runtime-introspection admin
+	// Embedded-server perf observability (used only when hosting an
+	// in-process server). OFF by default. perf arms the loopback runtime-introspection admin
 	// surface (pprof/expvar/RSS/goroutines/flightrecorder + /metrics) plus the
 	// domain-metrics EventSink. Empty perfAddr uses a private UNIX socket, except
 	// perfMCP uses ephemeral loopback TCP for its streaming-HTTP transport.
@@ -510,7 +509,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		return helpFS, config{}, err
 	}
 
-	// By-name applicability rejection (ADR 0087): connect rejects embedded-only
+	// By-name applicability rejection: connect rejects embedded-only
 	// flags; the bare/local mode rejects remote-only flags.
 	if err := rejectInapplicableFlags(fs, mode); err != nil {
 		return fs, config{}, err
@@ -690,7 +689,7 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	case "shell":
 		cfg.shellFlagSet = true
 	case "subagent-model-router":
-		// Kill-switch (ADR 0042): record that the flag was given so embeddedConfig can
+		// Kill-switch: record that the flag was given so embeddedConfig can
 		// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
 		// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
 		cfg.subagentModelRouterSet = true
@@ -935,8 +934,8 @@ func (c config) validate() error {
 	default:
 		return fmt.Errorf("invalid --mode %q (want default|plan|accept-edits)", c.mode)
 	}
-	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
-	// 1); the predicate + its rationale live once on config.mayEmbed.
+	// Provider/posture checks apply ONLY to paths that may embed; the
+	// predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
 		if err := validateEmbeddedRecovery(c); err != nil {
 			return err
@@ -998,7 +997,7 @@ See https://mecatl.dev/docs/features/choose-models`)
 // mayEmbed reports whether this run may host an embedded server, and so is
 // subject to the provider/posture checks in validate() and the pre-TUI posture
 // WARN in run(). The bare/local mode always embeds; `connect` never embeds, so
-// it skips those checks (ADR 0087). It is the single predicate both guards key
+// it skips those checks. It is the single predicate both guards key
 // on, so the gating rationale lives in one place.
 func (c config) mayEmbed() bool {
 	return c.transportMode == modeLocal

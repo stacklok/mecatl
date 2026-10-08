@@ -33,7 +33,7 @@ const (
 
 // eventFollowInterval is how often a following ReadAfter re-stats the log.
 //
-// ADR 0250 chose size-polling over fsnotify deliberately: attachment is not a
+// Size-polling is chosen over fsnotify deliberately: attachment is not a
 // keystroke-latency path, fsnotify adds dependency surface to a store adapter,
 // and it silently does not work on network filesystems — where polling degrades
 // identically to the local case. 100ms keeps a live tail feeling immediate.
@@ -51,7 +51,7 @@ const (
 // behind a cheap size/mtime comparison trades a correctness guard for constant
 // factors. It stays unoptimised because jsonlstore is not the many-follower
 // deployment: mecak8s keeps NO local state and follows through redisstore's
-// XREAD (ADR 0048), so jsonlstore followers are local and few. If that changes,
+// XREAD, so jsonlstore followers are local and few. If that changes,
 // the gate to add is a stat comparing size, mtime AND inode — inode being the
 // part that still catches a recreate — never size alone.
 const eventFollowInterval = 100 * time.Millisecond

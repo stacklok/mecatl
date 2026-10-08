@@ -141,7 +141,7 @@ type EvidenceRef struct {
 }
 
 // ResolvedProtocol applies the sole compatibility rule: an absent protocol is
-// an ADR-0109 legacy record. Field presence never changes that decision.
+// a legacy-v0 record. Field presence never changes that decision.
 func (r EvidenceRef) ResolvedProtocol() EvidenceProtocol {
 	if r.Protocol == "" {
 		return ReflectionEvidenceLegacyV0

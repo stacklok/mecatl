@@ -157,8 +157,8 @@ func (t *firstValueTracker) claim() (time.Time, bool) {
 }
 
 // perRunState is the bounded set of facts tracked for ONE live run, keyed by
-// the loop-stamped session.Event.RunID (an opaque per-run correlation id, ADR
-// 0249 — never a session id, tool name, or free-text field, so this package's
+// the loop-stamped session.Event.RunID (an opaque per-run correlation id —
+// never a session id, tool name, or free-text field, so this package's
 // no-PII invariant holds). Every field is a count or a boolean derived from a
 // closed vocabulary; nothing here is ever attached as an attribute VALUE.
 type perRunState struct {
@@ -374,7 +374,7 @@ func NewRecorder(mp metric.MeterProvider) (*Recorder, error) {
 // ONLY ev.Type, ev.RunID, ev.Result.Stop, and ev.Result.Usage — never a
 // session id, model id/alias, tool name, or any free-text field
 // (ev.Result.Text/Error are never touched). ev.RunID is an opaque per-run
-// correlation id (ADR 0249), not a session id, and is used ONLY as the key of
+// correlation id, not a session id, and is used ONLY as the key of
 // the per-run tracker (dedup'ing subagentUsed/teamUsed and resolving
 // had_tool_call at EvResult); it never becomes an attribute value.
 func (r *Recorder) Emit(ctx context.Context, ev session.Event) {

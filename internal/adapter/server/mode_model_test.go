@@ -85,7 +85,7 @@ func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.Se
 	return svc
 }
 
-// TestModeFlipRebuildsOnPlanSlot is the core Phase 3 guard (ADR 0030 Layer 3): a
+// TestModeFlipRebuildsOnPlanSlot is the core mode→model guard: a
 // DEFAULT-FS session run in default mode rides the shared engine; after SetMode(plan)
 // the next StartRun PROMOTES it to a per-session factory engine resolved on the PLAN
 // model. ResolvedModel reflects the plan model, and the factory was invoked with
@@ -144,7 +144,7 @@ func TestModeFlipRebuildsOnPlanSlot(t *testing.T) {
 }
 
 // TestModeRebuildReEmitsCapabilities pins that SessionCapabilities re-emits the
-// rebuilt engine's per-session caps after a mode→model rebuild (ADR 0030 Layer 3) — the
+// rebuilt engine's per-session caps after a mode→model rebuild — the
 // capability echo reads the freshly-registered se.caps, so a plan model with different
 // modalities re-advertises correctly.
 func TestModeRebuildReEmitsCapabilities(t *testing.T) {
@@ -351,7 +351,7 @@ func drainAndFinish(t *testing.T, svc *server.Service, id session.SessionID, run
 	return got
 }
 
-// TestPlanModeSessionRehydratesOnPlanModel pins the restart path (ADR 0030 Layer 3 +
+// TestPlanModeSessionRehydratesOnPlanModel pins the restart path (mode→model +
 // cloud-native Phase 1): a session persisted with Mode=plan, whose per-session engine
 // died with the process, is REHYDRATED at the run-entry seam on the PLAN model — the
 // factory is invoked with mode=plan read off the persisted aggregate, never the default.
@@ -395,8 +395,9 @@ func TestPlanModeSessionRehydratesOnPlanModel(t *testing.T) {
 	}
 }
 
-// TestModeFlipEndToEndModelObserved is the authoritative offline end-to-end (ADR 0030
-// Layer 3): CreateSession → Run(default) → SetMode(plan) → Run(plan), asserting via the
+// TestModeFlipEndToEndModelObserved is the authoritative offline end-to-end
+// (mode→model): CreateSession → Run(default) → SetMode(plan) → Run(plan),
+// asserting via the
 // mockllm request observer that the LLM saw the SESSION model on turn 1 and the PLAN
 // model on turn 2 — the model the provider actually received, not just the echoed id.
 func TestModeFlipEndToEndModelObserved(t *testing.T) {

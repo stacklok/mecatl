@@ -396,7 +396,7 @@ func (a *fakeAssembler) Assemble(_ context.Context, _ []string, _ *session.Instr
 
 // TestLoopUsesInjectedAssembler asserts the loop calls the injected
 // InstructionAssembler instead of the default and prepends its output to the
-// request (ephemerally — fragments are not persisted; ADR 0043).
+// request (ephemerally — fragments are not persisted).
 func TestLoopUsesInjectedAssembler(t *testing.T) {
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	asm := &fakeAssembler{msg: "INJECTED INSTRUCTIONS"}
@@ -433,7 +433,7 @@ func TestLoopUsesInjectedAssembler(t *testing.T) {
 // non-empty per-project memory store and the composed MultiAssembler
 // (RootAssembler + MemoryIndexAssembler), the turn-0 REQUEST contains the memory
 // index as a USER message, ordered AFTER the AGENTS.md instruction message and
-// before the user prompt. As of ADR 0043 the fragments are EPHEMERAL — prepended to
+// before the user prompt. The fragments are EPHEMERAL — prepended to
 // the LLMRequest per-run, NEVER persisted into the conversation — so the ordering is
 // observed on the request the provider received, not on sess.Conversation.Messages.
 func TestTurn0InjectsMemoryIndexAfterAgentsMD(t *testing.T) {
@@ -495,7 +495,7 @@ func (f fakeSoulSrc) Load(context.Context) (string, error) { return f.body, nil 
 // composed MultiAssembler (RootAssembler + SoulAssembler + MemoryIndexAssembler),
 // the turn-0 REQUEST contains the persona/soul as a USER message, ordered AFTER the
 // AGENTS.md instruction message, BEFORE the memory index (identity before saved
-// facts), and all before the user prompt. As of ADR 0043 the fragments are
+// facts), and all before the user prompt. The fragments are
 // EPHEMERAL — observed on the request the provider received, not on the persisted
 // conversation.
 func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
