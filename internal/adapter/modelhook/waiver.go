@@ -16,7 +16,7 @@ const (
 )
 
 // WaiverHolder owns process-local keyed contextual repeat grants. Despite its
-// compatibility name, it no longer stores normalized Shell/JSON waiver scopes:
+// compatibility name, it does not store normalized Shell/JSON waiver scopes:
 // every grant is an opaque HMAC-SHA256 over canonical length-delimited exact
 // action and dependency fields assembled by composition.
 type WaiverHolder struct {

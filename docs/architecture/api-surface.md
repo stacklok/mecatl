@@ -60,8 +60,10 @@ unknown value through instead of failing.
 
 A run's domain `session.Event` values become one proto `Event` through the pure `toProto`
 mapper (`mapper.go`), on gRPC and HTTP alike. The live relays (`Converse` and the prompt
-SSE stream) skip three log-only kinds, `approval`, `compaction_archive`, and
-`user_prompt`, because the client already holds its own verdicts and prompts.
+SSE stream) skip five log-only kinds: `approval`, `compaction_archive`, and
+`user_prompt`, because the client already holds its own verdicts and prompts, plus the
+internal `network_attempt` and `request_manifest`. All five are still recorded to the
+durable log.
 
 The relay, not the engine, appends every event to the durable event log, whether or not
 the client is still connected, so the log records a run's tail after its client

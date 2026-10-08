@@ -442,7 +442,8 @@ var errNoProvider = errors.New(
 // offline mockllm test/smoke path) regardless of the environment.
 //
 // It returns errNoProvider when no provider resolves credentials and the mock is
-// not selected. Startup logging emits one line per available provider with the
+// not selected, or an OIDC-not-enrolled error when the only configured providers
+// are unenrolled OIDC providers. Startup logging emits one line per available provider with the
 // provider id and base URL ONLY — NEVER the key (CWE-200; S5 verifies).
 func buildProviderRegistry(cfg Config, detect envDetector) (*providerRegistry, error) {
 	return buildProviderRegistryContext(context.Background(), cfg, detect)
@@ -610,10 +611,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// by CONFIG-DETECTED INTENT alone —
 	// resolveToolhiveIntent NEVER runs a network probe, so registration never
 	// blocks on (or is gated by) reachability (R1.1). With the family registered,
-	// len(entries)>0 even with ZERO provider keys, so errNoProvider no longer
-	// fires for a ToolHive-only operator — intended (zero-API-key onboarding).
-	// Issue #265: the intent now carries a routing mode — proxy (loopback,
-	// today's behaviour) or direct (gateway_url + in-process OIDC token).
+	// len(entries)>0 even with ZERO provider keys, so errNoProvider does not
+	// fire for a ToolHive-only operator — intended (zero-API-key onboarding).
+	// The intent carries a routing mode — proxy (loopback) or direct
+	// (gateway_url + in-process OIDC token).
 	if intent, ok := resolveToolhiveIntent(cfg); ok {
 		openAIEntry, anthropicEntry := newToolhiveEntries(cfg, intent, cfg.toolhiveConfigPath, meta)
 		entries[providerToolhive] = openAIEntry
@@ -1394,14 +1395,13 @@ func preferredDefaultProvider(reg *providerRegistry) string {
 }
 
 // toolhiveRoutingMode is the resolved routing mode for a toolhive registry
-// entry (issue #265): proxy routes through the LOCAL loopback reverse proxy
-// (today's behaviour); direct talks to the real gateway_url with an in-process
-// OIDC token. The zero value is proxy (the byte-identical default for every
-// config that predates direct mode).
+// entry (issue #265): proxy routes through the LOCAL loopback reverse proxy;
+// direct talks to the real gateway_url with an in-process OIDC token. The zero
+// value is proxy.
 type toolhiveRoutingMode int
 
 const (
-	toolhiveModeProxy  toolhiveRoutingMode = 0 // loopback reverse proxy (today's behaviour)
+	toolhiveModeProxy  toolhiveRoutingMode = 0 // loopback reverse proxy (the default)
 	toolhiveModeDirect toolhiveRoutingMode = 1 // gateway_url + in-process OIDC token
 )
 
@@ -1443,8 +1443,7 @@ type toolhiveIntent struct {
 // Routing mode (when the config-file path is taken): cfg.ToolhiveLLMMode drives
 // the discriminator — auto (the default) selects direct when the OIDC trio
 // (gateway_url + issuer + client_id) is configured (toolhivellm.OIDCConfigured)
-// and falls back to proxy otherwise (today's byte-identical behaviour when
-// OIDC is absent); proxy forces the loopback path regardless of OIDC; direct
+// and falls back to proxy otherwise (when OIDC is absent); proxy forces the loopback path regardless of OIDC; direct
 // forces the gateway_url path. direct + !IsConfigured() is NOT a fail-soft
 // miss here — it is a loud Build-fail (resolveDirectIntentError) so an
 // operator who asked for direct against an unconfigured gateway sees the
@@ -1943,8 +1942,7 @@ var errToolhiveNoModels = errors.New(
 
 // classifyLiveListError maps ANY provider's live-listing failure to a v1
 // provider_status state (it classifies every resolveProviderModels failure,
-// not just toolhive's — the name used to say "Toolhive" back when it was
-// probeToolhive-only, but it is now the SHARED classifier resolveProviderModels
+// not just toolhive's — it is the SHARED classifier resolveProviderModels
 // calls for every provider with a lister): a 401/403 *openaicompat.StatusError
 // is "unauthorized" (a stale/rejected credential); everything else (connection
 // refused, timeout, malformed response, a 5xx) is "unreachable" (the endpoint

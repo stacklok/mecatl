@@ -149,7 +149,7 @@ func TestJSONLStoreConditionalPrunableConformance(t *testing.T) {
 // TestJSONLStoreEventLogConformance runs the shared EventLog conformance table
 // against the JSONL replay store (the same Store that doubles as SessionStore):
 // this is the LOCAL/reference half of the dual-path contract, run against the
-// SAME suite the gRPC driver client passes over bufconn (cloud-native 3c).
+// SAME suite the gRPC driver client passes over bufconn.
 func TestJSONLStoreEventLogConformance(t *testing.T) {
 	eventlogconformance.Run(t, func(t *testing.T) port.EventLog {
 		st, err := jsonlstore.New(t.TempDir())

@@ -40,7 +40,7 @@ const emptyToolOutputPlaceholder = "(tool returned no output)"
 //     across turns statelessly.
 //
 // This free form projects tool results with the adapter's STATIC transmit caps
-// (text+image; the byte-identical pre-T7 default for tests and any caller that
+// (text+image; the default for tests and any caller that
 // does not hold a per-session intersection). The method form below threads the
 // per-session intersection (WithProviderCapabilities) so a text-only model on an
 // image-capable adapter drops image blocks from a tool result's Parts.
@@ -89,9 +89,8 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 	// Thread the per-SESSION capability intersection (WithProviderCapabilities)
 	// into the input build so a tool result's typed Parts are projected honestly
 	// — a text-only model on this image-capable adapter drops image blocks. The
-	// free buildParams above uses the static transmit caps (the byte-identical
-	// pre-T7 default); only the method (the live Stream path) carries the session
-	// intersection.
+	// free buildParams above uses the static transmit caps (the default); only
+	// the method (the live Stream path) carries the session intersection.
 	items, err := buildInput(req.Messages, p.sessionCaps(), p.breakpointIndex(req))
 	if err != nil {
 		return responses.ResponseNewParams{}, err
@@ -290,8 +289,8 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpoi
 //
 // Otherwise (no Parts, or routing returns nil — every block filtered out by the
 // capability intersection) it falls back to the single-string
-// function_call_output(callID, Content) — BYTE-IDENTICAL to the pre-T7 path, so
-// the legacy/mock/mecademo path is unchanged.
+// function_call_output(callID, Content), so the legacy/mock/mecademo path stays
+// stable.
 func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) responses.ResponseInputItemUnionParam {
 	blocks := port.RouteToolResultParts(tr, caps)
 	if len(blocks) == 0 {
@@ -402,7 +401,7 @@ func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 	// the id ITS blob is bound to. Sending several blobs under one id is what the
 	// provider rejects as invalid_encrypted_content, so the pairing is preserved
 	// end to end (see reasoning.go). Only a complete current envelope is
-	// replayable; historical bare ciphertext and malformed/unsupported envelopes
+	// replayable; legacy bare ciphertext and malformed/unsupported envelopes
 	// are omitted rather than reinterpreted.
 	//
 	// The SDK's ResponseReasoningItemParam.ID is a PLAIN string tagged

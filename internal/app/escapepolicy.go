@@ -23,7 +23,7 @@ import (
 // wrapping port.PermissionPolicy that relaxes an out-of-root Read/ListDir
 // escape at the yolo/auto operator postures, an out-of-root WRITE escape at
 // yolo (Allow) / auto (Ask), and resolves a strict/trusted out-of-root read OR
-// write escape to ASK (instead of today's
+// write escape to ASK (instead of a
 // hard ErrPathEscape dead-end that only pushes the model to an opaque Shell
 // `cat /path`). It is COMPOSITION, not domain — the escape decision is a
 // posture/policy concern, and the osfs containment vetting is never stripped
@@ -210,9 +210,8 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		case writeToolName, editToolName:
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
 			// never a silent un-asked mutation below yolo. Scenario 4 extends
-			// the SAME ask to strict/trusted (whose Write/Edit floor Ask
-			// previously surfaced the un-actionable "approval required by
-			// rule" and then dead-ended on ErrPathEscape even when approved).
+			// the SAME ask to strict/trusted, so their Write/Edit floor Ask is
+			// actionable rather than dead-ending on ErrPathEscape when approved.
 			// The inner policy already ran first: a configured Deny and a
 			// configured Ask both returned above (deny-dominance + the
 			// configured-Ask floor), so the relax only ever replaces an inner

@@ -115,8 +115,9 @@ sequenceDiagram
    time) through the permission policy and hooks.
 4. A call that needs approval pauses the run until the client answers.
 5. The loop only emits events. The service relay appends each one to `port.EventLog`,
-   stamping the verified caller, and forwards public events to the client. Approvals
-   and compaction archives go to the log only.
+   stamping the verified caller, and forwards public events to the client. Approvals,
+   compaction archives, user prompts, and internal network and request records go to
+   the log only ([API surface](architecture/api-surface.md)).
 
 Other entry points use the same service: `mecatui` runs it in-process by default,
 `mecatequi` drives a single run, and scheduled tasks start runs on a timer. `mecademo`

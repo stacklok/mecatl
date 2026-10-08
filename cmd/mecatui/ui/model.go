@@ -56,7 +56,7 @@ type LifecycleNotifier interface {
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be
 // driven entirely offline. Capabilities is the proto-free relayed truth the ui
-// stores for its honest discoverability affordances (Phase B); an older server
+// stores for its honest discoverability affordances; an older server
 // yields the all-false zero value. ResolvedModel is the EFFECTIVE provider+model
 // the server resolved the session to (echoed verbatim); the ui shows it in the
 // header from turn zero, and an older server yields the zero value (no model
@@ -161,7 +161,7 @@ type Deps struct {
 	// `mecated --no-scheduler` opts out).
 	Sched client.ScheduleLister
 	// Sessions is the stored-session inventory surface for the /sessions picker
-	// (issue #245 Phase 2); nil disables it (the overlay is honestly absent). It is
+	// (issue #245); nil disables it (the overlay is honestly absent). It is
 	// the lister the picker calls to enumerate stored sessions. Unlike the
 	// caps-gated overlays it is NOT gated on a ServerCapabilities bit — the picker
 	// is available whenever a lister + authoritative transcript loader are wired
@@ -301,7 +301,7 @@ type Deps struct {
 	BrowseSessions bool
 	// InitialPrompt is a CLI-supplied seed prompt auto-submitted once the first
 	// session is ready (the equivalent of typing the prompt and pressing enter).
-	// Empty = today's behavior (no seed). Cleared after the first use so a
+	// Empty = no seed. Cleared after the first use so a
 	// /models restart or /clear never re-submits it. Populated by main.go from
 	// -p/--prompt + --prompt-file.
 	InitialPrompt string
@@ -389,7 +389,7 @@ type Deps struct {
 	// sequence input on the program's ACTUAL reducer progress instead of on rendered
 	// output: under `task test`'s parallel `go test -race ./...` the Bubble Tea 60fps
 	// flush ticker is CPU-starved and the captured output stalls for seconds, so a
-	// WaitFor(tm.Output()) deadline fires before any frame is flushed (the historical
+	// WaitFor(tm.Output()) deadline fires before any frame is flushed (the
 	// "~1/3 -race flake", in truth far worse under load). The reducer goroutine keeps
 	// getting scheduled, so observing it directly is starvation-robust.
 	//
@@ -406,8 +406,7 @@ type Deps struct {
 	//     running→idle transition) — both reducer-side facts the fake cannot see
 	//     because the fake has no handle on the model. onPhase is the minimal seam
 	//     that surfaces exactly those reducer transitions.
-	// (An all-fake-side scheme that also signals run-completion would remove this
-	// field; that rework is deferred. For now: nil ⇒ zero cost, zero behaviour change.)
+	// (nil ⇒ zero cost, zero behaviour change.)
 	onPhase func(phase)
 }
 
@@ -796,8 +795,7 @@ type Model struct {
 	// SessionReadyMsg. It drives the honest discoverability affordances (which
 	// chords the help overlay annotates as available, and whether an empty
 	// MCP/commands box reads "not enabled" vs "none configured"). Zero value
-	// (all-false) until connect and for an older server. STORED, UNRENDERED in
-	// Phase A — Phase B consumes it.
+	// (all-false) until connect and for an older server.
 	caps client.Capabilities
 	// guardrailStatusRequest invalidates asynchronous /guardrails and /posture
 	// coverage responses when a newer request or session wins.
@@ -876,7 +874,7 @@ type Model struct {
 	// submit (defense-in-depth against re-fire), and the identical typed-prompt
 	// path runs. A /models restart or /clear funnels back through
 	// applySessionReady but the field is already empty, so the seed never
-	// re-fires. Empty = no seed (the default; today's behavior).
+	// re-fires. Empty = no seed (the default).
 	pendingInitialPrompt string
 
 	// promptRecovery retains a text-only prompt across a transport outcome. It is
@@ -1343,7 +1341,7 @@ func (m Model) startupProgressCmd() tea.Cmd {
 // verbatim (the boot snapshot may be the embedded floor), the server validates it,
 // and a server rejection degrades to the default loudly via createSessionCmd's
 // fallback leg. With no lister wired (old server / persistence off) it fires
-// CreateSession directly (the historical path, with an empty selection).
+// CreateSession directly with an empty selection.
 func (m Model) Init() tea.Cmd {
 	startup := m.startupCmd()
 	// The keyboard-capability probe deadline wraps structurally around whatever

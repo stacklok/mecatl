@@ -289,7 +289,7 @@ type config struct {
 	retentionCLISet                                                  app.RetentionCLISet
 	acknowledgeMainRetention                                         bool
 
-	// Embedded-server soul config (issue #14, Phase 1; used only when hosting an
+	// Embedded-server soul config (issue #14; used only when hosting an
 	// in-process server). A user-scoped, agent-READ-ONLY persona fragment injected
 	// as turn-0 context. ON by default reading the conventional
 	// $XDG_CONFIG_HOME/mecatl/soul.md (fallback ~/.config/mecatl/soul.md) — a
@@ -297,7 +297,7 @@ type config struct {
 	// noSoul disables it entirely and wins (the resolved SoulPath/NoSoul map onto
 	// app.Config in embeddedConfig). No tool can write the soul.
 	//
-	// Drift baseline (issue #14, Phase 3, Item 1): the harness records the soul's
+	// Drift baseline (issue #14): the harness records the soul's
 	// content hash in a sidecar (<soulPath>.sha256) trust-on-first-use; a later run
 	// whose hash differs logs a drift WARN and still loads. approveSoul (re)writes the
 	// baseline to the current hash (accept the edit); soulStrict makes a DRIFTED soul
@@ -307,7 +307,7 @@ type config struct {
 	approveSoul bool
 	soulStrict  bool
 
-	// Embedded-server user-model config (issue #14, Phase 2; used only when hosting
+	// Embedded-server user-model config (issue #14; used only when hosting
 	// an in-process server). A user-scoped, CROSS-PROJECT memory of durable FACTS
 	// about the operator (explicit user-memory tools plus a live bounded operator
 	// profile in the volatile system suffix). ON by default at the conventional

@@ -24,8 +24,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// These tests cover Phase 2 — the Subagent tool (read-only explorer) gets full Shell
-// inside an isolated git worktree, mirroring the Phase 1 team-member treatment.
+// These tests cover Subagent workspace isolation — the Subagent tool (read-only explorer)
+// gets full Shell inside an isolated git worktree, mirroring the team-member treatment.
 
 // TestBuildChildEngineWithRunnerHasShell proves the default Subagent explorer's catalog
 // gains Shell when a runner is configured (the worktree-isolation path), while still
@@ -167,7 +167,7 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 	}
 }
 
-// TestSubagentRunsGitInWorktreeEndToEnd is the key Phase 2 proof: a Subagent tool, driven
+// TestSubagentRunsGitInWorktreeEndToEnd is the key isolation proof: a Subagent tool, driven
 // through a real parent engine whose catalog has the Subagent tool wired with a real
 // worktree forker + sandboxed runner, runs git (log/show) over a cheap worktree that
 // SHARES the base repo's .git — so it sees the full history — confined to a throwaway
@@ -265,7 +265,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 }
 
 // TestBuildSubagentToolRealWiringForksChildShellWhenShell drives the REAL buildSubagentTool
-// (the live Phase 2 composition seam) — NOT the hand-wired newSubagentToolForTest helper —
+// (the live composition seam) — NOT the hand-wired newSubagentToolForTest helper —
 // to prove the Shell⟺forker coupling at the composition layer. With a shell-configured
 // cfg over a real git repo, the resulting Subagent tool, when invoked, must run the child's
 // Shell in an ISOLATED git WORKTREE: the child's pwd is NOT the parent repo root and its

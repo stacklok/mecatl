@@ -601,8 +601,7 @@ func taskGlyph(state string, blocked bool) string {
 
 // teamSubViewHint is the "<flip> roster · <close> close" footer used by the team
 // tasks/findings sub-views. The flip chord (Tasks/Findings) and the close chord
-// (Close) read the LIVE keyMap markings so an override propagates (issue #457);
-// with defaults it is byte-identical to the historical literal.
+// (Close) read the LIVE keyMap markings so an override propagates (issue #457).
 func teamSubViewHint(hk helpKeys, flip string) string {
 	return flip + " roster · " + hk.closeOnly + " close"
 }

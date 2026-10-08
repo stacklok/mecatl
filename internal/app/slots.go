@@ -22,22 +22,22 @@ const (
 	routerBackendJev = "jev"
 )
 
-// slots.go is the COMPOSITION-LAYER per-slot model resolver (Phase 1+2):
+// slots.go is the COMPOSITION-LAYER per-slot model resolver:
 // the "aliases as the spine" layer plus the `models.slots` map that binds named
 // pipeline functions to aliases. It is a pure composition concern — engine/agent
 // never sees a slot or an alias, only the already-resolved concrete model id.
 //
-// A SLOT is a named internal LLM call ("compaction", "ask-reviewer", "guardrail")
+// A SLOT is a named internal LLM call (e.g. "compaction", "ask-reviewer", "guardrail")
 // or a semantic TIER ("cheap", "fast", "reasoning"). resolveSlotModel maps a slot
 // name to a concrete model id THROUGH the existing alias machinery (lookupModelAlias),
 // so the two never drift: a slot value is itself an alias or a literal id, resolved
 // by the SAME grammar the agent-def `model:` path uses.
 //
-// THE BYTE-IDENTICAL GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
-// absent) resolveSlotModel returns ("", false) for every slot, and each of the three
-// routed call sites keeps its EXACT pre-feature behaviour (the session model). The
+// THE UNCONFIGURED GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
+// absent) resolveSlotModel returns ("", false) for every slot, and every routed call
+// site keeps its EXACT unrouted behaviour (the session model). The
 // posture is FAIL-SOFT throughout: a typo'd slot key, an unknown/inherit alias, or
-// any other miss WARNs and degrades to today's behaviour — a broken housekeeping
+// any other miss WARNs and degrades to the session model — a broken housekeeping
 // slot must never wedge a compaction / ask-review / guardrail call.
 //
 // The internal lightweight calls routed to a slot are compaction (the tier-4 summary
@@ -65,8 +65,7 @@ const (
 	// slotGuardrail routes the LLM-backed guardrail content checker (issue #27).
 	slotGuardrail  = "guardrail"
 	slotReflection = "reflection"
-	// slotSynthesis is DEFINED for completeness (team synthesis is the cheap tier's
-	// natural fourth consumer) but is deliberately NOT wired this slice — the lead
+	// slotSynthesis is DEFINED and accepted as a key but has NO consumer — the lead
 	// synthesis runs on the lead member's whole engine and lacks a clean seam.
 	slotSynthesis = "synthesis"
 	// slotTitle routes the opt-in server-owned title generator. It deliberately has
@@ -121,9 +120,8 @@ var knownSlotNames = map[string]struct{}{
 }
 
 // slotDefaultTier maps a slot to the semantic tier it falls through to when it has no
-// explicit binding. The three internal-call slots default to `cheap` (housekeeping
-// runs on the cheapest model unless the operator says otherwise — the ADR's immediate
-// token-savings win). The `plan` slot is the DELIBERATE divergence: it defaults to the
+// explicit binding. The internal-call slots default to `cheap` (housekeeping runs on
+// the cheapest model unless the operator says otherwise). The `plan` slot is the DELIBERATE divergence: it defaults to the
 // `reasoning` tier, because a plan-mode model is a STRONG-reasoning model, not a cheap
 // one. A slot absent here has no default tier (an explicit binding
 // is the only way to route it).
@@ -144,8 +142,8 @@ var slotDefaultTier = map[string]string{
 //  1. an explicit cfg.ModelSlots[slotName] binding;
 //  2. else the slot's default tier (slotDefaultTier[slotName]) when THAT tier is
 //     bound in cfg.ModelSlots;
-//  3. else ("", false) — NO slot configured, so the caller keeps today's EXACT
-//     behaviour (the byte-identical guarantee).
+//  3. else ("", false) — NO slot configured, so the caller keeps its EXACT
+//     unrouted behaviour (the session model).
 //
 // The chosen selector (an alias or a literal id) is resolved THROUGH the existing
 // lookupModelAlias grammar — the SAME path the agent-def `model:` resolution uses,
@@ -304,7 +302,7 @@ func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
 
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
 // (--model-slot / --model-alias / --model), taken BEFORE foldOperatorModelSlots merges
-// the operator-YAML in (Phase 4). It is the mechanism by which a CLI flag
+// the operator-YAML in. It is the mechanism by which a CLI flag
 // survives a project-tier override: foldProjectModelBindings overrides operator-YAML-set
 // keys but SKIPS any key recorded here, realising the precedence
 //
@@ -471,8 +469,8 @@ func foldOperatorDefaultProvider(cfg Config) Config {
 }
 
 // foldProjectModelBindings merges a TRUSTED project's `.mecatl/settings.yaml` models:
-// bindings (slots/aliases/default) onto cfg, CAPPED by the operator allowlist
-// (Phase 4). It runs in Build ONCE, AFTER foldOperatorModelSlots (so it overrides the
+// bindings (slots/aliases/default) onto cfg, CAPPED by the operator allowlist.
+// It runs in Build ONCE, AFTER foldOperatorModelSlots (so it overrides the
 // operator-YAML layer) and AFTER cfg.Model has been resolved to the registry default (so
 // a project `default` can re-bind cfg.Model and the cap resolves through the
 // operator-merged alias map), and BEFORE modeNeedsEngine/logSlotConfigFacts (so the plan
@@ -541,7 +539,7 @@ func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 }
 
 // capMergeProjectBindings merges one project-binding MAP (slots or aliases) onto dst,
-// capped by the operator allowlist (Phase 4). For each project entry: SKIP a
+// capped by the operator allowlist. For each project entry: SKIP a
 // CLI-set key (cliKeys — the CLI flag wins); for slots, drop an unknown slot NAME
 // fail-soft (knownSlotNames, validateName==true); resolve-then-check the VALUE against
 // the allowlist (accept→merge the concrete id, drop→keep dst's existing value); emit one
@@ -638,7 +636,7 @@ func capResolve(cfg Config, sel string, allowed map[string]struct{}) (string, bo
 }
 
 // foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy
-// (Phase 5) onto cfg: the routing categories, the default category, and the classifier
+// onto cfg: the routing categories, the default category, and the classifier
 // slot. It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), which is the
 // user-global + CLI tiers; a project-tier router: was already stripped with a WARN in
 // captureProjectModels). It is FAIL-SOFT: a category with an empty name OR an empty
@@ -781,14 +779,14 @@ func knownSlotNamesList() string {
 // silent precisely so this is the ONE place a misconfigured slot warns (once), not N
 // times across per-session/per-child engine builds. A slot that resolves keeps the
 // "loop emits exactly THREE lines" invariant intact: this is a Build-level fact, not a
-// loop line. When nothing is configured it logs nothing (byte-identical to pre-feature).
+// loop line. When nothing is configured it logs nothing.
 func logSlotConfigFacts(cfg Config) {
 	if len(cfg.ModelSlots) == 0 {
 		return
 	}
-	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotTitle, slotPlan, slotRouter} {
+	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotReflection, slotTitle, slotPlan, slotRouter} {
 		model, ok := resolveSlotModel(cfg, slot, cfg.Model)
-		// The three internal call-slots route a lightweight housekeeping call; the
+		// The internal call-slots route a lightweight housekeeping call; the
 		// plan slot instead re-resolves the SESSION model in plan
 		// mode (the opusplan pattern) — narrate it distinctly so the INFO is honest.
 		active := "model slot ACTIVE: this internal lightweight call runs on the slot model instead of the session model"

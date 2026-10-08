@@ -297,7 +297,7 @@ func TestResetWorkspaceEnrollmentWithdrawsCompletedCatalogue(t *testing.T) {
 }
 
 // TestResetWorkspaceEnrollmentLockOrderMatchesRefreshPath is a regression test
-// for a lock-order inversion: ResetWorkspaceEnrollment used to take
+// for a lock-order inversion: ResetWorkspaceEnrollment must not take
 // logical.mu before a.mu, the reverse of every other method that holds both
 // (Commit, Abort, beginOperation, freezeAuthenticatedCatalogue, and
 // RefreshGrantedAuthorizationCatalogue, which all take a.mu outer and

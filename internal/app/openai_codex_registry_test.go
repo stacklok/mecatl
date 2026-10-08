@@ -126,7 +126,7 @@ func TestRegistryOpenAICodexAvailability(t *testing.T) {
 	})
 }
 
-// TestOpenAICodexDefaultPrecedence locks the accepted ADR's provider
+// TestOpenAICodexDefaultPrecedence locks the default-provider precedence
 // ladder without relying on map iteration or accidental alphabetic order.
 func TestOpenAICodexDefaultPrecedence(t *testing.T) {
 	constructor := func(_ Config, _, _, _ string) port.LLMProvider {

@@ -54,7 +54,7 @@ func (b faultBackend) Read(context.Context, session.SessionID) iter.Seq2[session
 }
 
 // TestEventLogReadMidStreamFaultStopsAfterError is the headline streaming-risk
-// gate (cloud-native 3c MUST-ADD): the port contract says Read yields
+// gate (MUST-ADD): the port contract says Read yields
 // (session.Event{}, err) on a fault and then RETURNS — no further events. The
 // server-streaming RPC must honour that end-to-end. A fault-injecting backend
 // yields N good events then an error; the client's Read must yield exactly the

@@ -64,8 +64,7 @@ func newValidatedScheduleService(t *testing.T, now time.Time, minInterval time.D
 
 // TestCreateScheduleEnforcesMinIntervalSeam pins the SERVICE-side half of
 // AC1.3: a cadence tighter than the configured SchedulerMinInterval floor is
-// rejected fail-closed at the SHARED create-seam (the floor is no longer
-// inert), for BOTH the fixed-cron and the @every cadence forms; a cadence at
+// rejected fail-closed at the SHARED create-seam, for BOTH the fixed-cron and the @every cadence forms; a cadence at
 // or above the floor passes; a zero floor (0 = no floor) consults nothing;
 // and UpdateSchedule (the shared-seam sibling) enforces the same floor.
 func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
@@ -122,7 +121,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	}
 
 	// A zero floor (0 = no floor) consults nothing: the tightest cadence
-	// passes (the pre-feature posture).
+	// passes.
 	noFloor := newValidatedScheduleService(t, now, 0, nil)
 	if _, err := noFloor.CreateSchedule(ctx, port.ScheduleSpec{
 		Name: "tight-ok", Prompt: "p", Trigger: port.TriggerSpec{Cron: "* * * * *"},

@@ -9,7 +9,7 @@ import (
 )
 
 // authority.go answers "does this workspace carry a project AUTHORITY SET worth
-// gating?" (Workspace-Trust feature, Phase 2c — the mecatui first-encounter
+// gating?" (Workspace-Trust feature — the mecatui first-encounter
 // prompt). A NOT-trusted workspace with NO project authority set has nothing to
 // gate, so the pre-TUI prompt is SKIPPED (the operator is not nagged for a repo
 // that contributes no project-tier soul/agents/commands/skills/allows). The

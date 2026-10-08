@@ -1257,7 +1257,7 @@ func toProtoScopedWorktrees(wts []ScopedWorktree) []*mecatlv1.Worktree {
 }
 
 // toProtoSessionSummary maps a Service SessionSummary (the surface-agnostic
-// picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
+// picker row, issue #245) to its proto form. It projects ONLY the
 // picker metadata — no conversation content.
 func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 	metadata := s.TitleMetadata

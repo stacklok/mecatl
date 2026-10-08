@@ -129,8 +129,8 @@ type wireModel struct {
 		InputModalities *[]string `json:"input_modalities"`
 	} `json:"architecture"`
 	// TopProvider carries the upstream provider's per-model limits. Its
-	// max_completion_tokens is the output ceiling — NEW field captured for the
-	// resolvers (it previously never reached the wire struct). Absent/null ⇒ 0 ⇒ the
+	// max_completion_tokens is the output ceiling, captured for the
+	// resolvers. Absent/null ⇒ 0 ⇒ the
 	// composition helper falls back to the catalog floor.
 	TopProvider struct {
 		MaxCompletionTokens int `json:"max_completion_tokens"`

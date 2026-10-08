@@ -426,7 +426,7 @@ func TestSDKServerEnablers_Scenario8_HTTPDisabled(t *testing.T) {
 
 // TestSDKServerEnablers_Scenario8_HTTPDisabledRefusesPerfMCP pins the one
 // combination an empty --http-addr makes incoherent: --perf-mcp mounts /mcp on
-// the admin listener that no longer exists.
+// the admin listener, which is then absent.
 //
 // Refusing at startup rather than mounting an unreachable endpoint matters
 // because the failure would otherwise be invisible — the operator would see a

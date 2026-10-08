@@ -75,8 +75,8 @@ type Recorder struct {
 type firstValueTracker struct {
 	mu sync.Mutex
 	// armed is false until EnableFirstValueTracking is called; an unarmed
-	// Recorder never records the metric at all (the default, byte-identical to
-	// the pre-feature posture for every existing caller of NewRecorder).
+	// Recorder never records the metric at all (the default for every caller of
+	// NewRecorder that does not opt in).
 	armed bool
 	// firstSeenAt is this install's first-seen moment; the recorded duration is
 	// measured from it.

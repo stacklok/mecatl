@@ -255,8 +255,8 @@ func TestBuildFailureClosesMCPProfileLifecycle(t *testing.T) {
 	}
 }
 
-// TestBuildWarnsWhenOperatorMCPConfiguredWithoutLoader pins the WARN mecatui's
-// embedded server used to silently drop: an operator-tier mcp.servers block with
+// TestBuildWarnsWhenOperatorMCPConfiguredWithoutLoader pins the WARN for an
+// otherwise-silent drop: an operator-tier mcp.servers block with
 // no MCPProfileLoader wired must surface a settings-only diagnostic so any
 // consumer omitting the loader sees the ignored servers.
 func TestBuildWarnsWhenOperatorMCPConfiguredWithoutLoader(t *testing.T) {

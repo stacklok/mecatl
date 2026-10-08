@@ -283,7 +283,7 @@ models:
 	}
 }
 
-// TestModelsDefaultProviderParsed pins that models.default_provider (Wave 2b) parses
+// TestModelsDefaultProviderParsed pins that models.default_provider parses
 // faithfully from the operator tier and rides the SAME ModelsSection as models.default,
 // exposed via OperatorModelPolicy().DefaultProvider. An unknown key inside models:
 // (e.g. default_providr) is a strict-parse error, so a typo cannot silently disable

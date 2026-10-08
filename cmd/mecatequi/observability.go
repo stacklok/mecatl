@@ -46,9 +46,9 @@ type observability struct {
 // stderr receives the first-run disclosure notice, written SYNCHRONOUSLY by
 // BuildProductMetrics itself — before it starts the heartbeat goroutine and
 // before it returns — rather than deferred to a check on the returned
-// handles' FirstRun field at flush time (flushTelemetry previously printed
-// it there, AFTER already calling Shutdown/flushing the provider: exactly
-// the ordering forbidden for opt-out collection).
+// handles' FirstRun field at flush time (printing it at flush time would come
+// AFTER Shutdown/flushing the provider: exactly the ordering forbidden for
+// opt-out collection).
 func buildObservability(ctx context.Context, f flags, diag port.Diagnostics, stderr io.Writer) (observability, error) {
 	h, err := cliconfig.HeadlessTelemetry(ctx, cliconfig.HeadlessTelemetryConfig{
 		ServiceName:         "mecatequi",

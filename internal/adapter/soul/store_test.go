@@ -231,7 +231,7 @@ func TestDefaultMaxBytesIsTwentyKiB(t *testing.T) {
 }
 
 // TestStoreExposesOnlyReadMethods is the "no write path" guard (R2 / R1.7): every
-// exported method on the soul Store must be READ-ONLY. After issue #14 Phase 3 the
+// exported method on the soul Store must be READ-ONLY. The
 // allowed set is {Load, LoadWithMeta, ResolvedPath} — all read/compute, none mutate.
 // A WriteFragment/Write/Create/Approve slipping in would break the agent-read-only
 // invariant, so we assert the method set against an explicit allow-list here.
@@ -337,7 +337,7 @@ func TestLoadWithMetaRejectedBodiesHaveEmptyHash(t *testing.T) {
 	})
 }
 
-// TestNewWithEnvResolvesAndAppliesDiscipline (issue #14, Phase 3, Item 2) proves the
+// TestNewWithEnvResolvesAndAppliesDiscipline (issue #14) proves the
 // exported env-injectable constructor the composition layer uses for the user-scoped
 // soul resolves the conventional <xdg>/mecatl/soul.md against the INJECTED env and
 // applies the SAME loader discipline as New: a clean body loads; a fence-breakout

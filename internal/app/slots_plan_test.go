@@ -149,7 +149,7 @@ func planFactory(t *testing.T, sessionModel, planModel string) server.SessionEng
 	return sessionEngineFactory(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
 }
 
-// TestSessionEngineFactoryPlanVsExecute is the FACTORY-level Phase 3 guard:
+// TestSessionEngineFactoryPlanVsExecute is the FACTORY-level plan-slot guard:
 // the SAME factory, the SAME zero selector, called with mode=ModePlan vs
 // mode=ModeDefault, resolves the engine to the PLAN model vs the SESSION model — and
 // stamps BuiltForMode from the one source. The provider is unchanged (fixed per

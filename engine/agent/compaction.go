@@ -247,12 +247,12 @@ func snapCutToRecentUserTurn(msgs []session.Message, cut int, floor int) int {
 //     session snapshotted before the ephemeral cutover) so the pin never anchors on
 //     a stray fragment instead of the user's real goal.
 //
-// Without the synthesised-summary skip the pin anchored on the FIRST RoleUser
-// message — which on a re-compaction could be a prior summary, and historically
-// (with a persisted soul/memory deployment) an injected fragment — so the genuine
-// first instruction fell into the summarised middle and was dropped (the "I don't
-// have the original task" bug). The count of leading injected fragments was
-// config-variable (0–4+), so a positional "first N" cannot work; the anchor must be
+// Without the synthesised-summary skip the pin would anchor on the FIRST RoleUser
+// message — which on a re-compaction could be a prior summary, or in legacy
+// persisted history an injected fragment — so the genuine first instruction would
+// fall into the summarised middle and be dropped (the "I don't have the original
+// task" bug). The count of leading injected fragments is config-variable (0–4+), so
+// a positional "first N" cannot work; the anchor must be
 // content-identified.
 func isGenuineUserTurn(m session.Message) bool {
 	// Widens session.IsGenuineUserPrompt with the prompt.IsInjectedTurn0Fragment

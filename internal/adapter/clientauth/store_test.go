@@ -805,9 +805,9 @@ func TestIssParameterIsRequiredOnlyWhenAdvertised(t *testing.T) {
 }
 
 // TestReEnrolmentReplacesAnExistingCredential pins that logging in again works.
-// Save with a nil expected version is create-only, so enrolment used to succeed
-// exactly once per target and every later login failed a CAS precondition —
-// leaving no way to replace an expired or revoked credential.
+// Save with a nil expected version is create-only; enrolment must not use it for
+// an existing target, or every later login fails a CAS precondition — leaving
+// no way to replace an expired or revoked credential.
 func TestReEnrolmentReplacesAnExistingCredential(t *testing.T) {
 	creds := credentials(t)
 	id := identity("host.example:18081")
@@ -842,10 +842,10 @@ func TestReEnrolmentReplacesAnExistingCredential(t *testing.T) {
 }
 
 // TestTokenSizeBoundIsTheTokenLimitNotTheIdentityLimit pins the bound a token
-// value gets. safe() caps identity fields at 1024 and validToken used to apply it
-// to the access token, which silently overrode the 16384 limit sitting beside it:
-// a JWT with many group claims (Entra is the common case) could not be stored,
-// and the failure surfaced as "credential storage unavailable".
+// value gets. safe() caps identity fields at 1024; applying it to the access
+// token would silently override the 16384 limit sitting beside it: a JWT with
+// many group claims (Entra is the common case) could not be stored, and the
+// failure would surface as "credential storage unavailable".
 func TestTokenSizeBoundIsTheTokenLimitNotTheIdentityLimit(t *testing.T) {
 	creds := credentials(t)
 	id := identity("host.example:18081")
@@ -1238,10 +1238,10 @@ func TestRegistryHoldsOneEnrolmentPerTarget(t *testing.T) {
 	if got.Identity.Issuer != "https://keycloak.example/realms/x" || got.IssuerCAFile != "/ca/kc.pem" {
 		t.Fatalf("stale enrolment survived: %#v", got.Identity)
 	}
-	// The repair case my first attempt missed: a registry that ALREADY holds
-	// duplicates for a target. Replacing matches in place kept them as identical
-	// copies, so FindTarget stayed broken and a re-login could not recover. Write
-	// such a registry directly, since Upsert can no longer create one.
+	// The repair case: a registry that ALREADY holds duplicates for a target.
+	// Replacing matches in place would keep them as identical copies, so
+	// FindTarget would stay broken and a re-login could not recover. Write such a
+	// registry directly, since Upsert cannot create one.
 	dupDir := t.TempDir()
 	dupA, dupB := identity(target), identity(target)
 	dupA.Issuer, dupB.Issuer = "https://old-one.example", "https://old-two.example"
@@ -1319,11 +1319,11 @@ func TestRegistryReadsLegacyIssuerCAAndMigratesOnMutation(t *testing.T) {
 	}
 }
 
-// TestRegistryOmitsInvalidEntriesWithoutBlockingOthers pins the fix for a real
-// regression: list() used to fail the WHOLE registry read if ANY single entry
-// had a relative issuer_ca_file (a shape valid before validIssuerCAFile required
-// an absolute path), regardless of which target the caller actually asked
-// about. One legacy or damaged row then permanently broke List/FindTarget/Enroll
+// TestRegistryOmitsInvalidEntriesWithoutBlockingOthers pins that list() does not
+// fail the WHOLE registry read when ANY single entry has a relative
+// issuer_ca_file (a legacy shape; validIssuerCAFile requires an absolute path),
+// regardless of which target the caller actually asked about. Otherwise one
+// legacy or damaged row would permanently break List/FindTarget/Enroll
 // for every OTHER target too, with no repair path -- Upsert's own per-target
 // replace can only run after list() has already succeeded once. An invalid
 // entry must be excluded, not fatal.

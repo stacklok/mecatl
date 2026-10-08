@@ -23,8 +23,10 @@ Each kind of guidance has one home. Put a fact at the narrowest level that cover
 | Module `AGENTS.md` | Where to change what in that module, its commands and invariants | When an agent works in that directory |
 | `.claude/rules/*.md` | Invariants for a file pattern that spans directories, such as `*_test.go` | When an agent reads a matching file |
 | `.claude/skills/` | Multi-step workflows, such as cutting a release | When invoked |
+| `.claude/agents/` | Reviewer and helper subagent definitions | When delegated to |
 | `docs/` | How the system works today, for contributors: intent, boundaries, and invariants | When read |
 | [`docs/drafts/`](drafts/README.md) | Proposals and work records; never current behavior | When read |
+| [`docs/examples/`](examples/README.md) | Example Mecatl skills to copy or read as reference | When read |
 | [`user-docs/`](../user-docs/intro.md) | How to use Mecatl, published at mecatl.dev | When read |
 
 Every `AGENTS.md` stays under 200 lines and has a `CLAUDE.md` symlink beside it; rules

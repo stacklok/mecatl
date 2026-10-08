@@ -10,8 +10,8 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// soulguard is the composition-layer SOUL DRIFT BASELINE (issue #14, Phase 3, Item
-// 1). The soul itself is a USER-scoped, agent-READ-ONLY persona fragment (see
+// soulguard is the composition-layer SOUL DRIFT BASELINE (issue #14).
+// The soul itself is a USER-scoped, agent-READ-ONLY persona fragment (see
 // internal/adapter/soul) — the adapter is write-free by construction. This file is
 // the ONLY place that turns the soul's content hash into an on-disk baseline so a
 // later run can DETECT that the soul changed.

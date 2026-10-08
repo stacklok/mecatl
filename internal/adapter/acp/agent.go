@@ -53,14 +53,14 @@ type Agent struct {
 	// client that ignores the advertised caps still gets a clear error instead of a
 	// silent drop.
 	//
-	// CAPTURE-ONCE IS CORRECT IN P0: ACP carries NO per-session provider/model
+	// CAPTURE-ONCE IS CORRECT: ACP carries NO per-session provider/model
 	// selector (session/new passes only mcpServers, never a selector), so every ACP
 	// session rides the DEFAULT engine and a.caps is correct for every one of them.
 	// svc.ProviderCapabilities() returns the composition-intersected DEFAULT caps —
 	// the SAME value the gRPC/HTTP CreateSessionResponse echoes for a default-engine
 	// session — so the ACP gate and the wire echo cannot disagree. A per-session ACP
-	// capability gate (capture-once → per-session lookup) lands only when an ACP
-	// selector lands (P1+).
+	// capability gate (capture-once → per-session lookup) is needed only if ACP
+	// gains a per-session selector.
 	caps port.ProviderCapabilities
 
 	// resume reports whether session/load is supported (a session store is
@@ -523,8 +523,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 		case session.EvPermissionAsk:
 			if ev.Ask != nil {
 				// Persist the awaiting snapshot so a session/load after a restart can
-				// re-attach to a paused session (mirrors the gRPC/HTTP adapters). With
-				// session/load now landed this is no longer a dead snapshot.
+				// re-attach to a paused session (mirrors the gRPC/HTTP adapters).
 				a.svc.Persist(ctx, session.SessionID(req.SessionID))
 				// Out-of-band: ask the editor, then resolve the run. Run on its own
 				// goroutine so draining the event channel never blocks behind the

@@ -27,7 +27,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestScheduleE2E is the Phase 2a end-to-end gate (issue #232): it drives the
+// TestScheduleE2E is the end-to-end gate (issue #232): it drives the
 // gRPC ScheduleServer directly (in-process, no network) over a built *Service
 // wired with jsonlstore + mockllm + the in-process scheduler. It exercises the
 // full wire surface — Create/Get/List/Pause/Resume/FireNow/GetFire/ListFires/
@@ -289,9 +289,9 @@ func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
 	}
 }
 
-// TestScheduleEventLogContainsEvScheduleFired (S7): after a FireNow completes,
+// TestScheduleEventLogContainsEvScheduleFired: after a FireNow completes,
 // the fire session's durable EventLog contains an EvScheduleFired event. This
-// pins the S1 v1 delivery contract: the schedule.* lifecycle is durable-log-only
+// pins the delivery contract: the schedule.* lifecycle is durable-log-only
 // (pull-only via GetFire/ListFires), emitted from composition via the
 // EmitScheduleEvent callback.
 func TestScheduleEventLogContainsEvScheduleFired(t *testing.T) {

@@ -474,7 +474,7 @@ func effectRank(e Effect) int {
 // with an exact-match fast path. The audience check is symmetric-permissive
 // (issue #32): a rule binds iff the rule's audience is AudienceAll, the
 // evaluator's is AudienceAll, or they are equal — so untagged rules and untagged
-// evaluators keep their full historical reach.
+// evaluators keep their full reach.
 func ruleMatches(r *Rule, tool, pattern string, audience Audience) bool {
 	if r.Audience != AudienceAll && audience != AudienceAll && r.Audience != audience {
 		return false

@@ -722,7 +722,7 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 // TestPostureRefusalReason proves the generalised root-refusal (the exported
 // app.PostureRefusalReason) gates auto AND yolo (both waive the mutate-ask floor) while
 // strict/trusted are NEVER refused, and only when the process is PRIVILEGED. It would
-// fail if the gate regressed to the historical yolo-only check.
+// fail if the gate regressed to a yolo-only check.
 func TestPostureRefusalReason(t *testing.T) {
 	tests := []struct {
 		name       string

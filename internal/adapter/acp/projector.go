@@ -15,7 +15,7 @@ import (
 // prompt relay uses runProjector to correlate transient availability with its
 // canonical result.
 //
-// PROJECTION TABLE (Phase 2):
+// PROJECTION TABLE:
 //
 //	EvMessageDelta   -> agent_message_chunk{ content: text }
 //	EvReasoningDelta -> agent_thought_chunk{ content: text }   (display summary

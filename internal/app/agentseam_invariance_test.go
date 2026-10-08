@@ -119,12 +119,12 @@ func (s *countingAgentSourceServer) ListAgentDefs(context.Context, *driverv1.Lis
 }
 
 // TestBuildResolvesAgentRegistryExactlyOnce is the drift-class guard (§0.3):
-// the registry used to be resolved THREE times per Build (engines/catalog,
-// ListAgents snapshot, team wiring) — C2 consolidates to ONE resolveAgentSeam.
+// the registry is resolved by ONE resolveAgentSeam per Build, shared by the
+// engines/catalog, the ListAgents snapshot, and team wiring.
 // A counting wire server makes the count un-fakeable: a regression that
 // reintroduces a second resolution (the third firing of the per-session-drift
 // class) fails here with calls > 1. EnableTeams + Parallel are ON so every
-// historical re-resolution site is exercised in this one Build.
+// registry consumer is exercised in this one Build.
 func TestBuildResolvesAgentRegistryExactlyOnce(t *testing.T) {
 	srv := &countingAgentSourceServer{}
 	addr := startSourceDriver(t, func(gs *grpc.Server) {

@@ -60,8 +60,8 @@ func TestDefaultExplorerUsesSubagentModel(t *testing.T) {
 }
 
 // TestDefaultExplorerInheritsParentWhenUnset is the zero-config guard: with NO
-// SubagentModel the explorer stays on the parent model with the default window —
-// behaviourally identical to the pre-#35 shape at the Deps seam.
+// SubagentModel the explorer stays on the parent model with the default window
+// at the Deps seam.
 func TestDefaultExplorerInheritsParentWhenUnset(t *testing.T) {
 	prov := mockllm.New()
 	reg := regForTest(prov, providerAnthropic, "claude-default")
@@ -469,7 +469,7 @@ func TestBuildNarratesSubagentModelExactlyOnce(t *testing.T) {
 // the registered Parallel tool's BRANCH child must carry the configured
 // SubagentModel on its LLM request, proving registerParallelTool threads cfg +
 // the registry + the session model together into buildParallelChildEngine. A
-// revert to the pre-#35 modelCfgFor(cfg, s.model) wiring runs the branch on the
+// regression to modelCfgFor(cfg, s.model) wiring (issue #35) runs the branch on the
 // session model and fails here. The branch WINDOW through this seam is asserted
 // one level down (TestParallelBranchUsesSubagentModel over parallelChildDeps):
 // ParallelTool does not expose its child engine, and widening engine/agent's API

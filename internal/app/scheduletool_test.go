@@ -900,7 +900,7 @@ func TestScheduleTool_SharesStoreWithRESTSurface(t *testing.T) {
 // flag". Drives the REAL Build composition over jsonlstore + mockllm: a
 // one-shot due in the near future is claimed by the tick loop, its sched--
 // session is driven to StopEndTurn, and the fire is recorded — all without
-// --scheduler (which no longer exists; AC2.5 pins its removal).
+// a --scheduler flag (none exists; AC2.5 pins its absence).
 func TestScheduleTool_SchedulerOnByDefault(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
@@ -1208,8 +1208,7 @@ func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
 
 // TestScheduleTool_CreateEnforcesMinInterval pins AC1.3: `Schedule create`
 // rejects a cadence tighter than the configured SchedulerMinInterval
-// frequency floor — the floor is now CONSULTED at the in-band create verb
-// (no longer inert). The floor flows from app Config.SchedulerMinInterval
+// frequency floor — the floor is CONSULTED at the in-band create verb. The floor flows from app Config.SchedulerMinInterval
 // into the Service create path (Build wires it UNCONDITIONALLY, so a
 // --no-scheduler deployment still enforces it); the check lives in the
 // SHARED seam, so the tool inherits it: driven THROUGH the tool over the

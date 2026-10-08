@@ -11,10 +11,10 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
-// The durable-event-log replay surface (issue #245 Phase 2, cloud-native Phase
-// 3a read-back): the read-only EventStream wrapper over a server-streaming
-// StreamSessionEvents RPC, its ReadLoop entry, and the tea.Cmd constructor the
-// ui's transcript viewer calls. As with the rest of this package, NO proto type
+// The durable-event-log replay surface (issue #245): the read-only EventStream
+// wrapper over a server-streaming StreamSessionEvents RPC, its ReadLoop entry,
+// and the tea.Cmd constructor the ui's transcript viewer calls. As with the rest of
+// this package, NO proto type
 // leaks past this file — the ui drains tea.Msgs from the returned channel, the
 // SAME fan-in (WaitForMsg) the live Converse stream uses.
 
@@ -178,10 +178,10 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 	return ch, stop
 }
 
-// StreamSessionEvents opens the durable-event-log replay (cloud-native Phase 3a
-// read-back) for session id and wraps the returned server stream in an
-// EventStream. The replay yields *mecatlv1.Event directly (NO ConverseResponse
-// envelope), and INCLUDES the three log-only kinds (approval/user_prompt/
+// StreamSessionEvents opens the durable-event-log replay for session id and
+// wraps the returned server stream in an EventStream. The replay yields
+// *mecatlv1.Event directly (NO ConverseResponse envelope), and INCLUDES the three
+// log-only kinds (approval/user_prompt/
 // compaction.archive) — a transcript viewer wants the verdicts and user prompts;
 // metadata-only by construction (gauntlet #7). An unknown id yields an EMPTY
 // stream (absence is data) → a single StreamClosedMsg; a server with no durable

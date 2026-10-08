@@ -287,7 +287,7 @@ type config struct {
 	enableParallel bool
 	enableTeams    bool
 
-	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler.
+	// Scheduled tasks (issue #189): the in-process scheduler.
 	// mecak8s is the multi-replica home — the leader-lease (the k8s session-lease
 	// backend) elects one ticker. ON by default on a schedule-capable store (the
 	// --redis-url backend); noScheduler is the opt-out.
@@ -414,7 +414,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "Session lease lifetime. Another replica can claim a lease after this period when its holder stops")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "Interval for renewing held session leases. Zero uses one third of --session-lease-ttl")
 
-	// Scheduled tasks (issue #189, Phase 1f): mecak8s is the multi-replica home.
+	// Scheduled tasks (issue #189): mecak8s is the multi-replica home.
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "Disable scheduled-task execution. Schedule management APIs remain available; one replica runs the scheduler when leasing is enabled")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "Interval for polling due schedules. Zero uses the default interval; inactive when scheduling is unavailable or disabled")
 	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "Minimum accepted schedule interval. Shorter intervals are rejected; zero disables the limit")

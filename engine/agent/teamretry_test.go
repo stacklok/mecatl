@@ -19,7 +19,7 @@ import (
 
 // teamretry_test.go covers the BOUNDED MEMBER RETRY — the last acceptance bullet of
 // issue #318 ("a team member that hits one transient stall still participates in later
-// rounds"), deferred when resume of a failed subagent shipped.
+// rounds").
 //
 // The three mechanisms it pins, all in engine/agent/teamsupervisor.go:
 //

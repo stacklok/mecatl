@@ -12,7 +12,7 @@ import (
 )
 
 // residualSchedulesYAML is an old operator config carrying the removed
-// `schedules:` block (issue #233 Phase 2b). The block used a strict per-element
+// `schedules:` block (issue #233). The block used a strict per-element
 // decoder, so one element carries a TYPO'd key ("cronn") — post-removal even
 // that must parse cleanly (the whole subtree is gone; the lenient top-level
 // decode ignores it, the same as any other removed YAML key).

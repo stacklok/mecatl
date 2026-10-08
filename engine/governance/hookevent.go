@@ -83,7 +83,7 @@ type HookOutcome struct {
 	// ignored on PostToolUse (where Block is inert) and whenever Block is false.
 	// Mutated is ignored when AskApproval is set (an askable block does not also
 	// rewrite args). A hook that does not understand this field leaves it false, which
-	// is exactly the pre-feature behaviour. An INERT AskApproval — set with Block ==
+	// yields a plain terminal block. An INERT AskApproval — set with Block ==
 	// false, or on any non-PreToolUse phase — is a SILENT NO-OP that fails OPEN to the
 	// ordinary outcome (a plain allow / the phase's normal handling), NEVER to a block:
 	// AskApproval only REFINES an existing PreToolUse Block, it never creates one.

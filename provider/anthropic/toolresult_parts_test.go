@@ -35,7 +35,7 @@ func toolResultMessages(t *testing.T, p *Provider, tr session.ToolResult) []map[
 // TestToolResultStringOnlyUnchanged is the byte-identical-legacy guard: a tool
 // result with NO Parts produces the EXACT single-string tool_result the adapter
 // always produced — a content list with ONE text block carrying Content —
-// regardless of caps, and is_error stays false (the pre-T7 hard-coded value).
+// regardless of caps, and is_error stays false (the legacy hard-coded value).
 func TestToolResultStringOnlyUnchanged(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
 		WithProviderCapabilities(port.ProviderCapabilities{Image: true}))

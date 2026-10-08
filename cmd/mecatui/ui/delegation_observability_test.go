@@ -51,10 +51,9 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	}
 }
 
-// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews retains the
-// historical AC3.2 name after the newer mecatui-quieter-conversation-tool-calls plan
-// retired ctrl+t card expansion. Bounded preview content remains observable in the
-// actual f6 Agents focus, which is the newer plan's replacement route.
+// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews keeps its
+// AC3.2 name although cards do not expand via ctrl+t. Bounded preview content is
+// observable in the f6 Agents focus.
 func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *testing.T) {
 	const rawMessage = "child message must stay out of the parent conversation"
 	longMessage := strings.Repeat("m", maxTraceMessageLen+40)

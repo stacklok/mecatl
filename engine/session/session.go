@@ -77,8 +77,8 @@ const (
 	ModeAccept PermissionMode = "acceptEdits"
 )
 
-// ApprovalVerdict is the client's resolution of a permission.ask. It widens the
-// historical allow/deny boolean into three outcomes so a client can ask the
+// ApprovalVerdict is the client's resolution of a permission.ask. It widens an
+// allow/deny boolean into three outcomes so a client can ask the
 // harness to LEARN an allow for the matching tool+pattern (allow_always) versus
 // permitting only the current call (allow_once).
 //
@@ -402,7 +402,7 @@ type Session struct {
 	Owner *Principal
 	// Authority is the derived authority payload stamped through BindAuthority
 	// before the first runnable state. The private marker distinguishes a bound
-	// empty capability set from a genuinely pre-feature legacy session.
+	// empty capability set from a genuine legacy session written without authority.
 	Authority Authority
 	// Kind classifies the trusted producer and continuation posture. New creates
 	// main sessions; delegated/scheduled producers use the validated constructors.
@@ -920,10 +920,9 @@ func (s *Session) RunID() string {
 // any non-terminal state except StateAuthorizing.
 //
 // A failed session recovers through Recover (failed→idle, history-repaired —
-// issue #51), so a transient provider failure no longer bricks the session
-// permanently. Historical note: the trigger that originally bricked sessions
-// here was compaction emitting unpaired history (an orphaned tool result →
-// provider HTTP 400 → Fail), which the compactors independently prevent by
+// issue #51), so a transient provider failure does not brick the session
+// permanently. One such failure is compaction emitting unpaired history (an
+// orphaned tool result → provider HTTP 400 → Fail), which the compactors independently prevent by
 // snapping the kept-tail boundary past leading tool results and self-validating
 // via ValidateToolPairing.
 func (s *Session) Fail() error {

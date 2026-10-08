@@ -125,7 +125,7 @@ const (
 )
 
 // EvidenceRef is a content-addressed evidence citation. Legacy-v0 keeps Ordinal's
-// historical selected-input meaning. V1 keeps selected-local ManifestIndex separate
+// selected-input meaning. V1 keeps selected-local ManifestIndex separate
 // from durable original coordinates.
 type EvidenceRef struct {
 	Protocol        EvidenceProtocol   `json:"protocol,omitempty"`
@@ -158,7 +158,7 @@ type Signal struct {
 
 // Candidate is a bounded durable-learning proposal. Facts use Key, Value, and
 // optional Description. Procedures use Title and Body; new skill-materializable
-// procedures also carry Name. Name remains optional here so historical title/body
+// procedures also carry Name. Name remains optional here so legacy title/body
 // procedure proposals remain readable.
 type Candidate struct {
 	Kind        CandidateKind `json:"kind"`

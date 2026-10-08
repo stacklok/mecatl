@@ -89,7 +89,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	// Per-session provider/model selector (multi-provider Phase 0, S3): the two
+	// Per-session provider/model selector: the two
 	// fields map to the neutral ProviderSelector; the zero selector keeps the
 	// shared-engine fast path. An unknown/unavailable provider, or model_id without
 	// provider_id, surfaces as InvalidArgument via toStatus.
@@ -754,7 +754,7 @@ func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
 // sends behind a dead relay. The error is sticky — no further Send happens
 // after it — and is returned once the run has fully drained.
 //
-// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+// The durable event-log Append is DECOUPLED from the
 // client send: it runs for EVERY observed event, BEFORE and independent of the
 // drain-to-discard guard, so a disconnected client never stops the log (the
 // whole point of a server-side durable log is to survive the client — it must
@@ -1573,7 +1573,7 @@ func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWor
 }
 
 // StreamSessionEvents replays a session's durable event log as a server stream
-// of Event envelopes (issue #245 Phase 1; cloud-native Phase 3a read-back).
+// of Event envelopes (issue #245).
 func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
 	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
 		return err
@@ -2129,8 +2129,7 @@ func isDeliveryNoteText(text string) bool {
 }
 
 // ListSessions returns the stored-session inventory — the picker metadata a
-// client renders to let an operator open an EXISTING session by id (issue #245
-// Phase 1).
+// client renders to let an operator open an EXISTING session by id (issue #245).
 func (h *HarnessServer) ListSessions(ctx context.Context, req *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
 	page, err := h.svc.ListSessionPage(ctx, ListSessionsPageRequest{
 		PageSize: int(req.GetPageSize()), Cursor: req.GetCursor(),

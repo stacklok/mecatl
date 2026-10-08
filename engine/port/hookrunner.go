@@ -13,7 +13,7 @@ import (
 // A PreToolUse outcome MAY set governance.HookOutcome.AskApproval together with
 // Block to REFINE a block into an askable block: an interactive engine surfaces it
 // as a permission ask rather than dead-ending the call. A HookRunner is
-// free to never set it (the byte-identical pre-feature terminal-block behaviour).
+// free to never set it (a plain terminal block).
 type HookRunner interface {
 	// Run executes the hook(s) registered for ev.Phase and returns the outcome.
 	Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)

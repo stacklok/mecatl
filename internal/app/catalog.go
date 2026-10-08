@@ -96,7 +96,7 @@ type catalogAssets struct {
 	skillOwner           string
 	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
-	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
+	// Parallel single-branch auto-merge (the writable Subagent does not merge —
 	// it writes the parent tree directly). It wraps a forker.Merger in a
 	// forker.SerializingMerger so concurrent merges across sessions are serialized
 	// by a single mutex (a per-session instance would not serialize cross-session).
@@ -504,7 +504,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// Use the SHARED process-wide serializing merger from the assets (built once in
 	// Phase A), NOT a fresh forker.NewMerger() — so the SAME mutex serializes every
 	// Parallel merge process-wide. A nil merger (hand-rolled assets) skips auto-merge
-	// entirely (the historical boundary).
+	// entirely.
 	if a.autoMerger != nil {
 		opts = append(opts, agent.WithAutoMerge(a.autoMerger))
 	}
@@ -580,7 +580,8 @@ func scheduleManagerPresent(a catalogAssets) bool {
 // registerScheduleTool registers the model-facing Schedule tool when
 // the assets carry a scheduleManager — the conditional-registration gate that
 // keeps the tool present exactly when the session's store backs a
-// port.ScheduleStore and ABSENT (honest, not a stub) otherwise, agreeing with
+// port.ScheduleStore and the session is not a remote-execution profile (the
+// caller skips it when remote), and ABSENT (honest, not a stub) otherwise, agreeing with
 // ServerCapabilities.Scheduling. The SAME conditional-registration shape as
 // registerMemoryFamilies (a nil-asset check, never a stub). Registered in BOTH
 // profiles: managing a schedule is not a filesystem act (a no-fs session can

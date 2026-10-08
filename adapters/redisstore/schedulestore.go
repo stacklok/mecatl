@@ -335,7 +335,7 @@ return 1
 
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent Store's
 // replaceable client-generation manager. It is the MULTI-REPLICA production schedule backend
-// (scheduled-tasks issue #189, Phase 1d): the SAME logic as
+// (scheduled-tasks issue #189): the SAME logic as
 // memschedulestore/jsonlstore.scheduleStore with Redis persistence + a Lua-script
 // atomic Claim. No client-side mutex is needed — Redis serializes commands
 // single-threaded, and the Claim script is the cross-replica at-most-once fence

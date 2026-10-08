@@ -372,8 +372,7 @@ func classifyAddMemberErr(err error) error {
 		errors.Is(err, agent.ErrNilEngine):
 		return fmt.Errorf("%w: %v", ErrInternal, err)
 	default:
-		// Unknown failure class: treat as a bad request, preserving the historical
-		// default rather than masking it as a server fault.
+		// Unknown failure class: treat as a bad request (the default) rather than masking it as a server fault.
 		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 }

@@ -282,6 +282,32 @@ func TestLogSlotConfigFacts(t *testing.T) {
 	}
 }
 
+// TestLogSlotConfigFactsCoversReflection: the reflection slot is a routed call-slot,
+// so a resolved binding narrates ACTIVE and a mistyped one WARNs at Build like the
+// other call-slots.
+func TestLogSlotConfigFactsCoversReflection(t *testing.T) {
+	active := &capturingDiag{}
+	logSlotConfigFacts(Config{
+		Model:        "m",
+		Diagnostics:  active,
+		ModelSlots:   map[string]string{slotReflection: "cheap"},
+		ModelAliases: map[string]string{"cheap": "gpt-4o-mini"},
+	})
+	if got := active.count("model slot ACTIVE"); got != 1 {
+		t.Fatalf("ACTIVE lines = %d, want 1 for a resolved reflection slot; lines=%v", got, active.lines)
+	}
+
+	warn := &capturingDiag{}
+	logSlotConfigFacts(Config{
+		Model:       "m",
+		Diagnostics: warn,
+		ModelSlots:  map[string]string{slotReflection: "bogus"},
+	})
+	if got := warn.count("unknown alias or one meaning inherit"); got != 1 {
+		t.Fatalf("misconfig WARN lines = %d, want 1 for a mistyped reflection slot; lines=%v", got, warn.lines)
+	}
+}
+
 // TestCompactionBudgetIsCounterIndependent is the O5 TRIPWIRE (Architecture Low):
 // CascadeCompactor.BudgetTokens is WINDOW-derived and independent of the Counter, so
 // the compaction reroute can key the Counter to the slot model without mis-sizing the

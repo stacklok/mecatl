@@ -183,8 +183,8 @@ func (m Model) disarmQuitGuards(pressedQuit, pressedQuitD bool) Model {
 
 // quitHintFor builds the footer quit hint LIVE from the model's current Quit
 // binding, so a rebound quit chord is advertised honestly. With the default
-// binding ("ctrl+c") it is byte-identical to the historical "press ctrl+c again
-// to quit". It doubles as the disarm/clear sentinel — the arm and the disarm
+// binding ("ctrl+c") it reads "press ctrl+c again to quit". It doubles as the
+// disarm/clear sentinel — the arm and the disarm
 // both re-derive it from the SAME binding, so a mid-arm remap (a live reload
 // path) cannot strand a stale hint.
 func quitHintFor(b key.Binding) string {
@@ -512,7 +512,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
-// migrated onto the modal no longer ride this chain — HandleMsg owns their
+// hosted on the modal do not ride this chain — HandleMsg owns their
 // routing.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
@@ -594,7 +594,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.statusContextRoot = ""
-	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
+	m.caps = msg.Capabilities
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
 	// so this is set once here. An older server yields the zero value → no segment.
@@ -2033,11 +2033,9 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.rend.setWidth(m.width)
 	// relayout sizes the viewport height from the measured layout (header + transients
 	// + input + footer) and, when the height changed, re-renders + re-derives
-	// auto-follow — the tail onResize used to do inline. A width-only resize leaves
-	// that layout unchanged, so re-render below to replace any stale wrapped lines.
-	// The magic taH=4/footerH=2 and
-	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
-	// the rendered regions in chrome().
+	// auto-follow. A width-only resize leaves that layout unchanged, so re-render
+	// below to replace any stale wrapped lines. The heights are measured via
+	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
 	m.clampHelpScroll()
@@ -3683,8 +3681,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// chance to drain at this run's clean completion, so it is no longer "paused".
 	m.queuePaused = ""
 	// The textarea stays FOCUSED while running so the user can type a follow-up and
-	// enqueue it (see enqueuePrompt / onRunningKey). It used to Blur here to signal
-	// "input disabled while running"; type-while-running supersedes that.
+	// enqueue it (see enqueuePrompt / onRunningKey).
 	m.phase = phaseRunning
 	m.statusMsg = "running…"
 	m.refreshView()
@@ -4692,9 +4689,9 @@ func (m Model) copySelection() (tea.Model, tea.Cmd) {
 
 // snapshotSelection records the selection's identity anchor and RE-SPLICES the
 // highlight over the unstyled base content in place — the per-gesture (press / drag /
-// edge-autoscroll) update. It REPLACES the old applySelectionHighlight: the highlight
-// is no longer the viewport's native SetHighlights (which mis-placed it on ANSI-styled
-// content — see styleSelection) but our own per-line splice. So there is no
+// edge-autoscroll) update. The highlight is not the viewport's native SetHighlights
+// (which mis-places it on ANSI-styled content — see styleSelection) but our own
+// per-line splice. So there is no
 // SetHighlights/ClearHighlights and no YOffset save/restore to neutralise an
 // EnsureVisible scroll-jump — re-splicing the SAME-length content never moves YOffset.
 //

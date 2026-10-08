@@ -746,7 +746,7 @@ type LiveReconnectedMsg struct{}
 // The log-only replay msgs. These three kinds (approval/user_prompt/
 // compaction.archive) are LOG-ONLY on the live Converse wire (the relay skips
 // them) and are relayed ONLY by the StreamSessionEvents replay. They are the
-// transcript-viewer's audit/history surface (cloud-native Phase 3a read-back).
+// transcript-viewer's audit/history surface.
 
 // ApprovalMsg is the verdict half of a permission ask (EvApproval), relayed
 // only by the replay (log-only on the live wire). Metadata-only (gauntlet #7):

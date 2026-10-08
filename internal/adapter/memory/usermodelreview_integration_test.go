@@ -51,7 +51,7 @@ func completedSessionWithTranscript(id session.SessionID) *session.Session {
 	return s
 }
 
-// TestUserModelReviewerWritesFactAndNeverReopens is the Phase-2b unit proof:
+// TestUserModelReviewerWritesFactAndNeverReopens is the unit proof:
 //   - the reviewer loads a scripted transcript via the fake store,
 //   - runs a mockllm child that emits ONE RememberUser call,
 //   - the fact lands in the (real) user-model store, AND

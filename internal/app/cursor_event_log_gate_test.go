@@ -26,7 +26,8 @@ import (
 
 // This file is Scenario 6's cross-backend gate: the acceptance criteria that are
 // claims about the SET of backends rather than about any one of them, sited here
-// for the same reason internal/app owns the cloud-native Phase 3 gate — the
+// for the same reason internal/app owns the store+log reconstruction gate
+// (phase3_gate_test.go) — the
 // composition layer is the only one permitted to import every adapter, and the
 // backends span two Go modules (memstore in engine/, the rest in the root).
 //
@@ -34,7 +35,7 @@ import (
 // individually, invoked from that backend's own package. These tests do NOT
 // restate it. They assert the things a per-backend run structurally cannot: that
 // the additive port left the legacy contract intact, that a gap is an envelope
-// rather than an event, and that the durable backends the ADR names are actually
+// rather than an event, and that the expected durable backends are actually
 // present in the set rather than quietly absent.
 
 // cursorBackend is one row of the gate's backend table.
@@ -371,7 +372,7 @@ func TestCrossProcessWatchObservesAppends(t *testing.T) {
 		})
 	}
 
-	// The set assertion: a durable backend the ADR names must be in the table,
+	// The set assertion: every expected durable backend must be in the table,
 	// not quietly missing. Without this, deleting a row silently narrows AC6.5
 	// to whatever happens to remain.
 	for _, name := range requiredDurableCursorBackends {

@@ -642,7 +642,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 		memory.InspectUserMemoryToolName, memory.ForgetUserMemoryToolName, memory.UndoUserMemoryToolName,
 		// The no-fs core tier: WebFetch + FetchMcpResource (outbound reads) + WebSearch
 		// (search-then-fetch discovery). FetchMcpResource is an outbound read with no
-		// filesystem need (issue #223 Phase 2).
+		// filesystem need (issue #223).
 		"WebFetch", "FetchMcpResource", "WebSearch",
 		// CallMcpWithQuery (issue #223): the fail-closed escape hatch for an over-cap
 		// structured MCP result. Cloud-native portable (no disk), so a no-FS child that
@@ -661,7 +661,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 	}
 }
 
-// TestSelectorSessionSurvivesRestartE2E is the cloud-native Phase 1 falsifiable
+// TestSelectorSessionSurvivesRestartE2E is the session-survives-restart falsifiable
 // gate through the FULL composition (app.Build → server.Service), offline: a
 // session bound to a NON-default provider/model selector with a PARTIALLY-consumed
 // token budget is created and run over a durable store, the process "exits"

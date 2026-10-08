@@ -255,8 +255,8 @@ const (
 //     (the singleton / skip-overlap guard). The intended default is true (overlapping
 //     fires of the same schedule are suppressed, so a slow run does not pile up
 //     concurrent fires); it is a bare `bool` whose zero value is false, and the
-//     Phase-2 create-seam is what sets it to true by default (Phase 1 has no create
-//     API, so a schedule's Singleton is whatever its Save carried). The authoritative
+//     server's create seam sets it to true by default (a direct Save stores
+//     whatever Singleton it carries). The authoritative
 //     cross-replica liveness oracle for the "prior still running" check is the
 //     per-session LEASE on ScheduleState.LastFireSessionID: a stale pointer to a
 //     finished fire (lease released/expired) yields a free trial-acquire, so the
@@ -314,7 +314,7 @@ type ScheduleSpec struct {
 	// PlacementOwned marks an exact placement provisioned exclusively for this
 	// schedule. It is trusted durable host metadata: public schedule mappings
 	// never accept or project it. Legacy records decode false and are therefore
-	// conservatively treated as borrowed, so an ambiguous historical schedule
+	// conservatively treated as borrowed, so an ambiguous legacy schedule
 	// can never cause placement deletion.
 	PlacementOwned bool
 	Mode           session.PermissionMode
@@ -513,8 +513,8 @@ type ScheduleFire struct {
 	Err string
 }
 
-// ScheduleStore is the OPTIONAL durable schedule registry port (scheduled-tasks
-// Phase 1a) — a peer of port.SessionLease / port.EventLog. It is discovered by type
+// ScheduleStore is the OPTIONAL durable schedule registry port (scheduled tasks)
+// — a peer of port.SessionLease / port.EventLog. It is discovered by type
 // assertion exactly like PrunableStore / SessionLease: a store/backend that does not
 // implement it is simply never consulted, and composition wires a scheduler ONLY
 // when an operator selects a backend by flag — the default path is byte-identical

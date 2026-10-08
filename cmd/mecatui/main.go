@@ -430,7 +430,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.OpenURL = openBrowserURL
 	applyClientPresentationSettings(settings, &deps)
 
-	// Apply keymap overrides (CLI for now).
+	// Apply keymap overrides (client YAML settings merged with CLI --keymap).
 	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
 		_ = cl.Close()
 		transCleanup()
@@ -942,7 +942,8 @@ func testSignalHandler(mode string) error {
 }
 
 // keyOverridesFromConfig merges CLI --keymap entries into a map[string][]string.
-// YAML wiring will be added in a later step; for now only CLI is consulted.
+// It reads only the CLI; applyKeyOverridesToDeps merges the result over the
+// client YAML keymap.
 func keyOverridesFromConfig(cfg config) map[string][]string {
 	if cfg.keymap == nil || len(*cfg.keymap) == 0 {
 		return nil
@@ -988,7 +989,7 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 
 	// We are about to HOST an embedded server (the bare/local mode).
 	// This is the pre-TUI window (before the Bubble Tea alt screen starts) where the
-	// first-encounter workspace-trust prompt belongs (Workspace-Trust Phase 2c): if
+	// first-encounter workspace-trust prompt belongs: if
 	// the workspace is not already trusted but carries a project authority set (or a
 	// remembered entry that DRIFTED), prompt the operator. The outcome feeds
 	// cfg.trustProject so embeddedConfig → app.Build honours it WITHOUT re-resolving
@@ -1273,8 +1274,8 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 	return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
 }
 
-// applyTrustPrompt runs the pre-TUI first-encounter workspace-trust gate
-// (Workspace-Trust Phase 2c) and returns cfg with trustProject set when the
+// applyTrustPrompt runs the pre-TUI first-encounter workspace-trust gate and
+// returns cfg with trustProject set when the
 // operator (or an already-existing trust grant) trusts the run. It builds the
 // production trust seam over embeddedConfig(cfg) — so the prompt folds the EXACT
 // same app.Config app.Build will fold — and reads stdin / writes stderr / detects
@@ -1416,7 +1417,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		ChildGCInterval:               cfg.retentionSweepCadence,
 		RetentionCLISet:               cfg.retentionCLISet,
 		AcknowledgeMainRetention:      cfg.acknowledgeMainRetention,
-		// Soul ON by default (issue #14, Phase 1): a user-scoped, agent-READ-ONLY
+		// Soul ON by default (issue #14): a user-scoped, agent-READ-ONLY
 		// persona fragment read from the conventional ~/.config/mecatl/soul.md
 		// (fail-soft if absent), consistent with the "enable every free+local feature
 		// by default" posture. --soul-file overrides the path; --no-soul disables it.
@@ -1424,7 +1425,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		NoSoul:      cfg.noSoul,
 		ApproveSoul: cfg.approveSoul,
 		SoulStrict:  cfg.soulStrict,
-		// User model ON by default (issue #14, Phase 2): cross-project operator FACTS.
+		// User model ON by default (issue #14): cross-project operator FACTS.
 		UserModelDir:                 cfg.userModelDir,
 		NoUserModel:                  cfg.noUserModel,
 		LearningAdmissionInterval:    cfg.learningAdmissionInterval,
@@ -1456,7 +1457,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// per-project config and import Claude-Code settings.json — re-resolved per
 		// session against the session workspace root, inert until a
 		// .mecatl/settings.yaml (or .claude/settings.json) exists. TrustProject is
-		// DEFAULT FALSE (unified with mecated, WORKSPACE-TRUST Phase 0): a project's
+		// DEFAULT FALSE (unified with mecated): a project's
 		// ALLOW rules and its project soul are honoured ONLY with --trust-project; its
 		// deny/ask rules are always honoured regardless.
 		PermissionsConventional: true,

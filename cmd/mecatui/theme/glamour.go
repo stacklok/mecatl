@@ -95,7 +95,7 @@ func (t Theme) GlamourStyle() ansi.StyleConfig {
 			// Inline code is DE-EMPHASISED: a receding foreground (the quote slot,
 			// palette-derived so it stays theme-safe) plus Faint, over the element
 			// background. It reads as a quiet monospace span rather than an accent,
-			// so prose around an `identifier` no longer fights it for attention.
+			// so prose around an `identifier` does not fight it for attention.
 			StylePrimitive: ansi.StylePrimitive{
 				Color:           strptr(p.MdQuote),
 				BackgroundColor: strptr(p.BgElement),

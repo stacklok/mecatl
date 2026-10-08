@@ -284,8 +284,8 @@ func (s *Session) BindAuthority(authority Authority) error {
 }
 
 // BoundAuthority returns the copied durable authority payload and whether this
-// session was explicitly bound. An absent payload is a documented pre-feature
-// legacy session, never an empty bound set.
+// session was explicitly bound. An absent payload is a documented legacy
+// session written without authority, never an empty bound set.
 func (s *Session) BoundAuthority() (Authority, bool) {
 	if !s.authorityBound {
 		return Authority{}, false

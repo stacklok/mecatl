@@ -127,8 +127,8 @@ type SessionMeta struct {
 	Incarnation session.IncarnationID
 	Owner       *session.Principal
 	// Authority is the plain derived-capability payload supplied with creation
-	// metadata. Nil is a documented pre-feature legacy record; a present payload
-	// is validated and bound before reconstruction proceeds.
+	// metadata. Nil is a documented legacy record written without authority; a
+	// present payload is validated and bound before reconstruction proceeds.
 	Authority *session.Authority
 	// ExternalBinding is the opaque composition-issued process-external
 	// identity (e.g. an MCP broker attachment binding). Not event-carried:

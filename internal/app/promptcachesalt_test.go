@@ -58,7 +58,7 @@ func TestCacheKeySaltNeverPersistedOrLogged(t *testing.T) {
 
 // TestOpenAICompatEntryRefusesRedirect pins AC5.1 for a generic
 // openai-compat entry (openai / openrouter / openai-codex), which
-// newOpenAICompatEntry previously built with the SDK's default client. A 307
+// newOpenAICompatEntry must not build with the SDK's default client. A 307
 // re-sends the BODY — system prompt, file contents, tool results — and Go only
 // strips Authorization, not the payload.
 //

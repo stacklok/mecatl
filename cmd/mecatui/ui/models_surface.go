@@ -80,7 +80,7 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	appendChrome := func(line string) {
 		if len(lines) < max(0, height) {
 			// Keep normal Models chrome intact so the surrounding card can retain its
-			// historical natural width. Compact geometry still needs a hard bound.
+			// natural width. Compact geometry still needs a hard bound.
 			if width < modelsNormalChromeWidth {
 				line = boundedDisplayLine(line, width)
 			}

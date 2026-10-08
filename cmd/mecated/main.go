@@ -237,7 +237,7 @@ type config struct {
 	// Memory: per-project memory store directory (empty disables memory tools).
 	memoryDir string
 
-	// Remote store drivers (Phase B): gRPC driver endpoints replacing the local
+	// Remote store drivers: gRPC driver endpoints replacing the local
 	// session/memory stores (mutually exclusive with --store-dir/--memory-dir;
 	// app.Build validates). The driver auth/TLS knobs apply to every driver
 	// connection; the token also reads MECATL_DRIVER_AUTH_TOKEN when the flag
@@ -257,7 +257,7 @@ type config struct {
 	driverTLSCert    string
 	driverTLSKey     string
 
-	// Session leasing (cloud-native Phase 4): OPTIONAL cross-process single-writer
+	// Session leasing: OPTIONAL cross-process single-writer
 	// enforcement for multi-replica deployments over a shared store. Empty =
 	// no leasing (the byte-identical single-writer-by-affinity default). Exactly
 	// one backend: URL (driver), k8s namespace, or flock dir.
@@ -267,7 +267,7 @@ type config struct {
 	sessionLeaseTTL           time.Duration
 	sessionLeaseRenewInterval time.Duration
 
-	// Scheduled tasks (issue #189, Phase 1f): the in-process scheduler
+	// Scheduled tasks (issue #189): the in-process scheduler
 	// ticks the durable ScheduleStore and fires due schedules. ON by default on
 	// any schedule-capable store (--store-dir / --redis-url / a driver store that
 	// exposes the accessor); a store with no ScheduleStore (the in-memory
@@ -278,11 +278,11 @@ type config struct {
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
 
-	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona fragment.
+	// Soul (issue #14): a user-scoped, agent-READ-ONLY persona fragment.
 	// ON by default reading the conventional ~/.config/mecatl/soul.md (fail-soft if
 	// absent). soulFile overrides the path; noSoul disables it entirely.
 	//
-	// Drift baseline (issue #14, Phase 3, Item 1): the harness records the soul's
+	// Drift baseline (issue #14): the harness records the soul's
 	// content hash in a sidecar (<soulPath>.sha256) trust-on-first-use; a later run
 	// whose hash differs logs a drift WARN and still loads. approveSoul (re)writes the
 	// baseline to the current hash (accept the edit); soulStrict makes a DRIFTED soul
@@ -292,7 +292,7 @@ type config struct {
 	approveSoul bool
 	soulStrict  bool
 
-	// User model (issue #14, Phase 2): a user-scoped, cross-project memory of
+	// User model (issue #14): a user-scoped, cross-project memory of
 	// durable FACTS about the operator (explicit user-memory tools plus a live
 	// bounded operator profile in the volatile system suffix). ON by default at the conventional
 	// ~/.config/mecatl/usermodel; noUserModel disables it; userModelDir overrides
@@ -1795,7 +1795,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/operating/mecated). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
-	// Scheduled tasks (issue #189, Phase 1f). The scheduler is ON by
+	// Scheduled tasks (issue #189). The scheduler is ON by
 	// default whenever the configured store exposes a ScheduleStore; the flag
 	// surface is the opt-OUT knob.
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "disable scheduling for a schedule-capable durable store. Create, list, and manual fire operations remain available.")

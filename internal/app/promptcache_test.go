@@ -11,7 +11,7 @@ import (
 // — the composition half of the leak guard (the adapter-level
 // TestCacheDialectOpenAINeverSendsCacheControl proves the wire is safe once a
 // dialect is chosen; this proves the RIGHT dialect is chosen). Covers both
-// base-URL-override rows from the ADR's table and a PromptCacheDisabled
+// base-URL-override rows of the dialect table and a PromptCacheDisabled
 // sweep that must force None regardless of (id, baseURL).
 func TestCacheDialectTable(t *testing.T) {
 	tests := []struct {
@@ -75,7 +75,7 @@ func TestOpenAIChatCacheDialectTable(t *testing.T) {
 
 // TestAnthropicCacheTTLDefault pins that the three built-in Anthropic Messages
 // providers resolve the TTL identically: 1h by default, an operator value wins,
-// and --no-prompt-cache keeps the pre-ADR wire. Custom definitions keep the
+// and --no-prompt-cache sends no TTL unless the operator sets one. Custom definitions keep the
 // API default unless the operator sets one.
 func TestAnthropicCacheTTLDefault(t *testing.T) {
 	cases := []struct {

@@ -324,7 +324,7 @@ func TestMemberSessionIDUnaffectedByRouting(t *testing.T) {
 // Scope note: the test asserts the secret stays out of the ROUTING-introduced fields, NOT
 // out of the whole payload — the EvTeamStart roster legitimately carries the member's
 // clamped Role label (the pre-existing teamRoster projection), which is not the
-// gauntlet-#7 surface this slice added. The classifier here returns a CLEAN category/model;
+// gauntlet-#7 routing-metadata surface. The classifier here returns a CLEAN category/model;
 // a buggy router that echoed the classified text into the model id would trip (b).
 func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 	const secret = "SECRET-MEMBER-ROLE-CONTENT"

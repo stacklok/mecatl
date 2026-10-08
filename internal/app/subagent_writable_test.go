@@ -19,9 +19,9 @@ import (
 )
 
 // recordingMerger is a tool.EnvironmentMerger test double recording every Merge call. It is
-// used to prove the Parallel single-branch path still consumes the shared
-// catalogAssets.autoMerger — the writable Subagent NO LONGER merges (direct-write),
-// so it is the Parallel-only consumer now.
+// used to prove the Parallel single-branch path consumes the shared
+// catalogAssets.autoMerger — the writable Subagent does NOT merge (direct-write),
+// so Parallel is its only consumer.
 type recordingMerger struct {
 	mu    sync.Mutex
 	calls []struct{ fork, parent string }
@@ -129,8 +129,8 @@ func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 	}
 }
 
-// TestSharedMergerReachesParallel proves the Parallel single-branch auto-merge still
-// consumes the shared catalogAssets.autoMerger (the writable Subagent no longer does —
+// TestSharedMergerReachesParallel proves the Parallel single-branch auto-merge
+// consumes the shared catalogAssets.autoMerger (the writable Subagent does not —
 // direct-write). One recording merger on the assets receives the Parallel
 // branch's merge call.
 func TestSharedMergerReachesParallel(t *testing.T) {

@@ -91,8 +91,8 @@ func TestWebSearchDefaultIsFloorAllow(t *testing.T) {
 	}
 }
 
-// TestFetchMcpResourceDefaultIsFloorAllow proves FetchMcpResource (issue #223
-// Phase 2) resolves to Allow via the built-in floor, both directly and via the
+// TestFetchMcpResourceDefaultIsFloorAllow proves FetchMcpResource (issue #223)
+// resolves to Allow via the built-in floor, both directly and via the
 // production mainRules assembly — matching the WebFetch/WebSearch posture
 // (config-overridable; the SSRF gate is session.ValidateMediaURL, not an Ask).
 func TestFetchMcpResourceDefaultIsFloorAllow(t *testing.T) {

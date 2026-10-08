@@ -1,7 +1,7 @@
 // Package memorypromotion provides conservative proposal-to-memory convergence.
 package memorypromotion
 
-//revive:disable:exported // exported policy vocabulary is documented at the package and ADR boundary
+//revive:disable:exported // exported policy vocabulary is documented at the package boundary
 
 import (
 	"context"

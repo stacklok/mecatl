@@ -51,8 +51,8 @@ type Provider struct {
 	// maps a recognised value verbatim and OMITS on anything else (fail-soft).
 	effort string
 	// caps is the per-SESSION input-capability intersection (catalog ∩ adapter)
-	// the request builder consults when projecting a tool result's typed Parts
-	// (T7): port.RouteToolResultParts drops image/audio blocks the (provider, model)
+	// the request builder consults when projecting a tool result's typed Parts:
+	// port.RouteToolResultParts drops image/audio blocks the (provider, model)
 	// cannot receive. nil (the Option unset) DEGRADES to the adapter's own static
 	// Capabilities() — so a provider constructed without the Option (tests, the
 	// byte-identical default path) behaves exactly as before. It is DISTINCT from
@@ -133,14 +133,14 @@ func WithReasoningEffort(effort string) Option {
 
 // WithProviderCapabilities sets the per-SESSION input-capability intersection
 // (the catalog ∩ adapter value composition computes via modelCapability) the
-// request builder consults when projecting a tool result's typed Parts (T7). It
+// request builder consults when projecting a tool result's typed Parts. It
 // is an adapter-CONSTRUCTION Option, not a port.LLMRequest field — the per-
 // session engine factory re-mints the adapter (alongside reasoning effort) when
 // the session's resolved (provider, model) carries a DIFFERENT intersection than
 // the operator-default model the shared provider was built with; the default
 // path (same model) reuses the shared provider byte-for-byte. When unset, the
-// builder degrades to the adapter's own static Capabilities() — byte-identical
-// to the pre-T7 path, and a tool result with no Parts always takes the legacy
+// builder degrades to the adapter's own static Capabilities(), and a tool result
+// with no Parts always takes the legacy
 // single-string function_call_output regardless. A deliberately text-only
 // (zero-value) caps is distinct from unset (nil).
 func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
@@ -423,7 +423,7 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 // that carried no reasoning envelope cannot unlock a hidden retry.
 // "Carried one" is decided by the SAME unpack the wire projection uses
 // (assistantItems), so the two can never disagree about whether an envelope
-// exists — only a complete current envelope is replayable. Bare historical
+// exists — only a complete current envelope is replayable. Bare legacy
 // ciphertext and malformed/unsupported envelopes are intentionally omitted.
 func withoutEncryptedReasoning(req port.LLMRequest) (port.LLMRequest, bool) {
 	messages := slices.Clone(req.Messages)
@@ -492,7 +492,7 @@ func (*Provider) Capabilities() port.ProviderCapabilities {
 // sessionCaps returns the per-session capability intersection the request
 // builder consults for tool-result Part projection: the composition-set value
 // (WithProviderCapabilities) when present, else the adapter's static transmit
-// Capabilities() (the byte-identical pre-T7 default).
+// Capabilities() (the default).
 func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	if p.caps != nil {
 		return *p.caps

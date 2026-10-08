@@ -30,8 +30,8 @@ const maxTeamTrace = maxTraceEntries
 
 // teamTraceKind distinguishes the two flavours of a delegation-lane trace entry: a
 // forwarded message line versus a tool chip. The expanded view renders messages as
-// clamped prose and tools as glyph+name chips. (The kind name stays team-prefixed
-// for the historical type it rides; it is shared by all three families.)
+// clamped prose and tools as glyph+name chips. (The kind name is team-prefixed
+// after the type it rides; it is shared by all three families.)
 type teamTraceKind int
 
 const (
@@ -242,7 +242,7 @@ type teamLane struct {
 	// "" on a routed hit. BARE metadata — never member content.
 	routingReason string
 	// routingDecision is the configured router's immutable start snapshot.
-	// Nil preserves historical events without reconstructing evidence.
+	// Nil for events that carry no decision; evidence is never reconstructed.
 	routingDecision *client.RoutingDecision
 	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112),
 	// regardless of how it was chosen; == routedModel when routed. BARE

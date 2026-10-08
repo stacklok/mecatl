@@ -915,9 +915,9 @@ func TestSubagentNoAdvisoryLeavesPromptUnchanged(t *testing.T) {
 	}
 }
 
-// TestSubagentNilForkerRunsAgainstParent asserts the unchanged legacy behaviour: with
-// NO child forker wired, the child runs against the parent workspace (its tools see
-// the parent root) — no fork, exactly as before Phase 2.
+// TestSubagentNilForkerRunsAgainstParent asserts that with NO child forker wired,
+// the child runs against the parent workspace (its tools see the parent root) — no
+// fork.
 func TestSubagentNilForkerRunsAgainstParent(t *testing.T) {
 	probe := &rootRecordingTool{}
 	childLLM := mockllm.New(

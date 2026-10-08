@@ -2249,7 +2249,7 @@ func TestToolhiveNativeAnthropic_Scenario3_StatusAndPresentation(t *testing.T) {
 }
 
 // TestModelRowOrgTagNilConfigIntentProviderIDs: a nil configProvenanceProviderIDs map (no gateway)
-// means no row carries the "org" tag — the byte-identical pre-feature path.
+// means no row carries the "org" tag.
 func TestModelRowOrgTagNilConfigIntentProviderIDs(t *testing.T) {
 	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
 	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, nil, toolhive)
@@ -2338,8 +2338,7 @@ func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
 	}
 }
 
-// TestProvenanceHintSuppressedWhenNoStatus: no statuses ⇒ no hint (byte-identical
-// to the pre-feature line).
+// TestProvenanceHintSuppressedWhenNoStatus: no statuses ⇒ no hint.
 func TestProvenanceHintSuppressedWhenNoStatus(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})

@@ -16,7 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestPhase3ReconstructFromStoreAndLog is the cloud-native Phase 3 GATE: it drives
+// TestPhase3ReconstructFromStoreAndLog is the store+log reconstruction GATE: it drives
 // a session that takes THREE distinct verdicts (deny / allow-once / allow-always)
 // AND crosses a compaction boundary, persists to a REAL on-disk jsonlstore via the
 // full composition (app.Build + the HTTP SSE relay, which Appends every event to
@@ -266,7 +266,7 @@ var childLeakSentinel = "SENTINEL_phase3_child_arg_must_not_leak_7b2e" + strings
 // childLeakSentinelTail is the part of the sentinel that clamping MUST remove.
 const childLeakSentinelTail = "_TAIL"
 
-// TestPhase3LogNoChildLeak is the Phase 3 GATE's no-leak mutation-verify: a
+// TestPhase3LogNoChildLeak is the reconstruction GATE's no-leak mutation-verify: a
 // Subagent delegation's child makes a tool call whose args carry a secret-shaped
 // sentinel. The delegation events the relay records (subagent.*) are BOUNDED
 // previews, so the sentinel's TAIL must NOT appear in ANY durable-log

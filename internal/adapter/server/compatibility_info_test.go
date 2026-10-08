@@ -85,7 +85,7 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities(t *tes
 		t.Fatalf("GetCompatibilityInfo created %d session(s); it must answer without a probe session", n)
 	}
 
-	// Session creation no longer echoes deployment-wide capabilities.
+	// Session creation does not echo deployment-wide capabilities.
 	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
