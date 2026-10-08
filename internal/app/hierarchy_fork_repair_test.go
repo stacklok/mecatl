@@ -24,7 +24,7 @@ func TestBuildSamePlacementForkKeepsExaminedInstructions(t *testing.T) {
 	}
 	cfg := hcConfiguredFiles(t, ws)
 	cfg.Workspace = ws.Root()
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}), mockllm.TextTurn("parent"), mockllm.TextTurn("fork"), mockllm.TextTurn("fresh"))
@@ -142,7 +142,7 @@ func TestBuildForkDiscardsRemovedBinding(t *testing.T) {
 	}
 	cfg := hcConfiguredFiles(t, old)
 	cfg.Workspace = execution.Root()
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	cfg.HarnessInstructionSources[0].Scope = HarnessSourceScopePrincipal
 	binds := 0
 	cfg.HarnessInstructionSources[0].Bind = func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {

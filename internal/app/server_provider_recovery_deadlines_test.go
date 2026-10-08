@@ -131,6 +131,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				defer func() { cancel(); srv.Close() }()
 				cfg := recoveryAppConfig(t, srv.URL)
 				cfg.LLMBreakerCooldown = 10 * time.Millisecond
+				cfg.GuardrailsDisabled = false // recoveryAppConfig declares off; this test configures a checker instead
 				cfg.GuardrailsModel = cfg.Model
 				cfg.GuardrailsOnCheckerDown = policy
 				cfg.GuardrailsRules = []GuardrailRule{{Match: "Write", Phases: []string{"pre"}, Mode: "block"}}
@@ -230,6 +231,7 @@ func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *tes
 			}))
 			defer srv.Close()
 			cfg := recoveryAppConfig(t, srv.URL)
+			cfg.GuardrailsDisabled = false // recoveryAppConfig declares off; this test configures a checker instead
 			cfg.GuardrailsModel = cfg.Model
 			cfg.GuardrailsOnCheckerDown = policy
 			cfg.GuardrailsRules = []GuardrailRule{{Match: "Grep", Phases: []string{"pre"}, Mode: "block"}}
