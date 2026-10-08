@@ -313438,6 +313438,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791470681763,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9c0eb80cb58cba6cb77f9405f2562e54fc656f62",
+          "message": "fix(studio): antialias text like the design references (#2199)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T16:44:24+02:00",
+          "tree_id": "e9eb818fbdc4394f1b295caf3b77051e0108cbe3",
+          "url": "https://github.com/stacklok/mecatl/commit/9c0eb80cb58cba6cb77f9405f2562e54fc656f62"
+        },
+        "date": 1791471402076,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3252,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 51,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -410034,6 +410073,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791471399208,
+  "lastUpdate": 1791471403277,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
