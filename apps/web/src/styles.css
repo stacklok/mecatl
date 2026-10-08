@@ -364,3 +364,10 @@
     height: 18px;
   }
 }
+
+/* sonner toasts take the popover surface, as in the prototype. */
+[data-sonner-toaster] {
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+}
