@@ -89,7 +89,7 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
       </Link>
       <h1 className="mt-5 break-all text-3xl font-semibold tracking-tight">{providerId}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        Source: authenticated BFF provider detail. Configuration is managed by the deployment.
+        Configuration is managed by the deployment.
       </p>
       <div className="mt-7">{content}</div>
     </PageShell>
