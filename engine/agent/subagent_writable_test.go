@@ -463,7 +463,7 @@ func TestSubagentModeCombinationGuards(t *testing.T) {
 				map[string]*agent.Engine{"reviewer": childEngineWith(mockllm.New(mockllm.TextTurn("r")), catalogWith(t))},
 				[]agent.AgentMeta{{Name: "reviewer", Description: "reviews"}},
 			),
-			agent.WithAgentModelEngineFactory(func(string, string) (*agent.Engine, bool) { return overrideEngine, true }),
+			agent.WithAgentModelEngineFactory(func(string, agent.ModelTarget) (*agent.Engine, bool) { return overrideEngine, true }),
 			agent.WithAgentWritableEngineFactory(func(string) (*agent.Engine, bool) { return overrideEngine, true }))
 		res := runOneSubagent(t, task, "p1", `{"prompt":"go","mode":"read-write","agent":"reviewer","model":"fast"}`)
 		if !res.IsError || !strings.Contains(res.Content, "cannot be combined with both") {

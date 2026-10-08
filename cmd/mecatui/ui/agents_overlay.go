@@ -1306,7 +1306,7 @@ func subagentRosterTitle(ln *subagentLane, bodyWidth, titlePrefixWidth int) stri
 
 func subagentRosterDetails(ln *subagentLane) string {
 	details := []string{}
-	if routed := delegationModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model, ln.routingDecision); routed != "" {
+	if routed := delegationModelLabelWithSelection(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model, ln.provider, ln.explicitRouterCategory, ln.routingDecision); routed != "" {
 		details = append(details, routed)
 	}
 	details = append(details,
@@ -1466,7 +1466,7 @@ func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, 
 	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("subagent · "+goal, bodyWidth)))
 	out.WriteString("\n")
 	out.WriteString(muted.Render(subagentRosterText(ln, bodyWidth, 0)))
-	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+	if detail := routingDecisionDetail(ln.routingDecision, qualifiedModelLabel(ln.provider, ln.model), ln.routingReason); detail != "" {
 		out.WriteString("\n")
 		out.WriteString(muted.Render(hangingIndentWrap(detail, "  ", bodyWidth)))
 	}
@@ -1738,7 +1738,7 @@ func indentParallelBranchTrace(trace string, bodyWidth int) string {
 func parallelBranchText(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
 	text := parallelBranchTitle(br, bodyWidth, titlePrefixWidth) + "\n" +
 		hangingIndentWrap(parallelBranchDetails(br), "    ", bodyWidth)
-	if detail := routingDecisionDetail(br.routingDecision, br.model, br.routingReason); detail != "" {
+	if detail := routingDecisionDetail(br.routingDecision, qualifiedModelLabel(br.provider, br.model), br.routingReason); detail != "" {
 		text += "\n" + hangingIndentWrap(detail, "    ", bodyWidth)
 	}
 	return text
@@ -1761,7 +1761,7 @@ func parallelBranchTitle(br *parallelBranch, bodyWidth, titlePrefixWidth int) st
 
 func parallelBranchDetails(br *parallelBranch) string {
 	parts := []string{}
-	if routed := delegationModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model, br.routingDecision); routed != "" {
+	if routed := delegationModelLabelWithSelection(br.routedCategory, br.routedModel, br.routingReason, br.model, br.provider, br.explicitRouterCategory, br.routingDecision); routed != "" {
 		parts = append(parts, routed)
 	}
 	parts = append(parts, parallelBranchState(br), plural(br.toolCount, "tool"), "↑"+renderfmt.HumanizeTokens(br.usage.InputTokens)+" ↓"+renderfmt.HumanizeTokens(br.usage.OutputTokens))
@@ -1825,7 +1825,7 @@ func parallelBranchLine(br *parallelBranch) string {
 		state = truncate(terminaltext.Sanitize(br.current), maxTraceToolNameLen) + "…"
 	}
 	routed := ""
-	if r := delegationModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model, br.routingDecision); r != "" {
+	if r := delegationModelLabelWithSelection(br.routedCategory, br.routedModel, br.routingReason, br.model, br.provider, br.explicitRouterCategory, br.routingDecision); r != "" {
 		routed = " · " + r
 	}
 	return fmt.Sprintf("%s %s · %s%s · %s · %s · ↑%s ↓%s",

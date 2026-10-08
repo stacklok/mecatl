@@ -10,15 +10,52 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// ModelRouteResult is one backend-neutral classifier result. Category and Model are
+// ModelTarget is a provider/model target selected for delegated work. An empty
+// Provider preserves the caller's contextual provider.
+type ModelTarget struct {
+	Provider string
+	Model    string
+}
+
+const maxDelegationSelectorBytes = 512
+
+func validDelegationSelectorValue(value string) bool {
+	if len(value) > maxDelegationSelectorBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// ResolvedModelSelector is composition's validated interpretation of one explicit
+// delegation selector. ProviderBearing distinguishes a contextual bare model from
+// a selector that explicitly carries provider intent (including pair aliases).
+type ResolvedModelSelector struct {
+	Target                 ModelTarget
+	ActualProvider         string
+	ProviderBearing        bool
+	ExplicitRouterCategory string
+}
+
+// SubagentSelectorResolver resolves call-level provider/model syntax without
+// exposing provider registries or router configuration to engine core.
+type SubagentSelectorResolver func(provider, model string) (ResolvedModelSelector, error)
+
+// ModelRouteResult is one backend-neutral classifier result. Category and target are
 // validated candidates even when OK is false; OK alone says whether the route was accepted.
 type ModelRouteResult struct {
 	Category   string
+	Provider   string
 	Model      string
 	Usage      session.AuxiliaryUsage
 	Reason     string
@@ -37,6 +74,7 @@ type SubagentModelRouter struct {
 
 type modelRoutingResult struct {
 	category string
+	provider string
 	model    string
 	reason   string
 	ok       bool
@@ -111,10 +149,9 @@ func routerDecision(router *SubagentModelRouter, result ModelRouteResult, outcom
 // It is a SIBLING of guardrailcheck.go and askadjudicator.go: a free function
 // that drives a dedicated, composition-built, tool-less ONE-TURN classifier Engine
 // over a fenced task prompt
-// and parses a single-JSON verdict naming the chosen category. The engine layer is
-// model-string-only (the layering rule): RunModelRouter returns a CATEGORY NAME, and
-// composition owns the category→model mapping (aliases/slots/the allowlist cap) — the
-// engine never sees an alias or a slot.
+// and parses a single-JSON verdict naming the chosen category. RunModelRouter returns
+// a CATEGORY NAME; composition resolves it to a concrete provider/model target.
+// The engine never sees an alias or a slot.
 //
 // FAIL-SOFT is the whole posture: the router is NEVER load-bearing for correctness or
 // safety. Any run failure, cancellation, unparseable verdict, or hallucinated category

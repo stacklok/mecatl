@@ -136,7 +136,7 @@ func TestStatusLine_CompactHeaderLabelsPermissionMode(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	s.Submit(Input{
 		Session:  Session{Handle: "deadbeef", Mode: "accept-edits"},
-		Model:    Model{DisplayName: "GPT-5"},
+		Model:    Model{ProviderLabel: "gpt-5", FriendlyName: "GPT-5"},
 		Terminal: Terminal{HeaderAvailCols: 50, FooterAvailCols: 80},
 	})
 	select {
@@ -144,7 +144,7 @@ func TestStatusLine_CompactHeaderLabelsPermissionMode(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shipped source did not publish")
 	}
-	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · GPT-5 · mode accept-edits"; got != want {
+	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · gpt-5 · mode accept-edits"; got != want {
 		t.Fatalf("compact header = %q, want %q", got, want)
 	}
 }

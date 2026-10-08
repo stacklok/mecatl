@@ -58,13 +58,17 @@ type Session struct {
 }
 
 // Model carries the provider-independent model facts selected for the session.
-// ProviderID and ID are opaque routing identifiers; DisplayName is the operator-
-// facing label. ContextWindow is the resolved model context capacity, not current
-// session consumption.
+// ProviderID and ID are opaque routing identifiers. ProviderLabel is the
+// resolved provider/model identity for display (or the raw model ID when the
+// provider is unknown); FriendlyName is the inventory name, falling back to ID.
+// Route is an observed downstream route, not part of the model identity.
+// ContextWindow is the resolved model context capacity, not current session
+// consumption.
 type Model struct {
 	ProviderID    string
 	ID            string
-	DisplayName   string
+	ProviderLabel string
+	FriendlyName  string
 	Route         string
 	ContextWindow ContextAtom
 }

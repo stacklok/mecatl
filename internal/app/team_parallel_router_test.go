@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // team_parallel_router_test.go covers the composition half of issue #100:
@@ -149,14 +151,14 @@ func TestParallelEngineFactoryRoutesContaminationSafe(t *testing.T) {
 	)
 	prov := observedProvider(&models, &mu, mockllm.TextTurn("done"))
 	cfg := Config{Model: "parent-model", SubagentModel: "gpt-5-mini"}
-	factory := buildParallelEngineFactory(cfg, regForTest(prov, providerAnthropic, cfg.Model), prov, providerAnthropic, cfg.Model, nil)
+	factory := buildParallelTargetEngineFactory(cfg, regForTest(prov, providerAnthropic, cfg.Model), prov, providerAnthropic, nil)
 
 	// Blank model: unroutable.
-	if eng, ok := factory(""); ok || eng != nil {
+	if eng, ok := factory(agent.ModelTarget{}); ok || eng != nil {
 		t.Fatalf("a blank model must be unroutable; got (%v, %v)", eng, ok)
 	}
 
-	eng, ok := factory(catAnthropicModel)
+	eng, ok := factory(agent.ModelTarget{Model: catAnthropicModel})
 	if !ok || eng == nil {
 		t.Fatal("a non-blank model must mint a branch engine")
 	}
@@ -176,9 +178,249 @@ func TestParallelEngineFactoryRoutesContaminationSafe(t *testing.T) {
 func TestParallelEngineFactorySatisfiesOptionShape(_ *testing.T) {
 	cfg := Config{Model: "m"}
 	prov := mockllm.New()
-	f := buildParallelEngineFactory(cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil)
+	f := buildParallelTargetEngineFactory(cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, nil)
 	// WithParallelEngineFactory accepts exactly this shape (compile-time assertion).
 	_ = agent.WithParallelEngineFactory(f)
+}
+
+func TestADR_0369_Scenario4_TeamMemberSelector(t *testing.T) {
+	t.Run("parallel target switches provider", func(t *testing.T) {
+		parent := mockllm.New(mockllm.TextTurn("parent"))
+		var mu sync.Mutex
+		var models []string
+		second := observedProvider(&models, &mu, mockllm.TextTurn("second"))
+		reg := twoProviderReg(parent, "parent", "parent-model", second, "second")
+		factory := buildParallelTargetEngineFactory(Config{Model: "parent-model"}, reg, parent, "parent", nil)
+		eng, ok := factory(agent.ModelTarget{Provider: "second", Model: "chosen"})
+		if !ok || eng == nil {
+			t.Fatal("cross-provider parallel target was not built")
+		}
+		drainEngine(t, eng)
+		mu.Lock()
+		defer mu.Unlock()
+		if len(models) != 1 || models[0] != "chosen" {
+			t.Fatalf("second-provider models = %v, want [chosen]", models)
+		}
+	})
+
+	t.Run("provider-bearing named roster rejection is atomic", func(t *testing.T) {
+		builds := 0
+		teamTool := agent.NewTeamTool(func(_ *team.Team, _ agent.MemberSpec, _ string) agent.MemberBuild {
+			builds++
+			return agent.MemberBuild{}
+		}, agent.WithTeamSelectorResolver(func(provider, model string) (agent.ResolvedModelSelector, error) {
+			return agent.ResolvedModelSelector{Target: agent.ModelTarget{Provider: provider, Model: model}, ActualProvider: provider, ProviderBearing: provider != ""}, nil
+		}))
+		res, err := teamTool.Execute(t.Context(), session.NewToolCall("t", "Team", json.RawMessage(`{"goal":"goal","members":[{"name":"first","role":"lead","model":"ok"},{"name":"second","role":"review","agent":"reviewer","provider":"other","model":"bad"}]}`)), memEnvironment("/ws"))
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if !res.IsError || builds != 0 {
+			t.Fatalf("atomic rejection result error=%v builds=%d, want true/0", res.IsError, builds)
+		}
+	})
+
+	t.Run("named team model override preserves specialist scope", func(t *testing.T) {
+		parent := mockllm.New(mockllm.TextTurn("parent"))
+		var (
+			mu     sync.Mutex
+			models []string
+			system string
+		)
+		second := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			mu.Lock()
+			models = append(models, req.Model)
+			system = req.System.Render()
+			mu.Unlock()
+		})}, mockllm.TextTurn("done"))
+		reg := twoProviderReg(parent, "parent", "parent-model", second, "second")
+		def := agents.AgentDef{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY", Tools: []string{"Read", "Edit", "Write"}, PermissionMode: "plan", MaxTurns: 7, MaxToolCalls: 8}
+		cfg := Config{Model: "parent-model"}
+		factory := buildMemberSelectorEngine(cfg, reg, parent, "parent", "parent-model", hookexec.New(nil), agents.NewRegistry([]agents.AgentDef{def}), nil, nil, nil, false, nil, catalogAssets{}, false)
+		build := factory(team.New("t"), agent.MemberSpec{Name: "reviewer", AgentType: "reviewer"}, agent.ResolvedModelSelector{Target: agent.ModelTarget{Model: "override"}, ActualProvider: "second"})
+		if build.Engine == nil {
+			t.Fatal("named member model override returned nil engine")
+		}
+		drainEngine(t, build.Engine)
+		mu.Lock()
+		defer mu.Unlock()
+		if build.Provider != "second" || len(models) != 1 || models[0] != "override" {
+			t.Fatalf("provider=%q models=%v, want second/[override]", build.Provider, models)
+		}
+		if build.Mode != session.ModePlan || build.Limits.MaxTurns != 7 || build.Limits.MaxToolCalls != 8 || !strings.Contains(system, "SPECIALIST-SCOPE-CANARY") {
+			t.Fatalf("specialist scope lost: mode=%q limits=%+v system=%q", build.Mode, build.Limits, system)
+		}
+		if !build.Engine.HasTool("Read") || build.Engine.HasTool("Edit") || build.Engine.HasTool("Write") || build.Engine.HasTool("Shell") {
+			t.Fatalf("specialist read-only catalog lost: Read=%v Edit=%v Write=%v Shell=%v", build.Engine.HasTool("Read"), build.Engine.HasTool("Edit"), build.Engine.HasTool("Write"), build.Engine.HasTool("Shell"))
+		}
+	})
+
+	t.Run("selected specialist retains its composed engine across rounds", func(t *testing.T) {
+		lead := mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("l1", "AddTask", json.RawMessage(`{"description":"inspect"}`))),
+			mockllm.TextTurn("delegated"),
+			mockllm.TextTurn("synthesized"),
+		)
+		worker := mockllm.New(
+			mockllm.ToolCallTurn(
+				session.NewToolCall("w1", "CompleteTask", json.RawMessage(`{"task_id":"task-1"}`)),
+				session.NewToolCall("w2", "RecordFinding", json.RawMessage(`{"finding":"done"}`)),
+			),
+			mockllm.TextTurn("complete"),
+		)
+		reg := twoProviderReg(worker, "parent", "parent-model", lead, "second")
+		defs := agents.NewRegistry([]agents.AgentDef{{Name: "reviewer", Provider: "second", Model: "definition-model", Body: "SPECIALIST-SCOPE-CANARY"}})
+		cfg := Config{Model: "parent-model"}
+		defaultFactory := buildMemberEngine(cfg, reg, worker, "parent", "parent-model", hookexec.New(nil), defs, nil, nil, nil, false, nil, catalogAssets{}, false)
+		tm := team.New("team")
+		builds := 0
+		sup := agent.NewSupervisor(tm, memEnvironment("/ws"), func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+			if spec.Selector != nil {
+				builds++
+			}
+			return defaultFactory(tm, spec, routedModel)
+		}, agent.WithReadOnlyForker(memfsForker{}), agent.WithTeamReadLedgerFactory(testReadLedger), agent.WithMaxRounds(10))
+		selected := agent.ResolvedModelSelector{Target: agent.ModelTarget{Model: "override"}, ActualProvider: "second"}
+		if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "lead", Lead: true, AgentType: "reviewer", InitialPrompt: "delegate", Selector: &selected}); err != nil {
+			t.Fatalf("AddMember(lead): %v", err)
+		}
+		if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "worker"}); err != nil {
+			t.Fatalf("AddMember(worker): %v", err)
+		}
+		out := sup.Run(t.Context(), nil)
+		if !out.Quiescent || out.Rounds < 2 {
+			t.Fatalf("team outcome = %+v, builds=%d lead calls=%d worker calls=%d, want multiple quiescent rounds", out, builds, lead.Calls(), worker.Calls())
+		}
+		if builds != 1 || lead.Calls() != 3 {
+			t.Fatalf("selected specialist builds=%d calls=%d, want one composed engine retained for three calls", builds, lead.Calls())
+		}
+	})
+}
+
+func TestTeamBareModelSelectorUsesContextualProvider(t *testing.T) {
+	for _, selector := range []string{"selected-contextual-model", "contextual"} {
+		t.Run(selector, func(t *testing.T) {
+			testTeamBareModelSelectorUsesContextualProvider(t, false, selector)
+		})
+	}
+}
+
+func TestNoFSTeamBareModelSelectorUsesContextualProvider(t *testing.T) {
+	for _, selector := range []string{"selected-contextual-model", "contextual"} {
+		t.Run(selector, func(t *testing.T) {
+			testTeamBareModelSelectorUsesContextualProvider(t, true, selector)
+		})
+	}
+}
+
+func testTeamBareModelSelectorUsesContextualProvider(t *testing.T, noFS bool, selector string) {
+	t.Helper()
+	const (
+		parentProvider = providerOpenAI
+		parentModel    = "parent-model"
+		childProvider  = providerOpenRouter
+		childDefault   = "child-default"
+		selectedModel  = "selected-contextual-model"
+	)
+
+	var (
+		mu            sync.Mutex
+		parentModels  []string
+		childRequests int
+	)
+	teamArgs, err := json.Marshal(map[string]any{"goal": "inspect", "members": []map[string]string{{"name": "lead", "role": "review", "model": selector}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		mu.Lock()
+		parentModels = append(parentModels, req.Model)
+		mu.Unlock()
+	})},
+		mockllm.ToolCallTurn(session.NewToolCall("team", "Team", teamArgs)),
+		mockllm.TextTurn("member work"),
+		mockllm.TextTurn("member synthesis"),
+		mockllm.TextTurn("parent done"),
+	)
+	child := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+		mu.Lock()
+		childRequests++
+		mu.Unlock()
+	})})
+
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:             t.TempDir(),
+		MemoryDir:             t.TempDir(),
+		NoSoul:                true,
+		Model:                 parentModel,
+		DefaultProvider:       parentProvider,
+		SubagentModel:         childDefault,
+		ModelAliasTargets:     ModelAliases{childDefault: {ProviderID: childProvider, Model: "child-default-model"}, "contextual": {Model: selectedModel}},
+		EnableTeams:           true,
+		AllowAllTools:         true,
+		ContextWindowOverride: 128000,
+		envDetector: fakeEnv(map[string]string{
+			"OPENAI_API_KEY":     "test-key",
+			"OPENROUTER_API_KEY": "test-key",
+		}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			switch id {
+			case parentProvider:
+				return parent
+			case childProvider:
+				return child
+			default:
+				return mockllm.New()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	var sess *session.Session
+	if noFS {
+		sess, err = built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, defaultLimits(), server.ProviderSelector{}, server.ProfileNoFS)
+	} else {
+		sess, err = built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	}
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "delegate")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	events := runEvents(run)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if childRequests != 0 {
+		t.Fatalf("global child-default provider %q received %d requests, want zero", childProvider, childRequests)
+	}
+	foundSelected := false
+	for _, model := range parentModels {
+		if model == selectedModel {
+			foundSelected = true
+			break
+		}
+	}
+	if !foundSelected {
+		t.Fatalf("contextual provider %q models = %v, want selected member model %q", parentProvider, parentModels, selectedModel)
+	}
+	for _, ev := range events {
+		if ev.Type != session.EvTeamStart || ev.Team == nil || len(ev.Team.Roster) != 1 {
+			continue
+		}
+		member := ev.Team.Roster[0]
+		if member.Provider != parentProvider || member.Model != selectedModel {
+			t.Fatalf("member evidence = provider %q model %q, want %q/%q", member.Provider, member.Model, parentProvider, selectedModel)
+		}
+		return
+	}
+	t.Fatal("missing team member evidence")
 }
 
 // ---- routingProvider: a deterministic content-routing port.LLMProvider for the e2e ------
@@ -547,5 +789,101 @@ func TestParallelRouterOffByteIdenticalE2E(t *testing.T) {
 		if m != "gpt-5" {
 			t.Fatalf("a request carried %q with the Parallel router OFF; want only gpt-5 (models=%v)", m, prov.recordedModels())
 		}
+	}
+}
+
+// TestExplicitCrossProviderSelectorsReachSelectedChildProviderE2E exercises the full
+// composition path: Build registers distinct offline providers, Service runs the parent
+// catalog, and the catalog tool dispatches its child to the explicitly selected provider.
+func TestExplicitCrossProviderSelectorsReachSelectedChildProviderE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		call      session.ToolCall
+		enable    func(*Config)
+		wantCalls bool
+	}{
+		{
+			name:      "Parallel",
+			call:      session.NewToolCall("parallel", "Parallel", json.RawMessage(`{"tasks":["inspect this"],"provider":"anthropic","model":"claude-sonnet-4-6"}`)),
+			enable:    func(c *Config) { c.EnableParallel = true },
+			wantCalls: true,
+		},
+		{
+			name:      "Team",
+			call:      session.NewToolCall("team", "Team", json.RawMessage(`{"goal":"inspect this","members":[{"name":"lead","role":"inspect this","provider":"anthropic","model":"claude-sonnet-4-6"}]}`)),
+			enable:    func(c *Config) { c.EnableTeams = true },
+			wantCalls: true,
+		},
+		{
+			name:      "Parallel invalid selector constructs no branch",
+			call:      session.NewToolCall("parallel-invalid", "Parallel", json.RawMessage(`{"tasks":["inspect this"],"provider":"missing","model":"missing-model"}`)),
+			enable:    func(c *Config) { c.EnableParallel = true },
+			wantCalls: false,
+		},
+		{
+			name:      "Team invalid selector constructs no member",
+			call:      session.NewToolCall("team-invalid", "Team", json.RawMessage(`{"goal":"inspect this","members":[{"name":"lead","role":"inspect this","provider":"missing","model":"missing-model"}]}`)),
+			enable:    func(c *Config) { c.EnableTeams = true },
+			wantCalls: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mu     sync.Mutex
+				models []string
+			)
+			parent := mockllm.New(mockllm.ToolCallTurn(tc.call), mockllm.TextTurn("done"))
+			selected := observedProvider(&models, &mu,
+				mockllm.TextTurn("child done"), mockllm.TextTurn("child done"),
+				mockllm.TextTurn("child done"), mockllm.TextTurn("child done"))
+			cfg := Config{
+				Workspace: t.TempDir(),
+				NoSoul:    true,
+				Model:     "gpt-5",
+				envDetector: fakeEnv(map[string]string{
+					"OPENAI_API_KEY":    "sk-x",
+					"ANTHROPIC_API_KEY": "sk-x",
+				}),
+				liveModelHTTPClient: offlineHTTPClient(),
+				providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+					if id == providerAnthropic {
+						return selected
+					}
+					return parent
+				},
+			}
+			tc.enable(&cfg)
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+
+			sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			run, err := built.Service.StartRun(t.Context(), sess.ID, "go")
+			if err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+			drainRun(run)
+
+			mu.Lock()
+			got := append([]string(nil), models...)
+			mu.Unlock()
+			if !tc.wantCalls {
+				if len(got) != 0 {
+					t.Fatalf("invalid selector reached the child provider: models=%v", got)
+				}
+				if calls := parent.Calls(); calls != 2 {
+					t.Fatalf("invalid selector started a fallback child: parent calls=%d, want only the tool call and final turn", calls)
+				}
+				return
+			}
+			if len(got) == 0 || got[0] != "claude-sonnet-4-6" {
+				t.Fatalf("selected provider child models = %v, want a request on claude-sonnet-4-6", got)
+			}
+		})
 	}
 }

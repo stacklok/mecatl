@@ -2370,6 +2370,8 @@ Which fields are set depends on the event kind:
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this branch was NOT routed by the semantic model router (branch_start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;aborted&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the branch prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no branch content crosses). Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on branch_start. Historical events and deployments without a router omit it. |
 | `child_tool_call_id` | `string` |  |  | Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise. |
+| `provider` | `string` |  |  | provider is the concrete provider that actually ran the branch. |
+| `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
 
 
@@ -3389,6 +3391,8 @@ Which fields are set depends on the event kind:
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this delegation was NOT routed by the semantic model router (subagent.start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;pinned-model&#34;, &#34;agent-def-pinned-model&#34;, &#34;resume&#34;, &#34;fork&#34;, &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;breaker-open&#34;, &#34;aborted&#34;, &#34;empty-model&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the task prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the emit site. Mirrors session.SubagentPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on subagent.start. Historical events and deployments without a router omit it. |
 | `child_tool_call_id` | `string` |  |  | Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise. |
+| `provider` | `string` |  |  | provider is the concrete provider that actually ran the child. |
+| `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
 
 
@@ -3511,6 +3515,8 @@ shape — never any member content (no prompt body, no transcript).
 | `model` | `string` |  |  | model is the concrete MODEL id this member&#39;s engine ACTUALLY runs on (team.start roster only), regardless of how it was chosen — inherited default member model, agent-def pin, or the opt-in router. BARE METADATA — a model id, never member content — so it is context-isolation safe (gauntlet #7: no member content crosses). When the router classified this member, model == routed_model. Mirrors session.TeamMemberSpec.Model. |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this member was NOT routed by the semantic model router (team.start roster only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;agent-def-pinned-model&#34;, &#34;router-disabled&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the member&#39;s role/prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no member content crosses). Clamped at the emit site. Mirrors session.TeamMemberSpec.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured for this member on team.start. Historical roster entries omit it. |
+| `provider` | `string` |  |  | provider is the concrete provider backing the retained member engine. |
+| `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
 
 

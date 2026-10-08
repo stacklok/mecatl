@@ -280,6 +280,9 @@ Flags:
   --model-alias model
         model alias mapping as name=model-id. Repeatable; for example, --model-alias
         fast=gpt-4o-mini. Agent definitions can use these aliases in their model field.
+  --model-alias-provider value
+        provider for a same-tier --model-alias as name=provider-id. Repeatable; an
+        entry without a matching --model-alias is invalid.
   --model-slot compaction
         model binding as slot=selector. Repeatable; for example, --model-slot
         compaction=cheap. Slots compaction, `ask-reviewer`, and `guardrail` select
@@ -548,8 +551,7 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default
-        "<WORKSPACE>")
+        default session workspace root (default "<WORKSPACE>")
   --yolo
         alias for --posture=yolo. Allows tools server-wide and lets child command
         substitutions run automatically. Deny rules and configured ask rules still
@@ -714,6 +716,9 @@ Usage: mecak8s [flags]
   --model-alias model
         model alias mapping as name=model-id. Repeatable; for example, --model-alias
         fast=gpt-4o-mini. Agent definitions can use these aliases in their model field.
+  --model-alias-provider value
+        provider for a same-tier --model-alias as name=provider-id. Repeatable; an
+        entry without a matching --model-alias is invalid.
   --model-slot compaction
         model binding as slot=selector. Repeatable; for example, --model-slot
         compaction=cheap. Slots compaction, `ask-reviewer`, and `guardrail` select

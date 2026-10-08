@@ -37,7 +37,7 @@ const (
 	// (re-exported through internal/configgen), so the read and write paths can never
 	// resolve different files.
 	UserSettingsRelPath = "mecatl/settings.yaml"
-	// userSubdirMecatl is an internal alias for UserSettingsRelPath.
+	// userSubdirMecatl is the historical internal alias for UserSettingsRelPath.
 	userSubdirMecatl = UserSettingsRelPath // joined under <config>/...
 	// userSubdirClaude is the Claude-Code-compatible user-level settings file,
 	// rooted at the home directory (~/.claude/settings.json).
@@ -97,13 +97,6 @@ type fileStamp struct {
 type cacheEntry struct {
 	rules  []governance.Rule
 	stamps map[string]fileStamp // keyed by the project-relative file path
-	// projectModels is the SANITIZED project-tier models: block captured during the
-	// SAME resolution that built rules/stamps: slots/aliases/default
-	// only (the allowlist: key is stripped — non-wideable), and ONLY when the project is
-	// trusted AND an operator allowlist exists. nil when the project carried no honoured
-	// models: block. It lives on the cacheEntry so it invalidates with the project rules
-	// on the SAME mtime/size fingerprint (ProjectModelBindings is a pure read of it).
-	projectModels *ModelsSection
 }
 
 // Resolver discovers and caches file-based permission rules per workspace root
@@ -155,7 +148,7 @@ type Resolver struct {
 	operatorReasoningEffort string
 
 	// operatorPlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve: bool
-	// (issue #206), read ONCE at construction from the user-global + CLI
+	// (issue #206 Wave 6a), read ONCE at construction from the user-global + CLI
 	// tiers ONLY. A project-tier file's plan-mode-auto-approve: key is deliberately
 	// IGNORED (a project repo enabling autonomous plan approval is a security
 	// DOWNGRADE — loadProjectRules WARNs when it sees one). false when no
@@ -179,15 +172,11 @@ type Resolver struct {
 	operatorSteer    bool
 	operatorSteerSet bool
 
-	// operatorModels is the OPERATOR-TIER models: subtree, read ONCE at
-	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
-	// captureModels from loadUserRules; there is no second capture path). It carries
-	// the operator's own slots/aliases/default AND the non-wideable Allowlist cap that
-	// gates the PROJECT-tier bindings. A project-tier file's models: block is
-	// honoured only WITHIN this Allowlist on a trusted workspace (loadProjectRules) —
-	// when the Allowlist is empty the project block stays WARN-ignored (the opt-in).
-	// nil when no operator-tier file carried a models: section. CLI (explicit files)
-	// out-ranks user-global (first-non-nil keeps CLI).
+	// operatorModels is the first operator-tier models: block from user-global or
+	// CLI settings. Project-tier models: blocks are ignored regardless of trust.
+	// The legacy models.allowlist key is parsed for compatibility, but has no
+	// effect and warns when set. nil means neither operator tier supplied models:.
+	// CLI outranks user-global (first-non-nil keeps CLI).
 	operatorModels *ModelsSection
 
 	// operatorOpenRouter is the OPERATOR-TIER openrouter: subtree (issue #480), read
@@ -398,8 +387,8 @@ func (r *Resolver) OperatorReasoningEffort() string {
 }
 
 // OperatorPlanModeAutoApprove returns the operator-tier plan-mode-auto-approve:
-// bool (user-global + CLI only), or false when none was configured (issue #206).
-// It is the SOLE accessor the composition layer uses to read the flag
+// bool (user-global + CLI only), or false when none was configured (issue #206
+// Wave 6a). It is the SOLE accessor the composition layer uses to read the flag
 // from config — by construction it never returns a project-tier value (a project
 // plan-mode-auto-approve: is ignored with a WARN in loadProjectRules). nil-safe.
 // Mirrors OperatorPosture().
@@ -536,42 +525,15 @@ func (r *Resolver) OperatorRetention() (*RetentionSection, error) {
 }
 
 // OperatorModelPolicy returns the operator-tier models: subtree (user-global + CLI
-// only), or nil when none was configured. It is the accessor the
-// composition layer reads the operator ALLOWLIST and the operator DEFAULT from — the
-// non-wideable cap that gates project-tier bindings. It reads the SAME operatorModels
-// backing field as OperatorModelSlots (allowlist+default+slots+aliases all ride the
-// one operator models: block, captured once via captureModels); there is no second
-// capture path. nil-safe. It mirrors OperatorGuardrails()/OperatorPosture().
+// only), or nil when none was configured. It is the accessor the composition layer
+// reads for operator model bindings. It reads the SAME operatorModels backing field as
+// OperatorModelSlots; there is no second capture path. nil-safe. It mirrors
+// OperatorGuardrails()/OperatorPosture().
 func (r *Resolver) OperatorModelPolicy() *ModelsSection {
 	if r == nil {
 		return nil
 	}
 	return r.operatorModels
-}
-
-// ProjectModelBindings returns the SANITIZED project-tier models: block for the given
-// workspace: slots/aliases/default only (the allowlist: key is
-// stripped at capture — non-wideable), captured ONLY when the project was trusted AND
-// an operator allowlist exists. It is a pure read of the per-root cacheEntry; a cold
-// root is resolved first (the same revalidated-cache path Resolve uses), so the
-// trust/allowlist decision was already applied at CAPTURE time (loadProjectRules) — this
-// accessor adds no policy. Returns nil when ws is nil, the resolver is nil, or the
-// project carried no honoured models: block.
-func (r *Resolver) ProjectModelBindings(ws tool.WorkspaceReader) *ModelsSection {
-	if r == nil || ws == nil {
-		return nil
-	}
-	// Warm the cache (and apply the capture-time trust/allowlist gate) if cold/stale,
-	// reusing the SAME revalidated-cache path as Resolve so the projectModels capture
-	// stays in lockstep with the rules on the file fingerprint.
-	r.Resolve(context.Background(), ws)
-	root := ws.Root()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if entry, ok := r.cache[root]; ok {
-		return entry.projectModels
-	}
-	return nil
 }
 
 // New constructs a Resolver from opts, reading the user-global + explicit (CLI)
@@ -656,14 +618,14 @@ func (r *Resolver) Resolve(_ context.Context, ws tool.WorkspaceReader) []governa
 		return entry.rules
 	}
 
-	// Miss or stale: reload the project rules + the (gated) project models and re-stamp.
-	project, projModels := r.loadProjectRules(ws)
+	// Miss or stale: reload the project rules and re-stamp.
+	project := r.loadProjectRules(ws)
 	merged := make([]governance.Rule, 0, len(project)+len(r.userRules))
 	merged = append(merged, project...)
 	merged = append(merged, r.userRules...)
 
 	r.mu.Lock()
-	r.cache[root] = &cacheEntry{rules: merged, stamps: stamps, projectModels: projModels}
+	r.cache[root] = &cacheEntry{rules: merged, stamps: stamps}
 	r.mu.Unlock()
 	return merged
 }
@@ -705,10 +667,9 @@ func stampsEqual(a, b map[string]fileStamp) bool {
 // each at its tier scope (local > shared), applies the trust gate, and logs the
 // import report. It is fail-soft PER FILE: an unreadable/malformed file is logged
 // and skipped, so a bad shared YAML never suppresses a good local/Claude file.
-func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule, *ModelsSection) { //nolint:gocyclo // Project-tier parsing keeps per-subtree warnings at one trust boundary.
+func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) []governance.Rule { //nolint:gocyclo // Project-tier parsing keeps per-subtree warnings at one trust boundary.
 	var report Report
 	var rules []governance.Rule
-	var projectModels *ModelsSection
 
 	for _, src := range r.sources {
 		data, err := ws.Read(context.Background(), src.path)
@@ -772,7 +733,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"reasoning-effort: IGNORING a project-tier reasoning-effort: scalar (operator-tier only — set reasoning-effort in your user-global settings.yaml or via --reasoning-effort)",
 				"file", src.path, "root", ws.Root())
 		}
-		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206), for
+		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206 Wave 6a), for
 		// consistency with posture/guardrails: a project file's plan-mode-auto-approve:
 		// key is IGNORED with a loud WARN. Enabling it from a project repo would let a
 		// repo enable autonomous plan approval — a security DOWNGRADE (the same
@@ -832,22 +793,19 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"storage_management: IGNORING a project-tier authority block (operator-tier only)",
 				"file", src.path, "root", ws.Root())
 		}
-		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST,
-		// otherwise IGNORED. captureProjectModels applies the full gate (allowlist key
-		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
-		// honoured slots/aliases/default across project files (local > shared by load
-		// order — first non-empty wins per field/key). It WARNs precisely on each
-		// not-honoured reason. Without an operator allowlist the project block is
-		// WARN-ignored.
-		if cfg.Models != nil {
-			projectModels = r.captureProjectModels(ws, src.path, cfg.Models, projectModels)
+		// Project model policy is disabled. parseYAMLForTier removed the opaque models
+		// node before nested schema decoding; emit exactly one value-free warning per source.
+		if hasTopLevelKey(data, "models") {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"models: IGNORING project-tier models block (operator-tier only)",
+				"file", src.path, "root", ws.Root())
 		}
 		rules = append(rules, rulesFromConfig(cfg, src.scope, &report)...)
 	}
 
 	rules = r.applyTrustGate(rules, &report)
 	r.logReport(&report, "project("+ws.Root()+")")
-	return rules, projectModels
+	return rules
 }
 
 func (r *Resolver) warnProjectHarnessContext(data []byte, file, root string) {
@@ -873,139 +831,6 @@ func (r *Resolver) warnProjectSystemPrompt(section *SystemPromptSection, file, r
 	r.diag.Log(context.Background(), port.LevelWarn,
 		"system_prompt: IGNORING a project-tier system_prompt block (operator-tier only; configure it in user-global settings.yaml or an explicit operator file)",
 		"file", file, "root", root)
-}
-
-// captureProjectModels applies the project models: gate to ONE project-tier models:
-// block and merges its honoured bindings onto acc (the running per-root accumulator
-// across the local→shared file order; first-non-empty wins, so the higher-precedence
-// LOCAL file's binding is kept). It is the SINGLE choke point for the project-tier
-// trust/allowlist decision:
-//
-//  1. An allowlist: key in a PROJECT block is non-wideable — STRIP it with a WARN (a
-//     project cannot widen its own cap). The rest of the block is still considered.
-//  2. The rest is honoured ONLY when an operator allowlist EXISTS (the opt-in: no
-//     operator allowlist ⇒ project models stay WARN-ignored, byte-identical to today)
-//     AND the workspace is TRUSTED (the SAME r.opts.TrustProject gate as project allow
-//     rules — an untrusted repo's models: is dropped). When not honoured it WARNs,
-//     distinguishing the reason (no operator allowlist (opt-in) vs untrusted workspace).
-//  3. The honoured slots/aliases/default are sanitized (allowlist always nil) and merged
-//     onto acc. The allowlist-MEMBERSHIP cap itself (resolve-then-check each binding
-//     against the canonical set) is applied in COMPOSITION (foldProjectModelBindings),
-//     because it needs the operator-merged alias map to canonicalize — permconfig only
-//     captures the raw project bindings within the trust/opt-in gate.
-func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, block *ModelsSection, acc *ModelsSection) *ModelsSection {
-	// (1) A project-tier allowlist: is non-wideable — strip + WARN, but keep the rest.
-	if len(block.Allowlist) > 0 {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING project-tier models.allowlist (operator-tier only — a project cannot widen its own cap; set the allowlist in your user-global settings.yaml)",
-			"file", file, "root", ws.Root())
-	}
-
-	// (1b) A project-tier router: is OPERATOR-TIER ONLY — strip + WARN, but
-	// keep the rest. The semantic model-router taxonomy is an autonomous-spend/capability
-	// decision the operator owns (like the allowlist); a project must not define which
-	// models its delegated tasks route to. captureProjectModels never copies Router onto
-	// acc, so the strip is the WARN — the field is structurally dropped.
-	if block.Router != nil {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING project-tier models.router (operator-tier only — the semantic model-router taxonomy is an operator decision; set it in your user-global settings.yaml)",
-			"file", file, "root", ws.Root())
-	}
-
-	// (1c) A project-tier default_provider: is OPERATOR-TIER ONLY (the SAME operator-only
-	// captureModels discipline as the allowlist/router) — strip + WARN, but keep the rest.
-	// The deployment-wide default provider id is an operator decision (it mirrors the
-	// --default-provider flag); a project must not declare its own default provider.
-	// captureProjectModels never copies DefaultProvider onto acc, so the strip is the WARN
-	// — the field is structurally dropped.
-	if block.DefaultProvider != "" {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING project-tier models.default_provider (operator-tier only — the deployment-wide default provider is an operator decision; set it in your user-global settings.yaml or pass --default-provider)",
-			"file", file, "root", ws.Root())
-	}
-
-	// (1d) A project-tier subagent: is OPERATOR-TIER ONLY (issue #288 — the SAME
-	// operator-only captureModels discipline as default_provider/allowlist/router) —
-	// strip + WARN, but keep the rest. The def-less child-default model is an operator
-	// decision (it mirrors the --subagent-model flag); a project must not declare which
-	// model its delegated children run on. captureProjectModels never copies Subagent
-	// onto acc, so the strip is the WARN — the field is structurally dropped.
-	if block.Subagent != "" {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING project-tier models.subagent (operator-tier only — the child-default model is an operator decision; set it in your user-global settings.yaml or pass --subagent-model)",
-			"file", file, "root", ws.Root())
-	}
-	if len(block.ContextWindows) > 0 {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING project-tier models.context_windows (operator-tier only — set context windows in your user-global settings.yaml)",
-			"file", file, "root", ws.Root())
-	}
-
-	if value, ok := block.Slots["guardrail"]; ok && value.ExplicitProvider {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING project-tier models.slots.guardrail provider object (operator-tier only)",
-			"file", file, "root", ws.Root())
-	}
-
-	// (2) Opt-in by operator allowlist, then trust-gated.
-	op := r.operatorModels
-	if op == nil || len(op.Allowlist) == 0 {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING a project-tier models: block (no operator models.allowlist configured — set one in your user-global settings.yaml to opt into project-overridable, allowlist-capped model bindings)",
-			"file", file, "root", ws.Root())
-		return acc
-	}
-	if !r.opts.TrustProject {
-		r.diag.Log(context.Background(), port.LevelWarn,
-			"models: IGNORING a project-tier models: block (untrusted workspace — pass --trust-project or add this repo to trustedWorkspaces to honour its allowlisted model bindings)",
-			"file", file, "root", ws.Root())
-		return acc
-	}
-
-	// (3) Honoured: merge the sanitized bindings (allowlist stripped; first-non-empty
-	// wins per field, so a LOCAL file's binding out-ranks the SHARED file's).
-	if acc == nil {
-		acc = &ModelsSection{}
-	}
-	if block.Default != "" && acc.Default == "" {
-		acc.Default = block.Default
-	}
-	acc.Slots = mergeFirstWinsSlots(acc.Slots, block.Slots)
-	acc.Aliases = mergeFirstWins(acc.Aliases, block.Aliases)
-	return acc
-}
-
-func mergeFirstWinsSlots(dst, src ModelSlots) ModelSlots {
-	if dst == nil && len(src) > 0 {
-		dst = make(ModelSlots, len(src))
-	}
-	for key, value := range src {
-		if value.ExplicitProvider {
-			continue
-		}
-		if _, exists := dst[key]; !exists {
-			dst[key] = value
-		}
-	}
-	return dst
-}
-
-// mergeFirstWins copies src entries into dst, keeping any key dst already holds (the
-// higher-precedence file wins, since loadProjectRules visits local before shared). A nil
-// dst is lazily allocated only when src has entries; a nil/empty src returns dst as-is.
-func mergeFirstWins(dst, src map[string]string) map[string]string {
-	if len(src) == 0 {
-		return dst
-	}
-	if dst == nil {
-		dst = make(map[string]string, len(src))
-	}
-	for k, v := range src {
-		if _, exists := dst[k]; !exists {
-			dst[k] = v
-		}
-	}
-	return dst
 }
 
 // applyTrustGate drops project ALLOW rules when the project is untrusted, keeping
@@ -1089,7 +914,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.capturePosture(cfg.Posture)
 		// Operator-tier reasoning-effort: same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
-		// Operator-tier plan-mode-auto-approve (issue #206): same discipline as posture.
+		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 		// Operator-tier learning: same first-non-nil-keeps-CLI discipline.
 		r.captureLearning(cfg.Learning)
@@ -1135,7 +960,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.capturePosture(cfg.Posture)
 				// User-global reasoning-effort: same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
-				// User-global plan-mode-auto-approve (issue #206): same discipline as posture.
+				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 				// User-global learning: captured only if no higher CLI file already did.
 				r.captureLearning(cfg.Learning)
@@ -1262,7 +1087,7 @@ func (r *Resolver) captureLearning(s *LearningSection) {
 // wins on first-non-zero). It is called only from loadUserRules — the operator
 // (user-global + CLI) tiers — never from loadProjectRules, so a project file can
 // never supply it (operator-tier only, for consistency with posture/guardrails —
-// issue #206).
+// issue #206 Wave 6a).
 func (r *Resolver) capturePlanModeAutoApprove(p bool) {
 	if r.operatorPlanModeAutoApprove {
 		return
@@ -1288,16 +1113,17 @@ func (r *Resolver) captureSteer(s *bool) {
 // captureModels records the FIRST operator-tier models: block seen during
 // construction (CLI files are parsed before user-global, so CLI wins on
 // first-non-nil). It is called only from loadUserRules — the operator (user-global
-// + CLI) tiers — never from loadProjectRules, so this OPERATOR block (the allowlist
-// cap + the operator's own slots/aliases/default) can only come from an operator-tier
-// file. A PROJECT file's models: block is NOT captured here — it is honoured (within
-// the operator allowlist, on a trusted workspace) by the SEPARATE captureProjectModels
-// path, which feeds cacheEntry.projectModels, never operatorModels.
+// + CLI) tiers — never from loadProjectRules, so a project file can never supply
+// model configuration.
 func (r *Resolver) captureModels(m *ModelsSection) {
 	if m == nil || r.operatorModels != nil {
 		return
 	}
 	r.operatorModels = m
+	if len(m.Allowlist) > 0 {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models.allowlist has no effect and is retained only for compatibility")
+	}
 }
 
 // captureOpenRouter records the FIRST operator-tier openrouter: block seen during

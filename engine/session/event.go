@@ -889,6 +889,10 @@ type SubagentPayload struct {
 	// the gRPC + HTTP relays and the mecatui client).
 	RoutedCategory string
 	RoutedModel    string
+	// Provider is the concrete provider that actually ran this child.
+	Provider string
+	// ExplicitRouterCategory is set only for provider:"model-router" selection.
+	ExplicitRouterCategory string
 	// RoutingReason names WHY the router did NOT classify this delegation (EvSubagentStart
 	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
 	// RoutingReason* gate constants (pinned-model / agent-def-pinned-model / resume / fork /
@@ -1065,7 +1069,10 @@ type ParallelPayload struct {
 	// end-to-end (parallel.branch_start: Parallel.model = field 21), surfaced via the
 	// server mapper.
 	Model string
-
+	// Provider is the concrete provider that actually ran the branch.
+	Provider string
+	// ExplicitRouterCategory is set only for an explicit model-router selector.
+	ExplicitRouterCategory string
 	// ToolName is the name of a branch's child tool that just ran. Set on the
 	// branch_tool kind only. It is the tool NAME alone — never branch args/result.
 	ToolName string
@@ -1200,6 +1207,10 @@ type TeamMemberSpec struct {
 	// rides the proto/client wire end-to-end (team.start roster: TeamMemberSpec.model =
 	// field 7), surfaced via the server mapper.
 	Model string
+	// Provider is the concrete provider backing the retained member engine.
+	Provider string
+	// ExplicitRouterCategory is set only for an explicit model-router selector.
+	ExplicitRouterCategory string
 	// MemberSessionID and MemberIncarnation are trusted, log-only correlation for the
 	// exact enrolled member lifetime. They are deliberately omitted from every public
 	// wire and debugger JSON projection and must never be derived from the naming scheme.

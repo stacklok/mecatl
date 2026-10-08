@@ -93,34 +93,54 @@ func resolveModel(cfg Config, def agents.AgentDef) string {
 // resolveModel chain (def.Model > SubagentModel > parentModel) applies unchanged —
 // full back-compat for every existing def.
 func resolveProviderModel(cfg Config, provReg *providerRegistry, def agents.AgentDef, parentProviderID, parentModel string) (providerID, model string) {
-	pid := parentProviderID
-	if p := strings.TrimSpace(def.Provider); p != "" {
-		if _, ok := provReg.Lookup(p); ok {
-			pid = p
+	explicitProvider := strings.TrimSpace(def.Provider)
+	resolvedProvider := parentProviderID
+	invalidExplicitProvider := false
+	if explicitProvider != "" {
+		if _, ok := provReg.Lookup(explicitProvider); ok {
+			resolvedProvider = explicitProvider
 		} else {
+			invalidExplicitProvider = true
 			cfg.diag().Log(context.Background(), port.LevelWarn, "agent def references an unknown/unavailable provider; inheriting parent provider",
-				"agent", def.Name, "provider", p, "origin", string(def.Origin))
-			// pid stays parentProviderID (fail-safe).
+				"agent", def.Name, "provider", explicitProvider, "origin", string(def.Origin))
 		}
 	}
-
-	if pid != parentProviderID {
-		// Provider SWITCHED: never inherit the parent model string (different endpoint).
-		if m := strings.TrimSpace(def.Model); m != "" && m != "inherit" {
-			if resolved := resolveAlias(cfg, def, m); resolved != "" {
-				return pid, resolved
-			}
+	fallback := func() (string, string) {
+		if resolvedProvider != parentProviderID {
+			return resolvedProvider, provReg.DefaultModelFor(resolvedProvider)
 		}
-		// No explicit def model (or an alias that resolves to inherit): rebase off the
-		// new provider's builtin default, NOT the parent model.
-		return pid, provReg.DefaultModelFor(pid)
+		return parentProviderID, parentModel
 	}
 
-	// Same provider as the parent: the existing chain is correct (full back-compat).
-	// Resolve the model against the parent model rather than cfg.Model, so a session
-	// that selected a non-default model on the SAME provider propagates it to a def
-	// that pins no model of its own.
-	return pid, resolveModelFor(cfg, def, parentModel)
+	selector := strings.TrimSpace(def.Model)
+	fromDefault := selector == "" || selector == "inherit"
+	if fromDefault {
+		selector = strings.TrimSpace(cfg.SubagentModel)
+	}
+	if selector == "" {
+		return fallback()
+	}
+
+	if raw, known := lookupModelAliasTarget(cfg, selector); invalidExplicitProvider && known && raw.ProviderID != "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target conflicts with its unavailable provider; inheriting fallback target",
+			"agent", def.Name, "origin", string(def.Origin))
+		return fallback()
+	}
+	providerConstraint := ""
+	if explicitProvider != "" && !invalidExplicitProvider {
+		providerConstraint = resolvedProvider
+	}
+	contextualProvider := parentProviderID
+	if fromDefault && cfg.modelBindingProvider != "" {
+		contextualProvider = cfg.modelBindingProvider
+	}
+	target, err := resolveModelTarget(cfg, contextualProvider, providerConstraint, selector)
+	if err != nil || target.Model == "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target is unavailable or conflicts with its provider; inheriting fallback target",
+			"agent", def.Name, "origin", string(def.Origin))
+		return fallback()
+	}
+	return target.ProviderID, target.Model
 }
 
 // resolveChildProvider resolves a def to the (childProvider, model, windowFn)
@@ -187,28 +207,6 @@ func resolveModelFor(cfg Config, def agents.AgentDef, parentModel string) string
 		return pick(resolveAlias(cfg, def, strings.TrimSpace(cfg.SubagentModel)))
 	}
 	return pick(resolveAlias(cfg, def, sel))
-}
-
-// resolveDefaultChildModel resolves the model a DEF-LESS child engine — the
-// default Subagent explorer, an UNDEFINED team member, a Parallel BRANCH — runs
-// on (issue #35). It is NOT a parallel resolver: it delegates to the ONE chain
-// every def-resolved path already uses, resolveModelFor with the zero def, so the
-// precedence collapses to `SubagentModel (alias-resolved) > parentModel` (no def
-// tier to consult). The context window follows the shared childWindowFor rule:
-// the window is re-derived live-first on the PARENT provider for the resolved
-// model (a child compacts on ITS model's window, never the parent's) — an
-// unchanged model now resolves the parent's REAL window too (issue #64), flooring
-// to 128k only when the model is genuinely uncatalogued.
-//
-// SAME-PROVIDER POSTURE: the override never switches provider — the model id is
-// resolved against parentProviderID (the registry is keyed by provider, not
-// model). A def's `provider:` remains the only cross-provider seam. The Parallel
-// JUDGE deliberately does NOT route through this (it stays on the session model —
-// see registerParallelTool). provReg may be nil on direct-call test paths (the
-// window resolver falls back to the override-or-128k floor).
-func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProviderID, parentModel string) (model string, windowFn func() int) {
-	model = resolveModelFor(cfg, agents.AgentDef{}, parentModel)
-	return model, childWindowFor(cfg, provReg, parentProviderID, model)
 }
 
 // routableAgentNames computes the SET of agent-def names eligible for the OPT-IN model
@@ -327,16 +325,11 @@ func lookupModelAlias(cfg Config, sel string) (id string, known bool) {
 	if sel == "" {
 		return "", true
 	}
-	if id, ok := cfg.ModelAliases[sel]; ok {
-		return strings.TrimSpace(id), true
+	target, known := lookupModelAliasTarget(cfg, sel)
+	if !known || target.ProviderID != "" {
+		return "", false
 	}
-	if id, ok := builtinModelAliases[sel]; ok {
-		return id, true // may be "" => inherit
-	}
-	if strings.ContainsAny(sel, "-./:") || strings.Contains(sel, " ") {
-		return sel, true
-	}
-	return "", false
+	return strings.TrimSpace(target.Model), true
 }
 
 // resolvePermissionMode maps a def's frontmatter permissionMode string to a
@@ -813,6 +806,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		meta = append(meta, agent.AgentMeta{
 			Name:                     def.Name,
 			Description:              def.Description,
+			Provider:                 pid,
 			Limits:                   defLimits(def, agent.DefaultChildLimits()),
 			AuthorityCeiling:         agentDefinitionAuthorityCeiling(def, names, resources, false),
 			WritableAuthorityCeiling: agentDefinitionAuthorityCeiling(def, writableNames, resources, true),

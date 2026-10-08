@@ -141,11 +141,21 @@ hasn't succeeded, the window is unknown and the request is rejected before infer
 
 ## Model resolution: aliases and slots
 
-The engine only sees concrete model IDs. Aliases and slots resolve in composition.
+Engine factories receive concrete provider/model targets for delegated work;
+provider registries and provider-specific dependencies remain in composition.
+Aliases and slots resolve there.
 
-An **alias** is a short name mapped to a model ID in operator settings.
-`lookupModelAlias` in `internal/app/agentdefs.go` is the one grammar used by agent
-definitions, flags, and slots. Built-in `sonnet`, `opus`, and `haiku` mean "inherit"
+An **alias** is a short name mapped in operator settings to either a scalar model
+ID or an atomic `{provider, model}` target. Operator scalar aliases bind to
+`models.default_provider` (or `--default-provider`) when configured, otherwise to
+the consumer's contextual provider. Configured scalar slots, subagent defaults,
+and router categories use that configured default provider even when a paired
+session default selects another provider. Bare literal per-call models and unbound
+aliases, including CLI scalar aliases, remain contextual.
+Composition preserves the pair across defaults, slots, definitions, router categories,
+and delegation selectors. CLI aliases keep `--model-alias name=model-id`, with an
+optional matching `--model-alias-provider name=provider-id`; model IDs stay opaque.
+Resolution is single-hop. Built-in `sonnet`, `opus`, and `haiku` mean "inherit"
 unless the operator maps them, so shared agent files never break startup.
 
 A **slot** routes one internal call to its own model. `resolveSlotModel` in
@@ -161,15 +171,21 @@ through its tier, turns guardrails on. `synthesis` is accepted but nothing reads
 lists the keys and their settings.
 
 Slot resolution is fail-soft: an unknown slot key or an unresolvable selector logs
-one warning at Build and the call keeps the session model. The `plan` slot is the
-one slot on the mode axis and defaults to `reasoning`. It swaps the model, never the provider, and takes effect
-at the next run entry: the server rebuilds or promotes the session's engine when the
-session's mode differs from the one the engine was built for.
+one warning at Build and the call keeps the session model. Auxiliary calls can use
+cross-provider targets by re-deriving only that call's dependencies, without changing
+the parent session. Compaction changes only the summary call; `ask-reviewer` still
+requires its enable flag, while `guardrail` bindings enable guardrails.
 
-Model settings come from the operator tier. A trusted project may rebind the default
-model, slots, and aliases only to entries in the operator's allowlist; values outside
-it are dropped with a warning, and without an allowlist project model settings are
-ignored.
+The `plan` slot is the one slot on the mode axis and defaults to `reasoning`.
+A same-provider target swaps the model at the next run entry. A cross-provider target
+warns and keeps the session's ordinary provider/model while retaining plan permission
+mode; it never rebases the target model onto the session provider. `resolved_model`
+reports the actual model used.
+
+Model policy is operator-tier only: CLI flags > operator settings > built-in defaults.
+After whole-document YAML parsing, project `models:` nodes are opaque ignored content,
+with one value-free warning per source regardless of trust. `models.allowlist` remains
+parseable for compatibility, has no effect, and warns.
 
 ## Semantic model router
 
@@ -178,10 +194,18 @@ categories, each with a description and a model selector. Defining categories
 enables it; a kill switch disables it. It applies to `Subagent` calls, team members
 (classified once when added), and Parallel branches (each classified once).
 
-It decides only when nothing else has: an explicit per-call model, a definition's
-model (including `inherit`), fork, and resume all skip it. The routed child stays on the parent's provider and
-keeps that model for its lifetime. The chosen model never enters `port.LLMRequest`;
-composition builds the child through the same per-provider factory.
+It decides only when nothing else has: explicit call-level provider/model selectors,
+a definition's model intent (including `inherit`), fork, and resume skip classification.
+Eligible unpinned specialists retain their scoped prompt, tools, limits, and authority
+when rebuilt on the category's scalar or pair-alias target. Explicitly provider-switched
+or inline-MCP definitions bypass classification. The resolved provider/model stays fixed
+for the child's lifetime; composition builds fresh provider-specific dependencies, never
+adds selection fields to `port.LLMRequest`.
+
+An explicit `provider: "model-router"` plus an exact discovered category bypasses
+classification and fails before child construction if unavailable. Automatic routing is
+fail-soft. Precedence is explicit selector > definition model intent > fork/resume >
+router > global child default > inherited target.
 
 Two classifier backends exist. The `llm` backend runs one tool-less turn on the
 `router` slot model; the task text is fenced as untrusted, and the reply must be a

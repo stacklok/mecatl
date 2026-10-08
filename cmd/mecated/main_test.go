@@ -305,6 +305,7 @@ func TestParseFlagsAgentDefs(t *testing.T) {
 		"--agents-conventional=false",
 		"--subagent-model", "cheap-id",
 		"--model-alias", "fast=gpt-4o-mini",
+		"--model-alias-provider", "smart=anthropic",
 		"--model-alias", "smart=gpt-5",
 		"--model-slot", "compaction=cheap",
 		"--model-slot", "guardrail=fast",
@@ -323,6 +324,9 @@ func TestParseFlagsAgentDefs(t *testing.T) {
 	}
 	if got := cfg.modelAliases.AsMap(); got["fast"] != "gpt-4o-mini" || got["smart"] != "gpt-5" {
 		t.Errorf("modelAliases = %v, want fast=gpt-4o-mini smart=gpt-5", got)
+	}
+	if got := cfg.modelAliasProviders.AsMap()["smart"]; got != "anthropic" {
+		t.Errorf("modelAliasProviders[smart] = %q, want anthropic", got)
 	}
 	if got := cfg.modelSlots.AsMap(); got["compaction"] != "cheap" || got["guardrail"] != "fast" {
 		t.Errorf("modelSlots = %v, want compaction=cheap guardrail=fast", got)

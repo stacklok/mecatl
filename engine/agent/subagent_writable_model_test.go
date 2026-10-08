@@ -17,13 +17,13 @@ import (
 // writableModelMarkerFactory returns a factory that mints a writable explorer engine whose
 // single turn emits "WRITABLE-MODEL:<model>", so a test can tell which model the minted
 // engine ran on. found controls the (engine, ok) return.
-func writableModelMarkerFactory(t *testing.T, found bool) func(model string) (*agent.Engine, bool) {
+func writableModelMarkerFactory(t *testing.T, found bool) func(agent.ModelTarget) (*agent.Engine, bool) {
 	t.Helper()
-	return func(model string) (*agent.Engine, bool) {
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
 		if !found {
 			return nil, false
 		}
-		return childEngineWith(mockllm.New(mockllm.TextTurn("WRITABLE-MODEL:"+model)), catalogWith(t)), true
+		return childEngineWith(mockllm.New(mockllm.TextTurn("WRITABLE-MODEL:"+target.Model)), catalogWith(t)), true
 	}
 }
 
@@ -90,4 +90,4 @@ func TestSubagentWritableModelFactoryMiss(t *testing.T) {
 }
 
 // compile-time: the option constructor has the expected shape.
-var _ agent.SubagentOption = agent.WithWritableEngineFactory(func(string) (*agent.Engine, bool) { return nil, false })
+var _ agent.SubagentOption = agent.WithWritableEngineFactory(func(agent.ModelTarget) (*agent.Engine, bool) { return nil, false })

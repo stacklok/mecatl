@@ -246,8 +246,9 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		classified.mustRegister(extra, &entry)
 	}
 
-	if modelDiscoveryAvailable(reg, a.modelInventory) {
-		classified.mustRegister(newAgentModelDiscoveryTool(a.modelInventory), classification(server.KindSharedInfrastructure,
+	routerCategories := routerDiscoveryCategories(cfg)
+	if modelDiscoveryAvailable(reg, a.modelInventory, routerCategories) {
+		classified.mustRegister(newAgentModelDiscoveryTool(a.modelInventory, routerCategories), classification(server.KindSharedInfrastructure,
 			"bounded projection of the composition-owned resolved model inventory"))
 	}
 
@@ -461,6 +462,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// fixed keys; the attacker-NAMED-driver residual that remains is accepted at
 	// main-session parity — see buildForceCopyRunner.
 	forceCopyRunner := buildForceCopyRunner(cfg)
+	_, branchProviderID, _, _ := resolveChildProvider(cfg, reg, agents.AgentDef{}, s.provider, s.providerID, s.model)
 	parallelChild := buildParallelChildEngine(cfg, reg, s.provider, s.providerID, s.model, forceCopyRunner)
 	judge := agent.NewEngineJudge(buildParallelJudgeEngine(modelCfgFor(cfg, s.model), reg, s.providerID, s.provider))
 	opts := []agent.ParallelOption{
@@ -478,7 +480,9 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		// (the SubagentModelRouter dispatcher seam) AND the classifier hits, so with the
 		// router OFF the Parallel tool runs byte-identically on the shared branch child.
 		agent.WithParallelEngineFactory(
-			buildParallelEngineFactory(cfg, reg, s.provider, s.providerID, s.model, forceCopyRunner)),
+			buildParallelTargetEngineFactory(cfg, reg, s.provider, s.providerID, forceCopyRunner)),
+		agent.WithParallelSelectorResolver(buildSubagentSelectorResolver(cfg, reg, s.providerID)),
+		agent.WithParallelProvider(branchProviderID),
 	}
 	// NO nil fallback here: Phase A builds exactly ONE reaper per process —
 	// silently minting a per-assembly LRU would multiply the ForkPreservedCap
@@ -536,6 +540,7 @@ func registerTeamTools(ctx context.Context, cfg Config, cat *tool.Catalog, reg *
 		agent.WithTeamToolHooks(teamHooks),
 		agent.WithTeamToolStore(store),
 		agent.WithTeamToolTokenBudget(cfg.MaxTeamTokens),
+		agent.WithTeamSelectorResolver(buildSubagentSelectorResolver(cfg, reg, s.providerID)),
 	))
 	cat.MustRegister(agent.NewInspectMemberToolWithOwnership(store, cfg.OwnershipEnforced))
 	if s.narrate {

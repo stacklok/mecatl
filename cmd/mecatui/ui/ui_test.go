@@ -463,7 +463,8 @@ func goldenStatusFrame(t *testing.T, m Model) Model {
 	input := m.statusLineSnapshot()
 	input.Session.Title = "Golden session"
 	input.Model.ProviderID = "fixture"
-	input.Model.DisplayName = "fixture-model"
+	input.Model.ProviderLabel = "fixture/fixture-model"
+	input.Model.FriendlyName = "fixture-model"
 	input.Model.Route = "default"
 	input.Context = customization.Context{
 		Used:    customization.ContextAtom{Raw: 2048, Human: "2K"},

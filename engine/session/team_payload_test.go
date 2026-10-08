@@ -64,7 +64,9 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		"MemberIncarnation": "private member incarnation correlation",
 		// ISSUE #112: the concrete MODEL id the member's engine ACTUALLY runs
 		// on, regardless of how it was chosen — bare metadata, never member content.
-		"Model": "resolved concrete model id (bare metadata)",
+		"Model":                  "resolved concrete model id (bare metadata)",
+		"Provider":               "resolved concrete provider id (bare metadata)",
+		"ExplicitRouterCategory": "explicit operator router category (bare metadata)",
 	})
 }
 

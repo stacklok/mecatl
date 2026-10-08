@@ -535,6 +535,43 @@ func (m *KeyValueList) AsMap() map[string]string {
 	return map[string]string(*m)
 }
 
+// ModelAliasTargets combines the completed same-tier CLI maps. Provider-only
+// entries are retained with an empty model so app.Build can reject them after
+// all arguments have been parsed, independent of argument order.
+func ModelAliasTargets(models, providers *KeyValueList) app.ModelAliases {
+	if models == nil && providers == nil {
+		return nil
+	}
+	out := make(app.ModelAliases, len(models.AsMap())+len(providers.AsMap()))
+	for name, model := range models.AsMap() {
+		out[name] = app.ModelTarget{Model: model}
+	}
+	for name, provider := range providers.AsMap() {
+		target := out[name]
+		target.ProviderID = provider
+		out[name] = target
+	}
+	return out
+}
+
+// ScalarModelAliases retains the legacy scalar map for consumers not yet
+// converted to provider-aware targets. Entries with same-tier provider intent
+// are excluded so no consumer can silently discard that provider.
+func ScalarModelAliases(models, providers *KeyValueList) map[string]string {
+	modelMap := models.AsMap()
+	if modelMap == nil {
+		return nil
+	}
+	out := make(map[string]string, len(modelMap))
+	for name, model := range modelMap {
+		out[name] = model
+	}
+	for name := range providers.AsMap() {
+		delete(out, name)
+	}
+	return out
+}
+
 // ModelFlagHelp carries the per-main help text for the two repeatable model
 // flags --model-alias and --model-slot. The two mains word these slightly
 // differently (mecatui prefixes "embedded server only:"), so the help is passed
@@ -542,16 +579,18 @@ func (m *KeyValueList) AsMap() map[string]string {
 // the extraction. A zero ModelFlagHelp falls back to DefaultModelFlagHelp (the
 // mecated wording), which is what a new consumer (mecatequi) would use.
 type ModelFlagHelp struct {
-	ModelAlias string
-	ModelSlot  string
+	ModelAlias         string
+	ModelAliasProvider string
+	ModelSlot          string
 }
 
 // DefaultModelFlagHelp is the mecated-style wording, used when a field of the
 // passed ModelFlagHelp is empty. It mirrors the help text the mecated twin
 // carried before the extraction.
 var DefaultModelFlagHelp = ModelFlagHelp{
-	ModelAlias: "model alias mapping as name=model-id. Repeatable; for example, --model-alias fast=gpt-4o-mini. Agent definitions can use these aliases in their `model` field.",
-	ModelSlot:  "model binding as slot=selector. Repeatable; for example, --model-slot compaction=cheap. Slots `compaction`, `ask-reviewer`, and `guardrail` select models for those operations. The selector is a --model-alias or model identifier. An invalid selector uses the session model. `ask-reviewer` and `guardrail` slots do not enable those features.",
+	ModelAlias:         "model alias mapping as name=model-id. Repeatable; for example, --model-alias fast=gpt-4o-mini. Agent definitions can use these aliases in their `model` field.",
+	ModelAliasProvider: "provider for a same-tier --model-alias as name=provider-id. Repeatable; an entry without a matching --model-alias is invalid.",
+	ModelSlot:          "model binding as slot=selector. Repeatable; for example, --model-slot compaction=cheap. Slots `compaction`, `ask-reviewer`, and `guardrail` select models for those operations. The selector is a --model-alias or model identifier. An invalid selector uses the session model. `ask-reviewer` and `guardrail` slots do not enable those features.",
 }
 
 // RegisterModelFlags registers --model-alias / --model-slot on fs, each bound
@@ -561,18 +600,23 @@ var DefaultModelFlagHelp = ModelFlagHelp{
 // value (or override only the fields it words differently). It is the ONE place
 // the two repeatable model flags are wired, so the two mains (and a future
 // mecatequi consumer) cannot drift apart.
-func RegisterModelFlags(fs *flag.FlagSet, help ModelFlagHelp) (aliases, slots *KeyValueList) {
+func RegisterModelFlags(fs *flag.FlagSet, help ModelFlagHelp) (aliases, aliasProviders, slots *KeyValueList) {
 	help = help.withModelDefaults()
 	aliases = new(KeyValueList)
+	aliasProviders = new(KeyValueList)
 	slots = new(KeyValueList)
 	fs.Var(aliases, "model-alias", help.ModelAlias)
+	fs.Var(aliasProviders, "model-alias-provider", help.ModelAliasProvider)
 	fs.Var(slots, "model-slot", help.ModelSlot)
-	return aliases, slots
+	return aliases, aliasProviders, slots
 }
 
 func (h ModelFlagHelp) withModelDefaults() ModelFlagHelp {
 	if h.ModelAlias == "" {
 		h.ModelAlias = DefaultModelFlagHelp.ModelAlias
+	}
+	if h.ModelAliasProvider == "" {
+		h.ModelAliasProvider = DefaultModelFlagHelp.ModelAliasProvider
 	}
 	if h.ModelSlot == "" {
 		h.ModelSlot = DefaultModelFlagHelp.ModelSlot

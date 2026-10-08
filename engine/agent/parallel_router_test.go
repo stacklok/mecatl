@@ -64,8 +64,8 @@ func (routerForker) Fork(_ context.Context, _ tool.Environment, label string) (t
 func routerParallelTool(factoryWired bool) *ParallelTool {
 	opts := []ParallelOption{}
 	if factoryWired {
-		opts = append(opts, WithParallelEngineFactory(func(model string) (*Engine, bool) {
-			return markerEngine("ROUTED:" + model), true
+		opts = append(opts, WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			return markerEngine("ROUTED:" + target.Model), true
 		}))
 	}
 	return NewParallelTool(markerEngine("DEFAULT"), routerForker{}, opts...).(*ParallelTool)
@@ -192,8 +192,8 @@ func TestParallelRoutesEachBranchExactlyOnce(t *testing.T) {
 // one consult. Mutation-verified: moving the route call into the child turn loop FAILs here.
 func TestParallelRoutesMultiTurnBranchExactlyOnce(t *testing.T) {
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
-		WithParallelEngineFactory(func(model string) (*Engine, bool) {
-			return multiTurnMarkerEngine("ROUTED:" + model), true
+		WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			return multiTurnMarkerEngine("ROUTED:" + target.Model), true
 		})).(*ParallelTool)
 	var (
 		mu    sync.Mutex
@@ -332,7 +332,7 @@ func TestParallelBranchStartEmptyRoutedOnMiss(t *testing.T) {
 // the fallback that actually ran rather than claim the rejected target.
 func TestParallelBranchStartFactoryDeclineIsNotReportedAsRouted(t *testing.T) {
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
-		WithParallelEngineFactory(func(string) (*Engine, bool) { return nil, false })).(*ParallelTool)
+		WithParallelEngineFactory(func(ModelTarget) (*Engine, bool) { return nil, false })).(*ParallelTool)
 	var (
 		mu  sync.Mutex
 		evs []session.Event
@@ -438,7 +438,7 @@ func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 		Model:   "routed-model",
 	})
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
-		WithParallelEngineFactory(func(string) (*Engine, bool) {
+		WithParallelEngineFactory(func(ModelTarget) (*Engine, bool) {
 			return routed, true
 		})).(*ParallelTool)
 	var (

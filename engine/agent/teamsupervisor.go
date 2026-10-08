@@ -190,6 +190,8 @@ type MemberSpec struct {
 	// InitialPrompt is the member's first-turn input, run in round 0 (typically the
 	// lead's top-level task, or a teammate's role briefing).
 	InitialPrompt string
+	// Selector is the composition-validated explicit target, if one was requested.
+	Selector *ResolvedModelSelector
 }
 
 // MemberBuild is what the per-member engine factory returns: the constructed
@@ -204,6 +206,8 @@ type MemberBuild struct {
 	// Engine is the member's loop engine. It must be non-nil; AddMember rejects a
 	// nil Engine with ErrNilEngine.
 	Engine *Engine
+	// Provider is the concrete provider backing Engine.
+	Provider string
 	// Mode is the optional per-member permission mode. Empty => the team default.
 	Mode session.PermissionMode
 	// Limits are the OPTIONAL per-member, per-round stop conditions resolved from the
@@ -263,12 +267,10 @@ type MemberBuild struct {
 // runs in its OWN worktree/fork, never the shared parent base — which is why an
 // isolated member MAY be given Shell while a base-sharing read-only member must not.
 //
-// routedModel is the OPT-IN semantic model router's classification for an UNDEFINED
-// member, the ALREADY-RESOLVED concrete model id the member's engine should
-// be minted on; it is "" when the router was off, missed, or the member is DEFINED (a
-// def pins its own model — the factory IGNORES routedModel then). The supervisor owns
-// the route decision (it holds the parent caps) and passes the result here; composition
-// substitutes routedModel for the default child model only on the undefined branch.
+// routedModel is the OPT-IN router's concrete model for an undefined member.
+// For provider-aware selections (explicit or automatic), spec.Selector carries
+// the complete target and evidence to the same factory. A defined member without
+// an explicit selector keeps its own model.
 type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild
 
 // Supervisor orchestrates one agent team. Build it with NewSupervisor, enrol
@@ -482,10 +484,12 @@ type memberRT struct {
 	// a routed hit. They are BARE METADATA the Team tool reads back (MemberRouting) to
 	// project onto the EvTeamStart roster — never member content. Written once in
 	// AddMember (single goroutine, before any round), read after AddMember.
-	routedCategory  string
-	routedModel     string
-	routingReason   string
-	routingDecision *session.RoutingDecision
+	routedCategory         string
+	routedModel            string
+	routingReason          string
+	routingDecision        *session.RoutingDecision
+	provider               string
+	explicitRouterCategory string
 }
 
 // SupervisorOption configures a Supervisor.
@@ -784,6 +788,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	if _, ok := s.members[spec.Name]; ok {
 		return fmt.Errorf("%w: %q", ErrMemberAlreadyAdded, spec.Name)
 	}
+	if spec.Selector != nil && strings.TrimSpace(spec.AgentType) != "" && spec.Selector.ProviderBearing {
+		return fmt.Errorf("agent: named team member %q does not accept a provider-bearing selector", spec.Name)
+	}
 	if err := s.team.AddMember(spec.Name, spec.AgentType); err != nil {
 		// The team aggregate's sentinels (ErrMemberExists / ErrReservedName /
 		// ErrTooManyMembers) flow through unchanged so a caller can classify them
@@ -809,13 +816,39 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel, routingReason, routingDecision := s.maybeRouteMember(ctx, spec)
+	var routedCategory, routedModel, routingReason string
+	var routingDecision *session.RoutingDecision
+	selected := ResolvedModelSelector{}
+	if spec.Selector != nil {
+		selected = *spec.Selector
+		if selected.ExplicitRouterCategory == "" {
+			routingReason = session.RoutingReasonPinnedModel
+		}
+	} else {
+		var routedTarget ModelTarget
+		routedCategory, routedTarget, routingReason, routingDecision = s.maybeRouteMember(ctx, spec)
+		routedModel = routedTarget.Model
+		selected = ResolvedModelSelector{Target: routedTarget, ActualProvider: routedTarget.Provider}
+	}
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
 	// (worktree) fork — so workspace selection depends on the build, not the reverse.
-	build := s.factory(spec, routedModel)
+	// Pass the selection in the existing member spec, so one factory handles both
+	// explicit provider choices and automatic routed targets.
+	buildSpec := spec
+	if strings.TrimSpace(selected.Target.Model) != "" {
+		buildSpec.Selector = &selected
+	}
+	build := s.factory(buildSpec, selected.Target.Model)
 	eng := build.Engine
+	if eng == nil && spec.Selector == nil && routedModel != "" {
+		if build.Close != nil {
+			_ = build.Close()
+		}
+		build = s.factory(spec, "")
+		eng = build.Engine
+	}
 	if eng == nil {
 		if build.Close != nil {
 			_ = build.Close()
@@ -823,9 +856,13 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("%w for %q", ErrNilEngine, spec.Name)
 	}
-	routeAccepted := strings.TrimSpace(routedModel) == "" || eng.Model() == strings.TrimSpace(routedModel)
-	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
-		routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
+	if spec.Selector == nil {
+		routeAccepted := strings.TrimSpace(routedModel) == "" ||
+			(eng.Model() == strings.TrimSpace(routedModel) &&
+				(selected.Target.Provider == "" || build.Provider == selected.Target.Provider))
+		routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+			routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
+	}
 
 	// Workspace selection (three tiers). needFork is true for any member that runs in
 	// its OWN isolated workspace — a Mutating member (force-copy fork, s.forker) or a
@@ -886,6 +923,10 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
+	provider := strings.TrimSpace(build.Provider)
+	if provider == "" && spec.Selector != nil {
+		provider = strings.TrimSpace(selected.ActualProvider)
+	}
 	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
 	if err == nil && s.parentCallID != "" {
 		rel := sess.Relationship
@@ -915,6 +956,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	if err := s.stampDirectTeamRoot(sess, cleanup, spec.Name); err != nil {
 		return err
 	}
+	sess.ProviderID = provider
+	sess.ModelID = eng.Model()
 	if err := s.publishMemberSession(ctx, spec.Name, sess, cleanup); err != nil {
 		return err
 	}
@@ -945,10 +988,15 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// done means de-scheduled (see childFamilyTeamMember's caution).
 	s.caps.startChildRun(sess.ID)
 
+	explicitCategory := ""
+	if spec.Selector != nil {
+		explicitCategory = spec.Selector.ExplicitRouterCategory
+	}
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, env: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
 		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
-		routingDecision: cloneRoutingDecision(routingDecision)}
+		routingDecision: cloneRoutingDecision(routingDecision), provider: provider,
+		explicitRouterCategory: explicitCategory}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -990,15 +1038,15 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string, decision *session.RoutingDecision) {
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category string, target ModelTarget, reason string, decision *session.RoutingDecision) {
 	if strings.TrimSpace(spec.AgentType) != "" {
 		if s.caps.skipRoute != nil {
 			decision = s.caps.skipRoute(session.RoutingReasonAgentDefPinned)
 		}
-		return "", "", session.RoutingReasonAgentDefPinned, decision
+		return "", ModelTarget{}, session.RoutingReasonAgentDefPinned, decision
 	}
 	if s.caps.routeDecision == nil {
-		return "", "", session.RoutingReasonRouterDisabled, nil
+		return "", ModelTarget{}, session.RoutingReasonRouterDisabled, nil
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
@@ -1006,9 +1054,9 @@ func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (cat
 	}
 	routed := s.caps.routeConfigured(ctx, artifact)
 	if routed.ok {
-		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
+		return routed.category, ModelTarget{Provider: strings.TrimSpace(routed.provider), Model: strings.TrimSpace(routed.model)}, "", routed.decision
 	}
-	return "", "", routed.reason, routed.decision
+	return "", ModelTarget{}, routed.reason, routed.decision
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
@@ -1037,6 +1085,14 @@ func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.Inc
 		return "", "", false
 	}
 	return m.sess.ID, m.sess.Incarnation(), true
+}
+
+// memberSelectionEvidence returns concrete provider and explicit router category.
+func (s *Supervisor) memberSelectionEvidence(name string) (provider, explicitRouterCategory string) {
+	if m, ok := s.members[name]; ok {
+		return m.provider, m.explicitRouterCategory
+	}
+	return "", ""
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs

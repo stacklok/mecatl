@@ -322,8 +322,8 @@ func TestRoutingDecisionRealProducerRelayReloadDebugger(t *testing.T) {
 	subagent := agent.NewSubagentTool(child,
 		agent.WithSubagentStore(store),
 		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
-		agent.WithSubagentEngineFactory(func(model string) (*agent.Engine, bool) {
-			if model != "capable-model" {
+		agent.WithSubagentEngineFactory(func(target agent.ModelTarget) (*agent.Engine, bool) {
+			if target.Model != "capable-model" {
 				return nil, false
 			}
 			return child, true
