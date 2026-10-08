@@ -242,6 +242,7 @@ describe("Mecatl schedule spec mapping", () => {
     const rows = [
       { name: "paused", state: { enabled: false } },
       { name: "running", state: { enabled: true, lastFireStartedAt: ts(1_700_000_000) } },
+      { name: "running-paused", state: { enabled: false, lastFireStartedAt: ts(1_700_000_000) } },
       { name: "claimed", state: { enabled: true, lastFireSessionId: "pending" } },
       {
         name: "scheduled",
@@ -258,6 +259,7 @@ describe("Mecatl schedule spec mapping", () => {
       ["claimed", "claimed"],
       ["paused", "paused"],
       ["running", "running"],
+      ["running-paused", "running"],
       ["scheduled", "scheduled"],
     ]);
     expect(response.items.find((item) => item.name === "claimed")?.lastFireSessionId).toBe("");

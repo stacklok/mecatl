@@ -3,7 +3,7 @@
 export interface ShortcutDefinition {
   combo: string;
   description: string;
-  group: "Chats" | "Composer" | "General";
+  group: "Chats" | "Composer" | "General" | "Scheduled";
   id: string;
 }
 
@@ -43,6 +43,12 @@ export const shortcutRegistry = [
     description: "Act on the top chat layer (see Escape order below)",
     group: "General",
     id: "close.esc",
+  },
+  {
+    combo: "/",
+    description: "Filter scheduled tasks",
+    group: "Scheduled",
+    id: "schedules.filter",
   },
   {
     combo: "mod+shift+o",
@@ -120,7 +126,7 @@ export const shortcutRegistry = [
 
 export type ShortcutId = (typeof shortcutRegistry)[number]["id"];
 
-export const shortcutGroups = ["General", "Chats", "Composer"] as const;
+export const shortcutGroups = ["General", "Chats", "Scheduled", "Composer"] as const;
 
 const keycapLabels: Record<string, string> = {
   alt: "⌥",

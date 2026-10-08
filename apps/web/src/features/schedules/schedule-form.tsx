@@ -43,6 +43,20 @@ const NO_PHRASE: PhraseOutcome = { kind: "none" };
 const PHRASE_PLACEHOLDER = "every 30 minutes · daily at 9am · next monday 3pm · in 2 hours";
 const PHRASE_HINT = 'Not recognised — try "every weekday at 9am" or a cron expression';
 
+// SPEC: Editing excludes immutable name, trigger, and placement-bound tool
+// profile changes. Timezone, run limits, and retry policy remain wire state but
+// are not visible controls; edits round-trip their stored values unchanged.
+// Create and update bodies still pass through the authenticated BFF contract.
+
+/**
+ * DECISION: Completed one-shots stay inspect-only because the backend rejects
+ * their unchanged past trigger (#2146). Completed crons may still change prompt
+ * and permission posture, but reopening or rescheduling belongs to #2149.
+ */
+export function canEditSchedule(schedule: Pick<Schedule, "status" | "trigger">) {
+  return !(schedule.status === "completed" && schedule.trigger.kind === "once");
+}
+
 /** The plain-English preview of what a phrase compiled to. */
 function describePhraseOutcome(outcome: PhraseOutcome): string | null {
   if (outcome.kind === "none") return null;
@@ -141,8 +155,15 @@ export function ScheduleForm({
           </DialogHeader>
 
           <div className="mt-5 space-y-4">
+            {/*
+             * DECISION: Name stays immutable in #1852. Atomic rename or a
+             * mutable displayName over a stable backend name belongs to #2145;
+             * create-then-delete is not presented as rename because it cannot
+             * preserve state, placement, ownership, and fire history.
+             */}
             <Field label="Name">
               <Input
+                aria-label="Name"
                 disabled={Boolean(schedule)}
                 onChange={(event) => setValue({ ...value, name: event.target.value })}
                 placeholder="daily-summary"
@@ -152,6 +173,7 @@ export function ScheduleForm({
             </Field>
             <Field label="Prompt">
               <Textarea
+                aria-label="Prompt"
                 onChange={(event) => setValue({ ...value, prompt: event.target.value })}
                 placeholder="Summarize the latest project activity."
                 required
@@ -170,6 +192,7 @@ export function ScheduleForm({
                 <Field label="Describe the schedule">
                   <Input
                     aria-describedby={phraseNote ? "schedule-phrase-note" : undefined}
+                    aria-label="Describe the schedule"
                     autoComplete="off"
                     className="font-normal"
                     onChange={(event) => handlePhrase(event.target.value)}
@@ -202,75 +225,26 @@ export function ScheduleForm({
             </fieldset>
 
             {shown.triggerKind === "cron" ? (
-              <div className="space-y-4">
-                <CronFields
-                  cron={shown.cron}
-                  disabled={triggerLocked}
-                  key={phraseVersion}
-                  onChange={(cron) => changeTrigger({ cron })}
-                />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Timezone">
-                    <Input
-                      disabled={triggerLocked}
-                      onChange={(event) => {
-                        const timezone = event.target.value;
-                        setValue((current) => withTriggerPatch(current, { timezone }, schedule));
-                      }}
-                      placeholder="UTC"
-                      value={shown.timezone}
-                    />
-                    <p className="text-xs font-normal text-muted-foreground">
-                      {shown.timezone.trim()
-                        ? "An IANA time zone, such as Europe/Rome."
-                        : "Empty runs the schedule in UTC."}
-                    </p>
-                  </Field>
-                  <Field label="Maximum runs (0 = unlimited)">
-                    <Input
-                      min="0"
-                      onChange={(event) => setValue({ ...value, maxFires: event.target.value })}
-                      type="number"
-                      value={value.maxFires}
-                    />
-                  </Field>
-                </div>
-              </div>
+              <CronFields
+                cron={shown.cron}
+                disabled={triggerLocked}
+                key={phraseVersion}
+                onChange={(cron) => changeTrigger({ cron })}
+              />
             ) : (
-              <div className="space-y-3">
-                <Field label="Run at">
-                  <Input
-                    disabled={triggerLocked}
-                    onChange={(event) => changeTrigger({ oneShotAt: event.target.value })}
-                    required
-                    type="datetime-local"
-                    value={shown.oneShotAt}
-                  />
-                  {savedOneShot ? (
-                    <p className="mt-1 text-xs text-muted-foreground">Saves as {savedOneShot}</p>
-                  ) : null}
-                </Field>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    checked={value.oneShotRetry}
-                    onChange={(event) => setValue({ ...value, oneShotRetry: event.target.checked })}
-                    type="checkbox"
-                  />
-                  Retry if the run fails
-                </label>
-                {value.oneShotRetry && (
-                  <Field label="Maximum retries">
-                    <Input
-                      min="0"
-                      onChange={(event) =>
-                        setValue({ ...value, oneShotMaxRetries: event.target.value })
-                      }
-                      type="number"
-                      value={value.oneShotMaxRetries}
-                    />
-                  </Field>
-                )}
-              </div>
+              <Field label="Run at">
+                <Input
+                  aria-label="Run at"
+                  disabled={triggerLocked}
+                  onChange={(event) => changeTrigger({ oneShotAt: event.target.value })}
+                  required
+                  type="datetime-local"
+                  value={shown.oneShotAt}
+                />
+                {savedOneShot ? (
+                  <p className="mt-1 text-xs text-muted-foreground">Saves as {savedOneShot}</p>
+                ) : null}
+              </Field>
             )}
 
             <div className="rounded-lg border p-3">
@@ -284,6 +258,7 @@ export function ScheduleForm({
               </label>
               {value.allowWrites && (
                 <select
+                  aria-label="Write mode"
                   className="mt-3 h-9 w-full rounded-md border bg-background px-3 text-sm"
                   onChange={(event) =>
                     setValue({ ...value, writeMode: event.target.value as FormValue["writeMode"] })
@@ -299,7 +274,9 @@ export function ScheduleForm({
 
             <Field label="Tool profile">
               <select
+                aria-label="Tool profile"
                 className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                disabled={Boolean(schedule)}
                 onChange={(event) =>
                   setValue({ ...value, profile: event.target.value as FormValue["profile"] })
                 }
@@ -309,9 +286,11 @@ export function ScheduleForm({
                 <option value="noFilesystem">No filesystem</option>
               </select>
               <p className="text-xs font-normal text-muted-foreground">
-                {value.profile === "noFilesystem"
-                  ? "No file or shell tools; other tools stay available."
-                  : "The agent can use every tool, including file and shell access."}
+                {schedule
+                  ? "The backend placement fixes the tool profile after creation."
+                  : value.profile === "noFilesystem"
+                    ? "No file or shell tools; other tools stay available."
+                    : "The agent can use every tool, including file and shell access."}
               </p>
             </Field>
           </div>

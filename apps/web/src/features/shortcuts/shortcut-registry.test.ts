@@ -38,6 +38,7 @@ describe("shortcut registry", () => {
     expect(combos.get("settings.open")).toBe("mod+,");
     expect(combos.get("shortcuts.open")).toBe("?");
     expect(combos.get("chat.new")).toBe("mod+shift+o");
+    expect(combos.get("schedules.filter")).toBe("/");
     expect([...combos.values()]).not.toContain("mod+n");
   });
 });
@@ -127,6 +128,7 @@ describe("matchesShortcut", () => {
       "close.esc": { key: "Escape", modifiers: {} },
       "composer.newline": { key: "Enter", modifiers: { shift: true } },
       "composer.send": { key: "Enter", modifiers: {} },
+      "schedules.filter": { key: "/", modifiers: {} },
       "search.open": { key: "k", modifiers: { primary: true } },
       "settings.open": { key: ",", modifiers: { primary: true } },
       "shortcuts.open": { key: "?", modifiers: { shift: true } },
@@ -154,6 +156,7 @@ describe("shortcutWorksWhileTyping", () => {
     expect(shortcutWorksWhileTyping("mod+shift+o")).toBe(true);
     expect(shortcutWorksWhileTyping("esc")).toBe(true);
     expect(shortcutWorksWhileTyping("j")).toBe(false);
+    expect(shortcutWorksWhileTyping("/")).toBe(false);
   });
 });
 

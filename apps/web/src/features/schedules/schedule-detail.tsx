@@ -14,8 +14,8 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ChevronDown, ChevronUp, Clock3, Pause, Play, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Ellipsis } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { PageShell } from "../../components/shell/page-shell";
 import {
   AlertDialog,
@@ -29,31 +29,109 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
+import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../../components/ui/table";
 import { pageTitleClass } from "../../lib/typography";
-import { ScheduleForm } from "./schedule-form";
+import { TranscriptDialog } from "../chat/transcript-dialog";
+import { canEditSchedule, ScheduleForm } from "./schedule-form";
 
 type Schedule = ListSchedulesResponse["items"][number];
+/**
+ * TERM: A schedule fire is one claimed or started execution attempt and its
+ * resulting session, when one exists. Avoid: run, which is also used for an
+ * agent run inside a session.
+ */
 type ScheduleFire = ListScheduleFiresResponse["items"][number];
 export type FireSortKey = "duration" | "fired" | "outcome";
-type SortDirection = "asc" | "desc";
 
+export const scheduleDetailPolling = { refetchIntervalInBackground: false } as const;
+
+export function scheduleDetailPollInterval(
+  schedules: readonly Pick<Schedule, "name" | "status">[] | undefined,
+  scheduleName: string,
+) {
+  const status = schedules?.find((item) => item.name === scheduleName)?.status;
+  return status === "running" || status === "claimed" ? 5_000 : false;
+}
+
+export function scheduleFirePollInterval(
+  status: Schedule["status"] | undefined,
+  fires: readonly Pick<ScheduleFire, "inFlight">[] | undefined,
+) {
+  return status === "running" || status === "claimed" || fires?.some((fire) => fire.inFlight)
+    ? 5_000
+    : false;
+}
+
+/**
+ * DECISION: Detail reads caller-filtered schedules and fires through the
+ * authenticated BFF. Direct browser access to the daemon or SDK was rejected
+ * because the BFF owns capability negotiation and caller identity.
+ *
+ * SPEC: A fire transcript opened here is an inspection surface: navigation may
+ * fetch transcript and activity but must not offer actions that start, mutate,
+ * retry, approve, rename, fork, clear, or delete its scheduled session.
+ *
+ * DECISION: Match prototype PR #45 by opening a dedicated read-only transcript
+ * dialog from the run log. Ordinary chat and route state were rejected because
+ * this inspection must expose no composer or session mutation controls and must
+ * preserve schedule-detail context.
+ */
 export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const schedules = useQuery(listSchedulesOptions());
+  const schedules = useQuery({
+    ...listSchedulesOptions(),
+    ...scheduleDetailPolling,
+    refetchInterval: (query) => scheduleDetailPollInterval(query.state.data?.items, scheduleName),
+  });
+  const schedule = schedules.data?.items.find((item) => item.name === scheduleName);
   const fires = useQuery({
     ...listScheduleFiresOptions({ path: { scheduleName } }),
+    ...scheduleDetailPolling,
     enabled: schedules.data?.supported === true,
-    refetchInterval: (query) =>
-      query.state.data?.items.some((fire) => fire.inFlight) ? 5_000 : false,
+    refetchInterval: (query) => scheduleFirePollInterval(schedule?.status, query.state.data?.items),
   });
   const update = useMutation(updateScheduleMutation());
   const remove = useMutation(deleteScheduleMutation());
   const action = useMutation(actOnScheduleMutation());
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [transcript, setTranscript] = useState<{ sessionId: string; title: string }>();
   const [error, setError] = useState<string>();
-  const schedule = schedules.data?.items.find((item) => item.name === scheduleName);
+  const transcriptOpener = useRef<HTMLButtonElement | null>(null);
+  const actionMenuRef = useRef<HTMLButtonElement | null>(null);
+
+  function openTranscript(fire: ScheduleFire, opener: HTMLButtonElement) {
+    transcriptOpener.current = opener;
+    setTranscript({
+      sessionId: fire.sessionId,
+      title: `${scheduleName} — ${fire.firedAt ? formatDate(fire.firedAt) : "scheduled execution"}`,
+    });
+  }
+
+  function closeTranscript() {
+    setTranscript(undefined);
+    queueMicrotask(() => transcriptOpener.current?.focus());
+  }
+
+  function closeDelete() {
+    setConfirmDelete(false);
+    queueMicrotask(() => actionMenuRef.current?.focus());
+  }
 
   async function refresh() {
     await Promise.all([
@@ -77,10 +155,10 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
     try {
       await remove.mutateAsync({ path: { scheduleName } });
       await queryClient.invalidateQueries({ queryKey: listSchedulesQueryKey() });
-      await navigate({ search: { schedule: undefined }, to: "/workspace/schedules" });
+      await navigate({ to: "/workspace/schedules" });
     } catch (caught) {
       setError(errorMessage(caught));
-      setConfirmDelete(false);
+      closeDelete();
     }
   }
 
@@ -99,65 +177,73 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const busy = action.isPending || remove.isPending || update.isPending;
   return (
     <PageShell className="max-w-5xl">
-      <Button asChild size="sm" variant="outline">
-        <Link search={{ schedule: undefined }} to="/workspace/schedules">
-          <ArrowLeft />
+      <Button asChild className="rounded-full" size="sm" variant="outline">
+        <Link to="/workspace/schedules">
+          <span aria-hidden="true">‹</span>
           Back to scheduled
         </Link>
       </Button>
 
-      <div className="mt-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className={pageTitleClass("break-words")}>{schedule.name}</h1>
-            <StatusBadge status={schedule.status} />
-            <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
-            {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
-          </div>
-          <p className="mt-3 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-            {schedule.prompt}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Button
-            disabled={busy || !canRunNow(schedule)}
-            onClick={() => void runAction("fire")}
-            size="sm"
-            variant="outline"
-          >
-            <Play />
-            Run now
-          </Button>
-          <Button
-            disabled={busy || !canTogglePause(schedule)}
-            onClick={() => void runAction(schedule.enabled ? "pause" : "resume")}
-            size="sm"
-            variant="outline"
-          >
-            {schedule.enabled ? <Pause /> : <Play />}
-            {schedule.enabled ? "Pause" : "Resume"}
-          </Button>
-          <Button disabled={busy} onClick={() => setEditing(true)} size="sm" variant="ghost">
-            Edit
-          </Button>
-          <Button
-            aria-label={`Delete ${schedule.name}`}
-            disabled={busy}
-            onClick={() => setConfirmDelete(true)}
-            size="icon"
-            variant="ghost"
-          >
-            <Trash2 />
-          </Button>
-        </div>
+      <div className="mt-7 flex items-start justify-between gap-4">
+        <h1 className={pageTitleClass("min-w-0 break-words")}>{schedule.name}</h1>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              aria-label={`Actions for ${schedule.name}`}
+              className="shrink-0 rounded-full"
+              ref={actionMenuRef}
+              size="icon"
+              variant="outline"
+            >
+              <Ellipsis />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={busy || !canRunNow(schedule)}
+              onClick={() => void runAction("fire")}
+            >
+              Run now
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={busy || !canTogglePause(schedule)}
+              onClick={() => void runAction(schedule.enabled ? "pause" : "resume")}
+            >
+              {schedule.enabled ? "Pause" : "Resume"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={busy || !canEditSchedule(schedule)}
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={busy}
+              onClick={() => setConfirmDelete(true)}
+              variant="destructive"
+            >
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <StatusBadge status={schedule.status} />
+        <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
+        {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
+        {schedule.profile === "noFilesystem" && <Badge variant="outline">no filesystem</Badge>}
       </div>
 
       {error && (
         <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
       )}
 
+      <p className="mt-8 max-w-3xl whitespace-pre-wrap rounded-xl border bg-card p-5 text-sm leading-6">
+        {schedule.prompt}
+      </p>
+
       <div className="mt-8 grid gap-5 sm:grid-cols-2">
-        <FactGroup title="Execution">
+        <FactGroup title="Details">
           <Fact label="Mode" value={modeLabel(schedule.mode)} />
           <Fact label="Write access" value={schedule.mutating ? "Writes allowed" : "Read-only"} />
           <Fact label="Owner" value={schedule.owner || "Deployment default"} />
@@ -173,7 +259,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
             }
           />
         </FactGroup>
-        <FactGroup title="Trigger">
+        <FactGroup title="Frequency">
           <Fact label="Type" value={schedule.trigger.kind === "cron" ? "Recurring" : "One time"} />
           {schedule.trigger.kind === "cron" ? (
             <>
@@ -212,14 +298,12 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
       </div>
 
       <section className="mt-8">
-        <div className="flex items-center gap-2">
-          <Clock3 className="size-4 text-muted-foreground" />
-          <h2 className="font-semibold">Run history</h2>
-        </div>
+        <h2 className="font-semibold">Run history</h2>
         <ScheduleFireHistory
           error={fires.isError ? errorMessage(fires.error) : undefined}
           fires={fires.data?.items}
           loading={fires.isPending}
+          onViewTranscript={openTranscript}
         />
       </section>
 
@@ -236,7 +320,16 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
         />
       )}
 
-      <AlertDialog onOpenChange={setConfirmDelete} open={confirmDelete}>
+      {transcript && (
+        <TranscriptDialog
+          onOpenChange={(open) => !open && closeTranscript()}
+          open
+          sessionId={transcript.sessionId}
+          title={transcript.title}
+        />
+      )}
+
+      <AlertDialog onOpenChange={(open) => !open && closeDelete()} open={confirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{schedule.name}”?</AlertDialogTitle>
@@ -260,10 +353,12 @@ function ScheduleFireHistory({
   error,
   fires,
   loading,
+  onViewTranscript,
 }: {
   error?: string;
   fires?: ScheduleFire[];
   loading: boolean;
+  onViewTranscript: (fire: ScheduleFire, opener: HTMLButtonElement) => void;
 }) {
   const [sortKey, setSortKey] = useState<FireSortKey>("fired");
   const [direction, setDirection] = useState<SortDirection>("desc");
@@ -285,102 +380,112 @@ function ScheduleFireHistory({
   if (sorted.length === 0) return <HistoryState text="This task has not run yet." />;
 
   return (
-    <div className="mt-3 overflow-x-auto rounded-xl border bg-card">
-      <table className="w-full min-w-[42rem] text-left text-sm">
-        <thead className="bg-muted/50 text-xs text-muted-foreground">
-          <tr>
-            <SortHeader
-              direction={direction}
-              label="Ran"
-              name="fired"
-              onSort={changeSort}
-              selected={sortKey === "fired"}
-            />
-            <SortHeader
-              direction={direction}
-              label="Duration"
-              name="duration"
-              onSort={changeSort}
-              selected={sortKey === "duration"}
-            />
-            <SortHeader
-              direction={direction}
-              label="Outcome"
-              name="outcome"
-              onSort={changeSort}
-              selected={sortKey === "outcome"}
-            />
-            <th className="px-4 py-3 text-right font-medium">Session</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {sorted.map((fire) => (
-            <tr key={fire.id}>
-              <td className="px-4 py-3 whitespace-nowrap">
-                {fire.firedAt ? formatDate(fire.firedAt) : "—"}
-              </td>
-              <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
-                {formatDuration(fireDurationMs(fire))}
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex max-w-md flex-col items-start gap-1">
-                  <Badge variant={fire.inFlight ? "success" : fire.error ? "warning" : "muted"}>
-                    {fireOutcome(fire)}
-                  </Badge>
-                  {fire.error && <span className="text-xs text-destructive">{fire.error}</span>}
-                </div>
-              </td>
-              <td className="px-4 py-3 text-right">
-                {fire.sessionId ? (
-                  <Button asChild size="sm" variant="ghost">
-                    <Link search={{ sessionId: fire.sessionId }} to="/workspace/chat">
+    <>
+      <div className="mt-3 overflow-hidden rounded-xl border bg-card max-[499px]:hidden">
+        <Table className="min-w-[42rem]">
+          <TableHeader className="bg-muted/50 text-xs text-muted-foreground">
+            <TableRow className="hover:bg-transparent">
+              {(
+                [
+                  ["fired", "Ran"],
+                  ["duration", "Duration"],
+                  ["outcome", "Outcome"],
+                ] as const
+              ).map(([key, label]) => (
+                <SortableHead
+                  className="px-4"
+                  direction={sortKey === key ? direction : undefined}
+                  key={key}
+                  label={label}
+                  onSort={() => changeSort(key)}
+                />
+              ))}
+              <TableHead className="px-4 text-right">Session</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((fire) => (
+              <TableRow key={fire.id}>
+                <TableCell className="px-4 py-3 whitespace-nowrap">
+                  {fire.firedAt ? formatDate(fire.firedAt) : "—"}
+                </TableCell>
+                <TableCell className="px-4 py-3 whitespace-nowrap text-muted-foreground">
+                  {formatDuration(fireDurationMs(fire))}
+                </TableCell>
+                <TableCell className="px-4 py-3 whitespace-normal">
+                  <FireOutcome fire={fire} />
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right">
+                  {fire.sessionId ? (
+                    <Button
+                      onClick={(event) => onViewTranscript(fire, event.currentTarget)}
+                      size="sm"
+                      variant="ghost"
+                    >
                       View transcript
-                    </Link>
-                  </Button>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                    </Button>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div
+        className="mt-3 divide-y overflow-hidden rounded-xl border bg-card min-[500px]:hidden"
+        data-schedule-fire-mobile-list
+      >
+        {sorted.map((fire) => (
+          <article className="space-y-3 p-4" key={fire.id}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">
+                  {fire.firedAt ? formatDate(fire.firedAt) : "Time unavailable"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Duration {formatDuration(fireDurationMs(fire))}
+                </p>
+              </div>
+              <FireOutcome fire={fire} compact />
+            </div>
+            {fire.sessionId && (
+              <Button
+                onClick={(event) => onViewTranscript(fire, event.currentTarget)}
+                size="sm"
+                variant="outline"
+              >
+                View transcript
+              </Button>
+            )}
+          </article>
+        ))}
+      </div>
+    </>
   );
 }
 
-function SortHeader({
-  direction,
-  label,
-  name,
-  onSort,
-  selected,
-}: {
-  direction: SortDirection;
-  label: string;
-  name: FireSortKey;
-  onSort: (key: FireSortKey) => void;
-  selected: boolean;
-}) {
+function FireOutcome({ compact, fire }: { compact?: boolean; fire: ScheduleFire }) {
+  const outcome = fireOutcome(fire);
+  const variant =
+    outcome === "In flight" || outcome === "Claimed"
+      ? "success"
+      : outcome === "Failed"
+        ? "destructive"
+        : outcome === "Timed out"
+          ? "warning"
+          : "muted";
+  const rawStop = fire.stop.trim();
   return (
-    <th
-      aria-sort={selected ? (direction === "asc" ? "ascending" : "descending") : "none"}
-      className="px-4 py-3 font-medium"
-    >
-      <button
-        className="inline-flex items-center gap-1 hover:text-foreground"
-        onClick={() => onSort(name)}
-        type="button"
-      >
-        {label}
-        {selected &&
-          (direction === "asc" ? (
-            <ChevronUp className="size-3" />
-          ) : (
-            <ChevronDown className="size-3" />
-          ))}
-      </button>
-    </th>
+    <div className={`flex flex-col gap-1 ${compact ? "items-end text-right" : "items-start"}`}>
+      <Badge variant={variant}>{outcome}</Badge>
+      {!fire.inFlight && rawStop && rawStop.toLocaleLowerCase() !== outcome.toLocaleLowerCase() && (
+        <span className="text-xs text-muted-foreground">Stop: {rawStop}</span>
+      )}
+      {fire.error && <span className="max-w-md text-xs text-destructive">{fire.error}</span>}
+    </div>
   );
 }
 
@@ -433,9 +538,14 @@ export function fireDurationMs(fire: ScheduleFire, now = Date.now()) {
   return Math.max(0, end - started);
 }
 
-function fireOutcome(fire: ScheduleFire) {
+export function fireOutcome(fire: ScheduleFire) {
   if (fire.inFlight) return fire.startedAt ? "In flight" : "Claimed";
-  return fire.error ? "Failed" : fire.stop || "Completed";
+  if (fire.error) return "Failed";
+  const stop = fire.stop.trim().toLocaleLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  if (stop.includes("cancel")) return "Cancelled";
+  if (stop.includes("timeout") || stop.includes("timed_out") || stop.includes("deadline"))
+    return "Timed out";
+  return "Completed";
 }
 
 function dateValue(value: string | null) {
@@ -491,9 +601,7 @@ function DetailState({ text, title }: { text: string; title?: string }) {
         {title && <h1 className="font-semibold">{title}</h1>}
         <p className="mt-2 text-sm text-muted-foreground">{text}</p>
         <Button asChild className="mt-5" size="sm" variant="outline">
-          <Link search={{ schedule: undefined }} to="/workspace/schedules">
-            Back to scheduled
-          </Link>
+          <Link to="/workspace/schedules">Back to scheduled</Link>
         </Button>
       </div>
     </div>
