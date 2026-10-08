@@ -146,7 +146,7 @@ func TestHierarchyFactorySelectedSeparateSource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Workspace, "nested/draft.txt"), []byte("draft"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}), mockllm.TextTurn("done"))
@@ -193,7 +193,7 @@ func TestHierarchyFactoryAbsentRootLoadsNestedThroughHostWrapper(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Workspace, "nested/draft.txt"), []byte("draft"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}), mockllm.TextTurn("done"))
@@ -245,7 +245,7 @@ func TestHierarchyFactoryMixedHostSourceCachesEmptyGlobal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Workspace, "nested/draft.txt"), []byte("draft"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
 		requests = append(requests, r)
@@ -279,7 +279,7 @@ func TestDefaultSourceChildAndConversationForkInstructionSnapshots(t *testing.T)
 	if err := os.WriteFile(filepath.Join(ws.Root(), "nested/draft.txt"), []byte("draft"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Workspace: ws.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, NoShell: true, AllowAllTools: true, UserModelDir: t.TempDir()}
+	cfg := Config{Workspace: ws.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, NoShell: true, AllowAllTools: true, GuardrailsDisabled: true, UserModelDir: t.TempDir()}
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
 		requests = append(requests, r)
@@ -317,14 +317,14 @@ func TestHierarchyNoFSChildKeepsOnlyStartingGuidance(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		t.Run(fmt.Sprintf("configured=%v", configured), func(t *testing.T) {
 			ws := osfsWorkspaceForHierarchy(t)
-			cfg := Config{Workspace: ws.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, NoShell: true, AllowAllTools: true, UserModelDir: t.TempDir()}
+			cfg := Config{Workspace: ws.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, NoShell: true, AllowAllTools: true, GuardrailsDisabled: true, UserModelDir: t.TempDir()}
 			prefix := "."
 			if configured {
 				// The execution root is below the source root. Both ancestors are
 				// starting guidance, although only one has source-relative path '.'.
 				prefix = "website"
 				cfg = hcConfiguredFiles(t, ws)
-				cfg.NoSoul, cfg.NoShell, cfg.AllowAllTools = true, true, true
+				cfg.NoSoul, cfg.NoShell, cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true, true, true
 				cfg.HarnessInstructionSources[0].Bind = func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 					return prompt.RootAssembler{Source: ws, SourceID: "source", SourcePrefix: prefix}, nil, nil
 				}
@@ -407,7 +407,7 @@ func TestHierarchyDefaultSourceChildPlacementMapping(t *testing.T) {
 			if err := execution.Write(t.Context(), "nested/draft.txt", []byte("execution draft")); err != nil {
 				t.Fatal(err)
 			}
-			cfg := Config{Workspace: selected.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, Shell: "/bin/sh", AllowAllTools: true, UserModelDir: t.TempDir()}
+			cfg := Config{Workspace: selected.Root(), UseMock: true, TrustProject: true, Headless: true, NoSoul: true, Shell: "/bin/sh", AllowAllTools: true, GuardrailsDisabled: true, UserModelDir: t.TempDir()}
 			var requests []port.LLMRequest
 			cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 				mockllm.ToolCallTurn(session.ToolCall{ID: "parent-read", Name: "Read", Args: json.RawMessage(`{"path":"nested/draft.txt"}`)}),
@@ -552,7 +552,7 @@ func TestHierarchyConfiguredNilRefreshRetainsGuidance(t *testing.T) {
 			kinds := harnessEmptyKinds()
 			kinds.Instructions = permconfig.HarnessContextKind{Sources: []string{"custom", "lower"}, Mode: mode}
 			cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"custom", "lower"}, Kinds: kinds})
-			cfg.AllowAllTools, cfg.NoSoul, cfg.NoShell = true, true, true
+			cfg.AllowAllTools, cfg.NoSoul, cfg.NoShell, cfg.GuardrailsDisabled = true, true, true, true
 			source := &failingRefreshInstructions{}
 			lower := &policyCountWorkspace{Workspace: memfs.NewWorkspace("/lower")}
 			harnessSeed(t, lower.Workspace, "AGENTS.md", "LOWER-GUIDANCE")
@@ -662,7 +662,7 @@ func TestHierarchyConfiguredFactoryPartialRefresh(t *testing.T) {
 				kinds := harnessEmptyKinds()
 				kinds.Instructions = permconfig.HarnessContextKind{Sources: ids, Mode: mode}
 				cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: ids, Kinds: kinds})
-				cfg.AllowAllTools, cfg.NoSoul, cfg.NoShell = true, true, true
+				cfg.AllowAllTools, cfg.NoSoul, cfg.NoShell, cfg.GuardrailsDisabled = true, true, true, true
 				cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{
 					{ID: "fault", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 						return prompt.NewMultiAssembler(prompt.RootAssembler{Source: fault, SourceID: "fault", SourcePrefix: "."}, hcAssembler("FAULT-GLOBAL")), nil, nil

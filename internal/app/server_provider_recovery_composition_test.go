@@ -25,7 +25,7 @@ func recoveryAppConfig(t *testing.T, endpoint string) Config {
 	t.Helper()
 	return isolateConfig(t, Config{
 		Workspace: t.TempDir(), StoreDir: t.TempDir(), NoSoul: true, NoUserModel: true,
-		Model: "gpt-5", UseOpenAI: true, OpenAIKey: "test", AllowAllTools: true,
+		Model: "gpt-5", UseOpenAI: true, OpenAIKey: "test", AllowAllTools: true, GuardrailsDisabled: true,
 		ContextWindowOverride: defaultContextWindowTokens,
 		ProviderOverrides:     permconfig.ProviderOverrides{providerOpenAI: {BaseURL: endpoint + "/v1"}},
 		envDetector:           fakeEnv(nil), liveModelHTTPClient: offlineHTTPClient(),
