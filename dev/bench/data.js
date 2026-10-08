@@ -309468,6 +309468,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791444534826,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "abff477676e9858c139fda94bc61e43fd1fe18ba",
+          "message": "fix(release): stamp standalone host build identities (#2183)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T12:10:53+03:00",
+          "tree_id": "7146754242a21168bc1d9d3db54723c9ef74a016",
+          "url": "https://github.com/stacklok/mecatl/commit/abff477676e9858c139fda94bc61e43fd1fe18ba"
+        },
+        "date": 1791451353373,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3272.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -404924,6 +404963,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791451350338,
+  "lastUpdate": 1791451354500,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
