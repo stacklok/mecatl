@@ -12,6 +12,7 @@ import (
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
 )
 
 const (
@@ -19,8 +20,8 @@ const (
 	authOAuth = "oauth"
 
 	// toolHiveAuthStoragePrefix namespaces the embedded auth server's Redis
-	// keys away from mecatl's own session-store scheme (redisstore's
-	// "mecatl:session:" family) on the SAME managed Redis instance.
+	// keys away from mecatl's own versioned session-store scheme on the SAME
+	// managed Redis instance.
 	toolHiveAuthStoragePrefix = "mecatl:authserver:"
 )
 
@@ -72,9 +73,13 @@ type ToolHiveOAuth struct {
 	AuthorizationEndpoint string
 	TokenEndpoint         string
 	ClientID              string
-	ClientSecretEnv       string
-	Scopes                []string
-	RequestRefreshToken   bool
+	// ClientSecretFile names the local file read when confidential-client authentication is needed.
+	ClientSecretFile string
+	// ClientSecretEnv names the MECATL_* environment variable read by ToolHive;
+	// mutually exclusive with ClientSecretFile.
+	ClientSecretEnv     string
+	Scopes              []string
+	RequestRefreshToken bool
 	// DCRDiscoveryURL enables RFC 7591 registration through RFC 8414 metadata.
 	DCRDiscoveryURL string
 }
@@ -168,7 +173,7 @@ func toolHiveProviderKey(name string) (string, error) {
 func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authserver.UpstreamRunConfig, error) {
 	oauth := profile.OAuth
 	if oauth.DCRDiscoveryURL != "" {
-		if oauth.ClientID != "" || oauth.ClientSecretEnv != "" {
+		if oauth.ClientID != "" || oauth.ClientSecretFile != "" || oauth.ClientSecretEnv != "" {
 			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q combines DCR with a client identity", ErrInvalidCatalogue, profile.Name)
 		}
 		if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
@@ -179,6 +184,9 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 	if oauth.ClientID == "" {
 		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q is missing client identity", ErrInvalidCatalogue, profile.Name)
 	}
+	if err := validateClientSecretFile(oauth.ClientSecretFile); err != nil {
+		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q client secret file: %v", ErrInvalidCatalogue, profile.Name, err)
+	}
 	if oauth.AuthorizationEndpoint != "" || oauth.TokenEndpoint != "" {
 		return toolHiveOAuth2Upstream(profile, provider, issuer, nil)
 	}
@@ -187,7 +195,7 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 	}
 	redirect := issuer + "/oauth/callback"
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: &authserver.OIDCUpstreamRunConfig{
-		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretEnvVar: oauth.ClientSecretEnv,
+		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretFile: oauth.ClientSecretFile, ClientSecretEnvVar: oauth.ClientSecretEnv,
 		RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
 		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth),
 	}}, nil
@@ -200,7 +208,7 @@ func toolHiveOAuth2Upstream(profile ToolHiveProfile, provider, issuer string, dc
 	}
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: &authserver.OAuth2UpstreamRunConfig{
 		AuthorizationEndpoint: oauth.AuthorizationEndpoint, TokenEndpoint: oauth.TokenEndpoint, ClientID: oauth.ClientID,
-		ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
+		ClientSecretFile: oauth.ClientSecretFile, ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
 		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth), DCRConfig: dcr,
 	}}, nil
 }
@@ -229,4 +237,15 @@ func cloneStaticTools(in []StaticTool) []StaticTool {
 		out[i].Schema = append(json.RawMessage(nil), in[i].Schema...)
 	}
 	return out
+}
+
+// validateClientSecretFile proves that a configured credential is present and
+// bounded without retaining it. ToolHive reads the same path while building
+// its in-process upstream client.
+func validateClientSecretFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	_, err := mcpsecretfile.Read(path)
+	return err
 }

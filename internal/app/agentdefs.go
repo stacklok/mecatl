@@ -9,13 +9,13 @@ import (
 	"strings"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
@@ -151,11 +151,9 @@ func resolveChildProvider(cfg Config, provReg *providerRegistry, def agents.Agen
 // re-derived LIVE-FIRST from the registry meta (live when present, catalog floor:
 // the SAME store the picker reads), so a child compacts on ITS model's window —
 // regardless of whether the child's model differs from the parent's. Issue #64:
-// a same-model child now resolves the parent's REAL window via the same resolver,
-// never the hardcoded 128k floor; before, an unchanged pair short-circuited to 0
-// and a same-model child of a 1M-context parent compacted at ~102k. (The
-// parent-pair is no longer an input — the rule keys solely on the child's resolved
-// pair.)
+// a same-model child resolves the parent's REAL window via the same resolver,
+// never the hardcoded 128k floor. (The parent-pair is not an input — the rule
+// keys solely on the child's resolved pair.)
 //
 // It returns a RESOLVE-AT-USE closure (reg.windowResolver), not an eager int, so a
 // child inherits the SAME live-first override→live→catalog→128k-floor resolution as
@@ -227,7 +225,7 @@ func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProvi
 //
 // The set is consulted ONLY by the engine's router gate (agent.WithRoutableAgents →
 // maybeRouteModel). It is layering-clean: only def NAME strings cross into engine/agent. A nil
-// reg (no agent source) yields nil → no def routes (byte-identical to pre-#286). It is SILENT
+// reg (no agent source) yields nil → no def routes. It is SILENT
 // (no diagnostics): the per-def provider/MCP WARNs are emitted by the actual engine build
 // (buildAgentSubagentEngines), so re-logging here would double-emit (the build-once discipline).
 func routableAgentNames(provReg *providerRegistry, reg *agents.Registry, parentProviderID string) []string {
@@ -438,7 +436,7 @@ func shellScopeMissReason(cfg Config) string {
 //  5. when allowMutating is false, drop any mutating (non-read-only) tool with a
 //     DISTINCT diagnostic — EXCEPT that when allowShell is true the Shell tool alone
 //     survives. allowMutating == true (a Mutating team member, which runs in an
-//     isolated force-copy fork; AND a writable specialist Subagent (ADR 0058), which
+//     isolated force-copy fork; AND a writable specialist Subagent, which
 //     keeps Edit/Write/Shell over the real parent workspace via the MAIN runner) keeps
 //     every mutating tool (Edit/Write/Shell). allowMutating == false + allowShell == true
 //     (a read-only team member that the supervisor will isolate in a git worktree)
@@ -488,7 +486,7 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 		}
 		t, ok := available[name]
 		if !ok {
-			if name == tools.ShellToolName {
+			if name == tool.ShellToolName {
 				// Shell is a core tool, so a base-set miss is never a typo: it means NO
 				// shell is available at this call site — --no-shell, an empty shell, or
 				// (issue #40) an untrusted workspace withholding the subagent shell.
@@ -515,7 +513,7 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 			// i.e. a read-only member the supervisor isolates in a git worktree, where a
 			// shell is used for inspection (git log/show, build, test) but Edit/Write
 			// would still corrupt nothing shared, so we keep ONLY Shell.
-			if allowShell && name == tools.ShellToolName {
+			if allowShell && name == tool.ShellToolName {
 				kept = append(kept, name)
 				continue
 			}
@@ -791,13 +789,13 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// Resolve the def's (provider, model, window): a pinned-and-known provider
 		// switches the child engine (with its catalogued window); a def pinning no (or
 		// the same) provider inherits the parent's model AND its real resolved window
-		// (issue #64 — no longer the hardcoded 128k floor). The startup path threads the
+		// (issue #64 — not the hardcoded 128k floor). The startup path threads the
 		// startup-resolved (childProvider, model, windowFn) into buildAgentDefEngine; the
 		// per-call agent+model override path (buildAgentModelEngineFactory) resolves its OWN
 		// tuple to rebuild the SAME scoped engine on the override model.
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
 
-		eng, mcpClose, names, resources, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, reg.Detail(def.Name), childProvider, model, windowFn, base, false /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+		eng, mcpClose, names, resources, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn, base, false /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
 		engines[def.Name] = eng
 		closeFn = composeCloseErr(mcpClose, closeFn)
 
@@ -852,7 +850,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // base is the AVAILABLE base toolset the def's catalog is scoped over
 // (baseSubagentTools(cfg)); allowMutating, when true, KEEPS workspace-mutating tools
 // (Edit/Write/Shell) over the real workspace instead of dropping them — a Mutating team
-// member (isolated force-copy fork) and a writable specialist Subagent (ADR 0058, direct-
+// member (isolated force-copy fork) and a writable specialist Subagent (direct-
 // write against the real parent workspace via the MAIN runner) both pass true, while a
 // read-only Subagent explorer and a read-only team member pass false (Edit/Write dropped;
 // Shell kept only when allowShell is true and the member is worktree-isolated). allowShell
@@ -869,7 +867,8 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // inline server) + the scoped tool NAMES + the preloaded-skill COUNT, so callers can log
 // the "agent def engine built" INFO with the same fields the pre-extraction inline path
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
-func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
+func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, providerModel session.ProviderModelID, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
+	model := providerModel.ModelID
 	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
@@ -885,7 +884,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		// registers as-is. allowShell is true iff runner != nil, so this branch only
 		// fires with a non-nil runner.
 		registered := base[name]
-		if name == tools.ShellToolName && runner != nil {
+		if name == tool.ShellToolName && runner != nil {
 			registered = agent.NewShellTool()
 		}
 		entry, ok := coreToolClassification(registered)
@@ -895,7 +894,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		}
 		classified.mustRegister(registered, &entry)
 	}
-	if _, ok := cat.Lookup(tools.ShellToolName); ok {
+	if _, ok := cat.Lookup(tool.ShellToolName); ok {
 		status := agent.NewShellStatusTool()
 		entry, _ := coreToolClassification(status)
 		classified.mustRegister(status, &entry)
@@ -934,7 +933,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// its zero value (off), matching the original explicit omission, AND routes the
 	// child's compactor/counter/window through the resolved provider+model
 	// (contamination fix).
-	eng := newChildEngineForProvider(cfg, role, childProvider, model, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
+	eng := newChildEngineForProvider(cfg, role, childProvider, providerModel, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
 	return eng, mcpClose, names, resourceCapabilities, len(bodies)
 }
 
@@ -985,8 +984,8 @@ func composeClose(d port.Diagnostics, errClose func() error, plainClose func()) 
 // the cache-stable StablePrefix while the standard mecatl framing AND the agency
 // contract remain. The delta is keyed on resolvedModel, NOT cfg.Model, the same
 // discipline as Env.Model: the def must reflect the model it will actually run on.
-// (Since issue #49 the contract itself is uniform across families, so the keying
-// no longer changes the contract text, but the resolvedModel still governs
+// (The contract itself is uniform across families (issue #49), so the keying
+// does not change the contract text, but the resolvedModel still governs
 // Env.Model and keeps the keying honest for any future per-model wording.) The
 // Env model is set to the caller's ALREADY-RESOLVED model
 // id (threaded in, not re-resolved): resolving it a second time here would re-run
@@ -1273,8 +1272,16 @@ func skillSnapshot(discovered []skills.Skill) []*mecatlv1.SkillInfo {
 // these per session (e.g. against a CreateSession-supplied root), it MUST re-apply the
 // trust decision for that root or the project-tier injection gap silently reopens.
 func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
-	// Project-tier agent defs are withheld when the project tier is not admitted
-	// (Phase 2a): untrusted, or the ingestion grant withheld
+	if cfg.harnessAgentDefs != nil {
+		defs, err := cfg.harnessAgentDefs.ListAgentDefs(ctx)
+		if err != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "resolving configured agent definitions failed; none registered", "err", err)
+			return agents.NewRegistry(nil)
+		}
+		return agents.NewRegistry(defs)
+	}
+	// Project-tier agent defs are withheld when the project tier is not admitted:
+	// untrusted, or the ingestion grant withheld
 	// (projectIngestionAdmitted). The user-tier + explicit defs stay active
 	// regardless ("ask the human" mode, not "do nothing").
 	if cfg.AgentsConventional && cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
@@ -1296,7 +1303,7 @@ func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
 		// Word the log by the structural Fatal split, never the overloaded
 		// "skipped": a Fatal SkipError means the def was DROPPED (excluded); a
 		// non-fatal one means it was KEPT but ADJUSTED (e.g. truncated). Both
-		// stay at WARN — a truncation is a visible adjustment, just no longer
+		// stay at WARN — a truncation is a visible adjustment, not
 		// mislabelled as a drop.
 		if s.Fatal {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def dropped", "path", s.Path, "reason", s.Reason)

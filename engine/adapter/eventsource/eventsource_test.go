@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func meta() eventsource.SessionMeta {
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_EventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
+func TestEventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	t.Parallel()
 	m := meta()
 	m.Authority = &session.Authority{Provenance: "derived"}
@@ -76,9 +77,8 @@ func assertRetryParity(t *testing.T, live, folded *session.Session) {
 		t.Fatal(err)
 	}
 	if liveSnap.State != foldedSnap.State || liveSnap.StopReason != foldedSnap.StopReason ||
-		liveSnap.Counters != foldedSnap.Counters || liveSnap.Usage == nil != (foldedSnap.Usage == nil) ||
-		(liveSnap.Usage != nil && *liveSnap.Usage != *foldedSnap.Usage) ||
-		liveSnap.Permanent != foldedSnap.Permanent || liveSnap.RetryDisposition != foldedSnap.RetryDisposition ||
+		liveSnap.Counters != foldedSnap.Counters || !reflect.DeepEqual(liveSnap.TokenUsage, foldedSnap.TokenUsage) ||
+		liveSnap.RetryDisposition != foldedSnap.RetryDisposition ||
 		liveSnap.StreamProgress != foldedSnap.StreamProgress || liveSnap.RetryPending != foldedSnap.RetryPending ||
 		liveSnap.RetryPendingDisposition != foldedSnap.RetryPendingDisposition || liveSnap.RetryPendingProgress != foldedSnap.RetryPendingProgress ||
 		liveSnap.LastError != foldedSnap.LastError {
@@ -121,8 +121,8 @@ func TestFoldParityForCompleteErrorStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRetryParity(t, live, folded)
-	if folded.State != session.StateCompleted || folded.LastError() != "" || folded.FailurePermanence() {
-		t.Fatalf("complete error stop retained failure state: state=%v last=%q permanent=%v", folded.State, folded.LastError(), folded.FailurePermanence())
+	if folded.State != session.StateCompleted || folded.LastError() != "" || folded.FailureMetadata() != (session.RetryMetadata{}) {
+		t.Fatalf("complete error stop retained failure state: state=%v last=%q metadata=%+v", folded.State, folded.LastError(), folded.FailureMetadata())
 	}
 }
 
@@ -140,7 +140,7 @@ func TestFoldParityForIteratorError(t *testing.T) {
 	if err := live.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+	if err := live.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.RecordLastError("upstream reset"); err != nil {
@@ -180,8 +180,9 @@ func TestFoldDiscardsOnlyFailedPartialAssistant(t *testing.T) {
 	if s.State != session.StateFailed {
 		t.Fatalf("state = %v", s.State)
 	}
-	if d, p := s.FailureMetadata(); d != session.RetryDispositionRetryable || p != session.StreamProgressVisible {
-		t.Fatalf("failure metadata = (%v,%v)", d, p)
+	wantMetadata := session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}
+	if got := s.FailureMetadata(); got != wantMetadata {
+		t.Fatalf("failure metadata = %+v, want %+v", got, wantMetadata)
 	}
 	for _, msg := range s.Conversation.Messages {
 		if strings.Contains(msg.Text, "incomplete secret partial") {
@@ -223,7 +224,7 @@ func TestFoldFailedStepRetrySnapshotParity(t *testing.T) {
 		if err := s.Fail(); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+		if err := s.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.PrepareFailedStepRetry(); err != nil {
@@ -317,8 +318,8 @@ func TestFoldStructuralConversation(t *testing.T) {
 	if r, _ := s.RecordedStopReason(); r != session.StopEndTurn {
 		t.Fatalf("stop = %q, want end_turn", r)
 	}
-	if s.Usage != (session.Usage{InputTokens: 15, OutputTokens: 5}) {
-		t.Fatalf("usage = %+v, want {15,5}", s.Usage)
+	if s.UsageFor(session.UsageKindMain) != (session.Usage{InputTokens: 15, OutputTokens: 5}) {
+		t.Fatalf("usage = %+v, want {15,5}", s.UsageFor(session.UsageKindMain))
 	}
 	// Reasoning is never event-carried — the contract limitation.
 	if msgs[0].Reasoning != "" || msgs[0].ProviderPhase != "" {
@@ -347,8 +348,8 @@ func TestFoldMultiRunUsageIsCumulative(t *testing.T) {
 	}
 
 	want := session.Usage{InputTokens: 17, OutputTokens: 7}
-	if s.Usage != want {
-		t.Fatalf("cumulative usage = %+v, want %+v (sum of both runs, NOT a single EvResult)", s.Usage, want)
+	if s.UsageFor(session.UsageKindMain) != want {
+		t.Fatalf("cumulative usage = %+v, want %+v (sum of both runs, NOT a single EvResult)", s.UsageFor(session.UsageKindMain), want)
 	}
 	// Counters reflect the LATEST run segment (per-run, like resetToIdle on Reopen).
 	if s.Counters.Turns != 1 {
@@ -574,6 +575,73 @@ func TestFoldRoundTripsThroughSnapshot(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+// TestFoldUsesCanonicalReconstructionOnly pins the live-only boundary:
+// completion-order availability projections, including a success that a later
+// cancellation replaces canonically, do not participate in event-source folding.
+func TestFoldUsesCanonicalReconstructionOnly(t *testing.T) {
+	first := toolCall("first", "Read", `{"path":"first.go"}`)
+	second := toolCall("second", "Read", `{"path":"second.go"}`)
+	availableFirst := session.NewToolResult("first", "completed second")
+	availableSecond := session.NewToolResultWithParts("second", "completed first", []session.Content{
+		session.NewTextBlock("typed completion payload"),
+		session.NewStructuredContentBlock(`{"source":"availability"}`),
+	})
+
+	canonical := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &first},
+		{Type: session.EvToolCall, ToolCall: &second},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("first", "cancelled before canonical drain"))},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("second", "cancelled before canonical drain"))},
+		{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}},
+	}
+	withAvailability := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &first},
+		{Type: session.EvToolCall, ToolCall: &second},
+		// The later call completes first. The successful availability payloads arrive
+		// before the read-batch barrier drains canonical results in model-call order.
+		{Type: session.EvToolResultAvailable, ToolResult: &availableSecond},
+		{Type: session.EvToolResultAvailable, ToolResult: &availableFirst},
+		// Cancellation then replaces both live successes with synthetic canonical errors.
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("first", "cancelled before canonical drain"))},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("second", "cancelled before canonical drain"))},
+		{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}},
+	}
+
+	canonicalOnly, err := eventsource.Fold(meta(), seq(canonical))
+	if err != nil {
+		t.Fatalf("fold canonical events: %v", err)
+	}
+	withLiveAvailability, err := eventsource.Fold(meta(), seq(withAvailability))
+	if err != nil {
+		t.Fatalf("fold events with availability: %v", err)
+	}
+
+	canonicalSnapshot, err := sessnap.Of(canonicalOnly)
+	if err != nil {
+		t.Fatalf("snapshot canonical fold: %v", err)
+	}
+	availabilitySnapshot, err := sessnap.Of(withLiveAvailability)
+	if err != nil {
+		t.Fatalf("snapshot availability fold: %v", err)
+	}
+	if !reflect.DeepEqual(availabilitySnapshot, canonicalSnapshot) {
+		t.Fatalf("availability changed reconstruction\n with availability: %+v\n canonical only: %+v", availabilitySnapshot, canonicalSnapshot)
+	}
+	if !reflect.DeepEqual(withLiveAvailability.Conversation.Messages, canonicalOnly.Conversation.Messages) {
+		t.Fatalf("availability changed conversation\n with availability: %+v\n canonical only: %+v", withLiveAvailability.Conversation.Messages, canonicalOnly.Conversation.Messages)
+	}
+	if got := withLiveAvailability.Counters.ToolCalls; got != 2 {
+		t.Fatalf("tool-call counter = %d, want exactly 2 canonical calls", got)
+	}
+	for _, msg := range withLiveAvailability.Conversation.Messages {
+		if msg.ToolResult != nil && msg.ToolResult.Content == "completed first" {
+			t.Fatalf("availability typed payload entered reconstructed history: %+v", msg.ToolResult)
+		}
+	}
+}
+
 // TestFoldReconstructsTypedToolResult verifies that Fold reconstructs typed
 // tool-result blocks (ToolResult.Parts) for free — the EvToolResult case feeds the
 // *ToolResult (now carrying Parts) straight into session.NewToolMessage, so the
@@ -637,39 +705,31 @@ func TestFoldReconstructsTypedToolResult(t *testing.T) {
 	}
 }
 
-// TestFoldRoundTripsFailurePermanence asserts the event-sourced fold reconstructs
-// the failure-permanence flag from the terminal EvResult (ADR 0038's reconstruction
-// contract requires it, so a permanently-failed session's recover advisory fires on
-// an event-log-SoR backend just as it does on the snapshot path). A StopError run
-// with Permanent==true folds to StateFailed + FailurePermanence()==true; the same run
-// with Permanent==false folds to StateFailed + FailurePermanence()==false. A clean
-// (non-error) terminal with Permanent==true is meaningless and must NOT set the flag.
-func TestFoldRoundTripsFailurePermanence(t *testing.T) {
+// TestFoldRoundTripsFailureMetadata asserts the event-sourced fold reconstructs
+// typed terminal retry facts from EvResult and ignores them on clean terminals.
+func TestFoldRoundTripsFailureMetadata(t *testing.T) {
 	cases := []struct {
-		name       string
-		stop       session.StopReason
-		permanent  bool
-		wantState  session.State
-		wantPerman bool
-		// wantLastError pins the issue-#332 fold: the terminal EvResult.Error is
-		// captured on StateFailed (StopError) runs, ignored on clean terminals.
+		name          string
+		stop          session.StopReason
+		metadata      session.RetryMetadata
+		wantState     session.State
+		wantMetadata  session.RetryMetadata
 		wantLastError string
 	}{
-		{"permanent error", session.StopError, true, session.StateFailed, true, "provider error"},
-		{"transient error", session.StopError, false, session.StateFailed, false, "provider error"},
-		// A Permanent flag / Error body on a clean terminal is meaningless; the fold
-		// must ignore both.
-		{"clean terminal ignores permanent flag", session.StopEndTurn, true, session.StateCompleted, false, ""},
+		{"permanent error", session.StopError, session.RetryMetadata{Disposition: session.RetryDispositionPermanent, Progress: session.StreamProgressPrecommit}, session.StateFailed, session.RetryMetadata{Disposition: session.RetryDispositionPermanent, Progress: session.StreamProgressPrecommit}, "provider error"},
+		{"transient error", session.StopError, session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}, session.StateFailed, session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}, "provider error"},
+		{"clean terminal ignores retry metadata", session.StopEndTurn, session.RetryMetadata{Disposition: session.RetryDispositionPermanent, Progress: session.StreamProgressComplete}, session.StateCompleted, session.RetryMetadata{}, ""},
 	}
 	for _, tc := range cases {
 		evs := []session.Event{
 			{Type: session.EvTurnStart, Turn: 0},
 			{Type: session.EvMessageDelta, Turn: 0, Text: "boom"},
 			{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{
-				Stop:      tc.stop,
-				Permanent: tc.permanent,
-				Error:     "provider error",
-				Usage:     session.Usage{InputTokens: 2, OutputTokens: 1},
+				Stop:        tc.stop,
+				Disposition: tc.metadata.Disposition,
+				Progress:    tc.metadata.Progress,
+				Error:       "provider error",
+				Usage:       session.Usage{InputTokens: 2, OutputTokens: 1},
 			}},
 		}
 		s, err := eventsource.Fold(meta(), seq(evs))
@@ -679,13 +739,8 @@ func TestFoldRoundTripsFailurePermanence(t *testing.T) {
 		if s.State != tc.wantState {
 			t.Fatalf("%s: state = %q, want %q", tc.name, s.State, tc.wantState)
 		}
-		if got := s.FailurePermanence(); got != tc.wantPerman {
-			t.Fatalf("%s: FailurePermanence = %v, want %v", tc.name, got, tc.wantPerman)
-		}
-		if tc.stop == session.StopError && tc.permanent {
-			if d, p := s.FailureMetadata(); d != session.RetryDispositionPermanent || p != session.StreamProgressUnknown {
-				t.Fatalf("%s: FailureMetadata = (%v,%v), want (permanent,unknown)", tc.name, d, p)
-			}
+		if got := s.FailureMetadata(); got != tc.wantMetadata {
+			t.Fatalf("%s: FailureMetadata = %+v, want %+v", tc.name, got, tc.wantMetadata)
 		}
 		if got := s.LastError(); got != tc.wantLastError {
 			t.Fatalf("%s: LastError = %q, want %q", tc.name, got, tc.wantLastError)
@@ -693,26 +748,22 @@ func TestFoldRoundTripsFailurePermanence(t *testing.T) {
 	}
 }
 
-// TestFoldMultiRunPermanenceIsLastRun asserts that when a session was reopened after a
-// transient failure and later ended in a different failure, the fold reports the LATEST
-// run's permanence (mirroring how a snapshot captures the final state, not a mid-run).
-func TestFoldMultiRunPermanenceIsLastRun(t *testing.T) {
+// TestFoldMultiRunFailureMetadataIsLastRun asserts the final run's typed retry
+// metadata replaces an earlier run's classification.
+func TestFoldMultiRunFailureMetadataIsLastRun(t *testing.T) {
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
-		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopError, Permanent: true, Error: "perm"}},
-		// Reopen: a new run begins.
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopError, Disposition: session.RetryDispositionPermanent, Error: "perm"}},
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "retry"}},
 		{Type: session.EvTurnStart, Turn: 0},
-		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopError, Permanent: false, Error: "transient"}},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopError, Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit, Error: "transient"}},
 	}
 	s, err := eventsource.Fold(meta(), seq(evs))
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
-	if s.State != session.StateFailed {
-		t.Fatalf("state = %q, want failed", s.State)
-	}
-	if s.FailurePermanence() {
-		t.Fatalf("FailurePermanence = true, want false (last run was transient)")
+	want := session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}
+	if got := s.FailureMetadata(); got != want {
+		t.Fatalf("FailureMetadata = %+v, want %+v", got, want)
 	}
 }

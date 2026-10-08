@@ -62,6 +62,7 @@ export type {
   ApprovalEventPayload,
   ArchivedConversationMessage,
   CompactionArchiveEventPayload,
+  ControlRefusedEventPayload,
   Event,
   EventCommon,
   EventContent,
@@ -69,19 +70,20 @@ export type {
   EventOf,
   EventPayloads,
   EventUsage,
+  GuardrailApprovalScope,
   HookEventPayload,
   KnownEvent,
   KnownEventKind,
   ModelRetryEventPayload,
   ParallelEventPayload,
   PermissionAskEventPayload,
+  PlanContinuationFailureEventPayload,
   ResultEventPayload,
-  RetryDisposition,
+  RoutingDecisionEventPayload,
   ScheduleEventPayload,
   SessionTitleEventPayload,
   SteerEventPayload,
   SteerOutcomeEventPayload,
-  StreamProgress,
   SubagentEventPayload,
   TeamEvent,
   TeamEventPayload,
@@ -98,9 +100,17 @@ export type {
   UnknownHttpEvent,
   UserPromptEventPayload,
 } from "./events.js";
-export { MECATL_EVENT_KINDS } from "./events.js";
+export { MECATL_EVENT_KINDS, RetryDisposition, StreamProgress } from "./events.js";
 export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
+export type {
+  McpAuthorization,
+  McpAuthorizationFlow,
+  McpAuthorizationFlowOptions,
+  McpAuthorizationOperation,
+  McpAuthorizationResult,
+  McpAuthorizationStatus,
+} from "./mcp-authorization.js";
 export type {
   McpConnectorInventory,
   McpConnectorStatus,
@@ -167,11 +177,14 @@ export {
 } from "./raw.js";
 export type {
   PermissionAskResponder,
-  PermissionVerdict,
   Run,
+  RunAuthorizationRequiredOutcome,
+  RunCompletedOutcome,
   RunOptions,
+  RunOutcome,
   RunResult,
 } from "./run.js";
+export { PermissionVerdict, RunAuthorizationRequiredError } from "./run.js";
 export type {
   RunControls,
   RunSteerAcknowledgement,
@@ -184,17 +197,14 @@ export type {
   ServerInfo,
   ServerInfoOptions,
 } from "./server.js";
-export {
-  ServerFeature,
-  ServerPosture,
-  WATCH_SESSION_EVENTS_FEATURE,
-} from "./server.js";
+export { ServerFeature, ServerPosture } from "./server.js";
 export type {
   DreamTargetCapability,
   ManualDreamCapabilities,
   ServerCapabilities,
   SessionActivityReplayStatus,
   SessionCapabilities,
+  SessionContextOccupancy,
   SessionPlacement,
   SessionRelationship,
   SessionResolvedModel,

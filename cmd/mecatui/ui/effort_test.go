@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,9 +11,9 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// Tests for the /effort picker (ADR 0055): a tiny SELECTING enum overlay that
-// FORK-RESUMES the session onto a peer at the chosen reasoning-effort tier (ADR
-// 0068) — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
+// Tests for the /effort picker: a tiny SELECTING enum overlay that
+// FORK-RESUMES the session onto a peer at the chosen reasoning-effort tier
+// — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
 // Renders purely from client state (no proto in ui).
 
 // pressEffortKey routes a key through onEffortKey, asserting it was handled.
@@ -60,7 +61,7 @@ func TestRunEffortOpensPicker(t *testing.T) {
 	}
 }
 
-// TestEffortPickerWarnsOnNoReasoningModel (ADR 0055 UX): when the CURRENT effective
+// TestEffortPickerWarnsOnNoReasoningModel: when the CURRENT effective
 // model is KNOWN (in the loaded inventory) to lack reasoning support, the picker shows
 // a degrade warning — so a user who restarts for an unattainable tier is acknowledged
 // in the UI, not only the server log. A reasoning-capable model shows NO warning, and
@@ -159,7 +160,7 @@ func TestEffortEscCloses(t *testing.T) {
 	}
 }
 
-// TestEffortPickForksDirectly is the load-bearing behavioural test (ADR 0068): it
+// TestEffortPickForksDirectly is the load-bearing behavioural test: it
 // opens the picker, moves to a real tier, presses enter ONCE, and asserts the
 // switchEffort fork-resume handoff fired DIRECTLY — no confirm step — with the
 // selection synchronously applied (model preserved, effort changed, recorded as
@@ -220,7 +221,7 @@ func TestEffortPickForksDirectly(t *testing.T) {
 }
 
 // TestEffortPickPreservesTranscript is the HEADLINE regression guard against
-// re-introducing resetSession (ADR 0068): a fork-resume must leave m.conv (the
+// re-introducing resetSession: a fork-resume must leave m.conv (the
 // conversation transcript) UNCHANGED across the switch + the SessionReadyMsg
 // rebind — the fork carries the conversation server-side, so the client must NOT
 // wipe it. Asserts the transcript, the session-id rebind to the fork id, and the
@@ -243,19 +244,16 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	// The transcript is UNTOUCHED by the handoff itself.
-	if len(m.conv.blocks) != len(before.blocks) {
-		t.Fatalf("transcript blocks = %d after the handoff, want %d (fork must not wipe it)", len(m.conv.blocks), len(before.blocks))
+	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
+		t.Fatalf("transcript blocks = %d after the handoff, want %d (fork must not wipe it)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
 	m = feedCmd(t, m, cmd)
 	// After the fork + SessionReadyMsg: the transcript is STILL unchanged …
-	if len(m.conv.blocks) != len(before.blocks) {
-		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.blocks), len(before.blocks))
+	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
+		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
-	for i := range before.blocks {
-		if m.conv.blocks[i].raw != before.blocks[i].raw || m.conv.blocks[i].kind != before.blocks[i].kind {
-			t.Errorf("block %d changed across the fork: (%v,%q) → (%v,%q)", i,
-				before.blocks[i].kind, before.blocks[i].raw, m.conv.blocks[i].kind, m.conv.blocks[i].raw)
-		}
+	if !reflect.DeepEqual(m.conv.testBlocks(), before.testBlocks()) {
+		t.Errorf("typed scrollback snapshots changed across the fork")
 	}
 	// … the session id rebinds to the fork id …
 	if m.sessionID != "sess-fork-1" {
@@ -275,8 +273,8 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	}
 }
 
-// TestEffortPickFailureLeavesSourceOpen asserts the recoverable failure path (ADR
-// 0068): a failed fork does NOT close the source session — the old session is still
+// TestEffortPickFailureLeavesSourceOpen asserts the recoverable failure path:
+// a failed fork does NOT close the source session — the old session is still
 // the user's live one — and the recoverable reducer leaves the app idle with
 // enter-to-retry armed.
 func TestEffortPickFailureLeavesSourceOpen(t *testing.T) {
@@ -328,7 +326,7 @@ func TestEffortPickFailureRetryDoesNotDiscardSource(t *testing.T) {
 }
 
 // TestEffortPickRefetchFailureKeepsFork covers the post-fork GetSession-refetch
-// failure leg (ADR 0068): the fork SUCCEEDS (the peer session exists) but the
+// failure leg: the fork SUCCEEDS (the peer session exists) but the
 // resolved-model refetch fails. The app must DEGRADE gracefully — recoverable
 // (restartFailed armed, the fork origin recorded for a re-fork retry), NOT stuck in
 // phaseConnecting and NOT fatal — and the source session IS closed (the fork itself
@@ -447,6 +445,7 @@ func TestEffortPickerGolden(t *testing.T) {
 	if m.effort.view != effortPanel {
 		t.Fatalf("view = %v, want effortPanel", m.effort.view)
 	}
+	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "effort_picker.golden", got)
 }
@@ -535,25 +534,17 @@ func TestEffortPickerSwallowsOtherKeys(t *testing.T) {
 	}
 }
 
-// TestEffortRendersInHeader asserts the resolved effort appears beside the model in
-// the header when set, and is absent when unset (the footer/header live display).
-func TestEffortRendersInHeader(t *testing.T) {
+// TestEffortReachesStatusSnapshot asserts the resolved effort is submitted beside
+// the effective model when set, and remains absent when unset.
+func TestEffortReachesStatusSnapshot(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	// Unset effort: no suffix beside the model. (The inventory is not loaded here, so
-	// the header shows the raw effective model id "gpt-5", not the display name.)
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "gpt-5") {
-		t.Fatalf("header should show the model:\n%s", header)
+	if effort := m.statusLineSnapshot().Session.ReasoningEffort; effort != "" {
+		t.Fatalf("unset effort in status snapshot = %q, want empty", effort)
 	}
-	if strings.Contains(header, "· high") {
-		t.Fatalf("unset effort must not render a suffix:\n%s", header)
-	}
-	// Set effort: the suffix renders beside the model.
+
 	m.resolvedSessionModel.ReasoningEffort = "high"
-	m.refreshView()
-	header = stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "· high") {
-		t.Fatalf("a set effort should render a ` · high` suffix beside the model:\n%s", header)
+	if effort := m.statusLineSnapshot().Session.ReasoningEffort; effort != "high" {
+		t.Fatalf("status snapshot effort = %q, want high", effort)
 	}
 }
 

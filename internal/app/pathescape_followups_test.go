@@ -12,11 +12,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_followups_test.go pins the Wave-1 panel-review follow-up ACs
-// (docs/acceptance/path-escape-posture.md, "Wave-1 panel-review follow-ups"):
-// AC-W2-F1 (the Edit-ledger pseudo-fs asymmetry) and AC-W2-F2
-// (vetRelaxedParent shares Canonicalize — the structural half of that pin
-// lives in internal/adapter/osfs, this file pins the observable ledger half).
+// pathescape_followups_test.go pins two path-escape follow-ups: the
+// Edit-ledger pseudo-fs asymmetry, and vetRelaxedParent sharing Canonicalize
+// (the structural half of that pin lives in internal/adapter/osfs; this file
+// pins the observable ledger half).
 
 // TestPathEscapePosture_EditLedgerPseudoFSGuarded pins AC-W2-F1: the read-ledger
 // — RecordRead and RecordedVersion, the two tool-body ledger operations — route
@@ -45,7 +44,7 @@ func TestPathEscapePosture_EditLedgerPseudoFSGuarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	ws := newEscapeWorkspace(base, clf)
+	ws := newEscapeWorkspace(base, clf, false)
 
 	ledger := memledger.New()
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root}, ws, ledger, nil)

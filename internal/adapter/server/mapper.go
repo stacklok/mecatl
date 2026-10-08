@@ -3,6 +3,9 @@ package server
 import (
 	"fmt"
 	"math"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -158,6 +161,12 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Authorization != nil {
 		out.Authorization = toProtoAuthorization(*ev.Authorization)
 	}
+	if ev.PlanContinuationFailure != nil {
+		out.PlanContinuationFailure = &mecatlv1.PlanContinuationFailure{
+			PlanRunId: valid(ev.PlanContinuationFailure.PlanRunID),
+			AskId:     valid(ev.PlanContinuationFailure.AskID),
+		}
+	}
 	if ev.Result != nil {
 		out.Result = toProtoResult(*ev.Result)
 	}
@@ -166,9 +175,6 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	}
 	if ev.Hook != nil {
 		out.Hook = toProtoHook(*ev.Hook)
-	}
-	if ev.Usage != nil {
-		out.Usage = toProtoUsage(*ev.Usage)
 	}
 	if ev.Subagent != nil {
 		out.Subagent = toProtoSubagent(*ev.Subagent)
@@ -215,6 +221,68 @@ func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
 	return &mecatlv1.SteerEcho{Text: valid(p.Text), Parts: contentToProto(p.Parts), MessageId: valid(p.MessageID)}
 }
 
+func toProtoRoutingDecision(in *session.RoutingDecision) *mecatlv1.RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := &mecatlv1.RoutingDecision{
+		ClassifierModel:   routingEvidenceString(in.ClassifierModel),
+		CandidateCategory: routingEvidenceString(in.CandidateCategory),
+		CandidateModel:    routingEvidenceString(in.CandidateModel),
+		ConsecutiveMisses: ClampInt32(in.ConsecutiveMisses),
+		MissLimit:         ClampInt32(in.MissLimit),
+		BreakerOpen:       in.BreakerOpen,
+	}
+	switch in.Backend {
+	case "llm", "jev":
+		out.Backend = in.Backend
+	}
+	switch in.Outcome {
+	case "routed", "fallback", "skipped":
+		out.Outcome = in.Outcome
+	}
+	out.Confidence = routingProbability(in.Confidence)
+	out.MinimumConfidence = routingProbability(in.MinimumConfidence)
+	return out
+}
+
+func routingProbability(in *float64) *float64 {
+	if in == nil || math.IsNaN(*in) || math.IsInf(*in, 0) || *in < 0 || *in > 1 {
+		return nil
+	}
+	value := *in
+	return &value
+}
+
+func routingEvidenceString(in string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, valid(in))
+	runes := []rune(strings.TrimSpace(clean))
+	if len(runes) > 200 {
+		runes = runes[:200]
+	}
+	return string(runes)
+}
+
+// childPreviewID is a final backstop for externally constructed delegation payloads.
+// Repairing an invalid ID could collide with a different call; suppress the tool
+// preview instead of manufacturing a match. Engine-originated previews are checked
+// before emission, so this path also covers replay from older producers.
+func childPreviewID(id session.ToolCallID) string {
+	if len(id) > 256 || !utf8.ValidString(string(id)) {
+		return ""
+	}
+	return string(id)
+}
+
+func invalidChildPreview(id session.ToolCallID) bool {
+	return id != "" && childPreviewID(id) == ""
+}
+
 // toProtoParallel maps a session.ParallelPayload to its proto Parallel form: the
 // bounded-preview projection of a Parallel fork-join run. Usage is always emitted
 // (zero on the start/branch_start/branch_tool kinds); the per-kind field population
@@ -223,30 +291,35 @@ func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
 // inner_kind a STRING passthrough, mirroring toProtoTeam) — never unbounded branch
 // content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
+	if invalidChildPreview(p.ChildToolCallID) {
+		p.InnerKind, p.ToolName, p.Detail = "", "", ""
+	}
 	return &mecatlv1.Parallel{
-		ParentCallId:   p.ParentCallID,
-		Kind:           string(p.Kind),
-		Join:           valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
-		BranchCount:    ClampInt32(p.BranchCount),
-		BranchIndex:    ClampInt32(p.BranchIndex),
-		ChildId:        p.ChildID,
-		BranchLabel:    valid(p.BranchLabel),
-		Goal:           valid(p.Goal),
-		RoutedCategory: p.RoutedCategory,
-		RoutedModel:    p.RoutedModel,
-		RoutingReason:  p.RoutingReason,
-		Model:          p.Model,
-		ToolName:       valid(p.ToolName),
-		IsError:        p.IsError,
-		ToolCount:      ClampInt32(p.ToolCount),
-		InnerKind:      string(p.InnerKind),
-		Text:           valid(p.Text),
-		Detail:         valid(p.Detail),
-		Failed:         p.Failed,
-		Stop:           string(p.Stop),
-		Usage:          toProtoUsage(p.Usage),
-		DurationMs:     p.DurationMs,
-		Winner:         ClampInt32(p.Winner),
+		ParentCallId:    p.ParentCallID,
+		Kind:            string(p.Kind),
+		Join:            valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
+		BranchCount:     ClampInt32(p.BranchCount),
+		BranchIndex:     ClampInt32(p.BranchIndex),
+		ChildId:         p.ChildID,
+		BranchLabel:     valid(p.BranchLabel),
+		Goal:            valid(p.Goal),
+		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
+		RoutedModel:     routingEvidenceString(p.RoutedModel),
+		RoutingReason:   routingEvidenceString(p.RoutingReason),
+		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
+		Model:           routingEvidenceString(p.Model),
+		ToolName:        valid(p.ToolName),
+		ChildToolCallId: childPreviewID(p.ChildToolCallID),
+		IsError:         p.IsError,
+		ToolCount:       ClampInt32(p.ToolCount),
+		InnerKind:       string(p.InnerKind),
+		Text:            valid(p.Text),
+		Detail:          valid(p.Detail),
+		Failed:          p.Failed,
+		Stop:            string(p.Stop),
+		Usage:           toProtoUsage(p.Usage),
+		DurationMs:      p.DurationMs,
+		Winner:          ClampInt32(p.Winner),
 	}
 }
 
@@ -269,16 +342,29 @@ func toProtoSchedule(p session.SchedulePayload) *mecatlv1.SchedulePayload {
 
 // toProtoApproval maps a session.ApprovalPayload (EvApproval) to its proto Approval
 // form: the verdict half of a permission ask. It copies the metadata-only scalars
-// (tool NAME + verdict string + askID + the opaque gated-call id + the allow-always
-// flag) — gauntlet #7: NEVER raw args. The live Converse relay SKIPS this event
-// (log-only); this mapper exists so the StreamSessionEvents replay surfaces it.
+// (tool name + typed verdict + ask ID + opaque gated-call ID) — gauntlet #7:
+// NEVER raw args. The live Converse relay skips this event (log-only); this mapper
+// exists so the WatchSessionEvents replay surfaces it.
 func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 	return &mecatlv1.Approval{
-		AskId:       p.AskID,
-		Verdict:     p.Verdict,
-		Tool:        valid(p.Tool),
-		CallId:      string(p.Call),
-		AllowAlways: p.AllowAlways,
+		AskId:   p.AskID,
+		Verdict: approvalVerdictToProto(p.Verdict),
+		Tool:    valid(p.Tool),
+		CallId:  string(p.Call),
+		Origin:  string(p.Origin),
+	}
+}
+
+func approvalVerdictToProto(verdict string) mecatlv1.ApprovalVerdict {
+	switch verdict {
+	case session.VerdictStringAllowAlways:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS
+	case session.VerdictStringAllowOnce:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE
+	case session.VerdictStringDeny:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY
+	default:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED
 	}
 }
 
@@ -394,17 +480,21 @@ func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage
 // contract. The previews are already capped in the domain (projectTeamEvent /
 // clampPreview); this mapper copies them verbatim — it adds no further redaction.
 func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
+	if invalidChildPreview(p.ChildToolCallID) {
+		p.InnerKind, p.ToolName, p.Detail = "", "", ""
+	}
 	roster := make([]*mecatlv1.TeamMemberSpec, 0, len(p.Roster))
 	for _, m := range p.Roster {
 		roster = append(roster, &mecatlv1.TeamMemberSpec{
-			Name:           valid(m.Name),
-			Role:           valid(m.Role),
-			Mutating:       m.Mutating,
-			Lead:           m.Lead,
-			RoutedCategory: m.RoutedCategory,
-			RoutedModel:    m.RoutedModel,
-			RoutingReason:  m.RoutingReason,
-			Model:          m.Model,
+			Name:            valid(m.Name),
+			Role:            valid(m.Role),
+			Mutating:        m.Mutating,
+			Lead:            m.Lead,
+			RoutedCategory:  routingEvidenceString(m.RoutedCategory),
+			RoutedModel:     routingEvidenceString(m.RoutedModel),
+			RoutingReason:   routingEvidenceString(m.RoutingReason),
+			RoutingDecision: toProtoRoutingDecision(m.RoutingDecision),
+			Model:           routingEvidenceString(m.Model),
 		})
 	}
 	tasks := make([]*mecatlv1.TeamTask, 0, len(p.Tasks))
@@ -433,6 +523,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 		InnerKind:       string(p.InnerKind),
 		Text:            valid(p.Text),
 		ToolName:        valid(p.ToolName),
+		ChildToolCallId: childPreviewID(p.ChildToolCallID),
 		Detail:          valid(p.Detail),
 		IsError:         p.IsError,
 		Rounds:          ClampInt32(p.Rounds),
@@ -521,25 +612,30 @@ func toProtoTeamTaskSnapshot(t session.TeamTaskSnapshot) *mecatlv1.TeamTask {
 // inner_kind a STRING passthrough, mirroring toProtoTeam) are copied verbatim:
 // already clamped by the single redaction chokepoint upstream in engine/agent.
 func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
+	if invalidChildPreview(p.ChildToolCallID) {
+		p.InnerKind, p.ToolName, p.Detail = "", "", ""
+	}
 	return &mecatlv1.Subagent{
-		ParentCallId:   p.ParentCallID,
-		ChildId:        p.ChildID,
-		Goal:           valid(p.Goal),
-		Background:     p.Background,
-		RoutedCategory: p.RoutedCategory,
-		RoutedModel:    p.RoutedModel,
-		RoutingReason:  p.RoutingReason,
-		Model:          p.Model,
-		ToolName:       valid(p.ToolName),
-		IsError:        p.IsError,
-		ToolCount:      ClampInt32(p.ToolCount),
-		InnerKind:      string(p.InnerKind),
-		Text:           valid(p.Text),
-		Detail:         valid(p.Detail),
-		Usage:          toProtoUsage(p.Usage),
-		Stop:           string(p.Stop),
-		Cause:          valid(p.Cause),
-		DurationMs:     p.DurationMs,
+		ParentCallId:    p.ParentCallID,
+		ChildId:         p.ChildID,
+		Goal:            valid(p.Goal),
+		Background:      p.Background,
+		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
+		RoutedModel:     routingEvidenceString(p.RoutedModel),
+		RoutingReason:   routingEvidenceString(p.RoutingReason),
+		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
+		Model:           routingEvidenceString(p.Model),
+		ToolName:        valid(p.ToolName),
+		ChildToolCallId: childPreviewID(p.ChildToolCallID),
+		IsError:         p.IsError,
+		ToolCount:       ClampInt32(p.ToolCount),
+		InnerKind:       string(p.InnerKind),
+		Text:            valid(p.Text),
+		Detail:          valid(p.Detail),
+		Usage:           toProtoUsage(p.Usage),
+		Stop:            string(p.Stop),
+		Cause:           valid(p.Cause),
+		DurationMs:      p.DurationMs,
 	}
 }
 
@@ -711,28 +807,114 @@ func mediaKindFromBlock(k mecatlv1.ContentBlock_Kind) session.MediaKind {
 
 // toProtoAsk maps a session.PendingAsk to its proto PermissionAsk form.
 func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
-	return &mecatlv1.PermissionAsk{
-		AskId:  a.AskID,
-		Tool:   valid(a.Tool),
-		Args:   valid(string(a.Args)),
-		Reason: valid(a.Reason),
+	out := &mecatlv1.PermissionAsk{
+		AskId:     a.AskID,
+		Tool:      valid(a.Tool),
+		Args:      valid(string(a.Args)),
+		Reason:    valid(a.Reason),
+		Guardrail: toProtoGuardrailApprovalScope(a.Guardrail),
 	}
+	if a.Call != "" {
+		callID := valid(string(a.Call))
+		out.CallId = &callID
+	}
+	return out
+}
+
+func toProtoGuardrailApprovalScope(scope *session.GuardrailPendingScope) *mecatlv1.GuardrailApprovalScope {
+	if scope == nil {
+		return nil
+	}
+	kind := mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_UNSPECIFIED
+	switch scope.Kind {
+	case session.GuardrailApprovalAction:
+		kind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION
+	case session.GuardrailApprovalResultRelease:
+		kind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE
+	}
+	return &mecatlv1.GuardrailApprovalScope{ReviewId: valid(scope.ReviewID), Kind: kind, GrantDigest: valid(scope.GrantDigest), SessionOnly: scope.SessionOnly, RepeatAvailable: scope.RepeatAvailable}
+}
+
+func toProtoGuardrailReview(review *session.GuardrailReviewPayload) *mecatlv1.GuardrailReview {
+	if review == nil {
+		return nil
+	}
+	refs := func(in []session.GuardrailRef) []*mecatlv1.GuardrailRef {
+		out := make([]*mecatlv1.GuardrailRef, 0, len(in))
+		for _, ref := range in {
+			out = append(out, &mecatlv1.GuardrailRef{Ref: valid(ref.Ref), Category: valid(ref.Category)})
+		}
+		return out
+	}
+	return &mecatlv1.GuardrailReview{
+		ReviewId: valid(review.ReviewID), Job: guardrailJobToProto(review.Job), Assessment: guardrailAssessmentToProto(review.Assessment),
+		Inspection: guardrailInspectionToProto(review.Inspection), Disposition: guardrailDispositionToProto(review.Disposition), ReasonCode: valid(review.ReasonCode),
+		RuleId: valid(review.RuleID), RuleOrigin: valid(review.RuleOrigin), CheckerProviderId: valid(review.CheckerProviderID), CheckerModelId: valid(review.CheckerModelID),
+		Concerns: refs(review.Concerns), Sources: refs(review.Sources),
+	}
+}
+
+func guardrailJobToProto(v string) mecatlv1.GuardrailJob {
+	if v == "action" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_ACTION
+	}
+	if v == "inbound" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_INBOUND
+	}
+	if v == "permission" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_PERMISSION
+	}
+	return mecatlv1.GuardrailJob_GUARDRAIL_JOB_UNSPECIFIED
+}
+func guardrailAssessmentToProto(v string) mecatlv1.GuardrailAssessment {
+	switch v {
+	case "acceptable":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_ACCEPTABLE
+	case "prohibited":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_PROHIBITED
+	case "unresolved":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNRESOLVED
+	}
+	return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNSPECIFIED
+}
+func guardrailInspectionToProto(v string) mecatlv1.GuardrailInspection {
+	if v == "complete" {
+		return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_COMPLETE
+	}
+	if v == "operational_failure" {
+		return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE
+	}
+	return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_UNSPECIFIED
+}
+func guardrailDispositionToProto(v string) mecatlv1.GuardrailDisposition {
+	switch v {
+	case "execute":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_EXECUTE
+	case "ask_action":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_ASK_ACTION
+	case "withhold_result":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_WITHHOLD_RESULT
+	case "release_result":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_RELEASE_RESULT
+	case "deny":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_DENY
+	case "pass_advisory":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_PASS_ADVISORY
+	case "continue_warning":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_CONTINUE_WARNING
+	}
+	return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_UNSPECIFIED
 }
 
 // toProtoResult maps a session.ResultPayload to its proto Result form.
 func toProtoResult(p session.ResultPayload) *mecatlv1.Result {
-	disposition := p.Disposition
-	if disposition == session.RetryDispositionUnknown && p.Permanent {
-		disposition = session.RetryDispositionPermanent
-	}
-	protoDisposition := retryDispositionToProto(disposition)
+	protoDisposition := retryDispositionToProto(p.Disposition)
 	progress := streamProgressToProto(p.Progress)
 	return &mecatlv1.Result{
 		Stop:             string(p.Stop),
 		Text:             valid(p.Text),
 		Usage:            toProtoUsage(p.Usage),
 		Error:            valid(p.Error),
-		Permanent:        disposition == session.RetryDispositionPermanent,
 		RetryDisposition: &protoDisposition,
 		StreamProgress:   &progress,
 	}
@@ -767,16 +949,18 @@ func toProtoTurnEnd(p session.TurnEndPayload) *mecatlv1.TurnEnd {
 	return &mecatlv1.TurnEnd{
 		Usage:      toProtoUsage(p.Usage),
 		DurationMs: p.DurationMs,
+		Estimated:  p.Estimated,
 	}
 }
 
 // toProtoHook maps a session.HookPayload to its proto Hook form.
 func toProtoHook(h session.HookPayload) *mecatlv1.Hook {
 	return &mecatlv1.Hook{
-		Phase:    valid(h.Phase),
-		Tool:     valid(h.Tool),
-		Decision: hookDecisionToProto(h.Decision),
-		CallId:   string(h.CallID),
+		Phase:     valid(h.Phase),
+		Tool:      valid(h.Tool),
+		Decision:  hookDecisionToProto(h.Decision),
+		CallId:    string(h.CallID),
+		Guardrail: toProtoGuardrailReview(h.Guardrail),
 	}
 }
 
@@ -824,32 +1008,37 @@ func toProtoTokenUsage(in map[session.UsageKind]session.TokenUsage) map[string]*
 }
 
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
-func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities, sessionCaps port.ProviderCapabilities) *mecatlv1.Session {
-	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
+func toProtoSession(s *session.Session, rm ResolvedModel, _ *mecatlv1.ServerCapabilities, sessionCaps port.ProviderCapabilities) *mecatlv1.Session {
 	return &mecatlv1.Session{
-		SessionId:       string(s.ID),
-		State:           string(s.State),
-		Mode:            modeToProto(s.Mode),
-		Limits:          limitsToProto(s.Limits),
-		Turns:           ClampInt32(s.Counters.Turns),
-		ToolCalls:       ClampInt32(s.Counters.ToolCalls),
-		CreatedAtUnix:   s.CreatedAt.Unix(),
-		ResolvedModel:   resolvedModelToProto(rm),
-		Title:           valid(s.Title),
-		TitleProvenance: valid(string(s.TitleProvenance)),
-		TitleMetadata:   toProtoSessionTitle(titlePayload(s)),
-		TokenUsage:      toProtoTokenUsage(s.TokenUsageSnapshot()),
-		Capabilities:    caps,
+		SessionId:     string(s.ID),
+		State:         string(s.State),
+		Mode:          modeToProto(s.Mode),
+		Limits:        limitsToProto(s.Limits),
+		Turns:         ClampInt32(s.Counters.Turns),
+		ToolCalls:     ClampInt32(s.Counters.ToolCalls),
+		CreatedAtUnix: s.CreatedAt.Unix(),
+		ResolvedModel: resolvedModelToProto(rm),
+		TitleMetadata: toProtoSessionTitle(titlePayload(s)),
+		TokenUsage:    toProtoTokenUsage(s.TokenUsageSnapshot()),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: sessionCaps.Image,
 			Audio: sessionCaps.Audio,
 		},
-		Kind:            string(s.Kind),
-		Relationship:    toProtoSessionRelationship(s.Relationship),
-		DebugMcpServers: validStrings(s.DebugMCPServers),
-		DebugMcpTools:   validStrings(s.DebugMCPTools),
-		Placement:       placementMetadataToProto(s.Placement),
+		Kind:                   string(s.Kind),
+		Relationship:           toProtoSessionRelationship(s.Relationship),
+		DebugMcpServers:        validStrings(s.DebugMCPServers),
+		DebugMcpTools:          validStrings(s.DebugMCPTools),
+		Placement:              placementMetadataToProto(s.Placement),
+		LatestContextOccupancy: toProtoContextOccupancy(s),
 	}
+}
+
+func toProtoContextOccupancy(s *session.Session) *mecatlv1.ContextOccupancy {
+	occupancy, ok := s.LatestContextOccupancy()
+	if !ok {
+		return nil
+	}
+	return &mecatlv1.ContextOccupancy{InputTokens: int64(occupancy.InputTokens), Estimated: occupancy.Estimated}
 }
 
 func titlePayload(s *session.Session) session.TitlePayload {
@@ -1068,7 +1257,7 @@ func toProtoScopedWorktrees(wts []ScopedWorktree) []*mecatlv1.Worktree {
 }
 
 // toProtoSessionSummary maps a Service SessionSummary (the surface-agnostic
-// picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
+// picker row, issue #245) to its proto form. It projects ONLY the
 // picker metadata — no conversation content.
 func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 	metadata := s.TitleMetadata
@@ -1076,23 +1265,20 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		metadata.Title = s.Title
 		metadata.Provenance = s.TitleProvenance
 	}
-	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.SessionSummary{
-		SessionId:       s.SessionID,
-		ModifiedAtUnix:  s.ModifiedAtUnix,
-		State:           s.State,
-		Turns:           ClampInt32(s.Turns),
-		ModelId:         s.ModelID,
-		CreatedAtUnix:   s.CreatedAtUnix,
-		Title:           valid(s.Title),
-		TitleProvenance: valid(string(s.TitleProvenance)),
-		TitleMetadata:   toProtoSessionTitle(metadata),
-		TokenUsage:      toProtoTokenUsage(s.TokenUsage),
-		Placement:       placementMetadataToProto(s.Placement),
-		Owner:           toProtoPrincipal(s.Owner),
-		Kind:            string(s.Kind),
-		Relationship:    toProtoSessionRelationship(s.Relationship),
-		ActivityState:   valid(string(s.Activity)),
+		SessionId:      s.SessionID,
+		ModifiedAtUnix: s.ModifiedAtUnix,
+		State:          s.State,
+		Turns:          ClampInt32(s.Turns),
+		ModelId:        s.ModelID,
+		CreatedAtUnix:  s.CreatedAtUnix,
+		TitleMetadata:  toProtoSessionTitle(metadata),
+		TokenUsage:     toProtoTokenUsage(s.TokenUsage),
+		Placement:      placementMetadataToProto(s.Placement),
+		Owner:          toProtoPrincipal(s.Owner),
+		Kind:           string(s.Kind),
+		Relationship:   toProtoSessionRelationship(s.Relationship),
+		ActivityState:  valid(string(s.Activity)),
 		Capabilities: &mecatlv1.SessionInventoryCapabilities{
 			PublicChat:              s.Capabilities.PublicChat,
 			Inspect:                 s.Capabilities.Inspect,
@@ -1126,7 +1312,7 @@ func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.Session
 	return out
 }
 
-// toProtoPrincipal maps the verified owner (ADR 0204) to its proto form. A nil
+// toProtoPrincipal maps the verified owner to its proto form. A nil
 // principal maps to a nil message — an ABSENT owner must stay absent on the wire,
 // never a present-but-empty "anonymous" one. Every string goes through valid()
 // (the UTF-8 scrubber every other wire string uses): the issuer/subject come from
@@ -1213,12 +1399,33 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	}
 }
 
-// verdictFromResumeApproval derives the session.ApprovalVerdict from a
-// ResumeApproval frame, preferring the explicit `verdict` enum and falling back
-// to the legacy `allow` bool for clients that predate it (BACK-COMPAT). The
-// mapping is fail-safe: an UNSPECIFIED verdict with allow=false, and any
-// unrecognized value, resolve to VerdictDeny.
-func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict, allow bool) session.ApprovalVerdict {
+func guardrailApprovalKindFromProto(kind mecatlv1.GuardrailApprovalKind) session.GuardrailApprovalKind {
+	switch kind {
+	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:
+		return session.GuardrailApprovalAction
+	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE:
+		return session.GuardrailApprovalResultRelease
+	default:
+		return ""
+	}
+}
+
+func approvalResolutionFromProto(approval *mecatlv1.ResumeApproval) agent.ApprovalResolution {
+	if approval == nil {
+		return agent.ApprovalResolution{}
+	}
+	return agent.ApprovalResolution{
+		AskID:    approval.GetAskId(),
+		ReviewID: approval.GetReviewId(),
+		Kind:     guardrailApprovalKindFromProto(approval.GetGuardrailKind()),
+		Verdict:  verdictFromResumeApproval(approval.GetVerdict()),
+	}
+}
+
+// verdictFromResumeApproval maps the required wire verdict to its domain value.
+// Unknown values map to a guaranteed-invalid sentinel so shared validation refuses
+// them without consuming the pending ask.
+func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict) session.ApprovalVerdict {
 	switch verdict {
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
 		return session.VerdictAllowAlways
@@ -1226,13 +1433,9 @@ func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict, allow bool) ses
 		return session.VerdictAllowOnce
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY:
 		return session.VerdictDeny
-	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED:
-		// Legacy clients send only the bool. true -> allow once; false -> deny.
-		if allow {
-			return session.VerdictAllowOnce
-		}
-		return session.VerdictDeny
 	default:
-		return session.VerdictDeny
+		return invalidTransportApprovalVerdict
 	}
 }
+
+const invalidTransportApprovalVerdict session.ApprovalVerdict = -1

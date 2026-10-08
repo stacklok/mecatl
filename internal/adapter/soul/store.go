@@ -1,4 +1,4 @@
-// Package soul implements issue #14, Phase 1: a user-scoped, agent-READ-ONLY
+// Package soul implements issue #14: a user-scoped, agent-READ-ONLY
 // persona/"soul" fragment loaded into the turn-0 conversation as data.
 //
 // SCOPING: the soul is USER-scoped, not project-scoped. It lives at
@@ -12,10 +12,10 @@
 // Every method on Store is READ-ONLY (Load / LoadWithMeta read+validate the body;
 // ResolvedPath only computes a path string), and this package contains NO
 // os.WriteFile/Create/MkdirAll and NO Catalog/tool registration. The drift-baseline
-// fingerprint (issue #14, Phase 3) is COMPUTED here (LoadWithMeta) but PERSISTED only
+// fingerprint (issue #14) is COMPUTED here (LoadWithMeta) but PERSISTED only
 // by the composition layer (internal/app/soulguard) — the adapter never writes.
 // A writable identity anchor is
-// the central trap the spike (docs/adr/0011-soul-and-user-model.md §4) warns against: a
+// the central trap to avoid: a
 // prompt injection that rewrites "who the agent is" would persist across every
 // future session. So identity is read-only-if-present and bootstrapped by hand
 // (a text editor), never by a tool. The soul is additionally injection-scanned
@@ -35,34 +35,25 @@ package soul
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/hashutil"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adaptersupport/soulbody"
 )
 
 // DefaultMaxBytes is the load-time byte ceiling on the soul body (matching the
 // Hermes 20 KiB cap the spike cites). Over the cap the soul is REJECTED (no
 // fragment), not truncated: a half-truncated persona is worse than none.
-const DefaultMaxBytes = 20 * 1024
+const DefaultMaxBytes = soulbody.DefaultMaxBytes
 
 // soulSubpath is the conventional soul file relative to the XDG config base, i.e.
 // <config>/mecatl/soul.md (fallback ~/.config/mecatl/soul.md). Mirrors
 // permconfig.userSubdirMecatl / skills.userSubdirMecatl path conventions.
 const soulSubpath = "mecatl/soul.md"
-
-// soulCloseTag is the data-fence close delimiter the prompt renderer wraps the
-// body in (prompt.renderSoul uses "<soul>"/"</soul>"). A body containing this
-// literal could close the fence early and let trailing text escape the data zone,
-// so Load rejects any body that contains it. It is hardcoded here (with this
-// comment) rather than imported from engine/prompt to avoid coupling the adapter
-// to a domain magic-constant path; the two must stay in sync (one cheap string).
-const soulCloseTag = "</soul>"
 
 // readFunc opens a soul file for a bounded read and returns its content limited to
 // at most limit bytes (the caller passes MaxBytes+1 to detect an over-cap file
@@ -140,8 +131,8 @@ func newWith(opts Options, env xdgconfig.ResolveEnv, read readFunc) *Store {
 // when set, else the conventional <xdg>/mecatl/soul.md (fallback
 // ~/.config/mecatl/soul.md) — or "" when none can be resolved. It is a READ-ONLY
 // accessor (it computes a path string; it touches no file and writes nothing), used
-// by the composition layer to locate the drift-baseline sidecar (issue #14, Phase 3,
-// Item 1) as a sibling of this path. Exposing it does NOT add a write path.
+// by the composition layer to locate the drift-baseline sidecar (issue #14) as a
+// sibling of this path. Exposing it does NOT add a write path.
 func (s *Store) ResolvedPath() string {
 	return s.resolvePath()
 }
@@ -161,8 +152,8 @@ func (s *Store) resolvePath() string {
 }
 
 // Result is the outcome of LoadWithMeta: the clean soul body plus its content
-// fingerprint, for the composition-layer drift baseline (issue #14, Phase 3,
-// Item 1). The SHA256 is computed over the SAME clean body Load returns (after
+// fingerprint, for the composition-layer drift baseline (issue #14). The
+// SHA256 is computed over the SAME clean body Load returns (after
 // trim/scan/fence checks) — so it fingerprints the bytes that actually reach the
 // prompt, not the raw file. When there is no usable soul every field is its zero
 // value (empty Body, empty SHA256, zero Size), so an absent/rejected soul yields
@@ -233,38 +224,8 @@ func (s *Store) LoadWithMeta(ctx context.Context) (Result, error) {
 	return Result{Body: body, SHA256: hashutil.SHA256Hex([]byte(body)), Size: len(body)}, nil
 }
 
-// ValidateBody is the SINGLE soul-body validation discipline, extracted so
-// every soul source — the local file Store here and the remote-driver client
-// (grpcdriver), which RE-VALIDATES because a driver is never trusted to
-// sanitize — applies byte-identical rules. It returns the clean (trimmed)
-// body and "" on success, or ("", reason) on rejection:
-//   - over the byte cap (maxBytes; <=0 uses DefaultMaxBytes) — REJECTED, not
-//     truncated (a half-truncated persona is worse than none); the cap is
-//     measured on the RAW input, before trimming;
-//   - empty or whitespace-only after trimming;
-//   - an injection-scan hit (scanForInjection);
-//   - a data-fence breakout (the body contains the literal close tag).
-//
-// It is a pure function: no I/O, no logging — callers own the fail-soft
-// posture (log the reason, contribute no fragment, never abort a run).
+// ValidateBody preserves the local soul API while delegating the single
+// validation discipline to soulbody, shared with the gRPC driver client.
 func ValidateBody(body string, maxBytes int) (string, string) {
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
-	}
-	if len(body) > maxBytes {
-		return "", fmt.Sprintf("body is %d bytes, over the %d-byte cap (rejected, not truncated)", len(body), maxBytes)
-	}
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return "", "body is empty or whitespace-only"
-	}
-	if marker, found := scanForInjection(body); found {
-		return "", fmt.Sprintf("injection marker detected: %s", marker)
-	}
-	// Fence-integrity guard: a body containing the literal close-tag could close
-	// the data fence early and smuggle trailing text out of the data zone.
-	if strings.Contains(body, soulCloseTag) {
-		return "", fmt.Sprintf("body contains the data-fence close-tag %s", soulCloseTag)
-	}
-	return body, ""
+	return soulbody.ValidateBody(body, maxBytes)
 }

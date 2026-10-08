@@ -69,11 +69,14 @@ var flagMetaByFlag = map[string]flagMeta{
 	// Advanced — an operator running mecated by hand never sets them — and
 	// server-boundary, so absent from ACP help (a stdio ACP client already has
 	// its parent's lifetime and needs no socket or readiness barrier).
-	"grpc-unix-socket": {group: groupServer, common: false, acp: acpExclude},
-	"ready-file":       {group: groupServer, common: false, acp: acpExclude},
-	"lifetime-pipe-fd": {group: groupServer, common: false, acp: acpExclude},
-	"lifetime-stdin":   {group: groupServer, common: false, acp: acpExclude},
-	"metrics-addr":     {group: groupServer, common: false, acp: acpExclude},
+	"grpc-unix-socket":     {group: groupServer, common: false, acp: acpExclude},
+	"ready-file":           {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-pipe-fd":     {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-stdin":       {group: groupServer, common: false, acp: acpExclude},
+	"metrics-addr":         {group: groupServer, common: false, acp: acpExclude},
+	"microvm-guest-egress": {group: groupServer, common: false, acp: acpExclude},
+	"microvm-guest-allow":  {group: groupServer, common: false, acp: acpExclude},
+	"default-placement":    {group: groupWorkspaceSession, common: true, acp: acpExclude},
 
 	// ── Security (serve-only) ─────────────────────────────────────────────
 	"auth-token": {group: groupSecurity, common: true, acp: acpExclude},
@@ -82,7 +85,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"client-ca":  {group: groupSecurity, common: false, acp: acpExclude},
 	"rate-limit": {group: groupSecurity, common: false, acp: acpExclude},
 	"rate-burst": {group: groupSecurity, common: false, acp: acpExclude},
-	// Caller identity (ADR 0204): advanced, server-boundary — an ACP client
+	// Caller identity: advanced, server-boundary — an ACP client
 	// speaks over stdio and has no authenticated edge.
 	"oidc-issuer":             {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-jwks-uri":           {group: groupSecurity, common: false, acp: acpExclude},
@@ -165,6 +168,7 @@ var flagMetaByFlag = map[string]flagMeta{
 
 	// ── LLM resilience (both) ────────────────────────────────────────────
 	"llm-max-attempts":        {group: groupLLMResilience, common: false, acp: acpInclude},
+	"llm-recovery-budget":     {group: groupLLMResilience, common: false, acp: acpInclude},
 	"llm-per-attempt-timeout": {group: groupLLMResilience, common: false, acp: acpInclude},
 	"llm-stream-idle-timeout": {group: groupLLMResilience, common: false, acp: acpInclude},
 	"llm-breaker-threshold":   {group: groupLLMResilience, common: false, acp: acpInclude},
@@ -217,8 +221,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"soul-strict":                     {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 	"user-model-dir":                  {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 	"no-user-model":                   {group: groupMemoryKnowledge, common: false, acp: acpInclude},
-	"user-model-review":               {group: groupMemoryKnowledge, common: false, acp: acpInclude},
-	"user-model-review-interval":      {group: groupMemoryKnowledge, common: false, acp: acpInclude},
+	"learning-admission-interval":     {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 	"user-model-consolidate-interval": {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 
 	// ── Skills & agents (both) ───────────────────────────────────────────

@@ -43,7 +43,7 @@ func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 	if reasoningItemChunk == nil {
 		t.Fatalf("no ChunkReasoningItem in stream; chunks=%+v", chunks)
 	}
-	items := unpackReasoningItems(reasoningItemChunk.Text, "")
+	items := unpackReasoningItems(reasoningItemChunk.Text)
 	if len(items) != 1 {
 		t.Fatalf("unpacked %d reasoning items, want 1; packed=%q", len(items), reasoningItemChunk.Text)
 	}

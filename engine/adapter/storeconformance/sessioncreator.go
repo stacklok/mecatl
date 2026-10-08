@@ -101,7 +101,7 @@ func RunSessionCreator(t *testing.T, newSharedStores func(t *testing.T) (port.Se
 	t.Run("collision preserves derivative metadata generation", func(t *testing.T) {
 		st, _ := newSharedStores(t)
 		pager, ok := st.(port.SessionMetadataPager)
-		if !ok {
+		if !ok || !port.SupportsSessionMetadataPaging(st) {
 			t.Skipf("%T does not expose derivative session metadata", st)
 		}
 		creator := sessionCreator(t, st)
@@ -224,7 +224,7 @@ func RunSessionCreator(t *testing.T, newSharedStores func(t *testing.T) (port.Se
 func sessionCreator(t *testing.T, st port.SessionStore) port.SessionCreator {
 	t.Helper()
 	creator, ok := st.(port.SessionCreator)
-	if !ok {
+	if !ok || !port.SupportsSessionCreate(st) {
 		t.Fatalf("%T does not implement port.SessionCreator", st)
 	}
 	return creator

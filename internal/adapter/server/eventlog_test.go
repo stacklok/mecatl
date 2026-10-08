@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -29,7 +30,6 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // readEventLog collects every event the EventLog recorded for id, failing on a
@@ -392,7 +392,7 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 	return svc, csResp
 }
 
-// TestEventLogRecordsApprovalVerdict is the cloud-native Phase 3a GATE: drive a
+// TestEventLogRecordsApprovalVerdict is the durable event-log GATE: drive a
 // session through tool.call -> permission.ask -> approve(allow_always) ->
 // tool.result over the gRPC relay, then assert EventLog.Read yields the ordered
 // stream INCLUDING exactly one EvApproval{Verdict:"allow_always", Tool:"Write"}
@@ -434,14 +434,13 @@ func TestEventLogRecordsApprovalVerdict(t *testing.T) {
 			t.Fatalf("EvApproval must NOT be relayed to the client wire in 3a")
 		}
 		if ev.GetType() == "user_prompt" {
-			t.Fatalf("EvUserPrompt must NOT be relayed to the client wire (log-only, ADR 0038)")
+			t.Fatalf("EvUserPrompt must NOT be relayed to the client wire (log-only)")
 		}
 		if ev.GetType() == "permission.ask" {
 			if err := stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},
@@ -502,7 +501,7 @@ func TestEventLogRecordsApprovalVerdict(t *testing.T) {
 		t.Fatalf("EvApproval must carry the askID")
 	}
 
-	// EvUserPrompt is log-only (ADR 0038): the genuine prompt "go" must be DURABLY
+	// EvUserPrompt is log-only: the genuine prompt "go" must be DURABLY
 	// recorded in the log (so the log shows what the user asked) and never relayed to
 	// the wire (asserted in the drain loop above).
 	var userPrompts int
@@ -538,7 +537,7 @@ func typeNames(evs []session.Event) []string {
 // childSecretSentinel is a secret-SHAPED stand-in for a child tool call's args
 // (gauntlet #7): it is an innocuous literal that must NEVER surface VERBATIM in any
 // logged event body — the redaction-leak detector asserts on the ABSENCE of its full
-// form (ADR 0079: the delegation projection now forwards a clampPreview-BOUNDED,
+// form (the delegation projection now forwards a clampPreview-BOUNDED,
 // control-byte-scrubbed preview, so only a clamped head of the sentinel may cross,
 // never the whole thing). Per the repo rule against destructive strings in test
 // literals, this is a harmless token, not a real secret.
@@ -554,7 +553,7 @@ const childSecretSentinelTail = "_TAIL"
 // TestEventLogInheritsStreamRedaction is the gauntlet-#7 subtest: a Subagent
 // delegation's child makes a tool call whose args carry a secret-shaped sentinel
 // longer than the preview cap. The delegation events the relay records (subagent.*)
-// are BOUNDED previews (ADR 0079), so the sentinel's TAIL must NOT appear in ANY
+// are BOUNDED previews, so the sentinel's TAIL must NOT appear in ANY
 // logged event's serialized body — the log inherits the stream's redaction; it adds
 // none of its own.
 //
@@ -640,7 +639,7 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 	}
 	// Serialize the WHOLE logged stream and assert the sentinel never appears
 	// VERBATIM: the log stores already-redacted events, so a child's tool args cross
-	// only as a clamped, scrubbed preview (ADR 0079) — the tail clamping removes
+	// only as a clamped, scrubbed preview — the tail clamping removes
 	// must never surface.
 	sawSubagent := false
 	sawClampedPreview := false
@@ -663,7 +662,7 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 		t.Fatalf("expected at least one subagent.* event in the log (delegation lifecycle): %v", typeNames(logged))
 	}
 	if !sawClampedPreview {
-		t.Fatal("expected a logged subagent.* event carrying a clamped arg preview (ADR 0079); the redaction guard did not exercise")
+		t.Fatal("expected a logged subagent.* event carrying a clamped arg preview; the redaction guard did not exercise")
 	}
 }
 
@@ -701,12 +700,12 @@ func askingEventLogServiceOverStore(t *testing.T, store port.SessionStore, log p
 }
 
 // TestEventLogRecordsResumePathVerdict is the resume-path GATE (the dead-process
-// HTTP resumeFromAwaiting path): a session parks awaiting in svc1 (dies), then a
-// fresh svc2 over the SAME store + SAME EventLog resumes it via POST /approve with
-// allow_always. The gRPC ResumeApproval frame resolves the IN-FLIGHT run (no
-// rehydrate, so it does not reach resolvePendingCall); only the HTTP rehydrate path
-// drives resolvePendingCall, whose emit is otherwise UNGUARDED. The resumed run's
-// SSE relay (relayRunSSE) Appends the EvApproval, so the log must hold exactly one
+// resumeFromAwaiting path): a session parks awaiting in svc1 (dies), then a
+// fresh svc2 over the SAME store + SAME EventLog resumes it via Service.ApproveRun
+// with allow_always. The gRPC ResumeApproval frame resolves the IN-FLIGHT run (no
+// rehydrate, so it does not reach resolvePendingCall); only a rehydrate path
+// drives resolvePendingCall, whose emit is otherwise UNGUARDED. The run event
+// recorder Appends the EvApproval, so the log must hold exactly one
 // EvApproval{allow_always, Write} on the resume path.
 //
 // MUTATION-KILL: deleting the resolvePendingCall emit in engine/agent/dispatch.go
@@ -739,20 +738,17 @@ func TestEventLogRecordsResumePathVerdict(t *testing.T) {
 	svc2 := askingEventLogServiceOverStore(t, store2, log, permstore.New(), &ran2,
 		mockllm.New(mockllm.TextTurn("done after approval")), true)
 
-	// POST /approve with allow_always over the HTTP surface → resumeFromAwaiting →
-	// Engine.ResumeApproval → resolvePendingCall (the emit under test). httptest's
-	// ResponseWriter is a Flusher, so this relays via relayRunSSE (which Appends).
-	srv := httptest.NewServer(server.NewHTTPHandler(svc2))
-	defer srv.Close()
-	body, _ := json.Marshal(approveJSON{AskID: askID, Verdict: session.VerdictStringAllowAlways})
-	resp, err := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/approve", "application/json", strings.NewReader(string(body)))
+	// Resume the durable awaiting snapshot directly, then pass every resumed event
+	// through the same recorder the HTTP/gRPC relays use for durable append.
+	resumed, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowAlways, "")
 	if err != nil {
-		t.Fatalf("POST /approve: %v", err)
+		t.Fatalf("ApproveRun: %v", err)
 	}
-	// Drain + close the SSE body so the resumed run completes and relayRunSSE finishes
-	// appending (incl. the terminal EvResult).
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
+	recorder := server.NewRunEventRecorder(context.Background(), svc2, sess.ID)
+	for ev := range resumed.Events() {
+		recorder.Observe(ev)
+	}
+	recorder.Close()
 
 	if ran2.Load() != 1 {
 		t.Fatalf("pending Write executed %d time(s) on resume, want exactly 1", ran2.Load())
@@ -905,13 +901,6 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 	}
 }
 
-// approveJSON mirrors the HTTP approve body (the server's struct is unexported);
-// only the fields the resume-path test sets are present.
-type approveJSON struct {
-	AskID   string `json:"ask_id"`
-	Verdict string `json:"verdict"`
-}
-
 // catalogWith builds a one-tool catalog (a local helper so a test can build an engine
 // wired to a single tool).
 func catalogWith(tl tool.Tool) *tool.Catalog {
@@ -941,7 +930,7 @@ func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Envi
 
 var _ tool.Tool = (*gateTool)(nil)
 
-// --- StreamSessionEvents (issue #245 Phase 1) --------------------------------
+// --- StreamSessionEvents (issue #245) --------------------------------
 
 // driveAskingSessionToCompletion drives the askingEventLogService session through
 // its full Converse cycle (tool.call -> permission.ask -> approve(allow_always) ->
@@ -979,7 +968,6 @@ func driveAskingSessionToCompletion(t *testing.T, client mecatlv1.HarnessService
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},
@@ -1142,7 +1130,6 @@ func TestLiveConverseRelaySkipsLogOnlyKinds(t *testing.T) {
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},

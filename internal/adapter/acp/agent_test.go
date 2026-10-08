@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -24,13 +25,13 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	engineprompt "github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/acp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	toolsadapter "github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // scriptTool is a minimal mutating Tool: it returns a fixed body and records
@@ -62,7 +63,7 @@ func (p acpPlacementProvider) binding() server.PlacementBinding {
 		panic(err)
 	}
 	env := tool.MustEnvironment(p.ref, ws, memledger.New(), nil)
-	return server.PlacementBinding{Environment: env, Ref: p.ref}
+	return server.PlacementBinding{Environment: env, Ref: p.ref, GovernanceRoot: p.root}
 }
 
 func (p acpPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
@@ -177,9 +178,23 @@ type fakeLister struct {
 	cmds []server.Command
 }
 
-func (f fakeLister) List(_ context.Context, _ string) ([]server.Command, error) {
-	return f.cmds, nil
+func (f fakeLister) List(context.Context) ([]engineprompt.Command, error) {
+	out := make([]engineprompt.Command, 0, len(f.cmds))
+	for _, command := range f.cmds {
+		out = append(out, engineprompt.Command{Name: command.Name, Description: command.Description})
+	}
+	return out, nil
 }
+func (fakeLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (f fakeLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (server.CommandSourceBinding, func(), error) {
+	return f, func() {}, nil
+}
+func (fakeLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (fakeLister) Retire(session.SessionID) {}
 
 // editor is the scripted ACP CLIENT side of the test: it owns the agent's stdin
 // (it writes requests/responses there) and reads the agent's stdout (the agent's
@@ -321,7 +336,7 @@ func (e *editor) readLoop() {
 	}
 }
 
-// TestEndToEndPromptWithPermission drives the full Phase 1 loop over an in-memory
+// TestEndToEndPromptWithPermission drives the full prompt loop over an in-memory
 // stdio pipe: initialize -> session/new -> session/prompt; the agent streams a
 // message chunk, a tool_call, then issues a request_permission that the editor
 // answers allow_once; the tool runs; a tool_call_update follows; and the prompt
@@ -464,6 +479,43 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 	case <-serveDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve did not return after EOF")
+	}
+}
+
+// TestACPToolAvailabilityRelay drives the real ACP prompt relay against the
+// offline engine and verifies availability plus its canonical confirmation update
+// one existing tool-call card exactly once.
+func TestACPToolAvailabilityRelay(t *testing.T) {
+	read := &scriptTool{name: "Read", readOnly: true, content: "available"}
+	svc := newService(t, mockllm.New(
+		mockllm.ToolCallTurn(call("c-availability", "Read", `{"path":"a"}`)),
+		mockllm.TextTurn("done"),
+	), allowRules(), read)
+	e, cleanup := startAgent(t, svc)
+	defer cleanup()
+
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
+	var created struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &created); err != nil || created.SessionID == "" {
+		t.Fatalf("session/new: %s err=%v", res, err)
+	}
+	_ = e.call("session/prompt", map[string]any{"sessionId": created.SessionID,
+		"prompt": []any{map[string]any{"type": "text", "text": "run"}}})
+
+	updates := drainUpdates(e.notes)
+	settled := 0
+	for _, update := range updates {
+		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == "c-availability" {
+			settled++
+			if update["status"] != "completed" {
+				t.Fatalf("availability settlement status = %v, want completed", update["status"])
+			}
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("tool call settled %d times, want one availability/canonical lifecycle: %v", settled, updates)
 	}
 }
 
@@ -644,7 +696,7 @@ func TestEndToEndFSDelegation(t *testing.T) {
 		svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
 			cfg.SharedEngineRoot = root
 			cfg.PlacementProvider = acpPlacementProvider{root: root, ref: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "fs-test-placement", Revision: "v1"}}
-		}, toolsadapter.ReadTool{}, toolsadapter.EditTool{})
+		}, fstools.ReadTool{}, fstools.EditTool{})
 		// Seed the file on DISK so that, in the caps-absent (osfs) scenario, Read+Edit
 		// have a real file to operate on. In the caps-present scenario the editor
 		// buffer (fsDefault) supplies the content and disk must stay as-is.
@@ -950,7 +1002,7 @@ func TestInitializeAdvertisesHTTPMCP(t *testing.T) {
 	}
 }
 
-func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
+func TestACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	root := testCWD(t)
 	ref := session.EnvironmentRef{Kind: "remote", ID: "private-placement-id", Revision: "private-revision"}
 	var binds, reattaches atomic.Int32
@@ -991,11 +1043,11 @@ func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	if _, err := a.Handle(context.Background(), "session/load", badLoad, true); err == nil || !strings.Contains(err.Error(), "cwd does not match") {
 		t.Fatalf("session/load cwd mismatch = %v", err)
 	}
-	if got := binds.Load(); got != 3 { // startup validation + both session/new calls
-		t.Fatalf("Bind calls = %d, want 3", got)
+	if got := binds.Load(); got != 2 { // both session/new calls
+		t.Fatalf("Bind calls = %d, want 2", got)
 	}
-	if got := reattaches.Load(); got != 4 { // create/load discovery plus both load attempts
-		t.Fatalf("Reattach calls = %d, want 4", got)
+	if got := reattaches.Load(); got != 2 { // only the two load attempts; source discovery is execution-independent
+		t.Fatalf("Reattach calls = %d, want 2", got)
 	}
 }
 
@@ -1196,7 +1248,7 @@ func callP(id, name, args string) *session.ToolCall {
 
 // startAgent wires an Agent over a pipe pair, starts Serve on a goroutine, and
 // returns a connected editor plus a cleanup that closes the editor's writer and
-// waits for Serve. It centralizes the boilerplate the new Phase-3 tests share.
+// waits for Serve. It centralizes the boilerplate these tests share.
 func startAgent(t *testing.T, svc *server.Service, opts ...acp.AgentOption) (*editor, func()) {
 	t.Helper()
 	agentStdinR, editorToAgentW := io.Pipe()

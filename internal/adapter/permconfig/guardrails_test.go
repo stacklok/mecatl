@@ -16,7 +16,6 @@ import (
 const operatorGuardrailsYAML = `
 guardrails:
   model: "gpt-5"
-  minContentBytes: 32
   rules:
     - match: "WebFetch"
       phases: ["post"]
@@ -51,7 +50,7 @@ func TestOperatorGuardrailsFromCLIHonoured(t *testing.T) {
 		t.Fatal("operator-tier guardrails must be honoured from the CLI/explicit tier")
 		return
 	}
-	if g.Model != "gpt-5" || g.MinContentBytes != 32 || len(g.Rules) != 2 {
+	if g.Model != "gpt-5" || len(g.Rules) != 2 {
 		t.Fatalf("guardrails not parsed faithfully: %+v", g)
 	}
 	if g.Rules[0].Match != "WebFetch" || g.Rules[1].Mode != "advisory" {
@@ -94,6 +93,27 @@ guardrails:
 		t.Fatal("an unknown key inside guardrails: must be a strict parse error")
 	} else if !strings.Contains(err.Error(), "guardrails") {
 		t.Fatalf("error should name the guardrails subtree; got %v", err)
+	}
+}
+
+func TestGuardrailsRemovedMinContentBytesRejected(t *testing.T) {
+	const bad = `
+guardrails:
+  model: "gpt-5"
+  minContentBytes: 32
+`
+	if _, err := parseYAML([]byte(bad)); err == nil {
+		t.Fatal("removed guardrails.minContentBytes must be rejected as unknown")
+	}
+}
+
+func TestGuardrailsTaskWindowStrictInteger(t *testing.T) {
+	cfg, err := parseYAML([]byte("guardrails:\n  taskWindow: 3\n"))
+	if err != nil || cfg.Guardrails == nil || cfg.Guardrails.TaskWindow != 3 {
+		t.Fatalf("taskWindow parse = %#v, %v", cfg.Guardrails, err)
+	}
+	if _, err := parseYAML([]byte("guardrails:\n  taskWindow: two\n")); err == nil {
+		t.Fatal("non-integer guardrails.taskWindow must be rejected")
 	}
 }
 

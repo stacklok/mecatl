@@ -1,315 +1,201 @@
-# Deployment & server hardening
+# Deployment and hardening
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
-**What this covers:** server hardening (auth/mTLS, rate limiting, health, graceful shutdown), multi-replica single-writer enforcement (session leasing), permission & bash governance (deny-dominant resolution, posture ladder, workspace trust), the project authority set, and supply-chain scanning.
+This chapter covers the server process: edge authentication, how the verified caller
+becomes the owner of what it creates, where credentials are kept, load and shutdown
+behavior, and how the three server deployment shapes differ. Permissions, posture, shell
+checks, and workspace trust are in [governance](governance.md); where a session's files
+and commands live is in [microVM environments](microvm-environments.md). The server is
+`internal/adapter/server`, wired by the roots in `cmd/`; the engine never sees a token,
+a listener, or a certificate.
 
-**Prerequisites:** [the API surface](api-surface.md) — the servers being hardened.
+## Edge authentication
 
-**Follow-on:** [observability](observability.md) — the persistence seams the server depends on.
+Three optional mechanisms are enforced by the gRPC interceptors and HTTP middleware in
+`internal/adapter/server/authn.go`:
 
-The server (`internal/adapter/server`) is hardened for off-loopback operation,
-and `cmd/mecated` wires the knobs:
+- **Static bearer token.** One shared secret, compared in constant time. It yields no
+  caller identity: one credential, zero subjects.
+- **TLS and mutual TLS.** A client CA bundle makes the server require and verify client
+  certificates. mTLS authenticates the transport, not a caller.
+- **OIDC.** A `server.PrincipalValidator` turns a JWT into a `session.Principal`
+  identified by its `(Issuer, Subject)` pair. The shipped validator lives in the
+  separate `authn/oidc` module, keeping JWT and IdP dependencies out of the engine.
 
-- **Authentication** — optional bearer token (`--auth-token` / `MECATL_AUTH_TOKEN`,
-  constant-time compared) enforced by a gRPC interceptor + HTTP middleware
-  (`internal/adapter/server/authn.go`); optional **TLS / mTLS** (`--tls-cert` / `--tls-key` /
-  `--client-ca`). The server still **warns loudly** if it binds a non-loopback
-  address with no auth configured. `mecak8s` watches the parent directories of
-  its server cert/key paths so Kubernetes projected-Secret `..data` swaps are
-  observed. It publishes only a fully parsed, matching pair through
-  `tls.Config.GetCertificate`; a bad rotation retains the last valid pair, while
-  the client CA remains restart-required ([ADR 0240](../adr/0240-mecak8s-credential-reload-and-chart-security.md)).
-- **Redis credential reload** — when mecak8s receives any Redis CA, username, or
-  password file, it watches the lexical parent directories and transactionally re-reads
-  the complete configured set. A bounded single-flight worker constructs and probes a
-  candidate through the normal verified toolhive-core Redis path, then atomically publishes
-  it. Every store/schedule/migration operation leases one client generation, so displaced
-  clients close only after in-flight work and migration locks release them. Invalid
-  candidates retain the last valid generation; no configured files means no watcher or
-  reload goroutine ([ADR 0240](../adr/0240-mecak8s-credential-reload-and-chart-security.md)).
-- **Rate limiting** — per-client + global token-bucket (`--rate-limit` /
-  `--rate-burst`), bounded and idle-evicting. With OIDC enabled, a separate
-  pre-validation rejected-token bucket protects JWT/JWKS validation. It is keyed
-  only by the direct transport peer IP (`RemoteAddr` / gRPC peer), never by
-  `Forwarded` or `X-Forwarded-For`; valid tokens do not consume it and proceed to
-  the unchanged post-validation `(issuer, subject)` limiter.
-- **Health** — HTTP `/healthz` (liveness) + `/readyz` (readiness) mounted outside
-  auth/rate-limit, plus standard `grpc_health_v1` `SERVING` (`internal/adapter/server/health.go`).
-- **mecak8s drain isolation** — a separate plaintext `--drain-addr` listener
-  defaults to `0.0.0.0:8082` and serves only kubelet's `GET /drain`; the normal
-  HTTP/SSE API listener has no drain route. The chart omits this port from the
-  Service, protecting normal Service/gateway traffic, but direct Pod-IP access
-  remains an operator-enforced NetworkPolicy or mesh-isolation residual ([ADR 0290](../adr/0290-mecak8s-drain-listener.md)).
-- **mecak8s secure real-provider transport** — three postures: in-pod TLS + OIDC,
-  edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream=true`, ClusterIP-only h2c),
-  and the explicit unsafe bypass. The upstream value is an operator attestation the chart
-  cannot verify, and edge mode puts caller bearer tokens on the pod network in cleartext:
-  restricting backend reachability to the gateway or mesh is the load-bearing control,
-  and the chart ships no NetworkPolicy to do it. Full operator contract in
-  [ADR 0278](../adr/0278-mecak8s-edge-terminated-tls.md).
-- **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.
-- **Daemon config file (`daemon.yaml`, ADR 0088)** — the serve-time topology
-  slice (gRPC/HTTP/metrics listen addresses, TLS cert/key/CA paths,
-  rate-limit/burst) is optionally carried by a small, strict, versioned YAML
-  file loaded ONLY when `mecated serve --config PATH` is supplied explicitly
-  (`internal/adapter/daemonconfig`). There is NO conventional auto-load.
-  `mecated config daemon init` scaffolds the v1 skeleton at
-  `<XDG_CONFIG_HOME>/mecatl/daemon.yaml`; `mecated config daemon validate`
-  strictly parses + semantically validates a file offline. It is a DISTINCT file
-  from `settings.yaml` (POLICY/trust) and carries NO auth token value (the
-  bearer token stays `MECATL_AUTH_TOKEN`/`--auth-token`); a non-loopback bind
-  still requires auth/TLS. Precedence: defaults < file < explicit CLI. It folds
-  into the cmd-mecated serve-time fields (no `app.Config` widening).
+Static bearer and OIDC are mutually exclusive (`cliconfig.ValidateOIDCAuthToken`), and
+every OIDC misconfiguration is fatal at startup (`cliconfig.OIDCValidator`): degrading
+to the unauthenticated path would silently open an authenticated deployment. Signing keys
+are cached through a brief IdP outage up to a bounded staleness; past it the edge answers
+`Unavailable` (503) rather than `Unauthenticated`, so clients retry instead of logging in
+again. `mecated` binds loopback by default and warns loudly when it binds a non-loopback
+address without authentication, because the API exposes command and file execution.
 
-Deployment artifacts: a hardened **GitHub Actions** CI plus a **ko**-based release
-that signs images with **cosign** and emits an **SBOM** and **SLSA provenance**
-(`.github/workflows`, `.ko.yaml`); `deploy/` carries PSS-restricted manifests
-(health probes can switch TCP→httpGet against the endpoints above). A **live
-BDD e2e suite** (`e2e/`, `task e2e`, the `e2e-live.yml` workflow) exercises the
-harness against a real model; it is opt-in (real money) and deliberately not
-part of `task test`. The toolchain is **go 1.27** across all modules and the
-workspace.
+## Caller identity
 
-**Supply-chain scanning** (#118) closes the loop on dependency hygiene:
-**`govulncheck`** runs per-module — the `engine` module is held STRICT-CLEAN,
-while the root module runs through a fail-closed **reachable-vuln gate**
-(`.github/scripts/govulncheck-gate.go`: it parses `govulncheck -format json` and
-fails on any reachable finding whose OSV id is not on a dated accepted-risk
-allowlist — govulncheck has no native ignore mechanism, and the wrapper runs
-under `pipefail` so a broken scan cannot pass vacuously). **`dependabot`**
-(`.github/dependabot.yml`) tracks both Go modules independently plus the
-SHA-pinned GitHub Actions (grouping minor+patch, isolating majors); every action
-is **SHA-pinned** with a `# vX.Y.Z` comment that dependabot preserves.
+Caller identity enters at the edge and nowhere else. The edge re-checks its validator's
+verdict (`admissiblePrincipal`): it rejects a principal missing half of its identity
+pair, carrying the system grant type, or claiming the internal issuer `mecatl:internal`,
+which only `internal/syscaller` mints.
 
-### Server-owned session placement
+The principal rides the request context via `session.WithPrincipal` and
+`session.PrincipalFromContext`. Absence is a nil principal; nothing mints an anonymous
+placeholder (`TestInvariant_no_fabricated_principal`). A fabricated caller would look
+real to every consumer and would merge all unauthenticated requests into one owner.
+Internal work instead runs under an explicit system principal from the
+`internal/syscaller.Roots` registry (child cleanup, memory consolidation, the scheduler,
+JWKS refresh, and others). Embedders verify credentials themselves and attach the result
+with `session.WithPrincipal` before `Engine.Run`.
 
-Placement is a trusted composition decision on every listener topology. Public clients
-never submit workspace/cwd paths, placement IDs, or exact EnvironmentRefs. Create binds
-the configured deployment default or explicit no-FS attenuation. Local `--workspace`
-exists only as private operator configuration; embedded and loopback modes do not create
-a path-authority exception.
+## Caller ownership
 
-Every persisted session carries exactly one private `EnvironmentRef{Kind,ID,Revision}`.
-Run entry reauthorizes and exactly reattaches that ref; missing providers, authorization or
-revision drift, nil Workspace, and identity mismatch fail closed without following a
-current default. Trusted snapshots and driver storage may retain physical locator data,
-while public session/event/error projections remain path-free. ACP cwd is a local assertion
-against trusted configuration, not authority.
+`CreateSession` stamps the owner from the context principal, never from the request
+body; children, forks, and resumed sessions inherit it, and a schedule captures it at
+creation. With an OIDC validator wired, composition sets `OwnershipEnforced`, and a
+caller reaches only its own sessions, schedules, teams, memory, event streams, and live
+runs; without one, ownership is inert. Ownerless records become unreachable, not adopted.
 
-Alternate worktrees require an owned source session. Discovery emits display-safe metadata
-and an opaque caller/source-scoped HMAC selector accepted only by ClearSession/ForkSession.
-The Build-owned key and selectors are not persisted and no registry/map exists; restart
-requires relisting. Schedules persist an already-resolved exact ref plus owner/scope;
-delegation derives or server-forks the parent Environment and artifact handles cannot be
-replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future remote
-placement provider uses the same private Bind/Reattach contract. See
-[ADR 0291](../adr/0291-server-owned-session-placement.md).
+**One decision function.** `Service.ownsResource` (`ownership.go`) is the only
+comparison: the record's owner must be non-nil and match the context principal. Its
+wrappers return the same not-found error as a missing ID, so a refusal never reveals that
+another caller's record exists. Each verb re-runs the check instead of trusting an
+earlier one. Caller-partitioned memory (`memory.CallerStore`) derives its namespace from
+the context principal on every call.
 
-### Multi-replica affinity, correlation, and single-writer enforcement
+**The classification guard.** Every boundary touching owned data is classified as
+caller-owned, derived (follows from the current authorized run), shared-infrastructure,
+or exempt, with a written rationale. `classification.go` covers the service and system
+roots; `internal/app/catalog_classification.go` covers model-facing tools at their real
+registration sites. `TestInvariant_owned_access_is_classified` and catalog assembly fail
+on anything unclassified, so a new access path cannot skip ownership by being forgotten.
 
-`X-Mecatl-Session-ID` is one exact, optional byte contract across official clients,
-gRPC/HTTP ingress, mecak8s routing, and outbound provider requests. A legal value is
-non-empty and valid as one HTTP field value; it is compared byte-for-byte and is never
-trimmed, decoded, case-folded, truncated, or otherwise normalized. Missing metadata
-remains compatible. Duplicate, illegal, or mismatched metadata is rejected before work
-with the non-disclosing `invalid session affinity metadata` error; neither candidate ID
-is reflected. The routing hint grants no authority: authentication, caller ownership,
-lease ownership, authorization, and every durable-state check remain independent.
+**System principals are scoped.** Each syscaller root is shared-infrastructure for one
+narrow operation and fails every caller-owned check. The scheduler runs each fire under
+the schedule's captured owner, so an ownerless schedule fails closed. **Raw drivers are
+trusted infrastructure:** remote store and lease drivers receive no caller claims, so
+only the server may reach them (`deploy/README.md` covers the isolation).
 
-Ingress metadata is never forwarded blindly. `engine/agent` binds the loaded session ID
-to the authoritative run context, and every provider attempt and fallback derives its
-provider ID from that context. If the run binding is absent or illegal, providers omit
-the field and continue inference. Official clients add the field to representable
-session-bound calls. The TypeScript raw `withSessionAffinity` helper rejects an illegal
-explicit ID synchronously instead of silently deleting a caller header; a high-level
-session ID received from the server remains usable without affinity when it cannot be
-represented. Legacy clients that omit the field continue to work without a protobuf
-change.
+## The event log actor
 
-Affinity improves routing but does not enforce ownership. The in-process run registry
-serializes one process; a configured session lease serializes replicas over shared
-storage. The lease is session-scoped, acquired at mutation/run entry, renewed by a
-`Service`-owned goroutine, and retained between turns. A competing owner receives HTTP
-409 / gRPC `FAILED_PRECONDITION`. Without a lease, the compatibility behavior is
-unchanged; `ErrLeaseUnsupported` sticky-disables leasing and retains the existing
-fallback diagnostic.
+`session.Event.Actor` records who acted, which can differ from who owns the session: an
+approval must name the human who granted it. `Service.appendEvent` is the persistence
+chokepoint, where the lease is checked and the durable cursor assigned, and it is the
+only place the actor is stamped, from the verified request context. This keeps the loop
+identity- and storage-agnostic and ties each event's actor to the context that
+authorized the write; a second path could stamp the owner and misattribute an approval.
 
-Lease loss first invalidates the stale process's local mutation capability, then cancels
-its run. No new save, delete, event append, tool-call record, metadata update, or sidecar
-mutation may begin there. This local invalidation is not backend fencing: an
-already-started storage call may still complete, and no lease token or epoch is carried
-by the stores. If loss occurs while awaiting approval, only the local ask delivery is
-retracted; the durable `PendingAsk` remains unresolved for the post-TTL owner.
+## Protected-resource discovery
 
-`CloseSession` fails precondition while a local run is active or awaiting, without
-releasing its lease or tearing down resources. A persisted awaiting session with no live
-local run may close locally without destroying its resume point. Graceful drain closes
-admission before any ownership change, preserves awaiting state, cancels and joins
-executing runs, and releases each lease only after join. A run that misses the shutdown
-bound is invalidated locally but its lease is not explicitly released; process death and
-TTL govern takeover. Hard handoff is interruptive: the client stream drops and the
-client retries after endpoint and TTL convergence; there is no owner-to-owner live
-forwarding. The successor then acquires, reloads Redis, repairs a crash-orphaned
-`running` snapshot, and continues.
+With OIDC configured, `mecated` and `mecak8s` can publish RFC 9728 protected-resource
+metadata (`protected_resource.go`) advertising the issuer, audience, public client ID,
+and scopes, which `mecatui login` uses to enroll. The resource URL is explicit operator
+configuration, never inferred from listeners or the untrusted `Host`. For the same
+reason, protected API routes return a generic `Bearer` challenge: a subordinate path
+cannot prove the exact resource identity. The anonymous metadata endpoint is HTTP-only.
 
-The repository's fake-clock/two-Service tests model that sequence; modeled tests do not prove Gateway
-routing, EndpointSlice removal, or production timing. The Helm chart
-creates no Gateway, Route, `BackendTrafficPolicy`, certificate, or affinity policy. A
-separate infrastructure rollout must supply and live-validate those controls, including
-authenticated admission, request/header bounds, and client/IP/principal rate limits
-before affinity is enabled. See [ADR 0294](../adr/0294-session-correlation-and-affinity.md).
+## Internal credential store
 
-### Permission & bash governance details (`engine/governance`)
+`internal/adapter/credentialstore` stores opaque binary records with no OAuth or provider
+semantics; it is `internal` because the engine never consumes it. `Reader` is read-only,
+`ConditionalWriter` adds mutation, and `Store` combines both, so mutability is the
+interface an adapter implements rather than a flag that could disagree. Every mutation
+is compare-and-swap (a nil expected version creates only), so two processes refreshing
+the same token cannot overwrite each other's rotation.
 
-The `permpolicy` adapter wraps `governance.Evaluator`. Resolution
-(`evaluator.go`): a **Deny in any scope beats Ask beats Allow**; among rules of
-the same effect the highest-precedence `Scope` wins (`Managed > CLI >
-LocalProject > SharedProject > User > BuiltinDefault`); **no matching rule
-defaults to Ask** (the
-harness never silently allows an unconfigured call). Plan mode (`ModePlan`)
-denies mutating tools (`Edit`, `Write`) and non-read-only `Shell` up front.
-`ScopeBuiltinDefault` is the harness's built-in floor (read-allow /
-mutate-ask), with ONE narrow exception to the same-effect tie-break: a
-higher-scope configured Allow may loosen **only** a built-in-default Ask —
-never a *configured* Ask. The floor also carries pre-approved (but
-config-overridable) Allows for the memory tool family, the synthetic
-`soul:apply` action, and the three read-only child-observability tools
-(`InspectSubagent`/`InspectMember`/`SubagentStatus`, issue #37) — they loosen
-no other tool's Ask. A client's allow-**always** verdict feeds
-`PermissionPolicy.Learn` (over `engine/adapter/permstore`): a per-session
-allow consulted at the lowest scope only, never overriding a deny or plan
-mode.
+Adapters: in-memory, encrypted file (AES-256-GCM, owner-only, root and 32-byte key
+injected by the caller), plain file, and a read-only environment reader. The file stores
+coordinate cooperating processes on one host; they do not defend against the same OS
+user or non-local filesystems.
 
-**The posture ladder** (`internal/app/posture.go`) is the single operator knob for
-how much the harness self-authorises. Four ordered tiers — **`strict < trusted < auto
-< yolo`** (`--posture`, default `strict`) — fold to the maximum operator-tier value
-(`resolvePosture`), then derive the underlying knobs (`applyPosture`, run before
-`resolveTrust`). The two older flags are now **aliases**: `--trust-project` ≡ the
-`trusted` tier (admit the project authority set, below), `--yolo` ≡ the `yolo` tier.
-A project-file `posture:` is ignored with a WARN — posture is an operator-tier
-decision (fail-closed core).
+Native LLM-endpoint OIDC credentials use the always-encrypted `mecatl/provider-oidc/v1`
+namespace (`internal/adapter/llmendpoint`), keyed from the OS keyring or an
+operator-named environment variable. A record's identity binds endpoint, issuer, client,
+scopes, and trust policy, so changing any of them forces a new login instead of reusing
+a token minted for something else. A crash between a provider-side refresh-token
+rotation and the local save can still require a new login. MCP OAuth uses the same
+store; see [extensibility](extensibility.md).
 
-The allow-all postures (`auto` and `yolo`, `app.Config.AllowAllTools`) are **not** an
-evaluator bypass: they inject a single `ScopeCLI`/`AudienceMain` allow-all rule into
-the **main** engine's static ruleset (`mainRules` in `internal/app/build.go`) plus a
-mirrored `AudienceSubagent` rule that binds children (`childRules`), loosening only the
-`ScopeBuiltinDefault` mutate-ask floor. Deny-dominance and any deliberately configured
-`Ask` are preserved exactly at **every** tier including `yolo`. The one extra step at
-`yolo`: child command-substitution auto-runs too (`WithLooseSubstitution` extended to
-children) — at `auto`/`trusted`/`strict` a child's `$(...)` still resolves through the
-[subagents & teams](subagents-and-teams.md) child-ask model. See `docs/adr/0022-allow-all-posture.md` and the CLAUDE.md "CONFIG
-axis" / "Posture ladder" notes.
+## Remote mecatui login
 
-For Shell, `bash.go` splits compound lines (`SplitCommands`, honouring quotes and
-splitting on `&&`, `||`, `;`, `|`, a bare `&`, and newlines) and evaluates
-**every** sub-command, taking the worst outcome — so a deny on `rm` blocks
-`git status && rm -rf /`. `Canonicalize` strips a **closed, audited** set of
-transparent wrappers (`timeout`, `time`, `nice`, `env`, `stdbuf`, `ionice`) but
-deliberately **never** strips re-entrant launchers (`docker exec`, `npx`,
-`sudo`, `devbox run`). `HasSubstitutionOrGrouping` flags `$(...)`, backticks,
-`<(...)`, and `(`/`{` grouping and floors such segments at Ask (fail-safe) —
-unless `SubstitutionReadOnly` clears it: a segment whose every
-recursively-extracted inner command AND whose blanked outer are all read-only
-resolves by the ordinary rule fold instead (global, main + children). For
-ISOLATED children (worktree/force-copy forks), `IsolationApprovable`
-additionally auto-approves read-only plus a minimal worktree-safe verb set —
-the [subagents & teams](subagents-and-teams.md) 4-step child-ask model.
-`ReadOnlyShell` classifies a command line as read-only for plan-mode gating and
-is deliberately a SEPARATE, unchanged classifier.
+`mecatui login ADDRESS` enrolls a public OIDC client using Authorization Code with PKCE
+(`internal/adapter/clientauth`), discovering issuer, client, audience, and scopes from
+protected-resource metadata. First enrollment requires a confirmation that defaults to
+no; later logins skip it only when discovery matches what was saved. Credentials are
+bound to the canonical target, so one server's token is never sent to another.
 
-### Workspace trust (`internal/app/trust.go`, `internal/adapter/workspacetrust`)
+`mecatui connect` never opens a browser. It prefers an explicit token, then explicit
+anonymous, then a saved enrollment, which it refreshes on demand; only an OAuth
+`invalid_grant` deletes it. Credentials use the OS keyring with an encrypted store, or a
+plain owner-only file store, pinned per store root.
 
-Whether a *project's* contributions are admitted — the **project authority set** —
-is a **composition** decision, not a governance scope
-(`governance`/`session`/`prompt`/`tool` stay trust-unaware). The project authority
-set is: the project permission **ALLOW** rules, the project **soul**, and (Phase 2a)
-the **project tier** of agent definitions, slash commands, and skills
-(`<workspace>/.mecatl/*`, `<workspace>/.claude/*`). The decision is
-produced once per process by `resolveTrust(cfg) TrustDecision` (MUST-FIX 2 of the
-workspace-trust design), which folds, highest first:
+## Rate limiting, health, and shutdown
 
-1. `--trust-project` — the per-invocation operator flag (`TrustFlag`);
-2. a **declarative** `trustedWorkspaces:` match (`TrustDeclared`) — Phase 1: the
-   `internal/adapter/workspacetrust` leaf reads an operator-authored, **read-only**
-   list of absolute workspace paths from the user-global `settings.yaml` (via the
-   shared `xdgconfig` env seam) and answers "is this workspace declared-trusted?";
-3. a **remembered** `trust.yaml` entry (`TrustRemembered`) — Phase 2b: a
-   machine-written registry entry whose stored **identity-anchor hash** still
-   matches the workspace's live identity surface. A present entry whose anchor
-   **mismatches** ⇒ `Drifted` (and `Trusted=false` — fail-safe);
-4. otherwise `TrustNone`.
+Rate limiting uses a per-client and a global token bucket with idle eviction. A
+static-token client is keyed by its token and a verified caller by `(Issuer, Subject)`,
+so rotating a credential is not a bypass. With OIDC on, a separate bucket limits
+rejected tokens by direct peer IP before validation, protecting the IdP path; it ignores
+forwarding headers, which callers control.
 
-`Build` collapses `decision.Trusted` back onto `cfg.TrustProject` before the
-downstream build, so the existing consumers — `permconfig.Options.TrustProject`
-and the soul provenance gate (`soulselect.go`) — honour declared trust through the
-**exact same admission path** as the flag, with no adapter signature churn and no
-bypass. The composition narrates the decision (a `workspace trust` INFO fact via
-the injected `port.Diagnostics`: `trusted=… source=… drifted=…`), mirroring the
-soul-selection narration.
+`/healthz`, `/readyz`, and the standard gRPC health service sit outside authentication
+and rate limiting. Shutdown closes admission, drains the service, then stops gRPC and
+HTTP within bounded timeouts.
 
-**Phase 2a — the project-tier authority gate.** When the folded decision is
-**untrusted**, composition also withholds the **PROJECT TIER ONLY** of
-agents/commands/skills, mirroring how the project ALLOWs and project soul are gated:
-the `agents`/`skills` adapters gained an additive `ResolveOptions.IncludeProjectTier`
-(set to `cfg.TrustProject`; the three `internal/app` skills callers —
-`resolveSkills`, the agent-def skill-preload `resolveSkillIndex`, and the
-draft-overlap `activeSkillDirs` — all pass it), and `buildDirCommandExpander` drops
-the default project-tier command dirs (`.mecatl/commands`, `.claude/commands`) when
-`cfg.Workspace != "" && !cfg.TrustProject`, degrading to the `NoopExpander` so raw
-text still passes through. The **user tier** (`$XDG_CONFIG_HOME/mecatl/*`,
-`~/.claude/*`), the built-in tools, the base prompt, every Deny/Ask, the permission
-prompt, and any **explicit** `--commands-dir`/`--agents-dir`/`--skills-dir`
-(operator-supplied, not repo-injected) stay active — an untrusted repo degrades to
-**"ask the human"**, never **"do nothing"**. The project soul carries a **double
-gate** (trust provenance AND the `soul:apply` policy — a logical AND, reconciled in
-`selectSoulSource`'s doc comment).
+## Multi-replica operation
 
-**Settings-vs-state split.** `trustedWorkspaces:` is config **DATA**, not a
-governance `Rule`, and lives in the **human-authored** `settings.yaml` that mecatl
-only ever *reads*. The **machine-written** trust registry (Phase 2b) is a
-**separate** file — `<xdg>/mecatl/trust.yaml`, a sibling of but never inside
-`settings.yaml`. `workspacetrust` reads it (`Remembered`) and writes it
-(`Remember`, the only write path); `mecated` reads it declaratively and **never**
-writes or prompts. Each entry is keyed by `realpath` and stores the
-**identity-anchor hash** captured at trust time plus a `trustedAt` timestamp (the
-timestamp is injected by composition — the adapter never calls `time.Now()`, so the
-write is deterministic in tests). The **identity anchor** (`anchor.go`) is a
-deterministic fold of the project **soul** ⊕ project-tier **agent** ⊕ **command** ⊕
-**skill** definitions (sorted file set, per-file content hashes), and **explicitly
-excludes `settings.yaml`** — permissions change every commit, so anchoring drift on
-them would nag-fatigue the operator (they re-resolve live via permconfig's mtime
-cache instead). A drift (entry present, anchor mismatched) re-gates to untrusted +
-a WARN; the interactive re-prompt is the `mecatui` first-encounter prompt
-(shipped — `cmd/mecatui/trust.go`), which prompts on first encounter or drift
-and remembers via `workspacetrust.Remember`. The registry **write** uses `O_NOFOLLOW` + `0o600` +
-temp-then-rename (mirroring `soulguard`'s sidecar write, CWE-59), and a corrupt /
-oversized / wrong-version registry fails safe to untrusted. The SHA-256 primitive is
-shared with `soulguard` via the `internal/adapter/hashutil` leaf (`SHA256Hex`) —
-**only** the primitive is shared; the soul drift baseline (a soul-only `.sha256`
-sidecar, re-blessed by `--approve-soul`) and the trust identity anchor (the
-registry-stored fold, re-blessed by re-answering the prompt) stay **parallel**
-mechanisms. **Path keying** is cleaned + absolute +
-symlink-resolved (`filepath.Abs` then `EvalSymlinks`) on both sides, so a
-moved/symlinked path cannot forge or inherit trust; an unresolvable entry is
-skipped. Trust is **monotonic-positive**: it only ever *grants* admission of a
-project's ALLOWs/soul — it never overrides a Deny or a configured Ask (those remain
-deny-dominant in the evaluator). A missing/malformed/unparseable `settings.yaml`
-**or** `trust.yaml` fails safe to untrusted (a corrupt config never grants trust).
-See `docs/adr/0023-workspace-trust.md`.
+**Affinity.** Clients send an optional `X-Mecatl-Session-ID` header so a gateway can pin
+a session to one replica. It is compared byte-for-byte; a duplicate, illegal, or
+mismatched value is rejected before work. It is a routing hint and grants no authority.
+Outbound provider requests carry the active and root session IDs from the authoritative
+run context, never forwarded from ingress.
 
-## Prerequisites
+**Single writer.** The run registry serializes one process; a session lease serializes
+replicas. A replica that cannot acquire the lease refuses with HTTP 409 or gRPC
+`FAILED_PRECONDITION`. A replica that loses the lease stops starting writes for that
+session and cancels the run. That is local invalidation, not storage fencing: a storage
+call already in flight may still complete. Handoff is interruptive: the client stream
+drops, the client retries after routing and the lease TTL converge, and the successor
+reloads the session. Lease mechanics are in [observability](observability.md); the Helm
+chart creates no gateway or affinity policy.
 
-- [The API surface being hardened](api-surface.md)
+## Deployment shapes
 
-## Follow-on reading
+All three server roots share `app.Build` and `server.Service`; they differ around it.
 
-- [Observability & persistence](observability.md)
+**`mecated`** is the general-purpose daemon: listeners, TLS and authentication,
+Prometheus and OpenTelemetry, and administrative subcommands. It defaults to interactive
+approval and the strict posture. Session store and event log are each in memory, local,
+or a remote driver. A local store directory always gets a file-lock session lease;
+otherwise leasing is off unless the operator selects a lease backend.
+`mecated config validate` checks operator settings offline with the runtime parser. See
+[run mecated](../../user-docs/operating/mecated.md).
+
+**`mecak8s`** is the Kubernetes peer. Pods hold no durable state by default: sessions and
+the event log live in Redis, and a `coordination.k8s.io` Lease per session enforces the
+single writer. It defaults to headless with the `auto` posture. Without a mounted
+workspace, sessions are file-less or use an optional Redis virtual workspace. Readiness
+is drain-gated, and a separate drain-only listener serves the `preStop` hook. On shutdown
+in-flight runs are cancelled, not completed, since a long model turn cannot fit a
+rolling-update grace period; the successor recovers the session from Redis. Server
+certificates and Redis credentials reload in place, keeping the last valid set. See
+[mecak8s](../../user-docs/operating/mecak8s.md).
+
+**`mecatequi`** runs one prompt in CI against an in-process service with no listeners or
+UI, emits a git diff, a JSON run summary, and optionally the event log, and maps the stop
+reason to an exit code. It has no approver, so a main-engine permission request cancels
+the run. See [mecatequi](../../user-docs/building/ci/mecatequi.md).
+
+## Build and release
+
+All modules and the workspace share the Go version that `go.work` declares. Releases
+build images with ko, sign them with cosign, and attach an SBOM and SLSA provenance. `govulncheck`
+runs per module through a fail-closed gate on reachable findings
+(`.github/scripts/govulncheck-gate.go`), and Renovate keeps dependencies and SHA-pinned
+actions current.
 
 ## Related
 
-- [Hooks & guardrails — operator-tier guardrails](hooks-and-guardrails.md)
-
----
-
-[← Architecture guide](../architecture.md)
+- [Governance](governance.md)
+- [Observability](observability.md)
+- [API surface](api-surface.md)
+- [Caller identity](../../user-docs/features/security-and-execution/caller-identity.md)
+- [Deployment guides](../../user-docs/operating/index.md)

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
@@ -14,11 +15,11 @@ import (
 )
 
 // tools_test.go covers the COMPOSED catalog this package assembles: the mixed
-// filesystem (via engine/adapter/fstools aliases) + web/MCP bundle, and the
+// filesystem (via engine/adapter/fstools) + web/MCP bundle, and the
 // no-FS surface. The filesystem tool BODIES are unit-tested in their own module
 // (engine/adapter/fstools). The real-osfs e2e of the FS tools lives in
-// abspath_tools_test.go / read_readroots_test.go (they need internal/adapter/osfs
-// and so cannot live in the engine module).
+// abspath_tools_test.go (it needs internal/adapter/osfs and cannot live in the
+// engine module).
 
 var testLedgers sync.Map
 
@@ -77,7 +78,7 @@ func TestReadOnlyFlags(t *testing.T) {
 		}
 	}
 	// Shell is mutating.
-	if NewShellTool().ReadOnly() {
+	if fstools.NewShellTool().ReadOnly() {
 		t.Error("Shell.ReadOnly() = true, want false")
 	}
 }
@@ -112,7 +113,7 @@ func TestNoFSExcludesFileTools(t *testing.T) {
 			t.Errorf("NoFS() missing %q", want)
 		}
 	}
-	banned := map[string]bool{"Read": true, "ListDir": true, "Edit": true, "Write": true, "Copy": true, "Move": true, "Remove": true, "Grep": true, "Glob": true, ShellToolName: true}
+	banned := map[string]bool{"Read": true, "ListDir": true, "Edit": true, "Write": true, "Copy": true, "Move": true, "Remove": true, "Grep": true, "Glob": true, tool.ShellToolName: true}
 	for _, tl := range got {
 		if banned[tl.Spec().Name] {
 			t.Errorf("NoFS() includes file/shell tool %q — the no-FS profile must never carry it", tl.Spec().Name)
@@ -140,7 +141,7 @@ func TestAllAndRegister(t *testing.T) {
 	}
 	// Adding the optional Shell tool succeeds (the runner is bound to the
 	// Environment at Execute time, so NewShellTool takes no runner now).
-	cat.MustRegister(NewShellTool())
+	cat.MustRegister(fstools.NewShellTool())
 	if _, ok := cat.Lookup("Shell"); !ok {
 		t.Error("catalog missing Shell after explicit NewShellTool registration")
 	}

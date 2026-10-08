@@ -15,7 +15,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// dirtyForkSpecs is the live proof for ADR 0033: a read-only Subagent runs its
+// dirtyForkSpecs is the live proof for dirty-fork isolation: a read-only Subagent runs its
 // Shell in an isolated git worktree forked from the session workspace, and the
 // dirty-overlay (forker.WithDirtyOverlay) mirrors the operator's UNCOMMITTED
 // working-tree state into that worktree. Before the fix the worktree was a clean

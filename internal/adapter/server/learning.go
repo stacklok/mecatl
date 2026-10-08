@@ -12,6 +12,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -27,6 +28,7 @@ type ReflectionReceipt struct {
 	Staged      int
 	Promoted    int
 	Conflicted  int
+	Usage       session.AuxiliaryUsage
 }
 
 // ExplicitReflector submits one caller-owned completed session for reflection.
@@ -82,13 +84,16 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
 	}
 	if s.placementBinder != nil {
-		binding, bindErr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
-		if bindErr != nil {
-			return nil, bindErr
+		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
 		}
-		ctx = memory.WithWorkspace(ctx, binding.Environment.Workspace().Root())
+		ctx = memory.WithWorkspace(ctx, workspace)
 	}
 	r, err := s.cfg.ReflectSession(ctx, sess)
+	if len(r.Usage.Buckets) > 0 {
+		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "reflection usage dropped", "bucket_count", len(r.Usage.Buckets))
+	}
 	if err != nil {
 		return nil, explicitReflectionError(err)
 	}
@@ -415,7 +420,7 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 			return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
 		}
 	}
-	selectedTrajectory := learning.NewTrajectory(manifest.Source.Value, "", stop, sess.Usage, selectedMessages)
+	selectedTrajectory := learning.NewTrajectory(manifest.Source.Value, "", stop, sess.UsageFor(session.UsageKindMain), selectedMessages)
 	input := learning.NewInput(selectedTrajectory, selectedEvents, record.Signals, nil)
 	input.Manifest = &manifest
 	if err := learning.ValidateInput(input); err != nil {
@@ -499,7 +504,7 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 	if !ok {
 		return false, "source unavailable", ""
 	}
-	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
+	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.UsageFor(session.UsageKindMain), sess.Conversation.Messages)
 	var (
 		actual     learning.EvidenceRef
 		previewRef learning.EvidenceRef
@@ -570,11 +575,11 @@ func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) 
 	if s.placementBinder == nil {
 		return "", true
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	workspace, err := s.privateGovernanceRoot(ctx, sess)
 	if err != nil {
 		return "", false
 	}
-	return binding.Environment.Workspace().Root(), true
+	return workspace, true
 }
 
 func sameEventSequence(a, b *int64) bool {

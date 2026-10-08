@@ -49,6 +49,38 @@ func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
 	}
 }
 
+func TestProviderSetupToolHiveMenuSelectionOffersDeploymentDefault(t *testing.T) {
+	commands := setupCommands(t, providerInspection{}, "5", "yes", "")
+	commands.backend.toolHiveAvailable = func() bool { return true }
+	loginCalled := false
+	commands.backend.toolHiveLogin = func(context.Context, bool) error {
+		loginCalled = true
+		return nil
+	}
+	commands.backend.resolveDefault = func(_ context.Context, provider, model string) (string, string, error) {
+		if provider != toolHiveEndpointID || model != "" {
+			t.Fatalf("resolver input = (%q, %q)", provider, model)
+		}
+		return toolHiveEndpointID, "gateway-model", nil
+	}
+	commands.backend.settingsPath = func() string { return "/safe/settings.yaml" }
+	defaultsCalled := false
+	commands.backend.updateDefaults = func(_ context.Context, path string, update permconfig.DefaultUpdate) (authfile.CommitState, error) {
+		defaultsCalled = true
+		if path != "/safe/settings.yaml" || update != (permconfig.DefaultUpdate{Provider: toolHiveEndpointID, Model: "gateway-model"}) {
+			t.Fatalf("default update = (%q, %+v)", path, update)
+		}
+		return authfile.CommitDurable, nil
+	}
+
+	if err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !loginCalled || !defaultsCalled {
+		t.Fatalf("loginCalled=%t defaultsCalled=%t, want ToolHive login followed by default selection", loginCalled, defaultsCalled)
+	}
+}
+
 func TestProviderSetupCustomPromptStatesProviderIDFormat(t *testing.T) {
 	commands := testProviderCommands()
 	commands.backend.inspect = providerInspectionLoader(providerInspection{})

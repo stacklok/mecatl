@@ -51,7 +51,7 @@ func TestScalableReflectionEvidence_Scenario1_ExplicitLargeTrajectoryMatchesAuto
 	}
 }
 
-func TestADR_0300_ExplicitEventSourceSelectionPrecedesCap(t *testing.T) {
+func TestExplicitEventSourceSelectionPrecedesCap(t *testing.T) {
 	reflector := &automaticCaptureReflector{called: make(chan learning.Input, 1)}
 	observer, _ := newExplicitTestObserver(t, reflector)
 	scanned := 0
@@ -110,7 +110,7 @@ func TestScalableReflectionEvidence_Scenario5_ExplicitClosedAbstentionReasons(t 
 	}
 }
 
-func TestADR_0300_MaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
+func TestMaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
 	selected, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: automaticTrajectory("selected", []session.Message{session.NewUserMessage("remember gofmt")}, learning.MessageSpan{}), Explicit: true})
 	if err != nil || selected.Disposition != learning.MaterializationSelected || selected.Reason != learning.MaterializationReasonSelected {
 		t.Fatalf("selected = %+v, err=%v", selected, err)
@@ -120,7 +120,7 @@ func TestADR_0300_MaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0300_NonMaterializationFaultsRetainTypedMappings(t *testing.T) {
+func TestNonMaterializationFaultsRetainTypedMappings(t *testing.T) {
 	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
 		got := explicitReflectionServiceError(want)
 		if !errors.Is(got, want) {
@@ -173,7 +173,7 @@ func TestScalableReflectionEvidence_Scenario7_BuiltCloseCancelsAndJoinsMateriali
 	}
 }
 
-func TestADR_0300_MaterializationCancelCloseRaceAndNoPerJobGoroutine(t *testing.T) {
+func TestMaterializationCancelCloseRaceAndNoPerJobGoroutine(t *testing.T) {
 	gate := newMaterializationLifecycle()
 	before := runtime.NumGoroutine()
 	const jobs = 64
@@ -219,7 +219,7 @@ func TestScalableReflectionEvidence_Scenario8_ExplicitUsesPersistedProviderModel
 		mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`),
 	)
 	cfg := Config{Model: persistedModel, LearningMode: learning.Review}
-	observer := buildExplicitReflectionObserver(cfg, provider, persistedModel, memmemory.New(), nil, memproposal.New(), nil)
+	observer := buildExplicitReflectionObserver(cfg, provider, testProviderModel(persistedModel), memmemory.New(), nil, memproposal.New(), nil)
 	trajectory := automaticTrajectory("persisted-routing", []session.Message{session.NewUserMessage("remember model routing")}, learning.MessageSpan{})
 	if _, err := observer.Reflect(context.Background(), trajectory, false); err != nil {
 		t.Fatal(err)
@@ -237,10 +237,10 @@ func TestScalableReflectionEvidence_Scenario8_ExplicitUsesPersistedProviderModel
 func TestScalableReflectionEvidence_Scenario8_OffModeExplicitOnly(t *testing.T) {
 	cfg := Config{Model: "model", LearningMode: learning.Off}
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
-	if automatic := buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil); automatic != nil {
+	if automatic := buildReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memmemory.New(), nil, memproposal.New(), nil, nil); automatic != nil {
 		t.Fatal("off mode installed automatic reflection")
 	}
-	explicit := buildExplicitReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil)
+	explicit := buildExplicitReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memmemory.New(), nil, memproposal.New(), nil)
 	if explicit == nil {
 		t.Fatal("off mode did not install explicit reflection")
 	}

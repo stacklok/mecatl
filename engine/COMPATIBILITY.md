@@ -1,9 +1,9 @@
 # Engine compatibility policy
 
-The `github.com/stacklok/mecatl/engine` module is the importable core of mecatl
-(ADR 0036). This document is its **public API stability contract**: what is
+The `github.com/stacklok/mecatl/engine` module is the importable core of mecatl.
+This document is its **public API stability contract**: what is
 covered, how changes are versioned, and how the contract is mechanically
-enforced (issue #114, [ADR 0037](../docs/adr/0037-engine-stability-contract.md)).
+enforced (issue #114).
 
 ## The public surface
 
@@ -54,7 +54,7 @@ ignores internal churn:
   `skillfs` (the read-only `.claude/skills` discovery core + Skill tool body), and
   `search` (the WebSearch tool body + Exa/HTTP/SearXNG providers + offline fake),
   and `webfetch` (the bounded public HTTP(S) text fetch tool),
-  graduated into the importable module per #269 / #328 / #363 / ADR 0105, are reference bundles: a
+  graduated into the importable module per #269 / #328 / #363, are reference bundles: a
   consumer composes its own sources/catalog and may take, subset, swap-by-name,
   or ignore them (see the package docs), so their surface may change without a
   CHANGELOG note. **Note:** the conformance suites' real CONTRACT is the port
@@ -62,7 +62,7 @@ ignores internal churn:
   merely exercise it.
 - **`engine/arch`** — test-support (the layering/architecture proofs).
 - **The entire root module** — `internal/`, `cmd/`, `contracts/`, `perf/`. These
-  are outside the engine module boundary (ADR 0036) and carry no external
+  are outside the engine module boundary and carry no external
   compatibility promise.
 
 ## Versioning discipline
@@ -125,8 +125,8 @@ mecatl persists a session as a **snapshot** (`engine/adapter/sessnap`), and
 `port.SessionStore.Load` deserializes it. A host whose system of record is an
 **append-only event log** (e.g. a downstream consumer) may instead implement `Load` by **folding**
 its event stream into a `*session.Session`. The reference implementation is
-[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`); [ADR 0038](../docs/adr/0038-event-sourced-rehydration.md)
-records the decision. This section is the field-by-field contract such a backend must
+[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`).
+This section is the field-by-field contract such a backend must
 honour.
 
 ### Load-failure classification
@@ -158,8 +158,7 @@ Unknown custom-store failures intentionally remain `port.SessionLoadFailureUnkno
 **Creation metadata is not in events.** No event carries the session id, mode, limits,
 exact environment identity, safe placement metadata, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact tool ceiling, authoritative title/provenance,
 session kind/relationship, owner/authority, or createdAt. The caller — who created or discovered the session —
-supplies them alongside the stream (there is deliberately no `EvSessionCreated`; ADR 0038
-notes it as a possible future). `eventsource.SessionMeta` is the reference shape.
+supplies them alongside the stream (there is deliberately no `EvSessionCreated`). `eventsource.SessionMeta` is the reference shape.
 Kind/relationship combinations are validated during folding; missing legacy kind metadata
 becomes `unknown`, never `main`. Legacy metadata may omit title/provenance; only that case
 falls back to the first genuine user-prompt event.
@@ -169,7 +168,7 @@ continuations — the no-progress nudge, the background-pending nudge, the
 background-completion notice) **are** event-carried, via the log-only `EvUserPrompt`
 event the loop emits at every user-message record site. So a fold reconstructs the
 **complete** conversation, in stream order — closing the "the log can't show what the
-user asked" gap (ADR 0027 row 11). (Turn-0 project-instruction messages discovered from
+user asked" gap. (Turn-0 project-instruction messages discovered from
 AGENTS.md/CLAUDE.md are not event-carried; they are derivable from the workspace and are
 outside the reconstructed conversation.)
 
@@ -198,7 +197,4 @@ contract limitation, not a bug.
 
 ## See also
 
-- [ADR 0038 — event-sourced rehydration](../docs/adr/0038-event-sourced-rehydration.md)
-- [ADR 0037 — engine stability contract](../docs/adr/0037-engine-stability-contract.md)
-- [ADR 0036 — `engine/` is its own Go module](../docs/adr/0036-engine-module.md)
 - [Project README](../README.md)

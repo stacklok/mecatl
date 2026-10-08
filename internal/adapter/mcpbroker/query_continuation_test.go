@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -27,8 +28,8 @@ import (
 
 type queryAllowPolicy struct{}
 
-func (queryAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (queryAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (queryAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -77,7 +78,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 						return session.ToolResult{}, err
 					}
 					return mcp.FilterCallResult(ctx, native.ID, "github", "list", filter, mcp.CallResult{StructuredContent: json.RawMessage(`{"keep":42,"raw_canary":"secret"}`)})
-				}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+				}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 				if err != nil {
 					t.Fatal(err)
 				}

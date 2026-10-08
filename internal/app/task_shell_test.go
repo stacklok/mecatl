@@ -11,21 +11,21 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
-// These tests cover Phase 2 — the Subagent tool (read-only explorer) gets full Shell
-// inside an isolated git worktree, mirroring the Phase 1 team-member treatment.
+// These tests cover Subagent workspace isolation — the Subagent tool (read-only explorer)
+// gets full Shell inside an isolated git worktree, mirroring the team-member treatment.
 
 // TestBuildChildEngineWithRunnerHasShell proves the default Subagent explorer's catalog
 // gains Shell when a runner is configured (the worktree-isolation path), while still
@@ -167,7 +167,7 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 	}
 }
 
-// TestSubagentRunsGitInWorktreeEndToEnd is the key Phase 2 proof: a Subagent tool, driven
+// TestSubagentRunsGitInWorktreeEndToEnd is the key isolation proof: a Subagent tool, driven
 // through a real parent engine whose catalog has the Subagent tool wired with a real
 // worktree forker + sandboxed runner, runs git (log/show) over a cheap worktree that
 // SHARES the base repo's .git — so it sees the full history — confined to a throwaway
@@ -213,7 +213,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -265,7 +265,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 }
 
 // TestBuildSubagentToolRealWiringForksChildShellWhenShell drives the REAL buildSubagentTool
-// (the live Phase 2 composition seam) — NOT the hand-wired newSubagentToolForTest helper —
+// (the live composition seam) — NOT the hand-wired newSubagentToolForTest helper —
 // to prove the Shell⟺forker coupling at the composition layer. With a shell-configured
 // cfg over a real git repo, the resulting Subagent tool, when invoked, must run the child's
 // Shell in an ISOLATED git WORKTREE: the child's pwd is NOT the parent repo root and its
@@ -318,7 +318,7 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	parentEnv := osfsEnvironment(t, repo, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -390,7 +390,7 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 	parentEnv := osfsEnvironment(t, repo, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -406,7 +406,7 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 }
 
 // TestSubagentSeesDirtyWorkspaceEndToEnd is the model-facing proof for the dirty-aware
-// overlay (ADR 0033): a read-only Subagent dispatched over a DIRTY parent repo — one
+// overlay: a read-only Subagent dispatched over a DIRTY parent repo — one
 // uncommitted tracked modification AND one new untracked file — runs `git status` and
 // `git diff` in its worktree and the captured REAL git output reflects the operator's
 // in-progress work. Without WithDirtyOverlay the worktree is a clean HEAD checkout and
@@ -445,7 +445,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 	)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 6}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -501,9 +501,9 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 		t.Fatal("precondition: expected a non-nil sandboxed runner")
 	}
 	childCat := tool.NewCatalog()
-	childCat.MustRegister(tools.ReadTool{})
-	childCat.MustRegister(tools.GrepTool{})
-	childCat.MustRegister(tools.GlobTool{})
+	childCat.MustRegister(fstools.ReadTool{})
+	childCat.MustRegister(fstools.GrepTool{})
+	childCat.MustRegister(fstools.GlobTool{})
 	// agent.NewShellTool, mirroring the production child construction
 	// (readOnlyExplorerCatalog), so the test child exercises the same Shell the
 	// composition root hands real children.

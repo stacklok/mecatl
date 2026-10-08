@@ -60,8 +60,8 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 // TestWorkspaceEnrollmentUserCopy covers the concise user-facing states around
 // /tools-connect so each remedy stays tied to its actual condition.
 func TestWorkspaceEnrollmentUserCopy(t *testing.T) {
-	if got := builtinCommands(client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}); !hasBuiltinDescription(got, "tools-connect", "require your approval") {
-		t.Fatalf("/tools-connect built-in = %#v, want approval-focused description", got)
+	if got := builtinCommands(client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}); !hasBuiltinDescription(got, "tools-connect", "deprecated alias for /mcp-refresh") {
+		t.Fatalf("/tools-connect built-in = %#v, want deprecated broker alias", got)
 	}
 
 	for _, tc := range []struct {
@@ -257,12 +257,12 @@ func TestWorkspaceEnrollmentRejectionRewriteAppliesAtAllRunEntryPaths(t *testing
 	m, _ := newQueueModel(t)
 	mm, _ := m.Update(client.StreamErrMsg{Err: errors.New(raw)})
 	m = mm.(Model)
-	if got := m.conv.blocks[len(m.conv.blocks)-1].raw; !strings.Contains(got, "/tools-connect") {
+	if got := testCardText(m.conv.testBlocks()[len(m.conv.testBlocks())-1]); !strings.Contains(got, "/tools-connect") {
 		t.Fatalf("stream error block = %q", got)
 	}
 	mm, _ = m.applyResult(client.ResultMsg{Stop: stopError, Error: raw})
 	m = mm.(Model)
-	if got := m.conv.blocks[len(m.conv.blocks)-1].raw; !strings.Contains(got, "/tools-connect") {
+	if got := testCardText(m.conv.testBlocks()[len(m.conv.testBlocks())-1]); !strings.Contains(got, "/tools-connect") {
 		t.Fatalf("result error block = %q", got)
 	}
 }

@@ -1,0 +1,983 @@
+package ui
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"slices"
+	"sort"
+	"strings"
+	"unicode/utf8"
+
+	bubbleskey "charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
+)
+
+// runToolcalls opens the current session's local tool-call projection. It has no
+// server dependency, so it remains available while a run streams.
+func (m Model) runToolcalls() (tea.Model, tea.Cmd) {
+	if m.phase != phaseIdle && m.phase != phaseRunning {
+		return m, nil
+	}
+	m.prompt.Blur()
+	s := &toolcallsState{open: true, deps: (&m).surfaceDeps()}
+	s.setEntries(m.toolcallEntries(), true)
+	m.modal = s
+	return m, nil
+}
+
+type toolcallEntry struct {
+	toolcallProjection
+	index       int
+	hasActivity bool
+}
+
+type toolcallDetail struct {
+	childTools           []scrollback.TraceEntry
+	callID, name, intent string
+	result               scrollback.ToolResult
+	state                toolcallProjectionState
+	resultReceived       bool
+	historyCaveat        bool
+	hasActivity          bool
+}
+
+type toolcallsDetailIntent struct {
+	blockID scrollback.BlockID
+}
+
+func (toolcallsDetailIntent) isSurfaceIntent() {}
+
+type toolcallsState struct {
+	open        bool
+	deps        surfaceDeps
+	entries     []toolcallEntry
+	selected    int
+	detail      bool
+	detailEntry *toolcallDetail
+	intent      surfaceIntent
+	window      *bounded.Viewport
+	width       int
+	anchor      int
+	lines       int
+	follow      bool
+	list        *bounded.List
+	listFollow  bool
+	compact     bool
+	hitItems    map[HitID]scrollback.BlockID // visible rows' parent block IDs
+}
+
+func (*toolcallsState) modalPlacement() modalPlacement { return modalPlacementFill }
+func (*toolcallsState) Close()                         {}
+
+func (s *toolcallsState) takeSurfaceIntent() surfaceIntent {
+	intent := s.intent
+	s.intent = nil
+	return intent
+}
+
+func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	hit, ok := msg.(surfaceHitMsg)
+	if !ok || !s.open || s.compact || s.detail {
+		return nil, false, false
+	}
+	blockID, current := s.hitItems[hit.ID]
+	if !current {
+		return nil, true, false
+	}
+	index := -1
+	for i, entry := range s.entries {
+		if entry.blockID == blockID {
+			index = i
+			break
+		}
+	}
+	if index < 0 || index >= len(s.entries) {
+		return nil, true, false
+	}
+	s.selected = index
+	if s.list != nil {
+		s.list.SetCursor(index)
+		s.listFollow = index == len(s.entries)-1
+	}
+	s.detail = true
+	s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
+	s.window = new(bounded.Viewport)
+	s.width = 0
+	s.anchor = 0
+	s.follow = false
+	return nil, true, false
+}
+
+func toolcallsTooSmallHint(width int, dismiss string) string {
+	if width <= 0 {
+		return ""
+	}
+	message := "too small · " + dismiss
+	if ansi.StringWidth(message) <= width {
+		return message
+	}
+	message = "small · " + dismiss
+	if ansi.StringWidth(message) <= width {
+		return message
+	}
+	if ansi.StringWidth(dismiss) <= width {
+		return dismiss
+	}
+	return ansi.Truncate(dismiss, width, "")
+}
+
+type toolcallRowKind uint8
+
+const (
+	toolcallBody toolcallRowKind = iota
+	toolcallIdentity
+	toolcallHeading
+	toolcallError
+	toolcallChildSummary
+	toolcallArgument
+	toolcallDiffMeta
+	toolcallDiffRemove
+	toolcallDiffAdd
+	toolcallField
+)
+
+type toolcallDetailRow struct {
+	text, label string
+	kind        toolcallRowKind
+	line        renderfmt.ToolLine
+}
+
+func delegationToolLine(name, intent string, resolved, isError, provisional bool) renderfmt.ToolLine {
+	state := renderfmt.ToolDelegatedPending
+	if resolved {
+		state = renderfmt.ToolSucceeded
+		if isError {
+			state = renderfmt.ToolFailed
+		}
+		if provisional {
+			state = renderfmt.ToolFinalizing
+			if isError {
+				state = renderfmt.ToolFinalizingFailed
+			}
+		}
+	}
+	return renderfmt.PresentToolLine(name, intent, state)
+}
+
+func toolcallArgumentLines(name, arguments string) []string {
+	rows := toolcallArgumentRows(name, arguments)
+	lines := make([]string, len(rows))
+	for i, row := range rows {
+		lines[i] = row.text
+	}
+	return lines
+}
+
+func toolcallArgumentRows(name, arguments string, omit ...string) []toolcallDetailRow {
+	var fields map[string]any
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.UseNumber()
+	if decoder.Decode(&fields) != nil || fields == nil {
+		return []toolcallDetailRow{{text: "Original arguments: " + terminaltext.Sanitize(arguments), label: "Original arguments:", kind: toolcallArgument}}
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		return []toolcallDetailRow{{text: "Original arguments: " + terminaltext.Sanitize(arguments), label: "Original arguments:", kind: toolcallArgument}}
+	}
+
+	ordered := renderfmt.ArgumentOrder(name)
+	seen := make(map[string]bool, len(ordered))
+	for _, key := range ordered {
+		seen[key] = true
+	}
+	var extra []string
+	for key := range fields {
+		if !seen[key] {
+			extra = append(extra, key)
+		}
+	}
+	sort.Strings(extra)
+	ordered = append(ordered, extra...)
+
+	lines := make([]toolcallDetailRow, 0, len(ordered))
+	for _, key := range ordered {
+		if slices.Contains(omit, key) {
+			continue
+		}
+		if value, ok := fields[key]; ok {
+			lines = appendArgumentTree(lines, argumentLabel(key), value)
+		}
+	}
+	return lines
+}
+
+// Decode once, then walk the decoded tree instead of reparsing each subtree.
+// Cap indentation so deeply nested valid input cannot force quadratic output.
+func appendArgumentTree(lines []toolcallDetailRow, label string, value any) []toolcallDetailRow {
+	type item struct {
+		label string
+		value any
+		depth int
+	}
+	stack := []item{{label: label, value: value}}
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		prefix := strings.Repeat("  ", min(current.depth, 16)) + terminaltext.SanitizeSingleLine(current.label) + ":"
+		add := func(value string) {
+			lines = append(lines, toolcallDetailRow{text: prefix + value, label: prefix, kind: toolcallArgument})
+		}
+		switch v := current.value.(type) {
+		case map[string]any:
+			if len(v) == 0 {
+				add(" (empty object)")
+				continue
+			}
+			add("")
+			keys := make([]string, 0, len(v))
+			for key := range v {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for i := len(keys) - 1; i >= 0; i-- {
+				stack = append(stack, item{argumentLabel(keys[i]), v[keys[i]], current.depth + 1})
+			}
+		case []any:
+			if len(v) == 0 {
+				add(" (empty array)")
+				continue
+			}
+			add("")
+			for i := len(v) - 1; i >= 0; i-- {
+				stack = append(stack, item{fmt.Sprintf("[%d]", i), v[i], current.depth + 1})
+			}
+		case string:
+			add(" " + terminaltext.Sanitize(v))
+		case json.Number:
+			add(" " + terminaltext.Sanitize(string(v)))
+		case bool:
+			add(" " + fmt.Sprint(v))
+		default:
+			add(" null")
+		}
+	}
+	return lines
+}
+
+func (p toolcallProjection) summary() string {
+	return p.line().Content()
+}
+
+func argumentLabel(key string) string {
+	if key == "" {
+		return "(empty key)"
+	}
+	labels := map[string]string{
+		"uri": "URI", toolURLArg: "URL", "old_string": "Old string", "new_string": "New string",
+	}
+	if label, ok := labels[key]; ok {
+		return label
+	}
+	_, size := utf8.DecodeRuneInString(key)
+	return strings.ToUpper(key[:size]) + strings.ReplaceAll(key[size:], "_", " ")
+}
+
+func (m Model) toolcallEntries() []toolcallEntry { return m.toolcallEntriesSince(nil) }
+
+func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
+	cached := make(map[scrollback.BlockID]toolcallEntry, len(previous))
+	for _, entry := range previous {
+		cached[entry.blockID] = entry
+	}
+	entries := make([]toolcallEntry, 0)
+	for i := 0; i < m.conv.scrollback.Len(); i++ {
+		metadata, ok := m.conv.scrollback.ToolCallMetadataAt(i)
+		if !ok {
+			continue
+		}
+		projection := cached[metadata.ID].toolcallProjection
+		if old, ok := cached[metadata.ID]; !ok || old.revision != metadata.Revision {
+			projection = projectToolCall(metadata)
+		}
+		entries = append(entries, toolcallEntry{toolcallProjection: projection, index: i})
+		if metadata.Name != "Subagent" {
+			continue
+		}
+		card, ok := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.SubagentCardSnapshot)
+		if !ok {
+			continue
+		}
+		entries[len(entries)-1].hasActivity = len(card.Update.Trace) > 0
+	}
+	return entries
+}
+
+// setEntries preserves an earlier reader's block identity while new calls arrive.
+// A reader already following the newest row advances to the new newest row.
+func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
+	s.hitItems = nil
+	if opening {
+		s.listFollow = true
+	}
+	following := s.followingToolcallList(opening)
+	selected := s.previousToolcallSelection(following)
+	s.entries = entries
+	if len(entries) == 0 {
+		s.selected = 0
+		return
+	}
+	if following {
+		s.selected = len(entries) - 1
+		return
+	}
+	if selected := stableToolcallSelection(entries, selected); selected >= 0 {
+		s.selected = selected
+		return
+	}
+	s.selected = min(s.selected, len(entries)-1)
+}
+
+func (s *toolcallsState) followingToolcallList(opening bool) bool {
+	return !s.detail && (opening || (s.listFollow && len(s.entries) > 0 && s.selected == len(s.entries)-1))
+}
+
+func (s *toolcallsState) previousToolcallSelection(following bool) scrollback.BlockID {
+	if following || s.selected < 0 || s.selected >= len(s.entries) {
+		return 0
+	}
+	return s.entries[s.selected].blockID
+}
+
+func stableToolcallSelection(entries []toolcallEntry, blockID scrollback.BlockID) int {
+	for i, entry := range entries {
+		if entry.blockID == blockID {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) syncToolcalls() {
+	if s, ok := m.modal.(*toolcallsState); ok {
+		s.setEntries(m.toolcallEntriesSince(s.entries), false)
+		if s.detail {
+			s.refreshDetail(&m.conv.scrollback)
+		}
+	}
+}
+
+func (s *toolcallsState) refreshDetail(c *scrollback.Conversation) {
+	previous := s.detailEntry
+	entry := s.entries[s.selected]
+	snapshot := c.SnapshotAt(entry.index)
+	if snapshot.ID != entry.blockID {
+		s.detailEntry = nil
+		return
+	}
+	var call scrollback.ToolCall
+	var result scrollback.ToolResult
+	var received bool
+	var childTools []scrollback.TraceEntry
+	switch card := snapshot.Payload.(type) {
+	case scrollback.ToolCardSnapshot:
+		call, result, received = card.Call, card.Result, card.Resolved
+	case scrollback.SubagentCardSnapshot:
+		call, result, received = card.Call, card.Result, card.Resolved
+		for _, trace := range card.Update.Trace {
+			if trace.Kind == toolKind {
+				childTools = append(childTools, trace)
+			}
+		}
+	case scrollback.TeamCardSnapshot:
+		call, result, received = card.Call, card.Result, card.Resolved
+	}
+	s.detailEntry = &toolcallDetail{callID: call.ID, name: entry.fullName, intent: call.Arguments, result: result, childTools: childTools,
+		state: entry.state, resultReceived: received, historyCaveat: entry.fullName == "Subagent", hasActivity: entry.hasActivity}
+	s.restoreChildSummaryAnchor(previous)
+}
+
+// restoreChildSummaryAnchor keeps a reader on the same child preview when parent
+// result content is inserted before the child summaries.
+func (s *toolcallsState) restoreChildSummaryAnchor(previous *toolcallDetail) {
+	if s.follow || previous == nil || s.window == nil || s.width <= 0 {
+		return
+	}
+	oldRows := toolcallDetailRows(*previous)
+	oldCounts := toolcallLogicalRowCounts(s.styledToolcallDetailLinesAtWidth(*previous, s.width), s.width)
+	oldOffset, oldStart := s.window.Offset(), 0
+	child := -1
+	within := 0
+	for i, count := range oldCounts {
+		if oldOffset < oldStart+count {
+			if oldRows[i].kind != toolcallChildSummary {
+				return
+			}
+			for _, row := range oldRows[:i] {
+				if row.kind == toolcallChildSummary {
+					child++
+				}
+			}
+			child++
+			within = oldOffset - oldStart
+			break
+		}
+		oldStart += count
+	}
+	if child < 0 || child >= len(previous.childTools) {
+		return
+	}
+	oldTool := previous.childTools[child]
+	newChild := slices.IndexFunc(s.detailEntry.childTools, func(tool scrollback.TraceEntry) bool {
+		return tool.Lane == oldTool.Lane && tool.ID == oldTool.ID && tool.Serial == oldTool.Serial
+	})
+	if newChild < 0 {
+		return
+	}
+	newRows := toolcallDetailRows(*s.detailEntry)
+	newCounts := toolcallLogicalRowCounts(s.styledToolcallDetailLinesAtWidth(*s.detailEntry, s.width), s.width)
+	newTotal := 0
+	for _, count := range newCounts {
+		newTotal += count
+	}
+	start, seen := 0, 0
+	for i, count := range newCounts {
+		if newRows[i].kind != toolcallChildSummary {
+			start += count
+			continue
+		}
+		if seen == newChild {
+			s.window.SetOffset(start+min(within, count-1), newTotal)
+			return
+		}
+		seen++
+		start += count
+	}
+}
+
+func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
+	s.compact = false
+	s.hitItems = nil
+	if !s.open || width <= 0 || height <= 0 {
+		s.list = nil
+		return "", nil
+	}
+	th := s.deps.theme
+	line := func(style lipgloss.Style, text string) string {
+		return ansi.Cut(style.Render(terminaltext.Sanitize(text)), 0, width) + "\x1b[0m"
+	}
+	if height < 5 || width < 12 {
+		s.compact, s.list = true, nil
+		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+	}
+	title := line(th.Style("askTitle"), "Tool calls")
+	if s.detail {
+		hint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.jumpTopFull + "/" + s.deps.marks.jumpEndFull + " · " + s.deps.marks.closeOnly + " back"
+		if ansi.StringWidth(hint) > width {
+			s.compact, s.list = true, nil
+			return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+		}
+		return s.renderDetail(width, height, title, line), nil
+	}
+	footerText := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.choose + " detail · " + s.deps.marks.closeOnly + " close"
+	if ansi.StringWidth(footerText) > width {
+		s.compact, s.list = true, nil
+		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+	}
+	footer := line(th.Style("muted"), footerText)
+	bodyHeight := height - 4
+	if bodyHeight < 1 {
+		s.compact, s.list = true, nil
+		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+	}
+	body := []string{title, ""}
+	if len(s.entries) == 0 {
+		return toolcallsPanel(append(body, line(th.Style("muted"), "no tool calls in this session.")), height, footer), nil
+	}
+	if s.list == nil {
+		s.list = new(bounded.List)
+	}
+	items := make([]bounded.ListItem, len(s.entries))
+	for i, entry := range s.entries {
+		line := entry.line()
+		items[i] = bounded.ListItem{ID: fmt.Sprintf("%d", entry.blockID), Text: ansi.Truncate(terminaltext.SanitizeSingleLine(entry.summary()), 120, "…"), StatusCells: [2]string{line.Glyph()}}
+	}
+	s.list.SetGeometry(width, bodyHeight, 2, bounded.Clip)
+	s.list.SetItems(items)
+	if s.list.CursorID() != items[s.selected].ID {
+		s.list.SetCursor(s.selected)
+	}
+	view := s.list.ViewWithIndicators(bodyHeight, s.list.RevealPending())
+	body, regions := s.renderListRows(body, view, width, line)
+	return toolcallsPanel(body, height, footer), regions
+}
+
+func toolcallsPanel(body []string, height int, footer string) string {
+	for len(body) < height-2 {
+		body = append(body, "")
+	}
+	return strings.Join(append(body, "", footer), "\n")
+}
+
+func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, width int, line func(lipgloss.Style, string) string) ([]string, []ClickableRegion) {
+	regions := make([]ClickableRegion, 0, len(view.Rows))
+	s.hitItems = make(map[HitID]scrollback.BlockID, len(view.Rows))
+	if view.Above > 0 {
+		body = append(body, line(s.deps.theme.Style("muted"), fmt.Sprintf("↑ %d items", view.Above)))
+	}
+	for _, row := range view.Rows {
+		presentation := presentListRow(row, s.deps.theme.Style("toolName"), s.deps.theme.Style("toolArgs"))
+		statusStyle := s.deps.theme.Style("toolName")
+		if row.ItemIndex >= 0 && row.ItemIndex < len(s.entries) {
+			entry := s.entries[row.ItemIndex]
+			statusStyle = s.deps.theme.Style(entry.line().StatusStyle())
+		}
+		y := len(body)
+		body = append(body, ansi.Cut(renderToolcallListRow(presentation, statusStyle), 0, width)+"\x1b[0m")
+		if s.deps.hits == nil || row.ItemIndex < 0 || row.ItemIndex >= len(s.entries) {
+			continue
+		}
+		id := s.deps.hits.allocate()
+		x1 := min(max(0, width), lipgloss.Width(body[y]))
+		if x1 > 0 {
+			regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
+			s.hitItems[id] = s.entries[row.ItemIndex].blockID
+		}
+	}
+	if view.Below > 0 {
+		body = append(body, line(s.deps.theme.Style("muted"), fmt.Sprintf("↓ %d items", view.Below)))
+	}
+	return body, regions
+}
+
+// renderToolcallListRow keeps the row's cursor and selection styling while using
+// the canonical semantic slot for its status glyph.
+func renderToolcallListRow(row listRowPresentation, status lipgloss.Style) string {
+	runes := []rune(row.Text)
+	if len(runes) < 2 {
+		return row.Style.Render(row.Text)
+	}
+	glyphStyle := row.Style.Foreground(status.GetForeground()).Bold(status.GetBold())
+	return row.Style.Render(string(runes[:1])) + glyphStyle.Render(string(runes[1:2])) + row.Style.Render(string(runes[2:]))
+}
+
+func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string) string {
+	if s.detailEntry == nil {
+		return strings.Join([]string{title, "", line(s.deps.theme.Style("muted"), "call unavailable · "+s.deps.marks.closeOnly+" back")}, "\n")
+	}
+	entry := *s.detailEntry
+	if s.window == nil {
+		s.window = new(bounded.Viewport)
+		s.follow = true
+	}
+	header := []string{title, ""}
+	footer := line(s.deps.theme.Style("muted"), s.deps.marks.navUp+"/"+s.deps.marks.navDown+" · "+s.deps.marks.scroll+" · "+s.deps.marks.jumpTopFull+"/"+s.deps.marks.jumpEndFull+" · "+s.deps.marks.closeOnly+" back")
+	content := s.styledToolcallDetailLinesAtWidth(entry, width)
+	remapOffset, remapTotal := -1, 0
+	if !s.follow && s.width > 0 && s.width != width {
+		oldRows := toolcallRowCounts(s.styledToolcallDetailLinesAtWidth(entry, s.width), s.width)
+		newRows := toolcallRowCounts(content, width)
+		oldStart, newStart, totalNew := 0, 0, 0
+		for _, count := range newRows {
+			totalNew += count
+		}
+		oldOffset := s.window.Offset()
+		for i, count := range oldRows {
+			if oldOffset < oldStart+count {
+				remapOffset = newStart + min(s.anchor/width, newRows[i]-1)
+				remapTotal = totalNew
+				break
+			}
+			oldStart += count
+			newStart += newRows[i]
+		}
+	}
+	s.width = width
+	s.window.SetGeometry(width, height-len(header)-1, 0, bounded.Wrap)
+	if remapOffset >= 0 {
+		s.window.SetOffset(remapOffset, remapTotal)
+	}
+	view := s.window.View(content)
+	s.lines = view.Above + len(view.Rows) + view.Below
+	if s.lines <= s.window.Height() {
+		s.follow = true
+	}
+	if s.follow {
+		s.window.Move(bounded.End, s.lines)
+		view = s.window.View(content)
+	}
+	header = append(header, view.Rows...)
+	for len(header) < height-1 {
+		header = append(header, "")
+	}
+	return strings.Join(append(header, footer), "\n")
+}
+
+func (s *toolcallsState) styledToolcallDetailLinesAtWidth(entry toolcallDetail, width int) []string {
+	rows := toolcallDetailRows(entry)
+	content := s.styledToolcallDetailLines(entry)
+	for i, row := range rows {
+		if row.kind == toolcallChildSummary {
+			content[i] = ansi.Cut(content[i], 0, width) + "\x1b[0m"
+		}
+	}
+	return content
+}
+
+func (s *toolcallsState) styledToolcallDetailLines(entry toolcallDetail) []string {
+	rows := toolcallDetailRows(entry)
+	content := make([]string, len(rows))
+	for i, row := range rows {
+		text := terminaltext.Sanitize(row.text)
+		switch row.kind {
+		case toolcallIdentity:
+			content[i] = s.styledToolcallIdentity(row)
+		case toolcallHeading:
+			content[i] = s.deps.theme.Style("toolName").Render(text)
+		case toolcallError:
+			content[i] = s.deps.theme.Style("errorText").Render(text)
+		case toolcallChildSummary:
+			line := row.line
+			intent := ""
+			if line.Intent() != "" && line.Intent() != line.Name() {
+				intent = " · " + line.Intent()
+			}
+			status := ""
+			if line.Status() != "" {
+				status = " · "
+			}
+			content[i] = s.deps.theme.Style(line.StatusStyle()).Render(line.Glyph()) +
+				s.deps.theme.Style("toolName").Render(" "+line.Name()) +
+				s.deps.theme.Style("muted").Render(intent+status)
+			if line.Status() != "" {
+				content[i] += s.deps.theme.Style(line.StatusStyle()).Render(line.Status())
+			}
+		case toolcallArgument:
+			label := "  " + terminaltext.Sanitize(row.label)
+			value := strings.TrimPrefix(text, terminaltext.Sanitize(row.label))
+			content[i] = s.deps.theme.Style("toolName").Render(label) +
+				s.deps.theme.Style("toolArgs").Render(strings.ReplaceAll(value, "\n", "\n  "))
+		case toolcallDiffMeta:
+			content[i] = s.deps.theme.Style("diffMeta").Render(text)
+		case toolcallDiffRemove:
+			content[i] = s.deps.theme.Style("diffRemove").Render(text)
+		case toolcallDiffAdd:
+			content[i] = s.deps.theme.Style("diffAdd").Render(text)
+		case toolcallField:
+			label := terminaltext.Sanitize(row.label)
+			content[i] = s.deps.theme.Style("toolName").Render(label) +
+				s.deps.theme.Style("toolArgs").Render(strings.TrimPrefix(text, label))
+		case toolcallBody:
+			// Body and typed result content retain their original left edge.
+			content[i] = s.deps.theme.Style("toolArgs").Render(text)
+		}
+	}
+	return content
+}
+
+func (s *toolcallsState) styledToolcallIdentity(row toolcallDetailRow) string {
+	line := row.line
+	status := ""
+	if line.Status() != "" {
+		status = s.deps.theme.Style("muted").Render(" · ") + s.deps.theme.Style(line.StatusStyle()).Render(line.Status())
+	}
+	intent := ""
+	if line.Intent() != "" && line.Intent() != line.Name() {
+		intent = s.deps.theme.Style("muted").Render(" · " + line.Intent())
+	}
+	return s.deps.theme.Style(line.StatusStyle()).Render(line.Glyph()) +
+		s.deps.theme.Style("toolName").Render(" "+line.Name()) + intent + status
+}
+
+// toolcallRowCounts uses the same bounded wrapping policy as the detail window
+// to remap its top logical line when a terminal resize reflows earlier text.
+func toolcallRowCounts(lines []string, width int) []int {
+	probe := new(bounded.Viewport)
+	probe.SetGeometry(width, 1, 0, bounded.Wrap)
+	var counts []int
+	for _, line := range lines {
+		for _, source := range strings.Split(line, "\n") {
+			view := probe.View([]string{source})
+			counts = append(counts, view.Above+len(view.Rows)+view.Below)
+		}
+	}
+	return counts
+}
+
+// toolcallLogicalRowCounts keeps each detail row aligned with its rendered
+// physical height, even when an argument embeds newlines.
+func toolcallLogicalRowCounts(lines []string, width int) []int {
+	counts := make([]int, len(lines))
+	for i, line := range lines {
+		for _, count := range toolcallRowCounts([]string{line}, width) {
+			counts[i] += count
+		}
+	}
+	return counts
+}
+
+func (s *toolcallsState) recordAnchor() {
+	if s.width == 0 || s.detailEntry == nil {
+		return
+	}
+	start := 0
+	for _, count := range toolcallRowCounts(s.styledToolcallDetailLinesAtWidth(*s.detailEntry, s.width), s.width) {
+		if s.window.Offset() < start+count {
+			s.anchor = (s.window.Offset() - start) * s.width
+			return
+		}
+		start += count
+	}
+}
+
+func toolcallDetailLines(entry toolcallDetail) []string {
+	rows := toolcallDetailRows(entry)
+	lines := make([]string, len(rows))
+	for i, row := range rows {
+		lines[i] = row.text
+	}
+	return lines
+}
+
+func editRequestDetailRows(arguments string) []toolcallDetailRow {
+	request, ok := parseEditRequest(arguments)
+	if !ok {
+		return nil
+	}
+	header := fmt.Sprintf("%s  -%d +%d", request.path, lineCount(request.oldString), lineCount(request.newString))
+	if request.replaceAll {
+		header += " (replace all)"
+	}
+	rows := []toolcallDetailRow{{text: "Edit request:", kind: toolcallHeading}, {text: terminaltext.Sanitize(header), kind: toolcallDiffMeta}}
+	rows = append(rows, editRequestSideRows(request.oldString, "-", "removed text", toolcallDiffRemove)...)
+	rows = append(rows, editRequestSideRows(request.newString, "+", "added text", toolcallDiffAdd)...)
+	return rows
+}
+
+func editRequestSideRows(text, prefix, field string, kind toolcallRowKind) []toolcallDetailRow {
+	if text == "" {
+		return nil
+	}
+	parts := strings.Split(text, "\n")
+	if strings.HasSuffix(text, "\n") {
+		parts = parts[:len(parts)-1]
+	}
+	rows := make([]toolcallDetailRow, 0, len(parts)+1)
+	for _, part := range parts {
+		rows = append(rows, toolcallDetailRow{text: prefix + " " + terminaltext.Sanitize(part), kind: kind})
+	}
+	if !strings.HasSuffix(text, "\n") {
+		rows = append(rows, toolcallDetailRow{text: "\\ No newline at end of " + field, kind: toolcallDiffMeta})
+	}
+	return rows
+}
+
+func toolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
+	return topLevelToolcallDetailRows(entry)
+}
+
+func toolcallRequestArgumentRows(name, arguments string) []toolcallDetailRow {
+	if name == "Edit" {
+		if diff := editRequestDetailRows(arguments); len(diff) > 0 {
+			rows := append(diff, toolcallDetailRow{text: "Arguments:", kind: toolcallHeading})
+			return append(rows, toolcallArgumentRows(name, arguments, "old_string", "new_string")...)
+		}
+	}
+	return append([]toolcallDetailRow{{text: "Arguments:", kind: toolcallHeading}}, toolcallArgumentRows(name, arguments)...)
+}
+
+func childToolSummaryRows(tools []scrollback.TraceEntry) []toolcallDetailRow {
+	if len(tools) == 0 {
+		return nil
+	}
+	rows := []toolcallDetailRow{{text: "Recent child tools (bounded previews):", kind: toolcallHeading}}
+	for _, t := range tools {
+		line := delegationToolLine(t.ToolName, t.Intent, t.Resolved, t.Error, t.Provisional)
+		rows = append(rows, toolcallDetailRow{text: line.Text(), kind: toolcallChildSummary, line: line})
+	}
+	return rows
+}
+
+func topLevelToolcallDetailRows(entry toolcallDetail) []toolcallDetailRow {
+	line := renderfmt.PresentToolLine(entry.name, renderfmt.ToolIntent(entry.name, entry.intent), entry.state.renderfmtState())
+
+	lines := []toolcallDetailRow{
+		{text: line.Text(), kind: toolcallIdentity, line: line},
+		{text: "Call: " + terminaltext.Sanitize(entry.callID), label: "Call:", kind: toolcallField},
+	}
+	if entry.historyCaveat {
+		message := "activity preview unavailable; history may be incomplete"
+		if entry.hasActivity {
+			message = "recent activity preview only; history may be incomplete"
+		}
+		lines = append(lines, toolcallDetailRow{text: message})
+	}
+	lines = append(lines, toolcallRequestArgumentRows(entry.name, entry.intent)...)
+	if !entry.resultReceived {
+		lines = append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Result: pending", kind: toolcallHeading})
+		return append(lines, childToolSummaryRows(entry.childTools)...)
+	}
+
+	result := entry.result
+	lines = append(lines, toolcallDetailRow{})
+	if entry.state == toolcallFailed || entry.state == toolcallProvisionalFailed {
+		lines = append(lines, toolcallDetailRow{text: "Error:", kind: toolcallError})
+	} else {
+		lines = append(lines, toolcallDetailRow{text: "Result:", kind: toolcallHeading})
+	}
+	if result.Body != "" {
+		for _, text := range toolcallResultBodyLines(entry.name, result.Body) {
+			for _, line := range strings.Split(text, "\n") {
+				lines = append(lines, toolcallDetailRow{text: line})
+			}
+		}
+	}
+
+	structured := result.StructuredContent
+	var resources []toolcallDetailRow
+	for _, a := range result.Artifacts {
+		switch client.ContentBlockKind(a.Kind) {
+		case client.ContentBlockText:
+			if a.Text != "" && a.Text != result.Body {
+				lines = append(lines, toolcallDetailRow{text: "Text:", kind: toolcallHeading}, toolcallDetailRow{text: terminaltext.Sanitize(a.Text)})
+			}
+		case client.ContentBlockStructuredContent:
+			// The typed block is canonical when a field mirror is also present.
+			structured = a.Text
+		case client.ContentBlockResourceLink:
+			resources = append(resources, toolcallDetailRow{text: "Resource: " + terminaltext.Sanitize(a.Name) + " · " + terminaltext.Sanitize(a.URL), label: "Resource:", kind: toolcallField})
+		case client.ContentBlockEmbeddedResource:
+			if len(a.Data) > 0 {
+				resources = append(resources, toolcallDetailRow{text: "Embedded resource (" + terminaltext.Sanitize(a.MIMEType) + ", binary content)"})
+			} else {
+				resources = append(resources, toolcallDetailRow{text: "Embedded resource: " + terminaltext.Sanitize(a.Text), label: "Embedded resource:", kind: toolcallField})
+			}
+		case client.ContentBlockImage, client.ContentBlockAudio:
+			resources = append(resources, toolcallDetailRow{text: a.Kind + " (" + terminaltext.Sanitize(a.MIMEType) + ", media content)"})
+		}
+	}
+	if structured != "" {
+		lines = append(lines, toolcallDetailRow{text: "Structured content · Structured JSON:", kind: toolcallHeading}, toolcallDetailRow{text: terminaltext.Sanitize(structured)})
+	}
+	if len(resources) > 0 {
+		lines = append(lines, toolcallDetailRow{}, toolcallDetailRow{text: "Resources", kind: toolcallHeading})
+		lines = append(lines, resources...)
+	}
+	return append(lines, childToolSummaryRows(entry.childTools)...)
+}
+
+// toolcallResultBodyLines formats only Read's adapter-minted numbered rows for
+// the inspector. It never changes the canonical scrollback result.
+func toolcallResultBodyLines(name, body string) []string {
+	if name != "Read" {
+		return []string{terminaltext.Sanitize(body)}
+	}
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		lines[i] = terminaltext.Sanitize(readResultGutter(line))
+	}
+	return lines
+}
+
+func readResultGutter(line string) string {
+	tab := strings.IndexByte(line, '\t')
+	if tab < 6 {
+		return line
+	}
+	prefix := line[:tab]
+	digits := strings.TrimLeft(prefix, " ")
+	if digits == "" || digits[0] == '0' || (len(prefix) > 6 && len(prefix) != len(digits)) {
+		return line
+	}
+	for i := range digits {
+		if digits[i] < '0' || digits[i] > '9' {
+			return line
+		}
+	}
+	return prefix + "  " + line[tab+1:]
+}
+
+func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if bubbleskey.Matches(msg, s.deps.keys.Close) {
+		if s.detail {
+			s.detail = false
+			s.detailEntry = nil
+			return nil, true, false
+		}
+		return nil, true, true
+	}
+	if s.compact || len(s.entries) == 0 {
+		return nil, true, false
+	}
+	move := bounded.LineDown
+	switch {
+	case bubbleskey.Matches(msg, s.deps.keys.Down):
+	case bubbleskey.Matches(msg, s.deps.keys.Up):
+		move = bounded.LineUp
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollD):
+		move = bounded.PageDown
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollU):
+		move = bounded.PageUp
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollBottom):
+		move = bounded.End
+	case bubbleskey.Matches(msg, s.deps.keys.ScrollTop):
+		move = bounded.Top
+	case bubbleskey.Matches(msg, s.deps.keys.Choose):
+		if !s.detail {
+			s.detail = true
+			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
+			s.window = new(bounded.Viewport)
+			s.width = 0
+			s.anchor = 0
+			s.follow = false
+		}
+		return nil, true, false
+	default:
+		return nil, true, false
+	}
+	if s.detail {
+		if s.window != nil {
+			s.window.Move(move, s.lines)
+			s.follow = s.window.Offset() >= max(0, s.lines-s.window.Height())
+			if !s.follow {
+				s.recordAnchor()
+			}
+		}
+		return nil, true, false
+	}
+	if s.list != nil {
+		s.list.Move(move)
+		s.selected = s.list.Cursor()
+		s.listFollow = s.selected == len(s.entries)-1
+	}
+	return nil, true, false
+}
+
+func (s *toolcallsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	if s.detail && s.window != nil {
+		move := bounded.LineDown
+		if msg.Mouse().Button == tea.MouseWheelUp {
+			move = bounded.LineUp
+		}
+		s.window.Move(move, s.lines)
+		s.follow = s.window.Offset() >= max(0, s.lines-s.window.Height())
+		if !s.follow {
+			s.recordAnchor()
+		}
+		return nil, true
+	}
+	if s.list == nil {
+		return nil, true
+	}
+	s.list.Scroll(map[bool]bounded.Move{true: bounded.LineUp, false: bounded.LineDown}[msg.Mouse().Button == tea.MouseWheelUp])
+	s.listFollow = s.selected == len(s.entries)-1 && s.list.View().Below == 0
+	return nil, true
+}

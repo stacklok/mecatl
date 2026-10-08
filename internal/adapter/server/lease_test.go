@@ -288,8 +288,7 @@ func TestLeaseHeldElsewhereRefusesRun(t *testing.T) {
 
 // TestCloseSessionClearsLostOwnershipAndReacquires: once this process's renewer
 // definitively loses a lease (ErrLeaseHeld on Renew), CloseSession is the
-// documented recovery path (docs/adr/0027-cloud-native.md List 1 row 27) — it
-// must actually clear the lostOwnership tombstone instead of deferring forever
+// documented recovery path — it must actually clear the lostOwnership tombstone instead of deferring forever
 // (the pre-fix bug: closeSessionAuthorized tried to reaffirm the already-lost
 // lease first, which failed the same way every time, so closeSessionLocal —
 // the only place that deletes lostOwnership — was never reached). A run started
@@ -401,8 +400,8 @@ func TestCloseSessionStillRefusedWhileLeaseHeldElsewhere(t *testing.T) {
 // acquireLease -> reaffirmLease. Before the fix, reaffirmLease fail-fasts on
 // the tombstone without ever attempting a real Acquire, so this is a
 // permanent deadlock recoverable only by a process restart or CloseSession
-// (docs/adr/0027-cloud-native.md List 1 row 27) — neither of which the sweep
-// can perform. The fix: once the tombstone is set, reaffirmLease attempts a
+// — neither of which the sweep can perform. The fix: once the tombstone is
+// set, reaffirmLease attempts a
 // real Acquire before giving up, and clears the tombstone on success.
 func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
 	lease := &fakeLease{}
@@ -444,19 +443,42 @@ func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
 	// held for the session's life (HOLD-FOR-SESSION-LIFE), so its renewer is
 	// still ticking. Fail the NEXT renew with no live run for onLeaseLost to
 	// cancel — deterministic, no completion-save race.
-	var lost atomic.Bool
 	lease.mu.Lock()
 	lease.renewHook = func(port.Lease) (port.Lease, error) {
-		lost.Store(true)
 		return port.Lease{}, port.ErrLeaseHeld // self-inflicted or real — flocklease can't tell.
 	}
 	lease.mu.Unlock()
+	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
 	deadline := time.Now().Add(2 * time.Second)
-	for !lost.Load() && time.Now().Before(deadline) {
+	lostOwnershipObserved := false
+	for !lostOwnershipObserved && time.Now().Before(deadline) {
+		candidates, err := svc.LostOwnershipCandidates(staleCtx)
+		if err != nil {
+			t.Fatalf("LostOwnershipCandidates after renewal loss: %v", err)
+		}
+		for _, candidate := range candidates {
+			if candidate == sess.ID {
+				lostOwnershipObserved = true
+				break
+			}
+		}
+		if !lostOwnershipObserved {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if !lostOwnershipObserved {
+		t.Fatal("lost ownership was not recorded after the renewer reported lease loss")
+	}
+
+	// Renew invokes the hook before onLeaseLost records the tombstone. Wait for
+	// the loss-path Release, the public fake-lease observation that the tombstone
+	// transition and held-lease removal completed, rather than racing that tail.
+	deadline = time.Now().Add(2 * time.Second)
+	for lease.releaseCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if !lost.Load() {
-		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	if lease.releaseCount() == 0 {
+		t.Fatal("lease-loss cleanup never released the stale hold")
 	}
 	if svc.IsLive(sess.ID) {
 		t.Fatal("precondition: IsLive after loss with no live run = true, want false")
@@ -469,7 +491,6 @@ func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
 		t.Fatalf("overwrite Save: %v", err)
 	}
 
-	staleCtx := syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile)
 	settled, err := svc.SettleIfStale(staleCtx, sess.ID)
 	if err != nil {
 		t.Fatalf("SettleIfStale after self-inflicted lease loss = (%v, %v), want (true, nil) — the sweep must be able to recover a never-closed session", settled, err)
@@ -555,6 +576,13 @@ func TestStaleSessionSweepRefusesWhenGenuinelyHeldElsewhere(t *testing.T) {
 	}
 	if !lost.Load() {
 		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for lease.releaseCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if lease.releaseCount() == 0 {
+		t.Fatal("lease-loss cleanup never released the stale hold")
 	}
 
 	if err := store.Save(context.Background(), crashOrphanedSession(t, sess.ID)); err != nil {

@@ -569,7 +569,7 @@ func TestClearGenerationRejectsQueuedPlanApprovalContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := source.PauseForApproval(session.PendingAsk{
-		AskID: "ask-plan", Tool: "PresentPlan", Call: call.ID, PlanOriginated: true,
+		AskID: "ask-plan", Tool: "PresentPlan", Call: call.ID, Origin: session.ApprovalOriginPlan,
 	}); err != nil {
 		t.Fatal(err)
 	}

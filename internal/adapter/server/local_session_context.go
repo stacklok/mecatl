@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// LocalSessionContextServer implements ADR 0296's privileged local-client
+// LocalSessionContextServer implements the privileged local-client
 // workspace-root projection. Registration is deliberately left to composition,
 // which must attest the listener is local-client trusted.
 type LocalSessionContextServer struct {
@@ -47,13 +47,11 @@ func (s *Service) localSessionContextRoot(ctx context.Context, id session.Sessio
 	if persisted.EnvironmentRef.Kind != session.EnvKindLocal {
 		return "", ErrFailedPrecondition
 	}
-	binding, err := s.ReattachPlacement(ctx, persisted.EnvironmentRef)
+	binding, release, err := s.borrowSessionPlacement(ctx, persisted)
 	if err != nil {
 		return "", err
 	}
-	if binding.Close != nil {
-		defer func() { _ = binding.Close() }()
-	}
+	defer release()
 	if binding.Ref != persisted.EnvironmentRef || binding.Environment.Ref() != persisted.EnvironmentRef || binding.Environment.Workspace() == nil {
 		return "", ErrFailedPrecondition
 	}

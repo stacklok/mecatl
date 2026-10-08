@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// scheduletool.go implements the model-facing Schedule tools (ADR 0073, the
+// scheduletool.go implements the model-facing Schedule tools (the
 // scheduled-tasks capability): the in-chat affordance the model calls to manage
 // scheduled tasks. The surface is TWO catalog entries over the ONE injected
 // port.ScheduleManager seam — a read-only ScheduleQueryTool (list/inspect,
@@ -235,7 +235,7 @@ func (t *ScheduleQueryTool) Execute(ctx context.Context, call session.ToolCall, 
 var _ tool.Tool = (*ScheduleQueryTool)(nil)
 
 // NewPlanAwareScheduleTool wraps the MUTATING Schedule tool for a PLAN-MODE
-// session's catalog (ADR 0073 decision 4, the AC4.3 gate). The default mutating
+// session's catalog (the AC4.3 gate). The default mutating
 // tool reports ReadOnly()==false, so the plan-mode catalog projection
 // (engine/tool/catalog.go Available(ModePlan)) would hide the WHOLE tool —
 // including the read-leaning create plan mode must keep (a schedule CREATE does
@@ -385,13 +385,13 @@ func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args s
 		MaxFires: args.MaxFires,
 		Timezone: args.Timezone,
 		// The origin comes from the RUN CONTEXT and from nowhere else, and this
-		// literal is the only place it is ever set (ADR 0209). scheduleArgs has
+		// literal is the only place it is ever set. scheduleArgs has
 		// no origin field, so a model-supplied one cannot reach it — do NOT add
 		// an `args.Origin ?: ctx` fallback, which is exactly the forgery this
 		// closes. An unbound context yields the empty id, which means NO
 		// delivery (the delivery path early-returns), never delivery to an
 		// arbitrary session; that is the fail-safe direction and it is what an
-		// out-of-band create gets by design (ADR 0075 decision #1).
+		// out-of-band create gets by design.
 		OriginSessionID: origin,
 		// The Phase-2 one-shot retry fields map through VERBATIM: their rule
 		// enforcement (one-shot-only rejection, the >= 0 bound, the default of
@@ -559,15 +559,17 @@ func renderScheduleList(scheds []port.Schedule) string {
 // per-fire wall-clock FireTimeout (issue #386), it is appended so a create/list
 // surfaces the bound the in-flight fire runs under.
 func renderScheduleSummary(s port.Schedule) string {
-	enabled := "disabled"
-	if s.State.Enabled {
-		enabled = "enabled"
+	state := "disabled"
+	if s.State.DeletionID != "" {
+		state = "deletion_pending=true (retry delete)"
+	} else if s.State.Enabled {
+		state = "enabled"
 	}
 	next := "none"
 	if !s.State.NextFireAt.IsZero() {
 		next = s.State.NextFireAt.UTC().Format(time.RFC3339)
 	}
-	out := fmt.Sprintf("%s [%s] next=%s %s", s.Spec.Name, renderTrigger(s.Spec.Trigger), next, enabled)
+	out := fmt.Sprintf("%s [%s] next=%s %s", s.Spec.Name, renderTrigger(s.Spec.Trigger), next, state)
 	if s.Spec.FireTimeout > 0 {
 		out += " fire_timeout=" + s.Spec.FireTimeout.String()
 	}

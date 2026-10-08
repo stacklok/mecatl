@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -244,6 +245,69 @@ func TestPreparedAfterAuthorizationCanParkLaterProtectedCall(t *testing.T) {
 	if protected.requests != 1 {
 		t.Fatalf("later RequestAuthorization calls = %d, want 1", protected.requests)
 	}
+}
+
+func TestAuthorizationContinuationReentersPermissionWithoutRepeatingBroker(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		decision governance.PermissionDecision
+		approve  bool
+		wantExec int
+	}{
+		{name: "deny", decision: governance.PermissionDecision{Effect: governance.Deny, Reason: "revoked"}},
+		{name: "ask", decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "fresh approval required"}, approve: true, wantExec: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := &changingPermissionPolicy{decision: governance.PermissionDecision{Effect: governance.Allow}}
+			protected := newGenericAuthorizationTool("protected")
+			executions := 0
+			protected.exec = func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+				executions++
+				return session.NewToolResult(call.ID, "executed"), nil
+			}
+			store := memstore.New()
+			engine := newEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("call", protected.name, nil)), mockllm.TextTurn("done")),
+				Catalog: catalogWith(t, protected), Policy: policy, Store: store, Interactive: true,
+			})
+			sess := newSession(t, session.Limits{})
+			for range engine.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "protected action", CanPresentAuthorization: true}).Events() {
+			}
+			if sess.State != session.StateAuthorizing || protected.requests != 1 || executions != 0 {
+				t.Fatalf("park state=%q requests=%d executions=%d", sess.State, protected.requests, executions)
+			}
+			pending, err := sess.ClaimAuthorization()
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy.set(tc.decision)
+			run, transition := mustPrepareAuthorizationContinuation(t, engine, sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted).Start()
+			if transition != agent.PreparedRunStarted {
+				t.Fatalf("Start=%q", transition)
+			}
+			asks := 0
+			for ev := range run.Events() {
+				if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+					asks++
+					if tc.approve {
+						if err := run.Approve(ev.Ask.AskID, session.VerdictAllowOnce); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+			if protected.requests != 1 || executions != tc.wantExec || asks != btoi(tc.approve) {
+				t.Fatalf("requests=%d executions=%d asks=%d", protected.requests, executions, asks)
+			}
+		})
+	}
+}
+
+func btoi(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func TestPreparedAuthorizationContinuationCanParkSecondProtectedCall(t *testing.T) {

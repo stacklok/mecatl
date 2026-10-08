@@ -96,10 +96,10 @@ func (r *recheckAuthorizationStream) Recv() (*mecatlv1.Event, error) {
 	}
 	return response.GetEvent(), nil
 }
-func (r *recheckAuthorizationStream) SendApproval(id string, v Verdict) error {
+func (r *recheckAuthorizationStream) SendApprovalForScope(id string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApproval(id, v)}})
+	return r.stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(id, v, scope, expectedRunID)}})
 }
 func (r *recheckAuthorizationStream) SendCancel() error {
 	r.mu.Lock()
@@ -119,10 +119,10 @@ func (r *cancelAuthorizationStream) Recv() (*mecatlv1.Event, error) {
 	}
 	return response.GetEvent(), nil
 }
-func (r *cancelAuthorizationStream) SendApproval(id string, v Verdict) error {
+func (r *cancelAuthorizationStream) SendApprovalForScope(id string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.stream.Send(&mecatlv1.CancelMcpAuthorizationRequest{Control: &mecatlv1.CancelMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApproval(id, v)}})
+	return r.stream.Send(&mecatlv1.CancelMcpAuthorizationRequest{Control: &mecatlv1.CancelMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(id, v, scope, expectedRunID)}})
 }
 func (r *cancelAuthorizationStream) SendCancel() error {
 	r.mu.Lock()

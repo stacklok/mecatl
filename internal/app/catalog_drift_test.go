@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -15,13 +17,10 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // sortedNames projects a catalog into its sorted tool-name list for diffing.
@@ -76,7 +75,7 @@ func fullyLoadedCfg(t *testing.T) Config {
 		EnableTeams:      true,
 		MCPResourceTools: true,
 		Diagnostics:      port.NopDiagnostics{},
-		// StoreDir (ADR 0073/0076): a jsonlstore backs a ScheduleStore, so the
+		// StoreDir: a jsonlstore backs a ScheduleStore, so the
 		// fully-loaded catalog carries the Schedule + ScheduleQuery family and
 		// the anti-drift pin exercises it for real (memstore keeps them
 		// honestly absent — TestScheduleTool_RegisteredOnlyWhenStoreBacked).
@@ -113,7 +112,7 @@ var requiredFamilyTools = []string{
 	"ReadMcpResource",
 	"CallMcpWithQuery",
 	"mcp__globe__echo", // the server-global MCP mount itself
-	// Schedule + ScheduleQuery (ADR 0073/0076, AC2.3): the eager factory bind
+	// Schedule + ScheduleQuery (AC2.3): the eager factory bind
 	// registers them in BOTH catalogs over the SAME gate, so the name-set
 	// equality covers them with NO schedule carve-out. fullyLoadedCfg backs a
 	// ScheduleStore (StoreDir → jsonlstore) so the family pin exercises the
@@ -123,7 +122,7 @@ var requiredFamilyTools = []string{
 	agent.ScheduleQueryToolName, // "ScheduleQuery"
 }
 
-// eagerScheduleFactoryForTest mirrors buildEngine's eager bind (ADR 0076): the
+// eagerScheduleFactoryForTest mirrors buildEngine's eager bind: the
 // manager is resolved from the store BEFORE any catalog assembly and the
 // captured factory is what buildCatalog binds onto the assets. Tests that call
 // buildCatalog directly (the drift/nofs guards) pass this so the shared
@@ -166,8 +165,8 @@ func fullyLoadedScheduleStore(t *testing.T, cfg Config) port.SessionStore {
 // must contain every conditionally-registered family (requiredFamilyTools — the
 // both-paths-drop blindspot). The shared baseline is the catalog buildCatalog
 // ACTUALLY RETURNS — not a direct assembleCatalog call — so a post-assembly
-// MustRegister snuck into buildCatalog/buildEngine (the exact historical bug
-// shape, three prior firings) shifts the baseline and the equality catches it.
+// MustRegister snuck into buildCatalog/buildEngine (a recurring bug
+// shape) shifts the baseline and the equality catches it.
 //
 // The ONLY sanctioned per-session deltas are:
 //  1. the client MCP tools (a session's own mcpServers) — covered by the
@@ -344,7 +343,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	}
 	defer mcpClose()
 
-	bash, ok := sharedCat.Lookup(tools.ShellToolName)
+	bash, ok := sharedCat.Lookup(tool.ShellToolName)
 	if !ok {
 		t.Fatal("shared catalog lost Shell under a fully-loaded config")
 	}
@@ -369,7 +368,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 		t.Fatal("precondition: fully-loaded config yields a sandboxed runner")
 	}
 	explorer := readOnlyExplorerCatalog(runner)
-	childShell, ok := explorer.Lookup(tools.ShellToolName)
+	childShell, ok := explorer.Lookup(tool.ShellToolName)
 	if !ok {
 		t.Fatal("read-only explorer catalog lost Shell")
 	}
@@ -392,13 +391,13 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	def := agents.AgentDef{Name: "scoped-explorer", Tools: []string{"Read", "Shell"}}
 	base := baseSubagentTools(cfg)
 	defEng, defClose, defNames, _, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
-		oa, cfg.Model, nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
+		oa, testProviderModel(cfg.Model), nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
 	if defClose != nil {
 		defer func() { _ = defClose() }()
 	}
 	foundShell := false
 	for _, n := range defNames {
-		if n == tools.ShellToolName {
+		if n == tool.ShellToolName {
 			foundShell = true
 		}
 	}
@@ -407,7 +406,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	}
 	// The built engine holds the canonical Shell/ShellStatus pair; the requested
 	// scoped names retain only the explicit Shell allowlist entry.
-	if !defEng.HasTool(tools.ShellToolName) {
+	if !defEng.HasTool(tool.ShellToolName) {
 		t.Fatal("def-scoped engine lost Shell")
 	}
 	if !defEng.HasTool("ShellStatus") {
@@ -416,7 +415,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	if defEng.HasTool("Bash") {
 		t.Fatal("def-scoped engine must not contain legacy Bash")
 	}
-	if _, isAgent := base[tools.ShellToolName].(agent.ShellTool); !isAgent {
-		t.Fatalf("base Shell is %T, want agent.ShellTool (child background parity)", base[tools.ShellToolName])
+	if _, isAgent := base[tool.ShellToolName].(agent.ShellTool); !isAgent {
+		t.Fatalf("base Shell is %T, want agent.ShellTool (child background parity)", base[tool.ShellToolName])
 	}
 }

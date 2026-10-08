@@ -30,7 +30,7 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 
 	t.Run("focused team trace remains selected and height-bounded", func(t *testing.T) {
 		lanes := []teamLane{{name: "selected", trace: []teamTrace{{kind: teamTraceTool, name: long, detail: long}, {kind: teamTraceTool, name: long, detail: long}, {kind: teamTraceTool, name: long, detail: long}, {kind: teamTraceTool, name: long, detail: long}}}}
-		block := &block{teamLanes: lanes}
+		block := &teamOverlaySnapshot{teamLanes: lanes}
 		out := renderTeamFocus(th, block, "selected", hk, width, 15)
 		assertFits(t, "team focus", out)
 		if !strings.Contains(stripANSIstr(out), "selected") {
@@ -47,13 +47,16 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 			models[i] = client.ModelInfo{ProviderID: "provider", ID: long + string(rune('a'+i))}
 		}
 		picker := &modelsState{catalog: modelCatalog{models: models}, filtered: models, deps: surfaceDeps{keys: defaultKeys(), theme: th, marks: hk}}
-		out, _ := picker.Render(width, modelsPanelFixedRows(*picker, "", hk)+3)
+		prefix, suffix := modelsFixedLines(*picker, "")
+		height := len(prefix) + len(suffix) + 3
+		out, _ := picker.Render(width, height)
 		assertFits(t, "models initial", out)
 		picker.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-		out, _ = picker.Render(width, modelsPanelFixedRows(*picker, "", hk)+3)
+		out, _ = picker.Render(width, height)
 		assertFits(t, "models paged", out)
-		if picker.cursor != 3 || !strings.Contains(stripANSIstr(out), "›") {
-			t.Fatalf("paged models selection = %d, selected marker missing from %q", picker.cursor, stripANSIstr(out))
+		view := picker.list.View()
+		if picker.list.Cursor() != 0 || len(view.Rows) == 0 || view.Rows[0].ItemLine == 0 || !strings.Contains(stripANSIstr(out), "▶") {
+			t.Fatalf("paged oversized model = cursor %d rows %v, selected marker missing from %q", picker.list.Cursor(), view.Rows, stripANSIstr(out))
 		}
 	})
 
@@ -63,8 +66,8 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 		out, _ := state.Render(width, 20)
 		assertFits(t, "resource preview", out)
 		plain := stripANSIstr(out)
-		if !strings.Contains(plain, hk.expandTools) {
-			t.Fatalf("resource preview lost its existing truncation cue: %q", plain)
+		if !strings.Contains(plain, "+1 more line") || strings.Contains(plain, hk.toolcalls) {
+			t.Fatalf("resource preview should keep a plain truncation count without a dead shortcut: %q", plain)
 		}
 	})
 }

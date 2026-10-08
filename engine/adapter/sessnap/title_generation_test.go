@@ -73,19 +73,8 @@ func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *te
 	if usage := restored.TokenUsageSnapshot()[session.UsageKindSessionTitle]; usage.Total.InputTokens != 13 || usage.Models["provider/model"].OutputTokens != 8 {
 		t.Errorf("round-trip token usage = %#v, want title usage", usage)
 	}
-	if restored.Usage != (session.Usage{}) {
-		t.Errorf("main Usage = %#v, want zero", restored.Usage)
-	}
-	legacy := Snapshot{ID: "legacy", State: session.StateIdle, Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, Usage: &session.Usage{InputTokens: 5}}
-	legacyRestored, err := legacy.Restore()
-	if err != nil {
-		t.Fatalf("restore legacy usage: %v", err)
-	}
-	if got := legacyRestored.TitleRevision; got != 0 {
-		t.Errorf("legacy TitleRevision = %d, want 0", got)
-	}
-	if got := legacyRestored.TokenUsageSnapshot()[session.UsageKindMain]; got.Total.InputTokens != 5 || got.Models["unknown"].InputTokens != 5 {
-		t.Fatalf("legacy token usage = %#v, want unknown attribution", got)
+	if got := restored.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Errorf("main usage = %#v, want zero", got)
 	}
 }
 

@@ -38,8 +38,7 @@ export const MECATL_ATTACH_FILTERED_KINDS = [
 ] as const;
 // END MECATL_ATTACH_FILTERED_KINDS
 
-/** The compatibility feature required by every durable watch. */
-export const WATCH_SESSION_EVENTS_FEATURE = "watch_session_events";
+const watchSessionEventsFeature = "watch_session_events";
 
 /** A serializable cursor issued by a durable SDK attachment. @public */
 export type SdkCursor = string;
@@ -100,7 +99,7 @@ export interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisp
 /** A durable activity stream bound to one run. @public */
 export interface AttachedRun extends SessionActivity {
   readonly runId: string;
-  /** True until this attachment observes its run's terminal result. */
+  /** True until this attachment observes its run's terminal result or valid authorization park. */
   readonly live: boolean;
   /**
    * Cancels the attached run using its exact run ID.
@@ -108,15 +107,6 @@ export interface AttachedRun extends SessionActivity {
    * @returns A promise that resolves after the cancellation request is accepted.
    */
   cancel(): Promise<void>;
-  /**
-   * Reports that approval controls are unavailable on durable attachments.
-   *
-   * @param askId - Permission-ask ID, retained for parity with a live run.
-   * @param allow - Boolean verdict, retained for parity with a live run.
-   * @returns A rejected promise.
-   * @throws `UnsupportedFeatureError` for every call.
-   */
-  approve(askId: string, allow: boolean): Promise<never>;
   /**
    * Reports that ask resolution is unavailable on durable attachments.
    *
@@ -347,10 +337,24 @@ function envelopeEvent(envelope: WatchEnvelope): Event | undefined {
   return envelope.kind === "event" || envelope.kind === "unknown" ? envelope.event : undefined;
 }
 
+function isAuthorizationPark(event: Event | undefined, runId: string): boolean {
+  return (
+    event?.kind === "authorization.required" &&
+    event.runId === runId &&
+    event.payload.status === "pending" &&
+    event.payload.authorizationId !== "" &&
+    event.payload.callId !== ""
+  );
+}
+
+function isAttachedRunTerminal(event: Event | undefined, runId: string): boolean {
+  return event?.runId === runId && (event.kind === "result" || isAuthorizationPark(event, runId));
+}
+
 async function requireWatchFeature(operations: AttachmentOperations): Promise<void> {
   const features = await operations.features();
-  if (!features.has(WATCH_SESSION_EVENTS_FEATURE)) {
-    throw new UnsupportedFeatureError(WATCH_SESSION_EVENTS_FEATURE, {
+  if (!features.has(watchSessionEventsFeature)) {
+    throw new UnsupportedFeatureError(watchSessionEventsFeature, {
       transport: operations.transportKind,
     });
   }
@@ -588,7 +592,7 @@ class SessionActivityImpl implements SessionActivity {
         yield envelope;
         if (envelope.kind === "gap") throw new ActivityGapError();
         this.#checkpoint(envelope);
-        if (this.#runId !== undefined && event?.runId === this.#runId && event.kind === "result") {
+        if (this.#runId !== undefined && isAttachedRunTerminal(event, this.#runId)) {
           return;
         }
       }
@@ -668,7 +672,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
         if (event.kind === "permission.retract" || event.kind === "approval") {
           liveState.pendingAsks.delete(event.payload.askId);
         }
-        if (event.kind === "result") {
+        if (isAttachedRunTerminal(event, runId)) {
           liveState.value = false;
           liveState.pendingAsks.clear();
         }
@@ -689,10 +693,6 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
 
   async cancel(): Promise<void> {
     await this.#operations.cancelRun(this.#sessionId, this.runId);
-  }
-
-  async approve(_askId: string, _allow: boolean): Promise<never> {
-    throw this.#controlsUnsupported();
   }
 
   async resolveAsk(_askId: string, _verdict: PermissionVerdict): Promise<never> {

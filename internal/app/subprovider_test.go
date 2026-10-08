@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -18,7 +19,6 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
@@ -193,7 +193,7 @@ func TestSubproviderChildCompactorAndCounter(t *testing.T) {
 	childProvider, _, model, windowFn := resolveChildProvider(cfg, reg,
 		agents.AgentDef{Name: "big", Provider: providerOpenRouter, Model: childModel},
 		reg.entries[providerOpenAI].provider, providerOpenAI, "gpt-5")
-	deps := childEngineDepsForProvider(cfg, "", childProvider, model, windowFn, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	deps := childEngineDepsForProvider(cfg, "", childProvider, session.ProviderModelID{ProviderID: providerOpenRouter, ModelID: model}, windowFn, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 
 	// Compactor.Model is bound BY VALUE to the child's model (the contamination vector).
 	cc, ok := deps.Compactor.(agent.CascadeCompactor)
@@ -216,7 +216,7 @@ func TestSubproviderChildCompactorAndCounter(t *testing.T) {
 
 // TestSubproviderChildTelemetryOff guards the telemetry-leak regression: a child
 // engine's Deps.Sink and Deps.ToolCallRecorder are NIL even though engineDepsForProvider sets
-// them from cfg — restoring byte-identity with the pre-feature child shape, so a
+// them from cfg — the unmetered child shape, so a
 // sub-agent's turns/tool-calls don't double-count against the operator-facing
 // histograms. A regression that dropped the nil-restore would fail here.
 func TestSubproviderChildTelemetryOff(t *testing.T) {
@@ -224,7 +224,7 @@ func TestSubproviderChildTelemetryOff(t *testing.T) {
 	cfg := Config{Model: "gpt-5", Sink: fakeSink{}, ToolCallRecorder: &recordingToolLogger{}, Diagnostics: injectedDiag}
 	provider := mockllm.New()
 	// A provider-switched child (the same path a def-pinned / Half-B session child takes).
-	deps := childEngineDepsForProvider(cfg, "member:explorer", provider, "gpt-5", func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	deps := childEngineDepsForProvider(cfg, "member:explorer", provider, testProviderModel("gpt-5"), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	if deps.Sink != nil {
 		t.Fatalf("child Deps.Sink = %v, want nil (child telemetry off; pre-feature byte-identity)", deps.Sink)
 	}
@@ -259,13 +259,13 @@ func TestMaxRunTokensPropagatesToParentAndChild(t *testing.T) {
 	cfg := Config{Model: "gpt-5", MaxRunTokens: budget}
 	provider := mockllm.New()
 
-	parent := engineDepsForProvider(cfg, provider, cfg.Model, func() int { return defaultContextWindowTokens }, nil,
+	parent := engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, nil,
 		permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil), hookexec.New(nil), nil, nil)
 	if parent.MaxRunTokens != budget {
 		t.Fatalf("parent Deps.MaxRunTokens = %d, want %d (engineDepsForProvider must thread the budget)", parent.MaxRunTokens, budget)
 	}
 
-	child := childEngineDepsForProvider(cfg, "member:explorer", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	child := childEngineDepsForProvider(cfg, "member:explorer", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	if child.MaxRunTokens != budget {
 		t.Fatalf("child Deps.MaxRunTokens = %d, want %d (children must INHERIT the budget)", child.MaxRunTokens, budget)
 	}
@@ -290,7 +290,8 @@ func TestDefaultConfigPolicyEvaluatesWithoutPanic(t *testing.T) {
 		NoSoul:    true,
 		// DEFAULT permission posture: no Conventional, no ExplicitFiles, no AllowAll —
 		// so Build takes the resolver branch with a typed-nil *permconfig.Resolver.
-		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
 			return mockllm.New(
 				mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", []byte(`{"path":"note.txt","content":"x"}`))),
@@ -490,7 +491,7 @@ func TestHalfBSelectedSessionHasSubagentTool(t *testing.T) {
 		t.Fatal("a provider-selected session must now carry the Subagent tool (Half B); it does not")
 	}
 	// InspectSubagent is registered UNCONDITIONALLY wherever Subagent is — including the
-	// per-session (sessionEngineFactory) catalog, the historically-fragile registration
+	// per-session (sessionEngineFactory) catalog, a fragile registration
 	// site (the MCP-strip regression class).
 	if !res.Engine.HasTool("InspectSubagent") {
 		t.Fatal("a provider-selected session must carry the InspectSubagent tool alongside Subagent; it does not")

@@ -13,11 +13,11 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
@@ -46,7 +46,7 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 }
 
 // TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent pins
-// AC4.5's deployment control until ADR 0213 carries caller claims to remote
+// AC4.5's deployment control until caller claims are carried to remote
 // drivers: rendered with oidc.enabled=true, the mecak8s Helm chart produces a
 // NetworkPolicy admitting only the agent workload to a raw driver, on one port,
 // and the default (oidc disabled) render carries no such policy at all.
@@ -55,7 +55,7 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 // peer is blocked — that needs a live cluster with a policy-enforcing CNI — and
 // it is not caller enforcement: #368's tenant is an OIDC subject holding a
 // token, who is not a cluster peer at all. Caller-level driver enforcement is
-// issue #452 / ADR-0213. The test exists so the selector, the single agent-only
+// issue #452. The test exists so the selector, the single agent-only
 // ingress rule, the port, and the chart wiring cannot drift unnoticed.
 func TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent(t *testing.T) {
 	defaultRendered := helmTemplate(t)

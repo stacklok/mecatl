@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // Cap values: the SOUL body cap is 20 KiB (internal/adapter/soul/store.go). Rules
@@ -45,28 +44,33 @@ type RulesAssembler struct {
 // Compile-time assertion that RulesAssembler satisfies the interface.
 var _ InstructionAssembler = RulesAssembler{}
 
-// Assemble renders the discovered rules into one user-role message. The workspace
-// is unused: rules are resolved against their source (filesystem / driver), not the
-// session workspace root. It fails soft on a nil source, a source error, or an
-// empty rule set.
-func (a RulesAssembler) Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error) {
+// TargetScoped reports that rules do not depend on a selected workspace target.
+func (RulesAssembler) TargetScoped() bool { return false }
+
+// Assemble renders the discovered rules into one user-role message.
+func (a RulesAssembler) Assemble(ctx context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []InstructionManifest, error) {
+	messages := a.assembleRules(ctx)
+	return messages, manifestFor(messages, InstructionProvenanceRules), nil
+}
+
+func (a RulesAssembler) assembleRules(ctx context.Context) []session.Message {
 	if a.Src == nil {
-		return nil, nil
+		return nil
 	}
 	rules, err := a.Src.ListRules(ctx)
 	if err != nil {
 		// Best-effort context: never fail a run on a rules fault.
-		return nil, nil
+		return nil
 	}
 	if len(rules) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	text := renderRules(rules, a.maxBytes(), a.maxCount())
 	if text == "" {
-		return nil, nil
+		return nil
 	}
-	return []session.Message{session.NewUserMessage(text)}, nil
+	return []session.Message{session.NewUserMessage(text)}
 }
 
 func (a RulesAssembler) maxBytes() int {

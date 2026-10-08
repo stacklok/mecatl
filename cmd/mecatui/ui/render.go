@@ -16,7 +16,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // maxToolResultLines caps how many visible display rows of a tool result are
@@ -25,7 +28,7 @@ import (
 const maxToolResultLines = 12
 
 // maxDiffLines caps how many lines of each diff side (Edit old/new, Write
-// content) show inline when collapsed; ctrl+t expands to the full diff.
+// content) show inline in a tool card. Approval details retain the full diff.
 const maxDiffLines = 12
 
 // toolCardMaxWidth caps a tool card's column width on a wide terminal: past this
@@ -34,14 +37,12 @@ const maxDiffLines = 12
 // r.width-2 inset wins (the card never exceeds the viewport).
 const toolCardMaxWidth = 100
 
-// Compact-card tuning (issue #24): a collapsed tool card summarizes its JSON
-// args (and large JSON results) into a few scannable key:value rows instead of
-// dumping the full pretty-printed JSON inline — so an MCP call with a huge body
-// argument no longer dominates the scrollback. ctrl+t still reveals the full
-// JSON (and, for MCP, the raw tool name).
+// Compact-card tuning (issue #24): a pending tool card summarizes its JSON
+// args (and large JSON results) into a few scannable key:value rows. The
+// complete received payload remains available in the Toolcalls inspector.
 const (
 	// maxSummaryRows caps how many key:value rows a collapsed arg/result summary
-	// shows; the rest roll up into a "+K more keys · ctrl+t expand" line.
+	// shows; the rest roll up into a "+K more keys · ctrl+t inspect" line.
 	maxSummaryRows = 8
 	// inlinePreviewLen is the rune budget below which a single-line string value is
 	// shown inline verbatim ("key: \"value\""); longer/multiline strings collapse
@@ -63,22 +64,20 @@ const (
 // the remaining keys alphabetical after them. Map iteration order is random, so
 // this ordering is what makes the collapsed card render stable (golden-safe).
 var argPriorityKeys = []string{
-	"owner", "repo", "method", "number", "title", "path",
-	"query", "state", "branch", "name", "url", "limit", "page",
+	"owner", "repo", "method", "number", "title", toolPathArg,
+	"query", "state", "branch", "name", toolURLArg, "limit", "page",
 }
 
 // resultProminentKeys are the fields a large JSON result summary surfaces, in
 // render order — the handful a human scans a tool result for (where it landed,
 // what it is, its status).
 var resultProminentKeys = []string{
-	"html_url", "url", "id", "number", "sha", "status", "state",
+	"html_url", toolURLArg, "id", "number", "sha", "status", "state",
 }
 
 // renderer turns conversation blocks into the viewport string. It owns the
-// glamour TermRenderer cache (keyed by wrap width), the active theme, and two
-// per-block memo layers: blockCache (whole rendered blocks, keyed on
-// rev/width/expand — see renderBlock) and blockMD (the assistant glamour step,
-// keyed on src/width — see markdownAt). glamour is NOT thread-safe, so renderer
+// glamour TermRenderer cache (keyed by wrap width), the active theme, and one
+// blockRenderCache component for all cross-frame conversation-block state. Glamour
 // is only ever touched from the Bubble Tea update goroutine — never from the
 // stream reader. The mutex guards the cache map against the (currently
 // single-goroutine) access defensively and documents the invariant; it does not
@@ -92,15 +91,10 @@ type renderer struct {
 	traceWidth int
 
 	// marks carries the LIVE chord markings derived from the model's keyMap at
-	// construction (keyMarkings). The inline-card affordances that reference
-	// rebindable actions — the ExpandTools chord ("ctrl+t" by default) in the
-	// reasoning/subagent/team headers and the collapse/rollup markers, and the
-	// Agents chord ("f6") in the team "+N more" roll-up — read them off
-	// here so an override propagates to those affordances (issue #457, the
-	// #455 liveness pattern extended to inline cards). Set once at construction
-	// from keyMarkings; a bare &renderer{th: th} (the width-0 team/fleet focus
-	// panes) is seeded with defaultHelpKeys() so its output stays
-	// byte-identical to the pre-#457 default.
+	// construction (keyMarkings). The Toolcalls chord in truncated tool-card
+	// footers and Agents chord in live delegation cards use these marks so
+	// overrides propagate to the displayed hints.
+	// A bare &renderer{th: th} is seeded with defaultHelpKeys().
 	marks helpKeys
 
 	// indent is the left margin (in cells) prepended to EVERY conversation block so the
@@ -114,43 +108,18 @@ type renderer struct {
 	// bare renderer (team/fleet focus panes) leaves it 0.
 	indent int
 
+	// showBenignGuardrails keeps exact known-benign guardrail summaries and live
+	// details visible while conversation details are collapsed.
+	showBenignGuardrails bool
+
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
-	// blockMD memoizes the glamour render of each assistant block, keyed by the
-	// block's (stable, append-only) conversation index. It is the INNER of the two
-	// per-block memo layers: blockCache (below) memoizes the whole rendered block
-	// (any kind) keyed on (rev, width, expand), while blockMD memoizes only the
-	// glamour markdown step of an assistant block keyed on (src, width) — so an
-	// assistant block whose rev changed for a non-text reason (e.g. the turn-end
-	// endReasoningStream) misses the outer cache but still reuses its glamour
-	// render here. refreshView re-renders the WHOLE scrollback on every flushed
-	// frame (deltas are coalesced to frame cadence; see update.go's renderTickMsg).
-	// Without this, every prior assistant turn is re-parsed through glamour on
-	// every flushed frame of the live turn — O(turns × frames) glamour work that
-	// grows with session length. Memoising collapses each SETTLED block to one
-	// render: only the live (last) block, whose src grows each frame, misses and
-	// re-renders. markdown() is a pure function of (src, width, theme) and the
-	// theme is fixed for the renderer's life, so the cached entry is valid whenever
-	// its (src, width) still match — index is just the bucket that bounds memory to
-	// one entry per block and lets the live block overwrite in place. Touched only
-	// on the Bubble Tea update goroutine (same invariant as the glamour cache), so
-	// it needs no lock. Dropped (with blockCache) by resetBlockCaches when the
-	// conversation is rebuilt, since a fresh conversation reuses the same indices.
-	blockMD map[int]mdEntry
-
-	// blockCache memoizes the FULL rendered string of every block (all kinds, not
-	// just assistant markdown), keyed by the block's stable conversation index. An
-	// entry is valid while the block's render revision (block.rev — bumped by the
-	// conversation's mutation gateways), the wrap width, and the global expand
-	// toggle all match, so on each flushed frame every SETTLED block joins the
-	// conversation string straight from cache and only mutated blocks (in practice
-	// the live tail) re-render through renderBlockFresh. Correctness rests on the
-	// same purity argument as blockMD — a block's render is a pure function of
-	// (block fields, width, expand, theme) with the theme fixed per process — plus
-	// the rev discipline documented on block.rev. Update-goroutine-only; dropped by
-	// resetBlockCaches when the conversation is rebuilt (index reuse).
-	blockCache map[int]blockEntry
+	// blocks owns every cross-frame conversation-block cache: whole rendered
+	// blocks, assistant markdown, fallback frame rows, and the incremental prefix.
+	// It is reset when a conversation is rebuilt because its buckets use conversation
+	// indices that a fresh conversation can reuse.
+	blocks blockRenderCache
 
 	// mdRenders counts REAL glamour invocations (cache misses) — incremented at the
 	// tr.Render call site in markdown(), not in markdownAt's hit path. It is the test
@@ -159,11 +128,20 @@ type renderer struct {
 	// one (the live block re-renders once). Touched only on the update goroutine.
 	mdRenders int
 
-	// blockRenders counts REAL whole-block renders (blockCache misses) — incremented
+	// blockRenders counts REAL whole-block renders (blockRenderCache misses) — incremented
 	// only when renderBlock has a cache miss, never on a cache hit. It is the test
 	// seam proving settled blocks join from cache: a flushed frame of a streaming turn bumps it by exactly one (the live block), regardless of how
 	// long the scrollback is. Touched only on the update goroutine.
 	blockRenders int
+
+	// snapshotLoads counts detached model payload snapshots requested after metadata
+	// lookup. It is the test seam proving settled cache hits do not clone model state.
+	snapshotLoads int
+
+	// cardPrepares counts all migrated functional-card preparations. The counter is
+	// deliberately below renderBlock's composite-key guard so tests can prove a
+	// settled frame performs no snapshot or preparation.
+	cardPrepares int
 
 	// toolCardPrepares counts tool-card preparations. A fresh tool block prepares
 	// once for both its rendered output and structural frame provenance; semantic
@@ -171,7 +149,7 @@ type renderer struct {
 	toolCardPrepares int
 
 	// inputKey/inputView/inputValid memoize the rendered INPUT region (the bubbles
-	// textarea) — the input-side sibling of blockCache. textarea.View() re-wraps
+	// textarea) — the input-side sibling of blockRenderCache. textarea.View() re-wraps
 	// (and SHA-256-keys, even on its internal cache hits) every logical line on
 	// every call, and renderInput runs at least twice per reduced message (the
 	// relayout chokepoint's chrome() + View's assembleLayout), so an unchanged
@@ -191,12 +169,12 @@ type renderer struct {
 	inputView  string
 	inputValid bool
 
-	// renderedBlocksScratch is renderer-owned allocation reuse for one block-render
-	// pass. Consumers receive the returned slice from walkBlocks explicitly.
-	renderedBlocksScratch []string
+	// Render-pass scratch is renderer-owned allocation reuse. It carries no logical
+	// payload beyond the cache-miss preparation that produced each rendered entry.
+	renderPassScratch []renderPass
 
 	// vpViewCache/vpViewValid memoize the rendered VIEWPORT OUTPUT — the OUTERMOST
-	// render layer, above blockCache. View() calls vp.View() which runs
+	// render layer, above blockRenderCache. View() calls vp.View() which runs
 	// lipgloss's per-line grapheme-width pad on the full visible window (~40 lines at
 	// a time). On a spinner-only frame (no content/scroll/geometry change) this work
 	// is pure waste: the viewport output is identical to the previous frame. The memo
@@ -214,43 +192,10 @@ type renderer struct {
 	vpViewCache string
 	vpViewValid bool
 
-	// joinPrefixLines / joinPrefixN / joinPrefixKey cache the unchanged prefix for
-	// the incremental frame assembly. A live tail re-render only rebuilds the suffix.
-	//
-	// The canonical per-block segment framing is: block i contributes
-	// sep(i) + renderedBlocks[i] + "\n", where sep(0)="" and sep(i>0)="\n".
-	// The cached prefix plus its freshly built suffix is byte-identical output.
-	//
-	// joinPrefixLines holds the prefix ALREADY SPLIT into single (newline-free) lines,
-	// so renderConversationLines can hand it straight to vp.SetContentLines (no Split,
-	// no Builder copy of the settled scrollback) and only the suffix is built fresh
-	// each frame. joinPrefixN is the number of blocks the cached prefix covers;
-	// joinPrefixKey pins the (width, expand) it was built at (the prefix blocks did NOT
-	// re-render — that is precisely why they are in the prefix — so no per-block rev
-	// is needed; width/expand are the global axes that would change every block's
-	// render at once). A NON-TAIL mutation (resolveTool/subagentBlock/teamBlock bump a
-	// block BEHIND the tail) lowers firstChanged below joinPrefixN, which truncates the
-	// prefix before the changed index — never serving it stale.
-	joinPrefixLines []string
-	joinPrefixN     int
-	joinPrefixKey   joinPrefixState
-	// joinPrefixProvenance is the lockstep metadata sibling of joinPrefixLines.
-	// It contains no rendered text and is reset with the cached prefix.
-	joinPrefixProvenance []renderedRow
 	// frameProvenanceScratch assembles one frame's lockstep rows without a fresh
-	// full-scrollback allocation on every streaming tick.
+	// full-scrollback allocation on every streaming tick. It is current-frame
+	// allocation reuse, not cross-frame cache state.
 	frameProvenanceScratch []renderedRow
-	blockFrameCache        map[int]frameBlockEntry
-}
-
-// joinPrefixState is the validity key of the cached incremental-join prefix: the
-// width and expand toggle it was built under. (The prefix blocks did not re-render
-// this frame — they are in the prefix BECAUSE they were unchanged — so a per-block
-// rev is unnecessary; a width or expand change re-renders every block and must drop
-// the prefix.)
-type joinPrefixState struct {
-	width  int
-	expand bool
 }
 
 // inputRenderKey is the validity key of the memoized input render: the complete
@@ -284,57 +229,30 @@ type inputRenderKey struct {
 	placeholder                        string
 }
 
-// mdEntry is one memoized assistant-block render: the source text and wrap width
-// it was produced from (the validity key) plus the rendered ANSI output.
-type mdEntry struct {
-	src   string
-	width int
-	out   string
-}
-
-// blockEntry is one memoized whole-block render: the block revision, wrap width,
-// and expand state it was produced under (the validity key) plus the rendered
-// ANSI output. Tool entries retain only per-row structural provenance; the
-// prepared card's semantic strings are discarded after producing both outputs.
-type blockEntry struct {
-	rev    int
-	width  int
-	expand bool
-	out    string
-	rows   []renderedRow
-}
-
 // defaultBlockIndent is the left margin (cells) every conversation block is indented
 // by, so the history aligns with the 1-col-padded header/footer chrome (which use
 // Padding(0,1)) instead of sitting flush at column 0. One column matches the chrome
 // exactly. The width-0 team/fleet focus renderers (bare &renderer{}) keep indent 0.
 const defaultBlockIndent = 1
 
-// assistantBodyHang is the extra left indent (cells) the assistant MESSAGE body hangs
-// under its "● mecatl" label, so the body text sits under "mecatl" rather than flush
-// under the "●" bullet — matching the user block, whose gold rail + PaddingLeft(1)
-// already lands its body under "you". It equals the label marker width
-// lipgloss.Width("● ") = 2. Applied ON TOP of the base block indent (renderBlock), to
-// the body ONLY (reasoning summary + markdown answer) — never the label, and never the
-// non-message blocks (tool cards / notices / turn-stats / errors). The assistant
-// markdown wrap budget subtracts it (see markdown) so a wrapped body line + base +
-// hang never exceeds r.width.
+// assistantBodyHang is the extra left indent (cells) for assistant text and
+// reasoning. In the F9 detail view it aligns the body under the "● mecatl"
+// label; in the normal view it keeps prose inset from tool lines. It equals the
+// label marker width lipgloss.Width("● ") = 2. Applied on top of the base block
+// indent; the markdown wrap budget subtracts it so wrapped text fits r.width.
 const assistantBodyHang = 2
 
 // newRenderer builds a renderer for a theme, seeded with the LIVE chord
 // markings (hk) so inline-card affordances that reference rebindable actions
-// (ExpandTools/Agents) reflect any override (issue #457). With default keys hk
-// resolves to exactly the literals the affordances used to hardcode, so the
-// goldens stay byte-identical.
+// (Toolcalls/Agents) reflect any override (issue #457). With default keys hk
+// resolves to the default chord literals the goldens pin.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
-		th:              th,
-		marks:           hk,
-		indent:          defaultBlockIndent,
-		cache:           map[int]*glamour.TermRenderer{},
-		blockMD:         map[int]mdEntry{},
-		blockCache:      map[int]blockEntry{},
-		blockFrameCache: map[int]frameBlockEntry{},
+		th:     th,
+		marks:  hk,
+		indent: defaultBlockIndent,
+		cache:  map[int]*glamour.TermRenderer{},
+		blocks: blockRenderCache{},
 	}
 }
 
@@ -353,7 +271,7 @@ func (r *renderer) contentWidth() int {
 // indentLines prefixes every line of a rendered block with `indent` spaces — the
 // uniform left margin that aligns the conversation history with the 1-col-padded
 // header/footer. It is called ONCE per block on the cache-miss path (renderBlock), so
-// the indented string is what blockCache stores and every steady-state frame joins the
+// the indented string is what blockRenderCache stores and every steady-state frame joins the
 // already-indented line straight from cache (no per-frame indent cost). The prefixed
 // spaces are REAL content cells, so the selection x-mapping stays identity (see the
 // `indent` field doc). indent 0 (a bare/width-0 renderer) returns s unchanged with no
@@ -382,29 +300,6 @@ func padLines(s string, n int) string {
 		b.WriteString(line)
 	}
 	return b.String()
-}
-
-// resetBlockCaches drops BOTH per-block memo layers (blockCache and blockMD).
-// It MUST be called whenever the conversation is rebuilt from scratch (/clear,
-// the /models restart-now handoff — see Model.resetSession): both caches key on
-// the block's conversation INDEX, and a fresh conversation reuses indices 0..n
-// for entirely different blocks whose rev/src could coincidentally match a stale
-// entry, which would alias an old block's render onto a new one.
-func (r *renderer) resetBlockCaches() {
-	r.blockCache = map[int]blockEntry{}
-	r.blockMD = map[int]mdEntry{}
-	r.blockFrameCache = map[int]frameBlockEntry{}
-	// Drop the incremental-join prefix too: a rebuilt conversation reusing those
-	// indices would otherwise serve stale cached block renders.
-	r.joinPrefixLines = r.joinPrefixLines[:0]
-	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
-	r.joinPrefixN = 0
-	r.joinPrefixKey = joinPrefixState{}
-	// Drop the viewport-output memo too (defense-in-depth): every CURRENT resetSession
-	// caller calls refreshView() afterwards (which invalidateVPView()s), but clearing it
-	// here makes that ordering non-load-bearing — a future caller that forgets refreshView
-	// can never serve a stale vpView against a reset/empty conversation.
-	r.vpViewValid = false
 }
 
 // setWidth records the current wrap width. Width changes are handled by the
@@ -533,17 +428,11 @@ func (r *renderer) markdown(src string) string {
 // rests on markdown() being pure in (src, width, theme) with a fixed theme; the
 // cache therefore can never return a stale render. Update-goroutine-only.
 func (r *renderer) markdownAt(idx int, src string) string {
-	if e, ok := r.blockMD[idx]; ok && e.src == src && e.width == r.width {
-		return e.out
+	if out, ok := r.blocks.markdownBlock(idx, src, r.width); ok {
+		return out
 	}
 	out := r.markdown(src)
-	if r.blockMD == nil {
-		// Zero-value safety: a bare &renderer{th: th} (see the renderBlock comment)
-		// never went through newRenderer; lazy-init so an assistant block rendered
-		// through one stays safe.
-		r.blockMD = map[int]mdEntry{}
-	}
-	r.blockMD[idx] = mdEntry{src: src, width: r.width, out: out}
+	r.blocks.storeMarkdown(idx, mdEntry{src: src, width: r.width, out: out})
 	return out
 }
 
@@ -598,8 +487,8 @@ const widthDivergentPlaceholder = "�"
 // restored by the FIRST of these steps whose result actually agrees (re-checked
 // after each step), so a cluster is never mangled more than necessary:
 //
-//  1. As-is. Already-agreeing clusters (bare ✅ U+2705, the ZWJ family 👨‍👩‍👧,
-//     a letter + combining accent like á — all width-stable) pass through
+//  1. As-is. Already-agreeing clusters (bare ✅ U+2705 and a letter + combining
+//     accent like á) pass through
 //     byte-for-byte.
 //  2. Strip U+FE0F (VS16). Reconciles the common divergent clusters (❤️, ⚠️, ℹ️
 //     all go from WcWidth 1 / GraphemeWidth 2 to a stable width 1) and the keycap
@@ -690,21 +579,6 @@ func stripVS16(s string) string {
 	}, s)
 }
 
-// walkBlocks renders every block using the renderer-owned reusable backing slice.
-// It returns that render-pass output explicitly with the lowest changed block index.
-func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
-	firstChanged := len(c.blocks)
-	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
-	for i := range c.blocks {
-		before := r.blockRenders
-		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &c.blocks[i], expand))
-		if r.blockRenders != before && i < firstChanged {
-			firstChanged = i
-		}
-	}
-	return r.renderedBlocksScratch, firstChanged
-}
-
 // renderConversationLines returns the conversation as single newline-free lines
 // ready for vp.SetContentLines. It reuses the cached prefix of settled blocks and
 // builds only the changed suffix.
@@ -715,25 +589,129 @@ func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
 // line-split of segments [prefixN, n). prefixN = min(firstChanged, n): blocks below
 // firstChanged did NOT re-render, so they are byte-identical to last frame.
 //
-// Correctness invalidation (a stale prefix is worse than the perf cost): the cached
-// prefix is reused ONLY when it covers EXACTLY [0, prefixN) — i.e. joinPrefixN ==
-// prefixN — at the SAME (width, expand). The joinPrefixN == prefixN check is THE
-// load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a block
-// count shrink lowers prefixN, and a width/expand change re-renders EVERY block so
-// firstChanged drops to 0 (→ prefixN 0) — all three move prefixN away from the cached
-// joinPrefixN and joinPrefixKey must both match: the former catches changed
-// blocks or length, while the latter guards width- and expand-dependent framing.
+// Correctness invalidation (a stale prefix is worse than the perf cost):
+// blockRenderCache.prefix reuses the cached leading range ONLY when it covers
+// EXACTLY [0, prefixN) at the SAME (width, expand). Its prefix coverage check is
+// the load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a
+// block-count shrink lowers prefixN, and a width/expand change re-renders EVERY
+// block so firstChanged drops to 0 (→ prefixN). Those paths make the requested
+// coverage or joinPrefixState differ; storeRendered independently clears a prefix
+// when a freshly rendered block was already covered by it.
 //
-// The returned slice is freshly allocated EACH call (prefix lines appended into a
-// new backing array, then suffix lines), so vp.SetContentLines — which retains and
-// may mutate the slice it is handed (slices.Insert on embedded newlines) — never
-// corrupts the cached joinPrefixLines. The slice safety rests on TWO facts: the
-// fresh backing array (SetContentLines mutates that array, not joinPrefixLines'),
-// and Go string immutability (the prefix STRINGS are shared by value but can never
-// be mutated in place). It does NOT rely on the prefix lines being newline-free —
-// they are split single lines, but SetContentLines is free to re-split them and the
-// fresh array still absorbs the result.
-func (r *renderer) renderConversationLines(c *conversation, expand bool) []string {
+// The returned slice is freshly allocated EACH call (cached prefix lines appended
+// into a new backing array, then suffix lines), so vp.SetContentLines — which
+// retains and may mutate the slice it is handed (slices.Insert on embedded
+// newlines) — never corrupts blockRenderCache's cached prefix. The slice safety
+// rests on TWO facts: the fresh backing array (SetContentLines mutates that array,
+// not the cache-owned prefix), and Go string immutability (the prefix STRINGS are
+// shared by value but can never be mutated in place). It does NOT rely on the
+// prefix lines being newline-free — they are split single lines, but
+// SetContentLines is free to re-split them and the fresh array still absorbs the
+// result.
+// renderPasses reads cheap typed metadata first. A detached payload snapshot is
+// materialized only for a whole-card cache miss; settled cards never clone or
+// prepare their payload merely to prove their cached output is still valid.
+func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]renderPass, int) {
+	n := c.Len()
+	firstChanged := n
+	if cap(r.renderPassScratch) < n {
+		r.renderPassScratch = make([]renderPass, n)
+	} else {
+		r.renderPassScratch = r.renderPassScratch[:n]
+	}
+	passes := r.renderPassScratch
+	for i := 0; i < n; i++ {
+		meta := c.MetadataAt(i)
+		pass := renderPass{
+			id:       uint64(meta.ID),
+			revision: rendererRevision(meta.Revision),
+			kind:     meta.Kind,
+		}
+		effectiveExpand := expand
+		switch meta.Kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+			effectiveExpand = false
+		}
+		key := blockRenderKey{revision: pass.revision, context: r.renderContext(effectiveExpand)}
+		if entry, ok := r.blocks.renderedBlock(i, key); ok {
+			pass.text, pass.rows = entry.out, entry.rows
+			passes[i] = pass
+			continue
+		}
+		r.snapshotLoads++
+		pass.text = r.renderSnapshot(i, c.SnapshotAt(i), effectiveExpand)
+		entry, _ := r.blocks.renderedBlock(i, key)
+		pass.rows = entry.rows
+		passes[i] = pass
+		if i < firstChanged {
+			firstChanged = i
+		}
+	}
+	return passes, firstChanged
+}
+
+// renderSnapshot dispatches each sealed scrollback payload deliberately. The
+// renderer owns this adaptation: scrollback itself remains a logical model with
+// no dependency on presentation, markdown, or client event types.
+func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bool) string {
+	switch p := s.Payload.(type) {
+	case scrollback.UserCardSnapshot:
+		return r.renderUserSnapshot(idx, s, p, expand)
+	case scrollback.AssistantCardSnapshot:
+		return r.renderAssistantSnapshot(idx, s, p, expand)
+	case scrollback.ToolCardSnapshot:
+		return r.renderToolSnapshot(idx, s, p)
+	case scrollback.NoticeCardSnapshot:
+		return r.renderNoticeSnapshot(idx, s, p, expand)
+	case scrollback.TurnStatCardSnapshot:
+		return r.renderTurnStatSnapshot(idx, s, p, expand)
+	case scrollback.ErrorCardSnapshot:
+		return r.renderErrorSnapshot(idx, s, p, expand)
+	case scrollback.HookCardSnapshot:
+		return r.renderHookSnapshot(idx, s, p, expand)
+	case scrollback.DeliveryCardSnapshot:
+		return r.renderDeliverySnapshot(idx, s, p, expand)
+	case scrollback.SubagentCardSnapshot:
+		return r.renderSubagentSnapshot(idx, s, p)
+	case scrollback.TeamCardSnapshot:
+		return r.renderTeamSnapshot(idx, s, p)
+	default:
+		return ""
+	}
+}
+
+func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.AssistantCardSnapshot, expand bool) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		if strings.TrimSpace(p.Text) == "" && strings.TrimSpace(p.Reasoning) == "" {
+			return blockRenderOutput{}
+		}
+		out := r.renderAssistantSnapshotFresh(idx, p, expand)
+		out = r.indentLines(out)
+		return blockRenderOutput{
+			text: out,
+			rows: r.assistantProvenanceRows(blockID, p, out, expand),
+		}
+	})
+}
+
+func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantCardSnapshot, expand bool) string {
+	var body string
+	if strings.TrimSpace(p.Text) != "" {
+		body = padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
+	}
+	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
+		if body != "" {
+			body = "\n" + body
+		}
+		body = padLines(reasoning, assistantBodyHang) + body
+	}
+	if !expand {
+		return body
+	}
+	return r.th.Style("assistantLabel").Render("● mecatl") + "\n\n" + body
+}
+
+func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }
 
@@ -743,14 +721,15 @@ func (r *renderer) renderConversationLines(c *conversation, expand bool) []strin
 // (appendSegmentLines) MUST mirror this exactly (the matching blank-"" count before each
 // block i>0) or the cache-equivalence oracle (render_cache_test.go) trips.
 //
-// blockSepAfter / blockBlankLinesAfter encode per-transition spacing rules; both
-// paths (string and lines) must use them so the cache-equivalence oracle holds.
+// The production frame path uses blockBlankLinesAfterPasses; the string-path
+// oracle mirrors it, including the settled-tool → assistant exception below.
 //
 // Spacing policy (compact throughout):
-//   - blockTool → any                : 0 blank lines — tool boxes cluster tight
-//   - blockAssistant → blockTurnStat : 0 blank lines — empty turns need no gap before stats
-//   - blockTurnStat → any            : 1 blank line  — compact stat annotation
-//   - everything else                : 1 blank line  — user↔assistant, assistant→tool, etc.
+//   - settled tool → assistant         : 1 blank line  — separate prose from the call run
+//   - other tool → any                 : 0 blank lines — tool boxes cluster tight
+//   - blockAssistant → blockTurnStat   : 0 blank lines — empty turns need no gap before stats
+//   - blockTurnStat → any              : 1 blank line  — compact stat annotation
+//   - everything else                  : 1 blank line  — user↔assistant, assistant→tool, etc.
 const (
 	interBlockSepCompact        = "\n"
 	interBlockBlankLinesCompact = 1 // == strings.Count(trailing-"\n" + interBlockSepCompact, "\n") - 1
@@ -759,292 +738,31 @@ const (
 	interBlockBlankLinesNone = 0 // == strings.Count(trailing-"\n" + interBlockSepNone, "\n") - 1
 )
 
-// blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
-// before block i+1).
-func blockSepAfter(blocks []block, i int) string {
-	switch blocks[i].kind {
-	case blockTool:
-		return interBlockSepNone
-	case blockTurnStat:
-		return interBlockSepCompact
-	case blockAssistant:
-		if i+1 < len(blocks) && blocks[i+1].kind == blockTurnStat {
-			return interBlockSepNone
-		}
-	}
-	return interBlockSepCompact
-}
-
-// blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
-// number of blank "" lines to insert before block i (i.e. after block i-1).
-func blockBlankLinesAfter(blocks []block, i int) int {
-	switch blocks[i-1].kind {
-	case blockTool:
+func blockBlankLinesBetween(previous, current scrollback.Kind) int {
+	switch previous {
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 		return interBlockBlankLinesNone
-	case blockTurnStat:
-		return interBlockBlankLinesCompact
-	case blockAssistant:
-		if i < len(blocks) && blocks[i].kind == blockTurnStat {
+	case scrollback.KindAssistant:
+		if current == scrollback.KindTurnStat {
 			return interBlockBlankLinesNone
 		}
 	}
 	return interBlockBlankLinesCompact
 }
 
-// renderBlock is the CACHED per-block entry point: it returns the memoized
-// render when the block's revision, the wrap width, and the expand toggle all
-// match the cached entry, and otherwise renders fresh, stores the result, and
-// bumps blockRenders (the cache-miss test seam). idx is the block's stable conversation index (blocks are append-only within a
-// conversation; resetBlockCaches handles index reuse across rebuilds).
-// Correctness rests on the block.rev discipline: every post-append mutation of a
-// render-visible field bumps rev through a conversation gateway, so a cache hit
-// can never be stale. Update-goroutine-only.
-func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
-	if e, ok := r.blockCache[idx]; ok && e.rev == b.rev && e.width == r.width && e.expand == expand {
-		return e.out
+// blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
+// before block i+1).
+func blockSepAfter(kinds []scrollback.Kind, i int) string {
+	if blockBlankLinesBetween(kinds[i], kinds[i+1]) == 0 {
+		return interBlockSepNone
 	}
-	var (
-		out  string
-		rows []renderedRow
-	)
-	if b.kind == blockTool {
-		prepared := r.prepareToolCard(b, expand)
-		out = prepared.render()
-		// Derive structural selection provenance while the semantic card exists.
-		// The cache retains rows, never the prepared semantic sections.
-		rows = prepared.provenanceRows(b.id, r.indent, r.width)
-		for i := range rows {
-			rows[i].kind = b.kind
-			rows[i].indent = r.indent
-		}
-	} else {
-		out = r.renderBlockFresh(idx, b, expand)
-	}
-	// contentWidth preserves a positive width for a tiny renderer. A tool card uses
-	// that cell for its frameless fallback, so it cannot also carry the usual indent.
-	if b.kind != blockTool || r.width > r.indent {
-		out = r.indentLines(out)
-	}
-	if r.blockCache == nil {
-		// Zero-value safety: a bare &renderer{th: th} never calls newRenderer. Two
-		// production sites construct one — the width-0 team focus renderer
-		// (team.go, renderTeamFocus) and the fleet focus renderer (agents_overlay.go,
-		// renderSubagentFocus) — plus direct test construction. Those sites only call
-		// the trace/chip helpers today, but the safety must be uniform: markdown and
-		// markdownAt carry matching lazy-inits for their maps (r.cache / r.blockMD),
-		// so ANY render path on a bare renderer is safe, not just non-assistant
-		// blocks through here.
-		r.blockCache = map[int]blockEntry{}
-	}
-	r.blockCache[idx] = blockEntry{rev: b.rev, width: r.width, expand: expand, out: out, rows: rows}
-	r.blockRenders++
-	// CORRECTNESS CHOKEPOINT (shared by BOTH render paths): a fresh render of a block
-	// inside the cached incremental-join prefix invalidates that prefix. The prefix
-	// (joinPrefixLines, maintained by renderConversationLines) covers [0, joinPrefixN),
-	// but blockCache/blockRenders are mutated by renderConversation (the string path
-	// taken under selection/expand) TOO — so without this, a string-path frame could
-	// re-render a non-tail block (resolveTool/subagentBlock/teamBlock/an
-	// ex-tail assistant), update blockCache, and leave joinPrefixLines stale; the next
-	// lines-path frame would then HIT blockCache for that block (no blockRenders bump,
-	// firstChanged stays high, joinPrefixN matches) and serve the STALE prefix.
-	// Couple the invalidation to this single shared re-render point — not the
-	// lines-path walk — so either path drops the prefix the instant a covered block
-	// re-renders. Invalidate-to-0 (full rebuild next lines frame) is the simplest
-	// correct choice; the cost is paid only on the rare non-tail-mutation/path-switch
-	// frame, never on the streaming hot path (where the tail block is at index n-1 ≥
-	// joinPrefixN, so this never fires). INVARIANT: after any frame on either path,
-	// joinPrefixLines covers exactly [0, joinPrefixN) and no block in [0, joinPrefixN)
-	// has re-rendered since the prefix was built.
-	if idx < r.joinPrefixN {
-		r.joinPrefixLines = r.joinPrefixLines[:0]
-		r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
-		r.joinPrefixN = 0
-		r.joinPrefixKey = joinPrefixState{}
-	}
-	return out
+	return interBlockSepCompact
 }
 
-// renderBlockFresh renders one block per its kind. Assistant text goes through
-// glamour; everything else is plain themed lipgloss. idx is the block's stable
-// conversation index, used to memoize the (expensive) assistant glamour render
-// across the per-delta full-scrollback re-render — see markdownAt (the inner
-// memo layer below renderBlock's whole-block cache).
-func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
-	switch b.kind {
-	case blockUser:
-		// The user block is the gold left rail + the "▌ you" label over the plain
-		// viewport surface — NO background tint (the faint panel tint belongs only to the
-		// input box, never the conversation history). The body wraps through the normal
-		// wrapStyled path, which owns the width-guard (no per-call Width needed now that
-		// there is no background to fill out to the column).
-		label := r.th.Style("userLabel").Render("▌ you")
-		body := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("userBlock"))
-		out := label + "\n" + body
-		// Render one muted placeholder line per attached media part, so a multimodal
-		// prompt is never silently shown as text-only. Media is attached via the
-		// @-mention menu (type "@" then a path; an image/audio file becomes a part),
-		// gated on the server's advertised image/audio caps — see mention.go and
-		// client.ExpandMentions.
-		for _, m := range b.media {
-			out += "\n" + r.wrapPrefixed("📎 ", sanitizeTerminal(m), r.th.Style("muted"))
-		}
-		return out
-	case blockAssistant:
-		// Assistant text is rendered through glamour, which neutralises escape
-		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
-		// reasoning summary (if any) renders dim and collapsed ABOVE the answer.
-		// The label "● mecatl" stays at the base indent; the BODY (reasoning summary +
-		// markdown answer) hangs by assistantBodyHang so it sits under "mecatl" — matching
-		// the user block's body-under-"you" alignment. The markdown was already wrapped at
-		// contentWidth()-hang (see markdown), so hang + base never overflows r.width.
-		// ONE blank line separates the label from the body (a little vertical breathing
-		// room under "● mecatl") — within-block spacing, distinct from the inter-turn
-		// 2-line join gap. The user block is deliberately NOT given this gap: its gold rail
-		// visually connects label→body, and a mid-gap would break the rail.
-		label := r.th.Style("assistantLabel").Render("● mecatl")
-		body := padLines(r.markdownAt(idx, b.raw), assistantBodyHang)
-		if reasoning := r.renderReasoning(b, expand); reasoning != "" {
-			body = padLines(reasoning, assistantBodyHang) + "\n" + body
-		}
-		// label + blank line + body. The blank line is unindented (it is empty).
-		return label + "\n\n" + body
-	case blockTool:
-		return r.renderTool(b, expand)
-	case blockNotice:
-		if b.recover {
-			// A recover-notice is an actionable WARNING, not a muted compaction
-			// bullet: render it with the warning style + ⚠ so it stands out.
-			return r.wrapPrefixed("⚠ ", sanitizeTerminal(b.raw), r.th.Style("warning"))
-		}
-		return r.wrapPrefixed("• ", sanitizeTerminal(b.raw), r.th.Style("muted"))
-	case blockHook:
-		return r.renderHook(b)
-	case blockTurnStat:
-		return r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
-	case blockError:
-		if b.permanent {
-			return r.renderPermanentError(b, expand)
-		}
-		return r.wrapPrefixed("✗ ", sanitizeTerminal(b.raw), r.th.Style("errorText"))
-	case blockDelivery:
-		return r.renderDelivery(b)
-	default:
-		return r.wrapStyled(sanitizeTerminal(b.raw), lipgloss.NewStyle())
-	}
-}
-
-// renderPermanentError renders a PERMANENT error block: a one-line human summary
-// derived from the provider error, with the full safe terminal error available on
-// expand.
-func (r *renderer) renderPermanentError(b *block, expand bool) string {
-	summary := permanentErrorSummary(b.raw)
-	errStyle := r.th.Style("errorText")
-	line := r.wrapPrefixed("✗ ", summary, errStyle)
-	if !expand {
-		return line + "\n" + r.th.Style("muted").Render("  "+r.marks.expandTools+" shows details")
-	}
-	// Expanded: the summary line + the raw error under a dim header.
-	raw := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
-	return line + "\n" + r.th.Style("muted").Render("raw payload:") + "\n" + raw
-}
-
-// permanentErrorSummary derives a one-line human-readable summary from a provider
-// error string. The current adapters project structured HTTP rejections into safe
-// type/code, message, target, and request-ID text before the result reaches this layer.
-// collapseErrorSummary retains compatibility with older servers or custom providers that
-// still forward an SDK transport-shaped error. The summary is TERMINAL-SANITIZED
-// (control/ANSI sequences scrubbed) so a hostile provider/gateway can't inject escapes
-// into the scrollback — the blockError path already sanitizes via sanitizeTerminal, and
-// the permanent path must too. Falls back to a generic message when the error is
-// unparseable or blank.
-//
-// The extraction lives in the TUI as compatibility handling, not as an adapter-error
-// contract. It keeps legacy transport-shaped text from becoming a truncated JSON wall
-// without changing the safe error supplied by current adapters.
-func permanentErrorSummary(raw string) string {
-	// Collapse the SDK transport shape (POST "…" + trailing JSON) into a clean
-	// token on the FULL raw string BEFORE first-line truncation: a single-line
-	// SDK error like 'POST "<url>": 400 Bad Request {"error":{…json…}}' would
-	// otherwise be truncated mid-JSON by firstLineCap, leaving a fragment
-	// extractJSONMessage cannot parse. Collapsing first yields a clean first
-	// line that firstLineCap then caps sanely.
-	first := firstLineCap(collapseErrorSummary(raw), 120)
-	if first == "" {
-		return "permanent provider error — retrying won't help; the request is rejected. Start a new session."
-	}
-	return sanitizeTerminal(first) + " — retrying won't help; the request is rejected. Start a new session."
-}
-
-// collapseErrorSummary rewrites a provider/SDK error first-line into a cleaner
-// human-readable token. It strips a leading 'POST "<url>"' SDK-transport prefix and
-// a trailing JSON object ('{"error":{…}}'), so a legacy SDK transport error like
-// 'POST "https://api.openai.com/v1/responses": 400 Bad Request {"error":{"message":"…"}}'
-// collapses to '400 Bad Request' plus any extracted message. A plain 'code: message'
-// (anthropic / the translated event error) is returned unchanged.
-func collapseErrorSummary(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	// Strip a leading SDK transport prefix: 'POST "<url>": ' (or any
-	// '<METHOD> "<url>": ' shape the openai-go SDK emits). Keep everything after it.
-	if i := strings.Index(s, `": `); i >= 0 && strings.HasPrefix(s, `POST "`) {
-		s = strings.TrimSpace(s[i+len(`": `):])
-	}
-	// A trailing JSON object ('{"error":{…}}' or bare '{…}') is opaque in a one-line
-	// summary — replace it with its embedded "message" field if present, else drop it.
-	if i := strings.IndexByte(s, '{'); i >= 0 {
-		head := strings.TrimRight(s[:i], " :")
-		tail := s[i:]
-		if msg := extractJSONMessage(tail); msg != "" {
-			if head != "" {
-				return head + ": " + msg
-			}
-			return msg
-		}
-		return head
-	}
-	return s
-}
-
-// extractJSONMessage best-effort extracts the "message" string field from a leading
-// JSON object (an OpenAI error envelope like {"error":{"code":"…","message":"…"}}).
-// It returns "" if the JSON cannot be parsed or carries no string "message" field.
-func extractJSONMessage(s string) string {
-	var env map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(s), &env); err != nil {
-		return ""
-	}
-	// An OpenAI envelope nests {"error": {...}}; unwrap one level.
-	if raw, ok := env["error"]; ok {
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return ""
-		}
-	}
-	if raw, ok := env["message"]; ok {
-		var msg string
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			return strings.TrimSpace(msg)
-		}
-	}
-	return ""
-}
-
-// firstLineCap returns the first line of s (up to a newline or maxRunes runes,
-// whichever is shorter). Returns "" for an empty/blank string.
-func firstLineCap(s string, maxRunes int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if first, _, ok := strings.Cut(s, "\n"); ok {
-		s = first
-	}
-	// Rune-safe truncation: keep at most maxRunes runes.
-	if rs := []rune(s); len(rs) > maxRunes {
-		s = string(rs[:maxRunes])
-	}
-	return s
+// blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
+// number of blank "" lines to insert before block i (i.e. after block i-1).
+func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
+	return blockBlankLinesBetween(kinds[i-1], kinds[i])
 }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
@@ -1058,23 +776,21 @@ const reasoningCaveat = "— summary of the model's reasoning; may not reflect i
 // reasoning. Collapsed (the default) it is a single dim header: while reasoning
 // is still streaming and no answer text has begun it reads "reasoning…" (a live
 // "the model is working" affordance); otherwise it is the static
-// "reasoning summary · N lines · ctrl+t expand". When the global details toggle
-// (expand) is on, a dim caveat plus the full summary text are shown with no line
-// cap (a long chain-of-thought no longer truncates once the user has explicitly
-// asked to see it — matching how resultBody handles tool results). Streamed
-// reasoning is never a trust anchor: hidden unless explicitly asked for, and
+// "reasoning summary · N lines · f9 expand". When the conversation detail toggle
+// is on, a dim caveat plus the full summary text are shown with no line cap.
+// Streamed reasoning is never a trust anchor: hidden unless explicitly asked for, and
 // clearly labelled as a lossy summary.
-func (r *renderer) renderReasoning(b *block, expand bool) string {
-	if b.reasoning == "" {
+func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, expand bool) string {
+	if strings.TrimSpace(p.Reasoning) == "" {
 		return ""
 	}
 	style := r.th.Style("reasoning")
-	text := sanitizeTerminal(strings.TrimRight(b.reasoning, "\n"))
+	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
-	expandMark := r.marks.expandTools
+	expandMark := r.marks.expandConversation
 	if !expand {
-		if b.reasoningStreaming {
-			return style.Render("reasoning…")
+		if p.ReasoningStreaming {
+			return style.Render("reasoning… · " + expandMark + " expand")
 		}
 		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
 	}
@@ -1089,7 +805,7 @@ func (r *renderer) renderReasoning(b *block, expand bool) string {
 // it through st. A content width at or below the frame (e.g. the width-0 team focus
 // renderer, team.go) means "unknown/tiny: do not wrap" and the body renders unwrapped.
 // Wrapping against contentWidth (not r.width) keeps the body within budget once
-// renderBlock prefixes each line with `indent` spaces.
+// Whole-card rendering prefixes each line with `indent` spaces.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	frame := st.GetHorizontalFrameSize()
 	cw := r.contentWidth()
@@ -1104,32 +820,6 @@ func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	return st.Render(ansi.Wrap(normalizeEmojiWidth(s), cw-frame, ""))
 }
 
-// wrapPrefixed word-wraps body to the live width while reserving columns for a
-// leading marker (e.g. "• "/"✗ ") that is CONTENT, not style frame: the marker
-// sits on the first line and continuation lines hang-indent under the text so a
-// wrapped multi-line notice/error reads as one bulleted item. width at or below
-// the marker width means no wrap. Renders through st.
-func (r *renderer) wrapPrefixed(prefix, body string, st lipgloss.Style) string {
-	pw := lipgloss.Width(prefix)
-	cw := r.contentWidth()
-	if cw <= pw+1 {
-		return st.Render(prefix + body)
-	}
-	// Normalise the body's emoji presentation before ansi.Wrap (see wrapStyled);
-	// the marker prefix is a fixed literal, so its width is taken as-is. Wrap against
-	// the content width so the bullet+body fits after the renderBlock indent.
-	wrapped := ansi.Wrap(normalizeEmojiWidth(body), cw-pw, "")
-	lines := strings.Split(wrapped, "\n")
-	for i, ln := range lines {
-		if i == 0 {
-			lines[i] = prefix + ln
-		} else {
-			lines[i] = strings.Repeat(" ", pw) + ln
-		}
-	}
-	return st.Render(strings.Join(lines, "\n"))
-}
-
 // plural formats a count with a noun, pluralising with a trailing "s" for any
 // count other than 1 (e.g. 0 lines, 1 line, 3 lines).
 func plural(n int, noun string) string {
@@ -1137,151 +827,6 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
-}
-
-// renderHook renders a structured hook notice as a distinct one-liner: a hook
-// glyph + the lifecycle phase (and the related tool, for per-tool phases) + the
-// hook's message, with the OUTCOME driving colour and a leading severity glyph.
-// A blocked hook (which can abort a run) renders in the error style with a "✗"
-// so it is visually distinct from a benign informational/modified notice (a dim
-// "•" hook glyph) — never indistinguishable from a compaction notice. All text
-// is server-derived, so it is sanitized before reaching lipgloss.
-func (r *renderer) renderHook(b *block) string {
-	// Lead label: a phase tag, falling back to a generic "hook" when no phase.
-	// Every server-derived field (phase, tool, message) is sanitized before it
-	// reaches lipgloss — see the file's CWE-150 invariant.
-	label := "hook"
-	if b.hookPhase != "" {
-		label = "hook " + sanitizeTerminal(b.hookPhase)
-	}
-	if b.hookTool != "" {
-		label += " · " + sanitizeTerminal(b.hookTool)
-	}
-
-	switch b.hookDecision {
-	case string(client.HookBlocked):
-		// Blocked: error style + "✗", matching the error-block severity cue so an
-		// aborting hook can't be mistaken for a benign notice. The decision VERB is
-		// owned client-side ("blocked"), and the server Text rides as the trailing
-		// reason only — a redundant leading phase/verb echo is stripped so the phase
-		// appears exactly once (on the label).
-		return r.wrapPrefixed("✗ ", label+": blocked"+hookReason(b.raw, b.hookPhase), r.th.Style("errorText"))
-	case string(client.HookModified):
-		// Modified: info-coloured "✎" — an action was rewritten, notable but benign.
-		return r.wrapPrefixed("✎ ", label+": modified"+hookReason(b.raw, b.hookPhase), r.th.Style("hookModified"))
-	case string(client.HookAdvisory):
-		// Advisory: warning-coloured "⚠" — a guardrail flagged content but did not
-		// alter the call/result (client-visible, model-invisible). Reads as a
-		// warning notice, distinct from the benign info/modified and the error block.
-		return r.wrapPrefixed("⚠ ", label+": advisory"+hookReason(b.raw, b.hookPhase), r.th.Style("hookAdvisory"))
-	default:
-		// Info (the baseline): dim "•" hook notice — the server Text is the body.
-		line := label
-		if b.raw != "" {
-			line += ": " + sanitizeTerminal(b.raw)
-		}
-		return r.wrapPrefixed("• ", line, r.th.Style("muted"))
-	}
-}
-
-// hookReason normalises a hook's server Text into a trailing " — <reason>" tail
-// for the client-owned verb (blocked/modified), stripping a redundant leading
-// phase/verb echo so the phase is never doubled. It drops boilerplate that adds
-// nothing beyond the label+verb (e.g. "blocked by PreToolUse hook",
-// "PreToolUse hook rewrote …") and otherwise appends the sanitized text as the
-// reason. An empty/fully-redundant Text yields "" (label + verb stand alone).
-func hookReason(raw, phase string) string {
-	reason := strings.TrimSpace(stripPhaseEcho(raw, phase))
-	if reason == "" {
-		return ""
-	}
-	return " — " + sanitizeTerminal(reason)
-}
-
-// stripPhaseEcho removes a leading phase/verb echo from a hook message so the
-// phase isn't repeated once on the label and again in the body. It folds away
-// the loop's own boilerplate forms:
-//
-//	"blocked by <Phase> hook"            → ""        (pure echo)
-//	"<Phase> hook rewrote tool arguments…" → "rewrote tool arguments…"
-//	"<Phase> hook returned a malformed…"   → "returned a malformed…"
-//
-// A leading "<Phase> hook " or "<Phase> " prefix is trimmed; anything else is
-// returned unchanged. Phase-free messages pass through verbatim.
-func stripPhaseEcho(raw, phase string) string {
-	s := strings.TrimSpace(raw)
-	if phase == "" {
-		return s
-	}
-	// The "blocked by <Phase> hook" form is a pure echo of label+verb → drop it.
-	if strings.EqualFold(s, "blocked by "+phase+" hook") {
-		return ""
-	}
-	// Trim a leading "<Phase> hook " or "<Phase> " prefix (case-insensitive).
-	for _, prefix := range []string{phase + " hook ", phase + " "} {
-		if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
-			return strings.TrimSpace(s[len(prefix):])
-		}
-	}
-	return s
-}
-
-// renderDelivery renders a fire-result delivery note block: a scheduled-task
-// affordance (⏰) + the schedule name + the fire id + the outcome body. It is
-// visually distinct from a user prompt (gold rail + "▌ you"), the model's text
-// (● mecatl), and a muted notice (•). The schedule name + fire id sit on a
-// leading label line (dim colour); the outcome body renders below it with a
-// muted prefix, keeping the delivery card compact but recognisable.
-//
-// The recorded note is fenced-untrusted (renderFireDelivery) with a provenance
-// header — both are MACHINE markers for the model, not content for the
-// operator. The card already carries the provenance in its label, so the
-// renderer strips the fence markers + the redundant header line and shows only
-// the fire's outcome body. The operator-facing transcript and the model's
-// history legitimately differ here: the model needs the fence (trust boundary),
-// the operator needs the readable result.
-func (r *renderer) renderDelivery(b *block) string {
-	// Leading label: ⏰ scheduled task <name> — delivery · fire <id>
-	label := "⏰ scheduled task " + sanitizeTerminal(b.toolName) + " — delivery"
-	if b.deliveryFireID != "" {
-		label += " · fire " + sanitizeTerminal(b.deliveryFireID)
-	}
-	header := r.wrapPrefixed("", label, r.th.Style("hookModified")) // model-adapted emerald, same as modified hook
-	// Body: strip the fence markers + the redundant provenance header, keeping
-	// only the fire's outcome text; the "│" prefix keeps it subordinate to the
-	// header.
-	body := r.wrapPrefixed("│ ", sanitizeTerminal(deliveryBodyForDisplay(b.raw)), r.th.Style("muted"))
-	return header + "\n" + body
-}
-
-// deliveryBodyForDisplay strips the untrusted-fence markers and the
-// "[scheduled task … completed with stop reason: …]" provenance header from a
-// recorded delivery note, returning only the fire's outcome body for display.
-// The fence + header are machine markers (the trust boundary the model reads);
-// the delivery card already shows the provenance in its label, so echoing them
-// in the body is noise. A note that does not match the fenced shape is returned
-// VERBATIM (fail-soft — never drop content the transform can't prove is a
-// delivery note).
-func deliveryBodyForDisplay(raw string) string {
-	const fence = "<<<UNTRUSTED"
-	// Require the fence opener; a non-fenced note is not a delivery note we
-	// recognise, so return it untouched.
-	s, ok := strings.CutPrefix(raw, fence)
-	if !ok {
-		return raw
-	}
-	s = strings.TrimPrefix(s, "\n")
-	// Strip the trailing fence closer (the last fence marker on its own line).
-	if idx := strings.LastIndex(s, "\n"+fence); idx >= 0 {
-		s = s[:idx]
-	}
-	// Strip the redundant provenance header line (the first line, which the
-	// label already carries). Only strip when it IS the provenance header —
-	// otherwise this is a fenced note with no header and the body is line 1.
-	if nl := strings.IndexByte(s, '\n'); nl >= 0 && strings.HasPrefix(s, "[scheduled task ") {
-		s = s[nl+1:]
-	}
-	return s
 }
 
 // toolCardLayout returns the styled card, its outer width, and its usable body
@@ -1325,7 +870,7 @@ func renderToolHeader(glyph, glyphText, label string, nameStyle lipgloss.Style, 
 // renderToolCardText wraps plain card content before applying one region's
 // existing style, so ANSI styling cannot affect width accounting.
 func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
-	text = strings.TrimRightFunc(sanitizeTerminal(text), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(text), unicode.IsSpace)
 	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
 	for i, row := range rows {
 		rows[i] = style.Render(row)
@@ -1336,15 +881,24 @@ func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string
 // renderDelegationToolCardText preserves delegation-source whitespace while
 // constraining every raw row before styles can add their own layout padding.
 func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
-	rows := strings.Split(wrapToolCardText(sanitizeTerminal(text), bodyWidth), "\n")
+	rows := strings.Split(wrapToolCardText(terminaltext.Sanitize(text), bodyWidth), "\n")
 	for i, row := range rows {
 		rows[i] = style.Render(row)
 	}
 	return strings.Join(rows, "\n")
 }
 
+// toolCardTabWidth is the fixed displayed-code indentation width. Tool cards expand
+// literal tabs before wrapping so ansi.Hardwrap and Lip Gloss measure identical text.
+const toolCardTabWidth = 4
+
+func normalizeToolCardTabs(text string) string {
+	return strings.ReplaceAll(text, "\t", strings.Repeat(" ", toolCardTabWidth))
+}
+
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
+	text = normalizeToolCardTabs(text)
 	if text == "" || bodyWidth <= 0 {
 		return text
 	}
@@ -1362,7 +916,7 @@ func renderCardChromeSegments(style lipgloss.Style, segments []string, width int
 				return ' '
 			}
 			return r
-		}, sanitizeTerminal(segment))
+		}, terminaltext.Sanitize(segment))
 		if segment != "" {
 			clean = append(clean, segment)
 		}
@@ -1395,7 +949,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 				return ' '
 			}
 			return r
-		}, sanitizeTerminal(s))
+		}, terminaltext.Sanitize(s))
 	}
 	prefix, raw = oneLine(prefix), oneLine(raw)
 	if width <= 0 {
@@ -1413,7 +967,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 // prefix's alignment without letting either the prefix or style padding consume a
 // second layout pass.
 func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
-	text = strings.TrimRightFunc(sanitizeTerminal(text), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(normalizeToolCardTabs(text)), unicode.IsSpace)
 	if bodyWidth <= 0 {
 		return []string{prefix + text}
 	}
@@ -1447,6 +1001,7 @@ func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth i
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
 func wrapToolCardRegion(region string, bodyWidth int) string {
+	region = normalizeToolCardTabs(region)
 	if region == "" || bodyWidth <= 0 {
 		return region
 	}
@@ -1458,40 +1013,6 @@ func wrapToolCardRegion(region string, bodyWidth int) string {
 // diff, or — for an ordinary tool — the compact key:value summary when collapsed
 // and the full pretty JSON when expanded. Returns "" when there is nothing to
 // show. See renderTool for the per-branch rationale.
-func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
-	var args string
-	switch {
-	case b.team:
-		// Delegation rows must be bounded while still raw. renderTeam applies styles
-		// only after preparing its body-width rows, so no ANSI padding can induce a
-		// second wrap below the card frame.
-		return r.renderTeam(b, expand, bodyWidth)
-	case b.subagent:
-		// See the Team path above; Subagent has the same styled metadata/trace body.
-		return r.renderSubagent(b, expand, bodyWidth)
-	default:
-		if diff, ok := r.renderToolDiffAtWidth(b.toolName, b.toolArgs, expand, bodyWidth); ok {
-			// Edit/Write render their change as a diff in place of the raw JSON args.
-			return diff
-		}
-		if expand {
-			// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
-			// is collapsed-only, so ctrl+t reveals everything). Wrap raw JSON before its
-			// style so the card row budget is ANSI-independent.
-			if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-				return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
-			}
-		} else if summary, ok := r.summarizeArgs(b.toolArgs); ok {
-			// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
-			args = summary
-		} else if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-			// Collapsed but the args aren't a JSON object (bare array/scalar/odd shape):
-			// fall back to the existing pretty-JSON behaviour.
-			args = r.th.Style("toolArgs").Render(jsonArgs)
-		}
-	}
-	return wrapToolCardRegion(args, bodyWidth)
-}
 
 // renderToolResult renders the RESULT region of a resolved tool card. Collapsed,
 // a LARGE JSON result is summarized to prominent fields + a size line (issue #24,
@@ -1506,27 +1027,6 @@ func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
 // represented in the model-facing resultBody, so they are not double-rendered. A nil
 // resultBlocks (the common text-only case) leaves the existing render path
 // byte-unchanged.
-func (r *renderer) renderToolResult(b *block, expand bool, bodyWidth int) string {
-	lines, hiddenSummaryFields := r.renderToolResultLines(b, expand)
-	for _, blk := range b.resultBlocks {
-		if line, ok := renderResultBlockLine(blk); ok {
-			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
-		}
-	}
-	if !expand {
-		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
-	} else {
-		lines = wrapResultDisplayLines(lines, bodyWidth)
-	}
-	var out strings.Builder
-	for i, line := range lines {
-		if i > 0 {
-			out.WriteByte('\n')
-		}
-		out.WriteString(r.renderToolResultLine(line))
-	}
-	return out.String()
-}
 
 type resultLineStyle uint8
 
@@ -1546,20 +1046,6 @@ type toolResultLine struct {
 // renderToolResultLines returns unwrapped, terminal-safe result rows. The enclosing
 // renderToolResult combines these with typed artifact rows before applying the shared
 // collapsed display-row budget.
-func (r *renderer) renderToolResultLines(b *block, expand bool) ([]toolResultLine, int) {
-	if summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, expand); ok {
-		return resultLines(summary, resultLineSummary), hiddenFields
-	}
-	body := sanitizeTerminal(strings.TrimRight(b.resultBody, "\n"))
-	if body == "" {
-		return nil, 0
-	}
-	style := resultLineBody
-	if b.resultError {
-		style = resultLineError
-	}
-	return resultLines(body, style), 0
-}
 
 func resultLines(text string, style resultLineStyle) []toolResultLine {
 	lines := strings.Split(text, "\n")
@@ -1596,8 +1082,8 @@ func (r *renderer) renderToolResultLine(line toolResultLine) string {
 func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 	switch blk.Kind {
 	case client.ContentBlockResourceLink:
-		name := sanitizeTerminal(blk.Name)
-		uri := sanitizeTerminal(blk.URL)
+		name := terminaltext.Sanitize(blk.Name)
+		uri := terminaltext.Sanitize(blk.URL)
 		if name == "" {
 			if uri == "" {
 				return "", false
@@ -1609,7 +1095,7 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 		}
 		return "↗ " + name + " · " + uri, true
 	case client.ContentBlockImage:
-		mime := sanitizeTerminal(blk.MimeType)
+		mime := terminaltext.Sanitize(blk.MimeType)
 		if mime == "" {
 			return "[image]", true
 		}
@@ -1621,7 +1107,7 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 	}
 }
 
-// renderSubagent renders a Subagent card's BOUNDED subagent region (ADR 0079 — the
+// renderSubagent renders a Subagent card's BOUNDED subagent region (the
 // previews are bounded, scrubbed, client-only; they never enter the parent
 // conversation). It has three states, per the agreed UX:
 //
@@ -1638,51 +1124,22 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 // The goal title always leads (a muted line) so a card is self-contained and
 // legible even with several concurrent subagents interleaved. All subagent-derived
 // strings (goal, tool names, previews) are terminal-sanitized.
-func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
-	muted := r.th.Style("muted")
-	var out strings.Builder
-	if b.subGoal != "" {
-		out.WriteString(renderDelegationToolCardText(muted, "↳ "+sanitizeTerminal(b.subGoal), bodyWidth))
-		out.WriteString("\n")
-	}
-	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel); routed != "" {
-		out.WriteString(renderDelegationToolCardText(muted, routed, bodyWidth))
-		out.WriteString("\n")
-	}
-
-	if b.subDone {
-		out.WriteString(renderDelegationToolCardText(muted, subagentResolvedLine(b), bodyWidth))
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	if expand {
-		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
-		if trace := r.renderTraceAtWidth(b.subTrace, bodyWidth); trace != "" {
-			out.WriteString("\n")
-			out.WriteString(trace)
-		}
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	out.WriteString(renderDelegationToolCardText(muted, r.subagentLiveLine(b), bodyWidth))
-	return strings.TrimRight(out.String(), "\n")
-}
 
 // subagentModelLabel renders the model surface for a delegation as a muted one-line
 // cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
-// when the router classified the delegation (ADR 0031); otherwise it shows the
-// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112 / ADR 0035)
+// when the router classified the delegation; otherwise it shows the
+// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112)
 // — inherited default, agent-def pin, or per-call override — annotated with WHY the
 // router did not classify as " · not routed: <reason>" when the server supplied a
-// reason (issue #397 / ADR 0083). It returns "" when no model is known and the router
+// reason (issue #397). It returns "" when no model is known and the router
 // did not fire. The category/model/reason are server-derived bare metadata (sanitized)
 // — never child content — so gauntlet #7 holds. When routed, model == routedModel and
 // the reason is empty, so the routed cue is shown (not duplicated as a model: line).
 func subagentModelLabel(category, routedModel, routingReason, model string) string {
-	category = sanitizeTerminal(category)
-	routedModel = sanitizeTerminal(routedModel)
-	routingReason = sanitizeTerminal(routingReason)
-	model = sanitizeTerminal(model)
+	category = terminaltext.Sanitize(category)
+	routedModel = terminaltext.Sanitize(routedModel)
+	routingReason = terminaltext.Sanitize(routingReason)
+	model = terminaltext.Sanitize(model)
 	// Router fired: show the routed cue (category + the routed model).
 	if category != "" || routedModel != "" {
 		if routedModel == "" {
@@ -1693,50 +1150,108 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 		}
 		return "routed: " + category + " → " + routedModel
 	}
-	// Plain case: show the concrete model the child ran on, plus the miss reason.
 	if model != "" {
 		if routingReason != "" {
 			return "model: " + model + " · not routed: " + routingReason
 		}
 		return "model: " + model
 	}
-	// No model known (e.g. an aborted branch that ran on nothing) but the router was
-	// skipped: surface the reason so a router-off/pinned delegation is not silent.
 	if routingReason != "" {
 		return "not routed: " + routingReason
 	}
 	return ""
 }
 
-// subagentLiveLine is the calm, monotonic collapsed status line: the child's live
-// current-tool name (when one has run — "…" while it is still working), the token
-// totals, a running tool count, and the expand-tools trace affordance. No elapsed clock
-// and no heartbeat ticker, so the line changes only when the tool actually changes
-// (ADR 0079 AC3.1). The tool name is sanitized (server-derived). The trace chord
-// reads the LIVE ExpandTools marking (r.marks.expandTools) so an override propagates
-// (issue #457).
-func (r *renderer) subagentLiveLine(b *block) string {
-	current := "…"
-	if b.subCurrent != "" {
-		current = sanitizeTerminal(b.subCurrent)
+// delegationModelLabel renders the plain model line when decision is nil.
+// A fallback may add one candidate line, but the actual model always comes from
+// the existing authoritative model field rather than the rejected candidate.
+func delegationModelLabel(category, routedModel, routingReason, model string, decision *client.RoutingDecision) string {
+	label := subagentModelLabel(category, routedModel, routingReason, model)
+	if decision == nil || decision.Outcome != "fallback" {
+		return label
 	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace",
-		current,
-		humanizeTokens(b.subUsage.InputTokens),
-		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"),
-		r.marks.expandTools)
+	if terminaltext.Sanitize(model) != "" && terminaltext.Sanitize(routingReason) != "" {
+		label = "model: " + terminaltext.Sanitize(model) + " · fallback: " + terminaltext.Sanitize(routingReason)
+	}
+	candidate := routingCandidateCue(decision)
+	if candidate == "" {
+		return label
+	}
+	if label == "" {
+		return candidate
+	}
+	return label + "\n" + candidate
 }
 
-// subagentResolvedLine is the muted one-line summary shown once the child run has
-// finished: duration, token totals, final tool count, and the stop reason.
-func subagentResolvedLine(b *block) string {
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s",
-		humanizeDuration(b.subDurationMs),
-		humanizeTokens(b.subUsage.InputTokens),
-		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"),
-		subagentStopLabel(b.subStop))
+func routingCandidateCue(decision *client.RoutingDecision) string {
+	candidate := terminaltext.Sanitize(decision.CandidateCategory)
+	candidateModel := terminaltext.Sanitize(decision.CandidateModel)
+	if candidate == "" && candidateModel == "" {
+		return ""
+	}
+	line := "candidate: " + candidate
+	if candidate != "" && candidateModel != "" {
+		line += " → " + candidateModel
+	} else if candidateModel != "" {
+		line += candidateModel
+	}
+	if decision.Confidence != nil {
+		line += fmt.Sprintf(" · confidence %.2f", *decision.Confidence)
+		if decision.MinimumConfidence != nil && *decision.MinimumConfidence > 0 && *decision.Confidence < *decision.MinimumConfidence {
+			line += fmt.Sprintf(" < threshold %.2f", *decision.MinimumConfidence)
+		}
+	}
+	return line
+}
+
+// routingDecisionDetail renders the complete bounded decision snapshot for an
+// expanded card or F6 focus pane. Optional numeric presence is explicit.
+func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason string) string {
+	if decision == nil {
+		return ""
+	}
+	confidence := unavailableText
+	if decision.Confidence != nil {
+		confidence = fmt.Sprintf("%.2f", *decision.Confidence)
+	}
+	threshold := unavailableText
+	if decision.MinimumConfidence != nil {
+		threshold = fmt.Sprintf("%.2f", *decision.MinimumConfidence)
+		if *decision.MinimumConfidence == 0 {
+			threshold = "disabled (0.00)"
+		}
+	}
+	candidate := terminaltext.Sanitize(decision.CandidateCategory)
+	candidateModel := terminaltext.Sanitize(decision.CandidateModel)
+	if candidate == "" {
+		candidate = unavailableText
+	}
+	if candidateModel != "" {
+		candidate += " → " + candidateModel
+	}
+	actualModel = terminaltext.Sanitize(actualModel)
+	if actualModel == "" {
+		actualModel = unavailableText
+	}
+	reason = terminaltext.Sanitize(reason)
+	if reason == "" {
+		if decision.Outcome == "routed" {
+			reason = "accepted"
+		} else {
+			reason = unavailableText
+		}
+	}
+	breaker := "closed"
+	if decision.BreakerOpen {
+		breaker = "open"
+	}
+	return fmt.Sprintf("backend: %s · classifier: %s · outcome: %s\n"+
+		"candidate: %s · confidence: %s · threshold: %s\n"+
+		"actual model: %s · reason: %s\n"+
+		"breaker: %d/%d misses · %s",
+		terminaltext.Sanitize(decision.Backend), terminaltext.Sanitize(decision.ClassifierModel), terminaltext.Sanitize(decision.Outcome),
+		candidate, confidence, threshold, actualModel, reason,
+		decision.ConsecutiveMisses, decision.MissLimit, breaker)
 }
 
 // chipSep is the two-space gap between adjacent child-tool chips in the expanded
@@ -1778,8 +1293,8 @@ func wrapChips(chips []string, width int) string {
 }
 
 // maxTraceMessageLen caps how many runes of a forwarded child message line show in
-// a delegation lane's expanded trace (Subagent / Team / Parallel — shared per ADR
-// 0079); the server already bounds previews, this is a belt-and-braces clamp so one
+// a delegation lane's expanded trace (Subagent / Team / Parallel — they share it);
+// the server already bounds previews, this is a belt-and-braces clamp so one
 // verbose child can't dominate the card.
 const maxTraceMessageLen = 200
 
@@ -1790,14 +1305,14 @@ const maxTraceToolNameLen = 20
 // maxTraceDetailLen caps how many runes of a tool chip's arg/result preview show
 // next to it in the expanded trace. Server-bounded already (≤200 runes); this keeps
 // a single chip line scannable. Shared by the Subagent/Team/Parallel trace
-// renderers per ADR 0079 — the engine cap + this cap is the intentional
+// renderers — the engine cap + this cap is the intentional
 // double-truncation defense-in-depth.
 const maxTraceDetailLen = 80
 
 // boundedPreviewsSubNote / boundedPreviewsParNote are the honesty notes every
-// Subagent / Parallel trace surface carries (ADR 0079): the previews are BOUNDED —
+// Subagent / Parallel trace surface carries: the previews are BOUNDED —
 // clamped + scrubbed server-side, capped again on render, client-only — so the
-// note states the accurate posture instead of the pre-ADR-0079 "content hidden"
+// note states the accurate posture instead of the older "content hidden"
 // claim. The parent conversation stays clean (gauntlet #7 is about the
 // conversation, not what a client may observe).
 const (
@@ -1822,7 +1337,7 @@ const maxTeamNameWidth = 16
 // a "✓" for a clean TERMINAL member (the team has ended — b.teamDone), a hollow "○" for
 // an IDLE member (finished its current round, awaiting the next round or synthesis),
 // and a filled "◆" for one actively working. The stopped state is checked first so the
-// overlay no longer flips a stopped member to "✓ done" and contradicts the supervisor.
+// overlay never flips a stopped member to "✓ done" and contradicts the supervisor.
 func teamGlyph(ln *teamLane, teamDone bool) string {
 	switch {
 	case teamDone && ln.stopped:
@@ -1865,67 +1380,14 @@ func teamLaneOrder(lanes []teamLane) []int {
 //   - EXPANDED (ctrl+t, same toggle): per member, the capped lane trace — message
 //     lines (clamped) and tool chips (✓/✗ name) with their bounded arg/result
 //     preview — separated by a blank line between members so boundaries are clear.
-//   - RESOLVED (team ended): a muted stat line
-//     "team · <rounds> rounds · ↑<in> ↓<out> · stop:<reason>". The Team tool's
-//     joined summary renders below via the normal result body path.
+//   - RESOLVED compact (team ended): a muted stat line
+//     "team · <rounds> rounds · ↑<in> ↓<out> · stop:<reason>". Expanded resolved
+//     cards retain that terminal summary and show the same bounded per-member detail
+//     as a live expanded card. The Team tool's joined summary renders below via the
+//     normal result body path.
 //
 // All member-derived text (names, message lines, tool names, previews) is
 // terminal-sanitized before it reaches lipgloss.
-func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
-	muted := r.th.Style("muted")
-	var out strings.Builder
-
-	if b.teamDone {
-		out.WriteString(renderDelegationToolCardText(muted, teamResolvedLine(b), bodyWidth))
-		return out.String()
-	}
-
-	out.WriteString(renderDelegationToolCardText(muted, r.teamHeader(b, expand), bodyWidth))
-
-	order := teamLaneOrder(b.teamLanes)
-	shown := order
-	if len(shown) > maxTeamLanes {
-		shown = order[:maxTeamLanes]
-	}
-	nameW := teamNameWidth(b.teamLanes, shown)
-	for n, idx := range shown {
-		ln := &b.teamLanes[idx]
-		if expand && n > 0 {
-			// A blank line between members' blocks so boundaries read clearly at 3+.
-			out.WriteString("\n")
-		}
-		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, false), bodyWidth))
-		if expand {
-			if tr := r.renderTraceAtWidth(ln.trace, bodyWidth); tr != "" {
-				out.WriteString("\n")
-				out.WriteString(tr)
-			}
-		}
-	}
-	if extra := len(order) - len(shown); extra > 0 {
-		// The inline card caps at maxTeamLanes; the rest live in the agents overlay.
-		// Advertise it on the roll-up so a capped card is the discovery point for the
-		// full, windowed roster. The chord reads the LIVE Agents marking so an override
-		// propagates (issue #457).
-		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents), bodyWidth))
-	}
-	return out.String()
-}
-
-// teamHeader is the muted lead line summarising the team's shape: the member count
-// and the expand-tools affordance, whose verb tracks the toggle (trace when collapsed,
-// collapse when expanded). The round count is carried only on team.end, so it is
-// shown on the resolved line rather than fabricated live. The chord reads the LIVE
-// ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
-func (r *renderer) teamHeader(b *block, expand bool) string {
-	verb := r.marks.expandTools + " trace"
-	if expand {
-		verb = r.marks.expandTools + " collapse"
-	}
-	return "team · " + plural(len(b.teamLanes), "member") + " · " + verb
-}
 
 // teamNameWidth is the column width member BARE names are padded to on the
 // collapsed lane lines: the longest shown bare name, capped at maxTeamNameWidth,
@@ -1935,7 +1397,7 @@ func (r *renderer) teamHeader(b *block, expand bool) string {
 func teamNameWidth(lanes []teamLane, shown []int) int {
 	w := 0
 	for _, idx := range shown {
-		if n := len([]rune(truncate(sanitizeTerminal(lanes[idx].name), maxTeamNameWidth))); n > w {
+		if n := len([]rune(truncate(terminaltext.Sanitize(lanes[idx].name), maxTeamNameWidth))); n > w {
 			w = n
 		}
 	}
@@ -1948,7 +1410,7 @@ func teamNameWidth(lanes []teamLane, shown []int) int {
 // or a derived state label (with a "…" heartbeat while active) and running token
 // totals. No elapsed clock, so it updates only as events arrive.
 func teamLaneLine(ln *teamLane, nameW int, teamDone bool) string {
-	name := truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)
+	name := truncate(terminaltext.Sanitize(ln.name), maxTeamNameWidth)
 	if pad := nameW - len([]rune(name)); pad > 0 {
 		name += strings.Repeat(" ", pad)
 	}
@@ -1960,8 +1422,8 @@ func teamLaneLine(ln *teamLane, nameW int, teamDone bool) string {
 		teamMutCue(ln),
 		name,
 		teamLaneState(ln, teamDone),
-		humanizeTokens(ln.usage.InputTokens),
-		humanizeTokens(ln.usage.OutputTokens))
+		renderfmt.HumanizeTokens(ln.usage.InputTokens),
+		renderfmt.HumanizeTokens(ln.usage.OutputTokens))
 }
 
 // teamMutCue is the PERSISTENT per-member mutating cue (stable roster metadata): a
@@ -2002,13 +1464,13 @@ func teamLaneState(ln *teamLane, teamDone bool) string {
 		// the opposite of what the supervisor reported.
 		return "done (retried)"
 	case teamDone:
-		return "done"
+		return statusDone
 	case ln.idle:
 		return "idle"
 	}
 	label := "working"
 	if ln.current != "" {
-		label = truncate(sanitizeTerminal(ln.current), maxTraceToolNameLen)
+		label = truncate(terminaltext.Sanitize(ln.current), maxTraceToolNameLen)
 	}
 	return label + "…"
 }
@@ -2026,108 +1488,48 @@ func teamStopReasonLabel(reason string) string {
 	}
 }
 
-// renderTraceAtWidth prepares styled trace rows against a tool card's body before
-// they join the card. It leaves the shared renderer untouched for other regions.
-func (r *renderer) renderTraceAtWidth(trace []teamTrace, bodyWidth int) string {
-	return (&renderer{th: r.th, traceWidth: bodyWidth}).renderTrace(trace)
-}
-
-// renderTrace renders a delegation lane's expanded trace — the SHARED format for
-// the Team member lanes, the Subagent inline/fleet lanes, and the Parallel branch
-// lanes (ADR 0079: one trace shape, one renderer). Message lines (clamped, dim,
-// prefixed "  ") interleave with tool chips (✓/✗ name) carrying their bounded
-// arg/result preview, in arrival order. A chip with a preview gets its own line
-// ("  ✓ Grep — pattern: foo"); bare chips coalesce onto one wrapped row. Returns
-// "" for an empty trace. All text is sanitized; the previews are capped again here
-// (maxTraceDetailLen / maxTraceMessageLen) on top of the server clamp — the
-// intentional double-truncation defense-in-depth.
+// renderTrace renders the shared bounded delegation trace for Subagent, Parallel,
+// Team and the Agents overlay. Results change status, never call-side intent.
 func (r *renderer) renderTrace(trace []teamTrace) string {
 	if len(trace) == 0 {
 		return ""
 	}
 	muted := r.th.Style("muted")
-	okStyle := r.th.Style("toolOk")
-	errStyle := r.th.Style("toolErr")
 	nameStyle := r.th.Style("toolName")
-
 	var b strings.Builder
-	var chips []string
-	flush := func() {
-		if len(chips) == 0 {
-			return
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		for i, row := range wrapDelegationRow("  ", strings.Join(chips, chipSep), r.traceWidth) {
-			if i > 0 {
-				b.WriteString("\n")
+	for _, t := range trace {
+		if t.kind == teamTraceMessage {
+			for _, row := range wrapDelegationRow("  ", truncate(terminaltext.Sanitize(oneLine(t.text)), maxTraceMessageLen), r.traceWidth) {
+				if b.Len() > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(muted.Render(row))
 			}
-			b.WriteString(nameStyle.Render(row))
+			continue
 		}
-		chips = nil
-	}
-	writeLine := func(prefix, text string, style lipgloss.Style) {
-		flush()
-		for _, row := range wrapDelegationRow(prefix, text, r.traceWidth) {
+		line := delegationToolLine(t.name, t.intent, t.resolved, t.isError, t.provisional)
+		offset := 0
+		for _, row := range wrapDelegationRow("  ", line.Text(), r.traceWidth) {
 			if b.Len() > 0 {
-				b.WriteString("\n")
+				b.WriteByte('\n')
 			}
-			b.WriteString(style.Render(row))
-		}
-	}
-	writeToolLine := func(glyph, name, detail string, glyphStyle lipgloss.Style) {
-		flush()
-		rows := wrapDelegationRow("  ", glyph+" "+name+" — "+detail, r.traceWidth)
-		regularPrefix := r.traceWidth <= 0 || r.traceWidth > 2
-		offset, glyphStart := 0, 0
-		if !regularPrefix {
-			glyphStart = 2
-		}
-		for _, row := range rows {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			if regularPrefix {
+			// wrapDelegationRow retains the two-cell indent on ordinary widths.
+			if r.traceWidth <= 0 || r.traceWidth > 2 {
 				b.WriteString(row[:2])
 				row = row[2:]
 			}
-			b.WriteString(renderTraceToolRow(row, offset, glyphStart, name, glyphStyle, nameStyle, muted))
+			b.WriteString(renderTraceToolRow(row, offset, line, r.th.Style(line.StatusStyle()), nameStyle, muted))
 			offset += len([]rune(row))
 		}
 	}
-	for i := range trace {
-		t := &trace[i]
-		switch t.kind {
-		case teamTraceTool:
-			glyph := "✓"
-			style := okStyle
-			if t.isError {
-				glyph = "✗"
-				style = errStyle
-			}
-			name := truncate(sanitizeTerminal(t.name), maxTraceToolNameLen)
-			if detail := sanitizeTerminal(oneLine(t.detail)); detail != "" {
-				writeToolLine(glyph, name, truncate(detail, maxTraceDetailLen), style)
-			} else {
-				chips = append(chips, glyph+" "+name)
-			}
-		case teamTraceMessage:
-			writeLine("  ", truncate(sanitizeTerminal(oneLine(t.text)), maxTraceMessageLen), muted)
-		}
-	}
-	flush()
 	return b.String()
 }
 
-// renderTraceToolRow restores a trace tool row's semantic styles after its raw
-// text has been wrapped: status glyph, tool name, then muted preview. offset and
-// glyphStart are rune offsets in the unwrapped text, letting a style boundary fall
-// on either side of a wrapped row.
-func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphStyle, nameStyle, muted lipgloss.Style) string {
-	nameStart := glyphStart + 2 // glyph plus its following space
-	detailStart := nameStart + len([]rune(name))
-
+// renderTraceToolRow reapplies semantic styles after wrapping the plain line.
+func renderTraceToolRow(row string, offset int, line renderfmt.ToolLine, statusStyle, nameStyle, muted lipgloss.Style) string {
+	nameStart := len([]rune(line.Glyph())) + 1
+	intentStart := nameStart + len([]rune(line.Name()))
+	statusStart := len([]rune(line.Text())) - len([]rune(line.Status()))
 	var b strings.Builder
 	var runes []rune
 	style := -1
@@ -2139,7 +1541,7 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 		text := string(runes)
 		switch style {
 		case 0:
-			b.WriteString(glyphStyle.Render(text))
+			b.WriteString(statusStyle.Render(text))
 		case 1:
 			b.WriteString(nameStyle.Render(text))
 		case 2:
@@ -2154,11 +1556,13 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 		position := offset + i
 		next := -1
 		switch {
-		case position == glyphStart:
+		case position < len([]rune(line.Glyph())):
 			next = 0
-		case position >= nameStart && position < detailStart:
+		case position >= nameStart && position < intentStart:
 			next = 1
-		case position >= detailStart:
+		case line.Status() != "" && position >= statusStart:
+			next = 0
+		case position >= intentStart:
 			next = 2
 		}
 		if next != style {
@@ -2176,22 +1580,11 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 // stopped non-resumably — a "N stopped" count tell. The count is the calm inline
 // card's only signal of a stopped member (the per-member glyph lives in the modal
 // overlay), so it appears only when stopped > 0.
-func teamResolvedLine(b *block) string {
-	line := fmt.Sprintf("team · %s · ↑%s ↓%s · stop:%s",
-		plural(b.teamRounds, "round"),
-		humanizeTokens(b.teamUsage.InputTokens),
-		humanizeTokens(b.teamUsage.OutputTokens),
-		subagentStopLabel(b.teamStop))
-	if n := teamStoppedCount(b); n > 0 {
-		line += fmt.Sprintf(" · %d stopped", n)
-	}
-	return line
-}
 
 // teamStoppedCount reports how many member lanes ended STOPPED (non-resumable /
 // budget-exhausted). It drives the inline-card "N stopped" tell and the overlay
 // roster sub-header count.
-func teamStoppedCount(b *block) int {
+func teamStoppedCount(b *teamOverlaySnapshot) int {
 	n := 0
 	for i := range b.teamLanes {
 		if b.teamLanes[i].stopped {
@@ -2215,7 +1608,7 @@ func oneLine(s string) string {
 func subagentStopLabel(stop string) string {
 	switch stop {
 	case "end_turn", "":
-		return "done"
+		return statusDone
 	case "max_tool_calls":
 		return "max-tools"
 	case "max_turns":
@@ -2237,48 +1630,8 @@ func subagentStopLabel(stop string) string {
 	case "no_progress":
 		return "no-progress"
 	default:
-		return sanitizeTerminal(stop)
+		return terminaltext.Sanitize(stop)
 	}
-}
-
-// humanizeDuration renders a millisecond wall-clock duration compactly: sub-second
-// as "Nms", under a minute as "N.Ns", else "Nm Ns". A non-positive duration (no
-// clock) renders as "0ms".
-func humanizeDuration(ms int64) string {
-	if ms <= 0 {
-		return "0ms"
-	}
-	if ms < 1000 {
-		return strconv.FormatInt(ms, 10) + "ms"
-	}
-	secs := float64(ms) / 1000.0
-	if secs < 60 {
-		return trimDecimal(secs) + "s"
-	}
-	m := int64(secs) / 60
-	s := int64(secs) % 60
-	return strconv.FormatInt(m, 10) + "m " + strconv.FormatInt(s, 10) + "s"
-}
-
-// resultBody renders a tool result body with the legacy logical-line cap for
-// callers without card geometry.
-func (r *renderer) resultBody(body string, expand bool) string {
-	return r.resultBodyAtWidth(body, expand, 0)
-}
-
-// resultBodyAtWidth renders a tool result body: full when expanded; otherwise it
-// hard-wraps to the card body width before capping visible display rows. This keeps
-// the overflow count honest and prevents the final card wrap from growing the
-// collapsed body after its cap.
-func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) string {
-	body = sanitizeTerminal(strings.TrimRight(body, "\n"))
-	if expand || body == "" {
-		return body
-	}
-	if bodyWidth > 0 {
-		body = ansi.Hardwrap(body, bodyWidth, true)
-	}
-	return truncateLinesTailMark(body, maxToolResultLines, "", r.marks.expandTools)
 }
 
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
@@ -2304,7 +1657,8 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
-		if strings.TrimSpace(line.text) == "" {
+		text := normalizeToolCardTabs(line.text)
+		if strings.TrimSpace(text) == "" {
 			// Preserve an intentional blank source line as one display row, without
 			// retaining width-exceeding padding that could wrap into more rows.
 			wrapped = append(wrapped, toolResultLine{style: line.style})
@@ -2313,7 +1667,7 @@ func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultL
 		// Trailing whitespace is display padding, not result content: discard it
 		// before wrapping so it cannot become a blank continuation row. Leading
 		// indentation remains part of every meaningful source line.
-		text := strings.TrimRightFunc(line.text, unicode.IsSpace)
+		text = strings.TrimRightFunc(text, unicode.IsSpace)
 		if bodyWidth > 0 {
 			text = ansi.Hardwrap(text, bodyWidth, true)
 		}
@@ -2330,10 +1684,8 @@ func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultL
 }
 
 // renderChangedFiles renders the session's changed-files summary as a muted,
-// insertion-ordered list under a "✎ N files this session" header — the ctrl+t
-// expansion of the header indicator (sharing its "✎" pencil glyph). Returns ""
-// for an empty set. Paths are terminal-sanitized (they originate from
-// server-relayed tool args).
+// insertion-ordered list under a "✎ N files this session" header — revealed by
+// ExpandConversation. Returns "" for an empty set. Paths are terminal-sanitized.
 func (r *renderer) renderChangedFiles(paths []string) string {
 	if len(paths) == 0 {
 		return ""
@@ -2343,7 +1695,7 @@ func (r *renderer) renderChangedFiles(paths []string) string {
 	b.WriteString(style.Render("✎ " + plural(len(paths), "file") + " changed this session"))
 	for _, p := range paths {
 		b.WriteString("\n")
-		b.WriteString(style.Render("  " + sanitizeTerminal(p)))
+		b.WriteString(style.Render("  " + terminaltext.Sanitize(p)))
 	}
 	return b.String()
 }
@@ -2358,13 +1710,13 @@ func (r *renderer) renderChangedFiles(paths []string) string {
 // ("", false) so a garbled call never pollutes the changed-files set.
 func mutatedPath(name, rawArgs string) (string, bool) {
 	switch name {
-	case "Edit":
+	case toolEditName:
 		var args editDiffArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" {
 			return "", false
 		}
 		return args.Path, true
-	case "Write":
+	case toolWriteName:
 		var args writeDiffArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" {
 			return "", false
@@ -2389,9 +1741,9 @@ func (r *renderer) renderToolDiff(name, rawArgs string, expand bool) (string, bo
 // applying its independently styled rows.
 func (r *renderer) renderToolDiffAtWidth(name, rawArgs string, expand bool, bodyWidth int) (string, bool) {
 	switch name {
-	case "Edit":
+	case toolEditName:
 		return r.renderEditDiff(rawArgs, expand, bodyWidth)
-	case "Write":
+	case toolWriteName:
 		return r.renderWriteDiff(rawArgs, expand, bodyWidth)
 	default:
 		return "", false
@@ -2406,31 +1758,41 @@ type editDiffArgs struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+type editRequest struct {
+	path, oldString, newString string
+	replaceAll                 bool
+}
+
+func parseEditRequest(rawArgs string) (editRequest, bool) {
+	var args editDiffArgs
+	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil || args.Path == "" || (args.OldString == "" && args.NewString == "") {
+		return editRequest{}, false
+	}
+	return editRequest{path: args.Path, oldString: args.OldString, newString: args.NewString, replaceAll: args.ReplaceAll}, true
+}
+
 // renderEditDiff renders an Edit as a red/green unified-style diff:
 // removed (old_string) lines prefixed "-", added (new_string) lines prefixed
 // "+", under a muted path header (with a "(replace all)" tag when set). Returns
 // false on malformed/empty args so the caller falls back to JSON.
 func (r *renderer) renderEditDiff(rawArgs string, expand bool, bodyWidth int) (string, bool) {
-	var args editDiffArgs
-	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil {
-		return "", false
-	}
-	if args.Path == "" || (args.OldString == "" && args.NewString == "") {
+	args, ok := parseEditRequest(rawArgs)
+	if !ok {
 		return "", false
 	}
 
 	// Size signal: removed/added line counts (empty side = 0 lines).
-	removed := lineCount(args.OldString)
-	added := lineCount(args.NewString)
-	header := fmt.Sprintf("%s  -%d +%d", args.Path, removed, added)
-	if args.ReplaceAll {
+	removed := lineCount(args.oldString)
+	added := lineCount(args.newString)
+	header := fmt.Sprintf("%s  -%d +%d", args.path, removed, added)
+	if args.replaceAll {
 		header += " (replace all)"
 	}
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(sanitizeTerminal(header), bodyWidth)))
+	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	b.WriteString("\n")
-	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand, bodyWidth))
-	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.oldString, "-", "removed text", "diffRemove", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.newString, "+", "added text", "diffAdd", expand, bodyWidth))
 	return strings.TrimRight(b.String(), "\n"), true
 }
 
@@ -2457,10 +1819,10 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 	}
 	header := fmt.Sprintf("%s · %s (overwrites if it exists)", args.Path, plural(lineCount(args.Content), "line"))
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(sanitizeTerminal(header), bodyWidth)))
+	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	if args.Content != "" {
 		b.WriteString("\n")
-		b.WriteString(r.diffSide(args.Content, "+", "diffAdd", expand, bodyWidth))
+		b.WriteString(r.diffSide(args.Content, "+", "content", "diffAdd", expand, bodyWidth))
 	}
 	return strings.TrimRight(b.String(), "\n"), true
 }
@@ -2468,12 +1830,14 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 // diffSide renders one side of a diff (all-removed or all-added): every line of
 // text gets the prefix and the themed style, line-capped unless expanded. An
 // empty side renders nothing. The text is sanitized (these go through lipgloss).
-func (r *renderer) diffSide(text, prefix, slot string, expand bool, bodyWidth int) string {
-	text = sanitizeTerminal(strings.TrimRight(text, "\n"))
+func (r *renderer) diffSide(text, prefix, field, slot string, expand bool, bodyWidth int) string {
 	if text == "" {
 		return ""
 	}
 	lines := strings.Split(text, "\n")
+	if strings.HasSuffix(text, "\n") {
+		lines = lines[:len(lines)-1]
+	}
 	var marker string
 	if !expand && len(lines) > maxDiffLines {
 		extra := len(lines) - maxDiffLines
@@ -2486,12 +1850,15 @@ func (r *renderer) diffSide(text, prefix, slot string, expand bool, bodyWidth in
 		// Prefix before wrapping so the source's diff marker and leading whitespace
 		// remain attached to this source line, rather than being reconstructed after
 		// a styled-card wrap.
-		b.WriteString(style.Render(wrapToolCardRegion(prefix+" "+ln, bodyWidth)))
+		b.WriteString(style.Render(wrapToolCardRegion(prefix+" "+terminaltext.Sanitize(ln), bodyWidth)))
 		b.WriteString("\n")
 	}
 	if marker != "" {
 		// The collapse marker is muted, not coloured as a diff line.
 		b.WriteString(lipgloss.NewStyle().Render(wrapToolCardRegion(marker, bodyWidth)))
+		b.WriteString("\n")
+	} else if !strings.HasSuffix(text, "\n") {
+		b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion("\\ No newline at end of "+field, bodyWidth)))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -2507,9 +1874,9 @@ func prettyJSON(raw string) string {
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, []byte(raw), "", "  "); err != nil {
-		return sanitizeTerminal(raw)
+		return terminaltext.Sanitize(raw)
 	}
-	return sanitizeTerminal(buf.String())
+	return terminaltext.Sanitize(buf.String())
 }
 
 // summarizeArgs turns a JSON-object args string into a compact, scannable block
@@ -2521,16 +1888,12 @@ func prettyJSON(raw string) string {
 // Keys are ordered deterministically (argPriorityKeys first, then the rest
 // alphabetical) — map iteration is random, so this is what makes the collapsed
 // card golden-stable. At most maxSummaryRows rows render. EVERY rendered value
-// passes through sanitizeTerminal (the summary is plain lipgloss, never glamour —
+// passes through terminaltext.Sanitize (the summary is plain lipgloss, never glamour —
 // see the CWE-150 invariant in sanitize.go). Keys are styled "muted", values
 // "toolArgs".
 //
-// ctrl+t is never the only path to the data: the collapsed summary always sits
-// behind the full prettyJSON expansion, advertised by an argRollupMarker footer
-// (collapseMarker's shape) whenever ANYTHING was hidden — a key overflow
-// ("… +K more keys · ctrl+t expand") OR a per-value collapse with no overflow
-// ("… ctrl+t expand"). A card whose args are all short scalars hides nothing and
-// shows no footer.
+// The full arguments are in the Toolcalls inspector. A roll-up footer is
+// shown whenever a key or a value is omitted; short scalar args need no footer.
 func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 	raw := strings.TrimSpace(rawArgs)
 	if raw == "" {
@@ -2559,13 +1922,12 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 		}
 		text, collapsed := summarizeValueCollapsed(obj[k])
 		valueCollapsed = valueCollapsed || collapsed
-		b.WriteString(muted.Render(sanitizeTerminal(k) + ":"))
+		b.WriteString(muted.Render(terminaltext.Sanitize(k) + ":"))
 		b.WriteString(" ")
 		b.WriteString(valStyle.Render(text))
 	}
-	// Advertise ctrl+t whenever ANYTHING was hidden: a key overflow OR a per-value
-	// collapse (long string, big array/object). The marker mirrors collapseMarker's
-	// shape so adjacent collapsed cards/results read consistently.
+	// Link to Toolcalls whenever anything was hidden: a key overflow or a
+	// per-value collapse (long string, big array/object).
 	if extra := len(keys) - len(shown); extra > 0 {
 		b.WriteString("\n")
 		b.WriteString(muted.Render(r.argRollupMarker(extra)))
@@ -2576,22 +1938,17 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 	return b.String(), true
 }
 
-// argRollupMarker formats the collapsed-args affordance footer, matching
-// collapseMarker's "  … <…> · <expand> expand" shape (leading "…", indented) so an
-// arg roll-up and a line-capped result/diff don't show two different "there's
-// more" idioms. n>0 names the hidden-key count ("+K more keys"); n==0 (a pure
-// per-value collapse, no key overflow) shows just the expand hint. The chord
-// reads the LIVE ExpandTools marking (r.marks.expandTools) so an override
-// propagates (issue #457).
+// argRollupMarker formats the collapsed-args footer. Full arguments are available
+// from the Toolcalls inspector; tool cards do not expand in place.
 func (r *renderer) argRollupMarker(n int) string {
 	if n <= 0 {
-		return "  … " + r.marks.expandTools + " expand"
+		return "  … " + r.marks.toolcalls + " inspect"
 	}
 	noun := "keys"
 	if n == 1 {
 		noun = "key"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.expandTools + " expand"
+	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + r.marks.toolcalls + " inspect"
 }
 
 // sortedArgKeys returns obj's keys in deterministic render order: the keys in
@@ -2638,7 +1995,7 @@ func summarizeValue(raw json.RawMessage) string {
 //     false), else "N items" (collapsed=true).
 //   - object: "N keys" (collapsed=true).
 //
-// All branches sanitizeTerminal their output, since the summary is plain
+// All branches terminaltext.Sanitize their output, since the summary is plain
 // lipgloss (never glamour).
 func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 	trimmed := strings.TrimSpace(string(raw))
@@ -2649,7 +2006,7 @@ func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 	case '"':
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return sanitizeTerminal(trimmed), false
+			return terminaltext.Sanitize(trimmed), false
 		}
 		text := summarizeStringValue(s)
 		// A long/multiline string collapses to the size+preview form; the inline
@@ -2661,12 +2018,12 @@ func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 	case '{':
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &obj); err != nil {
-			return sanitizeTerminal(trimmed), false
+			return terminaltext.Sanitize(trimmed), false
 		}
 		return plural(len(obj), "key"), true
 	default:
 		// number / bool / null — render the verbatim JSON token.
-		return sanitizeTerminal(trimmed), false
+		return terminaltext.Sanitize(trimmed), false
 	}
 }
 
@@ -2677,15 +2034,15 @@ func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 func summarizeStringValue(s string) string {
 	lines := lineCount(s)
 	if lines <= 1 && len([]rune(s)) <= inlinePreviewLen {
-		return sanitizeTerminal(strconv.Quote(s))
+		return terminaltext.Sanitize(strconv.Quote(s))
 	}
 	first := firstLine(s)
 	preview := truncate(first, argPreviewLen)
 	if lines > 1 && !strings.HasSuffix(preview, "…") {
 		preview += "…"
 	}
-	preview = sanitizeTerminal(preview)
-	return fmt.Sprintf("%s / %s · %q", humanizeBytes(int64(len(s))), plural(lines, "line"), preview)
+	preview = terminaltext.Sanitize(preview)
+	return fmt.Sprintf("%s / %s · %q", renderfmt.HumanizeBytes(int64(len(s))), plural(lines, "line"), preview)
 }
 
 // summarizeArrayValue renders a JSON array value and reports whether it collapsed:
@@ -2694,7 +2051,7 @@ func summarizeStringValue(s string) string {
 func summarizeArrayValue(raw json.RawMessage) (string, bool) {
 	var elems []json.RawMessage
 	if err := json.Unmarshal(raw, &elems); err != nil {
-		return sanitizeTerminal(strings.TrimSpace(string(raw))), false
+		return terminaltext.Sanitize(strings.TrimSpace(string(raw))), false
 	}
 	if len(elems) == 0 {
 		return "[]", false
@@ -2704,7 +2061,7 @@ func summarizeArrayValue(raw json.RawMessage) (string, bool) {
 		for i, e := range elems {
 			parts[i] = scalarText(e)
 		}
-		return sanitizeTerminal("[" + strings.Join(parts, ", ") + "]"), false
+		return terminaltext.Sanitize("[" + strings.Join(parts, ", ") + "]"), false
 	}
 	return plural(len(elems), "item"), true
 }
@@ -2742,30 +2099,6 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimRight(s, "\r")
-}
-
-// humanizeBytes renders a byte count compactly: bytes verbatim under 1 KB, then
-// "N.N KB"/"N.N MB"/"N.N GB"/"N.N TB" with one decimal (trailing ".0" trimmed).
-// Sibling of the humanizeTokens/humanizeDuration formatters; used for the
-// collapsed long-string arg row size signal AND the session-storage byte
-// counts (which can run into the GB range). The math is SI/decimal (1 KB =
-// 1000 B, 1 MB = 1e6 B, …) so a human-facing size reconciles with how
-// file/content sizes are reported everywhere — the labels stay "KB"/"MB"/…
-// (honest, not mislabelled KiB/MiB).
-func humanizeBytes(n int64) string {
-	if n < 0 {
-		n = 0
-	}
-	const unit = 1000
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for value := n / unit; value >= unit && exp < 3; value /= unit {
-		div *= unit
-		exp++
-	}
-	return trimDecimal(float64(n)/float64(div)) + " " + [...]string{"KB", "MB", "GB", "TB"}[exp]
 }
 
 // parseMCPName splits an MCP tool name "mcp__<server>__<tool>" into its server
@@ -2812,7 +2145,7 @@ func mcpTitle(name string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return sanitizeTerminal(humanizeMCPServer(server) + " · " + humanizeMCPTool(tool)), true
+	return terminaltext.Sanitize(humanizeMCPServer(server) + " · " + humanizeMCPTool(tool)), true
 }
 
 // maxTitleCaseServer is the rune budget above which a server token is shown raw
@@ -2895,7 +2228,7 @@ func summarizeResultDetail(body string) (string, int, bool) {
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(sanitizeTerminal(k) + ":")
+			b.WriteString(terminaltext.Sanitize(k) + ":")
 			b.WriteString(" ")
 			b.WriteString(summarizeValue(raw))
 		}
@@ -2932,33 +2265,17 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // object/array). The expanded view, an error result, and a non-JSON/line-shaped
 // result all return ok=false so renderTool falls through to the existing styled,
 // line-capped/full body path (Read and prose results unchanged).
-func (r *renderer) summarizeResolvedResult(b *block, expand bool) (string, bool) {
-	summary, _, ok := r.summarizeResolvedResultDetail(b, expand)
-	return summary, ok
-}
 
-func (*renderer) summarizeResolvedResultDetail(b *block, expand bool) (string, int, bool) {
-	if expand || b.resultError {
-		return "", 0, false
-	}
-	return summarizeResultDetail(b.resultBody)
-}
-
-// collapseMarker formats the "+N more line(s) · <expand> expand" affordance shown
-// when a tool result or diff side is line-capped. The verb matches the footer
-// help line's collapsed-state hint ("<expand> expand") — the expand/collapse pair
-// is used consistently across help line, keybinding help, and this marker. The
-// chord reads the LIVE ExpandTools marking (r.marks.expandTools) so an override
-// propagates (issue #457).
+// collapseMarker formats the line-cap footer for a tool card. Complete details
+// remain in the Toolcalls inspector; tool cards do not expand in place.
 func (r *renderer) collapseMarker(n int) string {
-	return collapseMarkerMark(n, r.marks.expandTools)
+	return collapseMarkerMark(n, r.marks.toolcalls)
 }
 
-// truncateLinesTailMark is the free-function core of truncateLinesTail, taking the
-// expand chord explicitly so non-renderer callers (the MCP resource preview, which
-// has no *renderer) can thread the LIVE ExpandTools marking through (issue #457).
-func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) string {
-	s = sanitizeTerminal(strings.TrimRight(s, "\n"))
+// truncateLinesTailMark is the free-function core of truncateLinesTail. An empty
+// inspection mark leaves a plain line-count marker for previews with no detail view.
+func truncateLinesTailMark(s string, maxLines int, tail, inspectMark string) string {
+	s = terminaltext.Sanitize(strings.TrimRight(s, "\n"))
 	if s == "" {
 		return ""
 	}
@@ -2969,28 +2286,34 @@ func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) stri
 	kept := lines[:maxLines]
 	marker := tail
 	if marker == "" {
-		marker = collapseMarkerMark(len(lines)-maxLines, expandMark)
+		marker = collapseMarkerMark(len(lines)-maxLines, inspectMark)
 	}
 	return strings.Join(kept, "\n") + "\n" + lipgloss.NewStyle().Render(marker)
 }
 
-// collapseMarkerMark is the free-function core of collapseMarker, taking the
-// expand chord explicitly (issue #457).
-func collapseMarkerMark(n int, expandMark string) string {
+// collapseMarkerMark formats a line-cap marker, optionally linking to inspection.
+func collapseMarkerMark(n int, inspectMark string) string {
 	noun := "lines"
 	if n == 1 {
 		noun = "line"
 	}
-	return "  … +" + strconv.Itoa(n) + " more " + noun + " · " + expandMark + " expand"
+	marker := "  … +" + strconv.Itoa(n) + " more " + noun
+	if inspectMark != "" {
+		marker += " · " + inspectMark + " inspect"
+	}
+	return marker
 }
 
-// lineCount returns the number of text lines in s (0 for empty, otherwise one
-// more than the number of newlines, ignoring a single trailing newline). Used
-// for the diff header size signals.
+// lineCount returns the number of content lines in s (0 for empty, otherwise
+// every newline-terminated line plus a final unterminated line). Used for the
+// diff header size signals.
 func lineCount(s string) int {
-	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return 0
 	}
-	return strings.Count(s, "\n") + 1
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }

@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-// scheduler_default_test.go pins the ADR-0073 decision-2 posture: the
+// scheduler_default_test.go pins the default-on posture: the
 // scheduler is ON by default on any schedule-capable store, and a store with
 // no ScheduleStore (the in-memory default: mecademo, mecatequi, offline
 // tests) stays on the BYTE-IDENTICAL no-scheduling path — buildScheduler

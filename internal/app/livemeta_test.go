@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"testing"
 )
 
@@ -15,8 +14,8 @@ const (
 )
 
 func TestResolveWindowCorePrecedenceAndExactProviderModel(t *testing.T) {
-	reg := &providerRegistry{meta: newLiveMetaStore()}
-	reg.meta.Swap(map[string][]modelEntry{
+	reg := &providerRegistry{meta: newMetadataFixture()}
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: catAnthropicModel, ContextLimit: 555_000}},
 		providerOpenAI:    {{ID: catAnthropicModel, ContextLimit: 444_000}},
 	})
@@ -24,20 +23,20 @@ func TestResolveWindowCorePrecedenceAndExactProviderModel(t *testing.T) {
 		providerAnthropic: {catAnthropicModel: 333_000},
 		providerToolhive:  {"deployment/opaque-routing-id": 222_000},
 	}}
-	if got, _ := reg.resolveWindowCore(cfg, providerAnthropic, catAnthropicModel); got != 333_000 {
+	if got := resolveModelWindow(cfg, reg.meta.current(), providerAnthropic, catAnthropicModel).tokens; got != 333_000 {
 		t.Fatalf("configured exact window = %d, want 333000", got)
 	}
-	if got, _ := reg.resolveWindowCore(cfg, providerOpenAI, catAnthropicModel); got != 444_000 {
+	if got := resolveModelWindow(cfg, reg.meta.current(), providerOpenAI, catAnthropicModel).tokens; got != 444_000 {
 		t.Fatalf("cross-provider configured lookup = %d, want live 444000", got)
 	}
-	if got, _ := reg.resolveWindowCore(cfg, providerToolhive, "deployment/opaque-routing-id"); got != 222_000 {
+	if got := resolveModelWindow(cfg, reg.meta.current(), providerToolhive, "deployment/opaque-routing-id").tokens; got != 222_000 {
 		t.Fatalf("opaque ToolHive configured ID = %d, want 222000", got)
 	}
 	if got := reg.windowResolver(cfg, providerAnthropic, "not-catalogued")(); got != defaultContextWindowTokens {
 		t.Fatalf("unknown-model fallback = %d, want %d", got, defaultContextWindowTokens)
 	}
 	cfg.ContextWindowOverride = 111_000
-	if got, _ := reg.resolveWindowCore(cfg, providerAnthropic, catAnthropicModel); got != 111_000 {
+	if got := resolveModelWindow(cfg, reg.meta.current(), providerAnthropic, catAnthropicModel).tokens; got != 111_000 {
 		t.Fatalf("CLI override = %d, want 111000", got)
 	}
 }
@@ -57,7 +56,7 @@ func TestConfiguredWindowUsesFinalAliasAndSlotModel(t *testing.T) {
 	if !configured || slotModel != finalModel {
 		t.Fatalf("slot resolved to (%q, %v), want final id", slotModel, configured)
 	}
-	reg := &providerRegistry{meta: newLiveMetaStore()}
+	reg := &providerRegistry{meta: newMetadataFixture()}
 	if got := reg.windowResolver(cfg, providerOpenAI, aliasModel)(); got != 345_000 {
 		t.Fatalf("alias final-id window = %d, want 345000", got)
 	}
@@ -73,13 +72,13 @@ func TestConfiguredWindowEngineEchoAndModelListAgree(t *testing.T) {
 	)
 	cfg := Config{contextWindows: map[string]map[string]int{providerOpenAI: {model: window}}}
 	reg := &providerRegistry{
-		meta:           newLiveMetaStore(),
+		meta:           newMetadataFixture(),
 		contextWindows: cfg.contextWindows,
 	}
-	reg.meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, ContextLimit: 123_000}}})
+	reg.meta.setMetadataFixture(map[string][]modelEntry{providerOpenAI: {{ID: model, ContextLimit: 123_000}}})
 	engineWindow := reg.windowResolver(cfg, providerOpenAI, model)()
 	echoWindow := reg.echoWindowResolver(cfg, providerOpenAI, model)()
-	listedWindow := projectModelEntry(reg, providerOpenAI, modelEntry{ID: model, ContextLimit: 123_000}).GetContextLimit()
+	listedWindow := projectModelEntry(reg, cfg, reg.meta.current(), providerOpenAI, modelEntry{ID: model, ContextLimit: 123_000}).GetContextLimit()
 	if engineWindow != window || echoWindow != window || listedWindow != window {
 		t.Fatalf("window disagreement: engine=%d echo=%d list=%d, want %d", engineWindow, echoWindow, listedWindow, window)
 	}
@@ -89,7 +88,7 @@ func TestConfiguredWindowEngineEchoAndModelListAgree(t *testing.T) {
 	reg.contextWindowOverride = globalOverride
 	engineWindow = reg.windowResolver(cfg, providerOpenAI, model)()
 	echoWindow = reg.echoWindowResolver(cfg, providerOpenAI, model)()
-	listedWindow = projectModelEntry(reg, providerOpenAI, modelEntry{ID: model, ContextLimit: 123_000}).GetContextLimit()
+	listedWindow = projectModelEntry(reg, cfg, reg.meta.current(), providerOpenAI, modelEntry{ID: model, ContextLimit: 123_000}).GetContextLimit()
 	if engineWindow != globalOverride || echoWindow != globalOverride || listedWindow != globalOverride {
 		t.Fatalf("global override disagreement: engine=%d echo=%d list=%d, want %d", engineWindow, echoWindow, listedWindow, globalOverride)
 	}
@@ -99,19 +98,17 @@ func TestConfiguredWindowEngineEchoAndModelListAgree(t *testing.T) {
 // for every available provider, so a resolver read at t=0 (before any live swap)
 // returns the catalog value — never an empty miss.
 func TestLiveMetaStoreSeedFromCatalog(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 
-	m, ok := s.lookup(providerAnthropic, catAnthropicModel)
-	if !ok {
-		t.Fatalf("seeded store missing catalogued model %q", catAnthropicModel)
+	if _, observed := s.lookup(providerAnthropic, catAnthropicModel); observed {
+		t.Fatal("catalog fallback must not be published as a live observation")
 	}
-	if m.ContextLimit != catAnthropicCtx || m.OutputLimit != catAnthropicOutput {
-		t.Fatalf("seed mismatch: ctx=%d out=%d, want %d/%d", m.ContextLimit, m.OutputLimit, catAnthropicCtx, catAnthropicOutput)
+	if got := s.contextWindowFor(providerAnthropic, catAnthropicModel); got != catAnthropicCtx {
+		t.Fatalf("catalog context=%d, want %d", got, catAnthropicCtx)
 	}
-	// The seed carries no live thinking descriptor (the catalog has no thinking bit).
-	if m.Thinking.Known {
-		t.Errorf("seeded entry must not claim a live thinking descriptor")
+	if _, _, known := s.thinkingFor(providerAnthropic, catAnthropicModel); known {
+		t.Fatal("catalog must not claim a live thinking descriptor")
 	}
 }
 
@@ -119,8 +116,8 @@ func TestLiveMetaStoreSeedFromCatalog(t *testing.T) {
 // catalog-seeded only), the live-first helpers return EXACTLY the catalog floor — so
 // the broadening is behaviour-preserving until a live source populates the store.
 func TestResolversByteIdenticalWithCatalogOnlyStore(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 
 	if got := s.outputLimitFor(providerAnthropic, catAnthropicModel); got != catAnthropicOutput {
 		t.Errorf("outputLimitFor = %d, want catalog floor %d", got, catAnthropicOutput)
@@ -141,12 +138,12 @@ func TestResolversByteIdenticalWithCatalogOnlyStore(t *testing.T) {
 // beats the catalog; a live entry whose field is ZERO falls back to the catalog
 // floor (per-FIELD precedence, never a fabricated zero).
 func TestLiveFirstHelperPrefersLiveWhenPresent(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 
 	// A live swap: same model, a DIFFERENT (live) output ceiling and context window.
 	const liveOut, liveCtx = 9999, 555_000
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: catAnthropicModel, OutputLimit: liveOut, ContextLimit: liveCtx}},
 	})
 	if got := s.outputLimitFor(providerAnthropic, catAnthropicModel); got != liveOut {
@@ -157,7 +154,7 @@ func TestLiveFirstHelperPrefersLiveWhenPresent(t *testing.T) {
 	}
 
 	// A live entry with ZERO fields ⇒ per-field fallback to the catalog floor.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: catAnthropicModel, OutputLimit: 0, ContextLimit: 0}},
 	})
 	if got := s.outputLimitFor(providerAnthropic, catAnthropicModel); got != catAnthropicOutput {
@@ -173,11 +170,11 @@ func TestLiveFirstHelperPrefersLiveWhenPresent(t *testing.T) {
 // verbatim into max_tokens (cost/400) or disable compaction (a gigantic window). A
 // legitimate in-range live value is returned unchanged.
 func TestLiveValueUpperClamped(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 
 	// Way above any real Claude limit — must clamp to the caps.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: catAnthropicModel, OutputLimit: 999_999_999, ContextLimit: 999_999_999}},
 	})
 	if got := s.outputLimitFor(providerAnthropic, catAnthropicModel); got != maxLiveOutputLimit {
@@ -189,7 +186,7 @@ func TestLiveValueUpperClamped(t *testing.T) {
 
 	// A legitimate in-range live value (above catalog, below the cap) is unchanged.
 	const okOut, okCtx = 200_000, 1_500_000
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: catAnthropicModel, OutputLimit: okOut, ContextLimit: okCtx}},
 	})
 	if got := s.outputLimitFor(providerAnthropic, catAnthropicModel); got != okOut {
@@ -203,10 +200,10 @@ func TestLiveValueUpperClamped(t *testing.T) {
 // TestLiveMissFallsBackToCatalogRow: a model the LIVE swap omits but the catalog
 // knows must still resolve via the catalog (live absence never erases the catalog).
 func TestLiveMissFallsBackToCatalogRow(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 	// A live swap that DROPS catAnthropicModel entirely (only an unrelated id present).
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: "some-live-only-model", OutputLimit: 12345, ContextLimit: 99}},
 	})
 	// catAnthropicModel is absent from the live swap → catalog floor via the helper.
@@ -223,11 +220,11 @@ func TestLiveMissFallsBackToCatalogRow(t *testing.T) {
 // text-only; omitted metadata (nil) is unknown, as is an absent model, so callers
 // fall through to the exact catalog row and then adapter caps.
 func TestModalitiesForFromLiveStore(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 
 	// A live swap carrying modalities for an openrouter-style passthrough id.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerOpenRouter: {{ID: "openai/gpt-4", InputModalities: []string{"text", "image"}}},
 	})
 	mods, found := s.modalitiesFor(providerOpenRouter, "openai/gpt-4")
@@ -239,7 +236,7 @@ func TestModalitiesForFromLiveStore(t *testing.T) {
 	}
 
 	// An explicitly empty declaration is authoritative text-only.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerOpenRouter: {{ID: "openai/gpt-4", InputModalities: []string{}}},
 	})
 	mods, found = s.modalitiesFor(providerOpenRouter, "openai/gpt-4")
@@ -251,7 +248,7 @@ func TestModalitiesForFromLiveStore(t *testing.T) {
 	}
 
 	// Omitted metadata is unknown and falls through to catalog/adapter resolution.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerOpenRouter: {{ID: "openai/gpt-4"}},
 	})
 	if _, found := s.modalitiesFor(providerOpenRouter, "openai/gpt-4"); found {
@@ -268,8 +265,8 @@ func TestModalitiesForFromLiveStore(t *testing.T) {
 // live source populated it (Known=true); a seed-only or absent entry yields
 // known=false (the adapter then falls back to its prefix matrix).
 func TestThinkingForFromLiveStore(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 
 	// Seed-only entry: not live-known.
 	if _, _, known := s.thinkingFor(providerAnthropic, catAnthropicModel); known {
@@ -277,7 +274,7 @@ func TestThinkingForFromLiveStore(t *testing.T) {
 	}
 
 	// A live swap with a populated thinking descriptor (adaptive).
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: catAnthropicModel, Thinking: thinkingDescriptor{Known: true, Adaptive: true}}},
 	})
 	a, e, known := s.thinkingFor(providerAnthropic, catAnthropicModel)
@@ -312,8 +309,6 @@ func TestLiveMetaStoreNilSafe(t *testing.T) {
 	if _, found := s.modalitiesFor(providerAnthropic, catAnthropicModel); found {
 		t.Error("nil store modalitiesFor should report found=false")
 	}
-	s.Swap(map[string][]modelEntry{providerAnthropic: {{ID: "x"}}}) // must not panic
-	s.seedFromCatalog([]string{providerAnthropic})                  // must not panic
 }
 
 // --- echo resolver provisional-0 vs engine resolver never-0 (issue #66) ---
@@ -333,22 +328,13 @@ const (
 	liveOnlyCtx   = 1_050_000 // below maxLiveContextLimit, so unclamped
 )
 
-func TestMarkRefreshCompletedClosesWaitersOnce(t *testing.T) {
-	s := newLiveMetaStore()
-	s.markRefreshCompleted()
-	s.markRefreshCompleted()
-	if err := s.awaitRefresh(context.Background()); err != nil {
-		t.Fatalf("await settled refresh: %v", err)
-	}
-}
-
 // TestEchoResolverProvisionalThenSettled: for an uncatalogued live-only model the ECHO
 // resolver returns a deliberate PROVISIONAL 0 pre-completion (the client's footer-heal
 // gate keys off ==0), then the real live window once the refresh has marked completed
 // AND the live entry has been swapped in.
 func TestEchoResolverProvisionalThenSettled(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerOpenRouter}) // live-only model not in the seed
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerOpenRouter}) // live-only model not in the seed
 	reg := regForResolver(s)
 	echo := reg.echoWindowResolver(Config{}, providerOpenRouter, liveOnlyModel)
 
@@ -357,8 +343,7 @@ func TestEchoResolverProvisionalThenSettled(t *testing.T) {
 	}
 	// The live refresh lands: the live listing carries the model + window, and the flag
 	// settles.
-	s.Swap(map[string][]modelEntry{providerOpenRouter: {{ID: liveOnlyModel, ContextLimit: liveOnlyCtx}}})
-	s.markRefreshCompleted()
+	s.setMetadataFixture(map[string][]modelEntry{providerOpenRouter: {{ID: liveOnlyModel, ContextLimit: liveOnlyCtx}}})
 	if got := echo(); got != liveOnlyCtx {
 		t.Fatalf("post-swap echo = %d, want live %d", got, liveOnlyCtx)
 	}
@@ -369,15 +354,15 @@ func TestEchoResolverProvisionalThenSettled(t *testing.T) {
 // fetch-fail) floors to 128k, NOT a perpetual provisional 0. This closes the footer-
 // heal gate (the client stops refetching) — no-network boundedness.
 func TestEchoResolverSettledFloorStops(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerOpenRouter})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerOpenRouter})
 	reg := regForResolver(s)
 	echo := reg.echoWindowResolver(Config{}, providerOpenRouter, liveOnlyModel)
 
 	if got := echo(); got != 0 {
 		t.Fatalf("pre-completion echo = %d, want 0 (provisional)", got)
 	}
-	s.markRefreshCompleted() // settled, but the model never got a live entry
+	s.setMetadataFixture(map[string][]modelEntry{providerOpenRouter: {{ID: "listed-other"}}}) // settled, but the model never got a live entry
 	if got := echo(); got != defaultContextWindowTokens {
 		t.Fatalf("settled-but-unknown echo = %d, want the 128k floor %d (must not stick at 0)", got, defaultContextWindowTokens)
 	}
@@ -388,15 +373,12 @@ func TestEchoResolverSettledFloorStops(t *testing.T) {
 // is never provisional. (catAnthropicModel's catalog window is 200k, a non-zero
 // known value; the point is the echo never returns 0 for a catalogued model.)
 func TestEchoResolverCataloguedModelNeverProvisional(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerAnthropic})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerAnthropic})
 	reg := regForResolver(s)
 	echo := reg.echoWindowResolver(Config{}, providerAnthropic, catAnthropicModel)
 
 	// Pre-completion (refresh NOT settled) the catalogued window is still returned.
-	if s.refreshCompleted() {
-		t.Fatal("precondition: refresh must be uncompleted for this test")
-	}
 	if got := echo(); got != catAnthropicCtx {
 		t.Fatalf("pre-completion echo for a catalogued model = %d, want catalog window %d (never provisional)", got, catAnthropicCtx)
 	}
@@ -407,8 +389,8 @@ func TestEchoResolverCataloguedModelNeverProvisional(t *testing.T) {
 // 0 (it cannot run on a 0 window). This is the load-bearing engine-never-0 vs echo-0
 // guard.
 func TestEngineResolverNeverZero(t *testing.T) {
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerOpenRouter})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerOpenRouter})
 	reg := regForResolver(s)
 
 	echo := reg.echoWindowResolver(Config{}, providerOpenRouter, liveOnlyModel)
@@ -422,7 +404,7 @@ func TestEngineResolverNeverZero(t *testing.T) {
 	}
 	// And post-settle-but-still-unknown both agree on 128k (the only place they converge
 	// in the unknown case).
-	s.markRefreshCompleted()
+	s.setMetadataFixture(map[string][]modelEntry{providerOpenRouter: {{ID: "listed-other"}}})
 	if got := echo(); got != defaultContextWindowTokens {
 		t.Fatalf("settled echo = %d, want 128k floor", got)
 	}
@@ -435,8 +417,8 @@ func TestEngineResolverNeverZero(t *testing.T) {
 // resolvers, pre- and post-completion — never a provisional 0, never the floor.
 func TestResolversOverrideWinsBothPrePost(t *testing.T) {
 	const override = 777_000
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerOpenRouter})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerOpenRouter})
 	reg := regForResolver(s)
 	cfg := Config{ContextWindowOverride: override}
 
@@ -451,7 +433,7 @@ func TestResolversOverrideWinsBothPrePost(t *testing.T) {
 		t.Fatalf("pre-completion engine with override = %d, want %d", got, override)
 	}
 	// Post-completion: still the override.
-	s.markRefreshCompleted()
+	s.setMetadataFixture(map[string][]modelEntry{providerOpenRouter: {{ID: "listed-other"}}})
 	if got := echo(); got != override {
 		t.Fatalf("post-completion echo with override = %d, want %d", got, override)
 	}

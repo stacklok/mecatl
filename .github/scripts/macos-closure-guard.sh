@@ -32,7 +32,6 @@ terminal_dirs=(
   perf
   e2e
   deploy
-  docs/lint
 )
 
 # Package roots the three macOS jobs BUILD or TEST (see ci.yml: smoke-darwin-arm64,
@@ -44,8 +43,8 @@ darwin_roots=(
   ./internal/adapter/privatefile ./internal/adapter/authfile
   ./internal/adapter/permconfig ./internal/adapter/credentialstore
 )
-# managed-temp-macos also cross-compiles these for freebsd (`GOOS=freebsd go test -c`).
-freebsd_roots=(./internal/adapter/osfs ./internal/app)
+# managed-temp-macos also cross-compiles osfs for freebsd (`GOOS=freebsd go test -c`).
+freebsd_roots=(./internal/adapter/osfs)
 
 closure="$(mktemp)"
 trap 'rm -f "$closure"' EXIT

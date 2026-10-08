@@ -16,7 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly(t *testing.T) {
+func TestAuthorityEvaluator_MintPopulatesEveryFieldExplicitly(t *testing.T) {
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(rootAuthorityTestTool{name: "Read", readOnly: true})
 	catalog.MustRegister(rootAuthorityTestTool{name: "Write"})
@@ -96,7 +96,7 @@ func TestAgentDefinitionAuthorityCeilingUsesResolvedToolsAndMCP(t *testing.T) {
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend(t *testing.T) {
+func TestAuthorityEvaluator_MintedRootCanDescend(t *testing.T) {
 	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
 	child, err := governance.ConsumeDelegationHop(root.CapabilitySet)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend(t *testing.T
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit(t *testing.T) {
+func TestAuthorityEvaluator_NonSpawnDerivationPointsAreExplicit(t *testing.T) {
 	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
 	svc, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
@@ -151,7 +151,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplic
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnounced(t *testing.T) {
+func TestAuthorityEvaluator_AbsentEvaluatorIsExplicitAndAnnounced(t *testing.T) {
 	evaluator, adapter, err := selectAuthorityEvaluator("noop", "")
 	if err != nil || evaluator == nil {
 		t.Fatalf("select noop evaluator = (%T, %q, %v), want explicit evaluator", evaluator, adapter, err)
@@ -173,7 +173,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnou
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario6_PostureLineReportsEvaluator(t *testing.T) {
+func TestAuthorityEvaluator_PostureLineReportsEvaluator(t *testing.T) {
 	if got := authorityEvaluatorPostureLine("local"); got != "authority evaluator posture: adapter=local enforcement=true" {
 		t.Fatalf("local posture = %q", got)
 	}
@@ -182,7 +182,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_PostureLineReportsEvaluator(t *te
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario7_PolicyLoadFailureIsFatal(t *testing.T) {
+func TestAuthorityEvaluator_PolicyLoadFailureIsFatal(t *testing.T) {
 	t.Parallel()
 
 	if _, _, err := selectAuthorityEvaluator("cedar", ""); err == nil {

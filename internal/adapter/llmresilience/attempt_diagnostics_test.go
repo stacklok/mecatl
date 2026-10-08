@@ -36,7 +36,7 @@ func decisionRecords(d *recordingDiag) []diagRecord {
 	defer d.mu.Unlock()
 	var records []diagRecord
 	for _, record := range d.records {
-		if argValue(record.args, "decision") != nil {
+		if argValue(record.args, "decision") != nil && argValue(record.args, "retry_disposition") != nil {
 			records = append(records, record)
 		}
 	}
@@ -152,13 +152,13 @@ func TestAttemptDecisionTerminalReasons(t *testing.T) {
 		failure    error
 		classifier func(error) bool
 		wantReason replaySuppressedReason
-		wantDisp   port.RetryDisposition
+		wantDisp   session.RetryDisposition
 	}{
-		{name: "permanent", failure: apiErr(400), wantReason: replayPermanent, wantDisp: port.RetryDispositionPermanent},
-		{name: "unknown", failure: errors.New("secret unknown body"), wantReason: replayUnknown, wantDisp: port.RetryDispositionUnknown},
-		{name: "classifier veto", failure: connection(), classifier: func(error) bool { return false }, wantReason: replayClassifierVeto, wantDisp: port.RetryDispositionRetryable},
-		{name: "provider internal veto", failure: &explicitNoRetryTestError{err: connection()}, wantReason: replayProviderInternalVeto, wantDisp: port.RetryDispositionRetryable},
-		{name: "attempts exhausted", failure: connection(), wantReason: replayAttemptsExhausted, wantDisp: port.RetryDispositionRetryable},
+		{name: "permanent", failure: apiErr(400), wantReason: replayPermanent, wantDisp: session.RetryDispositionPermanent},
+		{name: "unknown", failure: errors.New("secret unknown body"), wantReason: replayUnknown, wantDisp: session.RetryDispositionUnknown},
+		{name: "classifier veto", failure: connection(), classifier: func(error) bool { return false }, wantReason: replayClassifierVeto, wantDisp: session.RetryDispositionRetryable},
+		{name: "provider internal veto", failure: &explicitNoRetryTestError{err: connection()}, wantReason: replayProviderInternalVeto, wantDisp: session.RetryDispositionRetryable},
+		{name: "attempts exhausted", failure: connection(), wantReason: replayAttemptsExhausted, wantDisp: session.RetryDispositionRetryable},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -222,16 +222,15 @@ func TestAttemptDecisionVisibleAndBreakerOpen(t *testing.T) {
 		})
 		_, _ = wrapped.Stream(context.Background(), port.LLMRequest{Model: "m"})
 		before := len(decisionRecords(diag))
-		_, _ = wrapped.Stream(context.Background(), port.LLMRequest{Model: "m"})
-		records := decisionRecords(diag)
-		if len(records) != before+1 {
-			t.Fatalf("decision records grew by %d, want 1", len(records)-before)
+		_, err := wrapped.Stream(context.Background(), port.LLMRequest{Model: "m"})
+		requirePrecommitRetryable(t, err)
+		if records := decisionRecords(diag); len(records) != before {
+			t.Fatalf("admission-only rejection fabricated an attempt decision: %+v", records)
 		}
-		record := records[len(records)-1]
-		requireDecisionFields(t, record, map[string]any{
-			"model": "m", "attempt": 1, "max_attempts": 1, "elapsed": time.Duration(0),
-			"retry_disposition": "unknown", "stream_progress": "precommit",
-			"decision": "terminal", "replay_suppressed_reason": string(replayBreakerOpen),
+		records := diag.find("llm provider recovery")
+		requireDecisionFields(t, records[len(records)-1], map[string]any{
+			"model": "m", "attempt": 0, "max_attempts": 1,
+			"decision": "terminal", "source": "breaker", "wait": time.Duration(0),
 		})
 	})
 }

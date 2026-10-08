@@ -50,7 +50,7 @@ func buildParams(req port.LLMRequest, effort string) (oai.ChatCompletionNewParam
 
 // buildParams (method) builds the base params (the free buildParams above,
 // which stays the byte-identical baseline for existing callers/tests) and
-// then applies the cache-dialect hints (ADR 0100). Mirrors the openai
+// then applies the cache-dialect hints. Mirrors the openai
 // (Responses) adapter's free/method split: only the method form — the live
 // Stream path — carries the cache dialect.
 func (p *Provider) buildParams(req port.LLMRequest) (oai.ChatCompletionNewParams, error) {
@@ -62,10 +62,10 @@ func (p *Provider) buildParams(req port.LLMRequest) (oai.ChatCompletionNewParams
 	return params, nil
 }
 
-// applyCacheDialect stamps the ADR 0100 cache hint onto params per
+// applyCacheDialect stamps the cache hint onto params per
 // p.cacheDialect. CacheDialectNone (the zero value) and any unrecognised
 // token both fall through the switch's default arm — emit nothing,
-// byte-identical to the pre-ADR-0100 wire (fail-soft, mirrors
+// byte-identical to the wire without cache hints (fail-soft, mirrors
 // reasoningEffortFor's omit-on-unknown arm).
 func (p *Provider) applyCacheDialect(params *oai.ChatCompletionNewParams, req port.LLMRequest) {
 	switch p.cacheDialect {
@@ -78,14 +78,14 @@ func (p *Provider) applyCacheDialect(params *oai.ChatCompletionNewParams, req po
 
 // reasoningEffortFor maps a NEUTRAL composition effort token to the SDK's
 // shared.ReasoningEffort (a string alias). It passes through mecatl's neutral
-// vocabulary — low/medium/high/xhigh/max (see NormalizeReasoningEffort / ADR
-// 0055) — VERBATIM, and returns ok=false (OMIT the field) for "" / "auto" / any
+// vocabulary — low/medium/high/xhigh/max (see NormalizeReasoningEffort) —
+// VERBATIM, and returns ok=false (OMIT the field) for "" / "auto" / any
 // unrecognised token (fail-soft, so a stray token never 400s the request). NOTE:
 // unlike the openai (Responses) adapter there is NO xhigh/max->high clamp — this
 // endpoint accepts them (verified 2026-07-17). The OpenCode Go endpoint ALSO
 // accepts none/adaptive, but mecatl's neutral vocabulary does not expose those, so
-// they never reach here; extending the vocabulary is an ADR-0055 concern, not this
-// adapter's.
+// they never reach here; extending the vocabulary is a harness-wide concern, not
+// this adapter's.
 func reasoningEffortFor(token string) (shared.ReasoningEffort, bool) {
 	switch token {
 	case "low", "medium", "high", "xhigh", "max":

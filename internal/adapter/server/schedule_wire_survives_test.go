@@ -13,8 +13,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestScheduleTool_WireSurvivesSettingsCLIRemoval pins AC3.3 (schedule-tool
-// acceptance plan): removing the settings.yaml `schedules:` block and the
+// TestScheduleTool_WireSurvivesSettingsCLIRemoval pins that removing the
+// settings.yaml `schedules:` block and the
 // `mecated schedules` CLI (clean removal — the in-chat Schedule tool replaces
 // them) does NOT touch the gRPC `ScheduleService` or the REST `/v1/schedules`
 // routes — the mecatui /schedule overlay's transport and the out-of-band

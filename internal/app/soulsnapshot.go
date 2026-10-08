@@ -10,8 +10,8 @@ import (
 )
 
 // soulsnapshot.go is the composition-layer PROJECTION of the resolved soul + the
-// LIVE user-model lister into the server adapter's wire types (issue #14, Phase 3,
-// Item 3 — the read-only /soul + /usermodel TUI inspection panels). It is the one
+// LIVE user-model lister into the server adapter's wire types (issue #14 — the
+// read-only /soul + /usermodel TUI inspection panels). It is the one
 // place the soul/user-model adapters meet the server's GetSoul/GetUserModel seams,
 // so the server adapter never reaches into the soul adapter's loader or the
 // composition-layer soulMeta type. It adds NO write path: soulSnapshot READS the
@@ -131,13 +131,5 @@ func (l userModelIndexLister) List(ctx context.Context) ([]server.UserModelEntry
 }
 
 func (l userModelIndexLister) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
-	if lifecycle, ok := l.store.(tool.MemoryLifecycleStore); ok {
-		return lifecycle.Inspect(ctx, key)
-	}
-	entry, found, err := l.store.Recall(ctx, key)
-	if err != nil || !found {
-		return tool.MemoryRecord{}, found, err
-	}
-	revision := tool.MemoryRevision{Key: entry.Key, Value: entry.Value, Description: entry.Description, Status: tool.MemoryStatusActive, Origin: tool.MemoryOriginImported, UpdatedAt: entry.UpdatedAt}
-	return tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}, true, nil
+	return l.store.Inspect(ctx, key)
 }

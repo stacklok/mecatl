@@ -71,9 +71,7 @@ type MCPServerInfo struct {
 	Group     string
 }
 
-// MCPSource is one inventory source — a ToolHive group or config block — with its
-// servers and any diagnostics (proto McpSource). NOTE: ListMcpSources reflects a
-// startup snapshot; servers started AFTER mecated launched won't appear.
+// MCPSource is one cached published/pre-shadow source inventory row.
 type MCPSource struct {
 	Name        string
 	Kind        string
@@ -160,7 +158,24 @@ type MCPPromptGotMsg struct {
 
 // MCPSourcesMsg carries a ListMcpSources success (the panel inventory).
 type MCPSourcesMsg struct {
-	Sources []MCPSource
+	Sources     []MCPSource
+	Revision    uint64
+	Stale       bool
+	Reconciling bool
+}
+
+// MCPRefreshResult identifies the direct runtime considered by one refresh.
+type MCPRefreshResult struct {
+	Revision uint64
+	Changed  bool
+}
+
+// MCPRefreshMsg carries an explicit direct-source refresh result.
+type MCPRefreshMsg struct {
+	RequestToken uint64
+	SessionID    string
+	Result       MCPRefreshResult
+	Err          error
 }
 
 // MCPGroupsMsg carries a ListToolHiveGroups success.
@@ -262,13 +277,28 @@ func (c *Client) GetMCPPrompt(ctx context.Context, server, name string, args map
 	return resp.GetDescription(), mapPromptMessages(resp.GetMessages()), nil
 }
 
-// ListMCPSources lists the inventory sources (the panel snapshot).
+// ListMCPSources lists the cached inventory sources.
 func (c *Client) ListMCPSources(ctx context.Context) ([]MCPSource, error) {
+	result, err := c.ListMCPSourceStatus(ctx)
+	return result.Sources, err
+}
+
+// ListMCPSourceStatus returns cached inventory plus publication status.
+func (c *Client) ListMCPSourceStatus(ctx context.Context) (MCPSourcesMsg, error) {
 	resp, err := c.svc.ListMcpSources(ctx, &mecatlv1.ListMcpSourcesRequest{})
 	if err != nil {
-		return nil, err
+		return MCPSourcesMsg{}, err
 	}
-	return mapSources(resp.GetSources()), nil
+	return MCPSourcesMsg{Sources: mapSources(resp.GetSources()), Revision: resp.GetRevision(), Stale: resp.GetStale(), Reconciling: resp.GetReconciling()}, nil
+}
+
+// RefreshMCP explicitly reconciles direct MCP sources for one session.
+func (c *Client) RefreshMCP(ctx context.Context, sessionID string) (MCPRefreshResult, error) {
+	resp, err := c.svc.RefreshMcpSources(ctx, &mecatlv1.RefreshMcpSourcesRequest{SessionId: sessionID})
+	if err != nil {
+		return MCPRefreshResult{}, err
+	}
+	return MCPRefreshResult{Revision: resp.GetRevision(), Changed: resp.GetChanged()}, nil
 }
 
 // ListToolHiveGroups lists the configured ToolHive group names.
@@ -412,6 +442,16 @@ type MCPConnectorReader interface {
 	ListMCPConnectors(ctx context.Context, sessionID string) (MCPConnectorInventory, error)
 }
 
+// MCPRefresher is the optional explicit direct-source control.
+type MCPRefresher interface {
+	RefreshMCP(ctx context.Context, sessionID string) (MCPRefreshResult, error)
+}
+
+// MCPSourceStatusReader is the optional cached status extension.
+type MCPSourceStatusReader interface {
+	ListMCPSourceStatus(ctx context.Context) (MCPSourcesMsg, error)
+}
+
 // ListMcpResourcesCmd lists resources (server "" = all).
 func ListMcpResourcesCmd(ctx context.Context, m MCP, server string) tea.Cmd {
 	return func() tea.Msg {
@@ -459,11 +499,26 @@ func GetMcpPromptCmd(ctx context.Context, m MCP, server, name string, args map[s
 // ListMcpSourcesCmd lists the inventory sources (the panel snapshot).
 func ListMcpSourcesCmd(ctx context.Context, m MCP) tea.Cmd {
 	return func() tea.Msg {
+		if statusReader, ok := m.(MCPSourceStatusReader); ok {
+			status, err := statusReader.ListMCPSourceStatus(ctx)
+			if err != nil {
+				return MCPErrMsg{Op: "list sources", Class: classifyMCPErr(err), Err: err}
+			}
+			return status
+		}
 		s, err := m.ListMCPSources(ctx)
 		if err != nil {
 			return MCPErrMsg{Op: "list sources", Class: classifyMCPErr(err), Err: err}
 		}
 		return MCPSourcesMsg{Sources: s}
+	}
+}
+
+// RefreshMcpSourcesCmd invokes explicit direct-source refresh.
+func RefreshMcpSourcesCmd(ctx context.Context, m MCPRefresher, sessionID string, requestToken uint64) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.RefreshMCP(ctx, sessionID)
+		return MCPRefreshMsg{RequestToken: requestToken, SessionID: sessionID, Result: result, Err: err}
 	}
 }
 

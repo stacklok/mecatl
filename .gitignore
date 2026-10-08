@@ -43,3 +43,4 @@ coverage.*
 # Personal, local-only Claude Code instructions and running-state notes
 /CLAUDE.local.md
 /HANDOFF.md
+.env

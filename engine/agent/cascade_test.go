@@ -78,7 +78,7 @@ func TestCascadeReducesWithoutLLM(t *testing.T) {
 	before := counter.CountMessages(conv.Messages)
 
 	cc := agent.CascadeCompactor{Counter: counter} // no LLM, no budget → run every deterministic tier once
-	compacted, summary, err := cc.Compact(context.Background(), conv)
+	compacted, summary, _, err := cc.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCascadeTierProgression(t *testing.T) {
 
 	// Tight budget: should drive past snip into strip/collapse (body rewriting).
 	tight := agent.CascadeCompactor{Counter: counter, BudgetTokens: 60}
-	compacted, summary, err := tight.Compact(context.Background(), overBudgetConversation())
+	compacted, summary, _, err := tight.Compact(context.Background(), overBudgetConversation())
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestCascadeTier4SummarizesWithLLM(t *testing.T) {
 		LLM:          llm,
 		Model:        "m",
 	}
-	compacted, summary, err := cc.Compact(context.Background(), overBudgetConversation())
+	compacted, summary, _, err := cc.Compact(context.Background(), overBudgetConversation())
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestCascadeImplementsCompactor(t *testing.T) {
 	conv := &session.Conversation{}
 	conv.Append(session.NewSystemMessage("sys"))
 	conv.Append(session.NewUserMessage("goal"))
-	compacted, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact on tiny history: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestCascadeTier4SubstitutesMediaPlaceholder(t *testing.T) {
 		LLM:           prov,
 		Model:         "m",
 	}
-	compacted, _, err := cc.Compact(context.Background(), conv)
+	compacted, _, _, err := cc.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestCascadeTier4StructuredPromptReachesRequest(t *testing.T) {
 		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { got = req })},
 		mockllm.TextTurn("## Goal\nfix the bug"),
 	)
-	if _, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation()); err != nil {
+	if _, _, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation()); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	if llm.Calls() != 1 {
@@ -351,7 +351,7 @@ func TestCascadeTier4PromptPreservesPendingAndConditionalWork(t *testing.T) {
 		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { got = req })},
 		mockllm.TextTurn("## Goal\nfix the bug"),
 	)
-	if _, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation()); err != nil {
+	if _, _, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation()); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	system := got.System.StablePrefix
@@ -416,7 +416,7 @@ func TestCascadeTier4ConditionalInstructionInMiddleReachesSummariser(t *testing.
 		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { got = req })},
 		mockllm.TextTurn("## Goal\nfix the bug\n\n## User instructions and intent\n"+conditional),
 	)
-	if _, _, err := forceTier4(llm).Compact(context.Background(), conv); err != nil {
+	if _, _, _, err := forceTier4(llm).Compact(context.Background(), conv); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	if llm.Calls() != 1 {
@@ -443,7 +443,7 @@ func TestCascadeTier4RequestCarriesTokenBudget(t *testing.T) {
 	)
 	cc := forceTier4(llm)
 	cc.SummaryMaxTokens = 256
-	if _, _, err := cc.Compact(context.Background(), overBudgetConversation()); err != nil {
+	if _, _, _, err := cc.Compact(context.Background(), overBudgetConversation()); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	if len(got.Messages) == 0 {
@@ -467,7 +467,7 @@ func TestCascadeTier4EmptySummaryAbortsToOriginal(t *testing.T) {
 	conv := overBudgetConversation()
 	original := append([]session.Message(nil), conv.Messages...)
 
-	compacted, _, err := forceTier4(llm).Compact(context.Background(), conv)
+	compacted, _, _, err := forceTier4(llm).Compact(context.Background(), conv)
 	if err == nil {
 		t.Fatal("Compact accepted an empty summary; want an error (abort-to-original)")
 	}
@@ -483,7 +483,7 @@ func TestCascadeTier4EmptySummaryAbortsToOriginal(t *testing.T) {
 // validation), lands in the compacted history, and pairing stays valid.
 func TestCascadeTier4MissingSectionsAccepted(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("## Goal\nfix handler.go"))
-	compacted, summary, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation())
+	compacted, summary, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation())
 	if err != nil {
 		t.Fatalf("Compact rejected a sections-light summary: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestCascadeTier4OverLongSummaryAccepted(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(long))
 	cc := forceTier4(llm)
 	cc.SummaryMaxTokens = 16 // tiny soft budget the scripted reply blows past
-	compacted, _, err := cc.Compact(context.Background(), overBudgetConversation())
+	compacted, _, _, err := cc.Compact(context.Background(), overBudgetConversation())
 	if err != nil {
 		t.Fatalf("Compact rejected an over-long summary: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestCascadeTier4PreservesPairingWithStructuredSummary(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("## Goal\nfix the bug\n\n## Next steps\nNone."))
 	cc := forceTier4(llm)
 	cc.KeepLastTurns = 6
-	compacted, _, err := cc.Compact(context.Background(), conv)
+	compacted, _, _, err := cc.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -620,7 +620,7 @@ func TestCascadeTier4TopLevelCutSnapsPastToolResult(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("## Goal\nfix the bug\n\n## Next steps\nNone."))
 	cc := forceTier4(llm)
 	cc.KeepLastTurns = 3
-	compacted, _, err := cc.Compact(context.Background(), conv)
+	compacted, _, _, err := cc.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v (a failure here usually means the top-level cut split the snap-call pair)", err)
 	}
@@ -700,7 +700,7 @@ func TestCascadeTier4PreservesRecentUserTaskInTail(t *testing.T) {
 	prov := &capturingSummaryProvider{}
 	cc := forceTier4(prov)
 	conv := recentTaskTier4Conversation()
-	compacted, _, err := cc.Compact(context.Background(), conv)
+	compacted, _, _, err := cc.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -731,11 +731,11 @@ func TestCascadeTier4PreservesRecentUserTaskInTail(t *testing.T) {
 // recent-task fixture and asserts byte-identical output (the back-snap is pure index
 // arithmetic — tiers 1-3 stay deterministic).
 func TestCascadeDeterministicWithBackSnap(t *testing.T) {
-	a, _, err := agent.CascadeCompactor{}.Compact(context.Background(), recentTaskConversation())
+	a, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), recentTaskConversation())
 	if err != nil {
 		t.Fatalf("Compact #1: %v", err)
 	}
-	b, _, err := agent.CascadeCompactor{}.Compact(context.Background(), recentTaskConversation())
+	b, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), recentTaskConversation())
 	if err != nil {
 		t.Fatalf("Compact #2: %v", err)
 	}
@@ -753,7 +753,7 @@ func TestCascadeTier4OnlyMemoryFramingReachesRequest(t *testing.T) {
 		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { got = req })},
 		mockllm.TextTurn("## Goal\nfix the bug"),
 	)
-	if _, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation()); err != nil {
+	if _, _, _, err := forceTier4(llm).Compact(context.Background(), overBudgetConversation()); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	system := got.System.StablePrefix
@@ -772,7 +772,7 @@ func TestCascadeTier4LLMErrorAbortsToOriginal(t *testing.T) {
 	conv := overBudgetConversation()
 	original := append([]session.Message(nil), conv.Messages...)
 
-	compacted, _, err := forceTier4(llm).Compact(context.Background(), conv)
+	compacted, _, _, err := forceTier4(llm).Compact(context.Background(), conv)
 	if err == nil {
 		t.Fatal("Compact swallowed a tier-4 LLM error")
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 // TestResolveSlotModelTable pins resolveSlotModel's precedence and fail-soft posture
-// (ADR 0030): literal id / operator alias / built-in alias / default-tier fallthrough
+// literal id / operator alias / built-in alias / default-tier fallthrough
 // / unset / inherit-or-unknown. resolveSlotModel is SILENT (the misconfig WARN lives in
 // the build-once logSlotConfigFacts, not here): this test asserts it NEVER logs, so the
 // per-engine duplication trap can't regress.
@@ -90,7 +90,7 @@ func TestResolveSlotModelTable(t *testing.T) {
 	}
 }
 
-// TestCompactionSlotRoutesSummaryOnly pins E1 (ADR 0030): a compaction slot routes
+// TestCompactionSlotRoutesSummaryOnly pins E1: a compaction slot routes
 // ONLY the CascadeCompactor's summary model; the engine's own Model stays the session
 // model.
 func TestCompactionSlotRoutesSummaryOnly(t *testing.T) {
@@ -102,7 +102,7 @@ func TestCompactionSlotRoutesSummaryOnly(t *testing.T) {
 		ModelAliases: map[string]string{"cheap": "cheap-model-id"},
 	}
 	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
-	deps := engineDepsForProvider(cfg, provider, sessionModel, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	deps := engineDepsForProvider(cfg, provider, testProviderModel(sessionModel), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 	if deps.Model != sessionModel {
 		t.Fatalf("deps.Model = %q, want the session model %q (the slot must NOT move the engine model)", deps.Model, sessionModel)
 	}
@@ -115,7 +115,7 @@ func TestCompactionSlotRoutesSummaryOnly(t *testing.T) {
 	}
 }
 
-// TestAskReviewerSlotSupersedesFlag pins E2 (ADR 0030): a configured ask-reviewer slot
+// TestAskReviewerSlotSupersedesFlag pins E2: a configured ask-reviewer slot
 // SUPERSEDES the flag's model, but a slot ALONE does not enable the reviewer (the flag
 // stays the on/off gate).
 func TestAskReviewerSlotSupersedesFlag(t *testing.T) {
@@ -147,9 +147,9 @@ func TestAskReviewerSlotSupersedesFlag(t *testing.T) {
 	}
 }
 
-// TestGuardrailSlotRoutesChecker pins E3 (ADR 0030) + the #159 enable widening: a
+// TestGuardrailSlotRoutesChecker pins E3 + the #159 enable widening: a
 // configured guardrail slot routes the checker model AND (alone) ENABLES guardrails
-// (configure = enable, ADR 0046). The slot supersedes the --guardrails-model value
+// (configure = enable). The slot supersedes the --guardrails-model value
 // when both are set.
 func TestGuardrailSlotRoutesChecker(t *testing.T) {
 	const sessionModel = "gpt-4o"
@@ -173,7 +173,7 @@ func TestGuardrailSlotRoutesChecker(t *testing.T) {
 		ModelAliases: map[string]string{"cheap": "slot-guard-id"},
 	}
 	if checker := buildGuardrailsChecker(noModel, nil, mockllm.New(mockllm.TextTurn("x")), "openai", sessionModel); checker == nil {
-		t.Fatalf("a guardrail slot WITHOUT --guardrails-model must now ENABLE the checker (ADR 0046)")
+		t.Fatalf("a guardrail slot WITHOUT --guardrails-model must now ENABLE the checker")
 	}
 	if m := checkerModel(t, noModel, sessionModel); m != "slot-guard-id" {
 		t.Fatalf("slot-only guardrail checker model = %q, want the slot model %q", m, "slot-guard-id")
@@ -197,7 +197,7 @@ func TestFoldOperatorModelSlotsNoResolverNoOp(t *testing.T) {
 	}
 }
 
-// TestFoldOperatorModelSlotsFromYAML pins the operator-tier fold (ADR 0030): the YAML
+// TestFoldOperatorModelSlotsFromYAML pins the operator-tier fold: the YAML
 // models.slots/models.aliases merge onto cfg, CLI wins PER KEY for both maps, and an
 // unknown INNER slot key is dropped fail-soft with a Build-once WARN (composition-layer
 // validation, distinct from the YAML strict-parse of unknown TOP keys).
@@ -282,6 +282,32 @@ func TestLogSlotConfigFacts(t *testing.T) {
 	}
 }
 
+// TestLogSlotConfigFactsCoversReflection: the reflection slot is a routed call-slot,
+// so a resolved binding narrates ACTIVE and a mistyped one WARNs at Build like the
+// other call-slots.
+func TestLogSlotConfigFactsCoversReflection(t *testing.T) {
+	active := &capturingDiag{}
+	logSlotConfigFacts(Config{
+		Model:        "m",
+		Diagnostics:  active,
+		ModelSlots:   map[string]string{slotReflection: "cheap"},
+		ModelAliases: map[string]string{"cheap": "gpt-4o-mini"},
+	})
+	if got := active.count("model slot ACTIVE"); got != 1 {
+		t.Fatalf("ACTIVE lines = %d, want 1 for a resolved reflection slot; lines=%v", got, active.lines)
+	}
+
+	warn := &capturingDiag{}
+	logSlotConfigFacts(Config{
+		Model:       "m",
+		Diagnostics: warn,
+		ModelSlots:  map[string]string{slotReflection: "bogus"},
+	})
+	if got := warn.count("unknown alias or one meaning inherit"); got != 1 {
+		t.Fatalf("misconfig WARN lines = %d, want 1 for a mistyped reflection slot; lines=%v", got, warn.lines)
+	}
+}
+
 // TestCompactionBudgetIsCounterIndependent is the O5 TRIPWIRE (Architecture Low):
 // CascadeCompactor.BudgetTokens is WINDOW-derived and independent of the Counter, so
 // the compaction reroute can key the Counter to the slot model without mis-sizing the
@@ -289,8 +315,8 @@ func TestLogSlotConfigFacts(t *testing.T) {
 // BudgetTokens — a future "make BudgetTokens counter-derived" refactor trips this red.
 func TestCompactionBudgetIsCounterIndependent(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("x"))
-	a := buildCompactor(Config{Model: "gpt-4o", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, buildTokenCounter(Config{Model: "gpt-4o", Tokenizer: "tiktoken"}))
-	b := buildCompactor(Config{Model: "gpt-4", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, buildTokenCounter(Config{Model: "gpt-4", Tokenizer: "tiktoken"}))
+	a := buildCompactor(Config{Model: "gpt-4o", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, testProviderModel("gpt-4o"), buildTokenCounter(Config{Model: "gpt-4o", Tokenizer: "tiktoken"}))
+	b := buildCompactor(Config{Model: "gpt-4", Compaction: "cascade", Tokenizer: "tiktoken"}, provider, testProviderModel("gpt-4"), buildTokenCounter(Config{Model: "gpt-4", Tokenizer: "tiktoken"}))
 	ca, ok := a.(agent.CascadeCompactor)
 	if !ok {
 		t.Fatalf("compactor a type = %T, want CascadeCompactor", a)

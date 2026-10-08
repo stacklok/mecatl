@@ -14,8 +14,14 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
@@ -23,20 +29,123 @@ import (
 // TestMain dispatches to the subprocess harnesses when their environment variables
 // are set. Otherwise it runs the normal isolated test suite.
 func TestMain(m *testing.M) {
-	os.Exit(testhome.Run("mecatui", func() int {
-		if id, ok := os.LookupEnv("MECATUI_TEST_EXIT_HANDOFF_ID"); ok {
-			runExitHandoffProcessHarness(id)
-			return 0
-		}
-		if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
-			run([]string{})
-			return 0
-		}
-		return m.Run()
-	}))
+	if os.Getenv("MECATUI_TEST_HANDOFF_COMPOSITION") != "" {
+		os.Exit(runMecatuiTest(m))
+	}
+	os.Exit(testhome.Run("mecatui", func() int { return runMecatuiTest(m) }))
 }
 
-// TestResolveThemeAutoDetect pins the light/dark auto-detect gate (ADR 0280):
+func runMecatuiTest(m *testing.M) int {
+	if os.Getenv("MECATUI_TEST_EXIT_HANDOFF_SCENARIO") != "" {
+		runExitHandoffScenarioHarness()
+		return 0
+	}
+	if id, ok := os.LookupEnv("MECATUI_TEST_EXIT_HANDOFF_ID"); ok {
+		runExitHandoffProcessHarness(id)
+		return 0
+	}
+	if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
+		run([]string{})
+		return 0
+	}
+	return m.Run()
+}
+
+type inertMicroVMReadyManager struct{}
+
+func (inertMicroVMReadyManager) EnsureReady(context.Context, microvmmanager.ReadyRequest) (string, error) {
+	return "unused", nil
+}
+
+func writeIsolatedExecutionSettings(t *testing.T, placement string) {
+	t.Helper()
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	settingsDir := filepath.Join(configHome, "mecatl")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "execution:\n  default_placement: " + placement + "\n"
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBareEmbeddedRunDiscoversConventionalMicroVMPlacement(t *testing.T) {
+	writeIsolatedExecutionSettings(t, app.PlacementMicroVMLocal)
+	stop := errors.New("configuration inspected")
+	workspace := t.TempDir()
+	err := runWithOptions([]string{"mecatui", "--mock", "--quiet", "--workspace=" + workspace}, runOptions{
+		beforeEmbeddedStart: func(cfg app.Config) error {
+			if len(cfg.PermissionConfigs) != 0 {
+				t.Fatalf("PermissionConfigs = %v, want conventional discovery only", cfg.PermissionConfigs)
+			}
+			cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+				return inertMicroVMReadyManager{}, "unix:///unused", nil
+			}
+			resolved, err := app.ConfigureExecution(cfg)
+			if err != nil {
+				t.Fatalf("ConfigureExecution: %v", err)
+			}
+			if resolved.PlacementProvider == nil {
+				t.Fatal("bare embedded startup did not select the microvm-local placement provider")
+			}
+			return stop
+		},
+	})
+	if !errors.Is(err, stop) {
+		t.Fatalf("runWithOptions error = %v, want inspection stop", err)
+	}
+}
+
+func TestEmbeddedReadinessCallbacksReachFirstSessionModel(t *testing.T) {
+	writeIsolatedExecutionSettings(t, app.PlacementHostLocal)
+	workspace := t.TempDir()
+	var composition app.Config
+	err := runWithOptions([]string{"mecatui", "--mock", "--quiet", "--no-store", "--no-memory", "--no-user-model", "--no-soul", "--no-skills", "--no-commands", "--workspace=" + workspace}, runOptions{
+		beforeEmbeddedStart: func(cfg app.Config) error {
+			composition = cfg
+			return nil
+		},
+		runProgram: func(_ context.Context, model ui.Model) (tea.Model, error) {
+			const progress = "Preparing microVM first session"
+			composition.MicroVMReadinessObserver(microvmmanager.StagePrepare, progress)
+			batch, ok := model.Init()().(tea.BatchMsg)
+			if !ok {
+				t.Fatalf("Init message = %T, want tea.BatchMsg", model.Init()())
+			}
+			seen := false
+			for _, cmd := range batch {
+				msg := cmd()
+				updated, _ := model.Update(msg)
+				model = updated.(ui.Model)
+				if strings.Contains(model.View().Content, progress) {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				t.Fatalf("app readiness progress did not reach UI model:\n%s", model.View().Content)
+			}
+
+			composition.MicroVMReadinessFailed(microvmmanager.StagePrepare)
+			updated, _ := model.Update(client.ConnectErrMsg{Err: errors.New("placement unavailable: private detail")})
+			model = updated.(ui.Model)
+			view := model.View().Content
+			if !strings.Contains(view, "mecated microvm doctor") || strings.Contains(view, "private detail") {
+				t.Fatalf("app readiness failure did not reach redacted UI remediation:\n%s", view)
+			}
+			return model, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runWithOptions: %v", err)
+	}
+}
+
+// TestResolveThemeAutoDetect pins the light/dark auto-detect gate:
 // armed only when no explicit theme was given AND stdout is a real terminal —
 // every other combination (explicit theme, redirected stdout, or both) must
 // leave it disarmed, since an explicit --theme/MECATUI_THEME always wins and a
@@ -174,9 +283,10 @@ func (b *syncBuffer) String() string {
 // MECATUI_TEST_SIGNAL_HANDLER mode and blocks until the child prints its
 // "signal-handler ready" handshake (installed AFTER signal.Notify), so the
 // parent's signals always land on an installed handler — never raced by -race
-// startup latency. It returns the running cmd and a synchronized buffer that
-// accumulates the child's merged output from the handshake onward.
-func startSignalChild(t *testing.T, mode string) (*exec.Cmd, *syncBuffer) {
+// startup latency. It returns the running cmd, a synchronized buffer that
+// accumulates the child's merged output from the handshake onward, and a channel
+// closed once that output has been fully drained.
+func startSignalChild(t *testing.T, mode string) (*exec.Cmd, *syncBuffer, <-chan struct{}) {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -218,10 +328,12 @@ func startSignalChild(t *testing.T, mode string) (*exec.Cmd, *syncBuffer) {
 		}
 	}
 	// Keep draining the pipe into out for the rest of the child's life.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		_, _ = io.Copy(out, pr)
 	}()
-	return cmd, out
+	return cmd, out, drained
 }
 
 // TestSignalChildHarness is a no-op in the parent; TestMain routes the child
@@ -233,7 +345,7 @@ func TestSignalChildHarness(*testing.T) {}
 // TestDoubleCtrlCForceExit spawns a child process with
 // MECATUI_TEST_SIGNAL_HANDLER=second, sends two SIGINTs, and asserts exit code 130.
 func TestDoubleCtrlCForceExit(t *testing.T) {
-	cmd, out := startSignalChild(t, "second")
+	cmd, out, drained := startSignalChild(t, "second")
 
 	// First SIGINT — the child goroutine prints the graceful-shutdown line.
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
@@ -259,13 +371,14 @@ func TestDoubleCtrlCForceExit(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 130 {
 		t.Fatalf("expected exit code 130, got %v (output: %q)", err, out.String())
 	}
+	<-drained
 }
 
 // TestSingleSignalGracefulExit spawns a child with
 // MECATUI_TEST_SIGNAL_HANDLER=first, sends one SIGINT, and asserts exit 0 with the
 // graceful-shutdown message on stderr.
 func TestSingleSignalGracefulExit(t *testing.T) {
-	cmd, out := startSignalChild(t, "first")
+	cmd, out, drained := startSignalChild(t, "first")
 
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
 		t.Fatalf("signal: %v", err)
@@ -273,6 +386,12 @@ func TestSingleSignalGracefulExit(t *testing.T) {
 
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("expected exit 0, got %v (output: %q)", err, out.String())
+	}
+
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("child output did not drain after exit: %q", out.String())
 	}
 
 	if !strings.Contains(out.String(), "shutting down gracefully") {

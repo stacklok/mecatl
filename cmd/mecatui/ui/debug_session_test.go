@@ -28,10 +28,10 @@ func TestDebugIdentityUsesNormalHeaderAcrossPhases(t *testing.T) {
 			rendered = m.View().Content
 		}
 		plain := stripANSIstr(rendered)
-		if !strings.Contains(plain, "mecatui  ·  "+want+"  ·  session ") || strings.Contains(plain, "target[31m opaque") || strings.Contains(rendered, "\x1b[31m") {
+		if !strings.Contains(plain, "⚠ "+want) || strings.Contains(plain, "target[31m opaque") || strings.Contains(rendered, "\x1b[31m") {
 			t.Fatalf("phase %v debug header identity unsafe/missing: %q", p, plain)
 		}
-		if !strings.Contains(rendered, m.deps.Theme.Style("warning").Bold(true).Render(want)) {
+		if !strings.Contains(rendered, m.deps.Theme.Style("warning").Bold(true).Render("⚠ "+want)) {
 			t.Fatalf("phase %v debug target lacks amber/bold treatment: %q", p, rendered)
 		}
 	}
@@ -118,17 +118,6 @@ func TestDebugSessionDetailsShowAndCopyExactTargetID(t *testing.T) {
 	m = m0.(Model).onSessionIDCopyResult(msg)
 	if len(clip.wrote) != 1 || string(clip.wrote[0]) != target || stripANSIstr(m.statusMsg) != "copied debug target ID" {
 		t.Fatalf("target copy = payloads:%q status:%q", clip.wrote, stripANSIstr(m.statusMsg))
-	}
-}
-
-func TestDebugWindowTitleStartsWithStableHandleAcrossPhases(t *testing.T) {
-	m := debugUIModel("target-session", 80)
-	prefix := "DEBUG " + client.SessionHandle("target-session")
-	for _, p := range []phase{phaseConnecting, phaseIdle, phaseRunning, phaseAwaitingApproval, phaseFatal} {
-		m.phase = p
-		if got := m.windowTitle(); !strings.HasPrefix(got, prefix) {
-			t.Fatalf("phase %v title = %q", p, got)
-		}
 	}
 }
 

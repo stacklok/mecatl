@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -270,10 +271,10 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 
 func connectAuthHint(reason client.AuthReason, target string) string {
 	if reason == client.AuthNotEnrolled && target != "" {
-		return "The server requires caller authentication. Use --auth-token, or, if this server supports OIDC enrollment, run mecatui login " + sanitizeTerminal(target) + "."
+		return "The server requires caller authentication. Use --auth-token, or, if this server supports OIDC enrollment, run mecatui login " + terminaltext.Sanitize(target) + "."
 	}
 	if reason == client.AuthAnonymousRejected && target != "" {
-		return "The server rejected --anonymous because it requires caller authentication. Retry without --anonymous to use saved OIDC, use --auth-token, or, if supported, run mecatui login " + sanitizeTerminal(target) + "."
+		return "The server rejected --anonymous because it requires caller authentication. Retry without --anonymous to use saved OIDC, use --auth-token, or, if supported, run mecatui login " + terminaltext.Sanitize(target) + "."
 	}
 	switch reason {
 	case client.AuthNotEnrolled:

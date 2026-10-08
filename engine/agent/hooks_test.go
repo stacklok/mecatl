@@ -387,14 +387,16 @@ type fakeAssembler struct {
 	msg    string
 }
 
-func (a *fakeAssembler) Assemble(_ context.Context, _ tool.Workspace) ([]session.Message, error) {
+func (*fakeAssembler) TargetScoped() bool { return false }
+
+func (a *fakeAssembler) Assemble(_ context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []prompt.InstructionManifest, error) {
 	a.called++
-	return []session.Message{session.NewUserMessage(a.msg)}, nil
+	return []session.Message{session.NewUserMessage(a.msg)}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceCustom}}, nil
 }
 
 // TestLoopUsesInjectedAssembler asserts the loop calls the injected
 // InstructionAssembler instead of the default and prepends its output to the
-// request (ephemerally — fragments are not persisted; ADR 0043).
+// request (ephemerally — fragments are not persisted).
 func TestLoopUsesInjectedAssembler(t *testing.T) {
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	asm := &fakeAssembler{msg: "INJECTED INSTRUCTIONS"}
@@ -431,7 +433,7 @@ func TestLoopUsesInjectedAssembler(t *testing.T) {
 // non-empty per-project memory store and the composed MultiAssembler
 // (RootAssembler + MemoryIndexAssembler), the turn-0 REQUEST contains the memory
 // index as a USER message, ordered AFTER the AGENTS.md instruction message and
-// before the user prompt. As of ADR 0043 the fragments are EPHEMERAL — prepended to
+// before the user prompt. The fragments are EPHEMERAL — prepended to
 // the LLMRequest per-run, NEVER persisted into the conversation — so the ordering is
 // observed on the request the provider received, not on sess.Conversation.Messages.
 func TestTurn0InjectsMemoryIndexAfterAgentsMD(t *testing.T) {
@@ -440,15 +442,15 @@ func TestTurn0InjectsMemoryIndexAfterAgentsMD(t *testing.T) {
 		Key: "pref/test-runner", Value: "gotestsum", Description: "preferred test runner",
 	}}}
 
-	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
-	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
-	asm := prompt.NewMultiAssembler(prompt.RootAssembler{}, prompt.MemoryIndexAssembler{Src: store})
-	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
-
 	ws := memfs.NewWorkspace("/ws")
 	if err := ws.Write(ctx, "AGENTS.md", []byte("project rule")); err != nil {
 		t.Fatalf("seed AGENTS.md: %v", err)
 	}
+	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
+	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
+	asm := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}, prompt.MemoryIndexAssembler{Src: store})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
+
 	sess := newSession(t, session.Limits{})
 	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the user prompt"}))
 
@@ -493,7 +495,7 @@ func (f fakeSoulSrc) Load(context.Context) (string, error) { return f.body, nil 
 // composed MultiAssembler (RootAssembler + SoulAssembler + MemoryIndexAssembler),
 // the turn-0 REQUEST contains the persona/soul as a USER message, ordered AFTER the
 // AGENTS.md instruction message, BEFORE the memory index (identity before saved
-// facts), and all before the user prompt. As of ADR 0043 the fragments are
+// facts), and all before the user prompt. The fragments are
 // EPHEMERAL — observed on the request the provider received, not on the persisted
 // conversation.
 func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
@@ -502,19 +504,19 @@ func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
 		Key: "pref/test-runner", Value: "gotestsum", Description: "preferred test runner",
 	}}}
 
+	ws := memfs.NewWorkspace("/ws")
+	if err := ws.Write(ctx, "AGENTS.md", []byte("project rule")); err != nil {
+		t.Fatalf("seed AGENTS.md: %v", err)
+	}
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	asm := prompt.NewMultiAssembler(
-		prompt.RootAssembler{},
+		prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."},
 		prompt.SoulAssembler{Src: fakeSoulSrc{body: "PERSONA-MARKER terse engineer"}},
 		prompt.MemoryIndexAssembler{Src: store},
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
 
-	ws := memfs.NewWorkspace("/ws")
-	if err := ws.Write(ctx, "AGENTS.md", []byte("project rule")); err != nil {
-		t.Fatalf("seed AGENTS.md: %v", err)
-	}
 	sess := newSession(t, session.Limits{})
 	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the user prompt"}))
 
@@ -552,9 +554,8 @@ func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
 	}
 }
 
-// TestDefaultAssemblerWhenNil asserts NewEngine defaults the assembler so a run
-// with no Instructions field set still discovers root instructions and prepends
-// them to the request (ephemerally — they are not persisted; ADR 0043).
+// TestDefaultAssemblerWhenNil asserts that a nil assembler does not infer source
+// authority from the execution workspace.
 func TestDefaultAssemblerWhenNil(t *testing.T) {
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("done"))
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
@@ -576,8 +577,8 @@ func TestDefaultAssemblerWhenNil(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("default RootAssembler did not discover AGENTS.md (it must be prepended to the request)")
+	if found {
+		t.Fatalf("nil instruction source inferred authority from the execution workspace")
 	}
 }
 

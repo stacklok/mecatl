@@ -21,11 +21,6 @@ type NamespacedStore struct {
 
 var _ tool.MemoryStore = (*NamespacedStore)(nil)
 
-type namespacedLifecycleStore struct {
-	*NamespacedStore
-	lifecycle tool.MemoryLifecycleStore
-}
-
 type duplicateRetirementStore interface {
 	RetireDuplicate(context.Context, string, tool.MemoryVersion, string, tool.MemoryVersion) (tool.MemoryRecord, error)
 }
@@ -34,18 +29,13 @@ type synthesisStore interface {
 	SynthesizeReplacement(context.Context, tool.MemoryEntry, tool.MemoryVersion, []string, []tool.MemoryVersion) (tool.MemoryRecord, error)
 }
 
-type namespacedConvergenceStore struct {
-	*namespacedLifecycleStore
-	convergence tool.MemoryConvergenceStore
-}
-
 type namespacedDuplicateStore struct {
-	*namespacedConvergenceStore
+	*NamespacedStore
 	retirement duplicateRetirementStore
 }
 
 type namespacedSynthesisStore struct {
-	*namespacedConvergenceStore
+	*NamespacedStore
 	synthesis synthesisStore
 }
 
@@ -54,14 +44,8 @@ type namespacedReviewedStore struct {
 	synthesis synthesisStore
 }
 
-var (
-	_ tool.MemoryLifecycleStore   = (*namespacedLifecycleStore)(nil)
-	_ tool.MemoryConvergenceStore = (*namespacedConvergenceStore)(nil)
-)
-
 // NewNamespacedStore confines a MemoryStore to namespace. Namespace is an
-// adapter-private boundary, not a model-visible key prefix. The returned store
-// advertises MemoryLifecycleStore exactly when the backing store does.
+// adapter-private boundary, not a model-visible key prefix.
 func NewNamespacedStore(store tool.MemoryStore, namespace string) tool.MemoryStore {
 	if store == nil {
 		panic("memory: NewNamespacedStore requires a non-nil MemoryStore")
@@ -70,25 +54,18 @@ func NewNamespacedStore(store tool.MemoryStore, namespace string) tool.MemorySto
 		panic("memory: NewNamespacedStore requires a non-empty namespace")
 	}
 	base := &NamespacedStore{store: store, namespace: strings.TrimSuffix(namespace, "/") + "/"}
-	if convergence, ok := store.(tool.MemoryConvergenceStore); ok {
-		lifecycle := &namespacedLifecycleStore{NamespacedStore: base, lifecycle: convergence}
-		wrapped := &namespacedConvergenceStore{namespacedLifecycleStore: lifecycle, convergence: convergence}
-		retirement, hasRetirement := store.(duplicateRetirementStore)
-		synthesis, hasSynthesis := store.(synthesisStore)
-		switch {
-		case hasRetirement && hasSynthesis:
-			return &namespacedReviewedStore{namespacedDuplicateStore: &namespacedDuplicateStore{namespacedConvergenceStore: wrapped, retirement: retirement}, synthesis: synthesis}
-		case hasRetirement:
-			return &namespacedDuplicateStore{namespacedConvergenceStore: wrapped, retirement: retirement}
-		case hasSynthesis:
-			return &namespacedSynthesisStore{namespacedConvergenceStore: wrapped, synthesis: synthesis}
-		}
-		return wrapped
+	retirement, hasRetirement := store.(duplicateRetirementStore)
+	synthesis, hasSynthesis := store.(synthesisStore)
+	switch {
+	case hasRetirement && hasSynthesis:
+		return &namespacedReviewedStore{namespacedDuplicateStore: &namespacedDuplicateStore{NamespacedStore: base, retirement: retirement}, synthesis: synthesis}
+	case hasRetirement:
+		return &namespacedDuplicateStore{NamespacedStore: base, retirement: retirement}
+	case hasSynthesis:
+		return &namespacedSynthesisStore{NamespacedStore: base, synthesis: synthesis}
+	default:
+		return base
 	}
-	if lifecycle, ok := store.(tool.MemoryLifecycleStore); ok {
-		return &namespacedLifecycleStore{NamespacedStore: base, lifecycle: lifecycle}
-	}
-	return base
 }
 
 func (s *NamespacedStore) key(key string) string { return s.namespace + key }
@@ -105,10 +82,11 @@ func (s *NamespacedStore) trim(entries []tool.MemoryEntry) []tool.MemoryEntry {
 	return out
 }
 
-// RememberEntry stores entry under this namespace.
-func (s *NamespacedStore) RememberEntry(ctx context.Context, entry tool.MemoryEntry) error {
+// Remember stores entry under this namespace with mandatory CAS.
+func (s *NamespacedStore) Remember(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	entry.Key = s.key(entry.Key)
-	return s.store.RememberEntry(ctx, entry)
+	record, err := s.store.Remember(ctx, entry, expected)
+	return s.trimRecord(record), s.logicalError(err)
 }
 
 // Recall retrieves key from this namespace.
@@ -154,12 +132,7 @@ func (s *NamespacedStore) Search(ctx context.Context, query string, limit int) (
 	return bm25Rank(entries, query, limit), nil
 }
 
-// Forget removes key from this namespace.
-func (s *NamespacedStore) Forget(ctx context.Context, key string) error {
-	return s.store.Forget(ctx, s.key(key))
-}
-
-func (s *namespacedLifecycleStore) trimRecord(record tool.MemoryRecord) tool.MemoryRecord {
+func (s *NamespacedStore) trimRecord(record tool.MemoryRecord) tool.MemoryRecord {
 	record.Current.Key = strings.TrimPrefix(record.Current.Key, s.namespace)
 	for i := range record.Revisions {
 		record.Revisions[i].Key = strings.TrimPrefix(record.Revisions[i].Key, s.namespace)
@@ -167,7 +140,7 @@ func (s *namespacedLifecycleStore) trimRecord(record tool.MemoryRecord) tool.Mem
 	return record
 }
 
-func (s *namespacedLifecycleStore) logicalError(err error) error {
+func (s *NamespacedStore) logicalError(err error) error {
 	var conflict *tool.MemoryVersionConflictError
 	if errors.As(err, &conflict) {
 		logical := *conflict
@@ -177,30 +150,21 @@ func (s *namespacedLifecycleStore) logicalError(err error) error {
 	return err
 }
 
-func (s *namespacedLifecycleStore) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	entry.Key = s.key(entry.Key)
-	record, err := s.lifecycle.RememberVersioned(ctx, entry, expected)
-	return s.trimRecord(record), s.logicalError(err)
-}
-
-func (s *namespacedLifecycleStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
-	record, ok, err := s.lifecycle.Inspect(ctx, s.key(key))
+// Inspect returns the lifecycle record for a logical key in this namespace.
+func (s *NamespacedStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
+	record, ok, err := s.store.Inspect(ctx, s.key(key))
 	return s.trimRecord(record), ok, s.logicalError(err)
 }
 
-func (s *namespacedLifecycleStore) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	record, err := s.lifecycle.ForgetVersioned(ctx, s.key(key), expected)
+// Forget tombstones a logical key when its current version matches expected.
+func (s *NamespacedStore) Forget(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, err := s.store.Forget(ctx, s.key(key), expected)
 	return s.trimRecord(record), s.logicalError(err)
 }
 
-func (s *namespacedLifecycleStore) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	record, err := s.lifecycle.UndoLatest(ctx, s.key(key), expected)
-	return s.trimRecord(record), s.logicalError(err)
-}
-
-func (s *namespacedConvergenceStore) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
-	entry.Key = s.key(entry.Key)
-	record, err := s.convergence.RememberIfCurrent(ctx, entry, expected)
+// Undo restores a logical key when its current version matches expected.
+func (s *NamespacedStore) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, err := s.store.Undo(ctx, s.key(key), expected)
 	return s.trimRecord(record), s.logicalError(err)
 }
 
@@ -210,14 +174,14 @@ func (s *namespacedDuplicateStore) RetireDuplicate(ctx context.Context, survivor
 }
 
 func (s *namespacedSynthesisStore) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
-	return synthesizeNamespaced(ctx, s.namespacedConvergenceStore, s.synthesis, survivor, survivorVersion, sourceKeys, sourceVersions)
+	return synthesizeNamespaced(ctx, s.NamespacedStore, s.synthesis, survivor, survivorVersion, sourceKeys, sourceVersions)
 }
 
 func (s *namespacedReviewedStore) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
-	return synthesizeNamespaced(ctx, s.namespacedConvergenceStore, s.synthesis, survivor, survivorVersion, sourceKeys, sourceVersions)
+	return synthesizeNamespaced(ctx, s.NamespacedStore, s.synthesis, survivor, survivorVersion, sourceKeys, sourceVersions)
 }
 
-func synthesizeNamespaced(ctx context.Context, namespace *namespacedConvergenceStore, store synthesisStore, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+func synthesizeNamespaced(ctx context.Context, namespace *NamespacedStore, store synthesisStore, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
 	survivor.Key = namespace.key(survivor.Key)
 	physicalSources := make([]string, len(sourceKeys))
 	for i, key := range sourceKeys {
@@ -255,57 +219,37 @@ type CallerStore struct {
 
 var _ tool.MemoryStore = (*CallerStore)(nil)
 
-type callerLifecycleStore struct {
+type callerDuplicateStore struct {
 	*CallerStore
 }
 
-type callerConvergenceStore struct {
-	*callerLifecycleStore
-}
-
-type callerDuplicateStore struct {
-	*callerConvergenceStore
-}
-
 type callerSynthesisStore struct {
-	*callerConvergenceStore
+	*CallerStore
 }
 
 type callerReviewedStore struct {
 	*callerDuplicateStore
 }
 
-var (
-	_ tool.MemoryLifecycleStore   = (*callerLifecycleStore)(nil)
-	_ tool.MemoryConvergenceStore = (*callerConvergenceStore)(nil)
-)
-
 // NewCallerStore returns a store partitioned by verified caller and, when
-// project is true, by workspace. The returned store advertises
-// MemoryLifecycleStore exactly when the backing store does.
+// project is true, by workspace.
 func NewCallerStore(store tool.MemoryStore, project bool) tool.MemoryStore {
 	if store == nil {
 		panic("memory: NewCallerStore requires a non-nil MemoryStore")
 	}
 	base := &CallerStore{store: store, project: project}
-	if _, ok := store.(tool.MemoryConvergenceStore); ok {
-		wrapped := &callerConvergenceStore{callerLifecycleStore: &callerLifecycleStore{CallerStore: base}}
-		_, hasRetirement := store.(duplicateRetirementStore)
-		_, hasSynthesis := store.(synthesisStore)
-		switch {
-		case hasRetirement && hasSynthesis:
-			return &callerReviewedStore{callerDuplicateStore: &callerDuplicateStore{callerConvergenceStore: wrapped}}
-		case hasRetirement:
-			return &callerDuplicateStore{callerConvergenceStore: wrapped}
-		case hasSynthesis:
-			return &callerSynthesisStore{callerConvergenceStore: wrapped}
-		}
-		return wrapped
+	_, hasRetirement := store.(duplicateRetirementStore)
+	_, hasSynthesis := store.(synthesisStore)
+	switch {
+	case hasRetirement && hasSynthesis:
+		return &callerReviewedStore{callerDuplicateStore: &callerDuplicateStore{CallerStore: base}}
+	case hasRetirement:
+		return &callerDuplicateStore{CallerStore: base}
+	case hasSynthesis:
+		return &callerSynthesisStore{CallerStore: base}
+	default:
+		return base
 	}
-	if _, ok := store.(tool.MemoryLifecycleStore); ok {
-		return &callerLifecycleStore{CallerStore: base}
-	}
-	return base
 }
 
 func (s *CallerStore) scoped(ctx context.Context) (tool.MemoryStore, error) {
@@ -325,13 +269,13 @@ func (s *CallerStore) scoped(ctx context.Context) (tool.MemoryStore, error) {
 	return NewNamespacedStore(s.store, fmt.Sprintf("caller/id-%x", digest[:])), nil
 }
 
-// RememberEntry stores entry in the verified caller's namespace.
-func (s *CallerStore) RememberEntry(ctx context.Context, entry tool.MemoryEntry) error {
+// Remember stores entry in the verified caller's namespace with mandatory CAS.
+func (s *CallerStore) Remember(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
-		return err
+		return tool.MemoryRecord{}, err
 	}
-	return store.RememberEntry(ctx, entry)
+	return store.Remember(ctx, entry, expected)
 }
 
 // Recall retrieves key from the verified caller's namespace.
@@ -370,61 +314,31 @@ func (s *CallerStore) Search(ctx context.Context, query string, limit int) ([]to
 	return store.Search(ctx, query, limit)
 }
 
-// Forget removes key from the verified caller's namespace.
-func (s *CallerStore) Forget(ctx context.Context, key string) error {
+// Inspect returns the lifecycle record for a key in the verified caller's namespace.
+func (s *CallerStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
 	store, err := s.scoped(ctx)
-	if err != nil {
-		return err
-	}
-	return store.Forget(ctx, key)
-}
-
-func (s *callerLifecycleStore) scopedLifecycle(ctx context.Context) (tool.MemoryLifecycleStore, error) {
-	store, err := s.scoped(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return store.(tool.MemoryLifecycleStore), nil
-}
-
-func (s *callerLifecycleStore) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	store, err := s.scopedLifecycle(ctx)
-	if err != nil {
-		return tool.MemoryRecord{}, err
-	}
-	return store.RememberVersioned(ctx, entry, expected)
-}
-
-func (s *callerLifecycleStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
-	store, err := s.scopedLifecycle(ctx)
 	if err != nil {
 		return tool.MemoryRecord{}, false, err
 	}
 	return store.Inspect(ctx, key)
 }
 
-func (s *callerLifecycleStore) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	store, err := s.scopedLifecycle(ctx)
-	if err != nil {
-		return tool.MemoryRecord{}, err
-	}
-	return store.ForgetVersioned(ctx, key, expected)
-}
-
-func (s *callerLifecycleStore) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	store, err := s.scopedLifecycle(ctx)
-	if err != nil {
-		return tool.MemoryRecord{}, err
-	}
-	return store.UndoLatest(ctx, key, expected)
-}
-
-func (s *callerConvergenceStore) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+// Forget tombstones a key in the verified caller's namespace.
+func (s *CallerStore) Forget(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
 		return tool.MemoryRecord{}, err
 	}
-	return store.(tool.MemoryConvergenceStore).RememberIfCurrent(ctx, entry, expected)
+	return store.Forget(ctx, key, expected)
+}
+
+// Undo restores a key in the verified caller's namespace.
+func (s *CallerStore) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	store, err := s.scoped(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.Undo(ctx, key, expected)
 }
 
 func (s *callerDuplicateStore) RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error) {

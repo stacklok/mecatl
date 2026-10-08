@@ -1,0 +1,59 @@
+provider:
+  clientIngressSelectors:
+    - namespaceLabels:
+        kubernetes.io/metadata.name: execution-qualification
+      podLabels:
+        app.kubernetes.io/name: mecak8s
+  apiServerCIDRs: [172.16.0.0/12]
+  dnsCIDRs: [10.96.0.10/32]
+profiles:
+  go:
+    image: placeholder.invalid/workload@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 20
+  quota-cas:
+    image: placeholder.invalid/workload@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 1
+  quota-kube:
+    image: placeholder.invalid/workload@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 4
+networkPolicy:
+  workloadProfiles: {}

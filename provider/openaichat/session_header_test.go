@@ -52,7 +52,7 @@ func sessionHeaderVectors(t *testing.T) []sessionHeaderVector {
 	return vectors
 }
 
-func TestADR_0294_SessionHeaderLegalValueParity(t *testing.T) {
+func TestSessionHeaderLegalValueParity(t *testing.T) {
 	if sessionIDHeaderName != "X-Mecatl-Session-ID" {
 		t.Fatalf("sessionIDHeaderName = %q", sessionIDHeaderName)
 	}
@@ -69,7 +69,7 @@ func TestADR_0294_SessionHeaderLegalValueParity(t *testing.T) {
 	}
 }
 
-func TestADR_0294_ProviderSessionHeaderExact(t *testing.T) {
+func TestProviderSessionHeaderExact(t *testing.T) {
 	const id = "session/exact:42?node=a&b=c"
 	headers := make(chan string, 2)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +91,7 @@ func TestADR_0294_ProviderSessionHeaderExact(t *testing.T) {
 	}
 }
 
-func TestADR_0294_OpenCodeSessionHeaderExact(t *testing.T) {
+func TestOpenCodeSessionHeaderExact(t *testing.T) {
 	const id = "session/exact:42?node=a&b=c"
 	headers := make(chan http.Header, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +112,7 @@ func TestADR_0294_OpenCodeSessionHeaderExact(t *testing.T) {
 	}
 }
 
-func TestADR_0294_ProviderSessionHeaderOptional(t *testing.T) {
+func TestProviderSessionHeaderOptional(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
@@ -165,7 +165,7 @@ func (b *sessionHeaderPairBarrier) wait(ctx context.Context) error {
 	}
 }
 
-func TestADR_0294_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
+func TestProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		captured = map[string]int{}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
 // geom_test.go covers the mouse hit-test geometry (issue #486): the
@@ -344,8 +345,8 @@ func TestPlanRenderedButtonLabelClickSendsApproval(t *testing.T) {
 			if len(apps) != 1 {
 				t.Fatalf("click on rendered label sent %d approval frames, want 1", len(apps))
 			}
-			if apps[0].GetAskId() != "sess-test-0001:1:presentplan-1" || !apps[0].GetAllow() {
-				t.Fatalf("approval = ask_id=%q allow=%v, want plan ask allow-once", apps[0].GetAskId(), apps[0].GetAllow())
+			if apps[0].GetAskId() != "sess-test-0001:1:presentplan-1" || apps[0].GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
+				t.Fatalf("approval = ask_id=%q verdict=%v, want plan ask allow-once", apps[0].GetAskId(), apps[0].GetVerdict())
 			}
 			return
 		}

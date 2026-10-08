@@ -7,11 +7,11 @@ import (
 	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
-// TestCacheDialectTable pins cacheDialectFor's pure (id, baseURL) gate (ADR
-// 0100) — the composition half of the leak guard (the adapter-level
+// TestCacheDialectTable pins cacheDialectFor's pure (id, baseURL) gate
+// — the composition half of the leak guard (the adapter-level
 // TestCacheDialectOpenAINeverSendsCacheControl proves the wire is safe once a
 // dialect is chosen; this proves the RIGHT dialect is chosen). Covers both
-// base-URL-override rows from the ADR's table and a PromptCacheDisabled
+// base-URL-override rows of the dialect table and a PromptCacheDisabled
 // sweep that must force None regardless of (id, baseURL).
 func TestCacheDialectTable(t *testing.T) {
 	tests := []struct {
@@ -70,6 +70,40 @@ func TestOpenAIChatCacheDialectTable(t *testing.T) {
 	}
 	if got := openaichatCacheDialectFor(providerOpenAI, "", Config{PromptCacheDisabled: true}); got != openaichat.CacheDialectNone {
 		t.Errorf("openaichatCacheDialectFor with PromptCacheDisabled = %q, want None", got)
+	}
+}
+
+// TestAnthropicCacheTTLDefault pins that the three built-in Anthropic Messages
+// providers resolve the TTL identically: 1h by default, an operator value wins,
+// and --no-prompt-cache sends no TTL unless the operator sets one. Custom definitions keep the
+// API default unless the operator sets one.
+func TestAnthropicCacheTTLDefault(t *testing.T) {
+	cases := []struct {
+		name, operator string
+		disabled       bool
+		want           string
+	}{
+		{"unset defaults to 1h", "", false, "1h"},
+		{"operator 5m restores the shorter TTL", "5m", false, "5m"},
+		{"operator 1h", "1h", false, "1h"},
+		{"no-prompt-cache keeps the pre-ADR wire", "", true, ""},
+		{"no-prompt-cache honours an operator value", "1h", true, "1h"},
+	}
+	for _, id := range []string{providerAnthropic, providerOpenRouterAnthropic, providerToolhiveAnthropic} {
+		for _, tc := range cases {
+			t.Run(id+"/"+tc.name, func(t *testing.T) {
+				got := anthropicCacheTTLFor(id, tc.operator, Config{PromptCacheDisabled: tc.disabled})
+				if got != tc.want {
+					t.Errorf("anthropicCacheTTLFor(%q, %q) = %q, want %q", id, tc.operator, got, tc.want)
+				}
+			})
+		}
+	}
+	if got := anthropicCacheTTLFor("my-claude", "", Config{}); got != "" {
+		t.Errorf("custom endpoint default = %q, want API default", got)
+	}
+	if got := anthropicCacheTTLFor("my-claude", "1h", Config{}); got != "1h" {
+		t.Errorf("custom endpoint with operator 1h = %q, want 1h", got)
 	}
 }
 

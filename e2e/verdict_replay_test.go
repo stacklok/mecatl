@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// verdictReplaySpecs is the cloud-native Phase 3b LIVE scenario: an allow-ALWAYS
+// verdictReplaySpecs is the verdict-replay LIVE scenario: an allow-ALWAYS
 // permission verdict logged on local #1 is REPLAYED into a fresh process's
 // in-memory permission store on resume, so the SAME tool+target is NOT re-asked
 // after a real SIGKILL + restart.
@@ -36,7 +36,7 @@ import (
 // resolves to Allow with NO permission ask, and executes.
 //
 // WHY LIVE, NOT OFFLINE: nothing offline exercises the verdict-log -> permstore
-// REPLAY loop end to end. approve-after-kill (Phase 2) hits the relay-persist +
+// REPLAY loop end to end. approve-after-kill hits the relay-persist +
 // awaiting-rehydrate path, but it resolves allow-ONCE — no rule is learned, so it
 // never consumes a replayed allow-always verdict. This spec is the only coverage
 // that a logged allow-always survives a real cross-process death and silences the
@@ -66,7 +66,7 @@ func verdictReplaySpecs() {
 						". Call no other tool."
 				}
 
-				// BUDGET HEADROOM (NOT a budget scenario): Phase 1 made session.Usage
+				// BUDGET HEADROOM (NOT a budget scenario): session.Usage is
 				// CUMULATIVE across restart, so two full Write turns on the harness default
 				// --max-run-tokens (20000) would cross the ceiling and trip StopBudget on
 				// the resume turn — confounding the replay assertion (observed in a live
@@ -101,7 +101,7 @@ func verdictReplaySpecs() {
 				// Drive to the first Write ask (shared drain helper), then resolve it
 				// allow-ALWAYS in-stream: this runs the Write AND learns the path-keyed
 				// rule, logged as a durable EvApproval(allow_always).
-				askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				_, askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
 				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
 					"drive local #1 to the Write permission ask\n--- mecated log tail ---\n"+local1.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on local #1", local1.LogTail(4096))
@@ -139,22 +139,19 @@ func verdictReplaySpecs() {
 				// stream). Its PRIMARY job is to be the first resumed run, which is what
 				// drives loadAndReopen -> ReplayApprovals — re-Learning the path-keyed
 				// rule into #2's fresh permstore from the logged allow-always verdict
-				// (the Phase 3b loop the spec proves). The driver opens/drains/closes its
+				// (the replay loop the spec proves). The driver opens/drains/closes its
 				// own stream; Read raises no ask, so the driver's auto-approver resolves
 				// nothing.
 				//
-				// NOTE ON THE FORMER "read-ledger primer" PREMISE (now corrected): this
-				// turn was once justified as priming osfs's per-workspace
-				// read-before-write ledger so the resumed Write would succeed on the
-				// FIRST attempt. That premise was FLAWED — each converse run gets its OWN
-				// Workspace instance (and the osfs read ledger is per-Workspace, reset on
-				// restart AND not shared across converse runs), so a Read recorded in the
-				// primer run's workspace does not carry into the separate Write run's
-				// workspace. The model may therefore still take a Read-then-Write recovery
-				// step on the Write turn. That is FINE: the corrected oracle does not
-				// require a first-try success — it asserts NO Write re-ask (the
-				// verdict-replay property) plus the EVENTUAL file content + a clean
-				// end_turn. The first-try-non-error assertion (model-variance) is dropped.
+				// This turn does NOT prime osfs's read-before-write ledger for the Write
+				// turn: each converse run gets its OWN Workspace instance (and the osfs
+				// read ledger is per-Workspace, reset on restart AND not shared across
+				// converse runs), so a Read recorded in the primer run's workspace does
+				// not carry into the separate Write run's workspace. The model may
+				// therefore take a Read-then-Write recovery step on the Write turn. The
+				// oracle does not require a first-try success — it asserts NO Write
+				// re-ask (the verdict-replay property) plus the EVENTUAL file content + a
+				// clean end_turn.
 				primerDrv := harness.NewDriver(local2)
 				_, primerErr := primerDrv.Run(ctx, harness.RunOpts{
 					Scenario:  "verdict-replay-primer",
@@ -169,11 +166,8 @@ func verdictReplaySpecs() {
 				// resumed Write is AUTO-ALLOWED — NO permission.ask fires for Write at
 				// all. This holds ONLY if ReplayApprovals rebuilt the path-keyed rule
 				// into #2's fresh in-memory permstore from the durable allow-always
-				// verdict (the Phase 3b loop); had the rule NOT been replayed, this Write
-				// would have raised an ask. With the read-ledger primed by the turn
-				// above, the auto-allowed Write also succeeds on the FIRST attempt, so
-				// the file-content + non-error-result assertions below are deterministic
-				// rather than dependent on model self-recovery.
+				// verdict (the replay loop); had the rule NOT been replayed, this Write
+				// would have raised an ask.
 				stream2, err := cli2.OpenConverse(ctx)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "open converse on local #2")
 				gomega.Expect(stream2.SendPrompt(sessionID, writePrompt("omega"), nil)).
@@ -234,7 +228,7 @@ func verdictReplaySpecs() {
 
 				// THE ORACLE: NO Write permission ask fired during the resumed run. This
 				// holds ONLY if ReplayApprovals rebuilt the learned rule into #2's fresh
-				// in-memory permstore from the durable allow-always verdict — the Phase 3b
+				// in-memory permstore from the durable allow-always verdict — the replay
 				// loop. The prompt instructs EXACTLY one logical Write target (replay.txt)
 				// and no other tool, so any Write ask here is unambiguously a re-ask; we
 				// surface the asks' args in the failure so the assertion reads as per-call,

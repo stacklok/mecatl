@@ -92,8 +92,7 @@ func implementsStorageHealth(store port.SessionStore) bool {
 	if _, ok := store.(port.SessionStorageHealthProvider); ok {
 		return true
 	}
-	_, ok := store.(port.SessionMetadataPager)
-	return ok
+	return port.SupportsSessionMetadataPaging(store)
 }
 
 const (
@@ -148,7 +147,7 @@ func ownerlessSessionInventory(ctx context.Context, pager port.SessionMetadataPa
 func (s *Service) ownerlessCutoverInventory(ctx context.Context) (OwnerlessCutoverInventory, error) {
 	var inventory OwnerlessCutoverInventory
 	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(s.cfg.Store) {
 		inventory.SessionsUnavailableReason = storageBackendUnsupported
 	} else {
 		sessions, err := ownerlessSessionInventory(ctx, pager)

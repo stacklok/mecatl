@@ -1,6 +1,6 @@
 package server
 
-// APIMajor is the wire-contract major version this build speaks (ADR 0248).
+// APIMajor is the wire-contract major version this build speaks.
 //
 // It starts at 1 and bumps ONLY on a genuine break. Every additive change —
 // a new RPC, a new field, a new capability — is announced through the feature
@@ -24,8 +24,12 @@ const APIMajor int32 = 1
 // Identifiers are STABLE ONCE PUBLISHED. Renaming one is a break dressed up as
 // a refactor: a deployed client gates on the exact string.
 const (
+	// FeatureExactPlanAskControl reports both strict ResolvePlanAsk transports
+	// when the deployment can durably record a known continuation failure.
+	FeatureExactPlanAskControl = "exact_plan_ask_control"
+
 	// FeatureHTTPSteer is the unary HTTP steer and cancel-steer control pair
-	// (issue #873, ADR 0252). The engine-level steer capability remains a
+	// (issue #873). The engine-level steer capability remains a
 	// separate runtime fact; this identifier reports that the HTTP transport
 	// implements the routes the TypeScript SDK can drive.
 	FeatureHTTPSteer = "http_steer"
@@ -38,7 +42,7 @@ const (
 	FeatureServerInfo = "server_info"
 
 	// FeatureWatchSessionEvents is the durable replay-then-follow watch — the
-	// WatchSessionEvents RPC and its SSE peer (issue #821, ADR 0250).
+	// WatchSessionEvents RPC and its SSE peer (issue #821).
 	//
 	// It answers "does this BUILD implement the watch?", which is the question a
 	// client needs before it decides between one watch and the older
@@ -51,7 +55,7 @@ const (
 	// watch_unsupported is registered as Unimplemented — exactly what grpc-go
 	// returns for a method the server does not have — so a client switching on the
 	// status alone still cannot separate a cursor-less store from version skew; it
-	// has to read the code. That is the ADR 0248 design rather than a compromise:
+	// has to read the code. That is the contract's design rather than a compromise:
 	// the sibling no_event_log refusal ships the same status for the same class of
 	// fact one level up, and moving this one to FailedPrecondition would make two
 	// sibling refusals disagree while breaking clients whose Unimplemented handling
@@ -60,12 +64,11 @@ const (
 	FeatureWatchSessionEvents = "watch_session_events"
 
 	// FeatureMCPServersOnCreate is client-provided MCP servers on session
-	// creation — CreateSessionRequest.mcp_servers and its HTTP peer (issue #821,
-	// ADR 0237).
+	// creation — CreateSessionRequest.mcp_servers and its HTTP peer (issue #821).
 	FeatureMCPServersOnCreate = "mcp_servers_on_create"
 
 	// FeaturePromptFreeControls is the run-ID-addressed unary control family:
-	// resolve-ask, cancel, steer, and cancel-steer (ADR 0347).
+	// resolve-ask, cancel, steer, and cancel-steer.
 	FeaturePromptFreeControls = "prompt_free_controls"
 
 	// FeatureSessionActivityInventory reports that ListSessions pages carry the
@@ -74,15 +77,15 @@ const (
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
-// implements. It is the "listener argument" serverFeatures' doc comment
-// anticipated, in the shape ADR 0237 requires: a composition policy value, not
-// an inference the server package makes from its own socket state.
+// implements. It combines composition policy and wired storage capabilities;
+// neither is inferred from a request's socket state.
 //
-// One *Service backs both the gRPC and the HTTP listener, so this is decided
-// ONCE at startup from the deployment's listener topology (mecated's
-// clientMCPOnCreateForListeners) and handed in. A per-connection answer would
-// be a different design needing its own ADR.
+// One *Service backs both the gRPC and HTTP listeners, so each scope value is
+// shared by both compatibility transports.
 type FeatureScope struct {
+	// ExactPlanAskControl requires durable failure recording for accepted
+	// server-owned plan continuations.
+	ExactPlanAskControl bool
 	// ClientMCPOnCreate reports whether this deployment accepts
 	// CreateSessionRequest.mcp_servers.
 	ClientMCPOnCreate bool
@@ -103,6 +106,7 @@ type FeatureScope struct {
 // repeated string and a client must treat it as a set, but a stable order keeps
 // diffs and golden fixtures readable.
 var allFeatures = []string{
+	FeatureExactPlanAskControl,
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeaturePromptFreeControls,
@@ -113,13 +117,15 @@ var allFeatures = []string{
 
 // permittedBy reports whether scope permits the named feature.
 //
-// Only listener-scoped identifiers appear here; everything else is a pure build
-// fact and is always permitted. Keeping the filter as one switch — rather than
+// Only deployment-dependent identifiers appear here; everything else is a pure
+// build fact and is always permitted. Keeping the filter as one switch — rather than
 // each transport testing its own conditions — is what stops the two surfaces
 // from advertising different sets, which is the failure the scope note in
 // serverFeatures warns about.
 func permittedBy(scope FeatureScope, feature string) bool {
 	switch feature {
+	case FeatureExactPlanAskControl:
+		return scope.ExactPlanAskControl
 	case FeatureMCPServersOnCreate:
 		return scope.ClientMCPOnCreate
 	case FeatureSessionActivityInventory:
@@ -136,7 +142,7 @@ func permittedBy(scope FeatureScope, feature string) bool {
 // the gRPC layer may retain, and a caller mutating the shared backing array
 // would corrupt every subsequent response from the process.
 //
-// SCOPE (ADR 0248 / ADR 0237): a feature that is reachable only on some
+// SCOPE: a feature that is reachable only on some
 // deployments is advertised only where it is permitted, so this set reads as
 // "what this build implements AND this deployment permits". The scope argument
 // is how that filtering stays in ONE place: the callers hand in the composition

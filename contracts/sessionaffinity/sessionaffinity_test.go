@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 )
 
-func TestADR_0294_SessionHeaderLegalValue(t *testing.T) {
+func TestSessionHeaderLegalValue(t *testing.T) {
 	if sessionaffinity.HeaderName != "X-Mecatl-Session-ID" {
 		t.Fatalf("HeaderName = %q", sessionaffinity.HeaderName)
 	}

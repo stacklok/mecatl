@@ -210,7 +210,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	}
 	if foldReasoning != "" {
 		t.Fatalf("fold MUST NOT reconstruct Message.Reasoning (not event-carried), got %q "+
-			"— if reasoning is now evented, update the contract docs (COMPATIBILITY.md / ADR 0038)", foldReasoning)
+			"— if reasoning is now evented, update the contract docs (COMPATIBILITY.md)", foldReasoning)
 	}
 }
 
@@ -238,7 +238,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	// Every EXPORTED field of session.Session the reconstruction contract considers.
 	// Classification (kept in sync with COMPATIBILITY.md "Session reconstruction
 	// contract"):
-	//   reconstructed-from-events: Conversation, State, Usage; legacy Title and
+	//   reconstructed-from-events: Conversation, State, canonical token usage; legacy Title and
 	//     TitleProvenance fallback (seeded from the first genuine EvUserPrompt via
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
@@ -250,7 +250,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     validating helper rather than direct assignment): Owner, Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Usage": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
+		"Counters": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "TitleRevision": {}, "Owner": {}, "Authority": {},
@@ -266,7 +266,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   (ToolCall.ItemID is on ToolCall, asserted separately below)
 	wantMessageFields := map[string]struct{}{
 		"Role": {}, "Text": {}, "ToolCalls": {}, "ToolResult": {},
-		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {},
+		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {}, "UserPromptProvenance": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Message{}), wantMessageFields,
 		"session.Message — classify the new field in COMPATIBILITY.md's reconstruction contract")
@@ -341,7 +341,7 @@ func TestFoldMultiRunResetsConsecutiveFailures(t *testing.T) {
 // the archive of a SUBSEQUENT compaction would carry it). That is a separate,
 // pre-existing event-coverage edge (the compaction summary is synthetic compactor state,
 // not user input), orthogonal to #115's user-prompt closure. So this variant asserts the
-// archive HEAD is recovered (the property #115/ADR 0038 promises) rather than a full
+// archive HEAD is recovered (the property #115 promises) rather than a full
 // snapshot deep-equal; the hand-built TestFoldRecoversCompactionArchiveHead proves the
 // archive-folding mechanics deterministically.
 func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {

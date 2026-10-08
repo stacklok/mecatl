@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	engineagent "github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -52,14 +53,14 @@ type Agent struct {
 	// client that ignores the advertised caps still gets a clear error instead of a
 	// silent drop.
 	//
-	// CAPTURE-ONCE IS CORRECT IN P0: ACP carries NO per-session provider/model
+	// CAPTURE-ONCE IS CORRECT: ACP carries NO per-session provider/model
 	// selector (session/new passes only mcpServers, never a selector), so every ACP
 	// session rides the DEFAULT engine and a.caps is correct for every one of them.
 	// svc.ProviderCapabilities() returns the composition-intersected DEFAULT caps —
 	// the SAME value the gRPC/HTTP CreateSessionResponse echoes for a default-engine
 	// session — so the ACP gate and the wire echo cannot disagree. A per-session ACP
-	// capability gate (capture-once → per-session lookup) lands only when an ACP
-	// selector lands (P1+); see docs/adr/0016-multi-provider.md.
+	// capability gate (capture-once → per-session lookup) is needed only if ACP
+	// gains a per-session selector.
 	caps port.ProviderCapabilities
 
 	// resume reports whether session/load is supported (a session store is
@@ -516,13 +517,13 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 
 	stop := stopEndTurn
 	authorizationIneligible := false
+	projector := newRunProjector()
 	for ev := range run.Events() {
 		switch ev.Type {
 		case session.EvPermissionAsk:
 			if ev.Ask != nil {
 				// Persist the awaiting snapshot so a session/load after a restart can
-				// re-attach to a paused session (mirrors the gRPC/HTTP adapters). With
-				// session/load now landed this is no longer a dead snapshot.
+				// re-attach to a paused session (mirrors the gRPC/HTTP adapters).
 				a.svc.Persist(ctx, session.SessionID(req.SessionID))
 				// Out-of-band: ask the editor, then resolve the run. Run on its own
 				// goroutine so draining the event channel never blocks behind the
@@ -532,7 +533,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 			}
 		case session.EvAuthorizationRequired:
 			authorizationIneligible = true
-			if update, ok := projectUpdate(ev); ok {
+			if update, ok := projector.project(ev); ok {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		case session.EvResult:
@@ -540,7 +541,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 				stop = stopReasonFor(ev.Result.Stop)
 			}
 		default:
-			if update, ok := projectUpdate(ev); ok {
+			if update, ok := projector.project(ev); ok {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		}
@@ -658,10 +659,19 @@ func (a *Agent) requestPermission(ctx context.Context, sessionID string, run run
 		err := a.conn.Call(ctx, methodRequestPermission, permissionRequestFor(sessionID, ask), &resp)
 		if err != nil {
 			a.diag.Log(ctx, port.LevelDebug, "acp: request_permission failed; denying", "session", sessionID, "ask", ask.AskID, "err", err)
-			run.Approve(ask.AskID, session.VerdictDeny)
+			resolution := engineagent.ApprovalResolution{AskID: ask.AskID, Verdict: session.VerdictDeny}
+			if ask.Guardrail != nil {
+				resolution.ReviewID, resolution.Kind = ask.Guardrail.ReviewID, ask.Guardrail.Kind
+			}
+			_ = run.ResolveApproval(resolution)
 			return
 		}
-		run.Approve(ask.AskID, approvalFor(resp.Outcome))
+		resolution := engineagent.ApprovalResolution{AskID: ask.AskID, Verdict: approvalFor(resp.Outcome)}
+		if ask.Guardrail != nil {
+			resolution.ReviewID = ask.Guardrail.ReviewID
+			resolution.Kind = ask.Guardrail.Kind
+		}
+		_ = run.ResolveApproval(resolution)
 	}()
 }
 
@@ -695,7 +705,7 @@ func (a *Agent) release(sessionID string) {
 // runApprover is the subset of *agent.Run the permission round-trip needs,
 // narrowed so requestPermission is unit-testable with a fake.
 type runApprover interface {
-	Approve(askID string, verdict session.ApprovalVerdict)
+	ResolveApproval(engineagent.ApprovalResolution) error
 }
 
 // validateCwd enforces only ACP's syntactic absolute-path contract. The Service

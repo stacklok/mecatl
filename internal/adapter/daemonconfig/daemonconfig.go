@@ -40,7 +40,7 @@ const SchemaVersionV1 = "v1"
 // XDG config base (`mecatl/daemon.yaml`), re-exported so the WRITE paths
 // (`mecated config daemon init` / `config daemon validate`) and the docs agree
 // on a single relative path. It is NEVER used for auto-load — the daemon config
-// is loaded ONLY when --config is supplied explicitly (issue #338, ADR 0088).
+// is loaded ONLY when --config is supplied explicitly (issue #338).
 // Re-exporting it here keeps the conventional path in the SAME package that owns
 // the schema, mirroring the configgen/permconfig SettingsRelPath pattern.
 const DaemonConfigRelPath = "mecatl/daemon.yaml"

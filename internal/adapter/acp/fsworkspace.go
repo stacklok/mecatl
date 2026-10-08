@@ -41,14 +41,14 @@ const fsCallTimeout = 30 * time.Second
 //     The Environment's separately-selected ReadLedger (a fresh memledger,
 //     composition-supplied at session/new) then tracks the editor's BUFFER
 //     versions, not disk (strictly better than osfs for an editor session) —
-//     fsWorkspace itself carries NO ledger (ADR 0281: content and read evidence
+//     fsWorkspace itself carries NO ledger (content and read evidence
 //     are independently composed at the Environment).
 //   - Root / Glob / Grep — COMPOSED from an osfs.Workspace rooted at the SAME
 //     session cwd. ACP has no fs/list or fs/grep, so these read the local on-disk
 //     tree. The residual: Grep/Glob see disk, not unsaved buffers. This is
 //     acceptable — the Edit invariant forces a re-read-through-fs/* before any
 //     edit, so the divergence is confined to search/discovery and never reaches
-//     the mutation path. (Documented in docs/adr/0001-acp-adapter.md.)
+//     the mutation path.
 //   - Stat — disk-primary BUT buffer-aware for EXISTENCE: when disk reports
 //     not-exist it probes the editor via fs/read_text_file, so a file that exists
 //     only as an unsaved buffer is reported as existing. This is load-bearing for
@@ -291,7 +291,7 @@ func (w *fsWorkspace) Write(ctx context.Context, path string, data []byte) error
 // only if the buffer does not already exist. It fails (wrapping fs.ErrExist) if
 // the editor's buffer already holds the path (checked via fs/read_text_file,
 // mirroring Stat's buffer-aware existence). The compare+write is serialized
-// under callMu (the RPC CAS sequence — ADR 0208 §5), so a concurrent
+// under callMu (the RPC CAS sequence), so a concurrent
 // CreateFile/ReplaceFile on the same instance cannot race. The ledger is NOT
 // held across the RPC: callMu and ledgerMu are independent.
 func (w *fsWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
@@ -330,7 +330,7 @@ func (w *fsWorkspace) CreateFile(ctx context.Context, path string, data []byte) 
 // ReplaceFile conditionally replaces the buffer content at path, only if the
 // editor's current buffer version equals old. It reads the buffer, mints the
 // current version, compares, and writes — all under callMu (the RPC CAS
-// sequence — ADR 0208 §5). On a version mismatch it returns a
+// sequence). On a version mismatch it returns a
 // *tool.VersionMismatchError; on a missing buffer it returns an error wrapping
 // fs.ErrNotExist. Because fs/write_text_file is unconditional, the CAS is only
 // as atomic as callMu; there is exactly one fsWorkspace per session, so a

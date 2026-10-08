@@ -51,7 +51,7 @@ func TestFoldRestoresTitleGenerationMetadata(t *testing.T) {
 	if got := s.TokenUsageSnapshot()[session.UsageKindSessionTitle]; got.Total.OutputTokens != 3 || got.Models["unknown"].InputTokens != 5 {
 		t.Errorf("TokenUsage = %#v, want restored ledger", got)
 	}
-	if got := s.Usage; got != (session.Usage{}) {
-		t.Errorf("main Usage = %#v, want unchanged", got)
+	if got := s.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Errorf("main usage = %#v, want unchanged", got)
 	}
 }

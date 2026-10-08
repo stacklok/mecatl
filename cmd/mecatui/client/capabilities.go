@@ -13,15 +13,16 @@ type Capabilities struct {
 	// MCPConnectorStatus gates the broker-local connector inventory. It is separate
 	// from MCP: broker-only deployments deliberately expose no direct resources or prompts.
 	MCPConnectorStatus bool
-	MCP                bool
-	SlashCommands      bool
-	Memory             bool
-	Skills             bool
-	Teams              bool
-	Agents             bool
-	// Bash reports availability of the canonical Shell tool. Its historical
-	// spelling is retained for compatibility with the established wire/Go API.
-	Bash bool
+	// MCPRefresh gates explicit direct/global source reconciliation.
+	MCPRefresh    bool
+	MCP           bool
+	SlashCommands bool
+	Memory        bool
+	Skills        bool
+	Teams         bool
+	Agents        bool
+	// Shell reports availability of the canonical Shell tool.
+	Shell bool
 	// Soul / UserModel report whether the server has a soul source / user-model store
 	// wired. They gate the /soul and /usermodel read-only inspection panels.
 	Soul      bool
@@ -51,13 +52,12 @@ type Capabilities struct {
 	// server (field absent → false) hides the overlay. Independent of the scheduler
 	// tick loop: the overlay can create/inspect/pause/resume/fire-now on any
 	// store-backed server; auto-firing on a cadence is the server's tick loop
-	// (ON by default on a store-backed server, ADR 0073 — `--no-scheduler` opts out).
+	// (ON by default on a store-backed server; `--no-scheduler` opts out).
 	Scheduling        bool
 	Reflection        bool
 	LearningProposals bool
 	LearnedSkills     bool
 	StorageHealth     bool
-	StorageMigration  bool
 	StorageCleanup    bool
 	// ManualDream is nil when an older server does not expose the capability object.
 	// A non-nil value keeps /dream discoverable even when both targets are unavailable,
@@ -87,11 +87,10 @@ type Capabilities struct {
 	SessionMediaPresent bool
 }
 
-// capabilitiesWithSessionMedia overlays the selected session's media support while
+// capabilitiesWithSessionMediaFrom overlays the selected session's media support while
 // retaining server-wide feature bits. A nil session capability is an older-server
 // response, so the global media values remain unchanged.
-func capabilitiesWithSessionMedia(global *mecatlv1.ServerCapabilities, sessionCaps *mecatlv1.SessionCapabilities) Capabilities {
-	caps := capabilitiesFrom(global)
+func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.SessionCapabilities) Capabilities {
 	if sessionCaps != nil {
 		caps.Image = sessionCaps.GetImage()
 		caps.Audio = sessionCaps.GetAudio()
@@ -108,13 +107,14 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 	}
 	return Capabilities{
 		MCPConnectorStatus:  c.GetMcpConnectorStatus(),
+		MCPRefresh:          c.GetMcpRefresh(),
 		MCP:                 c.GetMcp(),
 		SlashCommands:       c.GetSlashCommands(),
 		Memory:              c.GetMemory(),
 		Skills:              c.GetSkills(),
 		Teams:               c.GetTeams(),
 		Agents:              c.GetAgents(),
-		Bash:                c.GetBash(),
+		Shell:               c.GetShell(),
 		Soul:                c.GetSoul(),
 		UserModel:           c.GetUserModel(),
 		ModelSelection:      c.GetModelSelection(),
@@ -127,7 +127,6 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		LearningProposals:   c.GetLearningProposals(),
 		LearnedSkills:       c.GetLearnedSkills(),
 		StorageHealth:       c.GetStorageHealth(),
-		StorageMigration:    c.GetStorageMigration(),
 		StorageCleanup:      c.GetStorageCleanup(),
 		ManualDream:         manualDreamCapabilitiesFrom(c.GetManualDream()),
 		Steer:               c.GetSteer(),
@@ -167,7 +166,7 @@ type ResolvedModel struct {
 	ModelID       string
 	ContextWindow int64
 	// ReasoningEffort is the EFFECTIVE reasoning-effort tier this session resolved
-	// to (ADR 0055), "" when unset (provider default). The ui shows it in the model
+	// to, "" when unset (provider default). The ui shows it in the model
 	// footer segment (only when non-empty). Server-owned + echoed verbatim — never
 	// recomputed by the client.
 	ReasoningEffort string

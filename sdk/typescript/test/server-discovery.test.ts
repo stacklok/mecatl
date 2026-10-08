@@ -37,7 +37,6 @@ import {
   SUPPORTED_API_MAJOR,
   TransportError,
   UnsupportedFeatureError,
-  WATCH_SESSION_EVENTS_FEATURE,
 } from "../src/index.js";
 import * as nodeEntry from "../src/node.js";
 import { readRawCompatibility } from "../src/raw.js";
@@ -48,7 +47,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const completeCapabilities = {
   agents: true,
   audio: true,
-  bash: true,
+  shell: true,
   debugMcp: true,
   image: true,
   learnedSkills: true,
@@ -72,7 +71,6 @@ const completeCapabilities = {
   steer: true,
   storageCleanup: true,
   storageHealth: true,
-  storageMigration: true,
   teams: true,
   userModel: true,
   workspaceEnrollment: true,
@@ -260,6 +258,7 @@ describe("SDK server discovery", () => {
     expect([...result.features]).toEqual([ServerFeature.ServerInfo, "future_feature"]);
     expect(result.capabilities.posture).toBe("future-posture");
     expect(ServerFeature).toEqual({
+      ExactPlanAskControl: "exact_plan_ask_control",
       HttpSteer: "http_steer",
       McpServersOnCreate: "mcp_servers_on_create",
       PromptFreeControls: "prompt_free_controls",
@@ -273,7 +272,6 @@ describe("SDK server discovery", () => {
       Auto: "auto",
       Yolo: "yolo",
     });
-    expect(WATCH_SESSION_EVENTS_FEATURE).toBe(ServerFeature.WatchSessionEvents);
 
     const empty = new DiscoveryTransport();
     empty.compatibility.push(
@@ -886,7 +884,6 @@ describe("SDK server discovery", () => {
     for (const entry of [nodeEntry, denoEntry]) {
       expect(entry.ServerFeature).toBe(ServerFeature);
       expect(entry.ServerPosture).toBe(ServerPosture);
-      expect(entry.WATCH_SESSION_EVENTS_FEATURE).toBe(WATCH_SESSION_EVENTS_FEATURE);
     }
 
     for (const reportName of [
@@ -899,9 +896,6 @@ describe("SDK server discovery", () => {
         expect(report).toContain(`export interface ${name}`);
       }
       expect(report).toContain("readonly server: Server;");
-      expect(report).toContain(
-        '// @public @deprecated\nexport const WATCH_SESSION_EVENTS_FEATURE: "watch_session_events";',
-      );
       expect(reportBlock(report, "interface Server")).toEqual([
         "compatibility(options?: RequestOptions): Promise<ServerCompatibility>;",
         "info(options?: ServerInfoOptions, requestOptions?: RequestOptions): Promise<ServerInfo>;",
@@ -921,6 +915,7 @@ describe("SDK server discovery", () => {
         "readonly providerId?: string;",
       ]);
       expect(reportBlock(report, "const ServerFeature:")).toEqual([
+        'readonly ExactPlanAskControl: "exact_plan_ask_control";',
         'readonly HttpSteer: "http_steer";',
         'readonly McpServersOnCreate: "mcp_servers_on_create";',
         'readonly PromptFreeControls: "prompt_free_controls";',

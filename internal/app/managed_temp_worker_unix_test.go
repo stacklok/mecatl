@@ -12,9 +12,9 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/managedtemp"
 )
 
-// TestADR_0281_BuildOwnsManagedTempWorkerLifecycle pins Build's ownership of the
+// TestBuildOwnsManagedTempWorkerLifecycle pins Build's ownership of the
 // interval-gated startup sweep and Close's worker shutdown before namespace teardown.
-func TestADR_0281_BuildOwnsManagedTempWorkerLifecycle(t *testing.T) {
+func TestBuildOwnsManagedTempWorkerLifecycle(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "managed")
 	built, err := buildIsolated(t, context.Background(), Config{
 		UseMock:   true,

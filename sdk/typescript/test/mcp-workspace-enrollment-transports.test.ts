@@ -67,7 +67,11 @@ class RecordingTransport implements Transport {
               status: "pending",
             };
           },
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["workspace_enrollment_test"],
+          }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           listSessionMcpConnectors: (_request, context) => {
             context.responseHeader.set("x-response", "list-header");
@@ -165,7 +169,12 @@ it("pre-aborted workspace enrollment requests never reach either transport", asy
             baseUrl: "http://mecatl.test",
             fetch: async (input) => {
               const path = new URL(String(input)).pathname;
-              if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+              if (path === "/v1/compatibility")
+                return Response.json({
+                  api_major: 1,
+                  capabilities: {},
+                  features: ["workspace_enrollment_test"],
+                });
               if (path === `/v1/sessions/${sessionId}`)
                 return Response.json({ session_id: sessionId });
               throw new Error(`unexpected pre-aborted HTTP request ${path}`);
@@ -260,7 +269,7 @@ it("workspace enrollment has equivalent grpc and http request semantics", async 
       const value = (() => {
         switch (path) {
           case "/v1/compatibility":
-            return { api_major: 1 };
+            return { api_major: 1, capabilities: {}, features: ["workspace_enrollment_test"] };
           case `/v1/sessions/${sessionId}`:
             return { session_id: sessionId };
           case `/v1/sessions/${sessionId}/mcp/connectors`:
@@ -377,7 +386,11 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
                 targets += 1;
                 return waitForAbort(context.signal);
               },
-              getCompatibilityInfo: () => ({ apiMajor: 1 }),
+              getCompatibilityInfo: () => ({
+                apiMajor: 1,
+                capabilities: {},
+                features: ["workspace_enrollment_test"],
+              }),
               getSession: (request) => ({ session: { sessionId: request.sessionId } }),
             });
           })
@@ -385,7 +398,12 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
             baseUrl: "http://mecatl.test",
             fetch: async (input, init) => {
               const path = new URL(String(input)).pathname;
-              if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+              if (path === "/v1/compatibility")
+                return Response.json({
+                  api_major: 1,
+                  capabilities: {},
+                  features: ["workspace_enrollment_test"],
+                });
               if (path === `/v1/sessions/${sessionId}`)
                 return Response.json({ session_id: sessionId });
               targets += 1;
@@ -440,7 +458,11 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
             calls.push(`connect:${code}`);
             throw statusError(code, status, requestId);
           },
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["workspace_enrollment_test"],
+          }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           listSessionMcpConnectors: () => {
             calls.push("inventory");
@@ -482,7 +504,12 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
       baseUrl: "http://mecatl.test",
       fetch: async (input) => {
         const path = new URL(String(input)).pathname;
-        if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+        if (path === "/v1/compatibility")
+          return Response.json({
+            api_major: 1,
+            capabilities: {},
+            features: ["workspace_enrollment_test"],
+          });
         if (path === `/v1/sessions/${sessionId}`) return Response.json({ session_id: sessionId });
         calls.push(path);
         return Response.json(
@@ -512,7 +539,12 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
     baseUrl: "http://mecatl.test",
     fetch: async (input) => {
       const path = new URL(String(input)).pathname;
-      if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+      if (path === "/v1/compatibility")
+        return Response.json({
+          api_major: 1,
+          capabilities: {},
+          features: ["workspace_enrollment_test"],
+        });
       if (path === `/v1/sessions/${sessionId}`) return Response.json({ session_id: sessionId });
       offlineCalls.push(path);
       throw new Error("offline");
@@ -539,7 +571,11 @@ it("workspace enrollment lost acknowledgements do not trigger follow-up work", a
           calls.push("connect:pending-1");
           throw new ConnectError("connect acknowledgement lost", Code.Unavailable);
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: ["workspace_enrollment_test"],
+        }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         listSessionMcpConnectors: () => {
           calls.push("inventory");

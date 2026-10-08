@@ -1,126 +1,331 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-// preparedToolCard is the tool card's semantic body before lipgloss adds its
-// border and padding. It exists only during a fresh block render; its semantic
-// sections are converted to structural provenance before the cache entry is kept.
-type preparedToolCard struct {
-	card     lipgloss.Style
-	sections []preparedToolSection
+const (
+	toolEditName  = "Edit"
+	toolWriteName = "Write"
+	toolPathArg   = "path"
+	toolURLArg    = "url"
+)
+
+// toolCardPresentation is the renderer-owned immutable presentation input for an
+// ordinary typed tool snapshot. It deliberately does not enter ui.block, whose
+// remaining tool shape exists only for legacy delegation presentation helpers.
+type toolCardPresentation struct {
+	name      string
+	arguments string
+	resolved  bool
+	result    string
+	isError   bool
+	artifacts []client.ContentBlock
 }
 
-type preparedToolSection struct {
-	region   regionKind
-	text     string
-	trailing int
+func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPresentation {
+	return toolCardPresentation{
+		name: p.Call.Name, arguments: p.Call.Arguments, resolved: p.Resolved,
+		result: p.Result.Body, isError: p.Result.IsError,
+		artifacts: contentBlocks(p.Result.Artifacts),
+	}
 }
 
-func (p preparedToolCard) render() string {
-	parts := make([]string, 0, len(p.sections))
-	for _, section := range p.sections {
-		if section.text != "" {
-			parts = append(parts, section.text)
+// renderToolSnapshot is the ordinary-tool renderer boundary. It adapts the sealed
+// logical snapshot directly into immutable presentation input and keeps cache and
+// frame provenance renderer-owned. A settled call collapses to the same semantic
+// one-line projection the /toolcalls inspector lists; complete arguments and
+// results remain in the inspector.
+func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), false, func(blockID uint64) blockRenderOutput {
+		metadata, _ := scrollback.ToolCallMetadataOf(s)
+		projection := projectToolCall(metadata)
+		if projection.settled() {
+			return r.renderSettledToolLine(blockID, projection)
 		}
-	}
-	return p.card.Render(strings.Join(parts, "\n"))
-}
-
-// layoutRows returns the decorated card body's padded rows solely to mirror
-// lipgloss's final reflow; it is never retained after structural spans are built.
-func (p preparedToolCard) layoutRows(section int) []string {
-	if section < 0 || section >= len(p.sections) || p.sections[section].text == "" {
-		return nil
-	}
-	bodyWidth := p.card.GetWidth() - p.card.GetHorizontalFrameSize()
-	layout := lipgloss.NewStyle()
-	if bodyWidth > 0 {
-		layout = layout.Width(bodyWidth)
-	}
-	rows := strings.Split(layout.Render(p.sections[section].text), "\n")
-	for i := range rows {
-		rows[i] = ansi.Strip(rows[i])
-	}
-	return rows
-}
-
-// semanticRows wraps the ANSI-free section with the card's body rules without
-// layout padding. It preserves trailing semantic spaces, unlike the padded layout
-// rows used solely to account for decoration reflow.
-func (p preparedToolCard) semanticRows(section int) []string {
-	if section < 0 || section >= len(p.sections) || p.sections[section].text == "" {
-		return nil
-	}
-	bodyWidth := p.card.GetWidth() - p.card.GetHorizontalFrameSize()
-	text := ansi.Strip(p.sections[section].text)
-	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
-	// ansi.Hardwrap normalizes trailing spaces. They are semantic source text,
-	// not card padding, so restore the final source-line suffix explicitly.
-	if sourceLines := strings.Split(text, "\n"); len(sourceLines) > 0 {
-		last := sourceLines[len(sourceLines)-1]
-		trailing := last[len(strings.TrimRight(last, " ")):]
-		if n := p.sections[section].trailing; n > len(trailing) {
-			trailing = strings.Repeat(" ", n)
+		presentation := toolCardPresentationFromSnapshot(p)
+		prepared := r.prepareTypedToolCard(presentation, projection.state)
+		out := prepared.Text()
+		if r.width > r.indent {
+			out = r.indentLines(out)
 		}
-		if trailing != "" && len(rows) > 0 && !strings.HasSuffix(rows[len(rows)-1], trailing) {
-			rows[len(rows)-1] += trailing
+		return blockRenderOutput{
+			text: out,
+			rows: blockProvenanceRows(prepared.Prepared, blockID, scrollback.KindTool, r.indent, r.width),
 		}
-	}
-	return rows
+	})
 }
 
-// prepareToolCard builds every semantic section at the card body width before
-// final decoration. Its caller immediately renders the card and derives the
-// structural provenance needed after these strings are discarded.
-func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
+func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProjection) blockRenderOutput {
+	line := projection.line()
+	out := r.th.Style(line.StatusStyle()).Render(line.Glyph()) + " " + line.Content()
+	indent := 0
+	width := r.width
+	if r.width > r.indent {
+		indent = r.indent
+		width = r.contentWidth()
+	}
+	out = ansi.Truncate(out, width, "…")
+	if indent > 0 {
+		out = strings.Repeat(" ", indent) + out
+	}
+	return blockRenderOutput{
+		text: out,
+		rows: []renderedRow{{
+			blockID: blockID, region: conversationRegionBody, text: true,
+			kind: scrollback.KindTool, indent: indent, leading: indent, span: graphemeCount(ansi.Strip(out)),
+		}},
+	}
+}
+
+func (r *renderer) prepareTypedToolCard(p toolCardPresentation, state toolcallProjectionState) preparedToolCard {
+	r.cardPrepares++
 	r.toolCardPrepares++
-	card, _, bodyWidth := r.toolCardLayout()
+	_, _, bodyWidth := r.toolCardLayout()
+	theme := r.blockTheme()
 
-	var glyph, glyphText string
-	switch {
-	case !b.resolved:
-		glyphText = "…"
-		glyph = r.th.Style("toolName").Render(glyphText)
-	case b.resultError:
-		glyphText = "✗"
-		glyph = r.th.Style("toolErr").Render(glyphText)
-	default:
-		glyphText = "✓"
-		glyph = r.th.Style("toolOk").Render(glyphText)
-	}
-
-	mcpName, isMCP := mcpTitle(b.toolName)
-	headLabel := sanitizeTerminal(b.toolName)
+	line := renderfmt.PresentToolLine("", "", state.renderfmtState())
+	glyphText, status := line.Glyph(), line.Status()
+	glyph := r.th.Style(line.StatusStyle()).Render(glyphText)
+	mcpName, isMCP := mcpTitle(p.name)
+	headLabel := terminaltext.Sanitize(p.name)
 	if isMCP {
 		headLabel = mcpName
 	}
+	if status != "" {
+		headLabel = status + " · " + headLabel
+	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
-	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), sanitizeTerminal(b.toolName), bodyWidth)
+	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
+	if args := r.renderOrdinaryToolArgs(p.name, p.arguments, bodyWidth); args != "" {
+		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
 	}
-
-	sections := []preparedToolSection{{region: conversationRegionChrome, text: head}}
-	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
-		sections = append(sections, preparedToolSection{region: conversationRegionArguments, text: args})
-	}
-	if b.resolved {
-		if result := r.renderToolResult(b, expand, bodyWidth); result != "" {
-			sections = append(sections, preparedToolSection{
-				region: conversationRegionResult, text: result,
-				trailing: len(b.resultBody) - len(strings.TrimRight(b.resultBody, " ")),
-			})
+	if p.resolved {
+		if result := r.renderTypedToolResult(p.result, p.isError, p.artifacts, bodyWidth); result != "" {
+			sections = append(sections, preparedToolSection{Region: blocks.RegionResult, Text: result, Trailing: len(p.result) - len(strings.TrimRight(p.result, " "))})
 		}
 	}
-	return preparedToolCard{card: card, sections: sections}
+	return preparedToolCard{Prepared: blocks.PrepareStyledTool(blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections}), theme)}
 }
 
-// renderTool renders the prepared semantic card only after all sections have
-// been independently wrapped to the card body width.
-func (r *renderer) renderTool(b *block, expand bool) string {
-	return r.prepareToolCard(b, expand).render()
+func (r *renderer) renderTypedToolResult(body string, isError bool, artifacts []client.ContentBlock, bodyWidth int) string {
+	lines, hiddenSummaryFields := r.renderTypedToolResultLines(body, isError)
+	for _, artifact := range artifacts {
+		if line, ok := renderResultBlockLine(artifact); ok {
+			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
+		}
+	}
+	lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
+	var out strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(r.renderToolResultLine(line))
+	}
+	return out.String()
+}
+
+func (*renderer) renderTypedToolResultLines(body string, isError bool) ([]toolResultLine, int) {
+	if !isError {
+		if summary, hiddenFields, ok := summarizeResultDetail(body); ok {
+			return resultLines(summary, resultLineSummary), hiddenFields
+		}
+	}
+	body = terminaltext.Sanitize(strings.TrimRight(body, "\n"))
+	if body == "" {
+		return nil, 0
+	}
+	style := resultLineBody
+	if isError {
+		style = resultLineError
+	}
+	return resultLines(body, style), 0
+}
+
+func (r *renderer) renderOrdinaryToolArgs(name, arguments string, bodyWidth int) string {
+	var args string
+	if diff, ok := r.renderToolDiffAtWidth(name, arguments, false, bodyWidth); ok {
+		return diff
+	}
+	if summary, ok := r.summarizeArgs(arguments); ok {
+		args = summary
+	} else if jsonArgs := prettyJSON(arguments); jsonArgs != "" {
+		args = r.th.Style("toolArgs").Render(jsonArgs)
+	}
+	return wrapToolCardRegion(args, bodyWidth)
+}
+
+// preparedToolCard remains a package-local ephemeral adapter for regression
+// checks that ensure prepared semantic content is never retained by the cache.
+type preparedToolCard struct {
+	blocks.Prepared
+}
+
+type preparedToolSection = blocks.StyledSectionInput
+
+func (p preparedToolCard) render() string {
+	return p.Text()
+}
+
+// prepareToolCard snapshots the mutable conversation block into the real
+// stateless blocks package. Dynamic rows are already bounded to bodyWidth before
+// their styles are applied; the blocks package owns only final decoration and
+// lockstep structural provenance.
+
+// renderSubagentSnapshot adapts only the sealed Subagent payload to its renderer
+// presentation value. Cache storage and frame provenance remain renderer-owned.
+func (r *renderer) renderSubagentSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), false, func(blockID uint64) blockRenderOutput {
+		metadata, _ := scrollback.ToolCallMetadataOf(s)
+		projection := projectToolCall(metadata)
+		if projection.settled() {
+			return r.renderSettledToolLine(blockID, projection)
+		}
+		r.cardPrepares++
+		prepared := r.prepareSubagentCard(subagentCardPresentationFromSnapshot(p), projection.state).Prepared
+		out := prepared.Text()
+		if r.width > r.indent {
+			out = r.indentLines(out)
+		}
+		return blockRenderOutput{text: out, rows: blockProvenanceRows(prepared, blockID, scrollback.KindSubagent, r.indent, r.width)}
+	})
+}
+
+// renderTeamSnapshot adapts only the sealed Team payload to its renderer
+// presentation value. The Agents overlay continues to use its existing ui.block path.
+func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.TeamCardSnapshot) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), false, func(blockID uint64) blockRenderOutput {
+		metadata, _ := scrollback.ToolCallMetadataOf(s)
+		projection := projectToolCall(metadata)
+		if projection.settled() {
+			return r.renderSettledToolLine(blockID, projection)
+		}
+		r.cardPrepares++
+		prepared := r.prepareTeamCard(teamCardPresentationFromSnapshot(p), projection.state).Prepared
+		out := prepared.Text()
+		if r.width > r.indent {
+			out = r.indentLines(out)
+		}
+		return blockRenderOutput{text: out, rows: blockProvenanceRows(prepared, blockID, scrollback.KindTeam, r.indent, r.width)}
+	})
+}
+
+func (r *renderer) prepareSubagentCard(p subagentCardPresentation, state toolcallProjectionState) preparedToolCard {
+	_, _, bodyWidth := r.toolCardLayout()
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, bodyWidth), state)
+}
+
+func (r *renderer) prepareTeamCard(p teamCardPresentation, state toolcallProjectionState) preparedToolCard {
+	_, _, bodyWidth := r.toolCardLayout()
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, bodyWidth), state)
+}
+
+func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, state toolcallProjectionState) preparedToolCard {
+	r.toolCardPrepares++
+	_, _, bodyWidth := r.toolCardLayout()
+	line := renderfmt.PresentToolLine("", "", state.renderfmtState())
+	glyphText, status := line.Glyph(), line.Status()
+	glyph := r.th.Style(line.StatusStyle()).Render(glyphText)
+	mcpName, isMCP := mcpTitle(name)
+	headLabel := terminaltext.Sanitize(name)
+	if isMCP {
+		headLabel = mcpName
+	}
+	headLabel = status + " · " + headLabel
+	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
+	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
+	if args != "" {
+		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
+	}
+	if resolved {
+		if rendered := r.renderTypedToolResult(result, isError, artifacts, bodyWidth); rendered != "" {
+			sections = append(sections, preparedToolSection{Region: blocks.RegionResult, Text: rendered, Trailing: len(result) - len(strings.TrimRight(result, " "))})
+		}
+	}
+	return preparedToolCard{Prepared: blocks.PrepareStyledTool(blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections}), r.blockTheme())}
+}
+
+func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, bodyWidth int) string {
+	muted := r.th.Style("muted")
+	var out strings.Builder
+	if p.goal != "" {
+		out.WriteString(renderDelegationToolCardText(muted, "↳ "+terminaltext.Sanitize(p.goal), bodyWidth))
+		out.WriteString("\n")
+	}
+	modelLabel := delegationModelLabel(p.routedCategory, p.routedModel, p.routingReason, p.model, p.routing)
+	if modelLabel != "" {
+		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
+		out.WriteString("\n")
+	}
+	if p.done {
+		out.WriteString(renderDelegationToolCardText(muted, subagentPresentationResolvedLine(p), bodyWidth))
+		return strings.TrimRight(out.String(), "\n")
+	}
+	out.WriteString(renderDelegationToolCardText(muted, r.subagentPresentationLiveLine(p), bodyWidth))
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (r *renderer) subagentPresentationLiveLine(p subagentCardPresentation) string {
+	current := "…"
+	if p.current != "" {
+		current = terminaltext.Sanitize(p.current)
+	}
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s agents", current, renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), r.marks.agents)
+}
+
+func subagentPresentationResolvedLine(p subagentCardPresentation) string {
+	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s", renderfmt.HumanizeDuration(p.durationMS), renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), plural(p.toolCount, "tool"), subagentStopLabel(p.stop))
+}
+
+func (r *renderer) renderTeamPresentation(p teamCardPresentation, bodyWidth int) string {
+	muted := r.th.Style("muted")
+	var out strings.Builder
+	if p.done {
+		return renderDelegationToolCardText(muted, teamPresentationResolvedLine(p), bodyWidth)
+	}
+	out.WriteString(renderDelegationToolCardText(muted, r.teamPresentationHeader(p), bodyWidth))
+	order := teamLaneOrder(p.lanes)
+	shown := order
+	if len(shown) > maxTeamLanes {
+		shown = order[:maxTeamLanes]
+	}
+	nameW := teamNameWidth(p.lanes, shown)
+	for _, idx := range shown {
+		lane := &p.lanes[idx]
+		out.WriteString("\n")
+		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(lane, nameW, p.done), bodyWidth))
+	}
+	if extra := len(order) - len(shown); extra > 0 {
+		out.WriteString("\n")
+		out.WriteString(renderDelegationToolCardText(muted, fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents), bodyWidth))
+	}
+	return out.String()
+}
+
+func (r *renderer) teamPresentationHeader(p teamCardPresentation) string {
+	return "team · " + plural(len(p.lanes), "member") + " · " + r.marks.agents + " agents"
+}
+
+func teamPresentationResolvedLine(p teamCardPresentation) string {
+	line := fmt.Sprintf("team · %s · ↑%s ↓%s · stop:%s", plural(p.rounds, "round"), renderfmt.HumanizeTokens(p.usage.InputTokens), renderfmt.HumanizeTokens(p.usage.OutputTokens), subagentStopLabel(p.stop))
+	stopped := 0
+	for _, lane := range p.lanes {
+		if lane.stopped {
+			stopped++
+		}
+	}
+	if stopped > 0 {
+		line += fmt.Sprintf(" · %d stopped", stopped)
+	}
+	return line
 }

@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -22,7 +24,7 @@ type config struct {
 	// transportMode is the resolved canonical transport mode (local/connect)
 	// threaded explicitly from resolveInvocation through parse and validate.
 	// It drives the transport path (no-probe/no-embed) and the
-	// trust/provider/posture validation gating (ADR 0087).
+	// trust/provider/posture validation gating.
 	transportMode transportMode
 	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for the
 	// bare/local mode). Set by resolveInvocation; consumed by resolveTransport.
@@ -43,19 +45,23 @@ type config struct {
 	workspace string
 	// workspaceExplicit distinguishes an operator-supplied --workspace from the
 	// empty default. Remote connect rejects the former without resolving it.
-	workspaceExplicit bool
-	mode              string
-	theme             string
-	themeDir          string
-	authToken         string
-	anonymous         bool
-	useTLS            bool
-	tlsExplicit       bool
-	tlsCA             string
-	insecure          bool
-	listThemes        bool
-	// debug enables mecatui's client-side diagnostic surfaces. An explicit
-	// --debug value outranks MECATUI_DEBUG and the legacy per-surface aliases.
+	workspaceExplicit     bool
+	microVMDevRelease     string
+	microVMDevAcknowledge bool
+	microVMProgress       chan string
+	microVMSelected       *atomic.Bool
+	mode                  string
+	theme                 string
+	themeDir              string
+	authToken             string
+	anonymous             bool
+	useTLS                bool
+	tlsExplicit           bool
+	tlsCA                 string
+	insecure              bool
+	listThemes            bool
+	// debug enables all mecatui client-side diagnostic surfaces. An explicit
+	// --debug value outranks MECATUI_DEBUG.
 	debug        bool
 	debugFlagSet bool
 	debugMouse   bool
@@ -86,12 +92,9 @@ type config struct {
 	// inline). Wired to ui.Deps.NoMouse.
 	noMouse bool
 
-	// terminalTitleOff suppresses the dynamic terminal window/tab title (leaving
-	// it at the bare "mecatui"). Off by default (the title is dynamic: "<title> —
-	// <status word> mecatui"). Honoured from --terminal-title=off/false/0 or
-	// MECATUI_NO_TERMINAL_TITLE=1/true. The escape hatch for terminals/
-	// multiplexers where a set title does more harm than good. Wired to
-	// ui.Deps.NoWindowTitle.
+	// terminalTitleOff suppresses the terminal-title controller's OSC writes.
+	// Off by default. Honoured from --terminal-title=off/false/0 or
+	// MECATUI_NO_TERMINAL_TITLE=1/true.
 	terminalTitle        string
 	terminalTitleOff     bool
 	terminalTitleFlagSet bool
@@ -111,8 +114,8 @@ type config struct {
 	defaultProvider        string
 	defaultModel           string
 	defaultProviderFlagSet bool
-	// modelAliases / modelSlots mirror the mecated flags for the embedded server
-	// (ADR 0030): modelAliases maps a short alias to a concrete id; modelSlots binds
+	// modelAliases / modelSlots mirror the mecated flags for the embedded server:
+	// modelAliases maps a short alias to a concrete id; modelSlots binds
 	// an internal lightweight call (compaction/guardrail; the ask-reviewer slot is
 	// inert here — mecatui runs interactive, so the headless child-ask reviewer never
 	// engages) or a tier (cheap/fast/reasoning) to a selector resolved THROUGH
@@ -121,7 +124,7 @@ type config struct {
 	// #93: the type lives in cliconfig so the two mains cannot drift).
 	modelAliases *cliconfig.KeyValueList
 	modelSlots   *cliconfig.KeyValueList
-	// Subagent model router (ADR 0031; enable model per ADR 0042, embedded server
+	// Subagent model router (embedded server
 	// only): the router is ENABLED by an operator-tier models.router: taxonomy in the
 	// user-global settings.yaml (the guardrails-parity enable model). The
 	// --subagent-model-router flag is a KILL-SWITCH: subagentModelRouter holds its value
@@ -196,12 +199,15 @@ type config struct {
 	// in main.go. llmPerAttemptTimeout bounds ESTABLISHMENT (connect + first chunk)
 	// only — it never cuts an actively-streaming turn; llmStreamIdleTimeout bounds
 	// the idle gap between chunks after the first.
+	llmMaxAttempts       int
+	llmMaxAttemptsSet    bool
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	// contextWindowOverride mirrors mecated's embedded-server-only escape hatch.
 	contextWindowOverride int
 
-	// Provider-side prompt caching (ADR 0100), embedded server only. Mirrors
+	// Provider-side prompt caching, embedded server only. Mirrors
 	// mecated's --no-prompt-cache / --anthropic-cache-ttl, mapped onto
 	// app.Config.PromptCacheDisabled / app.Config.AnthropicCacheTTL in main.go.
 	noPromptCache     bool
@@ -220,7 +226,7 @@ type config struct {
 	// (ignored under `mecatui connect`). When set it injects a single
 	// ScopeCLI allow-all rule that suppresses the built-in mutate-ask floor; a Deny
 	// in any scope and any deliberately configured Ask still apply. Refused as root
-	// outside a declared sandbox (see validate). See docs/adr/0022-allow-all-posture.md.
+	// outside a declared sandbox (see validate).
 	allowAllTools bool
 
 	// posture is the graduated operator posture ladder for the EMBEDDED server only
@@ -231,7 +237,7 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
-	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055) for
+	// reasoningEffort is the operator-tier reasoning-effort default for
 	// the EMBEDDED server. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so CLI out-ranks the operator-global settings.yaml
 	// reasoning-effort: key. Mapped onto app.Config.ReasoningEffort/
@@ -283,7 +289,7 @@ type config struct {
 	retentionCLISet                                                  app.RetentionCLISet
 	acknowledgeMainRetention                                         bool
 
-	// Embedded-server soul config (issue #14, Phase 1; used only when hosting an
+	// Embedded-server soul config (issue #14; used only when hosting an
 	// in-process server). A user-scoped, agent-READ-ONLY persona fragment injected
 	// as turn-0 context. ON by default reading the conventional
 	// $XDG_CONFIG_HOME/mecatl/soul.md (fallback ~/.config/mecatl/soul.md) — a
@@ -291,7 +297,7 @@ type config struct {
 	// noSoul disables it entirely and wins (the resolved SoulPath/NoSoul map onto
 	// app.Config in embeddedConfig). No tool can write the soul.
 	//
-	// Drift baseline (issue #14, Phase 3, Item 1): the harness records the soul's
+	// Drift baseline (issue #14): the harness records the soul's
 	// content hash in a sidecar (<soulPath>.sha256) trust-on-first-use; a later run
 	// whose hash differs logs a drift WARN and still loads. approveSoul (re)writes the
 	// baseline to the current hash (accept the edit); soulStrict makes a DRIFTED soul
@@ -301,19 +307,18 @@ type config struct {
 	approveSoul bool
 	soulStrict  bool
 
-	// Embedded-server user-model config (issue #14, Phase 2; used only when hosting
+	// Embedded-server user-model config (issue #14; used only when hosting
 	// an in-process server). A user-scoped, CROSS-PROJECT memory of durable FACTS
 	// about the operator (explicit user-memory tools plus a live bounded operator
 	// profile in the volatile system suffix). ON by default at the conventional
 	// $XDG_CONFIG_HOME/mecatl/usermodel (fallback ~/.config/mecatl/usermodel).
-	// userModelDir overrides the dir; noUserModel disables it. userModelReview
-	// enables the OPT-IN (off by default) Stop-triggered background reviewer;
-	// userModelReviewInterval is its session-count debounce. Map onto app.Config in
-	// embeddedConfig. The user model holds FACTS about the operator, never rules.
-	userModelDir            string
-	noUserModel             bool
-	userModelReview         bool
-	userModelReviewInterval int
+	// userModelDir overrides the directory; noUserModel disables it.
+	// learningAdmissionInterval is the process-wide automatic-reflection debounce.
+	// Map these values onto app.Config in embeddedConfig.
+	userModelDir                 string
+	noUserModel                  bool
+	learningAdmissionInterval    int
+	learningAdmissionIntervalSet bool
 
 	// Embedded-server slash-command config (used only when hosting an in-process
 	// server). Command expansion is ON by default, expanding "/<name>" inputs from
@@ -335,9 +340,8 @@ type config struct {
 	skillsDir string
 	noSkills  bool
 
-	// Embedded-server perf observability (decision 7 in
-	// docs/adr/0018-perf-observability.md; used only when hosting an in-process
-	// server). OFF by default. perf arms the loopback runtime-introspection admin
+	// Embedded-server perf observability (used only when hosting an
+	// in-process server). OFF by default. perf arms the loopback runtime-introspection admin
 	// surface (pprof/expvar/RSS/goroutines/flightrecorder + /metrics) plus the
 	// domain-metrics EventSink. Empty perfAddr uses a private UNIX socket, except
 	// perfMCP uses ephemeral loopback TCP for its streaming-HTTP transport.
@@ -379,17 +383,18 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	cfg.browseSessions = len(browseSessions) > 0 && browseSessions[0]
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&cfg.workspace, "workspace", "", "set the embedded server workspace to DIR (default: current directory)")
+	fs.StringVar(&cfg.workspace, "workspace", "", "embedded server only: absolute deployment workspace root (default: cwd); not accepted by connect")
+	registerMicroVMDevelopmentFlags(fs, &cfg.microVMDevRelease, &cfg.microVMDevAcknowledge)
 	fs.StringVar(&cfg.mode, "mode", "default", "start sessions in permission mode: default, plan, or accept-edits")
 	fs.Func("debug-mcp", "attach configured streaming-HTTP MCP server NAME to debug sessions (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
 		return nil
 	})
-	fs.StringVar(&cfg.resumeID, "resume", "", "continue the main chat with SESSION_ID (conflicts with --resume-latest)")
-	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "continue the most recent resumable main chat, or start a new chat if none is available (conflicts with --resume)")
-	fs.StringVar(&cfg.prompt, "prompt", "", "submit TEXT when the session is ready; the TUI remains open for follow-ups")
+	fs.StringVar(&cfg.resumeID, "resume", "", "continue a stored main chat or supported ordinary pending approval with SESSION_ID (conflicts with --resume-latest)")
+	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "continue the most recent resumable main chat, excluding pending approvals, or start a new chat if none is available (conflicts with --resume)")
+	fs.StringVar(&cfg.prompt, "prompt", "", "submit TEXT when the session is ready; kept as an unsent draft during pending-approval recovery; the TUI remains open for follow-ups")
 	fs.StringVar(&cfg.prompt, "p", "", "short form of --prompt")
-	fs.StringVar(&cfg.promptFile, "prompt-file", "", "submit the contents of FILE when the session is ready; appended after --prompt when both are set")
+	fs.StringVar(&cfg.promptFile, "prompt-file", "", "submit the contents of FILE when the session is ready; appended after --prompt; kept as an unsent draft during pending-approval recovery")
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
@@ -401,13 +406,13 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.debug, "debug", false, "enable client diagnostics and debug-only commands")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
-	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable in-app mouse handling and use the terminal's native text selection; keyboard scrolling remains available")
-	fs.BoolVar(&cfg.noBanner, "no-banner", false, "hide the welcome illustration; prompt hints remain visible")
-	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "update the terminal title with session status: on or off (also true/false/1/0)")
+	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
+	fs.BoolVar(&cfg.noBanner, "no-banner", false, "disable the welcome splash (mascot + gradient wordmark); the plain prompt hint and affordance list are still shown. Also forced on under --quiet or a non-interactive stdin")
+	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "terminal title controller: on enables the configured/default plain-text OSC 0 title; off emits no title or cleanup sequence. Accepts on/off/true/false/1/0. Or set MECATUI_NO_TERMINAL_TITLE=1")
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)
-	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, ExpandTools, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
+	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, Toolcalls, ExpandConversation, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
 
 	fs.StringVar(&cfg.model, "model", "", "use MODEL for sessions on the embedded server (default: provider default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "use PROVIDER when a session does not select one; unavailable providers prevent startup")
@@ -437,11 +442,13 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "queue mid-turn input as a follow-up instead of steering the active run")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "maximum time to connect and receive the first model response chunk; 0 disables the timeout")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens; 0 uses the detected or configured value")
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider prompt caching")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h; other values are ignored with a warning")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h (default: 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway); other values are ignored with a warning")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "enable project instructions, persona, skills, commands, and allow rules; use only with projects you trust")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
 		"use yolo posture: allow tools by default and disable delegated-agent command-injection safeguards; explicit deny and ask rules still apply")
@@ -471,8 +478,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.soulStrict, "soul-strict", false, "do not load the persona if it changed since approval")
 	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "store the cross-project user model in DIR (default: $XDG_CONFIG_HOME/mecatl/usermodel)")
 	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "embedded server only: disable the user model entirely (explicit tools and live operator profile)")
-	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "deprecated alias for learning.mode: auto")
-	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "review every N eligible completed sessions when automatic learning is enabled")
+	fs.IntVar(&cfg.learningAdmissionInterval, "learning-admission-interval", 1, "embedded server only: admit every Nth eligible automatic reflection process-wide; 0 or 1 admits every eligible reflection")
 	fs.StringVar(&cfg.commandsDir, "commands-dir", "", "embedded server only: directory of slash-command templates (<name>.md); empty = the conventional dirs (.mecatl/commands, .claude/commands)")
 	fs.BoolVar(&cfg.noCommands, "no-commands", false, "embedded server only: disable slash-command expansion entirely")
 	fs.StringVar(&cfg.skillsDir, "skills-dir", "", "embedded server only: directory of skill units (<name>/SKILL.md); empty = the conventional dirs (e.g. .claude/skills)")
@@ -491,7 +497,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 
 	fs.Usage = transportUsage(fs, mode, cfg.browseSessions)
 
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(args)); err != nil {
+	if err := fs.Parse(args); err != nil {
 		// Return the fully-registered FlagSet even on a parse/help error so the
 		// progressive-help completeness invariant (validateFlagApplicability) can
 		// run over the full real registration path via the --help-triggered ErrHelp
@@ -499,32 +505,11 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		return fs, config{}, err
 	}
 
-	// --help-flags is the bare/local common flag reference.
-	if cfg.helpFlags {
-		if mode != modeLocal || cfg.browseSessions {
-			return fs, config{}, errors.New("--help-flags is available only as bare 'mecatui --help-flags'")
-		}
-		writeBareCommonHelp(fs.Output(), fs)
-		return nil, config{}, flag.ErrHelp
+	if helpFS, handled, err := handleTransportHelp(fs, cfg, mode); handled {
+		return helpFS, config{}, err
 	}
 
-	// --help-all was parsed as a normal flag; render and return ErrHelp (exit 0).
-	if cfg.helpAll {
-		out := fs.Output()
-		if cfg.browseSessions {
-			writeSessionsHelpAll(out, fs, mode)
-		} else {
-			switch mode {
-			case modeConnect:
-				writeConnectHelpAll(out, fs)
-			default:
-				writeBareHelpAll(out, fs)
-			}
-		}
-		return nil, config{}, flag.ErrHelp
-	}
-
-	// By-name applicability rejection (ADR 0087): connect rejects embedded-only
+	// By-name applicability rejection: connect rejects embedded-only
 	// flags; the bare/local mode rejects remote-only flags.
 	if err := rejectInapplicableFlags(fs, mode); err != nil {
 		return fs, config{}, err
@@ -534,6 +519,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	}
 
 	if err := finalizeParsedConfig(fs, &cfg); err != nil {
+		return fs, config{}, err
+	}
+	if err := validateMicroVMDevelopmentFlags(cfg); err != nil {
 		return fs, config{}, err
 	}
 	if err := validateResumeSelectors(cfg); err != nil {
@@ -550,6 +538,39 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		cfg.promptFileBody = string(body)
 	}
 	return fs, cfg, nil
+}
+
+func handleTransportHelp(fs *flag.FlagSet, cfg config, mode transportMode) (*flag.FlagSet, bool, error) {
+	if cfg.helpFlags {
+		if mode != modeLocal || cfg.browseSessions {
+			return fs, true, errors.New("--help-flags is available only as bare 'mecatui --help-flags'")
+		}
+		writeBareCommonHelp(fs.Output(), fs)
+		return nil, true, flag.ErrHelp
+	}
+	if !cfg.helpAll {
+		return fs, false, nil
+	}
+
+	out := fs.Output()
+	if cfg.browseSessions {
+		writeSessionsHelpAll(out, fs, mode)
+	} else if mode == modeConnect {
+		writeConnectHelpAll(out, fs)
+	} else {
+		writeBareHelpAll(out, fs)
+	}
+	return nil, true, flag.ErrHelp
+}
+
+func validateMicroVMDevelopmentFlags(cfg config) error {
+	_, _, err := microVMDevelopmentReadyRequest(
+		cfg.microVMDevRelease,
+		cfg.microVMDevAcknowledge,
+		version,
+		microVMReleaseStampRequired != "" || microVMReleaseDefaultsB64 != "",
+	)
+	return err
 }
 
 // resolveRemoteTLSPolicy applies the connect transport policy only after the
@@ -581,9 +602,17 @@ func resolveRemoteTLSPolicy(cfg *config) error {
 	return nil
 }
 
+// applySavedServerCA restores the saved server trust root unless this connect
+// invocation explicitly supplies its own server CA.
+func applySavedServerCA(cfg config, conn clientauth.Connection, dial *client.DialConfig) {
+	if cfg.tlsCA == "" {
+		dial.TLSCAFile = conn.ServerCAFile
+	}
+}
+
 // applySavedRemoteTLSPolicy gives managed OIDC credentials their stronger
-// transport guarantee. TLSCAFile deliberately remains untouched: an issuer CA
-// is not gRPC server trust.
+// transport guarantee. TLSCAFile deliberately remains untouched after server
+// CA selection: an issuer CA is not gRPC server trust.
 func applySavedRemoteTLSPolicy(cfg config, dial *client.DialConfig) error {
 	if (cfg.tlsExplicit && !cfg.useTLS) || cfg.insecure {
 		return errors.New("saved remote authentication requires verified TLS; remove --tls=false and --insecure")
@@ -660,10 +689,12 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	case "shell":
 		cfg.shellFlagSet = true
 	case "subagent-model-router":
-		// Kill-switch (ADR 0042): record that the flag was given so embeddedConfig can
+		// Kill-switch: record that the flag was given so embeddedConfig can
 		// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
 		// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
 		cfg.subagentModelRouterSet = true
+	case "learning-admission-interval":
+		cfg.learningAdmissionIntervalSet = true
 	case "no-steer":
 		// Record an explicit --no-steer so CLI out-ranks the settings.yaml steer: key.
 		cfg.noSteerFlagSet = true
@@ -676,6 +707,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.reasoningEffortFlagSet = true
 	case "default-provider":
 		cfg.defaultProviderFlagSet = true
+	case "llm-max-attempts":
+		cfg.llmMaxAttemptsSet = true
 	case "terminal-title":
 		cfg.terminalTitleFlagSet = true
 	case "workspace":
@@ -684,17 +717,10 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 }
 
-// resolveDebugConfig applies the canonical debug switch and its legacy env aliases.
+// resolveDebugConfig applies the canonical debug switch and environment fallback.
 func resolveDebugConfig(cfg *config) {
-	// Explicit --debug=false suppresses all env fallbacks; without an explicit flag,
-	// the legacy variables remain narrow aliases for their original surfaces.
 	if !cfg.debugFlagSet {
 		cfg.debug = os.Getenv("MECATUI_DEBUG") == "1"
-		cfg.debugMouse = cfg.debug || os.Getenv("MECATUI_DEBUG_MOUSE") != ""
-		cfg.debugSteer = cfg.debug || os.Getenv("MECATUI_DEBUG_STEER") != ""
-		cfg.debugAsk = cfg.debug || os.Getenv("MECATUI_DEBUG_ASK") != ""
-		cfg.debugKeymap = cfg.debug || os.Getenv("MECATUI_DEBUG_KEYMAP") == "1"
-		return
 	}
 	cfg.debugMouse = cfg.debug
 	cfg.debugSteer = cfg.debug
@@ -908,9 +934,12 @@ func (c config) validate() error {
 	default:
 		return fmt.Errorf("invalid --mode %q (want default|plan|accept-edits)", c.mode)
 	}
-	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
-	// 1); the predicate + its rationale live once on config.mayEmbed.
+	// Provider/posture checks apply ONLY to paths that may embed; the
+	// predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
+		if err := validateEmbeddedRecovery(c); err != nil {
+			return err
+		}
 		if err := validateEmbeddedProvider(c); err != nil {
 			return err
 		}
@@ -922,6 +951,16 @@ func (c config) validate() error {
 		if err := app.PostureRefusalReason(embeddedAuthoritativePosture(c), embeddedPrivileged()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateEmbeddedRecovery(c config) error {
+	if c.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if c.llmMaxAttemptsSet && c.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
 	}
 	return nil
 }
@@ -958,7 +997,7 @@ See https://mecatl.dev/docs/features/choose-models`)
 // mayEmbed reports whether this run may host an embedded server, and so is
 // subject to the provider/posture checks in validate() and the pre-TUI posture
 // WARN in run(). The bare/local mode always embeds; `connect` never embeds, so
-// it skips those checks (ADR 0087). It is the single predicate both guards key
+// it skips those checks. It is the single predicate both guards key
 // on, so the gating rationale lives in one place.
 func (c config) mayEmbed() bool {
 	return c.transportMode == modeLocal

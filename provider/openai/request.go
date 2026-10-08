@@ -40,7 +40,7 @@ const emptyToolOutputPlaceholder = "(tool returned no output)"
 //     across turns statelessly.
 //
 // This free form projects tool results with the adapter's STATIC transmit caps
-// (text+image; the byte-identical pre-T7 default for tests and any caller that
+// (text+image; the default for tests and any caller that
 // does not hold a per-session intersection). The method form below threads the
 // per-session intersection (WithProviderCapabilities) so a text-only model on an
 // image-capable adapter drops image blocks from a tool result's Parts.
@@ -50,17 +50,18 @@ func buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
 		return responses.ResponseNewParams{}, err
 	}
 	// -1: the free buildParams is the pre-existing default-path form and stays
-	// byte-identical, the same scoping ADR 0100 used for its cache hints.
+	// byte-identical, the same scoping the cache hints use.
 	items, err := buildInput(req.Messages, port.ProviderCapabilities{Image: true, EmbeddedContext: true}, -1)
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
 
 	params := responses.ResponseNewParams{
-		Model: req.Model,
-		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: items},
-		Tools: tools,
-		Store: oai.Bool(false),
+		Model:     req.Model,
+		Input:     responses.ResponseNewParamsInputUnion{OfInputItemList: items},
+		Tools:     tools,
+		Store:     oai.Bool(false),
+		Reasoning: shared.ReasoningParam{Summary: shared.ReasoningSummaryAuto},
 		Include: []responses.ResponseIncludable{
 			responses.ResponseIncludableReasoningEncryptedContent,
 		},
@@ -72,8 +73,8 @@ func buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
 }
 
 // buildParams (method) builds the base params (the free buildParams) and then
-// stamps the construction-configured reasoning effort onto reasoning.effort (ADR
-// 0055). Effort is an adapter-CONSTRUCTION knob, NOT a port.LLMRequest field — the
+// stamps the construction-configured reasoning effort onto reasoning.effort.
+// Effort is an adapter-CONSTRUCTION knob, NOT a port.LLMRequest field — the
 // request stays provider-neutral; the per-session engine factory re-mints the
 // adapter when a session's effort differs from the operator default. p.effort is
 // an ALREADY-CLAMPED neutral token (composition clamps xhigh/max→high for OpenAI,
@@ -88,19 +89,19 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 	// Thread the per-SESSION capability intersection (WithProviderCapabilities)
 	// into the input build so a tool result's typed Parts are projected honestly
 	// — a text-only model on this image-capable adapter drops image blocks. The
-	// free buildParams above uses the static transmit caps (the byte-identical
-	// pre-T7 default); only the method (the live Stream path) carries the session
-	// intersection.
+	// free buildParams above uses the static transmit caps (the default); only
+	// the method (the live Stream path) carries the session intersection.
 	items, err := buildInput(req.Messages, p.sessionCaps(), p.breakpointIndex(req))
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
 
 	params := responses.ResponseNewParams{
-		Model: req.Model,
-		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: items},
-		Tools: tools,
-		Store: oai.Bool(false),
+		Model:     req.Model,
+		Input:     responses.ResponseNewParamsInputUnion{OfInputItemList: items},
+		Tools:     tools,
+		Store:     oai.Bool(false),
+		Reasoning: shared.ReasoningParam{Summary: shared.ReasoningSummaryAuto},
 		Include: []responses.ResponseIncludable{
 			responses.ResponseIncludableReasoningEncryptedContent,
 		},
@@ -109,23 +110,23 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 		params.Instructions = oai.String(instr)
 	}
 	if mapped, ok := reasoningEffortFor(p.effort); ok {
-		params.Reasoning = shared.ReasoningParam{Effort: mapped}
+		params.Reasoning.Effort = mapped
 	}
 	p.applyCacheDialect(&params, req)
 	return params, nil
 }
 
-// applyCacheDialect stamps the ADR 0100 cache hints onto params per
+// applyCacheDialect stamps the cache hints onto params per
 // p.cacheDialect. CacheDialectNone (the zero value) and any unrecognised
 // token both fall through the switch's default arm — emit nothing,
-// byte-identical to the pre-ADR-0100 wire (fail-soft, mirrors
+// byte-identical to the wire without cache hints (fail-soft, mirrors
 // reasoningEffortFor's omit-on-unknown arm).
 //
 //   - CacheDialectOpenAI: prompt_cache_key always; prompt_cache_retention
 //     only on an allow-listed model (retentionFor) — never guessed.
 //   - CacheDialectOpenRouter: prompt_cache_key only. NEVER
-//     prompt_cache_retention (an OpenAI-only field), and since ADR 0346 no
-//     root cache_control either — the explicit prompt_cache_breakpoint
+//     prompt_cache_retention (an OpenAI-only field), and no root
+//     cache_control either — the explicit prompt_cache_breakpoint
 //     buildInput places is the protocol-native ask, on every endpoint.
 func (p *Provider) applyCacheDialect(params *responses.ResponseNewParams, req port.LLMRequest) {
 	switch p.cacheDialect {
@@ -136,7 +137,7 @@ func (p *Provider) applyCacheDialect(params *responses.ResponseNewParams, req po
 		}
 	case CacheDialectOpenRouter:
 		params.PromptCacheKey = oai.String(p.promptCacheKey(req.System.StablePrefix, req.Messages))
-		// Root cache_control is RETIRED (ADR 0346 decision 3). It was an
+		// Root cache_control is RETIRED. It was an
 		// OpenRouter-private extension, so it had to be gated on endpoint
 		// identity — and that gate is what silently disabled caching on three
 		// other endpoint shapes. OpenRouter converts an explicit
@@ -240,7 +241,7 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpoi
 			// Text-only fast path: keep the EXACT simple-string message form so the
 			// byte-stable prompt prefix and every existing fixture are unchanged.
 			// A marked message cannot take it: prompt_cache_breakpoint lives on an
-			// input_text BLOCK (ADR 0346), so the marked message is promoted to a
+			// input_text BLOCK, so the marked message is promoted to a
 			// one-element content list. That shifts its bytes once, then it is
 			// stable again.
 			if len(m.Parts) == 0 && i != breakpointIdx {
@@ -288,8 +289,8 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpoi
 //
 // Otherwise (no Parts, or routing returns nil — every block filtered out by the
 // capability intersection) it falls back to the single-string
-// function_call_output(callID, Content) — BYTE-IDENTICAL to the pre-T7 path, so
-// the legacy/mock/mecademo path is unchanged.
+// function_call_output(callID, Content), so the legacy/mock/mecademo path stays
+// stable.
 func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) responses.ResponseInputItemUnionParam {
 	blocks := port.RouteToolResultParts(tr, caps)
 	if len(blocks) == 0 {
@@ -399,17 +400,17 @@ func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 	// One input item per captured reasoning item, in emission order, each under
 	// the id ITS blob is bound to. Sending several blobs under one id is what the
 	// provider rejects as invalid_encrypted_content, so the pairing is preserved
-	// end to end (see reasoning.go); a pre-packing blob unpacks to the single
-	// (m.Reasoning, m.ReasoningItemID) pair, replaying exactly as it used to.
+	// end to end (see reasoning.go). Only a complete current envelope is
+	// replayable; legacy bare ciphertext and malformed/unsupported envelopes
+	// are omitted rather than reinterpreted.
 	//
 	// The SDK's ResponseReasoningItemParam.ID is a PLAIN string tagged
 	// `json:"id" api:"required"` with NO omitzero, so an unset id serialises
 	// unconditionally as `"id":""`, which strict OpenAI-compatible gateways (Azure
 	// GPT-5.x) reject with HTTP 400 on turn 2+ during store:false stateless
-	// replay. unpackReasoningItems therefore drops any item missing an id (D1a:
-	// lose that item's reasoning continuity, never 400), so every item reaching
-	// this loop carries one.
-	items := unpackReasoningItems(m.Reasoning, m.ReasoningItemID)
+	// replay. unpackReasoningItems validates the complete envelope, so every item
+	// reaching this loop carries both its opaque id and encrypted content.
+	items := unpackReasoningItems(m.Reasoning)
 	next := 0
 	emitReasoning := func(it reasoningItem) {
 		reasoning := responses.ResponseReasoningItemParam{

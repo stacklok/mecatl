@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // regionKind is the closed semantic vocabulary for rows in a rendered conversation.
@@ -21,7 +23,7 @@ const (
 	conversationRegionAppendix
 )
 
-// readingAnchor is the renderer-facing subset of ADR 0301's logical coordinate.
+// readingAnchor is the renderer-facing subset of the logical conversation coordinate.
 // Text rows use sourceOffset (a grapheme offset in ANSI-free visible text); chrome
 // and other derived rows retain their local row fallback.
 type readingAnchor struct {
@@ -56,10 +58,10 @@ type renderedRow struct {
 	sourceOffset int
 	row          int
 	text         bool
-	kind         blockKind
+	kind         scrollback.Kind
 	indent       int
-	// Tool-card rows retain only their structural location in the rendered line:
-	// canonical source offset, leading semantic grapheme, and visible span.
+	// Functional-card rows retain only their structural location in the rendered
+	// line: canonical source offset, leading semantic grapheme, and visible span.
 	leading int
 	span    int
 	// separator identifies a derived blank line between conversation blocks. It has
@@ -69,20 +71,13 @@ type renderedRow struct {
 
 // renderedFrame keeps the renderer's existing lines and their lockstep row
 // metadata. It is not a second transcript: lines share the strings already held
-// by blockCache/joinPrefixLines and provenance is O(rows), not O(rendered bytes).
+// by blockRenderCache's rendered entries and prefix lines; provenance is O(rows), not O(rendered bytes).
 type renderedFrame struct {
 	lines      []string
 	provenance []renderedRow
-	// Tool-card provenance is structural only; prepared semantic sections are
+	// Functional-card provenance is structural only; prepared semantic inputs are
 	// discarded at the cache boundary.
 	appendixID uint64
-}
-
-type frameBlockEntry struct {
-	rev    int
-	width  int
-	expand bool
-	rows   []renderedRow
 }
 
 func (f renderedFrame) hasRegion(blockID uint64, region regionKind) bool {
@@ -98,7 +93,7 @@ func (f renderedFrame) firstRegionRow(blockID uint64, region regionKind) int {
 	return -1
 }
 
-// Phase 3 — anchor lookup/fallback: lookup starts from frame provenance;
+// Anchor lookup/fallback: lookup starts from frame provenance;
 // conversationView.restore owns the deterministic fallback policy.
 func (f renderedFrame) anchorForRow(row int) (readingAnchor, bool) {
 	if row < 0 || row >= len(f.provenance) {
@@ -157,117 +152,105 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 	return best, best >= 0
 }
 
-// Phase 1 — cache/render inputs: walk blocks once and pass its render-pass output
+// Cache/render inputs: walk blocks once and pass its render-pass output
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
-func (r *renderer) renderConversationFrame(c *conversation, expand bool) renderedFrame {
-	renderedBlocks, firstChanged := r.walkBlocks(c, expand)
-	n := len(renderedBlocks)
+func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bool) renderedFrame {
+	passes, firstChanged := r.renderPasses(c, expand)
+	n := len(passes)
 	prefixN := min(firstChanged, n)
-	wantKey := joinPrefixState{width: r.width, expand: expand}
-	if r.joinPrefixKey != wantKey || r.joinPrefixN != prefixN {
-		r.rebuildFramePrefix(c, renderedBlocks, prefixN, expand)
-		r.joinPrefixN = prefixN
-		r.joinPrefixKey = wantKey
+	key := joinPrefixState{width: r.width, expand: expand}
+	prefixLines, prefixProvenance, ok := r.blocks.prefix(key, prefixN)
+	if !ok {
+		prefixLines, prefixProvenance = r.rebuildFramePrefix(passes, prefixN)
+		r.blocks.replacePrefix(prefixLines, prefixProvenance, prefixN, key)
 	}
 
-	// Phase 2 — frame/provenance assembly: append cached prefix and changed suffix
-	// into lockstep line and provenance slices.
 	frame := renderedFrame{
-		lines: make([]string, 0, len(r.joinPrefixLines)+(n-prefixN)*2+1),
-		// The viewport never retains provenance, so the renderer can reuse this
-		// frame-local backing array after the caller projects the current frame.
+		lines:      make([]string, 0, len(prefixLines)+(n-prefixN)*2+1),
 		provenance: r.frameProvenanceScratch[:0],
 	}
-	if expand && len(c.filesChanged) > 0 {
-		frame.appendixID = c.changedFilesAppendixID
+	if expand {
+		if appendix, ok := c.AppendixSnapshot(); ok && len(appendix.Files) > 0 {
+			frame.appendixID = uint64(appendix.ID)
+		}
 	}
-	frame.lines = append(frame.lines, r.joinPrefixLines...)
-	frame.provenance = append(frame.provenance, r.joinPrefixProvenance...)
+	frame.lines = append(frame.lines, prefixLines...)
+	frame.provenance = append(frame.provenance, prefixProvenance...)
 	for i := prefixN; i < n; i++ {
-		r.appendFrameSegment(&frame, c, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, passes, i)
 	}
-	// The trailing split element is the existing terminal empty viewport line.
 	frame.lines = append(frame.lines, "")
 	frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome})
 	r.frameProvenanceScratch = frame.provenance
 	return frame
 }
 
-func (r *renderer) rebuildFramePrefix(c *conversation, renderedBlocks []string, prefixN int, expand bool) {
-	r.joinPrefixLines = r.joinPrefixLines[:0]
-	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
+func (r *renderer) rebuildFramePrefix(passes []renderPass, prefixN int) ([]string, []renderedRow) {
+	lines := make([]string, 0, prefixN*2)
+	provenance := make([]renderedRow, 0, prefixN*2)
 	for i := 0; i < prefixN; i++ {
-		frame := renderedFrame{lines: r.joinPrefixLines, provenance: r.joinPrefixProvenance}
-		r.appendFrameSegment(&frame, c, renderedBlocks, i, expand)
-		r.joinPrefixLines, r.joinPrefixProvenance = frame.lines, frame.provenance
+		frame := renderedFrame{lines: lines, provenance: provenance}
+		r.appendFrameSegment(&frame, passes, i)
+		lines, provenance = frame.lines, frame.provenance
 	}
+	return lines, provenance
 }
 
-func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, renderedBlocks []string, index int, expand bool) {
-	if index > 0 {
-		for n := 0; n < blockBlankLinesAfter(c.blocks, index); n++ {
+func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, index int) {
+	pass := passes[index]
+	if pass.text == "" {
+		return
+	}
+	for previous := index - 1; previous >= 0; previous-- {
+		if passes[previous].text == "" {
+			continue
+		}
+		for n := 0; n < blockBlankLinesAfterPasses(passes, previous, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
+		break
 	}
-	rendered := renderedBlocks[index]
-	rows := r.blockFrameRows(index, &c.blocks[index], rendered, expand)
-	for row, line := range strings.Split(rendered, "\n") {
+	for row, line := range strings.Split(pass.text, "\n") {
 		frame.lines = append(frame.lines, line)
-		frame.provenance = append(frame.provenance, rows[row])
+		frame.provenance = append(frame.provenance, pass.rows[row])
 	}
 }
 
-func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand bool) []renderedRow {
-	if entry, ok := r.blockFrameCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
-		return entry.rows
-	}
-	if b.kind == blockTool {
-		if entry, ok := r.blockCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
-			return entry.rows
+func blockBlankLinesAfterPasses(passes []renderPass, previous, current int) int {
+	if passes[current].kind == scrollback.KindAssistant && len(passes[previous].rows) == 1 {
+		switch passes[previous].kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+			return interBlockBlankLinesCompact
 		}
 	}
-	rows := r.provenanceRows(b, rendered, expand, nil)
-	if r.blockFrameCache == nil {
-		r.blockFrameCache = map[int]frameBlockEntry{}
-	}
-	r.blockFrameCache[index] = frameBlockEntry{rev: b.rev, width: r.width, expand: expand, rows: rows}
-	return rows
+	return blockBlankLinesBetween(passes[previous].kind, passes[current].kind)
 }
 
-func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCard *preparedToolCard) []renderedRow {
+func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
+	return r.snapshotProvenanceRows(blockID, scrollback.KindAssistant, p, rendered, expand)
+}
+
+func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, assistant scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
 	lines := strings.Split(rendered, "\n")
-	if b.kind == blockTool {
-		if toolCard == nil {
-			prepared := r.prepareToolCard(b, expand)
-			toolCard = &prepared
-		}
-		rows := toolCard.provenanceRows(b.id, r.indent, r.width)
-		for i := range rows {
-			rows[i].kind = b.kind
-			rows[i].indent = r.indent
-		}
-		return rows
-	}
 	rows := make([]renderedRow, len(lines))
 	region := conversationRegionChrome
 	textStart := 0
-	switch b.kind {
-	case blockUser:
+	switch kind {
+	case scrollback.KindUser:
 		textStart, region = 1, conversationRegionBody
-	case blockAssistant:
-		textStart = 2 // label plus its intentional blank row
-		if b.reasoning != "" {
-			reasoning := r.renderReasoning(b, expand)
+	case scrollback.KindAssistant:
+		if expand {
+			textStart = 2 // expanded speaker label plus its blank row
+		}
+		if strings.TrimSpace(assistant.Reasoning) != "" {
+			reasoning := r.renderReasoningSnapshot(assistant, expand)
 			reasoningRows := len(strings.Split(reasoning, "\n"))
 			for i := textStart; i < min(textStart+reasoningRows, len(rows)); i++ {
-				rows[i] = renderedRow{blockID: b.id, region: conversationRegionReasoning, row: i - textStart}
+				rows[i] = renderedRow{blockID: blockID, region: conversationRegionReasoning, row: i - textStart}
 			}
 			if expand {
-				// The header and caveat describe the presentation. Only the
-				// expanded reasoning body is semantic text that can survive a
-				// reflow by its grapheme offset.
 				caveatRows := len(strings.Split(r.wrapStyled(reasoningCaveat, r.th.Style("reasoning")), "\n"))
 				for i := textStart + 1 + caveatRows; i < min(textStart+reasoningRows, len(rows)); i++ {
 					rows[i].text = true
@@ -283,14 +266,14 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 		if rows[i].region == conversationRegionReasoning {
 			continue
 		}
-		rows[i] = renderedRow{blockID: b.id, region: conversationRegionChrome, row: i}
+		rows[i] = renderedRow{blockID: blockID, region: conversationRegionChrome, row: i}
 		if i >= textStart {
 			rows[i].region = region
 		}
 	}
-	r.assignVisibleOffsets(b, rows, lines)
+	r.assignVisibleOffsets(kind, rows, lines)
 	for i := range rows {
-		rows[i].kind = b.kind
+		rows[i].kind = kind
 		rows[i].indent = r.indent
 	}
 	return rows
@@ -299,7 +282,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 // assignVisibleOffsets maps rows to canonical semantic text, not the final panel
 // strings. Indentation, hanging assistant layout, and card framing are presentation
 // only; counting them would make the same text acquire a different offset on reflow.
-func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []string) {
+func (r *renderer) assignVisibleOffsets(kind scrollback.Kind, rows []renderedRow, lines []string) {
 	offsets := map[regionKind]int{}
 	for i := range rows {
 		if rows[i].blockID == 0 || rows[i].region == conversationRegionChrome || rows[i].region == conversationRegionAppendix ||
@@ -308,16 +291,16 @@ func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []st
 		}
 		rows[i].text = true
 		rows[i].sourceOffset = offsets[rows[i].region]
-		plain := canonicalRowText(b.kind, ansi.Strip(lines[i]), r.indent)
+		plain := canonicalRowText(kind, ansi.Strip(lines[i]), r.indent)
 		offsets[rows[i].region] += graphemeCount(plain)
 	}
 }
 
-func canonicalRowText(kind blockKind, line string, indent int) string {
+func canonicalRowText(kind scrollback.Kind, line string, indent int) string {
 	if indent > 0 {
 		line = strings.TrimPrefix(line, strings.Repeat(" ", indent))
 	}
-	if kind == blockAssistant {
+	if kind == scrollback.KindAssistant {
 		line = strings.TrimPrefix(line, strings.Repeat(" ", assistantBodyHang))
 	}
 	return strings.TrimRight(line, " ")

@@ -22,53 +22,96 @@ type ScopedWorktree struct {
 	Bare     bool
 }
 
-func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, error) {
+func (s *Service) ownedSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			return nil, tool.Environment{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
 		s.logDiscoveryError(ctx, "load session", err)
-		return nil, tool.Environment{}, fmt.Errorf("%w: discovery backend failed", ErrInternal)
+		return nil, fmt.Errorf("%w: discovery backend failed", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
-		return nil, tool.Environment{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
-	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
-		return sess, tool.Environment{}, nil
-	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
-	if err != nil {
-		return nil, tool.Environment{}, err
-	}
-	return sess, binding.Environment, nil
+	return sess, nil
 }
 
-// ListCommandsForSession owner-authorizes and exactly reattaches before command
-// discovery. A no-FS source returns empty without touching either provider.
+func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID) (*session.Session, PlacementBinding, error) {
+	sess, err := s.ownedSession(ctx, id)
+	if err != nil {
+		return nil, PlacementBinding{}, err
+	}
+	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
+		return sess, PlacementBinding{}, nil
+	}
+	binding, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
+	if err != nil {
+		return nil, PlacementBinding{}, err
+	}
+	return sess, binding, nil
+}
+
+// ownedSessionEnvironment is the long-lived environment path used by team
+// creation. The team supervisor adopts the environment capability; discovery
+// uses ownedSessionBinding directly so it can release request-scoped provider
+// resources after the read completes.
+func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, func(), error) {
+	sess, binding, err := s.ownedSessionBinding(ctx, id)
+	if err != nil {
+		return nil, tool.Environment{}, nil, err
+	}
+	release := func() {}
+	if binding.Close != nil {
+		release = func() { _ = binding.Close() }
+	}
+	return sess, binding.Environment, release, nil
+}
+
+// ListCommandsForSession owner-authorizes the session and borrows its independent
+// command source binding without reattaching execution.
 func (s *Service) ListCommandsForSession(ctx context.Context, id session.SessionID) ([]Command, error) {
-	sess, env, err := s.ownedSessionEnvironment(ctx, id)
+	sess, err := s.ownedSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if sess.EnvironmentRef.Kind == session.EnvKindNoFS || s.cfg.Commands == nil {
+	if s.cfg.Commands == nil {
 		return nil, nil
 	}
-	commands, err := s.cfg.Commands.List(ctx, env.Workspace().Root())
+	var binding CommandSourceBinding
+	var release func()
+	if resolver, ok := s.cfg.Commands.(executionWorkspaceCommandSourceResolver); ok {
+		binding, release, err = resolver.BorrowWithExecutionWorkspace(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef))
+	} else {
+		binding, release, err = s.cfg.Commands.Borrow(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+	}
+	if err != nil {
+		s.logDiscoveryError(ctx, "bind command sources", err)
+		return nil, fmt.Errorf("%w: command source binding failed", ErrInternal)
+	}
+	defer release()
+	commands, err := binding.List(ctx)
 	if err != nil {
 		s.logDiscoveryError(ctx, "list commands", err)
 		return nil, fmt.Errorf("%w: command discovery failed", ErrInternal)
 	}
-	return commands, nil
+	out := make([]Command, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, Command{Name: command.Name, Description: command.Description})
+	}
+	return out, nil
 }
 
 // ListWorktreesForSession owner-authorizes and exactly reattaches before
 // enumeration, then issues caller/source-scoped selectors without retaining
 // them. A no-FS source is an empty result and invokes no lister.
 func (s *Service) ListWorktreesForSession(ctx context.Context, id session.SessionID) ([]ScopedWorktree, error) {
-	sess, _, err := s.ownedSessionEnvironment(ctx, id)
+	sess, binding, err := s.ownedSessionBinding(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if binding.Close != nil {
+		defer func() { _ = binding.Close() }()
 	}
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return nil, nil

@@ -13,7 +13,7 @@ Choose a built-in theme at launch, or add a JSON palette for your terminal.
 `mecatui` includes three themes:
 
 - **aztec**: the default, with jade, turquoise, and gold on obsidian
-- **mono**: neutral greys with a blue accent
+- **mono**: neutral grays with a blue accent
 - **solar**: a warm, light-leaning variant
 
 Select one at launch:
@@ -61,9 +61,6 @@ than once, the later location wins:
 
 Then choose it with `--theme midnight` or `MECATUI_THEME=midnight`. Themes are
 discovered at startup, so restart `mecatui` after adding or changing a file.
-
-For all palette slots and the complete theming reference, see
-[`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#theming).
 
 ## Next steps
 

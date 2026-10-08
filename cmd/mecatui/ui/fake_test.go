@@ -225,9 +225,10 @@ type fakeConv struct {
 	// (the caps-heal channel for /sessions continue + /effort fork, issue #348).
 	// A zero value (default, no field set) models an older server that omits the
 	// field.
-	getSessionCaps client.Capabilities
+	getSessionCaps      client.Capabilities
+	getSessionSnapshots []client.SessionSnapshot
 
-	// ForkSession recorders (ADR 0068 effort fork-resume). forkedFrom/forkedEffort
+	// ForkSession recorders (effort fork-resume). forkedFrom/forkedEffort
 	// record the LAST fork's source id + effort override; forkCount counts calls.
 	// forkedID, when non-empty, is the id the fork returns (default "sess-fork-N");
 	// forkErr forces the recoverable-failure path (the source is NOT closed).
@@ -258,7 +259,7 @@ func flattenBatch(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-// ForkSession implements the ui SessionCreator's fork seam (ADR 0068): it records
+// ForkSession implements the ui SessionCreator's fork seam: it records
 // the source id + effort override and returns a DISTINCT fork id so the /effort
 // fork-resume handoff can assert the rebind. forkErr drives the recoverable-failure
 // path. The fake carries NO history (the transcript-preservation guard asserts the
@@ -300,6 +301,13 @@ func (c *fakeConv) GetSession(_ context.Context, id string) (client.SessionSnaps
 	c.getSessionIDs = append(c.getSessionIDs, id)
 	if c.getSessionErr != nil {
 		return client.SessionSnapshot{}, c.getSessionErr
+	}
+	if len(c.getSessionSnapshots) > 0 {
+		i := c.getSessionCount - 1
+		if i >= len(c.getSessionSnapshots) {
+			i = len(c.getSessionSnapshots) - 1
+		}
+		return c.getSessionSnapshots[i], nil
 	}
 	resolved := c.resolvedModel
 	// When a create echoed a selector-derived model (echoSelAsResolved), GetSession
@@ -382,7 +390,7 @@ func (c *fakeConv) CreateSession(_ context.Context, sel client.ModelSelection, m
 	if n >= 2 && c.secondCreateErr != nil {
 		return "", client.Capabilities{}, client.ResolvedModel{}, c.secondCreateErr
 	}
-	// The first session keeps the historical id; a re-create (restart-now) gets a
+	// The first session gets the fixed id; a re-create (restart-now) gets a
 	// distinct id so the handoff e2e can prove the session was rebound.
 	id := "sess-test-0001"
 	if n > 1 {
@@ -709,7 +717,7 @@ func (f *fakeSoul) GetSoul(_ context.Context) (client.Soul, error) {
 	return f.soul, nil
 }
 
-// fakeUserModel is a scripted client.UserModelLister for the /usermodel panel
+// fakeUserModel is a scripted client.UserModelLister for the /memory panel
 // tests: GetUserModel returns the canned model, or err when set.
 type fakeUserModel struct {
 	model client.UserModel

@@ -229,7 +229,7 @@ func TestInvariant_delegation_previews_bounded_scrubbed(t *testing.T) {
 
 // TestInvariant_delegation_permission_ask_dropped (AC2.4): a child's permission.ask
 // event is NEVER projected to the parent stream — the drop discipline survives the
-// ADR 0079 widening. A child parked on an ask is auto-denied, and no subagent.tool
+// bounded-preview widening. A child parked on an ask is auto-denied, and no subagent.tool
 // projection carries InnerKind == EvPermissionAsk.
 func TestInvariant_delegation_permission_ask_dropped(t *testing.T) {
 	// The child asks for a mutating tool; the headless child contract auto-denies.
@@ -312,7 +312,7 @@ func TestInvariant_gauntlet7_no_child_content_in_parent_conversation(t *testing.
 // for SubagentPayload, mirroring TestParallelPayloadHasNoContentFields — the field
 // set is exactly the documented metadata + bounded-preview allow-list, and raw
 // content fields (Args/Content/Summary/FailReason) remain banned. Content fields may
-// exist ONLY as the clampPreview-fed previews (Text/Detail, ADR 0079).
+// exist ONLY as the clampPreview-fed previews (Text/Detail).
 func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 	allowed := map[string]bool{
 		"ParentCallID": true, "ChildID": true, "ChildIncarnation": true, "Goal": true, "Background": true,
@@ -322,9 +322,12 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 		// miss string), EMPTY on a routed hit — never the task prompt or classifier
 		// output. Same gauntlet-#7 footing as RoutedCategory/Model.
 		"RoutingReason": true,
-		"ToolName":      true, "IsError": true, "ToolCount": true,
+		// RoutingDecision is sanitized bounded classifier metadata only;
+		// it contains no task, criteria, response body, or dynamic error text.
+		"RoutingDecision": true,
+		"ToolName":        true, "ChildToolCallID": true, "IsError": true, "ToolCount": true,
 		"Usage": true, "Stop": true, "DurationMs": true,
-		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields, fed
+		// Text / Detail / InnerKind are the BOUNDED PREVIEW fields, fed
 		// ONLY through clampPreview at the single drainChildObserved chokepoint;
 		// client-only, never the parent's Conversation. The behavioral guards
 		// (TestInvariant_delegation_previews_bounded_scrubbed) prove the raw body
@@ -343,7 +346,7 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 		if !allowed[f.Name] {
 			t.Fatalf("SubagentPayload grew an unexpected field %q (%s): a new field MUST be reviewed "+
 				"against gauntlet #7 — child content may cross only as a clampPreview-bounded, "+
-				"client-only preview (ADR 0079). If legitimate, add it to the allow-list with a "+
+				"client-only preview. If legitimate, add it to the allow-list with a "+
 				"justification.", f.Name, f.Type)
 		}
 	}

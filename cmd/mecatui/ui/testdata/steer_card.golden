@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mode default
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ▌ you
  │ first
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⣾  thinking…                                                                ctx 0 · ↑0 ↓0 cache 0%
-enter queue · ctrl+u clear · esc cancel · ? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+c quit
+ ⣾  thinking…                                             ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+enter queue · esc cancel · ? help · / commands · ctrl+t tool calls · f9 session details · ctrl+c quit

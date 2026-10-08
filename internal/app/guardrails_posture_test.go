@@ -39,7 +39,7 @@ func TestLogGuardrailsPostureBranches(t *testing.T) {
 				ModelAliases: map[string]string{"cheap": "slot-id"},
 			},
 			wantCount: 1,
-			// The default set is BLOCK (ADR 0060), so the posture line reports mode=block.
+			// The default set is BLOCK, so the posture line reports mode=block.
 			wantSubs: []string{"guardrails: ON", "checker=slot-id", "via slot `guardrail`", "mode=block", "default set"},
 		},
 		{
@@ -143,10 +143,8 @@ func TestLogGuardrailsPostureReportsResolvedModelNotGate(t *testing.T) {
 	}
 }
 
-// TestHighestSeverityGuardrailMode pins the severity ordering the ON-with-explicit-rules
-// posture branch reports: block (3) > sanitize (2) > advisory (1), with an empty/unknown
-// mode counting as block (the adapter's CompileRule safe default). The zero-value
-// (empty specs) returns the initial "block" — the current behaviour, pinned here.
+// TestHighestSeverityGuardrailMode pins the supported severity ordering:
+// block > advisory, with an empty/unknown mode counting as block.
 func TestHighestSeverityGuardrailMode(t *testing.T) {
 	spec := func(mode string) modelhook.RuleSpec {
 		return modelhook.RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: mode}
@@ -158,16 +156,11 @@ func TestHighestSeverityGuardrailMode(t *testing.T) {
 	}{
 		{"empty specs → block (zero-value default)", nil, "block"},
 		{"single advisory", []modelhook.RuleSpec{spec(string(modelhook.ModeAdvisory))}, "advisory"},
-		{"single sanitize", []modelhook.RuleSpec{spec(string(modelhook.ModeSanitize))}, "sanitize"},
 		{"single block", []modelhook.RuleSpec{spec(string(modelhook.ModeBlock))}, "block"},
 		{"single empty-mode → block", []modelhook.RuleSpec{spec("")}, "block"},
 		{"single unknown-mode → block", []modelhook.RuleSpec{spec("nuke")}, "block"},
 		{"mixed advisory + block → block", []modelhook.RuleSpec{
 			spec(string(modelhook.ModeAdvisory)), spec(string(modelhook.ModeBlock))}, "block"},
-		{"mixed advisory + sanitize → sanitize", []modelhook.RuleSpec{
-			spec(string(modelhook.ModeAdvisory)), spec(string(modelhook.ModeSanitize))}, "sanitize"},
-		{"mixed sanitize + block → block", []modelhook.RuleSpec{
-			spec(string(modelhook.ModeSanitize)), spec(string(modelhook.ModeBlock))}, "block"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -279,7 +272,7 @@ func TestGuardrailsPostureLine(t *testing.T) {
 	}
 }
 
-// TestGuardrailsPostureLineStatesYoloDemotion (ADR 0062, item 10): the startup posture
+// TestGuardrailsPostureLineStatesYoloDemotion: the startup posture
 // line must SURFACE the yolo advisory demotion so an operator sees the security
 // downgrade in the log, not only in docs. Non-yolo tiers must NOT carry the note.
 func TestGuardrailsPostureLineStatesYoloDemotion(t *testing.T) {

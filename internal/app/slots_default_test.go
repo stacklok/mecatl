@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 )
 
@@ -17,7 +18,7 @@ func checkerModel(t *testing.T, cfg Config, parentModel string) string {
 	t.Helper()
 	var got string
 	obs := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { got = r.Model })},
-		mockllm.TextTurn(`{"safe": true}`))
+		mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))
 	checker := buildGuardrailsChecker(cfg, nil, obs, "openai", parentModel)
 	if checker == nil {
 		t.Fatalf("a configured guardrails model must build a checker")
@@ -26,10 +27,31 @@ func checkerModel(t *testing.T, cfg Config, parentModel string) string {
 	return got
 }
 
-// TestSlotsByteIdenticalDefault is the G1 pin (ADR 0030): with NO slot configured
-// (cfg.ModelSlots == nil), every routed call site keeps its EXACT pre-feature
+func TestGuardrailCompositionReturnsExactProviderModelIdentity(t *testing.T) {
+	usage := session.Usage{InputTokens: 9, OutputTokens: 3}
+	provider := mockllm.New(mockllm.ChunksTurn(
+		mockllm.TextChunk(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`),
+		mockllm.UsageChunk(usage),
+		mockllm.DoneChunk(session.StopEndTurn),
+	))
+	checker := buildGuardrailsChecker(Config{Model: "parent", UseMock: true, GuardrailsModel: "guard-id"}, nil, provider, "openai", "parent")
+	if checker == nil {
+		t.Fatal("configured guardrail checker was not built")
+	}
+	result, err := checker.Check(t.Context(), modelhook.CheckRequest{Prompt: "inspect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := result.Usage.Buckets[session.UsageKindGuardrail]
+	if bucket.Total != usage || bucket.Models["openai/guard-id"] != usage {
+		t.Fatalf("guardrail composition attribution = %#v, want exact openai/guard-id=%+v", bucket, usage)
+	}
+}
+
+// TestSlotsByteIdenticalDefault is the G1 pin: with NO slot configured
+// (cfg.ModelSlots == nil), every routed call site keeps its EXACT unrouted
 // behaviour — the session model — and resolveSlotModel returns ("", false) for every
-// slot. This is the byte-identical guarantee the feature commits to.
+// slot.
 func TestSlotsByteIdenticalDefault(t *testing.T) {
 	const sessionModel = "gpt-4o"
 
@@ -45,7 +67,7 @@ func TestSlotsByteIdenticalDefault(t *testing.T) {
 	// the session model when no compaction slot is set.
 	cfg := Config{Model: sessionModel, Compaction: "cascade"}
 	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
-	deps := engineDepsForProvider(cfg, provider, sessionModel, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	deps := engineDepsForProvider(cfg, provider, testProviderModel(sessionModel), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 	if deps.Model != sessionModel {
 		t.Fatalf("deps.Model = %q, want the session model %q", deps.Model, sessionModel)
 	}
@@ -57,7 +79,7 @@ func TestSlotsByteIdenticalDefault(t *testing.T) {
 		t.Fatalf("CascadeCompactor.Model = %q, want the session model %q (no slot ⇒ byte-identical)", cc.Model, sessionModel)
 	}
 
-	// E2 Ask-reviewer: with no slot, the reviewer model is exactly today's
+	// E2 Ask-reviewer: with no slot, the reviewer model is exactly
 	// lookupModelAlias(cfg, SubagentAskReviewerModel).
 	revCfg := Config{
 		Model:                    sessionModel,
@@ -73,7 +95,7 @@ func TestSlotsByteIdenticalDefault(t *testing.T) {
 		t.Fatalf("reviewer Model = %q, want today's resolved %q (no slot ⇒ byte-identical)", revDeps.Model, wantReviewer)
 	}
 
-	// E3 Guardrail: with no slot, the checker model is today's resolved value
+	// E3 Guardrail: with no slot, the checker model is the gate's resolved value
 	// (UseMock passes the literal through). Driving the checker over a mock observer
 	// shows the model that actually reached the provider.
 	gCfg := Config{Model: sessionModel, UseMock: true, GuardrailsModel: "guard-id"}

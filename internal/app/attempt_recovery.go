@@ -135,7 +135,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		workerCfg.Model = model
 		workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		var err error
-		reflector, err = agent.NewEvidenceReflector(entry.provider, model, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
+		reflector, err = agent.NewEvidenceReflector(entry.provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
 		if err != nil {
 			return errors.Join(errAttemptSetupTransient, err)
 		}
@@ -162,7 +162,10 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			if err != nil || binding.Ref != source.EnvironmentRef || binding.Environment.Workspace() == nil {
 				return learning.FailureNone, errAttemptSetupTransient
 			}
-			workspace = binding.Environment.Workspace().Root()
+			workspace, err = server.PlacementGovernanceRoot(binding)
+			if err != nil {
+				return learning.FailureNone, errAttemptSetupTransient
+			}
 			closePlacement = binding.Close
 			if record.CheckpointStage == learning.AttemptCheckpointNone {
 				return learning.FailureNone, nil
@@ -186,7 +189,11 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 					return learning.Outcome{}, learning.ErrInvalidEvidence
 				}
 			}
-			return reflector.ReflectProjection(reflectCtx, projection)
+			outcome, usage, reflectErr := reflector.ReflectProjection(reflectCtx, projection)
+			if len(usage.Buckets) > 0 {
+				cfg.diag().Log(reflectCtx, port.LevelDebug, "detached recovery reflection usage dropped", "attempt_id", item.Record.ID, "bucket_count", len(usage.Buckets))
+			}
+			return outcome, reflectErr
 		},
 		publish: func(publishCtx context.Context, outcome learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
 			if len(outcome.Candidates) == 0 {

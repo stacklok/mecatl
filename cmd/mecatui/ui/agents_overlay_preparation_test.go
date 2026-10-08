@@ -10,8 +10,8 @@ import (
 
 // repeatedPreparationAgentsOverlay is the differential baseline: it re-prepares
 // the current renderers for each call. The comparison measures reuse versus
-// re-preparation, not independence from a historical full renderer.
-func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height, terminal int) string {
+// re-preparation.
+func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *teamOverlaySnapshot, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height, terminal int) string {
 	if terminal > 0 && terminal < 24 {
 		return renderCompactAgentsOverlay(th, tab, sub, par, team, hk, width)
 	}
@@ -34,7 +34,7 @@ func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagen
 	return centerAgentsCard(th, layout.tabStrip+"\n"+body, layout.outerWidth, width, height)
 }
 
-func overlayPreparationFixtures() (fleet []subagentLane, groups []parallelGroup, team *block) {
+func overlayPreparationFixtures() (fleet []subagentLane, groups []parallelGroup, team *teamOverlaySnapshot) {
 	trace := make([]teamTrace, 20)
 	tasks := make([]teamTask, 20)
 	findings := make([]teamFinding, 20)
@@ -54,7 +54,7 @@ func overlayPreparationFixtures() (fleet []subagentLane, groups []parallelGroup,
 			{index: 1, childID: "branch-1", label: "winner", trace: trace, done: true},
 		},
 	}}
-	team = &block{teamLanes: []teamLane{{name: "worker", sessionID: "member-1", trace: trace}}, teamTasks: tasks, teamFindings: findings}
+	team = &teamOverlaySnapshot{teamLanes: []teamLane{{name: "worker", sessionID: "member-1", trace: trace}}, teamTasks: tasks, teamFindings: findings}
 	return fleet, groups, team
 }
 
@@ -66,26 +66,26 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 		sub  subagentState
 		par  parallelState
 		team teamState
-		b    *block
+		b    *teamOverlaySnapshot
 		f    []subagentLane
 		g    []parallelGroup
 	}
 	views := []view{
-		{name: "subagent roster", tab: tabSubagents, sub: subagentState{cursor: 1}, f: fleet},
-		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", scroll: 3}, f: fleet},
+		{name: "subagent roster", tab: tabSubagents, sub: subagentState{roster: agentsTestListCursor(1)}, f: fleet},
+		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", detail: agentsTestViewport(3)}, f: fleet},
 		{name: "subagent missing", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "missing"}},
 		{name: "subagent empty", tab: tabSubagents},
-		{name: "parallel roster", tab: tabParallel, par: parallelState{cursor: 1}, g: groups},
-		{name: "parallel focus", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "group", branchCursor: 1}, g: groups},
+		{name: "parallel roster", tab: tabParallel, par: parallelState{roster: agentsTestListCursor(1)}, g: groups},
+		{name: "parallel focus", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "group", branches: agentsTestListCursor(1)}, g: groups},
 		{name: "parallel missing", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "missing"}},
 		{name: "parallel empty", tab: tabParallel},
-		{name: "team roster", tab: tabTeams, team: teamState{cursor: 1}, b: teamBlock},
-		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", scroll: 4}, b: teamBlock},
+		{name: "team roster", tab: tabTeams, team: teamState{roster: agentsTestListCursor(1)}, b: teamBlock},
+		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", detail: agentsTestViewport(4)}, b: teamBlock},
 		{name: "team missing", tab: tabTeams, team: teamState{view: teamFocus, member: "missing"}, b: teamBlock},
-		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, scroll: 2}, b: teamBlock},
-		{name: "team tasks empty", tab: tabTeams, team: teamState{view: teamTasks}, b: &block{}},
-		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, scroll: 2}, b: teamBlock},
-		{name: "team findings empty", tab: tabTeams, team: teamState{view: teamFindings}, b: &block{}},
+		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, detail: agentsTestViewport(2)}, b: teamBlock},
+		{name: "team tasks empty", tab: tabTeams, team: teamState{view: teamTasks}, b: &teamOverlaySnapshot{}},
+		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, detail: agentsTestViewport(2)}, b: teamBlock},
+		{name: "team findings empty", tab: tabTeams, team: teamState{view: teamFindings}, b: &teamOverlaySnapshot{}},
 		{name: "team absent", tab: tabTeams},
 	}
 	geometries := []struct{ width, height, terminal int }{
@@ -108,10 +108,67 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 	}
 }
 
+func TestPreparedAgentsDetailRenderersKeepSourceViewportAcrossHeightProbes(t *testing.T) {
+	fleet, _, teamBlock := overlayPreparationFixtures()
+	th, hk := aztec(), defaultHelpKeys()
+	const width = 80
+	detail := agentsTestViewport(1 << 20)
+
+	tests := []struct {
+		name    string
+		prepare func() agentsBodyRenderer
+		last    string
+	}{
+		{
+			name: "subagent focus",
+			prepare: func() agentsBodyRenderer {
+				return prepareSubagentFocusAt(th, fleet, "selected", detail, hk, width)
+			},
+			last: "trace-19",
+		},
+		{
+			name: "team focus",
+			prepare: func() agentsBodyRenderer {
+				return prepareTeamFocusAt(th, teamBlock, "worker", detail, hk, width)
+			},
+			last: "trace-19",
+		},
+		{
+			name: "team tasks",
+			prepare: func() agentsBodyRenderer {
+				return prepareTeamTasksAt(th, teamBlock, detail, hk, width)
+			},
+			last: "task-19",
+		},
+		{
+			name: "team findings",
+			prepare: func() agentsBodyRenderer {
+				return prepareTeamFindingsAt(th, teamBlock, detail, hk, width)
+			},
+			last: "finding-19",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := tc.prepare()
+			_ = prepared(40)
+			got := prepared(16)
+			want := tc.prepare()(16)
+			if got != want {
+				t.Fatalf("prepared renderer retained state from an earlier height probe\nwant:\n%q\ngot:\n%q", want, got)
+			}
+			if !strings.Contains(stripANSIstr(got), tc.last) {
+				t.Fatalf("end-anchored renderer did not retain %q after height probes:\n%s", tc.last, stripANSIstr(got))
+			}
+		})
+	}
+}
+
 func BenchmarkAgentsOverlayPreparation(b *testing.B) {
 	fleet, _, _ := overlayPreparationFixtures()
 	th, hk := aztec(), defaultHelpKeys()
-	sub := subagentState{view: subagentFocus, child: "selected", scroll: 3}
+	sub := subagentState{view: subagentFocus, child: "selected", detail: agentsTestViewport(3)}
 	b.Run("repeated-preparation", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {

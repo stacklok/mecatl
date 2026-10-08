@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 )
 
 // TestRoutableAgentNamesMatrix pins the composition-side routable-set rules (issue #286):
@@ -41,7 +41,7 @@ func TestRoutableAgentNamesMatrix(t *testing.T) {
 }
 
 // TestRoutableAgentNamesByteIdenticalDefaults pins the no-op paths: a nil registry, and a
-// registry of only PINNED defs, both yield nil (no def routes — byte-identical to pre-#286).
+// registry of only PINNED defs, both yield nil (no def routes).
 func TestRoutableAgentNamesByteIdenticalDefaults(t *testing.T) {
 	if got := routableAgentNames(nil, nil, providerMock); got != nil {
 		t.Fatalf("nil registry must yield nil; got %v", got)

@@ -56,15 +56,16 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		t.Fatalf("stale generated mecatl.v1 service catalog/exclusion decision: %v", missing)
 	}
 
-	wantCounts := map[string]int{"HarnessService": 78, "ScheduleService": 10}
-	wantKeys := make(map[string]struct{}, 88)
+	wantCounts := map[string]int{"HarnessService": 77, "ScheduleService": 10}
+	wantKeys := make(map[string]struct{}, 90)
 	for service := range targetServices {
 		methods := descriptorsByService[service]
 		if len(methods) != wantCounts[service] {
 			t.Fatalf("%s descriptor count = %d, want pinned %d", service, len(methods), wantCounts[service])
 		}
 		for method := range methods {
-			wantKeys[service+"."+method] = struct{}{}
+			key := service + "." + method
+			wantKeys[key] = struct{}{}
 		}
 	}
 
@@ -93,7 +94,7 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 	assertSDKStringSetsEqual(t, "generated descriptors/TypeScript RPC catalog", wantKeys, gotKeys)
 }
 
-func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
+func TestSDKExactGRPCOnlySet(t *testing.T) {
 	t.Parallel()
 
 	source := sdkRPCCatalogSource(t)
@@ -108,8 +109,8 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 			routeFamily[row.method] = struct{}{}
 		}
 	}
-	assertSDKStringSetsEqual(t, "ADR 0304 gRPC-only methods", stringSet("StreamSessionLive"), grpcOnly)
-	assertSDKStringSetsEqual(t, "ADR 0304 route-family methods", stringSet("Converse"), routeFamily)
+	assertSDKStringSetsEqual(t, "gRPC-only methods", stringSet("StreamSessionLive", "ListGuardrailCoverage", "GetGuardrailReviewDetail"), grpcOnly)
+	assertSDKStringSetsEqual(t, "route-family methods", stringSet("Converse"), routeFamily)
 	assertSDKRPCManifest(t, source, "MECATL_RPC_ROUTE_FAMILIES", stringSet("Converse"))
 	assertSDKRPCManifest(
 		t,
@@ -129,7 +130,7 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 	)
 }
 
-func TestADR_0304_PlanApprovalContractParity(t *testing.T) {
+func TestSDKPlanApprovalContractParity(t *testing.T) {
 	t.Parallel()
 
 	_, filename, _, ok := runtime.Caller(0)
@@ -196,6 +197,11 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"ActiveRuns",
 		"Approve",
 		"ApproveRun",
+		// Contextual successors with no catalog row of their own: ResolveApprovalRun
+		// backs ApproveRun; the ResolveRunAsk handlers (gRPC and HTTP resolve-ask)
+		// call ResolveScopedRunAsk for guardrail-scoped asks.
+		"ResolveApprovalRun",
+		"ResolveScopedRunAsk",
 		"BindPlacement",
 		"CanProcessSchedule",
 		"Cancel",
@@ -221,6 +227,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"IsDraining",
 		"IsLive",
 		"LeaseSweepDisabled",
+		"ListModels", // models-only Go projection; wire handlers capture ListModelSnapshot
 		"ListSessions",
 		"LoadACPSession",
 		"LoadSession",
@@ -229,6 +236,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"LostOwnershipCandidates",
 		"MaintenanceMutationAvailable",
 		"ManualDreamCapabilities",
+		"ReconcileReferenceIntents",
 		"MaybeAutoApprovePlan",
 		"OwnershipEnforced",
 		"Persist",
@@ -236,6 +244,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"ProviderStatuses",
 		"PublishSessionEvent",
 		"ReattachPlacement",
+		"ReattachPlacementForBinding",
 		"ReattachPlacementInScope",
 		"ReconcileLeaseLossTombstone",
 		"RecoverNotice",
@@ -253,6 +262,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"SettleIfStale",
 		"StaleRunningCandidates",
 		"StartInteractiveRunContent",
+		"StartInteractiveRunContentWithPlanContinuation",
 		"StartRun",
 		"StartScheduledRunContent",
 		"Steer",

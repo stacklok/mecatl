@@ -29,6 +29,26 @@ retention, and learning. The client rejects server-only flags in this mode.
 - [Themes](./themes.md) explains built-in themes, custom palette locations, and
   selection.
 
+### Show benign guardrail notices
+
+`mecatui` retains contextual guardrail summaries and live review details. It
+hides a completed, acceptable `execute` or `release_result` review while
+conversation details are collapsed. Findings, outages, unresolved reviews,
+approval requests, withheld results, denied actions, warnings, and unknown
+outcomes remain visible.
+
+Press your configured `ExpandConversation` keybinding (`f9` by default) to show
+retained benign notices temporarily in live and replayed conversations. To keep
+them visible while details are collapsed, add this setting to
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`:
+
+```yaml
+hook_notices:
+  show_benign: true
+```
+
+This changes display only; guardrail checks still run.
+
 ## Customize the status line
 
 `$XDG_CONFIG_HOME/mecatui/settings.yaml` may customize the local header and
@@ -42,5 +62,5 @@ examples, the input reference, StatusML syntax, and safety limits.
 ## Next steps
 
 - [Connect to a server](./remote-servers.md) to use a remote deployment.
-- [Run `mecated` standalone](/building/deployment/mecated.md) to configure the
-  server itself.
+- [Run `mecated` standalone](/operating/mecated.md) to configure the server
+  itself.

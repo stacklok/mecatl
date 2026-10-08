@@ -13,14 +13,12 @@ metadata:
 # Cut a mecatl release
 
 A release is a `vX.Y.Z` git tag. Pushing that tag triggers `.github/workflows/release.yml`,
-which does two things. It builds, signs, and attests the `mecated`, `mecatui`, `mecak8s`, and
-slack-bot images plus the `mecak8s` Helm chart to GHCR (jobs `publish`, `publish-mecatui`,
-`publish-mecak8s`, `publish-slack-bot`, `publish-helm-chart`). It also publishes a **GitHub
-Release** carrying `darwin`/`linux` x `amd64`/`arm64` archives, a `checksums.txt`, cosign
-bundles, SBOMs, and build provenance — and pushes a `mecatl` formula bump to the public
-`stacklok/homebrew-tap` repository, which is what makes `brew install stacklok/tap/mecatl`
-resolve (job `publish-cli`). There is **no** version baked into the Go code — the tag IS the
-release.
+which publishes signed images (`mecated`, `mecatui`, `mecak8s`, execution provider/workload,
+Studio, and the Slack-bot example), Helm charts, and versioned microVM and Brood Box
+artifacts. It also publishes a **GitHub Release** carrying `darwin`/`linux` x
+`amd64`/`arm64` CLI archives, a `checksums.txt`, cosign bundles, SBOMs, and build
+provenance, and pushes a `mecatl` formula bump to the public `stacklok/homebrew-tap`
+repository. There is **no** version baked into the Go code — the tag IS the release.
 
 Two consequences of the Homebrew half, before you start:
 
@@ -30,9 +28,11 @@ Two consequences of the Homebrew half, before you start:
   breaks `brew install` for everyone. If a release goes wrong after the tap commit lands,
   **fix forward with the next patch version.** Re-tagging is only an option when the run failed
   before publishing anything.
-- **Verify a release build BEFORE tagging**, not by pushing a throwaway tag — a pushed tag is a
-  public release and a tap commit. `task release:snapshot && task release:verify` builds the
-  archives and the formula locally, with no tag, no upload and no tokens.
+- **Validate release-only inputs BEFORE tagging**, not by pushing a throwaway tag.
+  The release-PR workflow checks execution-image digest pins before it opens the PR;
+  CI checks the Brood Box build and microVM defaults handoff. A local
+  `task release:snapshot && task release:verify` only checks CLI archives and
+  Homebrew packaging; it does not prove the container publishing jobs work.
 
 **Nothing pushes a commit to `main`.** The release runs through an ordinary pull request:
 you dispatch a workflow, a bot opens the PR, a human merges it, and a bot tags the merge
@@ -60,15 +60,27 @@ Run from the repo root.
    git tag --sort=-v:refname --list 'v*' | head -1   # e.g. v0.0.33
    git log <last-tag>..origin/main --oneline
    ```
-   Pick the bump type from that: `patch` for fixes, `minor` for additive behavior, `major` for
-   a break. Releases so far have all been `patch`.
+   Confirm the bump type with the operator before dispatch; `patch` is the established
+   release cadence even when the range includes additive changes. Do not infer a
+   `minor` bump from commit subjects alone.
 
 2. **Dispatch the release-PR workflow.** This is the only step that starts a release:
    ```sh
    gh workflow run create-release-pr.yml -f bump_type=patch
    gh run watch "$(gh run list --workflow=create-release-pr.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
-   It bumps `VERSION`, the `mecak8s` chart version and app version, and the chart's default
+   The workflow validates the tracked `ARG` defaults in
+   `build/execution-provider/Dockerfile` and `build/execution-workload/Dockerfile`
+   on `main`: the Go builder, static provider runtime, and Brood Box workload
+   runtime must have tagged digest pins available for Linux amd64 and arm64;
+   it also builds both images without publishing. The tag workflow repeats the
+   pin and availability validation on the merged commit before tagging. Renovate
+   updates the pins through its native Dockerfile manager; no image repository
+   variables are required.
+   If validation fails, fix the tracked pins through review (or retry a transient
+   registry failure); do not bypass the check. The publishing job validates the
+   tagged checkout again. The workflow bumps
+   `VERSION`, the `mecak8s` chart version and app version, and the chart's default
    image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts that the
    required values are synchronized. **If that verification step fails, do not merge the PR**;
    close it, delete the branch, and read the job log.
@@ -100,15 +112,20 @@ Run from the repo root.
    git fetch --tags && git tag --sort=-v:refname --list 'v*' | head -1
    ```
 
-6. **Confirm the release run started, then wait for it.** The archive/Homebrew job is the one
-   that reaches outside this repository, so it is the one to watch:
+6. **Confirm the release run started, then wait for every publishing job.** A
+   successful CLI archive or one green image is not a complete release. In
+   particular, check the `mecated`, execution provider/workload, Brood Box
+   resolution, microVM, chart, and CLI/Homebrew jobs before reporting success:
    ```sh
    gh run list --workflow=release.yml --limit 3
    gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
 
 7. **Verify the GitHub Release carries every artifact.** It must not be a draft, and it must
-   have four archives plus a checksum file, with a cosign bundle and an SBOM alongside each:
+   have four archives plus a checksum file, with a cosign bundle and an SBOM alongside each.
+   Also require `brood-base-index.json`, `brood-platforms.json`, and the
+   `microvm-default-*.json` completion assets for each platform. Missing assets
+   mean the release is incomplete even if the CLI archives are available:
    ```sh
    gh release view vX.Y.Z --json isDraft,assets --jq '{draft: .isDraft, assets: [.assets[].name]}'
    ```
@@ -151,39 +168,34 @@ Run from the repo root.
 ## The engine module is tagged separately
 
 The `vX.Y.Z` release above is the **root repo / `mecated` image** release. The importable
-core, `github.com/stacklok/mecatl/engine`, is its **own Go module** (ADR 0036) with its own
+core, `github.com/stacklok/mecatl/engine`, is its **own Go module** with its own
 tag grammar `engine/vX.Y.Z` (distinct from the root tags). It carries a public-API
-compatibility contract (`engine/COMPATIBILITY.md`, ADR 0037).
+compatibility contract (`engine/COMPATIBILITY.md`).
 
-- **The first `engine/vX.Y.Z` tag is `engine/v0.0.1`** — a deliberate "earliest, no stability
-  promise" initial cut (the lowest pre-v1 patch, signalling zero stability commitment for the very
-  first published surface). Cutting it is a deliberate maintainer decision (deferred per ADR 0037) —
-  do NOT cut it as part of a routine root release unless asked. The grammar is `engine/vX.Y.Z`,
-  **distinct** from the root `vX.Y.Z` tags; the two version lines are independent. SUBSEQUENT bumps
-  follow `engine/COMPATIBILITY.md` (pre-v1: minor = additive, patch = fixes).
+- **Engine tags are cut on their own schedule.** Cutting one is a deliberate maintainer
+  decision — do NOT cut it as part of a routine root release unless asked. The `engine/vX.Y.Z`
+  and root `vX.Y.Z` version lines are independent. Bumps follow `engine/COMPATIBILITY.md`
+  (pre-v1: minor = additive or breaking, patch = fixes only).
 
 ### Cutting an engine tag (mirrors the root flow)
 
 Run from the repo root.
 
-1. **Pick the engine version.** First cut = `engine/v0.0.1` (a deliberate "earliest, no stability
-   promise" initial cut); thereafter increment per semver, classified per `engine/COMPATIBILITY.md`
-   (pre-v1: Added = minor, Changed/Removed = minor too; patch = fixes). The latest engine tag (none
-   yet on the first cut):
+1. **Pick the engine version.** Increment the latest engine tag per `engine/COMPATIBILITY.md`
+   (pre-v1: Added = minor, Changed/Removed = minor too; patch = fixes). The latest engine tag:
    ```sh
    git tag --sort=-v:refname --list 'engine/v*' | head -1
    ```
 
 2. **Pre-flight.** Confirm `engine/CHANGELOG.md` has an `[Unreleased]` entry covering everything
-   since the last engine tag (on the **first** cut that is the whole initial surface — the existing
-   `[Unreleased]` baseline section). Then run the advisory `gorelease` check:
+   since the last engine tag. Then run the advisory `gorelease` check:
    ```sh
    task api:release-check
    ```
-   **On the FIRST cut this is a no-op / uninformative:** `gorelease` can only classify the surface
-   against a *prior* `engine/vX.Y.Z` base tag, and none exists yet — so it has nothing to compare
-   to. That is expected. The authoritative guard is the `api-compat` gate (`task api:check`), which
-   already guarantees the committed `engine/api/*.txt` snapshots match the surface being tagged.
+   It never fails: it previews the SemVer classification against the previous engine tag, so
+   compare its verdict with the version you picked. The authoritative guard is the `api-compat` gate
+   (`task api:check`), which already guarantees the committed `engine/api/*.txt` snapshots match the
+   surface being tagged.
 
 3. **Create the annotated tag** with a concise summary:
    ```sh
@@ -202,7 +214,7 @@ tag is the whole release.
 **IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew formula bump.** `release.yml` triggers on `v*` (the root tag
 glob), which does **not** match `engine/v*`, so cutting an engine tag runs none of the ko build /
 cosign / SBOM / SLSA pipeline. It only publishes the module version, making it resolvable for
-`go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers (ADR 0036/0037). There is no pin
+`go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers. There is no pin
 bump and no `release.yml` run to confirm — the push of the tag is the whole release.
 
 ## Notes

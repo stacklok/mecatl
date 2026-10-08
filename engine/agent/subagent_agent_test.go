@@ -136,7 +136,7 @@ func TestSubagentSpecEnumeratesAgents(t *testing.T) {
 // WithSubagentShellDisabledNote seam (issue #40): WITH the note set, Spec()'s
 // isolated-worktree-shell clause is REPLACED by an honest read-only-only description
 // carrying the reason verbatim; WITHOUT it (and with an empty reason, the no-op), the
-// load-bearing shell clause stays byte-identical to the historical description, so a
+// load-bearing shell clause stays byte-identical to the default description, so a
 // shell-bearing deployment's prompt-cache-stable spec never shifts.
 func TestSubagentSpecShellDisabledNoteOption(t *testing.T) {
 	// The shell clause, pinned byte-for-byte (the model plans build/test/git delegation
@@ -149,7 +149,7 @@ func TestSubagentSpecShellDisabledNoteOption(t *testing.T) {
 
 	eng := childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t))
 
-	// Without the option: byte-stable historical clause, no note.
+	// Without the option: byte-stable default clause, no note.
 	plain := agent.NewSubagentTool(eng).Spec().Description
 	if !strings.Contains(plain, shellClause) {
 		t.Fatalf("spec without the note must keep the historical shell clause byte-identical, got:\n%s", plain)
@@ -179,13 +179,13 @@ func TestSubagentSpecShellDisabledNoteOption(t *testing.T) {
 // seam (the "no-fs" session profile): WITH the option, Spec()'s WHOLE
 // tool-surface description is replaced — no Read/Grep/Glob claim, no worktree
 // shell, no Parallel alternative, the honest MCP/memory/web-fetch surface
-// instead; WITHOUT it the description is byte-identical to the historical one
+// instead; WITHOUT it the description is byte-identical to the default one
 // (the same shell clause TestSubagentSpecShellDisabledNoteOption pins), so a
 // default-profile deployment's prompt-cache-stable spec never shifts.
 func TestSubagentSpecNoFSNoteOption(t *testing.T) {
 	eng := childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t))
 
-	// Without the option: the historical file-tool surface, byte-stable.
+	// Without the option: the default file-tool surface, byte-stable.
 	plain := agent.NewSubagentTool(eng).Spec().Description
 	if !strings.Contains(plain, "Read/Grep/Glob") {
 		t.Fatalf("precondition: the historical spec names the read-only file tools, got:\n%s", plain)

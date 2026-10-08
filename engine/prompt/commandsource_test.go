@@ -56,12 +56,12 @@ func TestSourceExpanderByteParityWithDirExpander(t *testing.T) {
 	for name, body := range templates {
 		writeFile(t, ws, ".mecatl/commands/"+name+".md", body)
 	}
-	dirExp := prompt.NewDirCommandExpander()
+	dirExp := prompt.NewDirCommandExpander(ws)
 	srcExp := prompt.NewSourceExpander(mapCommandSource{bodies: templates})
 
 	for _, in := range invocations {
-		fromDir, dirOK, dirErr := dirExp.Expand(context.Background(), ws, in)
-		fromSrc, srcOK, srcErr := srcExp.Expand(context.Background(), ws, in)
+		fromDir, dirOK, dirErr := dirExp.Expand(context.Background(), in)
+		fromSrc, srcOK, srcErr := srcExp.Expand(context.Background(), in)
 		if dirErr != nil || srcErr != nil {
 			t.Fatalf("Expand(%q) errs: dir=%v src=%v", in, dirErr, srcErr)
 		}
@@ -79,9 +79,8 @@ func TestSourceExpanderByteParityWithDirExpander(t *testing.T) {
 // unchanged with expanded=false and NO error.
 func TestSourceExpanderPassThrough(t *testing.T) {
 	exp := prompt.NewSourceExpander(mapCommandSource{bodies: map[string]string{"known": "body"}})
-	ws := memfs.NewWorkspace("/proj")
 	for _, in := range []string{"plain text", "/unknown-cmd args", "/", ""} {
-		out, ok, err := exp.Expand(context.Background(), ws, in)
+		out, ok, err := exp.Expand(context.Background(), in)
 		if err != nil {
 			t.Fatalf("Expand(%q) err = %v, want nil", in, err)
 		}
@@ -96,8 +95,7 @@ func TestSourceExpanderPassThrough(t *testing.T) {
 func TestSourceExpanderBackendFault(t *testing.T) {
 	boom := errors.New("backend down")
 	exp := prompt.NewSourceExpander(mapCommandSource{err: boom})
-	ws := memfs.NewWorkspace("/proj")
-	out, ok, err := exp.Expand(context.Background(), ws, "/cmd x")
+	out, ok, err := exp.Expand(context.Background(), "/cmd x")
 	if !errors.Is(err, boom) {
 		t.Fatalf("Expand err = %v, want the backend fault", err)
 	}
@@ -105,7 +103,7 @@ func TestSourceExpanderBackendFault(t *testing.T) {
 		t.Errorf("Expand on fault = (%q, %v), want the unchanged input", out, ok)
 	}
 	// A NON-command input never consults the backend, so no error either.
-	if _, ok, err := exp.Expand(context.Background(), ws, "plain"); err != nil || ok {
+	if _, ok, err := exp.Expand(context.Background(), "plain"); err != nil || ok {
 		t.Errorf("non-command input must not consult the backend: ok=%v err=%v", ok, err)
 	}
 }
@@ -118,7 +116,7 @@ func TestSourceExpanderListPassthrough(t *testing.T) {
 		{Name: "review", Description: "review a change"},
 	}
 	exp := prompt.NewSourceExpander(mapCommandSource{list: want})
-	got, err := exp.List(context.Background(), nil)
+	got, err := exp.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

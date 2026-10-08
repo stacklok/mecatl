@@ -52,7 +52,7 @@ func activeVersion(name, body string) learning.SkillVersion {
 	return learning.SkillVersion{State: learning.SkillActive, Partition: learning.SkillPartition{Principal: hex.EncodeToString(sum[:])}, Bundle: learning.SkillBundle{Name: name, Description: name + " description", Body: body}}
 }
 
-func TestADR_0259_CatalogGenerationRejectsStaleUpdates(t *testing.T) {
+func TestCatalogGenerationRejectsStaleUpdates(t *testing.T) {
 	partition := activeVersion("new", "").Partition
 	catalog := skillfs.NewAtomicCatalog(nil, nil, nil)
 	newer := activeVersion("new", "new body")
@@ -70,6 +70,38 @@ func TestADR_0259_CatalogGenerationRejectsStaleUpdates(t *testing.T) {
 	view := catalog.View(partition)
 	if view.Generation != 2 || len(view.Metas) != 1 || view.Metas[0].Name != "new" {
 		t.Fatalf("stale operation replaced newer snapshot: generation=%d metas=%+v", view.Generation, view.Metas)
+	}
+}
+
+func TestAtomicCatalogRevokePartitionIsScopedAndSnapshotSafe(t *testing.T) {
+	alice := activeVersion("shared", "alice body")
+	bob := activeVersion("shared", "bob body")
+	bob.Partition = learning.SkillPartition{Principal: "bob"}
+	catalog := skillfs.NewAtomicCatalog([]tool.SkillMeta{{Name: "external"}}, nil, []learning.SkillVersion{alice, bob})
+	beforeAlice, beforeBob := catalog.View(alice.Partition), catalog.View(bob.Partition)
+	if len(beforeAlice.Metas) != 2 || len(beforeBob.Metas) != 2 {
+		t.Fatal("precondition: both partitions must contain the learned skill and external metadata")
+	}
+
+	catalog.RevokePartition(alice.Partition, "shared")
+	afterAlice, afterBob := catalog.View(alice.Partition), catalog.View(bob.Partition)
+	if len(afterAlice.Metas) != 1 || afterAlice.Metas[0].Name != "external" || afterAlice.Generation <= beforeAlice.Generation {
+		t.Fatalf("revocation did not publish the scoped removal: %+v", afterAlice)
+	}
+	if len(afterBob.Metas) != 2 || afterBob.Metas[1].Name != "shared" || afterBob.Generation != beforeBob.Generation {
+		t.Fatalf("revocation changed the other principal's view: %+v", afterBob)
+	}
+	if len(beforeAlice.Metas) != 2 || beforeAlice.Metas[1].Name != "shared" {
+		t.Fatal("revocation mutated an already-held snapshot")
+	}
+
+	// Missing names/partitions and external skills are not learned revocations.
+	catalog.RevokePartition(alice.Partition, "shared")
+	catalog.RevokePartition(alice.Partition, "external")
+	catalog.RevokePartition(learning.SkillPartition{Principal: "missing"}, "shared")
+	unchanged := catalog.View(alice.Partition)
+	if unchanged.Generation != afterAlice.Generation || len(unchanged.Metas) != 1 || unchanged.Metas[0].Name != "external" {
+		t.Fatalf("no-op revocation changed the catalog: %+v", unchanged)
 	}
 }
 

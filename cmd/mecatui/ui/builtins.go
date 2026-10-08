@@ -30,6 +30,7 @@ type builtin struct {
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
 	MCP          bool
+	MCPRefresh   bool
 	MCPConnector bool
 	Agents       bool
 	Skills       bool
@@ -39,6 +40,7 @@ type wiredCollaborators struct {
 	Dream        bool
 	Compactor    bool
 	Models       bool // mirrors client.Capabilities.ModelSelection
+	Guardrails   bool
 	Worktrees    bool
 	Scheduling   bool
 	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
@@ -58,10 +60,12 @@ type wiredCollaborators struct {
 // though the actual dispatch path built it correctly).
 func (m Model) wiredCollaborators() wiredCollaborators {
 	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
+	_, mcpRefresh := m.deps.MCP.(client.MCPRefresher)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, MCPConnector: mcpConnector,
+		MCP: m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
+		Guardrails:  m.deps.Guardrails != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
 		Compactor:   m.deps.Compactor != nil,
@@ -85,7 +89,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // collaborator is wired (w.Agents); /team (the live-team overlay) only when the
 // server advertises Teams; /skills only when the server advertises Skills
 // AND a skills collaborator is wired (w.Skills); /soul only when the server
-// advertises Soul AND a soul collaborator is wired (w.Soul); /usermodel only
+// advertises Soul AND a soul collaborator is wired (w.Soul); /memory only
 // when the server advertises UserModel AND a user-model collaborator is wired
 // (w.UserModel); /models (the model picker) only when the server advertises
 // model_selection AND a model lister is wired (w.Models); /worktrees (the
@@ -93,9 +97,9 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // worktrees AND a worktree lister is wired (w.Worktrees). /schedule (the
 // scheduled-tasks overlay, issue #234) only when the server advertises
 // scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
-// reasoning-effort picker, ADR 0055) is gated identically to /models and sits
+// reasoning-effort picker) is gated identically to /models and sits
 // directly after it. The order is fixed (clear, help, quit, mcp, agents, team, skills,
-// soul, usermodel, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
+// soul, memory, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
 // the palette ordering is stable.
 //
 //nolint:gocyclo // capability-gated built-ins remain explicit and ordered
@@ -135,6 +139,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runFailedStepRetry,
 		},
 		{
+			name: "toolcalls",
+			desc: "browse tool calls in this session",
+			run:  Model.runToolcalls,
+		},
+		{
 			name: "diagnostics",
 			desc: "send a concise client and server diagnostics report",
 			run:  Model.runDiagnostics,
@@ -152,6 +161,15 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			name: "mcp",
 			desc: "browse MCP inventory",
 			run:  Model.runMCP,
+		})
+	}
+	directRefresh := caps.MCPRefresh && !caps.WorkspaceEnrollment && w.MCPRefresh
+	brokerRefresh := caps.WorkspaceEnrollment && !caps.MCPRefresh && w.Workspace
+	if directRefresh || brokerRefresh {
+		out = append(out, builtin{
+			name: "mcp-refresh",
+			desc: "refresh MCP tools for this session",
+			run:  Model.runMCPRefresh,
 		})
 	}
 	if caps.Agents && w.Agents {
@@ -184,8 +202,8 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.UserModel && w.UserModel {
 		out = append(out, builtin{
-			name: "usermodel",
-			desc: "inspect the user model (read-only)",
+			name: "memory",
+			desc: "inspect saved memory (read-only)",
 			run:  Model.runUserModel,
 		})
 	}
@@ -198,13 +216,16 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	if caps.ManualDream != nil && w.Dream {
 		out = append(out, builtin{name: "dream", desc: "manually consolidate project memory or the user model", run: Model.runDream})
 	}
+	if w.Guardrails {
+		out = append(out, builtin{name: "guardrails", desc: "show contextual guardrail coverage and checker health", run: Model.runGuardrails})
+	}
 	if caps.ModelSelection && w.Models {
 		out = append(out, builtin{
 			name: "models",
 			desc: "pick the model for the next session",
 			run:  Model.runModels,
 		})
-		// /effort picks the reasoning-effort tier (ADR 0055). Gated identically to
+		// /effort picks the reasoning-effort tier. Gated identically to
 		// /models — the effort is a per-session server setting that only matters when
 		// model selection is available — and sits right after it (the natural pairing).
 		out = append(out, builtin{
@@ -241,8 +262,8 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.WorkspaceEnrollment && w.Workspace {
 		out = append(out,
-			builtin{name: "tools-connect", desc: "connect workspace tools that require your approval", run: Model.runToolsConnect},
-			builtin{name: "tools-cancel", desc: "cancel a workspace tool connection", run: Model.runToolsCancel},
+			builtin{name: "tools-connect", desc: "deprecated alias for /mcp-refresh in broker mode", run: Model.runToolsConnect},
+			builtin{name: "tools-cancel", desc: "cancel a pending workspace-services connection", run: Model.runToolsCancel},
 		)
 	}
 	out = appendLearningBuiltin(out, w)
@@ -444,7 +465,6 @@ func (m Model) runFailedStepRetry() (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("no session is available to retry")
 		return m, nil
 	}
-	m.failedStepRetryTried = true
 	return m.startFailedStepRetry()
 }
 
@@ -489,7 +509,7 @@ func (m Model) runConnect() (tea.Model, tea.Cmd) {
 	return m.openConnect()
 }
 
-// runEffort opens the /effort picker (ADR 0055). Only registered when
+// runEffort opens the /effort picker. Only registered when
 // caps.ModelSelection && the model lister is wired, so openEffort's own nil/idle
 // guards are belt-and-braces here.
 func (m Model) runEffort() (tea.Model, tea.Cmd) {
@@ -542,8 +562,14 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture))
-	return m, nil
+	base := postureSummary(m.caps.Posture)
+	if m.deps.Guardrails == nil || m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
+		return m, nil
+	}
+	m.guardrailStatusRequest++
+	m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (loading effective status)")
+	return m, client.ListGuardrailCoverageCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, m.guardrailStatusRequest, true)
 }
 
 // debugAskPayloads are the three canned long-args Shell commands /debug-ask
@@ -621,9 +647,9 @@ type builtinName struct {
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
-	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
+	{name: "retry", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
-	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},
+	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
 	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
 	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false},
@@ -740,7 +766,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		// derived palette state too. This path serves both idle and running input.
 		m.palette.open = false
 		m.palette.filtered = nil
-		m.palette.cursor = 0
+		m.palette.syncList()
 		m.prompt.Reset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true

@@ -34,6 +34,7 @@ type ResumeSelection struct {
 	Row        SessionListItem
 	Transcript SessionTranscript
 	Snapshot   SessionSnapshot
+	Pending    *PendingApproval
 }
 
 // GetSessionTranscript fetches the authoritative snapshot-derived transcript.

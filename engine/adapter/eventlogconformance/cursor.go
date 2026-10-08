@@ -1,7 +1,7 @@
 package eventlogconformance
 
 // This file is the cursor half of the suite: it pins port.CursorEventLog, the
-// durable-position contract ADR 0250 adds on top of port.EventLog.
+// durable-position contract added on top of port.EventLog.
 //
 // RunCursor is deliberately a SEPARATE entry point from Run. EventLog is a
 // shipped port with backends that have not opted into cursors, and folding the
@@ -772,7 +772,7 @@ type envelope struct {
 }
 
 // tamper decodes a real cursor, applies mutate, and re-encodes it — the
-// determined client ADR 0250 says the encoding must survive.
+// determined client the opaque encoding must survive.
 func tamper(t *testing.T, cur port.Cursor, mutate func(*envelope)) port.Cursor {
 	t.Helper()
 	raw, err := base64.RawURLEncoding.DecodeString(string(cur))

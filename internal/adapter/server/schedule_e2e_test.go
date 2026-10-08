@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -24,10 +25,9 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-// TestScheduleE2E is the Phase 2a end-to-end gate (issue #232): it drives the
+// TestScheduleE2E is the end-to-end gate (issue #232): it drives the
 // gRPC ScheduleServer directly (in-process, no network) over a built *Service
 // wired with jsonlstore + mockllm + the in-process scheduler. It exercises the
 // full wire surface — Create/Get/List/Pause/Resume/FireNow/GetFire/ListFires/
@@ -167,7 +167,7 @@ func TestScheduleE2E(t *testing.T) {
 	if fireID == "" || sessID == "" || fireID != sessID {
 		t.Fatalf("FireNow fire_id=%q session_id=%q (want non-empty and equal)", fireID, sessID)
 	}
-	// ADR 0059 decision #7 Phase-2: the fire's session id is "sched--"-prefixed
+	// The fire's session id is "sched--"-prefixed
 	// (the fire path pre-mints it via newFireID and passes it as the
 	// WithSessionID override on CreateSessionWithProfile, so the persisted
 	// session carries the sched-- GC-retention family prefix).
@@ -289,9 +289,9 @@ func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
 	}
 }
 
-// TestScheduleEventLogContainsEvScheduleFired (S7): after a FireNow completes,
+// TestScheduleEventLogContainsEvScheduleFired: after a FireNow completes,
 // the fire session's durable EventLog contains an EvScheduleFired event. This
-// pins the S1 v1 delivery contract: the schedule.* lifecycle is durable-log-only
+// pins the delivery contract: the schedule.* lifecycle is durable-log-only
 // (pull-only via GetFire/ListFires), emitted from composition via the
 // EmitScheduleEvent callback.
 func TestScheduleEventLogContainsEvScheduleFired(t *testing.T) {
@@ -448,7 +448,7 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 // a fresh "sched--"-prefixed session reattached to the schedule's exact
 // placement via the WithSessionID override, drives it to
 // the terminal EvResult via StartScheduledRunContent, and returns the fire record. The
-// fire id IS the session id (ADR 0059 decision #7 Phase-2). Read-leaning
+// fire id IS the session id. Read-leaning
 // schedules run in plan mode (a read-only toolset).
 func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {

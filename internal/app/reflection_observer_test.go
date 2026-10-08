@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
@@ -49,7 +50,7 @@ func (r *automaticCaptureReflector) RequestTokenEstimate(_ learning.Input) (int,
 	return r.estimate, nil
 }
 
-func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input) (learning.Outcome, error) {
+func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.inputs = append(r.inputs, in)
 	if r.order != nil {
@@ -59,7 +60,7 @@ func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input
 	if r.called != nil {
 		r.called <- in
 	}
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func automaticTrajectory(id session.SessionID, messages []session.Message, current learning.MessageSpan) learning.Trajectory {
@@ -109,7 +110,7 @@ func TestScalableReflectionEvidence_Scenario1_AutomaticFullSourceAdmissionThenBo
 	}
 }
 
-func TestADR_0300_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
+func TestAdmissionPrecedesBoundedInputConstruction(t *testing.T) {
 	messages := make([]session.Message, learning.MaxInputMessages+40)
 	for i := range messages {
 		messages[i] = session.NewUserMessage(strings.Repeat("context ", 512))
@@ -137,7 +138,7 @@ func TestADR_0300_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
 	}
 }
 
-func TestADR_0300_AutomaticAdmissionIsContextCancellable(t *testing.T) {
+func TestAutomaticAdmissionIsContextCancellable(t *testing.T) {
 	started := make(chan struct{})
 	policy := admissionPolicyFunc(func(ctx context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		close(started)
@@ -168,7 +169,7 @@ func TestADR_0300_AutomaticAdmissionIsContextCancellable(t *testing.T) {
 	}
 }
 
-func TestADR_0300_BuiltCloseCancelsAutomaticAdmission(t *testing.T) {
+func TestBuiltCloseCancelsAutomaticAdmission(t *testing.T) {
 	started := make(chan struct{})
 	policy := admissionPolicyFunc(func(ctx context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		close(started)
@@ -250,7 +251,7 @@ func TestScalableReflectionEvidence_Scenario5_AutomaticSkipLeavesNoAdmissionStat
 	}
 }
 
-func TestADR_0300_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
+func TestNoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
 	large := session.NewUserMessageWithParts("", []session.Content{{Data: []byte(strings.Repeat("z", defaultReflectionJobBytes*2))}})
 	messages := []session.Message{large, session.NewUserMessage("remember that raw excluded bytes do not reject reflection")}
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
@@ -265,7 +266,7 @@ func TestADR_0300_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
 	}
 }
 
-func TestADR_0300_AutomaticCancellationStopsPreAdmissionMaterialization(t *testing.T) {
+func TestAutomaticCancellationStopsPreAdmissionMaterialization(t *testing.T) {
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
 	observer, coordinator := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -282,7 +283,7 @@ func TestADR_0300_AutomaticCancellationStopsPreAdmissionMaterialization(t *testi
 	}
 }
 
-func TestADR_0300_AutomaticAdmissionCooldownBudgetReservationUnchanged(t *testing.T) {
+func TestAutomaticAdmissionCooldownBudgetReservationUnchanged(t *testing.T) {
 	order := []string{}
 	policy := admissionPolicyFunc(func(_ context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		order = append(order, "policy")
@@ -310,9 +311,9 @@ func (passingSkillEvaluator) Evaluate(context.Context, learning.SkillEvaluationR
 	return learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"fixture-pass"}}, nil
 }
 
-func (r captureReflectionInput) Reflect(_ context.Context, in learning.Input) (learning.Outcome, error) {
+func (r captureReflectionInput) Reflect(_ context.Context, in learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.input <- in
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func reflectionOutcomeFixture(t *testing.T, kind learning.CandidateKind) (learning.Input, learning.Outcome, string) {
@@ -366,12 +367,12 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
 		attemptRepository: memattempt.New(wallclock.Clock{}), automaticAdmissionLedger: ledger, learningSourceStore: sourceStore,
 	}
-	admission := newLearningAdmission(1)
+	admission := newLearningAdmissionGate(1)
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
 	t.Cleanup(coordinator.Close)
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
 	memory := memmemory.New()
-	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, memory, nil, memproposal.New(), coordinator, admission).(*reflectionObserver)
+	observer, ok := buildReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memory, nil, memproposal.New(), coordinator, admission).(*reflectionObserver)
 	if !ok {
 		t.Fatal("automatic reflection observer was not built")
 	}
@@ -446,6 +447,52 @@ func waitForLearningActivity(t *testing.T, emitted <-chan learning.Activity, kin
 	}
 }
 
+func TestReflectionSlotUsesSelectedProviderAndReturnsAttributedUsage(t *testing.T) {
+	const (
+		selectedProvider = "non-default-provider"
+		primaryModel     = "session-primary-model"
+		slotModel        = "reflection-slot-model"
+	)
+	var request port.LLMRequest
+	provider := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) { request = got })},
+		mockllm.Turn{Chunks: []port.Chunk{
+			{Kind: port.ChunkText, Text: `{"kind":"abstained","candidates":[]}`},
+			{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 7, OutputTokens: 3}},
+			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+		}},
+	)
+	cfg := Config{
+		Model:        primaryModel,
+		LearningMode: learning.Review,
+		ModelSlots:   map[string]string{slotReflection: slotCheap},
+		ModelAliases: map[string]string{slotCheap: slotModel},
+	}
+	observer := buildExplicitReflectionObserver(cfg, provider,
+		session.ProviderModelID{ProviderID: selectedProvider, ModelID: primaryModel},
+		memmemory.New(), nil, memproposal.New(), nil)
+	if observer == nil {
+		t.Fatal("explicit reflection observer was not built")
+	}
+	trajectory := learning.NewTrajectory("reflection-slot", "/workspace", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("remember this")})
+	trajectory.Current = learning.MessageSpan{Start: 0, End: 1}
+	receipt, err := observer.Reflect(context.Background(), trajectory, false)
+	if err != nil {
+		t.Fatalf("Reflect: %v", err)
+	}
+	if request.Model != slotModel {
+		t.Fatalf("reflection request model = %q, want %q", request.Model, slotModel)
+	}
+	bucket, ok := receipt.Usage.Buckets[session.UsageKindReflection]
+	if !ok {
+		t.Fatalf("reflection usage = %+v, want reflection bucket", receipt.Usage)
+	}
+	wantUsage := session.Usage{InputTokens: 7, OutputTokens: 3}
+	if got := bucket.Models[selectedProvider+"/"+slotModel]; got != wantUsage {
+		t.Fatalf("reflection usage attribution = %+v, want %+v", bucket.Models, map[string]session.Usage{selectedProvider + "/" + slotModel: wantUsage})
+	}
+}
+
 func TestExplicitReflectionRunsWhenAutomaticModeOff(t *testing.T) {
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{})
 	t.Cleanup(coordinator.Close)
@@ -473,9 +520,7 @@ func TestNonLaunchReflectionDoesNotReadLaunchProjectMemory(t *testing.T) {
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{})
 	t.Cleanup(coordinator.Close)
 	project := memmemory.New()
-	if err := project.RememberEntry(context.Background(), tool.MemoryEntry{Key: "project/launch", Value: "launch-only"}); err != nil {
-		t.Fatal(err)
-	}
+	rememberProfile(context.Background(), t, project, tool.MemoryEntry{Key: "project/launch", Value: "launch-only"})
 	inputs := make(chan learning.Input, 1)
 	observer := &reflectionObserver{
 		coordinator: coordinator, reflector: captureReflectionInput{input: inputs}, repository: memproposal.New(),

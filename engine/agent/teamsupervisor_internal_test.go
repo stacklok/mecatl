@@ -301,7 +301,7 @@ func TestSynthesisBudgetBaselineSurvivesNudge(t *testing.T) {
 	}
 	lead := sup.members["lead"].sess
 	want := session.Usage{InputTokens: 160}
-	if lead.Usage != want || lead.TokenUsageSnapshot()[session.UsageKindMain].Total != want {
-		t.Fatalf("lifetime main usage = %+v / %+v, want %+v", lead.Usage, lead.TokenUsageSnapshot()[session.UsageKindMain].Total, want)
+	if got := lead.UsageFor(session.UsageKindMain); got != want || lead.TokenUsageSnapshot()[session.UsageKindMain].Total != want {
+		t.Fatalf("lifetime main usage = %+v / %+v, want %+v", got, lead.TokenUsageSnapshot()[session.UsageKindMain].Total, want)
 	}
 }

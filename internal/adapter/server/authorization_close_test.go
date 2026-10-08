@@ -29,8 +29,65 @@ func (s *oneSessionFailsStore) Load(ctx context.Context, id session.SessionID) (
 	return s.Store.Load(ctx, id)
 }
 
+func TestLiveInstructionAttachmentDroppedOnOwnershipLoss(t *testing.T) {
+	svc, err := NewService(Config{Engine: brokerEngineResult().Engine, Store: memstore.New(),
+		SessionLease: strictControlLease{}, LeaseOwner: "test-owner",
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	id := session.SessionID("lost-live-guidance")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &heldLease{ctx: ctx, cancel: cancel, valid: true}
+	svc.mu.Lock()
+	svc.heldLeases[id] = h
+	svc.instructionSnapshots[id] = liveInstructionSnapshot{incarnation: session.NewIncarnationID(), snapshot: session.InstructionSnapshot{Scopes: []session.InstructionScope{{Text: "lost"}}}}
+	svc.mu.Unlock()
+	svc.onLeaseLost(ctx, id, h, errors.New("ownership lost"))
+	svc.mu.Lock()
+	_, retained := svc.instructionSnapshots[id]
+	svc.mu.Unlock()
+	if retained {
+		t.Fatal("ownership loss retained live guidance")
+	}
+}
+
+func TestLiveInstructionAttachmentRetainedUntilCloseSettlementSucceeds(t *testing.T) {
+	store := &oneSessionFailsStore{Store: memstore.New(), failID: "live-close"}
+	svc, err := NewService(Config{Engine: brokerEngineResult().Engine, Store: store,
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	sess := session.New("live-close", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, svc.cfg.Now())
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	svc.mu.Lock()
+	svc.instructionSnapshots[sess.ID] = liveInstructionSnapshot{incarnation: sess.Incarnation(), snapshot: session.InstructionSnapshot{Scopes: []session.InstructionScope{{Text: "live"}}}}
+	svc.mu.Unlock()
+	svc.CloseSession(sess.ID)
+	svc.mu.Lock()
+	_, retained := svc.instructionSnapshots[sess.ID]
+	svc.mu.Unlock()
+	if !retained {
+		t.Fatal("failed close discarded live guidance")
+	}
+	store.failID = ""
+	svc.CloseSession(sess.ID)
+	svc.mu.Lock()
+	_, retained = svc.instructionSnapshots[sess.ID]
+	svc.mu.Unlock()
+	if retained {
+		t.Fatal("successful close retained live guidance")
+	}
+}
+
 // TestCloseCompletesWhenOneSessionSettlementFails pins that a single session's
-// external-authorization settlement failure during shutdown (P1-7) must not
+// external-authorization settlement failure during shutdown must not
 // abort the mandatory cleanup (lease release, subscription close, engine
 // close, shutdownComplete) for every other session.
 func TestCloseCompletesWhenOneSessionSettlementFails(t *testing.T) {

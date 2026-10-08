@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/cronparse"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -21,11 +22,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // scheduletool_test.go is the composition-side pin for the model-facing
-// Schedule tool (ADR 0073). It drives the REAL seams offline: the assembled
+// Schedule tool. It drives the REAL seams offline: the assembled
 // catalog (assembleCatalog over the eagerly-bound scheduleManager factory), the
 // server Service's schedule methods (the port.ScheduleManager the tool
 // consumes), and the in-process scheduler — over memschedulestore / jsonlstore
@@ -77,7 +77,7 @@ func execScheduleQuery(t *testing.T, cat *tool.Catalog, argsJSON string) session
 
 // assembleScheduleCatalog assembles a catalog over a scheduleManager factory
 // wired to the given resolver — the SAME registration gate both the shared
-// build-time assembly and the per-session path consume (ADR 0076 eager bind).
+// build-time assembly and the per-session path consume (eager bind).
 func assembleScheduleCatalog(t *testing.T, resolve func() port.ScheduleManager) *tool.Catalog {
 	t.Helper()
 	cfg := Config{Model: "gpt-5", Diagnostics: port.NopDiagnostics{}}
@@ -895,12 +895,12 @@ func TestScheduleTool_SharesStoreWithRESTSurface(t *testing.T) {
 // TestScheduleTool_SchedulerOnByDefault pins AC2.1: with a durable
 // (--store-dir) store and NO scheduler flag passed (the cmd layer feeds
 // SchedulerEnabled = !--no-scheduler, true by default), the scheduler ticks
-// and a due schedule fires WITHOUT any opt-in — the ADR-0073 decision-2 flip
-// of ADR 0059's "wires a scheduler ONLY when an operator selects a backend by
+// and a due schedule fires WITHOUT any opt-in — the flip from the original
+// "wires a scheduler ONLY when an operator selects a backend by
 // flag". Drives the REAL Build composition over jsonlstore + mockllm: a
 // one-shot due in the near future is claimed by the tick loop, its sched--
 // session is driven to StopEndTurn, and the fire is recorded — all without
-// --scheduler (which no longer exists; AC2.5 pins its removal).
+// a --scheduler flag (none exists; AC2.5 pins its absence).
 func TestScheduleTool_SchedulerOnByDefault(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
@@ -1092,7 +1092,7 @@ func TestScheduleTool_NoSchedulerDisablesTickOnly(t *testing.T) {
 // store (no ScheduleStore), the default-on posture neither ticks nor fails
 // startup — ServerCapabilities.Scheduling is false and the Schedule tool is
 // absent, the byte-identical pre-change default (mecademo, mecatequi, offline
-// tests). The pre-ADR-0073 enabled-but-no-store path FAILED LOUD; the
+// tests). The earlier opt-in enabled-but-no-store path FAILED LOUD; the
 // on-by-default flip reconciles it to silently inert.
 func TestScheduleTool_InMemoryStoreByteIdentical(t *testing.T) {
 	ctx := context.Background()
@@ -1208,8 +1208,7 @@ func TestScheduleTool_CreateRejectsUnknownSelector(t *testing.T) {
 
 // TestScheduleTool_CreateEnforcesMinInterval pins AC1.3: `Schedule create`
 // rejects a cadence tighter than the configured SchedulerMinInterval
-// frequency floor — the floor is now CONSULTED at the in-band create verb
-// (no longer inert). The floor flows from app Config.SchedulerMinInterval
+// frequency floor — the floor is CONSULTED at the in-band create verb. The floor flows from app Config.SchedulerMinInterval
 // into the Service create path (Build wires it UNCONDITIONALLY, so a
 // --no-scheduler deployment still enforces it); the check lives in the
 // SHARED seam, so the tool inherits it: driven THROUGH the tool over the

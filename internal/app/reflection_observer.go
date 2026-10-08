@@ -29,7 +29,7 @@ type reflectionObserver struct {
 	mode             learning.Mode
 	trusted          bool
 	projectWorkspace string
-	admission        *learningAdmission
+	admission        *learningAdmissionGate
 	policy           learning.AdmissionPolicy
 	ledger           learning.AutomaticAdmissionLedger
 	automatic        LearningAutomaticConfig
@@ -82,11 +82,16 @@ func memoryExisting(ctx context.Context, stores ...tool.MemoryStore) []learning.
 }
 
 func (o *reflectionObserver) Observe(ctx context.Context, trajectory learning.Trajectory) error {
-	if o == nil || o.mode == learning.Off {
-		return nil
-	}
-	_, err := o.submitWithEventSource(ctx, trajectory, nil, nil, true, true)
+	_, err := o.ObserveWithUsage(ctx, trajectory)
 	return err
+}
+
+func (o *reflectionObserver) ObserveWithUsage(ctx context.Context, trajectory learning.Trajectory) (session.AuxiliaryUsage, error) {
+	if o == nil || o.mode == learning.Off {
+		return session.AuxiliaryUsage{}, nil
+	}
+	receipt, err := o.submitWithEventSource(ctx, trajectory, nil, nil, true, true)
+	return receipt.Usage, err
 }
 
 // Reflect explicitly submits a completed session. Unlike Observe, it bypasses
@@ -139,11 +144,11 @@ func (o *reflectionObserver) durableAttemptMaterial(ctx context.Context, input l
 		return "", learning.AttemptCreate{}, errors.New("durable learning attempt repository is not configured")
 	}
 	if o.sourceStore == nil || input.Trajectory.RunID == "" {
-		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires a persisted ADR-0249 run ID")
+		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires a persisted run ID")
 	}
 	persisted, err := o.sourceStore.Load(ctx, input.Trajectory.SessionID)
 	if err != nil || persisted.RunID() != input.Trajectory.RunID {
-		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted ADR-0249 run ID")
+		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted run ID")
 	}
 	digest, err := automaticTrajectoryDigest(input)
 	if err != nil {
@@ -441,22 +446,22 @@ func (o *reflectionObserver) submitWithEventSource(ctx context.Context, trajecto
 	if o.attempts == nil || o.mode == learning.Off {
 		jobCtx, cancel := context.WithTimeout(ctx, defaultReflectionJobTimeout)
 		defer cancel()
-		outcome, err := o.reflector.Reflect(jobCtx, input)
+		outcome, usage, err := o.reflector.Reflect(jobCtx, input)
 		if err != nil {
-			return reflectionReceipt{Disposition: reflectionFailed}, err
+			return reflectionReceipt{Disposition: reflectionFailed, Usage: usage}, err
 		}
 		identity, digest, err := selectedEvidenceIdentity(input)
 		if err != nil {
 			return reflectionReceipt{Disposition: reflectionFailed}, err
 		}
-		receipt := reflectionReceipt{ID: reflectionJobID(reflectionPrincipal(owner) + "\x00" + identity), Disposition: reflectionCompleted}
+		receipt := reflectionReceipt{ID: reflectionJobID(reflectionPrincipal(owner) + "\x00" + identity), Disposition: reflectionCompleted, Usage: usage}
 		if outcome.Kind == learning.OutcomeAbstained {
 			receipt.Abstained = true
 			receipt.Err = learning.MaterializationNoEligibleEvidence.String()
 			return receipt, nil
 		}
 		processed, err := o.job(input, signals, owner, selectedBytes, nil, nil).process(jobCtx, digest, outcome)
-		processed.ID, processed.Disposition = receipt.ID, reflectionCompleted
+		processed.ID, processed.Disposition, processed.Usage = receipt.ID, reflectionCompleted, usage
 		return processed, err
 	}
 	// The legacy interval is a post-threshold downsampler. Hard and explicit
@@ -797,17 +802,17 @@ func processReflectionOutcome(
 func buildReflectionObserver(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
-	admission *learningAdmission,
+	admission *learningAdmissionGate,
 	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) learning.Observer {
 	if cfg.LearningMode == learning.Off {
 		return nil
 	}
-	return buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, admission, procedure...)
+	return buildConfiguredReflectionObserver(cfg, provider, providerModel, operatorMemory, projectMemory, repository, coordinator, admission, procedure...)
 }
 
 func bindMaterializationLifecycle(observer learning.Observer, lifecycle *materializationLifecycle) learning.Observer {
@@ -820,7 +825,7 @@ func bindMaterializationLifecycle(observer learning.Observer, lifecycle *materia
 func buildExplicitReflectionObserver(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
@@ -829,32 +834,34 @@ func buildExplicitReflectionObserver(
 	if cfg.LearningMode == learning.Off {
 		cfg.LearningMode = learning.Review
 	}
-	observer, _ := buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, nil, procedure...).(*reflectionObserver)
+	observer, _ := buildConfiguredReflectionObserver(cfg, provider, providerModel, operatorMemory, projectMemory, repository, coordinator, nil, procedure...).(*reflectionObserver)
 	return observer
 }
 
 func buildConfiguredReflectionObserver(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
-	admission *learningAdmission,
+	admission *learningAdmissionGate,
 	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) learning.Observer {
 	if provider == nil || repository == nil {
 		return nil
 	}
+	model := providerModel.ModelID
 	if selected, ok := resolveSlotModel(cfg, slotReflection, model); ok && selected != "" {
 		model = selected
+		providerModel.ModelID = model
 	}
 	if cfg.LearningSensitivity == learning.SensitivityUnset {
 		cfg.LearningSensitivity = learning.Balanced
 	}
 	modelCfg := cfg
 	modelCfg.Model = model
-	reflector, err := agent.NewEvidenceReflector(provider, model, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
+	reflector, err := agent.NewEvidenceReflector(provider, providerModel, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
 	if err != nil {
 		cfg.diag().Log(context.Background(), port.LevelWarn, "automatic reflection unavailable", "error", err)
 		return nil

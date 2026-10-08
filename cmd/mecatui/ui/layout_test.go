@@ -43,7 +43,7 @@ func withPalette(t *testing.T, m Model, n int) Model {
 	for i := 0; i < n; i++ {
 		m.palette.filtered = append(m.palette.filtered, client.Command{Name: fmt.Sprintf("cmd%d", i), Description: "a command"})
 	}
-	m.palette.cursor = 0
+	m.palette.syncList()
 	if renderPalette(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width) == "" {
 		t.Fatalf("precondition: palette of %d rows should render a non-empty region", n)
 	}
@@ -62,7 +62,7 @@ func withMention(t *testing.T, m Model, n int) Model {
 	for i := 0; i < n; i++ {
 		m.mention.matches = append(m.mention.matches, fmt.Sprintf("dir/file%d.go", i))
 	}
-	m.mention.cursor = 0
+	m.mention.syncList()
 	if renderMention(m.deps.Theme, m.mention, m.width) == "" {
 		t.Fatalf("precondition: mention of %d rows should render a non-empty region", n)
 	}

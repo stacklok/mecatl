@@ -19,7 +19,7 @@ type learningEvidenceLoader struct {
 }
 
 type canonicalEvidenceReflector interface {
-	ReflectProjection(context.Context, learning.Projection) (learning.Outcome, error)
+	ReflectProjection(context.Context, learning.Projection) (learning.Outcome, session.AuxiliaryUsage, error)
 }
 
 var errLearningEvidenceNotReady = errors.New("durable learning evidence is not ready")
@@ -40,7 +40,7 @@ func reflectAttemptEvidence(ctx context.Context, loader *learningEvidenceLoader,
 	if failure != learning.FailureNone {
 		return learning.Outcome{}, failure, nil
 	}
-	outcome, err := reflector.ReflectProjection(ctx, projection)
+	outcome, _, err := reflector.ReflectProjection(ctx, projection)
 	return outcome, learning.FailureNone, err
 }
 

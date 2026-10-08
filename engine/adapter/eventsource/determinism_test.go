@@ -40,7 +40,7 @@ func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environme
 // fields (Message.Reasoning / Message.ProviderPhase / ToolCall.ItemID are all empty),
 // which is exactly the provider class for which the fold is byte-identical-replay
 // faithful. A reasoning provider would diverge on those snapshot-only fields — the
-// documented limitation (see the package doc + ADR 0038). The CORE proof here is the
+// documented limitation (see the package doc). The CORE proof here is the
 // Conversation deep-equal: buildRequest sends the Conversation verbatim, so two
 // deep-equal conversations replay byte-identically given a stable System/Tools/Model.
 // (We assert the conversation + counters + usage + state directly rather than a
@@ -119,8 +119,8 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 		t.Fatalf("conversation mismatch:\n folded=%+v\n  snap=%+v", folded.Conversation.Messages, snap.Conversation.Messages)
 	}
 	// MUST round-trip: cumulative Usage (folded sums per-run EvResult; snap persists it).
-	if folded.Usage != snap.Usage {
-		t.Fatalf("usage mismatch: folded=%+v snap=%+v", folded.Usage, snap.Usage)
+	if folded.UsageFor(session.UsageKindMain) != snap.UsageFor(session.UsageKindMain) {
+		t.Fatalf("usage mismatch: folded=%+v snap=%+v", folded.UsageFor(session.UsageKindMain), snap.UsageFor(session.UsageKindMain))
 	}
 	// MUST round-trip: terminal State + recorded stop reason.
 	if folded.State != snap.State {

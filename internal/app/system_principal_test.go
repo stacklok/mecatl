@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
@@ -50,7 +51,7 @@ func TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess(t *te
 
 // TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem pins AC2.2: every
 // internal goroutine root runs under an EXPLICIT system principal, never an
-// absent one (ADR 0204 decision 7).
+// absent one.
 //
 // The set is enumerated ONCE — syscaller.Roots is the registry, and this table
 // must cover it exactly. A goroutine that registers a root but forgets the wrap
@@ -93,9 +94,9 @@ func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 			t.Cleanup(closeFn)
 		}},
 		syscaller.RootMemoryConsolidation: {paths: []string{"memory.List"}, run: func(ctx context.Context, _ *testing.T, seen observe) {
-			app.StartMemoryConsolidationForTest(ctx,
+			app.StartMemoryConsolidatorForTest(ctx,
 				app.Config{MemoryConsolidateInterval: time.Millisecond},
-				probeMemoryStore{seen: seen}, nil)
+				dream.New(probeMemoryStore{seen: seen}, nil, dream.Config{}))
 		}},
 		syscaller.RootUserModelConsolidation: {paths: []string{"memory.List"}, run: func(ctx context.Context, _ *testing.T, seen observe) {
 			app.StartUserModelConsolidationForTest(ctx,

@@ -19,7 +19,7 @@ import (
 // hookApprovalStub is a port.HookRunner that returns an ASKABLE block
 // (HookOutcome{Block, AskApproval}) on the FIRST PreToolUse for the matched tool,
 // counting how many times Run fired the PreToolUse phase. It models the guardrails
-// adapter's approve-once refinement (ADR 0062) WITHOUT pulling in the modelhook
+// adapter's approve-once refinement WITHOUT pulling in the modelhook
 // adapter (the engine tree stays self-contained). A non-matching phase/tool returns
 // an empty (allow) outcome. When learner is set, it ALSO implements
 // port.HookApprovalLearner and records the learned event, modelling the session
@@ -111,8 +111,8 @@ func TestGuardrailAskInteractiveAllowRuns(t *testing.T) {
 	if ask == nil {
 		t.Fatal("an interactive hook block must surface a permission ask")
 	}
-	if !ask.HookOriginated {
-		t.Fatal("the surfaced ask must carry HookOriginated=true")
+	if ask.Origin != session.ApprovalOriginHookGuardrail || ask.Guardrail == nil || ask.Guardrail.Kind != session.GuardrailApprovalAction {
+		t.Fatalf("the surfaced ask must carry hook-guardrail action origin and scope: %+v", ask)
 	}
 	if !ran {
 		t.Fatal("AllowOnce must execute the tool")
@@ -304,8 +304,8 @@ func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
-			if !ev.Ask.HookOriginated {
-				t.Fatal("the awaiting ask must be HookOriginated")
+			if ev.Ask.Origin != session.ApprovalOriginHookGuardrail {
+				t.Fatal("the awaiting ask must be hook-guardrail-originated")
 			}
 			snap, snapErr = sessnap.Of(sess)
 			r.Cancel()
@@ -327,8 +327,8 @@ func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
 
 	// The HookOriginated marker must survive the snapshot round-trip.
 	ra, ok := restored.PendingAsk()
-	if !ok || !ra.HookOriginated {
-		t.Fatalf("HookOriginated must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
+	if !ok || ra.Origin != session.ApprovalOriginHookGuardrail {
+		t.Fatalf("hook-guardrail origin must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
 	}
 
 	// Fresh engine (a new process): resume the ask with AllowOnce. The tool must run
@@ -418,8 +418,8 @@ func TestGuardrailAskResumePolicyAskRefinedBlockFailsSafe(t *testing.T) {
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
-			if ev.Ask.HookOriginated {
-				t.Fatal("the live ask must be the POLICY ask, NOT hook-originated")
+			if ev.Ask.Origin == session.ApprovalOriginHookGuardrail {
+				t.Fatal("the live ask must be the permission-policy ask, not hook-guardrail-originated")
 			}
 			snap, _ = sessnap.Of(sess)
 			r.Cancel()

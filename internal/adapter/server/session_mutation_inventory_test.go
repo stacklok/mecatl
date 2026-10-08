@@ -135,7 +135,7 @@ func TestSessionAffinityAndHandoff_Scenario5_MutationLeaseInventory(t *testing.T
 		"DeleteSessionForRetentionCandidate", "DeleteSessionForRetention", "SetMode",
 		"repairTerminalState", "prepareFailedStepRetry", "startRunContent", "Persist",
 		"appendEvent", "engine/agent/dispatch.go:ToolCall", "adapter:family-derivatives",
-		"SettleIfStale", "migrateOneFamily", "createPlacedSuccessor", "persistPlacedCreatedSession",
+		"SettleIfStale", "createPlacedSuccessor", "persistPlacedCreatedSession",
 	} {
 		entry, ok := sessionMutationInventory[name]
 		if !ok || !entry.mutatesDurableFamily() {
@@ -152,7 +152,7 @@ func discoveredSessionMutationBoundaries(t *testing.T) []string {
 	}
 	mutatingCalls := map[string]bool{
 		"Save": true, "Create": true, "Delete": true, "Append": true, "AppendEvent": true,
-		"ToolCall": true, "MigrateSessionFamily": true, "DeleteSessionIfUnchanged": true,
+		"ToolCall": true, "DeleteSessionIfUnchanged": true,
 		"SetMode": true, "RenameTitle": true, "CompactSession": true, "Reopen": true,
 		"Interrupt": true, "Recover": true, "Abandon": true, "PrepareFailedStepRetry": true,
 		"persistNewSession": true, "persistCreatedSession": true, "repairTerminalState": true,
@@ -246,7 +246,7 @@ func scanUnsanctionedWrites(files map[string]*ast.File, allowed map[string]bool)
 	return violations
 }
 
-func TestADR_0294_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
+func TestDurableSessionWritesUseSanctionedWrappers(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +284,7 @@ func freeHelper(store interface{ Save() }) { store.Save() }`, 0)
 	}
 }
 
-func TestADR_0294_AllSessionMutatorsClassified(t *testing.T) {
+func TestAllSessionMutatorsClassified(t *testing.T) {
 	if errs := validateSessionMutationNames(sessionMutationInventory, discoveredSessionMutationBoundaries(t)); len(errs) != 0 {
 		for _, err := range errs {
 			t.Error(err)

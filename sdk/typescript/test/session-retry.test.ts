@@ -178,7 +178,10 @@ describe("session retry", () => {
     const httpRetry = await httpSession.retry({}, requestOptions);
     await httpRetry.cancel();
     await expect(httpRetry.result()).resolves.toMatchObject({ stopReason: "cancelled" });
-    expect(httpCalls).toEqual(["/v1/sessions/session/retry", "/v1/sessions/session/cancel"]);
+    expect(httpCalls).toEqual([
+      "/v1/sessions/session/retry",
+      "/v1/sessions/session/controls/cancel",
+    ]);
     await http.close();
   });
 });

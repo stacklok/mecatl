@@ -221,21 +221,6 @@ describe("complete HTTP route transport", () => {
     });
 
     expect(
-      resolveHTTPRoute(RPC_CATALOG["HarnessService.ResumeSessionMigration"].grpc.descriptor, {
-        job_id: "job/one",
-      }),
-    ).toMatchObject({
-      body: undefined,
-      path: "/v1/storage/migrations/job%2Fone/resume",
-    });
-    expect(
-      resolveHTTPRoute(RPC_CATALOG["HarnessService.ApplySessionMigration"].grpc.descriptor, {
-        batch_size: 25,
-        plan_id: "plan-one",
-      }),
-    ).toMatchObject({ body: { batch_size: 25, plan_id: "plan-one" } });
-
-    expect(
       resolveHTTPRoute(RPC_CATALOG["HarnessService.RunTeam"].grpc.descriptor, {
         team_id: "team/one",
       }),

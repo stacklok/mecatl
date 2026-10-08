@@ -2,19 +2,19 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 
 	"google.golang.org/grpc"
 
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 )
 
-// Remote store drivers (Phase B): the composition seam that swaps the local
+// Remote store drivers: the composition seam that swaps the local
 // session/memory stores for gRPC driver clients (internal/adapter/grpcdriver)
 // when the operator points a *StoreURL at a driver process. All-empty URLs
-// keep today's behaviour byte-identical (validateDriverConfig + the untouched
-// default branches in buildStore/buildCatalog guarantee it).
+// use the local stores (the default branches in buildStore/buildCatalog).
 
 // validateDriverConfig rejects a config that sets BOTH a local store
 // directory and a remote driver URL for the same store — the two are
@@ -32,7 +32,7 @@ func validateDriverConfig(cfg Config) error {
 	if cfg.RedisURL == "" && (cfg.RedisUsernameFile != "" || cfg.RedisPasswordFile != "" || cfg.RedisTLSCAFile != "" || cfg.RedisTLS) {
 		return fmt.Errorf("--redis-username-file/--redis-password-file/--redis-tls-ca/--redis-tls require --redis-url: Redis connection material must not be silently ignored")
 	}
-	// Redis (ADR 0048, mecak8s) is a third store option, mutually exclusive with
+	// Redis (mecak8s) is a third store option, mutually exclusive with
 	// BOTH the local dir and the gRPC driver (one store per seam — a silent
 	// precedence would hide an operator mistake).
 	if cfg.RedisURL != "" && cfg.StoreDir != "" {
@@ -54,7 +54,7 @@ func validateDriverConfig(cfg Config) error {
 }
 
 func validateDriverSourceConfig(cfg Config) error {
-	if cfg.SkillSourceURL != "" && (len(cfg.SkillsDirs) > 0 || cfg.SkillsConventional) {
+	if cfg.harnessResolver == nil && cfg.SkillSourceURL != "" && (len(cfg.SkillsDirs) > 0 || cfg.SkillsConventional) {
 		return fmt.Errorf("--skill-source-url %q and --skills-dir/--skills-conventional are mutually exclusive: skills come either from the local directories or from the remote driver, never both", cfg.SkillSourceURL)
 	}
 	if cfg.SoulSourceURL != "" && cfg.SoulPath != "" {
@@ -62,7 +62,7 @@ func validateDriverSourceConfig(cfg Config) error {
 	}
 	// Explicit agent dirs clash with the driver; default conventional discovery
 	// is superseded because it is enabled and inert by default.
-	if cfg.AgentSourceURL != "" && len(cfg.AgentsDirs) > 0 {
+	if cfg.harnessResolver == nil && cfg.AgentSourceURL != "" && len(cfg.AgentsDirs) > 0 {
 		return fmt.Errorf("--agent-source-url %q and --agents-dir are mutually exclusive: agent definitions come either from the explicit local directories or from the remote driver, never both (the default conventional discovery is superseded, not an error)", cfg.AgentSourceURL)
 	}
 	return nil
@@ -103,24 +103,25 @@ func canonicalConfiguredDir(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
-		return filepath.Clean(resolved), nil
-	}
-	// A not-yet-created leaf (and possibly several missing ancestors, e.g. a
-	// completely fresh install) cannot be symlink-aliased; walk up until an
-	// existing ancestor resolves, then rejoin the missing suffix onto it.
-	missing := filepath.Base(abs)
-	dir := filepath.Dir(abs)
+	current := abs
+	var missing []string
 	for {
-		if resolved, resolveErr := filepath.EvalSymlinks(dir); resolveErr == nil {
-			return filepath.Clean(filepath.Join(resolved, missing)), nil
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", err
+		if _, lstatErr := os.Lstat(current); lstatErr == nil || !os.IsNotExist(lstatErr) {
+			return "", resolveErr
 		}
-		missing = filepath.Join(filepath.Base(dir), missing)
-		dir = parent
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
 	}
 }
 

@@ -28,8 +28,8 @@ func orCfg() Config {
 }
 
 // TestUnifiedPromptCache_Scenario1_OpenRouterRegistersBothProtocolEntries pins
-// AC1.1: one credential registers both protocol entries (ADR 0346 decision 2,
-// following ADR 0334's register-on-intent), so an existing user's Claude default
+// AC1.1: one credential registers both protocol entries (following the
+// ToolHive siblings' register-on-intent), so an existing user's Claude default
 // starts caching on upgrade with no config change.
 func TestUnifiedPromptCache_Scenario1_OpenRouterRegistersBothProtocolEntries(t *testing.T) {
 	reg, err := buildProviderRegistry(orCfg(), noEnv)
@@ -52,10 +52,10 @@ func TestUnifiedPromptCache_Scenario1_OpenRouterRegistersBothProtocolEntries(t *
 	}
 }
 
-// TestADR_0346_OpenRouterAnthropicBaseDerivation pins AC1.2. The SDK appends
-// /v1/messages itself, so the base must SHED a terminal v1 — and per ADR 0334 it
+// TestOpenRouterAnthropicBaseDerivation pins AC1.2. The SDK appends
+// /v1/messages itself, so the base must SHED a terminal v1 — and it
 // must carry no userinfo, query, or fragment into a request URL.
-func TestADR_0346_OpenRouterAnthropicBaseDerivation(t *testing.T) {
+func TestOpenRouterAnthropicBaseDerivation(t *testing.T) {
 	tests := []struct {
 		name, in, want string
 	}{
@@ -78,10 +78,10 @@ func TestADR_0346_OpenRouterAnthropicBaseDerivation(t *testing.T) {
 	}
 }
 
-// TestADR_0346_OpenRouterAnthropicListsAnthropicOnly pins AC1.5: OpenRouter's
+// TestOpenRouterAnthropicListsAnthropicOnly pins AC1.5: OpenRouter's
 // Anthropic surface does not serve non-Anthropic models, so advertising them
 // would offer ids that cannot execute.
-func TestADR_0346_OpenRouterAnthropicListsAnthropicOnly(t *testing.T) {
+func TestOpenRouterAnthropicListsAnthropicOnly(t *testing.T) {
 	for _, id := range []string{"anthropic/claude-opus-4.8", "anthropic/claude-sonnet-4-6", "ANTHROPIC/Claude-X"} {
 		if !isOpenRouterAnthropicModel(id) {
 			t.Errorf("%q should classify as Anthropic-family", id)
@@ -94,9 +94,9 @@ func TestADR_0346_OpenRouterAnthropicListsAnthropicOnly(t *testing.T) {
 	}
 }
 
-// TestADR_0346_OpenRouterResponsesEntryByteIdentical pins AC1.6: adding a sibling
+// TestOpenRouterResponsesEntryByteIdentical pins AC1.6: adding a sibling
 // must not disturb the existing entry's endpoint.
-func TestADR_0346_OpenRouterResponsesEntryByteIdentical(t *testing.T) {
+func TestOpenRouterResponsesEntryByteIdentical(t *testing.T) {
 	reg, err := buildProviderRegistry(orCfg(), noEnv)
 	if err != nil {
 		t.Fatalf("build registry: %v", err)
@@ -130,9 +130,9 @@ func TestUnifiedPromptCache_Scenario2_ClaudeDefaultPrefersMessagesEntry(t *testi
 	}
 }
 
-// TestADR_0346_NonClaudeDefaultPrecedenceUnchanged pins AC2.3: the preference is
+// TestNonClaudeDefaultPrecedenceUnchanged pins AC2.3: the preference is
 // narrow. A non-Anthropic default must resolve exactly as it does today.
-func TestADR_0346_NonClaudeDefaultPrecedenceUnchanged(t *testing.T) {
+func TestNonClaudeDefaultPrecedenceUnchanged(t *testing.T) {
 	for _, model := range []string{"", "openai/gpt-5", "google/gemini-2.5-pro"} {
 		cfg := orCfg()
 		cfg.Model = model
@@ -146,9 +146,9 @@ func TestADR_0346_NonClaudeDefaultPrecedenceUnchanged(t *testing.T) {
 	}
 }
 
-// TestADR_0346_ExplicitDefaultProviderOverridesCachingPreference pins AC2.4: the
+// TestExplicitDefaultProviderOverridesCachingPreference pins AC2.4: the
 // preference applies to a DEFAULT, never over an operator who named the provider.
-func TestADR_0346_ExplicitDefaultProviderOverridesCachingPreference(t *testing.T) {
+func TestExplicitDefaultProviderOverridesCachingPreference(t *testing.T) {
 	cfg := orCfg()
 	cfg.Model = "anthropic/claude-opus-4.8"
 	cfg.DefaultProvider = providerOpenRouter
@@ -161,12 +161,12 @@ func TestADR_0346_ExplicitDefaultProviderOverridesCachingPreference(t *testing.T
 	}
 }
 
-// TestADR_0346_PromptCachedProjectedOncePerModel pins AC3.4: the picker signal
+// TestPromptCachedProjectedOncePerModel pins AC3.4: the picker signal
 // is computed by composition's single projection, so the picker and the wire
 // cannot disagree. The FALSE case is asserted by the sibling
-// TestADR_0346_PromptCachedTrueWithoutDialect, which owns the
+// TestPromptCachedTrueWithoutDialect, which owns the
 // --no-prompt-cache sweep now that it is the only way to reach false.
-func TestADR_0346_PromptCachedProjectedOncePerModel(t *testing.T) {
+func TestPromptCachedProjectedOncePerModel(t *testing.T) {
 	reg, err := buildProviderRegistry(orCfg(), noEnv)
 	if err != nil {
 		t.Fatalf("build registry: %v", err)
@@ -188,15 +188,15 @@ func TestADR_0346_PromptCachedProjectedOncePerModel(t *testing.T) {
 	}
 }
 
-// TestADR_0346_PromptCachedTrueWithoutDialect REVERSES what an earlier draft of
-// this work asserted, and the reversal is the headline of ADR 0346.
+// TestPromptCachedTrueWithoutDialect REVERSES what an earlier draft of
+// this work asserted, and the reversal is the headline of the unified prompt cache.
 //
 // Before: an endpoint with no cache dialect emitted nothing, so an Anthropic
 // model there silently re-paid full input every turn — the reported incident.
 // After: the protocol-native breakpoint goes out regardless of dialect, so that
 // same endpoint caches. The dialect still governs the vendor-shaped hints, and
 // only --no-prompt-cache turns caching off.
-func TestADR_0346_PromptCachedTrueWithoutDialect(t *testing.T) {
+func TestPromptCachedTrueWithoutDialect(t *testing.T) {
 	cfg := orCfg()
 	cfg.ProviderOverrides = permconfig.ProviderOverrides{
 		providerOpenRouter: {BaseURL: "https://my-proxy.internal/v1"},
@@ -229,7 +229,7 @@ func TestADR_0346_PromptCachedTrueWithoutDialect(t *testing.T) {
 }
 
 // TestUnifiedPromptCache_Scenario4_PostureLineNamesPostureAndSource pins AC4.1:
-// ADR 0100's failure mode was silence, so the resolved posture must be operator
+// the failure mode is silence, so the resolved posture must be operator
 // visible AND name its source, not just a boolean.
 func TestUnifiedPromptCache_Scenario4_PostureLineNamesPostureAndSource(t *testing.T) {
 	reg, err := buildProviderRegistry(orCfg(), noEnv)
@@ -256,10 +256,29 @@ func TestUnifiedPromptCache_Scenario4_PostureLineNamesPostureAndSource(t *testin
 	}
 }
 
-// TestADR_0346_AnthropicFamilyClassifier pins the narrow matcher behind the
+func TestCachePostureLogsOncePerProcess(t *testing.T) {
+	diag := newCapturingDiagnostics()
+	cfg := orCfg()
+	cfg.Diagnostics = diag
+	reg, err := buildProviderRegistry(cfg, noEnv)
+	if err != nil {
+		t.Fatalf("build registry: %v", err)
+	}
+	entry, ok := reg.Lookup(providerOpenRouter)
+	if !ok {
+		t.Fatal("openrouter entry missing")
+	}
+	_ = entry.remint("high", port.ProviderCapabilities{})
+	_ = entry.remint("low", port.ProviderCapabilities{})
+	if got := diag.countContaining("prompt cache:"); got != 1 {
+		t.Fatalf("prompt-cache posture logged %d times, want exactly once at registry assembly", got)
+	}
+}
+
+// TestAnthropicFamilyClassifier pins the narrow matcher behind the
 // default preference: it keys on the vendor namespace and the product name,
 // never a substring anywhere in the id.
-func TestADR_0346_AnthropicFamilyClassifier(t *testing.T) {
+func TestAnthropicFamilyClassifier(t *testing.T) {
 	for _, id := range []string{"anthropic/claude-opus-4.8", "claude-sonnet-4-6", "  Claude-Opus  "} {
 		if !isAnthropicFamilyModel(id) {
 			t.Errorf("%q should be Anthropic-family", id)
@@ -277,7 +296,7 @@ func providerOverridesFor(id, baseURL string) permconfig.ProviderOverrides {
 	return permconfig.ProviderOverrides{id: {BaseURL: baseURL}}
 }
 
-// TestADR_0346_GatewayPairNotRedirected pins AC3.2, which REVERSES an earlier
+// TestGatewayPairNotRedirected pins AC3.2, which REVERSES an earlier
 // draft of this work. The gateway's two surfaces do not share a model-id
 // namespace — staging exposes one Claude Opus 4.8 as `anthropic/claude-opus-4.8`
 // on its OpenRouter downstream, `claude-opus-4-8` on its Anthropic downstream
@@ -287,7 +306,7 @@ func providerOverridesFor(id, baseURL string) permconfig.ProviderOverrides {
 // The gateway case is covered by the protocol-native breakpoint instead, which
 // needs no id translation. This test exists so nobody "helpfully" restores the
 // toolhive row in anthropicProtocolSibling.
-func TestADR_0346_GatewayPairNotRedirected(t *testing.T) {
+func TestGatewayPairNotRedirected(t *testing.T) {
 	cfg := Config{
 		ToolhiveLLMBaseURL: "http://127.0.0.1:14000/v1",
 		Model:              "anthropic/claude-opus-4.8",
@@ -307,11 +326,11 @@ func TestADR_0346_GatewayPairNotRedirected(t *testing.T) {
 	}
 }
 
-// TestADR_0346_LeakGuardBothDirectionsStillHolds pins AC4.4. ADR 0100's dialect
-// table is deliberately UNTOUCHED by ADR 0346 — routing replaced the declaration
+// TestLeakGuardBothDirectionsStillHolds pins AC4.4. The cache dialect
+// table is deliberately UNTOUCHED by the unified prompt cache — routing replaced the declaration
 // surface that would have widened it — so the guard that root cache_control never
 // reaches canonical OpenAI must still hold exactly as before.
-func TestADR_0346_LeakGuardBothDirectionsStillHolds(t *testing.T) {
+func TestLeakGuardBothDirectionsStillHolds(t *testing.T) {
 	if got := cacheDialectFor(providerOpenAI, "", Config{}); got != openai.CacheDialectOpenAI {
 		t.Errorf("canonical openai dialect = %q, want the openai dialect (never openrouter)", got)
 	}
@@ -352,9 +371,9 @@ func (a *attackerCapture) snapshot() (hits int, xAPIKeys, authz []string) {
 	return a.hits, append([]string(nil), a.xAPIKeys...), append([]string(nil), a.authz...)
 }
 
-// TestADR_0346_AnthropicProtocolEntryRefusesRedirect pins AC5.1 for the
+// TestAnthropicProtocolEntryRefusesRedirect pins AC5.1 for the
 // Anthropic MESSAGES protocol, the sibling of
-// TestADR_0346_OpenAICompatEntryRefusesRedirect.
+// TestOpenAICompatEntryRefusesRedirect.
 //
 // This one is LOAD-BEARING in a way the openai sibling is not. openai-go carries
 // its own cross-origin guard, so there the composition client is a second layer.
@@ -368,7 +387,7 @@ func (a *attackerCapture) snapshot() (hits int, xAPIKeys, authz []string) {
 // it drives the same adapter with no composition wiring and asserts the redirect
 // IS followed. Without it a green test could mean "the SDK protects us" and the
 // composition wiring could be deleted with no failure.
-func TestADR_0346_AnthropicProtocolEntryRefusesRedirect(t *testing.T) {
+func TestAnthropicProtocolEntryRefusesRedirect(t *testing.T) {
 	attacker := &attackerCapture{}
 	attackerSrv := httptest.NewServer(http.HandlerFunc(attacker.handler))
 	defer attackerSrv.Close()
@@ -441,22 +460,22 @@ func TestADR_0346_AnthropicProtocolEntryRefusesRedirect(t *testing.T) {
 	}
 }
 
-// TestADR_0346_ChatCompletionsEntriesReportNoPromptCache pins the honest answer
+// TestChatCompletionsEntriesReportNoPromptCache pins the honest answer
 // for the THIRD protocol, and is the reason promptCachedFor switches on a
 // three-value enum rather than an is-it-Anthropic bool.
 //
-// openaichat has no prompt_cache_breakpoint mechanism — ADR 0346's fix is a
+// openaichat has no prompt_cache_breakpoint mechanism — the breakpoint is a
 // Responses-protocol field — and openaichatCacheDialectFor returns None for
 // every id except the canonical OpenAI endpoint. So for opencode and for every
 // custom api_flavor: openai-chat-completions definition, mecatl sends no cache
-// ask at all. Reporting prompt_cached true there would recreate exactly the ADR
-// 0100 failure the picker signal exists to expose: a provider that silently
+// ask at all. Reporting prompt_cached true there would recreate exactly the
+// failure the picker signal exists to expose: a provider that silently
 // re-pays full input every turn, looking in the picker like one that caches.
 //
 // The posture line is asserted alongside, because a line reading
 // "responses breakpoint" for an entry that speaks Chat Completions names a
 // mechanism that is not there.
-func TestADR_0346_ChatCompletionsEntriesReportNoPromptCache(t *testing.T) {
+func TestChatCompletionsEntriesReportNoPromptCache(t *testing.T) {
 	const customID = "my-chat-endpoint"
 	cfg := orCfg()
 	cfg.OpenCodeKey = "oc-test-key"
@@ -511,13 +530,13 @@ func TestADR_0346_ChatCompletionsEntriesReportNoPromptCache(t *testing.T) {
 	}
 }
 
-// TestADR_0346_ChatCompletionsUnderCanonicalOpenAIDialectStillCaches is the
+// TestChatCompletionsUnderCanonicalOpenAIDialectStillCaches is the
 // other half: the Chat Completions arm reports FALSE because the endpoint has no
 // dialect, NOT because the protocol is disqualified. The canonical OpenAI
 // endpoint caches implicitly with nothing on the wire, so a future
 // OpenAI-over-Chat-Completions entry must read true — and the arm must not be
 // simplified to a flat "chat completions never caches".
-func TestADR_0346_ChatCompletionsUnderCanonicalOpenAIDialectStillCaches(t *testing.T) {
+func TestChatCompletionsUnderCanonicalOpenAIDialectStillCaches(t *testing.T) {
 	cfg := orCfg()
 	reg := &providerRegistry{
 		entries: map[string]providerEntry{
@@ -525,7 +544,6 @@ func TestADR_0346_ChatCompletionsUnderCanonicalOpenAIDialectStillCaches(t *testi
 			// openaichatCacheDialectFor gates its implicit-caching dialect on.
 			providerOpenAI: {id: providerOpenAI, available: true, protocol: protocolOpenAIChatCompletions},
 		},
-		outcomes: newLiveOutcomeStore(),
 	}
 	if !promptCachedFor(reg, cfg, providerOpenAI, "gpt-5") {
 		t.Error("canonical OpenAI over Chat Completions caches implicitly; prompt_cached must be true")

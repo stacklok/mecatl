@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0294_HTTPCreateSessionDerivedAffinity(t *testing.T) {
+func TestHTTPCreateSessionDerivedAffinity(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 	for _, tc := range []struct {
 		name, body string
@@ -74,14 +74,15 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		{"rename", http.MethodPost, "/v1/sessions/route-id/rename", `{"title":"title"}`},
 		{"delete", http.MethodPost, "/v1/sessions/route-id/delete", ""},
 		{"compact", http.MethodPost, "/v1/sessions/route-id/compact", ""},
+		{"mcp refresh", http.MethodPost, "/v1/sessions/route-id/mcp-refresh", ""},
 		{"workspace connect", http.MethodPost, "/v1/sessions/route-id/workspace-enrollment/connect", ""},
 		{"workspace retry", http.MethodPost, "/v1/sessions/route-id/workspace-enrollment/enrollment-1/retry", ""},
 		{"workspace cancel", http.MethodPost, "/v1/sessions/route-id/workspace-enrollment/enrollment-1/cancel", ""},
 		{"prompt", http.MethodPost, "/v1/sessions/route-id/prompt", `{"text":"prompt"}`},
 		{"retry", http.MethodPost, "/v1/sessions/route-id/retry", ""},
-		{"approve", http.MethodPost, "/v1/sessions/route-id/approve", `{"ask_id":"ask"}`},
+		{"resolve ask", http.MethodPost, "/v1/sessions/route-id/controls/resolve-ask", `{"expected_run_id":"run","ask_id":"ask","verdict":"allow_once"}`},
 		{"plan approve", http.MethodPost, "/v1/sessions/route-id/plan:approve", ""},
-		{"cancel", http.MethodPost, "/v1/sessions/route-id/cancel", ""},
+		{"cancel", http.MethodPost, "/v1/sessions/route-id/controls/cancel", `{"expected_run_id":"run"}`},
 		{"cancel child", http.MethodPost, "/v1/sessions/route-id/cancel-child", `{"child_id":"child"}`},
 		{"fork", http.MethodPost, "/v1/sessions/route-id/fork", ""},
 		{"clear", http.MethodPost, "/v1/sessions/route-id/clear", ""},
@@ -120,7 +121,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 	}
 }
 
-func TestADR_0294_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestHTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -162,7 +163,7 @@ func TestADR_0294_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	}
 }
 
-func TestADR_0294_HTTPDecodedPathEquality(t *testing.T) {
+func TestHTTPDecodedPathEquality(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -184,7 +185,7 @@ func TestADR_0294_HTTPDecodedPathEquality(t *testing.T) {
 	}
 }
 
-func TestADR_0294_AffinityHeaderGrantsNoAuthority(t *testing.T) {
+func TestAffinityHeaderGrantsNoAuthority(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model"})
 	svc, err := server.NewService(server.Config{
 		Engine: engine, Store: memstore.New(), PlacementProvider: testPlacementProvider{root: "/ws"}, PlacementScope: "test", SharedEngineRoot: "/ws", OwnershipEnforced: true,

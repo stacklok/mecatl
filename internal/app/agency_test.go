@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/prompt"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 )
 
 // TestAgencyDelta verifies the agency contract is SUPPLIED for EVERY model

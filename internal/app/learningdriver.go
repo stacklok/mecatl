@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
 func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.AttemptRepository, learning.ProposalRepository, learning.SkillRepository, learning.AutomaticAdmissionLedger, func(), error) {
@@ -17,7 +17,7 @@ func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.Atte
 	// The current raw repository RPCs have no workload-authenticated ownership
 	// middleware. A driver's self-description cannot establish that trust boundary.
 	if cfg.OwnershipEnforced {
-		return nil, nil, nil, nil, nil, fmt.Errorf("learning-store driver %q is unavailable with ownership enforcement until ADR-0213 learning-driver middleware and private ownership registry are implemented", cfg.LearningStoreURL)
+		return nil, nil, nil, nil, nil, fmt.Errorf("learning-store driver %q is unavailable with ownership enforcement until learning-driver ownership middleware and a private ownership registry are implemented", cfg.LearningStoreURL)
 	}
 	conn, closeConn, err := cfg.drivers().dial(cfg, cfg.LearningStoreURL)
 	if err != nil {

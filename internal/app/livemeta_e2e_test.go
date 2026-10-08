@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/provider/anthropic"
 )
 
@@ -49,7 +49,7 @@ func regWithAnthropicLister(t *testing.T, client *http.Client) *providerRegistry
 		defaultID: providerAnthropic,
 		meta:      meta,
 	}
-	meta.seedFromCatalog(reg.Available())
+	bindDiscoveryFixture(t, reg)
 	return reg
 }
 
@@ -71,11 +71,9 @@ func TestAnthropicLiveResolverPicksUpCeiling(t *testing.T) {
 	}
 
 	// Run the live snapshot + swap (the same two-sink path the background refresh uses).
-	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	if len(byProvider[providerAnthropic]) == 0 {
+	if len(discoverAllModels(t, reg)) == 0 {
 		t.Fatal("live snapshot empty")
 	}
-	reg.meta.Swap(byProvider)
 
 	// Post-swap: the LIVE thinking descriptor is now known and adaptive for opus-4-8.
 	a, e, known := reg.meta.thinkingFor(providerAnthropic, "claude-opus-4-8")
@@ -94,6 +92,56 @@ func TestAnthropicLiveResolverPicksUpCeiling(t *testing.T) {
 	}
 	if got := reg.meta.contextWindowFor(providerAnthropic, "claude-opus-4-8"); got != 1_000_000 {
 		t.Errorf("live contextWindowFor(opus) = %d, want 1000000", got)
+	}
+}
+
+// TestMissingThinkingCapabilityUsesModelFallback proves incomplete
+// custom Anthropic discovery remains unknown so the request adapter can use its
+// model-prefix floor rather than treating omitted metadata as unsupported.
+func TestMissingThinkingCapabilityUsesModelFallback(t *testing.T) {
+	for _, capabilities := range []string{
+		``,
+		`"capabilities":{}`,
+		`"capabilities":{"thinking":{}}`,
+		`"capabilities":{"thinking":{"supported":true}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"enabled":{}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":false}}}}`,
+		`"capabilities":{"thinking":{"supported":true,"types":{"adaptive":{"supported":false},"enabled":{"supported":false}}}}`,
+	} {
+		t.Run(capabilities, func(t *testing.T) {
+			body := `{"data":[{"id":"claude-opus-4-8","type":"model","display_name":"Claude Opus 4.8","created_at":"2026-01-01T00:00:00Z","max_input_tokens":1000000,"max_tokens":128000` + func() string {
+				if capabilities == "" {
+					return ""
+				}
+				return "," + capabilities
+			}() + `}],"has_more":false}`
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+			})}
+			cfg := Config{
+				ProviderDefinitions: permconfig.ProviderDefinitions{"gateway": {
+					ID: "gateway", BaseURL: "https://gateway.example", DefaultModel: "claude-opus-4-8", APIFlavor: "anthropic-messages", Auth: permconfig.ProviderAuth{Method: "api_key"},
+				}},
+				CustomProviderAPIKeys: map[string]string{"gateway": "test-key"},
+				liveModelHTTPClient:   client,
+			}
+			reg, err := buildProviderRegistry(isolateConfig(t, cfg), fakeEnv(nil))
+			if err != nil {
+				t.Fatalf("buildProviderRegistry: %v", err)
+			}
+			discoverAllModels(t, reg)
+			_, _, known := reg.meta.thinkingFor("gateway", "claude-opus-4-8")
+			if known {
+				t.Fatal("missing thinking capability metadata became known unsupported; want prefix fallback")
+			}
+			fragment := ""
+			if capabilities != "" {
+				fragment = "," + capabilities
+			}
+			exerciseAnthropicThinkingComposition(t, "claude-opus-4-8", fragment, "adaptive", "high", false)
+		})
 	}
 }
 
@@ -136,7 +184,8 @@ func TestAnthropicLiveCeilingOverridesCatalog(t *testing.T) {
 	// a direct swap (the fixture matches catalog for this id, so we force a divergence
 	// to assert live-wins unambiguously).
 	const liveCeiling = 32768
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta = newMetadataFixture()
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerAnthropic: {{ID: "claude-haiku-4-5", OutputLimit: liveCeiling, ContextLimit: 200_000}},
 	})
 	if got := reg.meta.outputLimitFor(providerAnthropic, "claude-haiku-4-5"); got != liveCeiling {
@@ -179,11 +228,10 @@ func TestOpenRouterOutputLimitSurvivesSwapIntoStore(t *testing.T) {
 		defaultID: providerOpenRouter,
 		meta:      meta,
 	}
-	meta.seedFromCatalog(reg.Available())
+	bindDiscoveryFixture(t, reg)
 
 	// Run the real snapshot + swap (the two-sink path the background refresh uses).
-	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	meta.Swap(byProvider)
+	discoverAllModels(t, reg)
 
 	// qwen/qwen3.7-plus has top_provider.max_completion_tokens = 65536 in the fixture.
 	if got := meta.outputLimitFor(providerOpenRouter, "qwen/qwen3.7-plus"); got != 65536 {
@@ -231,12 +279,11 @@ func TestOpenRouterLiveModalitiesGateSessionEcho(t *testing.T) {
 		defaultID: providerOpenRouter,
 		meta:      meta,
 	}
-	meta.seedFromCatalog(reg.Available())
+	bindDiscoveryFixture(t, reg)
 
 	// Run the real snapshot + swap (the two-sink path the background refresh uses).
-	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	meta.Swap(byProvider)
-	picker := projectAll(reg, byProvider)
+	discoverAllModels(t, reg)
+	picker := reg.discovery.CurrentModelSnapshot().Models
 
 	const (
 		textOnly = "nvidia/nemotron-3-ultra-550b-a55b:free" // input_modalities ["text"]

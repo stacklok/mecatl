@@ -8,6 +8,8 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // overrideAll rebinds EVERY rebindable action to a distinct sentinel chord so a
@@ -18,42 +20,43 @@ import (
 // approvalMnemonic paths render them legibly.
 func overrideAll() map[string][]string {
 	return map[string][]string{
-		"Submit":           {"ctrl+f1"},
-		"Newline":          {"ctrl+f2"},
-		"Paste":            {"ctrl+f3"},
-		"SelectAll":        {"ctrl+f31"},
-		"CopySelection":    {"ctrl+f32"},
-		"Cancel":           {"ctrl+f4"},
-		"ClearPrompt":      {"ctrl+f33"},
-		"Effort":           {"ctrl+f5"},
-		"MCPPanel":         {"ctrl+f6"},
-		"Resources":        {"ctrl+f7"},
-		"Prompts":          {"ctrl+f8"},
-		"Agents":           {"ctrl+f9"},
-		"ModeSwitch":       {"ctrl+f10"},
-		"ExpandTools":      {"ctrl+f11"},
-		"Help":             {"ctrl+f12"},
-		"Quit":             {"ctrl+f13"},
-		"ScrollU":          {"ctrl+f14"},
-		"ScrollD":          {"ctrl+f15"},
-		"Close":            {"ctrl+f16"},
-		"Allow":            {"y"},
-		"AllowAlways":      {"q"},
-		"Deny":             {"n"},
-		"Choose":           {"ctrl+f17"},
-		"NextTab":          {"ctrl+f18"},
-		"JumpTop":          {"ctrl+f19"},
-		"JumpEnd":          {"ctrl+f20"},
-		"CancelChild":      {"ctrl+f21"},
-		"Tasks":            {"ctrl+f22"},
-		"Findings":         {"ctrl+f23"},
-		"Refresh":          {"ctrl+f24"},
-		"SetGlobalDefault": {"ctrl+f25"},
-		"Up":               {"ctrl+f26"},
-		"Down":             {"ctrl+f27"},
-		"ScrollTop":        {"ctrl+f28"},
-		"ScrollBottom":     {"ctrl+f29"},
-		"EditBack":         {"ctrl+f30"},
+		"Submit":             {"ctrl+f1"},
+		"Newline":            {"ctrl+f2"},
+		"Paste":              {"ctrl+f3"},
+		"SelectAll":          {"ctrl+f31"},
+		"CopySelection":      {"ctrl+f32"},
+		"Cancel":             {"ctrl+f4"},
+		"ClearPrompt":        {"ctrl+f33"},
+		"Effort":             {"ctrl+f5"},
+		"MCPPanel":           {"ctrl+f6"},
+		"Resources":          {"ctrl+f7"},
+		"Prompts":            {"ctrl+f8"},
+		"Agents":             {"ctrl+f9"},
+		"ModeSwitch":         {"ctrl+f10"},
+		"ExpandConversation": {"ctrl+f34"},
+		"Toolcalls":          {"ctrl+f11"},
+		"Help":               {"ctrl+f12"},
+		"Quit":               {"ctrl+f13"},
+		"ScrollU":            {"ctrl+f14"},
+		"ScrollD":            {"ctrl+f15"},
+		"Close":              {"ctrl+f16"},
+		"Allow":              {"y"},
+		"AllowAlways":        {"q"},
+		"Deny":               {"n"},
+		"Choose":             {"ctrl+f17"},
+		"NextTab":            {"ctrl+f18"},
+		"JumpTop":            {"ctrl+f19"},
+		"JumpEnd":            {"ctrl+f20"},
+		"CancelChild":        {"ctrl+f21"},
+		"Tasks":              {"ctrl+f22"},
+		"Findings":           {"ctrl+f23"},
+		"Refresh":            {"ctrl+f24"},
+		"SetGlobalDefault":   {"ctrl+f25"},
+		"Up":                 {"ctrl+f26"},
+		"Down":               {"ctrl+f27"},
+		"ScrollTop":          {"ctrl+f28"},
+		"ScrollBottom":       {"ctrl+f29"},
+		"EditBack":           {"ctrl+f30"},
 	}
 }
 
@@ -71,26 +74,27 @@ func remderRenderer() *renderer {
 // reference rebindable chords read the LIVE markings (issue #457): the
 // reasoning header, the subagent live line, the team header, the team "+N more"
 // roll-up, and the collapse/arg-rollup markers must each carry the overridden
-// ExpandTools/Agents chord and NOT the default. Each subtest builds the card via
+// Toolcalls/Agents chord and NOT the default. Each subtest builds the card via
 // the same renderer path the model uses (remderRenderer) so the seam is real.
 func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	const (
-		wantExpand = "ctrl+f11" // overridden ExpandTools
+		wantDetail = "ctrl+f34" // overridden ExpandConversation
+		wantExpand = "ctrl+f11" // overridden Toolcalls
 		wantAgents = "ctrl+f9"  // overridden Agents
 	)
 	t.Run("reasoning collapsed/expanded header", func(t *testing.T) {
 		r := remderRenderer()
-		b := block{reasoning: "line one\nline two"}
-		collapsed := stripANSIstr(r.renderReasoning(&b, false))
-		if !strings.Contains(collapsed, wantExpand+" expand") {
-			t.Errorf("collapsed reasoning header should carry %q, got %q", wantExpand+" expand", collapsed)
+		b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
+		collapsed := stripANSIstr(r.renderReasoningSnapshot(b, false))
+		if !strings.Contains(collapsed, wantDetail+" expand") {
+			t.Errorf("collapsed reasoning header should carry %q, got %q", wantDetail+" expand", collapsed)
 		}
 		if strings.Contains(collapsed, "ctrl+t") {
 			t.Errorf("collapsed reasoning header still shows the default ctrl+t: %q", collapsed)
 		}
-		expanded := stripANSIstr(r.renderReasoning(&b, true))
-		if !strings.Contains(expanded, wantExpand+" collapse") {
-			t.Errorf("expanded reasoning header should carry %q, got %q", wantExpand+" collapse", expanded)
+		expanded := stripANSIstr(r.renderReasoningSnapshot(b, true))
+		if !strings.Contains(expanded, wantDetail+" collapse") {
+			t.Errorf("expanded reasoning header should carry %q, got %q", wantDetail+" collapse", expanded)
 		}
 		if strings.Contains(expanded, "ctrl+t") {
 			t.Errorf("expanded reasoning header still shows the default ctrl+t: %q", expanded)
@@ -99,11 +103,11 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 
 	t.Run("subagent live line trace affordance", func(t *testing.T) {
 		r := remderRenderer()
-		b := block{subCurrent: "Grep", subToolCount: 2,
-			subUsage: client.Usage{InputTokens: 100, OutputTokens: 20}}
-		line := r.subagentLiveLine(&b)
-		if !strings.Contains(line, wantExpand+" trace") {
-			t.Errorf("subagent live line should carry %q trace, got %q", wantExpand, line)
+		b := subagentCardPresentation{current: "Grep", toolCount: 2,
+			usage: client.Usage{InputTokens: 100, OutputTokens: 20}}
+		line := r.subagentPresentationLiveLine(b)
+		if !strings.Contains(line, wantAgents+" agents") {
+			t.Errorf("subagent live line should carry %q agents, got %q", wantAgents, line)
 		}
 		if strings.Contains(line, "ctrl+t") {
 			t.Errorf("subagent live line still shows the default ctrl+t: %q", line)
@@ -112,17 +116,13 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 
 	t.Run("team header trace/collapse affordance", func(t *testing.T) {
 		r := remderRenderer()
-		b := block{teamLanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
-		collapsed := r.teamHeader(&b, false)
-		if !strings.Contains(collapsed, wantExpand+" trace") {
-			t.Errorf("collapsed team header should carry %q trace, got %q", wantExpand, collapsed)
+		b := teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
+		header := r.teamPresentationHeader(b)
+		if !strings.Contains(header, wantAgents+" agents") {
+			t.Errorf("live team header should carry %q agents, got %q", wantAgents, header)
 		}
-		if strings.Contains(collapsed, "ctrl+t") {
-			t.Errorf("collapsed team header still shows the default ctrl+t: %q", collapsed)
-		}
-		expanded := r.teamHeader(&b, true)
-		if !strings.Contains(expanded, wantExpand+" collapse") {
-			t.Errorf("expanded team header should carry %q collapse, got %q", wantExpand, expanded)
+		if strings.Contains(header, "ctrl+t") {
+			t.Errorf("live team header still shows the Toolcalls chord: %q", header)
 		}
 	})
 
@@ -136,8 +136,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 		for i := 0; i < maxTeamLanes+2; i++ {
 			big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 		}
-		c.setTeamStart("t1", "", big)
-		out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+		c.startTeamCard("t1", "", big)
+		out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 		if !strings.Contains(out, "more · "+wantAgents) {
 			t.Errorf("team roll-up should carry the live agents chord %q, got %q", wantAgents, out)
 		}
@@ -149,8 +149,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	t.Run("collapse marker carries live expand chord", func(t *testing.T) {
 		r := remderRenderer()
 		got := r.collapseMarker(3)
-		if !strings.Contains(got, wantExpand+" expand") {
-			t.Errorf("collapseMarker should carry %q expand, got %q", wantExpand, got)
+		if !strings.Contains(got, wantExpand+" inspect") {
+			t.Errorf("collapseMarker should carry %q inspect, got %q", wantExpand, got)
 		}
 		if strings.Contains(got, "ctrl+t") {
 			t.Errorf("collapseMarker still shows the default ctrl+t: %q", got)
@@ -160,12 +160,12 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	t.Run("arg rollup marker carries live expand chord", func(t *testing.T) {
 		r := remderRenderer()
 		withCount := r.argRollupMarker(2)
-		if !strings.Contains(withCount, wantExpand+" expand") {
-			t.Errorf("argRollupMarker(2) should carry %q expand, got %q", wantExpand, withCount)
+		if !strings.Contains(withCount, wantExpand+" inspect") {
+			t.Errorf("argRollupMarker(2) should carry %q inspect, got %q", wantExpand, withCount)
 		}
 		zero := r.argRollupMarker(0)
-		if !strings.Contains(zero, wantExpand+" expand") {
-			t.Errorf("argRollupMarker(0) should carry %q expand, got %q", wantExpand, zero)
+		if !strings.Contains(zero, wantExpand+" inspect") {
+			t.Errorf("argRollupMarker(0) should carry %q inspect, got %q", wantExpand, zero)
 		}
 		if strings.Contains(zero, "ctrl+t") {
 			t.Errorf("argRollupMarker still shows the default ctrl+t: %q", zero)
@@ -184,8 +184,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 			t.Fatal("Write diff should render")
 		}
 		plain := stripANSIstr(out)
-		if !strings.Contains(plain, wantExpand+" expand") {
-			t.Errorf("collapsed diff should carry %q expand, got %q", wantExpand, plain)
+		if !strings.Contains(plain, wantExpand+" inspect") {
+			t.Errorf("collapsed diff should carry %q inspect, got %q", wantExpand, plain)
 		}
 		if strings.Contains(plain, "ctrl+t") {
 			t.Errorf("collapsed diff still shows the default ctrl+t: %q", plain)
@@ -198,149 +198,6 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 // mnemonics (allow/allowAlways/deny), the quitArmed cue, the fatal-screen cue, and
 // the team/subagent/parallel agents-overlay advertisements must each carry the
 // overridden chord and NOT the default.
-func TestFooterReflectsKeyOverride(t *testing.T) {
-	km := applyKeyOverrides(defaultKeys(), overrideAll())
-	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
-	m.keys = km
-	m.rend = newRenderer(m.deps.Theme, keyMarkings(km))
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 120, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
-	)
-
-	t.Run("idle help line", func(t *testing.T) {
-		m.phase = phaseIdle
-		got := stripANSIstr(m.renderFooter())
-		// help line: "<help> help · / commands · <quit> quit"
-		if !strings.Contains(got, "ctrl+f31 select all") {
-			t.Errorf("footer help line should carry the overridden SelectAll chord ctrl+f31: %q", got)
-		}
-		if !strings.Contains(got, "ctrl+f32 copy") {
-			t.Errorf("footer help line should carry the overridden CopySelection chord ctrl+f32: %q", got)
-		}
-		if strings.Contains(got, "ctrl+g select all") || strings.Contains(got, "ctrl+y copy") {
-			t.Errorf("footer help line still shows a default selection chord: %q", got)
-		}
-		if !strings.Contains(got, "ctrl+f12 help") {
-			t.Errorf("footer help line should carry the overridden help chord ctrl+f12: %q", got)
-		}
-		if !strings.Contains(got, "ctrl+f13 quit") {
-			t.Errorf("footer help line should carry the overridden quit chord ctrl+f13: %q", got)
-		}
-		if strings.Contains(got, "? help") || strings.Contains(got, "ctrl+c quit") {
-			t.Errorf("footer help line still shows a default chord: %q", got)
-		}
-	})
-
-	t.Run("running queue/cancel affordances", func(t *testing.T) {
-		m.phase = phaseRunning
-		got := stripANSIstr(m.renderFooter())
-		if !strings.Contains(got, "ctrl+f1 queue") {
-			t.Errorf("running footer should carry the overridden submit ctrl+f1: %q", got)
-		}
-		if !strings.Contains(got, "ctrl+f33 clear") || !strings.Contains(got, "ctrl+f4 cancel") {
-			t.Errorf("running footer should carry the overridden clear/cancel chords: %q", got)
-		}
-		if strings.Contains(got, "enter queue") || strings.Contains(got, "esc cancel") || strings.Contains(got, "ctrl+u clear") {
-			t.Errorf("running footer still shows a default chord: %q", got)
-		}
-	})
-
-	t.Run("plan-approval mnemonics", func(t *testing.T) {
-		m.phase = phaseAwaitingApproval
-		openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}
-		got := stripANSIstr(m.renderFooter())
-		// approvalMnemonic upper-cases the bare rune: y→Y, q→Q, n→N.
-		if !strings.Contains(got, "Y approve & run") {
-			t.Errorf("plan-approval footer should carry the overridden allow mnemonic Y: %q", got)
-		}
-		if !strings.Contains(got, "Q auto-accept") {
-			t.Errorf("plan-approval footer should carry the overridden allowAlways mnemonic Q: %q", got)
-		}
-		if !strings.Contains(got, "N iterate") {
-			t.Errorf("plan-approval footer should carry the overridden deny mnemonic N: %q", got)
-		}
-		if strings.Contains(got, "A approve") || strings.Contains(got, "W auto-accept") || strings.Contains(got, "D iterate") {
-			t.Errorf("plan-approval footer still shows a default mnemonic: %q", got)
-		}
-	})
-
-	t.Run("quitArmed cue", func(t *testing.T) {
-		m.phase = phaseIdle
-		m.quitArmed = true
-		got := stripANSIstr(m.renderFooter())
-		if !strings.Contains(got, "ctrl+f13 again to quit") {
-			t.Errorf("quitArmed cue should carry the overridden quit chord ctrl+f13: %q", got)
-		}
-		if strings.Contains(got, "ctrl+c again") {
-			t.Errorf("quitArmed cue still shows the default ctrl+c: %q", got)
-		}
-		m.quitArmed = false
-	})
-
-	t.Run("quitArmed statusMsg carries the live override (not the stale default)", func(t *testing.T) {
-		// The arm path (onQuitKey) sets m.statusMsg LIVE from m.keys.Quit, so the
-		// footer-left hint advertises the rebound chord and not the frozen
-		// "ctrl+c" default (issue #457 SPEC gap: quitHint was a constant). Drive
-		// the real arm reducer and assert the footer-left (idleFooterLeft →
-		// statusMsg) and the footer-help cue BOTH carry the override.
-		mm := m
-		mm.phase = phaseIdle
-		mm.quitArmed = false
-		mm.statusMsg = ""
-		mm, _ = pressKey(mm, tea.KeyPressMsg{Code: tea.KeyF13, Mod: tea.ModCtrl})
-		if !mm.quitArmed {
-			t.Fatal("overridden ctrl+f13 should arm the quit guard")
-		}
-		want := "press ctrl+f13 again to quit"
-		if mm.statusMsg != want {
-			t.Errorf("statusMsg should carry the live quit hint %q, got %q", want, mm.statusMsg)
-		}
-		if strings.Contains(mm.statusMsg, "ctrl+c") {
-			t.Errorf("statusMsg still advertises the stale default ctrl+c: %q", mm.statusMsg)
-		}
-		got := stripANSIstr(mm.renderFooter())
-		if !strings.Contains(got, want) {
-			t.Errorf("armed footer-left should show the live override %q: %q", want, got)
-		}
-		if strings.Contains(got, "press ctrl+c again to quit") {
-			t.Errorf("armed footer still shows the stale default ctrl+c hint: %q", got)
-		}
-	})
-
-	t.Run("fatal screen cue", func(t *testing.T) {
-		m.phase = phaseFatal
-		m.fatalErr = "boom"
-		got := stripANSIstr(m.renderFatal())
-		if !strings.Contains(got, "press ctrl+f13 to quit") {
-			t.Errorf("fatal screen should carry the overridden quit chord ctrl+f13: %q", got)
-		}
-		if strings.Contains(got, "press ctrl+c") {
-			t.Errorf("fatal screen still shows the default ctrl+c: %q", got)
-		}
-	})
-
-	t.Run("team/subagent agents advertisement", func(t *testing.T) {
-		// Build a live team block + subagent fleet so fitFooter renders the
-		// agents prefix tiers that advertise the overlay chord.
-		m.phase = phaseIdle
-		m.conv = conversation{}
-		m.conv.addTool("t1", "Team", `{"goal":"ship"}`)
-		m.conv.setTeamStart("t1", "team-abc", roster())
-		m.conv.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
-		m.conv.setSubagentStart("p1", "scout", "", "", "", "")
-		m.conv.addSubagentTool(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "p1", ToolName: "Grep", ToolCount: 1})
-		m.refreshView()
-		got := stripANSIstr(m.fitFooter("ready", 160))
-		if !strings.Contains(got, "ctrl+f9") {
-			t.Errorf("footer agents prefix should carry the overridden agents chord ctrl+f9: %q", got)
-		}
-		if strings.Contains(got, "f6") {
-			t.Errorf("footer agents prefix still shows the default f6: %q", got)
-		}
-	})
-}
-
 // TestPlanReviewActionBarReflectsKeyOverride proves the plan-review action bar
 // reads the LIVE approval and scroll chords (issue #457): the bracketed
 // mnemonics and ScrollU/ScrollD/ScrollTop/ScrollBottom hint must carry the
@@ -417,7 +274,7 @@ func TestPlanReviewActionBarModifiedChordDegrades(t *testing.T) {
 
 // TestPlanReviewActionBarDefaultBytesUnchanged is the byte-identical guard for
 // the DEFAULT approval chords: with no overrides the plan-review action bar
-// renders the historical word-embedded form ("[A]pprove & run" / "[W]
+// renders the default word-embedded form ("[A]pprove & run" / "[W]
 // auto-accept edits" / "[D] iterate") so the goldens and pre-#457 output stay
 // byte-for-byte.
 func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
@@ -440,7 +297,7 @@ func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
 // TestPermissionModalButtonsReflectKeyOverride proves the GENERIC permission
 // modal's button labels are honest about the LIVE approval chords (issue #457
 // SPEC/UX gap: they were hard-coded to the word-embedded form). With the DEFAULT
-// a/w/d chords the historical word-embedded form ("[A]llow"/"Al[w]ays"/
+// a/w/d chords the default word-embedded form ("[A]llow"/"Al[w]ays"/
 // "[D]eny" + the "al[w]ays allows …" footnote) renders byte-for-byte; under an
 // override the buttons degrade to an honest standalone form
 // ("[Y] allow"/"[Q] always allow"/"[N] deny") carrying the rebound chord and
@@ -470,7 +327,7 @@ func TestPermissionModalButtonsReflectKeyOverride(t *testing.T) {
 
 // TestPermissionModalButtonsDefaultBytesUnchanged is the byte-identical guard
 // for the DEFAULT approval chords: with no overrides the generic permission
-// modal renders the historical word-embedded form ("[A]llow"/"Al[w]ays"/
+// modal renders the default word-embedded form ("[A]llow"/"Al[w]ays"/
 // "[D]eny" + the "al[w]ays allows …" footnote) so the goldens and the pre-#457
 // output stay byte-for-byte.
 func TestPermissionModalButtonsDefaultBytesUnchanged(t *testing.T) {
@@ -507,7 +364,7 @@ func TestPermissionModalButtonsModifiedChordStandalone(t *testing.T) {
 }
 
 // TestApprovalMnemonic pins the footer approval-mnemonic helper: a bare lowercase
-// rune is upper-cased (the historical "A"/"W"/"D" from "a"/"w"/"d"), while a
+// rune is upper-cased (the "A"/"W"/"D" from "a"/"w"/"d"), while a
 // modified or multi-rune chord is returned verbatim (upper-casing only the first
 // letter of "ctrl+y" would mangle it).
 func TestApprovalMnemonic(t *testing.T) {
@@ -530,9 +387,8 @@ func TestApprovalMnemonic(t *testing.T) {
 	}
 }
 
-// TestDefaultFooterHelp pins the default footer help affordances. The selection
-// shortcuts follow help and slash commands, then quit; live-key tests separately
-// prove these markings update when operators rebind them.
+// TestDefaultFooterHelp pins the conversation inspection shortcuts followed by quit.
+// The line uses live bindings, so remapped chords are checked separately.
 func TestDefaultFooterHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m,
@@ -541,9 +397,25 @@ func TestDefaultFooterHelp(t *testing.T) {
 	)
 	m.phase = phaseIdle
 	got := stripANSIstr(m.renderFooter())
-	if !strings.Contains(got, "? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+u clear · ctrl+c quit") {
+	if !strings.Contains(got, "? help · / commands · ctrl+t tool calls · f9 session details · ctrl+c quit") {
 		t.Errorf("default footer help line = %q", got)
 	}
+	for _, stale := range []string{"select all", " copy ·", " clear ·"} {
+		if strings.Contains(got, stale) {
+			t.Errorf("footer retains editor hint %q: %q", stale, got)
+		}
+	}
+	m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
+	got = stripANSIstr(m.renderFooter())
+	if !strings.Contains(got, "ctrl+f11 tool calls · ctrl+f34 session details · ctrl+f13 quit") {
+		t.Errorf("rebound footer help line = %q", got)
+	}
+	m.phase = phaseRunning
+	got = stripANSIstr(m.renderFooter())
+	if !strings.HasSuffix(got, "ctrl+f13 quit") || strings.Contains(got, " clear ·") {
+		t.Errorf("running footer must end with quit, without editor shortcuts: %q", got)
+	}
+	m.keys = defaultKeys()
 
 	m.phase = phaseAwaitingApproval
 	openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}
@@ -551,53 +423,36 @@ func TestDefaultFooterHelp(t *testing.T) {
 	if !strings.Contains(got, "A approve & run · W auto-accept · D iterate") {
 		t.Errorf("default plan-approval line should be the historical literal, got %q", got)
 	}
-
-	// Team footer advertisement.
-	m.phase = phaseIdle
-	m.conv = conversation{}
-	m.conv.addTool("t1", "Team", `{"goal":"ship"}`)
-	m.conv.setTeamStart("t1", "team-abc", roster())
-	m.conv.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
-	m.refreshView()
-	got = stripANSIstr(m.fitFooter("ready", 160))
-	if !strings.Contains(got, "f6 agents") {
-		t.Errorf("default team footer should carry the historical f6 literal, got %q", got)
-	}
 }
 
 // TestDefaultInlineCardsBytesUnchanged is the byte-identical guard for the default
-// keymap on the inline-card affordances: with NO overrides the reasoning header,
-// subagent live line, team header, roll-up, and collapse/arg-rollup markers must
-// render EXACTLY the historical "ctrl+t" / "f6" literals.
+// Reasoning follows ExpandConversation (f9); tool-card helpers retain ctrl+t hints.
 func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 	r := newTestRenderer()
 	// Reasoning header.
-	b := block{reasoning: "line one\nline two"}
-	if got := stripANSIstr(r.renderReasoning(&b, false)); !strings.Contains(got, "ctrl+t expand") {
-		t.Errorf("default reasoning header should carry ctrl+t expand, got %q", got)
+	b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
+	if got := stripANSIstr(r.renderReasoningSnapshot(b, false)); !strings.Contains(got, "f9 expand") {
+		t.Errorf("default reasoning header should carry f9 inspect, got %q", got)
 	}
-	if got := stripANSIstr(r.renderReasoning(&b, true)); !strings.Contains(got, "ctrl+t collapse") {
-		t.Errorf("default reasoning header should carry ctrl+t collapse, got %q", got)
+	if got := stripANSIstr(r.renderReasoningSnapshot(b, true)); !strings.Contains(got, "f9 collapse") {
+		t.Errorf("default reasoning header should carry f9 collapse, got %q", got)
 	}
 	// Subagent live line.
-	sb := block{subCurrent: "Grep", subToolCount: 1}
-	if got := r.subagentLiveLine(&sb); !strings.Contains(got, "ctrl+t trace") {
-		t.Errorf("default subagent live line should carry ctrl+t trace, got %q", got)
+	sb := subagentCardPresentation{current: "Grep", toolCount: 1}
+	if got := r.subagentPresentationLiveLine(sb); !strings.Contains(got, "f6 agents") {
+		t.Errorf("default subagent live line should carry f6 agents, got %q", got)
 	}
 	// Team header.
-	tb := block{teamLanes: []teamLane{{name: "lead", lead: true}}}
-	if got := r.teamHeader(&tb, false); !strings.Contains(got, "ctrl+t trace") {
-		t.Errorf("default team header should carry ctrl+t trace, got %q", got)
-	}
-	if got := r.teamHeader(&tb, true); !strings.Contains(got, "ctrl+t collapse") {
-		t.Errorf("default team header should carry ctrl+t collapse, got %q", got)
+	tb := teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}}}
+	if got := r.teamPresentationHeader(tb); !strings.Contains(got, "f6 agents") {
+		t.Errorf("default team header should carry f6 agents, got %q", got)
 	}
 	// Collapse + arg rollup markers.
-	if got := r.collapseMarker(1); !strings.Contains(got, "ctrl+t expand") {
-		t.Errorf("default collapseMarker should carry ctrl+t expand, got %q", got)
+	if got := r.collapseMarker(1); !strings.Contains(got, "ctrl+t inspect") {
+		t.Errorf("default collapseMarker should carry ctrl+t inspect, got %q", got)
 	}
-	if got := r.argRollupMarker(0); !strings.Contains(got, "ctrl+t expand") {
-		t.Errorf("default argRollupMarker should carry ctrl+t expand, got %q", got)
+	if got := r.argRollupMarker(0); !strings.Contains(got, "ctrl+t inspect") {
+		t.Errorf("default argRollupMarker should carry ctrl+t inspect, got %q", got)
 	}
 	// Team roll-up advertises f6.
 	c := &conversation{}
@@ -607,8 +462,8 @@ func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 	for i := 0; i < maxTeamLanes+2; i++ {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
-	c.setTeamStart("t1", "", big)
-	if got := stripANSIstr(r.renderBlock(0, &c.blocks[0], false)); !strings.Contains(got, "more · f6") {
+	c.startTeamCard("t1", "", big)
+	if got := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false)); !strings.Contains(got, "more · f6") {
 		t.Errorf("default team roll-up should carry f6, got %q", got)
 	}
 }
@@ -681,7 +536,7 @@ func TestAgentsOverlayHintsReflectKeyOverride(t *testing.T) {
 func TestTeamOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
-	b := &block{teamLanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
+	b := &teamOverlaySnapshot{teamLanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
 	t.Run("roster", func(t *testing.T) {
 		got := stripANSIstr(renderTeamRoster(th, teamState{}, b, hk, 0))
 		for _, want := range []string{"ctrl+f26/ctrl+f27 select", "ctrl+f17 focus", "ctrl+f21 cancel", "ctrl+f22 tasks", "ctrl+f23 findings", "ctrl+f18 switch", "ctrl+f16 close"} {
@@ -726,10 +581,10 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	}
 	t.Run("panel footer", func(t *testing.T) {
 		got := render(mcpState{view: mcpPanel})
-		if !strings.Contains(got, "ctrl+f24 refresh · ctrl+f16 close") {
-			t.Errorf("panel footer should carry live refresh+close: %q", got)
+		if !strings.Contains(got, "ctrl+f24 reload status · ctrl+f16 close") {
+			t.Errorf("panel footer should carry live status-reload+close: %q", got)
 		}
-		if strings.Contains(got, "r refresh · esc close") {
+		if strings.Contains(got, "r reload status · esc close") {
 			t.Errorf("panel footer still shows defaults: %q", got)
 		}
 	})
@@ -780,8 +635,9 @@ func TestModelsOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	catalog := modelCatalog{models: []client.ModelInfo{{ID: "m1"}}}
-	picker := modelsState{view: modelsPanel, filtered: []client.ModelInfo{{ID: "m1"}}}
-	got := stripANSIstr(renderModelsPanel(th, catalog, picker, client.Capabilities{ModelSelection: true}, "", hk, modelsRowBudgetFor(30, modelsPanelFixedRows(picker, "", hk))))
+	picker := modelsState{view: modelsPanel, catalog: catalog, filtered: catalog.models, deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk, caps: client.Capabilities{ModelSelection: true}}}
+	rendered, _ := picker.Render(200, 30)
+	got := stripANSIstr(rendered)
 	if !strings.Contains(got, "↑/↓/ctrl+f14 move · ctrl+f17 use · ctrl+f25 set global default · ctrl+f16 clear filter / close") {
 		t.Errorf("models hint should carry live page/use/set/close: %q", got)
 	}
@@ -866,18 +722,15 @@ func TestWorktreesOverlayHintsReflectKeyOverride(t *testing.T) {
 }
 
 // TestSkillsOverlayHintsReflectKeyOverride proves the skills panel footer reads the
-// LIVE scroll + Close markings, while the literal ↑/↓ stays (bare up/down, not
-// keyMap-bound) (issue #457).
+// live scroll and Close markings for the focused-region controls.
 func TestSkillsOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	st := &skillsState{view: skillsPanel, skills: []client.Skill{{Name: "s1"}}, filtered: []client.Skill{{Name: "s1"}}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Skills: true}, marks: hk}}
 	body, _ := st.Render(100, 30)
-	got := stripANSIstr(body)
-	// ↑/↓ stays literal; pgup/pgdn scroll + close are live (scrollMarking returns
-	// the live "<scrollU>/<scrollD>" pair once either half is remapped).
-	if !strings.Contains(got, "↑/↓/ctrl+f14/ctrl+f15 scroll · ctrl+f16 clear filter / close") {
-		t.Errorf("skills hint should carry live scroll+close with literal ↑/↓: %q", got)
+	got := strings.Join(strings.Fields(stripANSIstr(body)), " ")
+	if !strings.Contains(got, "tab changes region · ctrl+f14/ctrl+f15 scroll · ctrl+f16") || !strings.Contains(got, "clear filter / close") {
+		t.Errorf("skills hint should carry live focused-region scroll+close: %q", got)
 	}
 	if strings.Contains(got, "esc clear filter / close") {
 		t.Errorf("skills hint still shows default close: %q", got)
@@ -902,8 +755,10 @@ func TestSoulAndUserModelOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("user model", func(t *testing.T) {
-		st := userModelState{view: userModelPanel, model: client.UserModel{Entries: []client.UserModelEntry{{Key: "k"}}}}
-		got := stripANSIstr(renderUserModelOverlay(th, st, client.Capabilities{UserModel: true}, hk, 100, 30))
+		st := &userModelState{deps: surfaceDeps{theme: th, marks: hk, caps: client.Capabilities{UserModel: true}}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
+		st.setModel(client.UserModel{Entries: []client.UserModelEntry{{Key: "k"}}})
+		body, _ := st.Render(100, 30)
+		got := stripANSIstr(body)
 		if !strings.Contains(got, "ctrl+f16 close") {
 			t.Errorf("user-model hint should carry live close: %q", got)
 		}

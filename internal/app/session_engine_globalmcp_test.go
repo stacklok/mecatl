@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -20,8 +20,8 @@ import (
 
 // globalMCPFactory builds a sessionEngineFactory over a two-provider registry
 // (openai default, openrouter selectable) and threads `globalMgr` as the SHARED
-// server-global MCP manager — the seam bug #3 fixed (a selector session used to get
-// a fresh core-only catalog and silently drop the server-global MCP tools).
+// server-global MCP manager, so a selector session keeps the server-global MCP tools
+// rather than getting a fresh core-only catalog (bug #3).
 func globalMCPFactory(t *testing.T, globalMgr *mcp.Manager) (server.SessionEngineFactory, *providerRegistry) {
 	t.Helper()
 	cfg := Config{Model: "default-model"}

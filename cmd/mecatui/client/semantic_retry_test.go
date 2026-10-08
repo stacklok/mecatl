@@ -18,8 +18,8 @@ func TestResultTypedDispositionPrecedenceAndPresence(t *testing.T) {
 		present   bool
 	}{
 		{
-			name: "typed retryable overrides legacy permanent and permanent-looking text",
-			result: &mecatlv1.Result{Stop: "error", Error: "invalid request", Permanent: true,
+			name: "typed retryable is authoritative",
+			result: &mecatlv1.Result{Stop: "error", Error: "invalid request",
 				RetryDisposition: retryDisposition(mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE)},
 			transient: true, present: true,
 		},
@@ -31,14 +31,13 @@ func TestResultTypedDispositionPrecedenceAndPresence(t *testing.T) {
 		},
 		{
 			name: "typed unknown is conservative",
-			result: &mecatlv1.Result{Stop: "error", Error: "deadline exceeded", Permanent: true,
+			result: &mecatlv1.Result{Stop: "error", Error: "deadline exceeded",
 				RetryDisposition: retryDisposition(mecatlv1.RetryDisposition_RETRY_DISPOSITION_UNKNOWN)},
 			present: true,
 		},
 		{
-			name:      "absent disposition keeps legacy display fallback",
-			result:    &mecatlv1.Result{Stop: "error", Error: "deadline exceeded"},
-			transient: true,
+			name:   "absent disposition is conservative",
+			result: &mecatlv1.Result{Stop: "error", Error: "deadline exceeded"},
 		},
 	}
 	for _, tc := range tests {
@@ -46,33 +45,6 @@ func TestResultTypedDispositionPrecedenceAndPresence(t *testing.T) {
 			got := resultMsg(tc.result)
 			if got.Transient != tc.transient || got.Permanent != tc.permanent || got.RetryDispositionPresent != tc.present {
 				t.Fatalf("resultMsg = %+v, want transient=%v permanent=%v present=%v", got, tc.transient, tc.permanent, tc.present)
-			}
-		})
-	}
-}
-
-func TestFailedStepRetryEligibleRequiresTypedRetryablePrecommit(t *testing.T) {
-	eligible := ResultMsg{
-		Stop: "error", RetryDispositionPresent: true, RetryDisposition: RetryDispositionRetryable,
-		StreamProgressPresent: true, StreamProgress: StreamProgressPrecommit,
-	}
-	if !eligible.FailedStepRetryEligible() {
-		t.Fatal("typed retryable precommit error must be failed-step retry eligible")
-	}
-
-	tests := map[string]ResultMsg{
-		"non-error stop":      func() ResultMsg { r := eligible; r.Stop = "cancelled"; return r }(),
-		"disposition absent":  func() ResultMsg { r := eligible; r.RetryDispositionPresent = false; return r }(),
-		"unknown disposition": func() ResultMsg { r := eligible; r.RetryDisposition = RetryDispositionUnknown; return r }(),
-		"permanent":           func() ResultMsg { r := eligible; r.RetryDisposition = RetryDispositionPermanent; return r }(),
-		"progress absent":     func() ResultMsg { r := eligible; r.StreamProgressPresent = false; return r }(),
-		"visible":             func() ResultMsg { r := eligible; r.StreamProgress = StreamProgressVisible; return r }(),
-		"complete":            func() ResultMsg { r := eligible; r.StreamProgress = StreamProgressComplete; return r }(),
-	}
-	for name, result := range tests {
-		t.Run(name, func(t *testing.T) {
-			if result.FailedStepRetryEligible() {
-				t.Fatalf("%+v must not be failed-step retry eligible", result)
 			}
 		})
 	}

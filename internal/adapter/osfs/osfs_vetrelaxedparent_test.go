@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// osfs_vetrelaxedparent_test.go pins the Wave-1 panel-review follow-up
-// AC-W2-F2 (docs/acceptance/path-escape-posture.md): vetRelaxedParent — the
+// osfs_vetrelaxedparent_test.go pins that vetRelaxedParent — the
 // containment vet the relaxed read/write roots run on the verbatim parent
 // dir — delegates each component to the already-extracted Canonicalize rather
 // than hand-rolling a THIRD ancestor-resolution algorithm. These cases pin

@@ -35,7 +35,7 @@ func countingSessionEngineFactory(inner server.SessionEngineFactory, calls *int)
 // the embedded catalog, whose build-time baked window WOULD be the 128k compaction
 // floor under the old freeze-at-construction scheme.
 func liveWindowReg(provider *mockllm.Provider, id, model string) *providerRegistry {
-	meta := newLiveMetaStore()
+	meta := newMetadataFixture()
 	return &providerRegistry{
 		entries:      map[string]providerEntry{id: {id: id, provider: provider, available: true}},
 		defaultID:    id,
@@ -49,7 +49,7 @@ func liveWindowReg(provider *mockllm.Provider, id, model string) *providerRegist
 // reg.windowResolver, NOT a frozen scalar — the unification), whose SessionEngine is
 // the REAL composition sessionEngineFactory, and whose ResolveContextWindow is the
 // SAME live-first resolver Build wires. DefaultResolvedModel carries the baked
-// identity; its window is no longer load-bearing (ResolvedModel resolves live-first).
+// identity; its window is not load-bearing (ResolvedModel resolves live-first).
 func defaultLiveWindowService(t *testing.T, reg *providerRegistry, provider *mockllm.Provider, model string) (*server.Service, *int) {
 	return defaultLiveWindowServiceCfg(t, reg, provider, Config{Model: model})
 }
@@ -92,7 +92,7 @@ func defaultLiveWindowServiceCfg(t *testing.T, reg *providerRegistry, provider *
 // TestDefaultLiveOnlyModelSelfCorrectsAtUse is THE BUG (issue #66 engine-window fix),
 // re-expressed for the resolve-at-use UNIFICATION: a DEFAULT-model session whose model
 // is live-only (catalog floor 0) must, AFTER the live model-catalog swap, compact at
-// the LIVE window — WITHOUT any rehydration. The shared engine no longer freezes a
+// the LIVE window — WITHOUT any rehydration. The shared engine does not freeze a
 // window at construction; it reads reg.windowResolver live on the next turn, so the
 // echo heals AND the engine self-corrects with the per-session factory NEVER consulted.
 //
@@ -133,7 +133,7 @@ func TestDefaultLiveOnlyModelSelfCorrectsAtUse(t *testing.T) {
 	}
 
 	// THE LIVE SWAP: the background refresh populates the live window for the model.
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: liveModel, ContextLimit: liveWindow}},
 	})
 	if got := reg.meta.contextWindowFor(providerOpenAI, liveModel); got != liveWindow {
@@ -179,7 +179,7 @@ func TestCataloguedDefaultModelEchoesCatalogWindow(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("SHARED-A"))
 	reg := liveWindowReg(provider, providerOpenAI, model)
 	// Seed the live store so contextWindowFor returns the catalogued window.
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: model, ContextLimit: bakedWindow}},
 	})
 
@@ -232,7 +232,7 @@ func TestContextWindowOverrideReachesEcho(t *testing.T) {
 	reg := liveWindowReg(provider, providerOpenAI, model)
 	// Seed the live store with a window DISTINCT from the override, so a passing test
 	// can only mean the override won (not a coincidental match).
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: model, ContextLimit: liveWin}},
 	})
 	if got := reg.meta.contextWindowFor(providerOpenAI, model); got != liveWin {

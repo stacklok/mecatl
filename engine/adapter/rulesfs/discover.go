@@ -247,13 +247,6 @@ func (s DirSource) Rules(_ context.Context) ([]Discovered, []SkipError, error) {
 	return out, skips, nil
 }
 
-// Discover scans dir for rules and returns them. It is a thin convenience
-// wrapper over DirSource for callers (and tests) that want single-directory
-// discovery without composing a Source.
-func Discover(dir string) ([]Discovered, []SkipError, error) {
-	return DirSource{Dir: dir}.Rules(context.Background())
-}
-
 // parseRule splits raw into an OPTIONAL YAML frontmatter and a markdown body
 // and builds the Rule. It returns a fatal reason string (with a zero Rule) on
 // malformed frontmatter so the caller records a SkipError and EXCLUDES the

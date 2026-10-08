@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
@@ -12,8 +13,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// relaxed_read_test.go pins the path-escape-posture Scenario 2 osfs half
-// (docs/acceptance/path-escape-posture.md): Read/Stat serve a canonicalized
+// relaxed_read_test.go pins the osfs half of relaxed reads: Read/Stat serve a
+// canonicalized
 // out-of-root absolute path ONLY under the explicit WithRelaxedReads
 // construction option (the zero-value workspace stays deny), serving the leaf
 // through a FRESH *os.Root opened on the target's canonical parent so a
@@ -125,6 +126,51 @@ func TestRelaxedReads_OutOfRootReadServed(t *testing.T) {
 	// empty read.
 	if _, err := relaxed.Read(t.Context(), filepath.Join(outside, "nope.txt")); err == nil {
 		t.Fatal("relaxed Read of a nonexistent out-of-root path must error")
+	}
+}
+
+// TestRelaxedReads_OutOfRootReadDirServed pins that WithRelaxedReads applies
+// the same absolute-path carve-out to directory metadata as to Read and Stat.
+// The default workspace remains confined, results stay sorted, and the serving
+// root rejects relative traversal and nested symlink escapes.
+func TestRelaxedReads_OutOfRootReadDirServed(t *testing.T) {
+	t.Parallel()
+	root, outside, _ := setupRelaxedFS(t)
+
+	plain, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace(plain): %v", err)
+	}
+	if _, err := plain.ReadDir(t.Context(), outside); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("default ReadDir(%q) = %v, want ErrPathEscape", outside, err)
+	}
+
+	relaxed, err := osfs.NewWorkspace(root, osfs.WithRelaxedReads())
+	if err != nil {
+		t.Fatalf("NewWorkspace(relaxed): %v", err)
+	}
+	entries, err := relaxed.ReadDir(t.Context(), outside)
+	if err != nil {
+		t.Fatalf("relaxed ReadDir(%q): %v", outside, err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+	if got, want := strings.Join(names, ","), "deep,link,out.txt"; got != want {
+		t.Fatalf("relaxed ReadDir names = %q, want sorted %q", got, want)
+	}
+	if _, err := relaxed.ReadDir(t.Context(), filepath.Join(outside, "out.txt")); err == nil {
+		t.Fatal("relaxed ReadDir(non-directory) = nil error")
+	}
+	if _, err := relaxed.ReadDir(t.Context(), filepath.Join("..", "outside")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("relaxed ReadDir(relative traversal) = %v, want ErrPathEscape", err)
+	}
+	if _, err := relaxed.ReadDir(t.Context(), filepath.Join(outside, "link")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("relaxed ReadDir(nested symlink escape) = %v, want ErrPathEscape", err)
+	}
+	if _, err := relaxed.ReadDir(t.Context(), string(filepath.Separator)); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("relaxed ReadDir(filesystem root) = %v, want ErrPathEscape", err)
 	}
 }
 

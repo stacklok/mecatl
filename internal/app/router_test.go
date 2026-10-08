@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
-// router_test.go covers the OPT-IN semantic Subagent model router (ADR 0031, Phase 5):
+// router_test.go covers the OPT-IN semantic Subagent model router:
 // the buildModelRouterTask closure (category→model mapping, precedence, fail-soft,
 // breaker) and the end-to-end proof through the REAL composition that a routed
 // delegation mints the child on the classifier-chosen model.
@@ -38,7 +38,7 @@ func routerTaxonomyCfg() Config {
 	}
 }
 
-// OFF (ADR 0042): the TAXONOMY is the enable, with a kill-switch override. A non-empty
+// OFF: the TAXONOMY is the enable, with a kill-switch override. A non-empty
 // taxonomy that is NOT disabled returns a non-nil closure; an empty taxonomy OR the
 // kill-switch (RouterDisabled) returns nil — the engine then carries no router and the
 // run() hook's routeTask is nil (byte-identical to no router).
@@ -85,18 +85,23 @@ func TestBuildModelRouterTaskMapsCategoryToModel(t *testing.T) {
 	if fn == nil {
 		t.Fatal("router task must be non-nil when enabled with a taxonomy")
 	}
-	cat, model, usage, reason, ok := fn(context.Background(), "redesign the storage layer")
-	if !ok {
+	result := fn.Route(context.Background(), "redesign the storage layer")
+	if !result.OK {
 		t.Fatal("a valid classification must resolve")
 	}
-	if cat != "large" || model != routerLarge {
-		t.Fatalf("routed (category, model) = (%q, %q), want (large, %q)", cat, model, routerLarge)
+	if result.Category != "large" || result.Model != routerLarge {
+		t.Fatalf("routed (category, model) = (%q, %q), want (large, %q)", result.Category, result.Model, routerLarge)
 	}
-	if reason != "" {
-		t.Fatalf("a successful route must carry no miss reason; got %q", reason)
+	if result.Reason != "" {
+		t.Fatalf("a successful route must carry no miss reason; got %q", result.Reason)
 	}
-	if usage.TotalTokens() != inputTok+outputTok {
-		t.Fatalf("hit usage.TotalTokens() = %d, want %d (classifier spend must propagate through the composition closure)", usage.TotalTokens(), inputTok+outputTok)
+	wantUsage := session.Usage{InputTokens: inputTok, OutputTokens: outputTok}
+	bucket := result.Usage.Buckets[session.UsageKindRouter]
+	if bucket.Total.TotalTokens() != inputTok+outputTok {
+		t.Fatalf("hit usage.TotalTokens() = %d, want %d (classifier spend must propagate through the composition closure)", bucket.Total.TotalTokens(), inputTok+outputTok)
+	}
+	if bucket.Total != wantUsage || bucket.Models[providerAnthropic+"/session-model"] != wantUsage {
+		t.Fatalf("router composition attribution = %#v, want exact %s/session-model=%+v", bucket, providerAnthropic, wantUsage)
 	}
 }
 
@@ -115,7 +120,7 @@ func TestBuildModelRouterTaskPropagatesUsageOnMiss(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "session-model")
 
 	fn := buildModelRouterTask(routerTaxonomyCfg(), reg, prov, providerAnthropic, "session-model")
-	cat, model, usage, reason, ok := fn(context.Background(), "x")
+	cat, model, usage, reason, ok := callModelRouter(context.Background(), fn, "x")
 	if ok || cat != "" || model != "" {
 		t.Fatalf("a garbage verdict must be a fail-soft miss; got (cat=%q, model=%q, ok=%v)", cat, model, ok)
 	}
@@ -140,7 +145,7 @@ func TestBuildModelRouterTaskResolvesCategoryAlias(t *testing.T) {
 	cfg.ModelAliases = map[string]string{"tiny": "resolved-tiny-1.0"} // alias → concrete id
 
 	fn := buildModelRouterTask(cfg, reg, prov, providerAnthropic, "session-model")
-	_, model, _, _, ok := fn(context.Background(), "rename a var")
+	_, model, _, _, ok := callModelRouter(context.Background(), fn, "rename a var")
 	if !ok || model != "resolved-tiny-1.0" {
 		t.Fatalf("aliased category routed to (%q, %v), want resolved-tiny-1.0 true", model, ok)
 	}
@@ -153,7 +158,7 @@ func TestBuildModelRouterTaskFailSoftOnMiss(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "session-model")
 
 	fn := buildModelRouterTask(routerTaxonomyCfg(), reg, prov, providerAnthropic, "session-model")
-	if _, _, _, reason, ok := fn(context.Background(), "x"); ok || reason != agent.RouterMissBadVerdict {
+	if _, _, _, reason, ok := callModelRouter(context.Background(), fn, "x"); ok || reason != agent.RouterMissBadVerdict {
 		t.Fatalf("a classifier miss must be fail-soft with the engine reason passed through; ok=%v reason=%q", ok, reason)
 	}
 }
@@ -168,7 +173,7 @@ func TestBuildModelRouterTaskFailSoftOnUnresolvableTarget(t *testing.T) {
 	fn := buildModelRouterTask(cfg, reg, prov, providerAnthropic, "session-model")
 	// The classifier picks "small" (RouterCategories[0]); its target "sonnet" resolves to
 	// inherit → a COMPOSITION-side miss naming the category + selector (issue #287).
-	_, _, _, reason, ok := fn(context.Background(), "x")
+	_, _, _, reason, ok := callModelRouter(context.Background(), fn, "x")
 	if ok {
 		t.Fatal("an unresolvable category target must be fail-soft (ok=false)")
 	}
@@ -186,7 +191,7 @@ func TestBuildModelRouterTaskFailSoftOnEmptySelector(t *testing.T) {
 	cfg := routerTaxonomyCfg()
 	cfg.RouterCategories[0].Model = "" // the chosen category's selector is empty
 	fn := buildModelRouterTask(cfg, reg, prov, providerAnthropic, "session-model")
-	_, _, _, reason, ok := fn(context.Background(), "x")
+	_, _, _, reason, ok := callModelRouter(context.Background(), fn, "x")
 	if ok {
 		t.Fatal("an empty category selector must be fail-soft (ok=false)")
 	}
@@ -261,7 +266,7 @@ models:
 }
 
 // foldOperatorModelRouter ORs the YAML `disabled:` kill-switch into cfg.RouterDisabled
-// (ADR 0042, mirroring foldOperatorGuardrails). A regression dropping the OR fails here.
+// (mirroring foldOperatorGuardrails). A regression dropping the OR fails here.
 func TestFoldOperatorModelRouterFoldsDisabled(t *testing.T) {
 	const yamlCfg = `
 models:
@@ -308,7 +313,7 @@ models:
 	}
 }
 
-// logModelRouterFacts (ADR 0042): no taxonomy → SILENT; taxonomy + disabled → a one-time
+// logModelRouterFacts: no taxonomy → SILENT; taxonomy + disabled → a one-time
 // DISABLED WARN; taxonomy + not disabled → the ACTIVE INFO (category count + classifier).
 func TestLogModelRouterFacts(t *testing.T) {
 	t.Run("no taxonomy → silent", func(t *testing.T) {
@@ -368,6 +373,25 @@ func TestLogModelRouterFacts(t *testing.T) {
 			t.Fatalf("the DISABLED WARN must NOT fire when a taxonomy is present and not disabled; got:\n%s", log)
 		}
 	})
+	t.Run("Jev summary includes safe threshold and category mapping", func(t *testing.T) {
+		var buf bytes.Buffer
+		diag := slogdiag.New(&buf, false, port.LevelDebug)
+		cfg := Config{
+			Model: "session-model", Diagnostics: diag, RouterBackend: routerBackendJev,
+			RouterJevModel: "jev-1.13.0", RouterJevMinimumConfidence: 0,
+			RouterCategories: []permconfig.RouterCategory{{Name: "deep", Description: "PRIVATE DESCRIPTION", Model: "capable"}},
+		}
+		logModelRouterFacts(cfg)
+		log := buf.String()
+		for _, want := range []string{"backend=jev", "classifier=jev-1.13.0", "minimum_confidence=0", `category_mappings="[deep=capable]"`} {
+			if !strings.Contains(log, want) {
+				t.Fatalf("Jev startup summary missing %q: %s", want, log)
+			}
+		}
+		if strings.Contains(log, "PRIVATE DESCRIPTION") {
+			t.Fatalf("category description leaked into startup summary: %s", log)
+		}
+	})
 }
 
 // The `router` slot (or classifier-slot) actually changes which model the CLASSIFIER
@@ -389,7 +413,7 @@ func TestRouterClassifierRunsOnSlotModel(t *testing.T) {
 	if fn == nil {
 		t.Fatal("router task must be non-nil")
 	}
-	cat, _, _, _, ok := fn(context.Background(), "classify this")
+	cat, _, _, _, ok := callModelRouter(context.Background(), fn, "classify this")
 	if !ok || cat != "large" {
 		t.Fatalf("classification failed: cat=%q ok=%v", cat, ok)
 	}
@@ -429,7 +453,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
-		// ADR 0042: the taxonomy is the enable — no flag needed to turn the router on.
+		// The taxonomy is the enable — no flag needed to turn the router on.
 		RouterCategories: []permconfig.RouterCategory{
 			{Name: "small", Description: "trivial tasks", Model: routerSmall},
 			{Name: "large", Description: "deep reasoning", Model: routerLarge},
@@ -482,7 +506,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 	}
 }
 
-// END-TO-END byte-identical-when-OFF: with the router OFF (no taxonomy, ADR 0042), the
+// END-TO-END byte-identical-when-OFF: with the router OFF (no taxonomy), the
 // SAME script runs without a classifier turn — the child inherits the session model and
 // NO request carries a routed model. Proves OFF ⇒ no classifier call.
 func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
@@ -496,7 +520,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
-		// OFF (ADR 0042): no taxonomy ⇒ byte-identical to no router (no classifier call).
+		// OFF: no taxonomy ⇒ byte-identical to no router (no classifier call).
 		AllowAllTools:       true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient: offlineHTTPClient(),
@@ -549,7 +573,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 // terminal text).
 func drainRunWithSubagentStart(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) (final string, starts []session.SubagentPayload) {
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -569,10 +593,10 @@ func drainRunWithSubagentStart(run interface {
 // category-selector-empty miss (issue #287) — a detailed reason like
 // "category-selector-empty (category=small)" — must be REDUCED to the bare static code
 // before it reaches the delegation-start event (routingReasonPayload's allowlist,
-// engine/agent/subagent.go). This closes the composition-to-wire seam that was previously
-// only indirectly verified: TestBuildModelRouterTaskFailSoftOnEmptySelector proves the
-// closure returns the detailed string, and the routingReasonPayload unit tests prove the
-// reduction in isolation, but nothing drove the two together through a real Build → Run.
+// engine/agent/subagent.go). This covers the composition-to-wire seam end to end:
+// TestBuildModelRouterTaskFailSoftOnEmptySelector proves the closure returns the detailed
+// string and the routingReasonPayload unit tests prove the reduction in isolation; this
+// test drives the two together through a real Build → Run.
 func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()

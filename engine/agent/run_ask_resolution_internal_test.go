@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	t.Run("root ordinary resolution is atomic", func(t *testing.T) {
 		run := &Run{asks: newAskRegistry()}
-		verdicts := run.asks.registerPending(session.PendingAsk{AskID: "root-ordinary"})
+		verdicts := run.asks.registerAsk(session.PendingAsk{AskID: "root-ordinary", Origin: session.ApprovalOriginPermission})
 
 		const callers = 32
 		assertOneResolution(t, resolveConcurrently(run, "root-ordinary", session.VerdictAllowAlways, callers), callers)
@@ -27,7 +28,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 
 	t.Run("root plan ask stays pending for Approve", func(t *testing.T) {
 		run := &Run{asks: newAskRegistry()}
-		verdicts := run.asks.registerPending(session.PendingAsk{AskID: "root-plan", PlanOriginated: true})
+		verdicts := run.asks.registerAsk(session.PendingAsk{AskID: "root-plan", Origin: session.ApprovalOriginPlan})
 
 		for i := 0; i < 2; i++ {
 			if got := run.ResolveOrdinaryAsk("root-plan", session.VerdictAllowOnce); got != AskResolutionPlanOriginated {
@@ -49,7 +50,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	t.Run("surfaced child ordinary ask resolves exactly once", func(t *testing.T) {
 		parent := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
 		child := &Run{asks: newAskRegistry()}
-		verdicts := child.asks.registerPending(session.PendingAsk{AskID: "child-ordinary"})
+		verdicts := child.asks.registerAsk(session.PendingAsk{AskID: "child-ordinary", Origin: session.ApprovalOriginPermission})
 		parent.childAsks.registerChild("child-ordinary", child)
 
 		const callers = 32
@@ -62,7 +63,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	t.Run("surfaced child plan ask and route stay pending for Approve", func(t *testing.T) {
 		parent := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
 		child := &Run{asks: newAskRegistry()}
-		verdicts := child.asks.registerPending(session.PendingAsk{AskID: "child-plan", PlanOriginated: true})
+		verdicts := child.asks.registerAsk(session.PendingAsk{AskID: "child-plan", Origin: session.ApprovalOriginPlan})
 		parent.childAsks.registerChild("child-plan", child)
 
 		for i := 0; i < 2; i++ {
@@ -88,7 +89,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 			t.Fatalf("unknown outcome = %v, want %v", got, AskResolutionNotPending)
 		}
 
-		verdicts := run.asks.registerPending(session.PendingAsk{AskID: "late"})
+		verdicts := run.asks.registerAsk(session.PendingAsk{AskID: "late", Origin: session.ApprovalOriginPermission})
 		if got := run.ResolveOrdinaryAsk("late", session.VerdictAllowOnce); got != AskResolutionResolved {
 			t.Fatalf("later registered ask outcome = %v, want %v", got, AskResolutionResolved)
 		}
@@ -96,6 +97,89 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 			t.Fatalf("later registered ask verdict = %v, want %v", got.verdict, session.VerdictAllowOnce)
 		}
 	})
+}
+
+func TestApproveReportsStaleSurfacedChildAsk(t *testing.T) {
+	parent := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
+	child := &Run{asks: newAskRegistry()}
+	ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Origin: session.ApprovalOriginPermission}
+	child.asks.registerAsk(ask)
+	parent.childAsks.registerSurfaced(ask, child, 1)
+	child.asks.discard(ask.AskID)
+
+	if err := parent.Approve(ask.AskID, session.VerdictAllowOnce); !errors.Is(err, ErrApprovalNotPending) {
+		t.Fatalf("stale compatibility approval error = %v, want ErrApprovalNotPending", err)
+	}
+	if got := parent.childAsks.takeAccepted(child); len(got) != 0 {
+		t.Fatalf("stale approval recorded a parent event: %+v", got)
+	}
+	if !parent.childAsks.unregister(ask.AskID) {
+		t.Fatal("stale approval consumed the terminal retract gate")
+	}
+}
+
+// TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait deterministically
+// models cancellation after the verdict entered the child's buffered channel,
+// before the child could emit EvApproval. The terminal drain must still publish
+// exactly one parent approval and must not retract an answered ask.
+func TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		verdict   session.ApprovalVerdict
+		guardrail bool
+	}{
+		{name: "ordinary allow", verdict: session.VerdictAllowOnce},
+		{name: "ordinary deny", verdict: session.VerdictDeny},
+		{name: "scoped guardrail", verdict: session.VerdictAllowOnce, guardrail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &Run{childAsks: newChildAskRouter(), children: newChildRunRegistry()}
+			child := &Run{asks: newAskRegistry()}
+			ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Call: "collision", Origin: session.ApprovalOriginPermission}
+			if tc.guardrail {
+				ask.Origin = session.ApprovalOriginHookGuardrail
+				ask.Guardrail = &session.GuardrailPendingScope{ReviewID: "review", Kind: session.GuardrailApprovalAction}
+			}
+			verdicts := child.asks.registerAsk(ask)
+			parent.childAsks.registerSurfaced(ask, child, 7)
+			var emitted []session.Event
+			parent.children.emit = func(ev session.Event) { emitted = append(emitted, ev) }
+			posture := childPosture{caps: parentCaps{emitChildApprovals: func(child *Run) {
+				parent.children.emitAccepted(
+					func() []session.Event { return parent.childAsks.takeAccepted(child) },
+					func(ev session.Event) bool { parent.children.emit(ev); return true },
+					func(events []session.Event) { parent.childAsks.requeueAccepted(child, events) },
+				)
+			}}}
+			if tc.guardrail {
+				wrong := ApprovalResolution{AskID: ask.AskID, ReviewID: "wrong", Kind: session.GuardrailApprovalAction, Verdict: tc.verdict}
+				if err := parent.ResolveApproval(wrong); err == nil {
+					t.Fatal("wrong guardrail review was accepted")
+				}
+				if got := parent.childAsks.takeAccepted(child); len(got) != 0 {
+					t.Fatalf("rejected verdict recorded approval: %+v", got)
+				}
+				valid := ApprovalResolution{AskID: ask.AskID, ReviewID: "review", Kind: session.GuardrailApprovalAction, Verdict: tc.verdict}
+				if err := parent.ResolveApproval(valid); err != nil {
+					t.Fatal(err)
+				}
+			} else if got := parent.ResolveOrdinaryAsk(ask.AskID, tc.verdict); got != AskResolutionResolved {
+				t.Fatalf("ordinary result = %v, want resolved", got)
+			}
+			// The buffered verdict was accepted, but the cancelled child never
+			// consumes it or emits its own approval before its terminal result.
+			if got := len(verdicts); got != 1 {
+				t.Fatalf("buffered verdicts = %d, want one", got)
+			}
+			handleChildEvent(child, session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}}, posture)
+			parent.children.retractAsksVia(parent.unregisterChildAsk, []string{ask.AskID})
+			if len(emitted) != 1 || emitted[0].Type != session.EvApproval || emitted[0].Turn != 7 ||
+				emitted[0].Approval == nil || emitted[0].Approval.AskID != ask.AskID ||
+				emitted[0].Approval.Verdict != session.VerdictString(tc.verdict) || emitted[0].Approval.Call != "" {
+				t.Fatalf("terminal child events = %+v, want one safe parent approval", emitted)
+			}
+		})
+	}
 }
 
 func resolveConcurrently(run *Run, askID string, verdict session.ApprovalVerdict, callers int) <-chan AskResolution {

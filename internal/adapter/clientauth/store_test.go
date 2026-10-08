@@ -805,9 +805,9 @@ func TestIssParameterIsRequiredOnlyWhenAdvertised(t *testing.T) {
 }
 
 // TestReEnrolmentReplacesAnExistingCredential pins that logging in again works.
-// Save with a nil expected version is create-only, so enrolment used to succeed
-// exactly once per target and every later login failed a CAS precondition —
-// leaving no way to replace an expired or revoked credential.
+// Save with a nil expected version is create-only; enrolment must not use it for
+// an existing target, or every later login fails a CAS precondition — leaving
+// no way to replace an expired or revoked credential.
 func TestReEnrolmentReplacesAnExistingCredential(t *testing.T) {
 	creds := credentials(t)
 	id := identity("host.example:18081")
@@ -842,10 +842,10 @@ func TestReEnrolmentReplacesAnExistingCredential(t *testing.T) {
 }
 
 // TestTokenSizeBoundIsTheTokenLimitNotTheIdentityLimit pins the bound a token
-// value gets. safe() caps identity fields at 1024 and validToken used to apply it
-// to the access token, which silently overrode the 16384 limit sitting beside it:
-// a JWT with many group claims (Entra is the common case) could not be stored,
-// and the failure surfaced as "credential storage unavailable".
+// value gets. safe() caps identity fields at 1024; applying it to the access
+// token would silently override the 16384 limit sitting beside it: a JWT with
+// many group claims (Entra is the common case) could not be stored, and the
+// failure would surface as "credential storage unavailable".
 func TestTokenSizeBoundIsTheTokenLimitNotTheIdentityLimit(t *testing.T) {
 	creds := credentials(t)
 	id := identity("host.example:18081")
@@ -956,8 +956,8 @@ func TestLogoutReconcilesLocalStateAndRevokesWithoutExposingTokens(t *testing.T)
 // TestRevocationErrorNeverLeaksProviderEndpointURL pins that a genuine
 // *url.Error against a provider-controlled endpoint (here, a connection
 // refused by an unreachable issuer) never reaches LogoutResult.RevocationError
-// verbatim -- url.Error.Error() embeds the full request URL, and ADR 0277
-// excludes provider-controlled discovery endpoint values from errors,
+// verbatim -- url.Error.Error() embeds the full request URL, and
+// provider-controlled discovery endpoint values are kept out of errors,
 // diagnostics, and UI state.
 func TestRevocationErrorNeverLeaksProviderEndpointURL(t *testing.T) {
 	root := t.TempDir()
@@ -1238,10 +1238,10 @@ func TestRegistryHoldsOneEnrolmentPerTarget(t *testing.T) {
 	if got.Identity.Issuer != "https://keycloak.example/realms/x" || got.IssuerCAFile != "/ca/kc.pem" {
 		t.Fatalf("stale enrolment survived: %#v", got.Identity)
 	}
-	// The repair case my first attempt missed: a registry that ALREADY holds
-	// duplicates for a target. Replacing matches in place kept them as identical
-	// copies, so FindTarget stayed broken and a re-login could not recover. Write
-	// such a registry directly, since Upsert can no longer create one.
+	// The repair case: a registry that ALREADY holds duplicates for a target.
+	// Replacing matches in place would keep them as identical copies, so
+	// FindTarget would stay broken and a re-login could not recover. Write such a
+	// registry directly, since Upsert cannot create one.
 	dupDir := t.TempDir()
 	dupA, dupB := identity(target), identity(target)
 	dupA.Issuer, dupB.Issuer = "https://old-one.example", "https://old-two.example"
@@ -1319,11 +1319,11 @@ func TestRegistryReadsLegacyIssuerCAAndMigratesOnMutation(t *testing.T) {
 	}
 }
 
-// TestRegistryOmitsInvalidEntriesWithoutBlockingOthers pins the fix for a real
-// regression: list() used to fail the WHOLE registry read if ANY single entry
-// had a relative issuer_ca_file (a shape valid before validIssuerCAFile required
-// an absolute path), regardless of which target the caller actually asked
-// about. One legacy or damaged row then permanently broke List/FindTarget/Enroll
+// TestRegistryOmitsInvalidEntriesWithoutBlockingOthers pins that list() does not
+// fail the WHOLE registry read when ANY single entry has a relative
+// issuer_ca_file (a legacy shape; validIssuerCAFile requires an absolute path),
+// regardless of which target the caller actually asked about. Otherwise one
+// legacy or damaged row would permanently break List/FindTarget/Enroll
 // for every OTHER target too, with no repair path -- Upsert's own per-target
 // replace can only run after list() has already succeeded once. An invalid
 // entry must be excluded, not fatal.
@@ -1331,16 +1331,7 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	dir := t.TempDir()
 	bad := Connection{Identity: identity("relative-ca.example:443"), IssuerCAFile: "issuer-ca.pem"}
 	good := Connection{Identity: identity("unrelated-target.example:443"), IssuerCAFile: "/ca.pem"}
-	body, err := json.Marshal(struct {
-		Version     int          `json:"version"`
-		Connections []Connection `json:"connections"`
-	}{Version: 1, Connections: []Connection{bad, good}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeRegistryConnections(t, dir, bad, good)
 	reg, err := OpenRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -1362,6 +1353,56 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	// legacy rows are tolerated on read.
 	if _, err := reg.Upsert(bad); err == nil || !strings.Contains(err.Error(), "absolute and clean") {
 		t.Fatalf("Upsert relative CA error = %v", err)
+	}
+}
+
+func TestRegistryQuarantinesMalformedPersistedServerCAAndRejectsRelativeUpsert(t *testing.T) {
+	dir := t.TempDir()
+	bad := Connection{Identity: identity("relative-server-ca.example:443"), ServerCAFile: "server-ca.pem"}
+	good := Connection{Identity: identity("valid-server-ca.example:443"), ServerCAFile: "/server-ca.pem"}
+	writeRegistryConnections(t, dir, bad, good)
+	reg, err := OpenRegistry(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := reg.List()
+	if err != nil {
+		t.Fatalf("List error = %v, want malformed server CA row quarantined", err)
+	}
+	if len(all) != 1 || all[0].Identity.Target != good.Identity.Target {
+		t.Fatalf("List = %#v, want only valid server CA row", all)
+	}
+	if all[0].ServerCAFile != good.ServerCAFile {
+		t.Fatalf("round-tripped server CA = %q, want %q", all[0].ServerCAFile, good.ServerCAFile)
+	}
+	if _, err := reg.FindTarget(bad.Identity.Target); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("FindTarget(malformed server CA row) = %v, want ErrNotFound", err)
+	}
+	if _, err := reg.Upsert(bad); err == nil || !strings.Contains(err.Error(), "server CA path must be absolute and clean") {
+		t.Fatalf("Upsert relative server CA error = %v", err)
+	}
+}
+
+func TestDeleteTargetCASIncludesServerCAFile(t *testing.T) {
+	reg, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := Connection{Identity: identity("server-ca-cas.example:443"), ServerCAFile: "/current-server-ca.pem"}
+	if _, err := reg.Upsert(current); err != nil {
+		t.Fatal(err)
+	}
+	stale := current
+	stale.ServerCAFile = "/stale-server-ca.pem"
+	if _, err := reg.DeleteTarget(current.Identity.Target, []Connection{stale}); !errors.Is(err, credentialstore.ErrConflict) {
+		t.Fatalf("DeleteTarget with stale server CA error = %v, want ErrConflict", err)
+	}
+	got, err := reg.FindTarget(current.Identity.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ServerCAFile != current.ServerCAFile {
+		t.Fatalf("server CA after rejected delete = %q, want %q", got.ServerCAFile, current.ServerCAFile)
 	}
 }
 
@@ -1404,6 +1445,20 @@ func TestRegistryMutationsPreserveQuarantinedRawRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertQuarantined("replaceTarget")
+}
+
+func writeRegistryConnections(t *testing.T, dir string, connections ...Connection) {
+	t.Helper()
+	body, err := json.Marshal(struct {
+		Version     int          `json:"version"`
+		Connections []Connection `json:"connections"`
+	}{Version: 1, Connections: connections})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clientauth-connections.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func mustStoreJSON(t *testing.T, value any) json.RawMessage {

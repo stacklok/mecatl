@@ -197,6 +197,56 @@ func TestDiscoveredLoginMatchingSavedEnrollmentSkipsConfirmation(t *testing.T) {
 	}
 }
 
+func TestSavedDiscoveredEnrollmentChangedServerCARequiresConfirmation(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+
+	discovered := discoveredLoginFixture()
+	enrollment, err := discoveredEnrollmentFrom(discovered, "", []string{"api.read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := enrollment.Connection
+	saved.ServerCAFile = "/old-server-ca.pem"
+	registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Upsert(saved); err != nil {
+		t.Fatal(err)
+	}
+
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return discovered, nil }
+	confirmed := false
+	confirmDiscoveredEnrollment = func(_ io.Reader, _ io.Writer, got discoveredEnrollment) (bool, error) {
+		confirmed = true
+		if got.Connection.ServerCAFile != "/new-server-ca.pem" {
+			t.Fatalf("confirmation server CA = %q, want changed server CA", got.Connection.ServerCAFile)
+		}
+		return true, nil
+	}
+	loggedIn := false
+	executeRemoteLogin = func(_ context.Context, got clientauth.Connection, _ bool, _ clientauth.CredentialStoreMode) error {
+		loggedIn = true
+		if got.ServerCAFile != "/new-server-ca.pem" {
+			t.Fatalf("login server CA = %q, want changed server CA", got.ServerCAFile)
+		}
+		return nil
+	}
+
+	if err := runRemoteLogin("api.example.com", []string{"--server-tls-ca", "/new-server-ca.pem"}); err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed || !loggedIn {
+		t.Fatalf("changed server CA = confirmed:%v logged in:%v", confirmed, loggedIn)
+	}
+}
+
 func TestDiscoveredLoginChangedEnrollmentConfirms(t *testing.T) {
 	mutations := map[string]func(*clientauth.Connection){
 		"resource":              func(c *clientauth.Connection) { c.ResourceURL = "https://other.example.com" },
@@ -253,7 +303,7 @@ func discoveredLoginFixture() discoveredResource {
 	return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}
 }
 
-func TestADR_0305_ResourceTargetSeparation(t *testing.T) {
+func TestResourceTargetSeparation(t *testing.T) {
 	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/service/v1", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/service/v1", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}, "grpc.example.com:7443", []string{"api.read"})
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +330,7 @@ func TestInvariant_oauth_three_transport_trust_split(t *testing.T) {
 	}
 }
 
-func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
+func TestDiscoveredIdentityConfirmation(t *testing.T) {
 	originalDiscover := discoverRemoteResource
 	originalConfirm := confirmDiscoveredEnrollment
 	originalLogin := executeRemoteLogin
@@ -342,7 +392,7 @@ func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
 	}
 }
 
-func TestADR_0305_DiscoveredScopeSelection(t *testing.T) {
+func TestDiscoveredScopeSelection(t *testing.T) {
 	profile := discoveredResource{ScopesPresent: true, Scopes: []string{"profile", "api.read"}}
 	scopes, err := discoveredScopes(profile, false)
 	if err != nil {
@@ -413,18 +463,18 @@ func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_RejectsDiscoveryScopesFlag(
 	}
 }
 
-// TestADR_0305_DiscoveredScopeRejectsCommaSmuggling pins the fix for a
+// TestDiscoveredScopeRejectsCommaSmuggling pins the fix for a
 // discovered scope value containing a literal comma: it must be rejected, not
 // silently split into two bogus scopes when later CSV-joined and re-split by
 // discoveredEnrollmentFrom.
-func TestADR_0305_DiscoveredScopeRejectsCommaSmuggling(t *testing.T) {
+func TestDiscoveredScopeRejectsCommaSmuggling(t *testing.T) {
 	profile := discoveredResource{ScopesPresent: true, Scopes: []string{"api.read", "smuggled,scope"}}
 	if _, err := discoveredScopes(profile, false); err == nil {
 		t.Fatal("discovered scope containing a comma was accepted")
 	}
 }
 
-func TestADR_0277_ExplicitEnrollmentCompatibility(t *testing.T) {
+func TestExplicitEnrollmentCompatibility(t *testing.T) {
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
 	marker := errors.New("captured")
@@ -478,7 +528,7 @@ func TestOAuthProtectedResource_Scenario6_EndToEnd(t *testing.T) {
 	}
 }
 
-func TestADR_0305_ProviderCompatibility(t *testing.T) {
+func TestResourceDiscoveryProviderCompatibility(t *testing.T) {
 	identity := reflect.TypeOf(clientauth.Identity{})
 	for _, name := range []string{"Resource", "TokenFormat", "OpaqueToken"} {
 		if _, found := identity.FieldByName(name); found {

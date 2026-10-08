@@ -61,12 +61,12 @@ func lastInputTextMarked(t *testing.T, raw string) bool {
 	return false
 }
 
-// TestADR_0346_BreakpointCacheReadE2E is AC1.7: the whole point of ADR 0346,
+// TestBreakpointCacheReadE2E is AC1.7: the whole point of the protocol-native breakpoint,
 // driven end to end offline through the REAL openai adapter.
 //
 // The endpoint is an operator-overridden base URL, which resolves to
 // CacheDialectNone via cacheDialectFor. That is the EXACT deployment shape the
-// reported incident came from: before ADR 0346 the dialect gate meant such an
+// reported incident came from: before the protocol-native breakpoint the dialect gate meant such an
 // endpoint got no cache ask at all, so a Claude model there re-paid full input
 // every single turn. providerConstructor stays nil so nothing is mocked between
 // the loop and the HTTP body.
@@ -83,7 +83,7 @@ func lastInputTextMarked(t *testing.T, raw string) bool {
 // the cached_tokens the upstream reports back through the adapter's usage
 // mapping and out to the client-visible event, so a regression anywhere along
 // that path fails here.
-func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
+func TestBreakpointCacheReadE2E(t *testing.T) {
 	ctx := context.Background()
 
 	capture := &breakpointCapture{}
@@ -132,7 +132,7 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 	svc := built.Service
 
 	// The overridden base URL must genuinely be dialect-less, or the test proves
-	// nothing about the case ADR 0346 fixed.
+	// nothing about the dialect-less case.
 	reg, err := buildProviderRegistry(Config{
 		OpenRouterKey:     "sk-test",
 		ProviderOverrides: permconfig.ProviderOverrides{providerOpenRouter: {BaseURL: srv.URL + "/v1"}},
@@ -181,18 +181,18 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 		t.Errorf("turn 1 carried a prompt_cache_breakpoint; it must mark nothing before an assistant turn exists.\nbody=%s", bodies[0])
 	}
 	if !marked[1] {
-		t.Errorf("turn 2 carried NO prompt_cache_breakpoint on a dialect-less endpoint — this is the ADR 0346 bug.\nbody=%s", bodies[1])
+		t.Errorf("turn 2 carried NO prompt_cache_breakpoint on a dialect-less endpoint — the dialect-gated breakpoint bug.\nbody=%s", bodies[1])
 	}
 	if cacheReads[1] == 0 {
 		t.Errorf("turn 2 EvResult.Usage.CacheReadTokens = 0, want the upstream's 80 cached_tokens (reads = %v)", cacheReads)
 	}
 }
 
-// TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic is AC2.3: the
+// TestAnthropicCacheTTLStampedOnOpenRouterAnthropic is AC2.3: the
 // --anthropic-cache-ttl an operator sets must reach the openrouter-anthropic
 // entry's wire, on EVERY cache_control marker the adapter emits.
 //
-// The TTL is the concrete reason ADR 0346 registers a second, Messages-speaking
+// The TTL is the concrete reason mecatl registers a second, Messages-speaking
 // provider for one OpenRouter credential at all: the Responses protocol cannot
 // express a cache lifetime, so a Claude session routed over Responses gets the
 // API's default 5m whether the operator asked for an hour or not. If the flag
@@ -200,17 +200,16 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 // justification.
 //
 // It drives the REAL anthropic adapter (providerConstructor nil) against an
-// Anthropic-Messages SSE handler, and asserts BOTH directions: the flag set
-// stamps "ttl":"1h" on every marker, and the flag UNSET emits no ttl key at all
-// rather than a hardcoded default.
-func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
+// Anthropic-Messages SSE handler: the flag set stamps its value on every
+// marker, and the flag UNSET stamps the shared built-in default of 1h.
+func TestAnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 	for _, tc := range []struct {
 		name, ttl string
 		wantTTL   string // "" => no ttl key anywhere in the body
 	}{
 		{"operator set 1h", "1h", "1h"},
 		{"operator set 5m", "5m", "5m"},
-		{"flag unset leaves the API default", "", ""},
+		{"flag unset defaults to 1h", "", "1h"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -247,7 +246,7 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 			// A MULTI-TURN request with a layered system prompt, not driveStream's
 			// single bare message: that shape fires only the top-level marker, and a
 			// TTL test that sees one marker cannot tell "uniform" from "stamped once".
-			// This shape fires three of the four ADR 0100 slots (see the floor
+			// This shape fires three of the four cache_control slots (see the floor
 			// assertion below), so the uniformity check has something to check.
 			if err := driveCacheRichStream(entry.provider); err != nil {
 				t.Fatalf("drive stream: %v", err)
@@ -269,7 +268,7 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 			//
 			// Not four: the second conversation anchor (leadingFragmentEnd) resolves
 			// only when the history opens with an injected turn-0 fragment, and
-			// ADR 0043 made those ephemeral, so a normal conversation never has one.
+			// those are ephemeral, so a normal conversation never has one.
 			markers := countCacheControlMarkers(t, body)
 			if markers < 3 {
 				t.Fatalf("%d cache_control marker(s) on the wire, want >= 3 "+
@@ -285,6 +284,53 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 			if withTTL != markers {
 				t.Errorf("%d of %d cache_control markers carried ttl=%q; the TTL must be uniform across every marker.\nbody=%s",
 					withTTL, markers, tc.wantTTL, body)
+			}
+		})
+	}
+}
+
+// TestAnthropicCacheTTLDefaultsToOneHourOnBuiltinProviders drives the REAL
+// entry construction for each built-in Anthropic Messages provider against a
+// local server. All three must behave identically: with --anthropic-cache-ttl
+// unset every marker carries the 1-hour default, and
+// --anthropic-cache-ttl=5m restores the shorter TTL.
+func TestAnthropicCacheTTLDefaultsToOneHourOnBuiltinProviders(t *testing.T) {
+	type ttlCase struct{ name, id, flag, wantTTL string }
+	var cases []ttlCase
+	for _, id := range []string{providerAnthropic, providerOpenRouterAnthropic, providerToolhiveAnthropic} {
+		cases = append(cases,
+			ttlCase{id + "/flag unset defaults to 1h", id, "", "1h"},
+			ttlCase{id + "/flag 5m restores the shorter TTL", id, "5m", "5m"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var body string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				body = string(raw)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, toolhiveCompletedMessageSSE)
+			}))
+			defer srv.Close()
+
+			cfg := Config{LLMMaxAttempts: 1, AnthropicCacheTTL: tc.flag}
+			entry := newAnthropicEntryFor(cfg, tc.id, "test", srv.URL, newLiveMetaStore(), false)
+			if err := driveCacheRichStream(entry.provider); err != nil {
+				t.Fatalf("drive stream: %v", err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			markers := countCacheControlMarkers(t, body)
+			if markers < 3 {
+				t.Fatalf("%d cache_control marker(s), want >= 3.\nbody=%s", markers, body)
+			}
+			if got := countCacheControlTTL(t, body, tc.wantTTL); got != markers {
+				t.Errorf("%d of %d markers carried ttl=%q, want all.\nbody=%s", got, markers, tc.wantTTL, body)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -110,6 +111,35 @@ func (s *Server) listResources(ctx context.Context) ([]Resource, error) {
 		out = append(out, resourceFromSDK(s.name, r))
 	}
 	return out, nil
+}
+
+func (s *Server) listResourcesBounded(ctx context.Context, sess *mcpsdk.ClientSession, budget *CandidateListBudget) ([]Resource, error) {
+	var out []Resource
+	cursor := ""
+	seen := make(map[string]struct{})
+	for {
+		page, err := sess.ListResources(ctx, &mcpsdk.ListResourcesParams{Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			return nil, errors.New("mcp: nil resources list page")
+		}
+		if err := budget.consumePage(len(page.Resources)); err != nil {
+			return nil, err
+		}
+		for _, resource := range page.Resources {
+			out = append(out, resourceFromSDK(s.name, resource))
+		}
+		if page.NextCursor == "" {
+			return out, nil
+		}
+		if _, duplicate := seen[page.NextCursor]; duplicate {
+			return nil, errors.New("mcp: resources list cursor cycle")
+		}
+		seen[page.NextCursor] = struct{}{}
+		cursor = page.NextCursor
+	}
 }
 
 // readResource fetches a single resource by URI and returns its (translated)

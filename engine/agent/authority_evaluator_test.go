@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -87,7 +88,7 @@ func authoritySession(t *testing.T, names ...string) *session.Session {
 	return sess
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce(t *testing.T) {
+func TestAuthorityEvaluator_EveryDispatchPathConsultsTheEvaluatorOnce(t *testing.T) {
 	t.Run("sequential", func(t *testing.T) {
 		first := &authorityTool{name: "First"}
 		second := &authorityTool{name: "Second"}
@@ -107,7 +108,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvalu
 	})
 }
 
-func TestADR_0233_AuthorityEvaluator_BoundSessionWithoutEvaluatorFailsClosed(t *testing.T) {
+func TestAuthorityEvaluator_BoundSessionWithoutEvaluatorFailsClosed(t *testing.T) {
 	t.Run("nil evaluator retains authority-shaped request and rejects forged calls", func(t *testing.T) {
 		read := &authorityTool{name: "Read"}
 		omitted := &authorityTool{name: "Write"}
@@ -161,7 +162,7 @@ func TestADR_0233_AuthorityEvaluator_BoundSessionWithoutEvaluatorFailsClosed(t *
 	})
 }
 
-func TestADR_0233_AuthorityEvaluator_OwnerlessBoundSessionUsesEvaluator(t *testing.T) {
+func TestAuthorityEvaluator_OwnerlessBoundSessionUsesEvaluator(t *testing.T) {
 	read := &authorityTool{name: "Read"}
 	evaluator := &recordingAuthorityEvaluator{decision: port.AuthorityDecision{Allowed: true}}
 	sess := newSession(t, session.Limits{})
@@ -189,7 +190,7 @@ func TestADR_0233_AuthorityEvaluator_OwnerlessBoundSessionUsesEvaluator(t *testi
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial(t *testing.T) {
+func TestAuthorityEvaluator_UnavailableEvaluatorIsDistinctFromDenial(t *testing.T) {
 	readTool := &authorityTool{name: "Read"}
 	unavailable := &recordingAuthorityEvaluator{err: context.DeadlineExceeded}
 	diagnostics := &recordingDiagnostics{}
@@ -217,7 +218,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFro
 	t.Fatal("missing unavailable evaluator result")
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_AdaptersSatisfyConformanceSuite(t *testing.T) {
+func TestAuthorityEvaluator_AdaptersSatisfyConformanceSuite(t *testing.T) {
 	t.Run("noop", func(t *testing.T) {
 		authorityconformance.Run(t, func(*testing.T) port.AuthorityEvaluator { return noopauthority.New() })
 	})
@@ -229,7 +230,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_AdaptersSatisfyConformanceSuite(t
 	t.Run("cedar unavailable in this build", func(t *testing.T) { t.Skip("Cedar adapter is not part of this task") })
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_MetaToolIsAuthorizedAgainstItsTarget(t *testing.T) {
+func TestAuthorityEvaluator_MetaToolIsAuthorizedAgainstItsTarget(t *testing.T) {
 	const (
 		metaTool      = "CallMcpWithQuery"
 		allowedTarget = "mcp__github__create_issue"
@@ -294,7 +295,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_MetaToolIsAuthorizedAgainstItsTar
 	})
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithoutRawArguments(t *testing.T) {
+func TestAuthorityEvaluator_ResourceAttributeIsDerivedWithoutRawArguments(t *testing.T) {
 	t.Run("normalized workspace target", func(t *testing.T) {
 		write := &authorityTool{name: "Write"}
 		evaluator := &recordingAuthorityEvaluator{decision: port.AuthorityDecision{Allowed: true}}
@@ -431,6 +432,54 @@ func TestADR_0233_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithout
 	})
 }
 
+type failingAuthorityWorkspace struct {
+	tool.Workspace
+	err error
+}
+
+func (w failingAuthorityWorkspace) AuthorityResourcePath(string) (string, string, error) {
+	return "", "", w.err
+}
+
+func TestAuthorityResourceResolutionFailureDeniesBeforeEvaluator(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "remote resolver unavailable", err: context.DeadlineExceeded},
+		{name: "physical symlink escape", err: errors.New("path is outside workspace")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			read := &authorityTool{name: "Read"}
+			evaluator := &recordingAuthorityEvaluator{decision: port.AuthorityDecision{Allowed: true}}
+			eng := newEngine(agent.Deps{
+				LLM:                mockllm.New(mockllm.ToolCallTurn(toolCall("read", "Read", `{"path":"escape"}`))),
+				Catalog:            catalogWith(t, read),
+				AuthorityEvaluator: evaluator,
+			})
+			base := agent.MemEnv("/workspace")
+			env := tool.MustEnvironment(base.Ref(), failingAuthorityWorkspace{Workspace: base.Workspace(), err: tc.err}, base.ReadLedger(), nil)
+			sess := authoritySession(t, "Read")
+			if err := sess.Rehome(env.Ref()); err != nil {
+				t.Fatal(err)
+			}
+			events := drain(eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "read"}))
+			if read.ran.Load() != 0 || evaluator.calls() != 0 {
+				t.Fatalf("tool executions=%d evaluator calls=%d, want 0/0", read.ran.Load(), evaluator.calls())
+			}
+			for _, event := range events {
+				if event.ToolResult != nil && event.ToolResult.CallID == "read" {
+					if !event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, "authority resource") {
+						t.Fatalf("tool result=%+v, want fail-closed authority resolution error", event.ToolResult)
+					}
+					return
+				}
+			}
+			t.Fatal("missing fail-closed tool result")
+		})
+	}
+}
+
 // sequencedAuthorityEvaluator returns one decision per call in order, so a test
 // can distinguish the source-resource request from the destination-resource
 // request in a dual-resource call (Copy/Move).
@@ -451,7 +500,7 @@ func (e *sequencedAuthorityEvaluator) AuthorizeTool(_ context.Context, _ port.Au
 	return d, nil
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing(t *testing.T) {
+func TestAuthorityEvaluator_DisclosureIsNotLoadBearing(t *testing.T) {
 	t.Run("required control tools remain disclosed", func(t *testing.T) {
 		var request port.LLMRequest
 		eng := newEngine(agent.Deps{
@@ -540,7 +589,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing(t *tes
 	})
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames(t *testing.T) {
+func TestAuthorityEvaluator_ResourceReachDerivesFromToolNames(t *testing.T) {
 	const server = "resource-only"
 	capability := governance.MCPResourceCapability(server)
 

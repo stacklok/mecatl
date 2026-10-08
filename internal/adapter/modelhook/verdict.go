@@ -19,12 +19,6 @@ type Verdict struct {
 	// Reason is the checker's short rationale, folded (clamped) into the model-facing
 	// block message and the operator audit line.
 	Reason string `json:"reason"`
-	// Sanitized, when non-nil, is the checker's REWRITTEN content with the dangerous
-	// portion removed/neutralised. It is honoured ONLY in a `sanitize` rule mode (the
-	// runner rewrites the call args / tool result to it); in `block`/`advisory` modes
-	// it is ignored. A nil Sanitized in sanitize mode means "nothing to rewrite" and
-	// the runner falls back to a block (sanitize implies the content was unsafe).
-	Sanitized *string `json:"sanitized_content"`
 }
 
 // ParseVerdict requires the checker's WHOLE trimmed output to be a single JSON

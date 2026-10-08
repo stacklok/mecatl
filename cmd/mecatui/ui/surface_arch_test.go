@@ -2,9 +2,9 @@ package ui
 
 // surface_arch_test.go is the structural gate for the issue #555 Phase-2
 // surface interface (soul proof-of-pattern): it fails CI if any surface/soul
-// /skills/mcp/sessions/models vocabulary is added outside its declared homes, or if
+// /skills/mcp/sessions/models/memory vocabulary is added outside its declared homes, or if
 // Model acquires a second `surface` field or any soulState/skillsState/mcpState/
-// sessionsState/modelsState field back. It imitates approval_arch_test.go —
+// sessionsState/modelsState/userModelState field back. It imitates approval_arch_test.go —
 // placement-only, additive; it never touches rendered output (the soul goldens
 // own that).
 
@@ -33,14 +33,15 @@ var surfaceFileHomes = map[string]bool{
 	"models.go":           true,
 	"models_catalog.go":   true,
 	"models_surface.go":   true,
+	"usermodel.go":        true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 9
+const surfaceFileCount = 10
 
 // surfaceToken identifies declarations governed by the surface placement gate.
-var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|session[A-Za-z0-9]*|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderSkillsPanel|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|brokerMCPSetupState|canConnect|syncMCPSetup|renderBrokerMCPPanel|brokerEnrollmentLabel|brokerCatalogueLabel|argField|renderMCPOverlay|renderMCPPanel|renderMCPListHeader|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|modelsView|modelsNone|modelsPanel|modelsChrome|modelsMinRows|modelsState|modelsCatalogIntent|modelsSelectIntent|modelsGlobalDefaultIntent|modelsRowBudgetFor|renderModelsPanel|filterModels|clampModelsCursor|modelsDisabledNote|modelsErrorHint|modelsGatewayEmptyNote|modelsEmptyCopy|promotedStatus|providerStatusLine|renderProviderStatusLines|modelsPositionLabel|modelRowText|modelLabel|modelCapSegments|openModels|configProvenanceProviderSet|availableNotDefaultStatus)$`)
+var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|session[A-Za-z0-9]*|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|brokerMCPSetupState|canConnect|syncMCPSetup|renderBrokerMCPPanel|brokerEnrollmentLabel|brokerCatalogueLabel|argField|renderMCPOverlay|renderMCPPanel|renderMCPListHeader|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|modelsView|modelsNone|modelsPanel|modelsChrome|modelsState|modelsCatalogIntent|modelsSelectIntent|modelsGlobalDefaultIntent|filterModels|modelsDisabledNote|modelsErrorHint|modelsGatewayEmptyNote|modelsEmptyCopy|promotedStatus|providerStatusLine|renderProviderStatusLines|modelRowText|modelLabel|modelCapSegments|openModels|configProvenanceProviderSet|availableNotDefaultStatus)$`)
 
 // modelsSymbolHomes pins the deliberate three-way /models split: Model-owned
 // installation and effects, durable catalog reduction, and dynamic surface behavior.
@@ -56,12 +57,17 @@ var modelsSymbolHomes = map[string]string{
 	"reconcileSelection": "models_catalog.go", "liveModelLabel": "models_catalog.go", "modelProvenanceLine": "models_catalog.go", "modelProvenance": "models_catalog.go",
 	"statusAutoSelected": "models_catalog.go", "configProvenanceProviderSet": "models_catalog.go", "availableNotDefaultStatus": "models_catalog.go",
 	"modelsView": "models_surface.go", "modelsNone": "models_surface.go", "modelsPanel": "models_surface.go",
-	"modelsChrome": "models_surface.go", "modelsMinRows": "models_surface.go", "modelsState": "models_surface.go",
+	"modelsChrome": "models_surface.go", "modelsState": "models_surface.go",
 	"modelsCatalogIntent": "models_surface.go", "modelsSelectIntent": "models_surface.go", "modelsGlobalDefaultIntent": "models_surface.go",
-	"modelsRowBudgetFor": "models_surface.go", "renderModelsPanel": "models_surface.go", "filterModels": "models_surface.go", "clampModelsCursor": "models_surface.go",
+	"filterModels":       "models_surface.go",
 	"modelsDisabledNote": "models_surface.go", "modelsErrorHint": "models_surface.go", "modelsGatewayEmptyNote": "models_surface.go", "modelsEmptyCopy": "models_surface.go",
 	"promotedStatus": "models_surface.go", "providerStatusLine": "models_surface.go", "renderProviderStatusLines": "models_surface.go",
-	"modelsPositionLabel": "models_surface.go", "modelRowText": "models_surface.go", "modelLabel": "models_surface.go", "modelCapSegments": "models_surface.go",
+	"modelRowText": "models_surface.go", "modelLabel": "models_surface.go", "modelCapSegments": "models_surface.go",
+}
+
+var userModelSymbolHomes = map[string]string{
+	"userModelView": "usermodel.go", "userModelPanel": "usermodel.go", "userModelDetail": "usermodel.go", "userModelState": "usermodel.go",
+	"openUserModel": "usermodel.go", "userModelMove": "usermodel.go", "userModelDisabledNote": "usermodel.go", "userModelEmptyCopy": "usermodel.go", "renderUserModelMeta": "usermodel.go",
 }
 
 // TestSurfaceSymbolsLiveInSurfaceFiles walks every non-test ui package file and
@@ -107,14 +113,18 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 					continue
 				}
 				_, isModelsSymbol := modelsSymbolHomes[n]
-				if !surfaceToken.MatchString(n) && !isModelsSymbol {
+				_, isUserModelSymbol := userModelSymbolHomes[n]
+				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol {
 					continue
 				}
 				if !surfaceFileHomes[file] {
-					t.Errorf("surface/soul/skills/mcp/sessions-vocabulary declaration %q in non-surface file %s (want surface.go, soul.go, skills.go, mcp.go, or sessions.go)", n, file)
+					t.Errorf("surface vocabulary declaration %q in non-surface file %s", n, file)
 				}
 				if want, ok := modelsSymbolHomes[n]; ok && file != want {
 					t.Errorf("/models declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := userModelSymbolHomes[n]; ok && file != want {
+					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
 				}
 			}
 		}
@@ -232,12 +242,33 @@ func TestModelHasNoModelsStateField(t *testing.T) {
 	}
 }
 
+func TestModelHasNoUserModelStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	stateType := reflect.TypeFor[userModelState]()
+	pointerStateType := reflect.PointerTo(stateType)
+	for i := 0; i < st.NumField(); i++ {
+		fieldType := st.Field(i).Type
+		if fieldType == stateType || fieldType == pointerStateType {
+			t.Errorf("Model field %q has userModelState type; /memory state lives only in m.modal", st.Field(i).Name)
+		}
+	}
+}
+
+// TestModelKeepsUserModelRequestToken pins the Model-lifetime request token that
+// invalidates detail replies after the dynamic surface closes or is replaced.
+func TestModelKeepsUserModelRequestToken(t *testing.T) {
+	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelRequestToken")
+	if !ok || field.Type.Kind() != reflect.Uint64 {
+		t.Error("Model must retain uint64 userModelRequestToken as the /memory lifetime token")
+	}
+}
+
 // TestSurfaceDepsIsAmbientOnly reflects over the SHARED surfaceDeps struct and
 // asserts it carries ONLY the ambient base fields (theme/keys/marks/caps/ctx)
 // plus the Model-owned reference hit allocator, and NONE of the archived deps-per-call wideners (width/lifecycle/nextEpoch/
 // focusInput — surface-SPECIFIC collaborators live as fields on the surface's
 // own state struct, set next to deps in the same Open literal, per
-// docs/design/surface-migration-plan.md §4 decision 8). ctx is ambient: any
+// docs/drafts/surface-migration-plan.md §4 decision 8). ctx is ambient: any
 // modal that talks to the server needs the parent context, so it belongs in
 // the shared base, not on each surface. This is the anti-regression guard for
 // the deps-on-state redesign: a deps-per-call widening fails here the moment a

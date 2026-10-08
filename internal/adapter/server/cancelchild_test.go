@@ -61,8 +61,9 @@ func newInteractiveSubagentService(t *testing.T) (*server.Service, *scriptTool) 
 		Interactive: true, // the child ask SURFACES instead of auto-denying
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: engine,
-		Store:  memstore.New(),
+		Engine:   engine,
+		Store:    memstore.New(),
+		EventLog: memstore.NewEventLog(),
 
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: parentLLM.Capabilities(),
@@ -213,7 +214,6 @@ func TestGRPCConverseApproveSurfacedChildAsk(t *testing.T) {
 			if serr := stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{
 					AskId:   askID,
-					Allow:   true,
 					Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
 				}},
 			}); serr != nil {
@@ -451,8 +451,8 @@ func TestServiceCancelChildFallbacks(t *testing.T) {
 }
 
 // TestHTTPCancelChild pins the REST mirror: bad body → 400, missing child_id → 400,
-// unknown session → 404, known-but-runless session → 409 (the same surface shape as
-// /approve; the live-run path is covered end-to-end by the gRPC test).
+// unknown session → 404, known-but-runless session → 409 (the live-run path is
+// covered end-to-end by the gRPC test).
 func TestHTTPCancelChild(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), allowRules())
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))

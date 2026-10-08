@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
@@ -42,17 +44,6 @@ func (d *toolhiveLevelDiag) hasAtLevel(level port.Level, sub string) bool {
 	defer d.mu.Unlock()
 	for _, l := range d.lines {
 		if l.level == level && strings.Contains(l.msg, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-func (d *toolhiveLevelDiag) has(sub string) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, l := range d.lines {
-		if strings.Contains(l.msg, sub) {
 			return true
 		}
 	}
@@ -182,9 +173,9 @@ func TestToolhiveIntent_ProbeDown_StillRegistered(t *testing.T) {
 	if !ok {
 		t.Fatal("toolhive entry must still be registered when the probe fails")
 	}
-	status, ok := reg.outcomes.getStatus(providerToolhive)
-	if !ok || status.State != statusUnreachable {
-		t.Fatalf("status = %+v, ok=%v, want unreachable", status, ok)
+	status := reg.discovery.snapshot().providers[providerToolhive].outcome
+	if status.State != statusUnreachable {
+		t.Fatalf("status = %+v, want unreachable", status)
 	}
 	if !diag.hasAtLevel(port.LevelInfo, "probe failed") {
 		t.Error("expected an INFO probe-failed diagnostic (non-explicit intent)")
@@ -303,14 +294,14 @@ func TestToolhiveSole_ProbeDown_BootsThenHeals(t *testing.T) {
 		t.Fatal("toolhive entry missing before heal")
 	}
 
-	reg.healDefaultModel(diag, map[string][]modelEntry{
-		providerToolhive: {{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6"}},
-	})
+	healed := reg.healDefaultModelCandidate(providerToolhive, &discoverySnapshot{providers: map[string]discoveryProvider{
+		providerToolhive: {observations: []modelEntry{{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6"}}},
+	}})
 	if want := "claude-sonnet-4-6"; reg.ResolvedDefaultModel() != want {
 		t.Errorf("ResolvedDefaultModel() after heal = %q, want %q", reg.ResolvedDefaultModel(), want)
 	}
-	if !diag.has("auto-selected") {
-		t.Error("expected an 'auto-selected' INFO after healing")
+	if healed == nil || healed.level != port.LevelInfo {
+		t.Error("expected an auto-selection INFO fact after healing")
 	}
 
 	// Issue #262 review finding 4: the runtime heal must re-mint the entry's
@@ -358,33 +349,37 @@ func (t *toggleTransport) RoundTrip(*http.Request) (*http.Response, error) {
 // end through the mechanism production uses (the direct-call test above only
 // proves the method's own logic, not that the wiring reaches it).
 func TestToolhiveSole_ProbeDown_HealsThroughRealRefresh(t *testing.T) {
-	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
-	transport := &toggleTransport{body: toolhiveFixtureJSON} // starts down (up=false)
-	client := &http.Client{Transport: transport}
+	synctest.Test(t, func(t *testing.T) {
+		cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
+		transport := &toggleTransport{body: toolhiveFixtureJSON} // starts down (up=false)
+		client := &http.Client{Transport: transport}
 
-	reg, err := buildProviderRegistry(Config{
-		ToolhiveLLM:         true,
-		toolhiveConfigPath:  cfgPath,
-		liveModelHTTPClient: client,
-	}, fakeEnv(nil))
-	if err != nil {
-		t.Fatalf("buildProviderRegistry must succeed even when the sole provider is down: %v", err)
-	}
-	if reg.Default() != providerToolhive {
-		t.Fatalf("Default() = %q, want %q", reg.Default(), providerToolhive)
-	}
-	if reg.ResolvedDefaultModel() != "" {
-		t.Fatalf("ResolvedDefaultModel() = %q, want empty until healed", reg.ResolvedDefaultModel())
-	}
+		reg, err := buildProviderRegistry(Config{
+			ToolhiveLLM:         true,
+			toolhiveConfigPath:  cfgPath,
+			liveModelHTTPClient: client,
+		}, fakeEnv(nil))
+		if err != nil {
+			t.Fatalf("buildProviderRegistry must succeed even when the sole provider is down: %v", err)
+		}
+		if reg.Default() != providerToolhive {
+			t.Fatalf("Default() = %q, want %q", reg.Default(), providerToolhive)
+		}
+		if reg.ResolvedDefaultModel() != "" {
+			t.Fatalf("ResolvedDefaultModel() = %q, want empty until healed", reg.ResolvedDefaultModel())
+		}
 
-	transport.up.Store(true) // "the proxy comes up"
+		transport.up.Store(true) // "the proxy comes up"
 
-	swap := newFakeSwapper()
-	startLiveModelRefresh(port.NopDiagnostics{}, reg, swap, true /* sync */, 0)
+		synctest.Wait()
+		time.Sleep(discoveryCooldown)
+		reg.discovery.refresh(context.Background(), discoveryPicker)
+		defer reg.discovery.Close()
 
-	if want := "claude-sonnet-4-6"; reg.ResolvedDefaultModel() != want {
-		t.Fatalf("ResolvedDefaultModel() after a real sync live-refresh = %q, want %q (first-listed)", reg.ResolvedDefaultModel(), want)
-	}
+		if want := "claude-sonnet-4-6"; reg.ResolvedDefaultModel() != want {
+			t.Fatalf("ResolvedDefaultModel() after a real sync live-refresh = %q, want %q (first-listed)", reg.ResolvedDefaultModel(), want)
+		}
+	})
 }
 
 // TestHealDefaultModel_ConcurrentWithResolvedDefaultModel is the `-race`
@@ -413,8 +408,7 @@ func TestHealDefaultModel_ConcurrentWithResolvedDefaultModel(t *testing.T) {
 		},
 		defaultID: providerToolhive,
 	}
-	byProvider := map[string][]modelEntry{providerToolhive: {{ID: "claude-sonnet-4-6"}}}
-	diag := port.NopDiagnostics{}
+	view := &discoverySnapshot{providers: map[string]discoveryProvider{providerToolhive: {observations: []modelEntry{{ID: "claude-sonnet-4-6"}}}}}
 
 	var wg sync.WaitGroup
 	// Many concurrent healers (simulating the async refresh + refreshStaleModels racing).
@@ -422,7 +416,7 @@ func TestHealDefaultModel_ConcurrentWithResolvedDefaultModel(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			reg.healDefaultModel(diag, byProvider)
+			reg.healDefaultModelCandidate(providerToolhive, view)
 		}()
 	}
 	// Many concurrent Lookup/Available readers (entriesMu — review finding 4).
@@ -456,9 +450,9 @@ func TestHealDefaultModel_NoOpWhenAlreadySet(t *testing.T) {
 		entries:   map[string]providerEntry{providerToolhive: {id: providerToolhive, intentDriven: true}},
 		defaultID: providerToolhive, defaultModel: "pinned-model",
 	}
-	reg.healDefaultModel(&toolhiveLevelDiag{}, map[string][]modelEntry{
-		providerToolhive: {{ID: "other-model"}},
-	})
+	reg.healDefaultModelCandidate(providerToolhive, &discoverySnapshot{providers: map[string]discoveryProvider{
+		providerToolhive: {observations: []modelEntry{{ID: "other-model"}}},
+	}})
 	if reg.defaultModel != "pinned-model" {
 		t.Errorf("defaultModel = %q, want unchanged 'pinned-model'", reg.defaultModel)
 	}
@@ -569,12 +563,12 @@ func TestProviderStatusProto_ToolhiveScopedOnly(t *testing.T) {
 			providerOpenRouter: {id: providerOpenRouter, available: true},
 			providerToolhive:   {id: providerToolhive, available: true, intentDriven: true},
 		},
-		outcomes: newLiveOutcomeStore(),
 	}
-	reg.outcomes.recordFailure(providerOpenRouter, statusUnreachable, "should never surface")
-	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "m1"}})
-
-	out := providerStatusProto(reg)
+	view := &discoverySnapshot{providers: map[string]discoveryProvider{
+		providerOpenRouter: {outcome: providerStatus{State: statusUnreachable, Hint: "should never surface"}},
+		providerToolhive:   {outcome: providerStatus{State: statusOK}, observations: []modelEntry{{ID: "m1"}}},
+	}}
+	out := providerStatusProto(reg, view)
 	if len(out) != 1 {
 		t.Fatalf("got %d status rows, want 1 (toolhive only): %+v", len(out), out)
 	}
@@ -585,28 +579,17 @@ func TestProviderStatusProto_ToolhiveScopedOnly(t *testing.T) {
 
 func TestProviderStatusProto_AllFourStates(t *testing.T) {
 	reg := &providerRegistry{
-		entries:  map[string]providerEntry{providerToolhive: {id: providerToolhive, available: true, intentDriven: true}},
-		outcomes: newLiveOutcomeStore(),
+		entries: map[string]providerEntry{providerToolhive: {id: providerToolhive, available: true, intentDriven: true}},
 	}
 
-	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "m1"}})
-	if got := providerStatusProto(reg)[0].GetState(); got != statusOK {
-		t.Errorf("state = %q, want ok", got)
-	}
-
-	reg.outcomes.recordFailure(providerToolhive, statusUnreachable, toolhiveStatusHints[statusUnreachable])
-	if got := providerStatusProto(reg)[0]; got.GetState() != statusUnreachable || got.GetHint() == "" {
-		t.Errorf("row = %+v, want unreachable with a hint", got)
-	}
-
-	reg.outcomes.recordFailure(providerToolhive, statusUnauthorized, toolhiveStatusHints[statusUnauthorized])
-	if got := providerStatusProto(reg)[0]; got.GetState() != statusUnauthorized || got.GetHint() == "" {
-		t.Errorf("row = %+v, want unauthorized with a hint", got)
-	}
-
-	reg.outcomes.recordSuccess(reg.entries[providerToolhive], nil) // empty embedded catalog too
-	if got := providerStatusProto(reg)[0]; got.GetState() != statusEmpty || got.GetHint() == "" {
-		t.Errorf("row = %+v, want empty with a hint", got)
+	for _, state := range []string{statusOK, statusUnreachable, statusUnauthorized, statusEmpty} {
+		view := &discoverySnapshot{providers: map[string]discoveryProvider{
+			providerToolhive: {outcome: providerStatus{State: state, Hint: statusHintFor(reg.entries[providerToolhive], state)}},
+		}}
+		rows := providerStatusProto(reg, view)
+		if len(rows) != 1 || rows[0].State != state || (state != statusOK && rows[0].Hint == "") {
+			t.Fatalf("state %q projection=%v", state, rows)
+		}
 	}
 }
 
@@ -628,7 +611,7 @@ func TestProviderStatusProto_AutoSelectedBit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildProviderRegistry: %v", err)
 		}
-		rows := providerStatusProto(reg)
+		rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 		if len(rows) != 2 || rows[0].GetProviderId() != providerToolhive || !rows[0].GetDefaultModelAutoSelected() {
 			t.Fatalf("rows = %+v, want both ToolHive rows with only toolhive auto-selected", rows)
 		}
@@ -645,7 +628,7 @@ func TestProviderStatusProto_AutoSelectedBit(t *testing.T) {
 		if reg.Default() != providerToolhive {
 			t.Fatalf("Default() = %q, want toolhive (still the sole provider)", reg.Default())
 		}
-		rows := providerStatusProto(reg)
+		rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 		if len(rows) != 2 || rows[0].GetDefaultModelAutoSelected() || rows[1].GetDefaultModelAutoSelected() {
 			t.Fatalf("rows = %+v, want both ToolHive rows with DefaultModelAutoSelected=false (operator-configured)", rows)
 		}
@@ -671,7 +654,7 @@ func TestProviderStatusProto_AvailableNotDefault_TrueWhenKeyedProviderIsDefault(
 	if reg.Default() != providerOpenRouter {
 		t.Fatalf("Default() = %q, want %q (keyed provider must outrank intent-driven)", reg.Default(), providerOpenRouter)
 	}
-	rows := providerStatusProto(reg)
+	rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2 (both ToolHive protocols): %+v", len(rows), rows)
 	}
@@ -711,7 +694,7 @@ func TestProviderStatusProto_AvailableNotDefault_FalseWhenSoleProviderIsDefault(
 	if reg.Default() != providerToolhive {
 		t.Fatalf("Default() = %q, want %q (sole provider)", reg.Default(), providerToolhive)
 	}
-	rows := providerStatusProto(reg)
+	rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2: %+v", len(rows), rows)
 	}
@@ -737,7 +720,7 @@ func TestProviderStatusProto_AvailableNotDefault_FalseWhenUnreachable(t *testing
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	rows := providerStatusProto(reg)
+	rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2: %+v", len(rows), rows)
 	}
@@ -765,8 +748,8 @@ func TestProbeToolhive_Unauthorized_Warns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	status, ok := reg.outcomes.getStatus(providerToolhive)
-	if !ok || status.State != statusUnauthorized {
+	status := reg.discovery.snapshot().providers[providerToolhive].outcome
+	if status.State != statusUnauthorized {
 		t.Fatalf("status = %+v, want unauthorized", status)
 	}
 	if !diag.hasAtLevel(port.LevelWarn, "probe failed") {

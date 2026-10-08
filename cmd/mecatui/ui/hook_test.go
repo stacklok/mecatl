@@ -10,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // renderHookBlock is a small helper that renders a single hook block. It goes
@@ -18,8 +19,9 @@ import (
 // dummy index, which would alias in renderBlock's per-block cache — its contract
 // is one stable conversation index per block (see render_cache_test.go).
 func renderHookBlock(r *renderer, text, phase, tool, decision string) string {
-	b := block{kind: blockHook, raw: text, hookPhase: phase, hookTool: tool, hookDecision: decision}
-	return r.renderBlockFresh(0, &b, false)
+	r.blocks.reset()
+	s := testSnapshot(0, scrollback.HookCardSnapshot{Text: text, Phase: phase, Tool: tool, Decision: decision})
+	return r.renderSnapshot(0, s, false)
 }
 
 // TestRenderHookBlocked asserts a blocked hook reads distinctly: it carries the
@@ -103,6 +105,25 @@ func TestRenderHookModified(t *testing.T) {
 	}
 }
 
+func TestRenderProjectInstructionWarning(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m.phase = phaseRunning
+	m = applyAll(m, client.HookMsg{Text: "Project instructions: scope guidance truncated or omitted (content limit reached).", Phase: "ProjectInstructions", Decision: client.HookAdvisory})
+	var found bool
+	for _, card := range m.conv.testBlocks() {
+		if hook, ok := card.Payload.(scrollback.HookCardSnapshot); ok {
+			out := stripANSIstr(renderHookBlock(newTestRenderer(), hook.Text, hook.Phase, hook.Tool, hook.Decision))
+			if !strings.Contains(out, "⚠") || !strings.Contains(out, "ProjectInstructions") || !strings.Contains(out, "scope guidance truncated") {
+				t.Fatalf("instruction warning not rendered for the operator: %q", out)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("client warning did not produce a hook card")
+	}
+}
+
 // TestRenderHookAdvisory asserts an advisory hook uses the "⚠" glyph and the
 // warning style — distinct from blocked (error "✗") and modified (info "✎").
 // An advisory guardrail finding flagged content but altered nothing; it is a
@@ -166,17 +187,17 @@ func TestHookMsgRoutesToHookBlock(t *testing.T) {
 	m = applyAll(m, client.HookMsg{
 		Text: "blocked by policy", Phase: "PreToolUse", Tool: "Shell", Decision: client.HookBlocked,
 	})
-	var found *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockHook {
-			found = &m.conv.blocks[i]
+	var found *scrollback.HookCardSnapshot
+	for _, card := range m.conv.testBlocks() {
+		if hook, ok := card.Payload.(scrollback.HookCardSnapshot); ok {
+			found = &hook
 		}
 	}
 	if found == nil {
-		t.Fatal("HookMsg did not produce a blockHook")
+		t.Fatal("HookMsg did not produce a Hook card")
 		return
 	}
-	if found.hookPhase != "PreToolUse" || found.hookTool != "Shell" || found.hookDecision != "blocked" {
-		t.Errorf("hook block fields = %+v", found)
+	if found.Phase != "PreToolUse" || found.Tool != "Shell" || found.Decision != "blocked" {
+		t.Errorf("hook card fields = %+v", found)
 	}
 }

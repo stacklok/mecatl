@@ -64,7 +64,7 @@ func TestRetryFailedStepSkipsOnlyFirstBoundaryInjections(t *testing.T) {
 	if err := sess.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressPrecommit); err != nil {
+	if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {
@@ -100,7 +100,7 @@ func TestRetryFailedStepVisibleNoticeSupersedesPartialOutput(t *testing.T) {
 	if err := sess.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+	if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {
@@ -151,7 +151,7 @@ func TestRetryFailedStepRepeatsOnlyFailedModelStep(t *testing.T) {
 	if executions != 1 {
 		t.Fatalf("tool executions before retry = %d, want 1", executions)
 	}
-	if got := sess.Usage.TotalTokens(); got != 5 {
+	if got := sess.UsageFor(session.UsageKindMain).TotalTokens(); got != 5 {
 		t.Fatalf("cumulative usage before retry = %d, want 5", got)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {
@@ -169,8 +169,8 @@ func TestRetryFailedStepRepeatsOnlyFailedModelStep(t *testing.T) {
 	if result.Usage.TotalTokens() != 7 {
 		t.Fatalf("retry result usage = %d, want per-run 7", result.Usage.TotalTokens())
 	}
-	if sess.Usage.TotalTokens() != 12 {
-		t.Fatalf("cumulative usage after retry = %d, want 12", sess.Usage.TotalTokens())
+	if sess.UsageFor(session.UsageKindMain).TotalTokens() != 12 {
+		t.Fatalf("cumulative usage after retry = %d, want 12", sess.UsageFor(session.UsageKindMain).TotalTokens())
 	}
 	if executions != 1 {
 		t.Fatalf("tool executions after retry = %d, want unchanged 1", executions)
@@ -213,11 +213,13 @@ func TestRetryFailedStepPreTurnBudgetDefersWithoutProviderCall(t *testing.T) {
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	sess.Usage = session.Usage{InputTokens: 1}
+	if err := sess.RecordUsage(session.Usage{InputTokens: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if err := sess.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressPrecommit); err != nil {
+	if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {
@@ -231,7 +233,7 @@ func TestRetryFailedStepPreTurnBudgetDefersWithoutProviderCall(t *testing.T) {
 	if got := lastResult(t, events).Stop; got != session.StopBudget {
 		t.Fatalf("stop = %q, want budget", got)
 	}
-	if _, _, pending := sess.FailedStepRetryPending(); !pending || sess.State != session.StateIdle {
+	if _, pending := sess.FailedStepRetryPending(); !pending || sess.State != session.StateIdle {
 		t.Fatalf("deferred retry state=%s pending=%v, want idle+pending", sess.State, pending)
 	}
 	if err := sess.RecordUserPrompt("queued", nil); err == nil {
@@ -248,7 +250,7 @@ func TestRetryFailedStepCancellationExplicitlyClearsIntent(t *testing.T) {
 	if err := sess.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressPrecommit); err != nil {
+	if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {
@@ -260,7 +262,7 @@ func TestRetryFailedStepCancellationExplicitlyClearsIntent(t *testing.T) {
 	if got := lastResult(t, events).Stop; got != session.StopCancelled {
 		t.Fatalf("stop=%q", got)
 	}
-	if _, _, pending := sess.FailedStepRetryPending(); pending || sess.State != session.StateCancelled {
+	if _, pending := sess.FailedStepRetryPending(); pending || sess.State != session.StateCancelled {
 		t.Fatalf("cancel state=%s pending=%v", sess.State, pending)
 	}
 }

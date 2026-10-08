@@ -11,6 +11,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -20,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -80,7 +80,7 @@ func newStorageReadyTestService(t *testing.T, st port.SessionStore) *server.Serv
 }
 
 // TestDrainGateStartsFalse: a fresh Service accepts run-entries (the gate is
-// byte-identical to pre-ADR-0048 when Drain has not been called).
+// byte-identical to a build without it when Drain has not been called).
 func TestDrainGateStartsFalse(t *testing.T) {
 	svc := newDrainTestService(t)
 	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
@@ -352,7 +352,7 @@ func (s *drainPersistBarrierStore) arm(fail bool) (<-chan struct{}, chan struct{
 	return s.entered, s.release
 }
 
-func TestADR_0294_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
+func TestAwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		fail      bool
@@ -531,7 +531,7 @@ func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, 
 	return sess, ask
 }
 
-func TestADR_0294_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
+func TestDrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("unused")), port.NopDiagnostics{})
@@ -572,75 +572,114 @@ func TestADR_0294_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	}
 }
 
-func TestADR_0294_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
-	lease := &fakeLease{}
-	store := memstore.New()
-	capability := server.NewSessionMutationCapability(true)
-	cat := tool.NewCatalog()
-	cat.MustRegister(&writeAskTool{})
-	eng := agent.NewEngine(agent.Deps{
-		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("relay-call", "Write", json.RawMessage(`{}`)))),
-		Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
-		Store: capability.GuardStore(store),
-	})
-	svc, err := server.NewService(server.Config{
-		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "relay-drain",
-		MutationCapability: capability,
-		LeaseTTL:           time.Hour, LeaseRenewInterval: time.Hour,
-		PlacementProvider: testPlacementProvider{root: "/ws"},
-		PlacementScope:    "test",
-		SharedEngineRoot:  "/ws",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer svc.Close()
-	client, cleanup := dialGRPC(t, svc)
-	defer cleanup()
-	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := session.SessionID(created.GetSessionId())
-	stream, err := client.Converse(affinityContext(string(id)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(id), Text: "park"}}}); err != nil {
-		t.Fatal(err)
-	}
-	var askID string
-	for askID == "" {
-		resp, recvErr := stream.Recv()
-		if recvErr != nil {
-			t.Fatalf("receive ask: %v", recvErr)
-		}
-		if ask := resp.GetEvent().GetAsk(); ask != nil {
-			askID = ask.GetAskId()
-		}
-	}
+func TestShutdownPreservesAwaitingDurableEventProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		shutdown func(*server.Service) error
+	}{
+		{name: "graceful drain", shutdown: func(svc *server.Service) error { return svc.GracefulDrain(context.Background()) }},
+		{name: "close", shutdown: func(svc *server.Service) error { svc.Close(); return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lease := &fakeLease{}
+			store := memstore.New()
+			eventLog := memstore.NewEventLog()
+			capability := server.NewSessionMutationCapability(true)
+			cat := tool.NewCatalog()
+			cat.MustRegister(&writeAskTool{})
+			eng := agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("relay-call", "Write", json.RawMessage(`{}`)))),
+				Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+				Store: capability.GuardStore(store),
+			})
+			svc, err := server.NewService(server.Config{
+				Engine: eng, Store: store, EventLog: eventLog, SessionLease: lease, LeaseOwner: "relay-drain",
+				MutationCapability: capability,
+				LeaseTTL:           time.Hour, LeaseRenewInterval: time.Hour,
+				PlacementProvider: testPlacementProvider{root: "/ws"},
+				PlacementScope:    "test",
+				SharedEngineRoot:  "/ws",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer svc.Close()
+			client, cleanup := dialGRPC(t, svc)
+			defer cleanup()
+			created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := session.SessionID(created.GetSessionId())
+			stream, err := client.Converse(affinityContext(string(id)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(id), Text: "park"}}}); err != nil {
+				t.Fatal(err)
+			}
+			var askID string
+			for askID == "" {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					t.Fatalf("receive ask: %v", recvErr)
+				}
+				if ask := resp.GetEvent().GetAsk(); ask != nil {
+					askID = ask.GetAskId()
+				}
+			}
 
-	drained := make(chan error, 1)
-	go func() { drained <- svc.GracefulDrain(context.Background()) }()
-	for {
-		if _, recvErr := stream.Recv(); recvErr != nil {
-			break
-		}
-	}
-	if err := <-drained; err != nil {
-		t.Fatalf("GracefulDrain: %v", err)
-	}
-	got, err := store.Load(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pending, ok := got.PendingAsk()
-	if got.State != session.StateAwaiting || !ok || pending.AskID != askID {
-		t.Fatalf("relay-backed durable resume point changed: state=%q ask=%+v ok=%t", got.State, pending, ok)
+			shutdownDone := make(chan error, 1)
+			go func() { shutdownDone <- tc.shutdown(svc) }()
+			liveCancelled := false
+			for {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					break
+				}
+				if result := resp.GetEvent().GetResult(); result != nil && result.GetStop() == string(session.StopCancelled) {
+					liveCancelled = true
+				}
+			}
+			if err := <-shutdownDone; err != nil {
+				t.Fatalf("shutdown: %v", err)
+			}
+			if !liveCancelled {
+				t.Fatal("live relay did not deliver shutdown cancellation")
+			}
+
+			got, err := store.Load(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, ok := got.PendingAsk()
+			if got.State != session.StateAwaiting || !ok || pending.AskID != askID {
+				t.Fatalf("relay-backed durable resume point changed: state=%q ask=%+v ok=%t", got.State, pending, ok)
+			}
+
+			var durableAsk bool
+			for ev, readErr := range eventLog.Read(context.Background(), id) {
+				if readErr != nil {
+					t.Fatalf("read event log: %v", readErr)
+				}
+				if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.AskID == askID {
+					durableAsk = true
+				}
+				if ev.Type == session.EvPermissionRetract && ev.Ask != nil && ev.Ask.AskID == askID {
+					t.Fatalf("durable replay retracted preserved ask %q", askID)
+				}
+				if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+					t.Fatal("durable replay terminated the preserved awaiting run")
+				}
+			}
+			if !durableAsk {
+				t.Fatalf("durable replay omitted unresolved ask %q", askID)
+			}
+		})
 	}
 }
 
-func TestADR_0294_DrainPreservesAwaitingResumePoint(t *testing.T) {
+func TestDrainPreservesAwaitingResumePoint(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("done")), port.NopDiagnostics{})
@@ -735,7 +774,7 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	}
 }
 
-func TestADR_0294_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
+func TestDrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
@@ -788,7 +827,7 @@ func TestADR_0294_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	}
 }
 
-func TestADR_0294_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
+func TestDrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})

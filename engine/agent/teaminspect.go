@@ -43,7 +43,7 @@ type InspectMemberTool struct {
 	// consumes the port.SessionStore interface, never a concrete adapter.
 	store port.SessionStore
 	// ownershipEnforced is supplied by the verified-caller request edge. When false,
-	// legacy deployments without a verifier retain their historical access behavior.
+	// legacy deployments without a verifier use the callerOwnsTranscript predicate.
 	ownershipEnforced bool
 }
 

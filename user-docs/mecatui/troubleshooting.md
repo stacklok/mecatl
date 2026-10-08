@@ -1,5 +1,5 @@
 ---
-sidebar_position: 10
+sidebar_position: 12
 title: Troubleshoot mecatui
 description:
   Diagnose mecatui startup, connection, authentication, TLS, and session
@@ -12,8 +12,8 @@ Start by identifying whether you are running embedded `mecatui` or
 `mecatui connect ADDRESS`. The first owns a local server; the second only
 displays and controls the server it reaches.
 
-Expand an error card with your configured `ExpandTools` keybinding to see its
-complete sanitized message.
+Press `f9` (or your configured `ExpandConversation` binding) to show a
+permanent error card's complete sanitized message.
 
 ## Embedded startup says no provider is available
 
@@ -27,7 +27,7 @@ mecatui --mock --workspace "$PWD"
 
 Do not put provider secrets in command-line flags. For provider credentials and
 server-side selection, use
-[Run mecated standalone](/building/deployment/mecated.md#provider-and-model).
+[Choose models and providers](/features/sessions/choose-models.md).
 
 ## Provider is not configured or credentials are unavailable
 
@@ -81,15 +81,16 @@ inspect the gateway logs for its rejection. If the provider cannot report a
 context window, configure the exact value under
 `models.context_windows.<provider-id>.<model-id>` or restore live model
 discovery. See
-[Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
+[Choose models and providers](/features/sessions/choose-models.md#set-up-a-local-provider).
 
 Chat can fail with `context window unavailable` even when the same credential
 works for chat completions: a custom provider's context window is learned by
 fetching its live model list, and some OpenAI-compatible gateways authorize or
-implement that listing endpoint differently from the completion endpoint.
-Check the server's startup log for `live model fetch failed` and its reported
-state, and confirm the credential against the listing endpoint directly, for
-example `curl -H "Authorization: Bearer <key>" <base_url>/models`.
+implement that listing endpoint differently from the completion endpoint. Check
+the server's startup log for `live model fetch failed` and its reported state,
+and confirm that the credential has permission to call the gateway's
+`GET /models` endpoint. Keep API keys out of command arguments and diagnostic
+output.
 
 ### Recover OIDC credentials
 
@@ -109,7 +110,7 @@ and key, issuer trust, and network and TLS settings:
   configuration and `mecatui providers status PROVIDER`.
 
 The
-[provider configuration guide](/building/deployment/mecated.md#configure-providers)
+[provider configuration guide](/operating/mecated/configure-providers-and-storage.md#configure-providers)
 and [credential store reference](/reference/configuration.md#credential_store)
 describe the supported schema.
 
@@ -141,8 +142,7 @@ Identify the failure before changing the client configuration:
 A bearer token is allowed over plaintext loopback, but `mecatui` refuses it over
 explicit non-loopback plaintext. Saved OIDC authentication always uses verified
 TLS, even for loopback. See [Connect to a server](./remote-servers.md) and the
-operator
-[server flag reference](/building/deployment/mecated.md#flag-reference).
+operator [server flag reference](/reference/server-cli.md#mecated-serve).
 
 If `mecatui login` reports `storage_unavailable`, follow the stage-specific
 action in the same message. An issuer CA read failure means checking the login
@@ -156,7 +156,7 @@ directory under your XDG config home.
 For an embedded session, `--workspace` is the local checkout. For a connected
 session, the server configures the workspace in its own filesystem. Ask the
 operator which paths are available. See
-[Connect the client](./remote-servers.md#connect-the-client).
+[Connect the client](./remote-servers.md#connect-with-a-bearer-token).
 
 ## A provider error says retrying will not help
 
@@ -164,7 +164,7 @@ A permanent provider rejection or context-window overflow will not succeed when
 you retry the same request unchanged. Start a new session, or change the request
 or model as directed. Retry transient connection and service failures. For
 recovery details, see
-[Agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
+[Session states and continuation](/features/sessions/start-and-resume-sessions.md#session-states-and-continuation).
 
 ## A session will not resume
 
@@ -174,7 +174,7 @@ ineligible or unreadable entries. Verify that you reached the same server and
 that its storage still has the session, then ask the operator about storage,
 retention, or leases. Do not create a replacement session if you need the
 original transcript. See [Sessions](./sessions.md) and
-[session storage operations](/building/deployment/session-storage-operations.md).
+[session storage operations](/operating/session-storage-operations.md).
 
 ## A debug command cannot open its target
 
@@ -195,35 +195,48 @@ or credentials.
 
 Start `mecatui` with `--debug`, or set `MECATUI_DEBUG=1` when the flag is
 omitted. Debug mode enables the mouse-coordinate footer, steer correlation,
-keymap-resolution diagnostics at startup, and debug-only local commands such as
-`/debug-ask`. These surfaces are off by default.
+keymap-resolution diagnostics at startup, compact guardrail success diagnostics,
+and debug-only local commands such as `/debug-ask`. These surfaces are off by
+default.
 
-An explicit `--debug=false` overrides the environment. The compatibility
-variables `MECATUI_DEBUG_MOUSE`, `MECATUI_DEBUG_STEER`, `MECATUI_DEBUG_ASK`, and
-`MECATUI_DEBUG_KEYMAP` enable only their named surface. Debug mode is
-client-only and does not change server configuration or the operational log
-level.
+Normal conversation output hides guardrail checks that completed successfully
+and allowed an action or released a result. Press `f9` (or your configured
+`ExpandConversation` binding) to reveal them, or
+[keep them visible](./customization.md#show-benign-guardrail-notices).
+`--debug` always shows them, with the review's technical metadata.
+Stored-session transcripts use the same visibility rules.
+
+Warnings, unresolved reviews, checker outages, and unknown states remain
+visible. A warning's explanation updates its existing entry when available; a
+review that needs your decision shows the explanation in its approval prompt. An
+unavailable or expired explanation does not imply a security finding. Check the
+displayed outcome to see whether the action stopped, the result was withheld, or
+work continued. See
+[guardrail approvals](/features/security-and-execution/permissions-and-posture.md#guardrails)
+for the available choices.
+
+An explicit `--debug=false` overrides the environment. Debug mode is client-only
+and does not change server configuration or the operational log level.
 
 ## Find diagnostics
 
 In embedded mode, `mecatui` writes operational diagnostics to
 `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to
-`~/.local/state/mecatl/mecatui.log`. One process holds the default log lock; a
-second instance disables its own default log rather than sharing the file. Use
-`--diagnostics-log` to give concurrent instances separate files, or `--quiet` to
-disable the log. At startup, `mecatui` reduces an oversized log to its most
-recent 10 MiB. An unsafe path disables logging without changing the existing
-file.
+`~/.local/state/mecatl/mecatui.log`. One process holds that log at a time. A
+second instance writes to a per-process sibling beside it, named with its
+process ID as in `mecatui.4821.log`, and prints that path to stderr at startup
+so no instance loses its diagnostics. Use `--diagnostics-log` to name each
+instance's file yourself, or `--quiet` to disable the log. At startup, `mecatui`
+reduces an oversized log to its most recent 10 MiB. An unsafe path disables
+logging without changing the existing file.
 
 Use `/diagnostics` to send a concise, sanitized bug-report snapshot through the
-normal prompt path. It includes build identities and available display
-information for the connection target and active provider. It excludes
-credentials, TLS and authentication settings, raw errors, and other
-configuration. A `mecatui connect` client does not write an equivalent local
-server log; inspect the remote server's operator logs instead.
-
-For exhaustive flags and failure behavior, see
-[`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).
+normal prompt path. It includes build identities, available display information
+for the connection target and active provider, a compact capability snapshot
+currently advertised to the client, and whether a Converse stream is currently
+attached. It excludes credentials, TLS and authentication settings, raw errors,
+and other configuration. A `mecatui connect` client does not write an equivalent
+local server log; inspect the remote server's operator logs instead.
 
 ## Related information
 

@@ -61,11 +61,16 @@ tasks:
 
   e2e:
     desc: Build the SDK and same-checkout mecated, then run the Node/Bun offline wire suite
-    deps: [build]
+    deps: [build, e2e:fixture]
     cmds:
       - test -x "${BUN_BIN:-}" || command -v bun >/dev/null 2>&1 || { echo "bun is required for the SDK e2e runtime matrix"; exit 1; }
       - task --dir ../.. build
       - pnpm run test:e2e
+
+  e2e:fixture:
+    desc: Build the test-only MCP authorization fixture daemon
+    cmds:
+      - CGO_ENABLED=0 go build -o ../../bin/mecatl-sdk-authorization-fixture ./e2e/fixturedaemon
 
   deno:
     desc: Type-check the package exports and run the Deno.Command local integration

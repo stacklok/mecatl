@@ -47,10 +47,10 @@ func TestTurnEndZeroUsageFallsBackToCounter(t *testing.T) {
 			}
 		}
 	}
-	// The session aggregate's cumulative Usage (what the budget brake + snapshot read)
+	// The session aggregate's cumulative main usage (what the budget brake + snapshot read)
 	// likewise stays on provider truth.
-	if sess.Usage.InputTokens != 0 {
-		t.Errorf("sess.Usage.InputTokens = %d, want 0 (cumulative budget figure is provider truth, not the estimate)", sess.Usage.InputTokens)
+	if got := sess.UsageFor(session.UsageKindMain).InputTokens; got != 0 {
+		t.Errorf("main usage InputTokens = %d, want 0 (cumulative budget figure is provider truth, not the estimate)", got)
 	}
 	// The fallback is computed BEFORE the assistant message is recorded, so it
 	// covers only the user prompt at that instant; the FINAL conversation

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,38 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 )
+
+type globFaultWorkspace struct {
+	tool.Workspace
+	err error
+}
+
+func (w globFaultWorkspace) Glob(context.Context, string) ([]string, error) {
+	return nil, w.err
+}
+
+func TestCommandListerPropagatesWorkspaceGlobFault(t *testing.T) {
+	fault := errors.New("virtual workspace glob failed")
+	faultWS := globFaultWorkspace{Workspace: memfs.NewWorkspace("/virtual"), err: fault}
+	cfg := Config{EnableCommands: true, commandWorkspace: faultWS}
+	// Add a source-backed child so this exercises the concrete
+	// MultiExpander -> DirCommandExpander.Glob path. The dir child has precedence
+	// and its genuine enumeration fault must stop discovery.
+	cfg.commandSource = stubCommandSource{}
+	lister := buildCommandLister(cfg, nil)
+	if lister == nil {
+		t.Fatal("buildCommandLister returned nil")
+	}
+	binding, release, err := lister.Borrow(t.Context(), "test", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	_, err = binding.List(t.Context())
+	if !errors.Is(err, fault) {
+		t.Fatalf("List error = %v, want workspace Glob fault", err)
+	}
+}
 
 // TestSkillCommandBridgeExpandsSkillBody proves the WHOLE wiring: a discovered
 // skill is invocable as /<skill-name> and the expander injects the skill BODY
@@ -36,8 +69,7 @@ func TestSkillCommandBridgeExpandsSkillBody(t *testing.T) {
 	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 
 	exp := buildCommandExpander(cfg, nil)
-	ws := memfs.NewWorkspace("/proj")
-	out, ok, err := exp.Expand(context.Background(), ws, "/deploy staging")
+	out, ok, err := exp.Expand(context.Background(), "/deploy staging")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -61,8 +93,7 @@ func TestSkillCommandBridgeUnknownSkillPassesThrough(t *testing.T) {
 	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 
 	exp := buildCommandExpander(cfg, nil)
-	ws := memfs.NewWorkspace("/proj")
-	out, ok, err := exp.Expand(context.Background(), ws, "/no-such-skill")
+	out, ok, err := exp.Expand(context.Background(), "/no-such-skill")
 	if err != nil {
 		t.Fatalf("Expand(unknown): %v", err)
 	}
@@ -86,17 +117,18 @@ func TestSkillCommandBridgeLocalCommandShadowsSkill(t *testing.T) {
 	seam := resolveFSSkillSeam(context.Background(), cfg)
 	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	// A local command dir that ALSO defines "dup" — the file shadows the skill.
-	cfg.CommandsDir = "cmds"
-	exp := buildCommandExpander(cfg, nil)
-
 	ws := memfs.NewWorkspace("/proj")
+	cfg.CommandsDir = "cmds"
+	cfg.commandWorkspace = ws
 	if err := ws.Write(context.Background(), "cmds/dup.md", []byte("---\ndescription: file dup\n---\nFILE dup body $ARGUMENTS")); err != nil {
 		t.Fatalf("write command file: %v", err)
 	}
+	exp := buildCommandExpander(cfg, nil)
+
 	ctx := context.Background()
 
 	// The same-named file command shadows the skill.
-	out, ok, err := exp.Expand(ctx, ws, "/dup x")
+	out, ok, err := exp.Expand(ctx, "/dup x")
 	if err != nil || !ok || out != "FILE dup body x" {
 		t.Errorf("Expand(/dup) = (%q, %v, %v), want the FILE body (file shadows skill)", out, ok, err)
 	}
@@ -107,7 +139,7 @@ func TestSkillCommandBridgeLocalCommandShadowsSkill(t *testing.T) {
 	if !isLister {
 		t.Fatal("composed expander must implement prompt.CommandLister")
 	}
-	cmds, err := lister.List(ctx, ws)
+	cmds, err := lister.List(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -138,16 +170,15 @@ func TestSkillCommandBridgeSkillShadowsDriverSource(t *testing.T) {
 		},
 	}
 	exp := buildCommandExpander(cfg, nil)
-	ws := memfs.NewWorkspace("/proj")
 	ctx := context.Background()
 
 	// The skill shadows the same-named driver command.
-	out, ok, err := exp.Expand(ctx, ws, "/dup")
+	out, ok, err := exp.Expand(ctx, "/dup")
 	if err != nil || !ok || out != "SKILL dup body" {
 		t.Errorf("Expand(/dup) = (%q, %v, %v), want the SKILL body (skill shadows driver)", out, ok, err)
 	}
 	// A driver-only command still expands through the driver source.
-	out, ok, err = exp.Expand(ctx, ws, "/driver-only y")
+	out, ok, err = exp.Expand(ctx, "/driver-only y")
 	if err != nil || !ok || out != "DRIVER body for y" {
 		t.Errorf("Expand(/driver-only) = (%q, %v, %v), want the driver body", out, ok, err)
 	}
@@ -189,8 +220,7 @@ func TestSkillCommandBridgeProjectTierWithheldWhenUntrusted(t *testing.T) {
 	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	exp := buildCommandExpander(cfg, nil)
 
-	wsReader := memfs.NewWorkspace(ws)
-	out, ok, err := exp.Expand(context.Background(), wsReader, "/sneaky")
+	out, ok, err := exp.Expand(context.Background(), "/sneaky")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -217,8 +247,7 @@ func TestSkillCommandBridgeProjectTierAdmittedWhenTrusted(t *testing.T) {
 	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	exp := buildCommandExpander(cfg, nil)
 
-	wsReader := memfs.NewWorkspace(ws)
-	out, ok, err := exp.Expand(context.Background(), wsReader, "/review the diff")
+	out, ok, err := exp.Expand(context.Background(), "/review the diff")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}

@@ -4,7 +4,7 @@
 # The allowlist intentionally accepts only documentation content: Markdown under
 # docs/ and user-docs/, user-docs' Docusaurus category metadata, and README.md.
 # Everything else is full validation, including workflow/configuration and build
-# files. In particular, docs/lint Go code and the modelith YAML are not docs-only
+# files. In particular, Go code under docs/ and the modelith YAML are not docs-only
 # changes even though they live below docs/.
 #
 # This script never evaluates a path as shell code. It prints exactly "true" or

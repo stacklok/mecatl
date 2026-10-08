@@ -24,6 +24,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -439,8 +440,16 @@ func TestSteer_ControlTargetsPromotedRun(t *testing.T) {
 		mockllm.ToolCallTurn(call("c9", "Read", `{"path":"b.go"}`)),
 	)
 	svc := newSteerService(t, llm, nil, block)
-	client, stallRelease, cleanup := dialGRPCStall(t, svc, 2*time.Second)
+	client, stallRelease, cleanup := dialGRPCStall(t, svc, 20*time.Second)
 	defer cleanup()
+	promotionStarted := make(chan struct{})
+	allowPromotion := make(chan struct{})
+	releasePromotion := sync.OnceFunc(func() { close(allowPromotion) })
+	svc.SetSteerPromotionStartedForTest(func() {
+		close(promotionStarted)
+		<-allowPromotion
+	})
+	defer releasePromotion()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -473,10 +482,21 @@ func TestSteer_ControlTargetsPromotedRun(t *testing.T) {
 			break
 		}
 	}
-	// Confirm the original is still terminal-but-registered before sending the
-	// steer; the stall keeps this promotion path reachable.
-	if _, ok := svc.LookupRun(session.SessionID(cs.GetSessionId())); !ok {
+	// Confirm the original is terminal-but-registered before sending the steer;
+	// turn.end arrives before the terminal result and therefore is not itself the
+	// terminal-state boundary.
+	original, ok := svc.LookupRun(session.SessionID(cs.GetSessionId()))
+	if !ok {
 		t.Fatal("original run is not registered in its terminal drain window")
+	}
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for original.Outcome() != agent.RunOutcomeCompleted {
+		select {
+		case <-ctx.Done():
+			t.Fatal("original run did not reach its terminal outcome")
+		case <-poll.C:
+		}
 	}
 	registered := make(chan struct{})
 	svc.SetSteerPromotionRegisteredForTest(func() { close(registered) })
@@ -485,15 +505,33 @@ func TestSteer_ControlTargetsPromotedRun(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Send steer: %v", err)
 	}
-	// Wait for the specific registration event before unblocking the original
-	// relay. The timeout is only a deadlock guard; registration, not elapsed
-	// time, establishes the handoff ordering.
+	// Releasing the terminal send is safe only after Service.Steer has admitted the
+	// received frame to the promotion path. readControl reserved the handoff route
+	// before calling Service.Steer, so that reservation happens-before this signal.
+	// The synchronous hook then holds promotion until LookupRun proves the original
+	// relay has deregistered; only then may the replacement register.
+	select {
+	case <-promotionStarted:
+	case <-ctx.Done():
+		t.Fatal("control reader did not admit steer before test context expired")
+	}
+	close(stallRelease)
+	for {
+		if _, ok := svc.LookupRun(session.SessionID(cs.GetSessionId())); !ok {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("original run did not deregister before test context expired")
+		case <-poll.C:
+		}
+	}
+	releasePromotion()
 	select {
 	case <-registered:
-	case <-time.After(15 * time.Second):
+	case <-ctx.Done():
 		t.Fatal("promoted run was not registered after steer")
 	}
-	close(stallRelease) // the stalled original run drains; the promoted run drives.
 
 	// The promoted tool.call is relayed only after the handoff swapped the
 	// control target. Send Cancel at that event boundary; the blocking tool then

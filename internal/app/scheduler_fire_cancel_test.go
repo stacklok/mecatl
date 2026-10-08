@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -15,7 +16,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // blockingFireProvider streams nothing until its ctx is cancelled, then ends the
@@ -235,7 +235,7 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 	}
 	// Recoverability: a cancelled session is Interrupt-recoverable (cancelled→idle).
 	// Pin that the aggregate accepts Interrupt from the persisted cancelled state,
-	// so a later loadAndReopen recovers it (the cloud-native Phase 1 guarantee).
+	// so a later loadAndReopen recovers it.
 	if err := sess.Interrupt(); err != nil {
 		t.Errorf("Interrupt on the persisted cancelled session failed: %v (the snapshot must be Interrupt-recoverable)", err)
 	}

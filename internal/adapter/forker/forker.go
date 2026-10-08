@@ -288,31 +288,36 @@ func (f *Forker) Fork(ctx context.Context, base tool.Environment, label string) 
 
 	repoRoot, isRepo := gitRepoRoot(ctx, baseRoot)
 	if isRepo {
-		ws, cleanup, advisory, ferr := f.forkWorktree(ctx, repoRoot, childDir)
-		if ferr != nil {
-			// Worktree creation failed (e.g. dirty/odd repo state): fall back to a
-			// copy so a fork never hard-fails just because git refused. forkCopy
-			// mints a FRESH child directory (the reservation above was discarded),
-			// so Workspace/Ref/runner all derive from the copy root via childEnv —
-			// never from the discarded childDir.
-			_ = os.RemoveAll(childDir)
-			cws, ccleanup, cerr := f.forkCopy(baseRoot, label)
-			if cerr != nil {
-				return tool.Environment{}, nil, "", cerr
+		// A worktree checks out the repository root, while callers execute in
+		// baseRoot. Keep the child's tool paths relative to the same subtree.
+		rel, relErr := filepath.Rel(repoRoot, baseRoot)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			ws, cleanup, advisory, ferr := f.forkWorktree(ctx, repoRoot, childDir, rel)
+			if ferr != nil {
+				// Worktree creation failed (e.g. dirty/odd repo state): fall back to a
+				// copy so a fork never hard-fails just because git refused. forkCopy
+				// mints a FRESH child directory (the reservation above was discarded),
+				// so Workspace/Ref/runner all derive from the copy root via childEnv —
+				// never from the discarded childDir.
+				_ = os.RemoveAll(childDir)
+				cws, ccleanup, cerr := f.forkCopy(baseRoot, label)
+				if cerr != nil {
+					return tool.Environment{}, nil, "", cerr
+				}
+				cenv, cwerr := f.childEnv(base, cws)
+				if cwerr != nil {
+					_ = ccleanup()
+					return tool.Environment{}, nil, "", cwerr
+				}
+				return cenv, ccleanup, "", nil
 			}
-			cenv, cwerr := f.childEnv(base, cws)
-			if cwerr != nil {
-				_ = ccleanup()
-				return tool.Environment{}, nil, "", cwerr
+			env, werr := f.childEnv(base, ws)
+			if werr != nil {
+				_ = cleanup()
+				return tool.Environment{}, nil, "", werr
 			}
-			return cenv, ccleanup, "", nil
+			return env, cleanup, advisory, nil
 		}
-		env, werr := f.childEnv(base, ws)
-		if werr != nil {
-			_ = cleanup()
-			return tool.Environment{}, nil, "", werr
-		}
-		return env, cleanup, advisory, nil
 	}
 	ws, cleanup, ferr := f.forkCopyInto(baseRoot, childDir)
 	if ferr != nil {
@@ -370,7 +375,7 @@ func (f *Forker) childDir(label string) (string, error) {
 // forkWorktree adds a detached git worktree at childDir pointing at repoRoot's
 // HEAD. git refuses to create a worktree at an existing non-empty directory, so
 // childDir (created empty by childDir) is removed first and recreated by git.
-func (f *Forker) forkWorktree(ctx context.Context, repoRoot, childDir string) (tool.Workspace, func() error, string, error) {
+func (f *Forker) forkWorktree(ctx context.Context, repoRoot, childDir, executionRel string) (tool.Workspace, func() error, string, error) {
 	// git worktree add wants to create the directory itself.
 	if err := os.RemoveAll(childDir); err != nil {
 		return nil, nil, "", fmt.Errorf("forker: prepare worktree dir: %w", err)
@@ -389,7 +394,13 @@ func (f *Forker) forkWorktree(ctx context.Context, repoRoot, childDir string) (t
 	if f.dirtyOverlay {
 		advisory = f.overlayDirty(ctx, repoRoot, childDir)
 	}
-	ws, err := f.newWorkspace(childDir)
+	root := filepath.Join(childDir, executionRel)
+	physical, err := filepath.EvalSymlinks(root)
+	if err != nil || physical != root {
+		_ = f.runGit(ctx, repoRoot, "worktree", "remove", "--force", childDir)
+		return nil, nil, "", fmt.Errorf("forker: child execution subtree is not a real directory inside the worktree: %v", err)
+	}
+	ws, err := f.newWorkspace(root)
 	if err != nil {
 		_ = f.runGit(ctx, repoRoot, "worktree", "remove", "--force", childDir)
 		return nil, nil, "", fmt.Errorf("forker: open child workspace: %w", err)
@@ -760,8 +771,8 @@ func sanitizeLabel(label string) string {
 // Merger is the tool.EnvironmentMerger implementation: it merges a preserved winning
 // fork's working-tree changes BACK into the parent workspace. It is the
 // composition-owned merge half of BOTH merge-back paths — a Parallel
-// single-branch winner (ADR 0039) AND a writable Subagent (mode:"read-write",
-// ADR 0040) — DEFAULT-ON with no flag, the capability that lets a delegated
+// single-branch winner AND a writable Subagent (mode:"read-write") —
+// DEFAULT-ON with no flag, the capability that lets a delegated
 // implementer's edits actually land without a manual copy/merge step. The
 // composition root wraps it in a SerializingMerger (one process-wide mutex) so
 // concurrent merges from different runs/sessions cannot interleave their writes.

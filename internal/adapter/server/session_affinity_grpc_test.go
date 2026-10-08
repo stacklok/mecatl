@@ -33,7 +33,7 @@ func duplicateAffinityContext(first, second string) context.Context {
 	))
 }
 
-func TestADR_0294_CreateSessionDerivedAffinity(t *testing.T) {
+func TestCreateSessionDerivedAffinity(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -60,7 +60,7 @@ func TestADR_0294_CreateSessionDerivedAffinity(t *testing.T) {
 	}
 }
 
-func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
+func TestNewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
 	want := map[protoreflect.Name]bool{
 		"CreateSession": true, "GetSession": true, "GetSessionTranscript": true,
 		"SetMode": true, "CloseSession": true, "RenameSession": true,
@@ -68,10 +68,11 @@ func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T)
 		"ClearSession": true, "ListCommands": true, "ListWorktrees": true, "StreamSessionEvents": true,
 		"StreamSessionLive": true, "WatchSessionEvents": true, "ReflectSession": true,
 		"ApprovePlan": true, "CreateTeam": true,
-		"ResolveRunAsk": true, "CancelRun": true, "SteerRun": true, "CancelRunSteer": true,
+		"ResolveRunAsk": true, "ResolvePlanAsk": true, "CancelRun": true, "SteerRun": true, "CancelRunSteer": true,
 		"GetMcpAuthorizationPresentation": true, "RecheckMcpAuthorization": true, "CancelMcpAuthorization": true,
-		"ListSessionMcpConnectors": true,
+		"ListSessionMcpConnectors": true, "ListGuardrailCoverage": true, "GetGuardrailReviewDetail": true,
 		"ConnectWorkspaceServices": true, "RetryWorkspaceEnrollment": true, "CancelWorkspaceEnrollment": true,
+		"RefreshMcpSources": true,
 	}
 	service := mecatlv1.File_mecatl_v1_harness_proto.Services().ByName("HarnessService")
 	for i := range service.Methods().Len() {
@@ -181,6 +182,13 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 		}},
 		{"ResolveRunAsk", func() error {
 			_, err := client.ResolveRunAsk(ctx, &mecatlv1.ResolveRunAskRequest{
+				SessionId: requestID, ExpectedRunId: "run", AskId: "ask",
+				Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+			})
+			return err
+		}},
+		{"ResolvePlanAsk", func() error {
+			_, err := client.ResolvePlanAsk(ctx, &mecatlv1.ResolvePlanAskRequest{
 				SessionId: requestID, ExpectedRunId: "run", AskId: "ask",
 				Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
 			})
@@ -359,7 +367,7 @@ func TestSessionAffinityAndHandoff_Scenario2_StreamSessionLiveRejectsInvalidAffi
 	}
 }
 
-func TestADR_0294_GRPCHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestGRPCHeaderFailureIsNonDisclosing(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -449,7 +457,7 @@ func TestSessionAffinityAndHandoff_Scenario2_ConversePreStreamAndFirstFrame(t *t
 	}
 }
 
-func TestADR_0294_ConverseControlsStaySessionBound(t *testing.T) {
+func TestConverseControlsStaySessionBound(t *testing.T) {
 	// Reuse the full live wire fixtures so this acceptance pin proves each
 	// control changes runtime state, rather than merely inspecting protobuf shape.
 	for name, fixture := range map[string]func(*testing.T){
@@ -539,7 +547,7 @@ func TestADR_0294_ConverseControlsStaySessionBound(t *testing.T) {
 	}
 }
 
-func TestADR_0294_ConverseIgnoresUnsetFramesAndDoesNotRestart(t *testing.T) {
+func TestConverseIgnoresUnsetFramesAndDoesNotRestart(t *testing.T) {
 	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
@@ -587,7 +595,7 @@ func TestADR_0294_ConverseIgnoresUnsetFramesAndDoesNotRestart(t *testing.T) {
 	}
 }
 
-func TestADR_0294_GRPCMissingHeaderCompatibility(t *testing.T) {
+func TestGRPCMissingHeaderCompatibility(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)

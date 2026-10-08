@@ -6,12 +6,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 type durableEvidenceSink struct{ manifest atomic.Bool }
@@ -19,6 +19,31 @@ type durableEvidenceSink struct{ manifest atomic.Bool }
 func (s *durableEvidenceSink) Emit(_ context.Context, ev session.Event) {
 	if ev.Type == session.EvRequestManifest {
 		s.manifest.Store(true)
+	}
+}
+
+func TestBuildRemoteStoreWithoutAtomicCreateUsesSaveWhenOwnershipDisabled(t *testing.T) {
+	ctx := context.Background()
+	backend := memstore.New()
+	cfg := Config{
+		Workspace: t.TempDir(), NoSoul: true, MemoryDir: t.TempDir(),
+		SessionStoreURL: startSessionStoreDriver(t, plainSessionStore{inner: backend}),
+		envDetector:     fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}), liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("done"))
+		},
+	}
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	created, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := backend.Load(ctx, created.ID); err != nil {
+		t.Fatalf("fallback Save did not persist session: %v", err)
 	}
 }
 
@@ -63,10 +88,10 @@ func TestBuildDisablesDurableEvidenceWithoutEventLog(t *testing.T) {
 //     relay (the relay is what Appends every event to the durable EventLog —
 //     the loop itself never does), then close (process death: in-memory state
 //     gone, only the durable files remain).
-//  2. A FRESH jsonlstore over the SAME dir Loads the session (snapshot present,
-//     completed) and EventLog.Read yields the recorded events (incl. the
-//     terminal EvResult). Reading the store directly (not via a second Build)
-//     keeps the assertion focused on durability, not on the rehydration path.
+//  2. A FRESH public jsonlstore over the SAME dir Loads the session (snapshot,
+//     usage, and lineage present, completed) and EventLog.Read yields the
+//     recorded events (incl. the terminal EvResult). Reading the store directly
+//     (not via a second Build) keeps the assertion focused on durability.
 func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
@@ -81,7 +106,9 @@ func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
-			return mockllm.New(mockllm.TextTurn("all done, no tools needed"))
+			turn := mockllm.TextTurn("all done, no tools needed")
+			turn.Chunks[1] = mockllm.UsageChunk(session.Usage{InputTokens: 7, OutputTokens: 3})
+			return mockllm.New(turn)
 		},
 	}
 	built1, err := buildIsolated(t, ctx, cfg)
@@ -121,6 +148,13 @@ func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 	}
 	if loaded.State != session.StateCompleted {
 		t.Fatalf("loaded state = %q, want completed", loaded.State)
+	}
+	if got := loaded.UsageFor(session.UsageKindMain); got.InputTokens != 7 || got.OutputTokens != 3 {
+		t.Fatalf("persisted main usage = %+v, want 7 input and 3 output", got)
+	}
+	lineage, err := store.ReadSessionLineage(ctx, port.SessionLineageQuery{RootID: sess.ID, RootIncarnation: loaded.Incarnation(), Limit: 1})
+	if err != nil || len(lineage.Records) != 1 || lineage.Records[0].ID != sess.ID {
+		t.Fatalf("persisted lineage = %+v, %v; want the root session", lineage, err)
 	}
 
 	// The durable event log replays the recorded timeline, including the result

@@ -40,6 +40,9 @@ const (
 	EvReasoningDelta EventType = "reasoning.delta"
 	// EvToolCall is emitted when a tool is about to run.
 	EvToolCall EventType = "tool.call"
+	// EvToolResultAvailable carries a live, display-only safe result before the
+	// canonical tool.result. It is not part of session or model history.
+	EvToolResultAvailable EventType = "tool.result.available"
 	// EvToolResult carries the result of a tool execution.
 	EvToolResult EventType = "tool.result"
 	// EvToolProgress is transient progress for a long-running tool: it carries a
@@ -152,6 +155,9 @@ const (
 	// EvAuthorizationResolved closes a previously required authorization lifecycle
 	// after its matching tool result has been durably recorded.
 	EvAuthorizationResolved EventType = "authorization.resolved"
+	// EvPlanContinuationFailed records a known server-owned proceed-start failure
+	// after the approved plan run has already emitted its terminal result.
+	EvPlanContinuationFailed EventType = "plan.continuation_failed"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -170,8 +176,7 @@ const (
 	//
 	// WHY IT EXISTS: without it the durable log could not show WHAT THE USER ASKED (the
 	// relay never re-emits the user prompt it received), and an event-sourced fold of the
-	// log (engine/adapter/eventsource) could not reconstruct user-role turns — closing
-	// that gap is ADR 0038 / the ADR 0027 row-11 follow-up.
+	// log (engine/adapter/eventsource) could not reconstruct user-role turns.
 	//
 	// NO-LEAK CONTRACT (gauntlet #7): a CHILD's user prompt (a Subagent goal, a team
 	// member task, a structured-output correction) is recorded into the CHILD session and
@@ -186,12 +191,11 @@ const (
 	// content. It carries only the parent call id, the child session id, and a
 	// short goal label so a client can attribute and title the subagent card.
 	EvSubagentStart EventType = "subagent.start"
-	// EvSubagentTool is emitted each time a Subagent tool's child tool call
-	// resolves. It is a REDACTED observability projection: it forwards ONLY the
-	// child tool's NAME and error bool plus a running count — never the child's
-	// tool args or result content, and never the child's message text. This keeps
-	// the context-isolation guarantee (gauntlet #7) intact: nothing the child
-	// produces enters the parent's conversation.
+	// EvSubagentTool projects bounded child activity, including early available and
+	// canonical results. It is a REDACTED observability projection: it forwards
+	// the child tool's name, error bool, bounded preview, and a running count.
+	// Bounded previews keep the context-isolation guarantee (gauntlet #7) intact:
+	// nothing the child produces enters the parent's conversation.
 	EvSubagentTool EventType = "subagent.tool"
 	// EvSubagentEnd is emitted when a Subagent tool run terminates. It is a
 	// REDACTED observability projection carrying only aggregate metadata — the
@@ -206,7 +210,7 @@ const (
 	// member content). See TeamPayload for the redaction contract.
 	EvTeamStart EventType = "team.start"
 	// EvTeamMember is emitted for each forwarded member-session event during a Team
-	// run. Unlike the metadata-only subagent.tool projection, it is deliberately
+	// run. Unlike the narrower subagent.tool projection, it is deliberately
 	// FULLER — a team is meant to be watched — so it carries the member's message
 	// text and BOUNDED tool-call/result previews, tagged by member name. It ALWAYS
 	// sets Member (the member whose activity it projects) and InnerKind (that
@@ -247,11 +251,9 @@ const (
 	EvParallelStart EventType = "parallel.start"
 	// EvParallelBranch is emitted for each per-branch lifecycle transition of a Parallel
 	// run, discriminated by ParallelPayload.Kind (branch_start / branch_tool / branch_end).
-	// Like EvSubagentTool it is METADATA ONLY: a branch_tool carries only the child tool's
-	// NAME + error bool + running count (forwarded via the SAME drainChildObserved
-	// chokepoint Subagent uses), and a branch_end carries only the branch's stop / usage /
-	// duration / failed flag / fork-root path — never branch args, result bodies, or
-	// message text. This keeps gauntlet #7 intact.
+	// EvParallelBranch includes bounded branch activity, including early available
+	// and canonical results; branch_end carries only stop / usage / duration /
+	// failed / fork-root-path metadata. This keeps gauntlet #7 intact.
 	EvParallelBranch EventType = "parallel.branch"
 	// EvParallelEnd is emitted when a Parallel run terminates. It is a REDACTED, RUN-LEVEL
 	// projection carrying the join strategy, the WINNER branch index (-1 for join=all /
@@ -348,6 +350,19 @@ const (
 	HookAdvisory HookDecision = "advisory"
 )
 
+// GuardrailRef is a validated machine reference carried by a review projection.
+type GuardrailRef struct {
+	Ref      string
+	Category string
+}
+
+// GuardrailReviewPayload is the durable machine-only guardrail assessment.
+type GuardrailReviewPayload struct {
+	ReviewID, Job, Assessment, Inspection, Disposition, ReasonCode string
+	RuleID, RuleOrigin, CheckerProviderID, CheckerModelID          string
+	Concerns, Sources                                              []GuardrailRef
+}
+
 // HookPayload is the structured detail carried by an EvHook Event, in addition
 // to the human-readable Event.Text. It lets a client render a hook notice
 // distinctly from a compaction notice — labelling the lifecycle Phase and
@@ -369,6 +384,8 @@ type HookPayload struct {
 	// address the hook notice to the originating tool card (e.g. mark that exact
 	// tool_call as failed) instead of falling back to a free-standing note.
 	CallID ToolCallID
+	// Guardrail carries machine-only review metadata; human rationale is live-only.
+	Guardrail *GuardrailReviewPayload
 }
 
 // ApprovalPayload is the structured detail carried by an EvApproval Event: the
@@ -376,12 +393,14 @@ type HookPayload struct {
 // approval record (the EvPermissionAsk it follows is the request half).
 //
 // NO-LEAK CONTRACT (gauntlet #7): it carries the tool NAME, the verdict string,
-// the askID, the gated tool-call id, and the allow-always flag — and NOTHING ELSE.
+// the askID, an optional gated tool-call id, and the allow-always flag — and NOTHING ELSE.
 // It NEVER carries the raw tool args (those can quote secrets) nor the deny-reason
 // body (which can quote a sensitive command preview). A consumer that needs to
-// correlate a verdict back to a tool call uses Call (the opaque tool-call id, also
-// implicitly inside AskID) against the conversation history, never an arg payload
-// on this event.
+// correlate a root verdict back to a tool call uses Call (the opaque tool-call id,
+// also implicitly inside AskID) against the conversation history, never an arg
+// payload on this event. A child ask projected onto a parent has an empty Call:
+// child and parent provider call IDs can collide, and parent replay must not
+// learn a rule from an unrelated parent call.
 type ApprovalPayload struct {
 	// AskID is the id of the resolved permission ask (the same id carried on the
 	// EvPermissionAsk that preceded this verdict and on the wire ResumeApproval).
@@ -399,7 +418,8 @@ type ApprovalPayload struct {
 	// so surfacing it directly opens no new leak surface. It is the durable,
 	// grammar-free correlation handle a 3b permstore-replay consumer uses to find the
 	// gated ToolCall in the loaded conversation and re-derive its rule from the real
-	// args (which stay in the session history, never on this event).
+	// args (which stay in the session history, never on this event). Empty for a
+	// child approval projected onto the parent run.
 	Call ToolCallID
 	// AllowAlways mirrors (Verdict == VerdictStringAllowAlways): the verdict ASKED
 	// the harness to learn a per-session allow rule. It is deliberately NOT named
@@ -411,6 +431,8 @@ type ApprovalPayload struct {
 	// event never carries enough to reconstruct a pattern), so AllowAlways is a
 	// filter hint, never a durable rule record.
 	AllowAlways bool
+	// Origin is the explicit provenance of this approval. Unknown never learns.
+	Origin ApprovalOrigin
 }
 
 // The EvApproval verdict-string passthrough labels. They are the ONE source of
@@ -445,8 +467,8 @@ func VerdictString(v ApprovalVerdict) string {
 // CompactionArchivePayload is the structured detail carried by an
 // EvCompactionArchive Event: the pre-compaction conversation that ReplaceHistory
 // replaced. It is the durable, non-destructive archive of the history a
-// compaction would otherwise drop — a later consumer (the Phase 3 reconstruct
-// gate, issue #28 session-scoped detach) replays the EventLog and recovers the
+// compaction would otherwise drop — a consumer (e.g. the eventsource
+// reconstruction adapter) replays the EventLog and recovers the
 // pre-compaction turns that the session snapshot no longer holds.
 //
 // CAPTURE ORDERING (load-bearing): the loop captures the original Messages slice
@@ -525,6 +547,9 @@ type UserPromptPayload struct {
 	// Synthetic reports that the harness, rather than the principal, authored this
 	// user-role continuation. False is genuine or legacy-unknown.
 	Synthetic bool
+	// Provenance carries explicit authority provenance. Its zero value is legacy
+	// unknown and must never be upgraded to principal from message text.
+	Provenance UserPromptProvenance
 }
 
 // ModelRetryPayload is the structured durable marker that a failed-step retry
@@ -547,8 +572,6 @@ type ResultPayload struct {
 	// It surfaces the error the loop would otherwise drop so callers (the demo,
 	// API clients) can see why a run failed instead of an opaque "error".
 	Error string
-	// Permanent is the compatibility projection of Disposition==Permanent.
-	Permanent bool
 	// Disposition classifies whether replaying the failed model request is safe.
 	Disposition RetryDisposition
 	// Progress records how far the terminal model stream advanced semantically.
@@ -770,7 +793,7 @@ type TurnEndPayload struct {
 // TeamPayload — all project the SAME underlying child-loop LIFECYCLE: a redacted child
 // doing tool work, start → tool → end. The shared lifecycle is the parent call id, a
 // child/branch/member identity, a tool name / error bool / running count, usage, stop
-// reason, and duration, PLUS — as of ADR 0079 — the bounded preview fields (Text /
+// reason, and duration, PLUS the bounded preview fields (Text /
 // Detail / InnerKind) all three families now carry for their tool/message events; and
 // the redaction of that lifecycle (previews included) is shared in EXACTLY ONE place —
 // agent.drainChildObserved (the single redaction chokepoint all three reuse, every
@@ -795,11 +818,28 @@ type TurnEndPayload struct {
 // ChildActivity extraction — it is a helper, not a value-object migration — and the
 // 4th-family bar stands.
 
+// RoutingDecision is the bounded evidence snapshot for one configured delegated-model
+// routing decision. Model and accepted-route facts remain authoritative on the enclosing
+// delegation payload; this value records only classifier configuration, candidate evidence,
+// outcome, and the post-decision breaker state.
+type RoutingDecision struct {
+	Backend           string
+	ClassifierModel   string
+	CandidateCategory string
+	CandidateModel    string
+	Confidence        *float64
+	MinimumConfidence *float64
+	Outcome           string
+	ConsecutiveMisses int
+	MissLimit         int
+	BreakerOpen       bool
+}
+
 // SubagentPayload is the REDACTED observability projection carried by the three
 // subagent.* events (EvSubagentStart / EvSubagentTool / EvSubagentEnd). It is the
 // ONLY information about a Subagent tool's child run that surfaces to clients.
 //
-// REDACTION CONTRACT — bounded previews (ADR 0079, superseding the former
+// REDACTION CONTRACT — bounded previews (superseding the former
 // metadata-only contract): on tool events it deliberately forwards BOUNDED previews
 // of the child's content — Text is a bounded, clamped preview of the child's message
 // text, Detail is a bounded, clamped preview of a child tool call's args or a tool
@@ -814,8 +854,8 @@ type TurnEndPayload struct {
 // Which fields are set depends on the event kind:
 //   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount, and —
-//     when a preview is available — Text / Detail / InnerKind (which inner event kind
-//     the preview came from: message.delta / tool.call / tool.result / result).
+//     when a preview is available — Text / Detail / InnerKind (message.delta /
+//     tool.call / tool.result.available / tool.result / result).
 //   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, [Cause], DurationMs.
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
@@ -837,7 +877,7 @@ type SubagentPayload struct {
 	// one boolean on subagent.* (the ChildActivity trip-wire stands).
 	Background bool
 	// RoutedCategory / RoutedModel are the OPT-IN semantic model router's classification
-	// for this child (ADR 0031): the chosen CATEGORY label and the concrete MODEL id the
+	// for this child: the chosen CATEGORY label and the concrete MODEL id the
 	// child was minted on. Set on EvSubagentStart ONLY when the router was wired AND
 	// classified this delegation (both empty otherwise — no router, or a fail-soft miss
 	// that inherited the default model). They are BARE METADATA — a category label and a
@@ -859,17 +899,24 @@ type SubagentPayload struct {
 	// or the classifier's reasoning — so it is gauntlet-#7 safe (no child content, no
 	// model-influenced free text crosses). Clamped at the emit site.
 	RoutingReason string
+	// RoutingDecision is the optional configured-router evidence captured on
+	// EvSubagentStart. Historical events and deployments without a router leave it nil.
+	RoutingDecision *RoutingDecision
 	// Model is the concrete MODEL id the child ACTUALLY ran on (EvSubagentStart only),
 	// set unconditionally — inherited default, agent-def pin, per-call `model` override,
 	// or the opt-in router — independent of whether the router fired. It is BARE METADATA
 	// — a model id, never child content — so it is gauntlet-#7 safe (no child content
 	// crosses). When the router classified this delegation, Model == RoutedModel. It rides
 	// the proto/client wire end-to-end (subagent.start: Subagent.model = field 13),
-	// surfaced via the server mapper — see ADR 0035.
+	// surfaced via the server mapper.
 	Model string
 	// ToolName is the name of a child tool that just ran. Set on EvSubagentTool
 	// only. It is the tool NAME alone — never the child's tool args or result.
 	ToolName string
+	// ChildToolCallID is the exact child call, available-result, or canonical-result ID
+	// for tool projections only. It is scoped by ChildID; older and non-tool events leave it empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether the child tool call failed. Set on EvSubagentTool
 	// only.
 	IsError bool
@@ -885,13 +932,13 @@ type SubagentPayload struct {
 	// kinds when a preview is available.
 	Text string
 	// Detail is a BOUNDED preview of a child tool call's args (tool.call) or a
-	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// tool result's body (tool.result.available or tool.result) — control-byte scrubbed and rune-capped by
 	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
-	// on EvSubagentTool for the tool.call / tool.result inner kinds when a preview
+	// on EvSubagentTool for the tool.call / tool.result.available / tool.result inner kinds when a preview
 	// is available.
 	Detail string
 	// InnerKind discriminates which inner child event kind the projection came from
-	// (message.delta / tool.call / tool.result / result / turn.end) and which preview
+	// (message.delta / tool.call / tool.result.available / tool.result / result / turn.end) and which preview
 	// fields it populates (Text/Detail). A turn.end projection carries NO Text/Detail;
 	// it only advances Usage. A child's permission.ask is never projected.
 	InnerKind EventType
@@ -927,7 +974,7 @@ type SubagentPayload struct {
 // ParallelPayload is the REDACTED observability projection carried by the parallel.*
 // events (EvParallelStart / EvParallelBranch / EvParallelEnd).
 //
-// REDACTION CONTRACT — bounded previews (ADR 0079, superseding the former
+// REDACTION CONTRACT — bounded previews (superseding the former
 // metadata-only contract): on branch tool events it deliberately forwards BOUNDED
 // previews of the branch's content — Text is a bounded, clamped preview of the
 // branch's message text, Detail is a bounded, clamped preview of a branch tool
@@ -987,7 +1034,7 @@ type ParallelPayload struct {
 	// Set on the branch_start kind. Clamped identically to SubagentPayload.Goal.
 	Goal string
 	// RoutedCategory / RoutedModel are the OPT-IN semantic model router's classification
-	// for this branch (ADR 0031 / ADR 0034): the chosen CATEGORY label and the concrete
+	// for this branch: the chosen CATEGORY label and the concrete
 	// MODEL id the branch was minted on. Set on the branch_start kind ONLY when the router
 	// was wired AND classified this branch (both empty otherwise — no router, a fail-soft
 	// miss that inherited the default branch model, or a branch cancelled before it started).
@@ -995,7 +1042,7 @@ type ParallelPayload struct {
 	// label and a model id, never the branch prompt or the classifier's reasoning — so they
 	// are gauntlet-#7 safe (no branch content, no model-influenced free text crosses). They
 	// ride the proto/client wire end-to-end (parallel.branch_start: Parallel.routed_category
-	// = field 19 / routed_model = field 20), surfaced via the server mapper — see ADR 0034.
+	// = field 19 / routed_model = field 20), surfaced via the server mapper.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the router did NOT classify this branch (branch_start kind
@@ -1007,18 +1054,25 @@ type ParallelPayload struct {
 	// reasoning — so it is gauntlet-#7 safe (no branch content crosses). Clamped at the
 	// emit site.
 	RoutingReason string
+	// RoutingDecision is the optional configured-router evidence captured on a
+	// branch_start event. Historical events and deployments without a router leave it nil.
+	RoutingDecision *RoutingDecision
 	// Model is the concrete MODEL id the branch ACTUALLY ran on (branch_start kind only),
 	// set unconditionally — inherited default branch model or the opt-in router —
 	// independent of whether the router fired. It is BARE METADATA — a model id, never
 	// branch content — so it is gauntlet-#7 safe (no branch content crosses). When the
 	// router classified this branch, Model == RoutedModel. It rides the proto/client wire
 	// end-to-end (parallel.branch_start: Parallel.model = field 21), surfaced via the
-	// server mapper — see ADR 0035.
+	// server mapper.
 	Model string
 
 	// ToolName is the name of a branch's child tool that just ran. Set on the
 	// branch_tool kind only. It is the tool NAME alone — never branch args/result.
 	ToolName string
+	// ChildToolCallID is the exact branch call/result ID for tool.call/tool.result
+	// projections only, scoped by the branch lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether that branch tool call failed. Set on branch_tool only.
 	IsError bool
 	// ToolCount is the running (branch_tool) or final (branch_end) number of a branch's
@@ -1030,13 +1084,13 @@ type ParallelPayload struct {
 	// inner kinds when a preview is available.
 	Text string
 	// Detail is a BOUNDED preview of a branch tool call's args (tool.call) or a
-	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// tool result's body (tool.result.available or tool.result) — control-byte scrubbed and rune-capped by
 	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
-	// on the branch_tool kind for the tool.call / tool.result inner kinds when a
+	// on the branch_tool kind for the tool.call / tool.result.available / tool.result inner kinds when a
 	// preview is available.
 	Detail string
 	// InnerKind discriminates which inner branch event kind the preview came from
-	// (message.delta / tool.call / tool.result / result). Set on the branch_tool
+	// (message.delta / tool.call / tool.result.available / tool.result / result). Set on the branch_tool
 	// kind alongside Text / Detail. A branch's permission.ask is never projected.
 	InnerKind EventType
 
@@ -1114,7 +1168,7 @@ type TeamMemberSpec struct {
 	// Lead marks the coordinating member.
 	Lead bool
 	// RoutedCategory / RoutedModel are the OPT-IN semantic model router's classification
-	// for this member (ADR 0031 / ADR 0034): the chosen CATEGORY label and the concrete
+	// for this member: the chosen CATEGORY label and the concrete
 	// MODEL id the member's engine was minted on. Set on the EvTeamStart roster entry ONLY
 	// when the router was wired AND classified this member (both empty otherwise — no
 	// router, a fail-soft miss that inherited the default member model, or a DEFINED member
@@ -1123,7 +1177,7 @@ type TeamMemberSpec struct {
 	// the member's role/prompt or the classifier's reasoning — so they are gauntlet-#7 safe
 	// (no member content crosses). They ride the proto/client wire end-to-end (team.start
 	// roster: TeamMemberSpec.routed_category = field 5 / routed_model = field 6), surfaced
-	// via the server mapper — see ADR 0034.
+	// via the server mapper.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the router did NOT classify this member (EvTeamStart roster
@@ -1135,14 +1189,22 @@ type TeamMemberSpec struct {
 	// member's role/prompt or classifier reasoning — so it is gauntlet-#7 safe (no member
 	// content crosses). Clamped at the emit site.
 	RoutingReason string
+	// RoutingDecision is the optional configured-router evidence captured in the
+	// team.start roster. Historical events and deployments without a router leave it nil.
+	RoutingDecision *RoutingDecision
 	// Model is the concrete MODEL id the member's engine ACTUALLY runs on (EvTeamStart
 	// roster entry only), set unconditionally — inherited default member model, agent-def
 	// pin, or the opt-in router — independent of whether the router fired. It is BARE
 	// METADATA — a model id, never member content — so it is gauntlet-#7 safe (no member
 	// content crosses). When the router classified this member, Model == RoutedModel. It
 	// rides the proto/client wire end-to-end (team.start roster: TeamMemberSpec.model =
-	// field 7), surfaced via the server mapper — see ADR 0035.
+	// field 7), surfaced via the server mapper.
 	Model string
+	// MemberSessionID and MemberIncarnation are trusted, log-only correlation for the
+	// exact enrolled member lifetime. They are deliberately omitted from every public
+	// wire and debugger JSON projection and must never be derived from the naming scheme.
+	MemberSessionID   SessionID
+	MemberIncarnation IncarnationID
 }
 
 // Routing-reason gate constants (issue #397): the CLOSED set of harness-authored reasons
@@ -1259,7 +1321,7 @@ type TeamMemberDisposition struct {
 // about an in-process team's run that surfaces to clients on the event stream.
 //
 // REDACTION CONTRACT — fuller-but-bounded. Like SubagentPayload / ParallelPayload
-// (bounded previews per ADR 0079) but fuller, since a team is meant to be WATCHED:
+// (bounded previews) but fuller, since a team is meant to be WATCHED:
 // this payload deliberately forwards member
 // CONTENT on team.member events: the member's streamed/terminal message text and
 // BOUNDED previews of its tool calls (name + capped arg preview) and tool results
@@ -1306,17 +1368,21 @@ type TeamPayload struct {
 	// MemberIncarnation is internal durable correlation metadata, never projected.
 	MemberIncarnation IncarnationID
 	// InnerKind is the member's underlying session event kind being projected
-	// (e.g. "message.delta", "tool.call", "tool.result", "turn.end", "result").
+	// (e.g. "message.delta", "tool.call", "tool.result.available", "tool.result", "turn.end", "result").
 	// Set on EvTeamMember only. permission.ask is never projected.
 	InnerKind EventType
 	// Text is the member's message/result text or a BOUNDED preview of it. Set on
 	// EvTeamMember for message.delta / result inner kinds.
 	Text string
 	// ToolName is the name of a member tool that was called. Set on EvTeamMember
-	// for tool.call / tool.result inner kinds.
+	// for tool.call / tool.result.available / tool.result inner kinds.
 	ToolName string
+	// ChildToolCallID is the exact member call/result ID for tool.call/tool.result
+	// projections only, scoped by the member lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// Detail is a BOUNDED preview of a member tool call's args (tool.call) or
-	// result body (tool.result) — capped at maxTeamPreview runes. It is never the
+	// result body (tool.result.available or tool.result) — capped at maxTeamPreview runes. It is never the
 	// raw, unbounded args/result body. Set on EvTeamMember for tool.* inner kinds.
 	Detail string
 	// IsError reports whether a member tool.result failed. Set on EvTeamMember for
@@ -1413,6 +1479,14 @@ type AuthorizationPayload struct {
 	Status          AuthorizationStatus
 }
 
+// PlanContinuationFailurePayload safely correlates a known failed proceed start
+// to the approved plan ask. The failed execution run never began, so this event
+// remains session-scoped and contains no prompt, error, or tool arguments.
+type PlanContinuationFailurePayload struct {
+	PlanRunID string
+	AskID     string
+}
+
 // Valid reports whether the payload uses the bounded authorization identifier
 // grammar, has a non-zero expiry, and carries a closed lifecycle status.
 func (p AuthorizationPayload) Valid() bool {
@@ -1456,7 +1530,7 @@ type Event struct {
 	Title *TitlePayload
 	// ToolCall is set on EvToolCall.
 	ToolCall *ToolCall
-	// ToolResult is set on EvToolResult.
+	// ToolResult is set on EvToolResultAvailable and EvToolResult.
 	ToolResult *ToolResult
 	// Ask is set on EvPermissionAsk.
 	Ask *PendingAsk
@@ -1473,6 +1547,9 @@ type Event struct {
 	// It contains only safe lifecycle correlation; private continuation state and
 	// sensitive tool or backend data never enter the event.
 	Authorization *AuthorizationPayload
+	// PlanContinuationFailure is set on EvPlanContinuationFailed and carries
+	// only the approved plan's run and ask IDs.
+	PlanContinuationFailure *PlanContinuationFailurePayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).
@@ -1495,9 +1572,6 @@ type Event struct {
 	// event-sourced fold; it is log-only (skipped on the live client wire). See
 	// UserPromptPayload.
 	UserPrompt *UserPromptPayload
-	// Usage is set on usage-bearing events. On EvResult it is the cumulative run
-	// total; turn.end carries its per-turn usage in TurnEnd, NOT here.
-	Usage *Usage
 	// Subagent is set on the three subagent.* events: the REDACTED observability
 	// projection of a Subagent child run (metadata only, never child content).
 	Subagent *SubagentPayload
@@ -1510,8 +1584,8 @@ type Event struct {
 	// metadata-only observability projection of a Parallel fork-join run (group-level
 	// join/winner facts + per-branch metadata + fork paths, never branch content).
 	Parallel *ParallelPayload
-	// RunID is the opaque, host-minted identity of the run that emitted this event
-	// (ADR 0249). It is STAMPED BY THE LOOP, at Run.emit/emitOrAbort, beside the
+	// RunID is the opaque, host-minted identity of the run that emitted this event.
+	// It is STAMPED BY THE LOOP, at Run.emit/emitOrAbort, beside the
 	// existing Seq stamp — every event a run emits carries it, so no relay,
 	// transport, or persistence path can omit it.
 	//
@@ -1535,11 +1609,11 @@ type Event struct {
 	// stream includes them, which is why the two are separate operations.
 	//
 	// A host that supplies no RunID emits events with an empty one, byte-identical
-	// to the behaviour before ADR 0249. Like Actor, it is not a reconstruction
+	// to the behaviour before RunID existed. Like Actor, it is not a reconstruction
 	// input: eventsource.Fold ignores it.
 	RunID string
 	// Actor is the verified caller who ACTED — who drove the request this event
-	// belongs to (ADR 0204 decision 5). It is LOG-ONLY and DERIVE-AT-APPEND: every
+	// belongs to. It is LOG-ONLY and DERIVE-AT-APPEND: every
 	// emit site — the loop included — leaves it nil (the loop is storage-agnostic
 	// and knows nothing about principals), and the server relay's single appendEvent
 	// chokepoint stamps it from the CONTEXT PRINCIPAL just before the durable

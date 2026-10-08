@@ -1,0 +1,87 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        { "id": "grant-call", "name": "mcp__fixture__one", "args": { "case": "grant" } }
+      ]
+    },
+    { "text": "authorization grant completed" },
+    {
+      "tool_calls": [{ "id": "deny-call", "name": "mcp__fixture__one", "args": { "case": "deny" } }]
+    },
+    { "text": "authorization denial completed" },
+    {
+      "tool_calls": [
+        { "id": "cancel-call", "name": "mcp__fixture__one", "args": { "case": "cancel" } }
+      ]
+    },
+    { "text": "authorization cancellation completed" },
+    {
+      "tool_calls": [
+        {
+          "id": "permission-allow-auth",
+          "name": "mcp__fixture__one",
+          "args": { "case": "permission-allow" }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "permission-allow-write",
+          "name": "Write",
+          "args": { "path": "permission-allowed.txt", "content": "allowed\n" }
+        }
+      ]
+    },
+    { "text": "permission allow completed" },
+    {
+      "tool_calls": [
+        {
+          "id": "permission-deny-auth",
+          "name": "mcp__fixture__one",
+          "args": { "case": "permission-deny" }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "permission-deny-write",
+          "name": "Write",
+          "args": { "path": "permission-denied.txt", "content": "denied\n" }
+        }
+      ]
+    },
+    { "text": "permission deny completed" },
+    {
+      "tool_calls": [
+        {
+          "id": "chain-first",
+          "name": "mcp__fixture__one",
+          "args": { "case": "chain-first" }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "chain-second",
+          "name": "mcp__fixture__two",
+          "args": { "case": "chain-second" }
+        }
+      ]
+    },
+    { "text": "chained authorization completed" },
+    {
+      "tool_calls": [
+        {
+          "id": "continuation-cancel",
+          "name": "mcp__fixture__one",
+          "args": { "case": "continuation-cancel" }
+        }
+      ]
+    },
+    { "delay_ms": 2000, "text": "continuation should be cancelled" }
+  ]
+}

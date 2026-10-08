@@ -27,7 +27,7 @@ func TestCommandExpanderExpandsRecordedPrompt(t *testing.T) {
 	e := newEngine(agent.Deps{
 		LLM:             llm,
 		Catalog:         catalogWith(t),
-		CommandExpander: prompt.NewDirCommandExpander(),
+		CommandExpander: prompt.NewDirCommandExpander(ws),
 	})
 	sess := newSession(t, session.Limits{})
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "/review foo.go"})
@@ -55,7 +55,7 @@ func TestCommandExpanderLeavesNonCommandUnchanged(t *testing.T) {
 	e := newEngine(agent.Deps{
 		LLM:             llm,
 		Catalog:         catalogWith(t),
-		CommandExpander: prompt.NewDirCommandExpander(),
+		CommandExpander: prompt.NewDirCommandExpander(ws),
 	})
 	sess := newSession(t, session.Limits{})
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "hello there"})

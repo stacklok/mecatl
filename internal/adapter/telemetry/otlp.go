@@ -114,7 +114,7 @@ type Providers struct {
 // Metrics are ALWAYS installed: a prometheus-exporter reader registers the
 // domain instruments on a fresh prometheus.Registry (returned for /metrics), the
 // latency histograms are configured as explicit-bucket histograms via metric.Views
-// (ADR 0045 — so the classic text exposition carries real le= buckets / quantiles),
+// (so the classic text exposition carries real le= buckets / quantiles),
 // and the runtime collector (go.goroutine.count, GC, heap, …) is started against
 // the MeterProvider. The MeterProvider is NOT installed globally — it is returned
 // in Providers.Meter for explicit injection into NewMetrics.
@@ -196,7 +196,7 @@ func Setup(ctx context.Context, cfg OTLPConfig) (Providers, error) {
 
 // newMeterProvider builds the SDK MeterProvider with a prometheus-exporter reader
 // (registered on a fresh registry) and the explicit-bucket-histogram views for
-// every latency instrument (ADR 0045). It returns the provider and the registry
+// every latency instrument. It returns the provider and the registry
 // to serve at /metrics.
 //
 // When cfg.MetricsEndpoint is set, an OTLP metrics push reader (a PeriodicReader
@@ -283,7 +283,8 @@ func newMetricPushReader(ctx context.Context, cfg OTLPConfig) (*sdkmetric.Period
 // Prometheus text exposition format, suitable for mounting at /metrics. It is a
 // thin wrapper over promhttp that keeps the handler construction (and the
 // promhttp.HandlerOpts choice) in one place; the composition root still names
-// *prometheus.Registry to wire the handler, which architecture.md §2 permits.
+// *prometheus.Registry to wire the handler, which the layering rules permit
+// for composition code (docs/architecture.md).
 func MetricsHandler(reg *prometheus.Registry) http.Handler {
 	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }

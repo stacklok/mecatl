@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -17,7 +18,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // newReconcileTestService builds a *server.Service over a jsonlstore (the SAME
@@ -25,7 +25,7 @@ import (
 // engine, so the reconcile callback's GetSession/SessionStore.Save operate on
 // the durable store the real makeFireFunc uses. It returns the store, the
 // schedule store, the service, and a cleanup. It is the shared harness for the
-// stale-fire reconcile composition tests (issue #386 Phase 4b).
+// stale-fire reconcile composition tests (issue #386).
 func newReconcileTestService(t *testing.T) (store *jsonlstore.Store, schedStore port.ScheduleStore, svc *server.Service) {
 	t.Helper()
 	ctx := context.Background()
@@ -62,7 +62,7 @@ func newReconcileTestService(t *testing.T) (store *jsonlstore.Store, schedStore 
 	return s, s.ScheduleStore(), sv
 }
 
-// TestReconcileStaleFireAfterClaimSettles is the issue #386 Phase 4b gate for
+// TestReconcileStaleFireAfterClaimSettles is the issue #386 gate for
 // crash sub-case 1: a crashed process left LastFireSessionID == "pending"
 // (Claim happened, RecordFireStart/RecordFire never did), and the fire is
 // stale (LastFireAt older than the window). After the tick's reconcile scan
@@ -161,7 +161,7 @@ func TestReconcileStaleFireAfterClaimSettles(t *testing.T) {
 	}
 }
 
-// TestReconcileStaleFireAfterSessionSettles is the issue #386 Phase 4b gate for
+// TestReconcileStaleFireAfterSessionSettles is the issue #386 gate for
 // crash sub-case 2: a crashed process left a real in-flight fire
 // (LastFireSessionID is a "sched--" id, LastFireStartedAt set, the session
 // snapshot StateRunning — the loop never persisted terminal) whose lease

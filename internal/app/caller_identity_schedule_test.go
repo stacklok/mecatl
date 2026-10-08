@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -15,12 +16,11 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // alicePrincipal is the verified human caller these scenario tests attribute
-// schedules to. Identity is the (issuer, subject) PAIR (ADR 0204 decision 1).
+// schedules to. Identity is the (issuer, subject) PAIR.
 var alicePrincipal = session.Principal{
 	Issuer:    "https://idp.example",
 	Subject:   "alice",
@@ -92,7 +92,7 @@ func ownedScheduleSpec(name string, origin session.SessionID) port.ScheduleSpec 
 // schedule created FROM Alice's session records Alice as its owner at CREATE
 // time, and that owner survives the origin session being swept by childgc.
 //
-// The childgc half is the point (ADR 0204 decision 6): deriving the owner at
+// The childgc half is the point: deriving the owner at
 // FIRE time would read a session that no longer exists, so the capture must be
 // durable on the schedule itself. The test therefore sweeps the origin away and
 // re-reads the schedule from the store.

@@ -89,7 +89,7 @@ func BenchmarkCompactionCycle(b *testing.B) {
 
 	u := session.Usage{}
 	if lastSess != nil {
-		u = lastSess.Usage
+		u = lastSess.UsageFor(session.UsageKindMain)
 	}
 	addResult(kpi.ScenarioResult{
 		Name:            "compaction_cycle",

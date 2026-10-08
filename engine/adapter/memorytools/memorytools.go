@@ -1,7 +1,5 @@
 // Package memorytools provides portable memory tool bodies for project and user
-// scopes. Stores opt into Inspect/Forget/Undo by implementing
-// tool.MemoryLifecycleStore; the original Remember/Recall/Search family remains
-// available over every tool.MemoryStore.
+// scopes over the mandatory versioned tool.MemoryStore.
 package memorytools
 
 import (
@@ -40,18 +38,20 @@ func namesFor(scope Scope) names {
 	return names{"Remember", "Recall", "SearchMemory", "InspectMemory", "ForgetMemory", "UndoMemory", ""}
 }
 
-// Tools returns the three base tools and, when store implements
-// MemoryLifecycleStore, the three lifecycle tools for scope.
+// Tools returns the six memory tools for scope.
 func Tools(store tool.MemoryStore, scope Scope) []tool.Tool {
 	if store == nil {
 		panic("memorytools: nil MemoryStore")
 	}
 	n := namesFor(scope)
-	out := []tool.Tool{rememberTool{store: store, lifecycle: lifecycleOf(store), scope: scope, names: n}, recallTool{store: store, scope: scope, names: n}, searchTool{store: store, scope: scope, names: n}}
-	if lifecycle := lifecycleOf(store); lifecycle != nil {
-		out = append(out, inspectTool{store: lifecycle, scope: scope, names: n}, forgetTool{store: lifecycle, scope: scope, names: n}, undoTool{store: lifecycle, scope: scope, names: n})
+	return []tool.Tool{
+		rememberTool{store: store, scope: scope, names: n},
+		recallTool{store: store, scope: scope, names: n},
+		searchTool{store: store, scope: scope, names: n},
+		inspectTool{store: store, scope: scope, names: n},
+		forgetTool{store: store, scope: scope, names: n},
+		undoTool{store: store, scope: scope, names: n},
 	}
-	return out
 }
 
 // ProjectTools returns the project-scoped family.
@@ -70,16 +70,10 @@ func Register(cat *tool.Catalog, store tool.MemoryStore, scope Scope) error {
 	return nil
 }
 
-func lifecycleOf(store tool.MemoryStore) tool.MemoryLifecycleStore {
-	lifecycle, _ := store.(tool.MemoryLifecycleStore)
-	return lifecycle
-}
-
 type rememberTool struct {
-	store     tool.MemoryStore
-	lifecycle tool.MemoryLifecycleStore
-	scope     Scope
-	names     names
+	store tool.MemoryStore
+	scope Scope
+	names names
 }
 type rememberArgs struct {
 	Key, Value, Description string
@@ -114,23 +108,15 @@ func (t rememberTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	if err := tool.ValidateMemoryContentWrite(key, args.Value, args.Description, attribution); err != nil {
 		return storeFailure(call, t.scope, "remember", key, err), nil
 	}
-	if t.lifecycle != nil {
-		if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
-			return storeFailure(call, t.scope, "remember", key, err), nil
-		}
-		record, err := t.lifecycle.RememberVersioned(ctx, entry, args.ExpectedVersion)
-		if err != nil {
-			return storeFailure(call, t.scope, "remember", key, err), nil
-		}
-		return receipt(call, t.scope, "remembered", key, record.Current), nil
-	}
-	if t.lifecycle == nil && args.ExpectedVersion != "" {
-		return failure(call, `"expected_version" requires lifecycle-capable memory storage`), nil
-	}
-	if err := t.store.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: args.Value, Description: args.Description}); err != nil {
+	if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
 		return storeFailure(call, t.scope, "remember", key, err), nil
 	}
-	return session.NewToolResult(call.ID, fmt.Sprintf("Memory scope=%s key=%q remembered.", t.scope, key)), nil
+	expected := tool.MemoryCurrent{Exists: args.ExpectedVersion != "", Version: args.ExpectedVersion}
+	record, err := t.store.Remember(ctx, entry, expected)
+	if err != nil {
+		return storeFailure(call, t.scope, "remember", key, err), nil
+	}
+	return receipt(call, t.scope, "remembered", key, record.Current), nil
 }
 func (n names) key(key string) string {
 	if n.prefix != "" && !strings.HasPrefix(key, n.prefix) {
@@ -198,14 +184,9 @@ func (t recallTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 }
 
 func recallRevision(ctx context.Context, store tool.MemoryStore, entry tool.MemoryEntry) (tool.MemoryRevision, error) {
-	fallback := tool.MemoryRevision{Key: entry.Key, Value: entry.Value, Description: entry.Description, Status: tool.MemoryStatusActive, UpdatedAt: entry.UpdatedAt}
-	lifecycle, ok := store.(tool.MemoryLifecycleStore)
-	if !ok {
-		return fallback, nil
-	}
-	record, found, err := lifecycle.Inspect(ctx, entry.Key)
+	record, found, err := store.Inspect(ctx, entry.Key)
 	if err != nil || !found {
-		return fallback, err
+		return tool.MemoryRevision{}, err
 	}
 	return record.Current, nil
 }
@@ -256,7 +237,7 @@ func (t searchTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 }
 
 type inspectTool struct {
-	store tool.MemoryLifecycleStore
+	store tool.MemoryStore
 	scope Scope
 	names names
 }
@@ -301,7 +282,7 @@ type mutationArgs struct {
 	ExpectedVersion tool.MemoryVersion `json:"expected_version"`
 }
 type forgetTool struct {
-	store tool.MemoryLifecycleStore
+	store tool.MemoryStore
 	scope Scope
 	names names
 }
@@ -322,7 +303,7 @@ func (t forgetTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 		return failure(call, `the "expected_version" argument is required`), nil
 	}
 	key := t.names.key(args.Key)
-	record, err := t.store.ForgetVersioned(ctx, key, args.ExpectedVersion)
+	record, err := t.store.Forget(ctx, key, args.ExpectedVersion)
 	if err != nil {
 		return storeFailure(call, t.scope, "forget", key, err), nil
 	}
@@ -330,7 +311,7 @@ func (t forgetTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 }
 
 type undoTool struct {
-	store tool.MemoryLifecycleStore
+	store tool.MemoryStore
 	scope Scope
 	names names
 }
@@ -359,7 +340,7 @@ func (t undoTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Env
 		return failure(call, `the "expected_version" argument is required`), nil
 	}
 	key := t.names.key(args.Key)
-	record, err := t.store.UndoLatest(ctx, key, args.ExpectedVersion)
+	record, err := t.store.Undo(ctx, key, args.ExpectedVersion)
 	if err != nil {
 		return storeFailure(call, t.scope, "undo", key, err), nil
 	}

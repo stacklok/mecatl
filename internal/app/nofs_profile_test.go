@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -17,7 +18,6 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -242,7 +242,7 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 
 	saw := map[string]bool{}
 	for _, p := range toolEv {
-		// ADR 0079: the projection also carries message.delta / result text previews
+		// The projection also carries message.delta / result text previews
 		// with no ToolName — only tool.call / tool.result projections are
 		// tool-attributed. The ok/error outcome is attributed on the tool.RESULT
 		// projection (a tool.call preview always reads IsError=false).
@@ -594,7 +594,7 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 // upstream no-fs guard regressed). A non-empty root still opens osfs normally.
 func TestOsfsWorkspaceFactoryEmptyRootIntercepted(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	factory := osfsWorkspaceFactory(diag)
+	factory := osfsWorkspaceFactory(diag, PostureStrict)
 
 	ws := factory("")
 	if _, ok := ws.(nofs.Workspace); !ok {
@@ -642,7 +642,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 		memory.InspectUserMemoryToolName, memory.ForgetUserMemoryToolName, memory.UndoUserMemoryToolName,
 		// The no-fs core tier: WebFetch + FetchMcpResource (outbound reads) + WebSearch
 		// (search-then-fetch discovery). FetchMcpResource is an outbound read with no
-		// filesystem need (issue #223 Phase 2).
+		// filesystem need (issue #223).
 		"WebFetch", "FetchMcpResource", "WebSearch",
 		// CallMcpWithQuery (issue #223): the fail-closed escape hatch for an over-cap
 		// structured MCP result. Cloud-native portable (no disk), so a no-FS child that
@@ -661,7 +661,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 	}
 }
 
-// TestSelectorSessionSurvivesRestartE2E is the cloud-native Phase 1 falsifiable
+// TestSelectorSessionSurvivesRestartE2E is the session-survives-restart falsifiable
 // gate through the FULL composition (app.Build → server.Service), offline: a
 // session bound to a NON-default provider/model selector with a PARTIALLY-consumed
 // token budget is created and run over a durable store, the process "exits"

@@ -248,8 +248,8 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 		size += int64(64 + len(snap.Owner.Issuer) + len(snap.Owner.Subject) +
 			len(snap.Owner.GrantType) + len(snap.Owner.Name))
 	}
-	if snap.Usage != nil {
-		size += 96
+	if len(snap.TokenUsage) > 0 {
+		size += int64(96 * len(snap.TokenUsage))
 	}
 
 	for _, message := range snap.Messages {

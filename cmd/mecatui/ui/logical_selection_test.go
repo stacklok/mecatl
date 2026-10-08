@@ -10,11 +10,11 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// TestADR_0301_SelectionPreservesLiveStableText pins ADR 0301 §4: a selection
+// TestSelectionPreservesLiveStableText pins that a selection
 // is logical text, not a rendered row range. Reflow and a pending stream delta
 // must retain its exact ANSI-free copy while its context still resolves. A pending
 // delta never changes selection/copy's visible frame before its render tick.
-func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
+func TestSelectionPreservesLiveStableText(t *testing.T) {
 	const marker = "LOGICALSELECTIONMARKER"
 	m, _ := selModel(t)
 	m.conv.addUser("request")
@@ -65,7 +65,7 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 		t.Fatalf("stable selection after pending-delta render = %q (active=%t)", selectedText(m.vp.GetContent(), m.sel), m.sel.active)
 	}
 	// Expanding an earlier card changes the frame above the selected text.
-	m.expandTools = true
+	m.expandConversation = true
 	m.refreshView()
 	if !m.sel.active {
 		t.Fatal("stable selection was cleared by reflow")
@@ -89,7 +89,7 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 		m.conv.addTool("edit", "Edit", `{"path":"`+path+`","old_string":"a","new_string":"b"}`)
 		m.conv.resolveTool("edit", "done", false)
 		m.conv.recordFileChange(path)
-		m.expandTools = true
+		m.expandConversation = true
 		m.refreshView()
 		line := -1
 		for i, text := range strings.Split(m.vp.GetContent(), "\n") {
@@ -114,10 +114,10 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 		if strings.Contains(ansi.Strip(m.vp.GetContent()), "pending update") {
 			t.Fatalf("selection exposed hidden pending conversation content: %q", m.vp.GetContent())
 		}
-		if got := m.sel.anchorPoint.blockID; got != m.conv.changedFilesAppendixID {
-			t.Fatalf("appendix selection block = %d, want appendix ID %d", got, m.conv.changedFilesAppendixID)
+		if got := m.sel.anchorPoint.blockID; got != m.conv.testAppendixID() {
+			t.Fatalf("appendix selection block = %d, want appendix ID %d", got, m.conv.testAppendixID())
 		}
-		if !m.conversationView.frame.hasRegion(m.conv.changedFilesAppendixID, conversationRegionAppendix) {
+		if !m.conversationView.frame.hasRegion(m.conv.testAppendixID(), conversationRegionAppendix) {
 			t.Fatal("displayed complete frame was not used for selection projection")
 		}
 		m.refreshView()
@@ -383,8 +383,8 @@ func TestLogicalConversationAnchors_Scenario1_ChangingFrame(t *testing.T) {
 		m, _ := selModel(t)
 		m = applyAll(m, tea.WindowSizeMsg{Width: 34, Height: 30})
 		m.conv.addTool("read", "Read", `{"path":"a/very/long/path/for/wrapping.txt"}`)
-		m.conv.resolveTool("read", marker+" survives a narrow tool card reflow", false)
-		m.expandTools = true
+		m.conv.resolveAvailableTool("read", marker+" survives a narrow tool card reflow", false)
+		m.expandConversation = true
 		m.refreshView()
 		line := lineIndexContaining(m.vp.GetContent(), marker)
 		if line < 0 {

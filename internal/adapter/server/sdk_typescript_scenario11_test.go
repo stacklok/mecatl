@@ -82,7 +82,7 @@ type sdkScenario11Step struct {
 	With map[string]string `yaml:"with"`
 }
 
-func TestADR_0304_ManualDispatchIsDryRunOnly(t *testing.T) {
+func TestSDKReleaseManualDispatchIsDryRunOnly(t *testing.T) {
 	t.Parallel()
 
 	workflow, source := readSDKScenario11Workflow(t, sdkScenario11ReleaseWorkflow(t))
@@ -206,7 +206,8 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
 		t.Helper()
-		output, err := runSDKScenario11Command(t, sdkScenario11CommandTimeout, repo, "git", nil, args...)
+		runArgs := append([]string{"-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"}, args...)
+		output, err := runSDKScenario11Command(t, sdkScenario11CommandTimeout, repo, "git", nil, runArgs...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -406,7 +407,7 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	}
 }
 
-func TestADR_0328_TrustedPublishingNoStoredCredentials(t *testing.T) {
+func TestSDKTrustedPublishingNoStoredCredentials(t *testing.T) {
 	t.Parallel()
 
 	workflow, source := readSDKScenario11Workflow(t, sdkScenario11ReleaseWorkflow(t))
@@ -517,7 +518,7 @@ func TestADR_0328_TrustedPublishingNoStoredCredentials(t *testing.T) {
 	}
 }
 
-func TestADR_0304_TagTriggerIsolation(t *testing.T) {
+func TestSDKReleaseTagTriggerIsolation(t *testing.T) {
 	t.Parallel()
 
 	root := sdkScenario11RepoRoot(t)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth verifies AC3.2: every
@@ -32,7 +33,9 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 	}
 
 	t.Run("skills and learned details", func(t *testing.T) {
-		assertFits(t, "skills", renderSkillsPanel(th, skillsState{skills: []client.Skill{{Name: long, Description: long}}, filtered: []client.Skill{{Name: long, Description: long}}, learned: []client.LearnedSkill{{Name: long, State: long, OwnerAgent: long}}}, client.Capabilities{Skills: true}, hk, width))
+		sk := &skillsState{view: skillsPanel, skills: []client.Skill{{Name: long, Description: long}}, filtered: []client.Skill{{Name: long, Description: long}}, learned: []client.LearnedSkill{{Name: long, State: long, OwnerAgent: long}}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Skills: true}, marks: hk}}
+		skillsOut, _ := sk.Render(width, 100)
+		assertFits(t, "skills", skillsOut)
 		assertFits(t, "learned skill", centerCard(th, renderLearnedSkillDetail(th, client.LearnedSkill{Name: long, OwnerAgent: long, State: long, Version: long, Revision: long, Description: long, Body: long, Evaluations: []client.SkillEvaluation{{Verdict: long, FixtureIDs: []string{long}}}, Receipts: []client.SkillChange{{Operation: long, FromState: long, ToState: long}}}, long, width), width, 40))
 	})
 	t.Run("agent definitions", func(t *testing.T) {
@@ -41,15 +44,22 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 	t.Run("connect and session details", func(t *testing.T) {
 		m := Model{width: width, connect: connectState{open: true, targets: []ConnectTarget{{Target: long, Issuer: long, ClientID: long, Audience: long}}}}
 		assertFits(t, "connect", m.renderConnectOverlay(th))
-		assertFits(t, "session details", renderSessionDetails(th, sessionDetailsView{ID: long, Title: long, State: long, Placement: client.Placement{Label: long}, ProviderID: long, ModelID: long}, hk, width, 40))
+		assertFits(t, "session details", renderSessionDetails(th, sessionDetailsView{ID: long, Title: long, State: long, Connection: long, Placement: client.Placement{Label: long}, ProviderID: long, ModelID: long}, hk, width, 40))
 	})
 	t.Run("dream reflections soul and user model", func(t *testing.T) {
 		plan := &client.DreamPlan{Operations: []client.DreamOperation{{Kind: long, Survivor: client.DreamParticipant{Key: long, Value: long, Description: long}, Sources: []client.DreamParticipant{{Key: long, Value: long, Description: long}}, Replacement: client.DreamReplacement{Value: long, Description: long}, Reason: long}}}
 		assertFits(t, "dream", renderDreamOverlay(th, dreamState{view: dreamReview, plan: plan}, client.Capabilities{}, hk, width, 60))
 		proposal := &client.LearningProposal{ID: long, Status: long, Version: long, Kind: long, Key: long, Value: long, Description: long, Body: long, Triggers: []string{long}, Evidence: []client.LearningEvidence{{Locator: long, SessionID: long, Digest: long, Preview: long}}}
 		assertFits(t, "reflections", renderReflectionsOverlay(th, reflectionsState{view: reflectionsDetail, detail: proposal}, client.Capabilities{LearningProposals: true}, hk, width, 60))
-		assertFits(t, "soul", centerCard(th, renderSoulPanel(th, soulState{soul: client.Soul{Present: true, Content: long, SHA256: long}}, client.Capabilities{Soul: true}, hk, width), width, 40))
-		assertFits(t, "user model inventory", renderUserModelOverlay(th, userModelState{view: userModelPanel, model: client.UserModel{Entries: []client.UserModelEntry{{Key: long, Description: long}}}}, client.Capabilities{UserModel: true}, hk, width, 40))
-		assertFits(t, "user model", renderUserModelOverlay(th, userModelState{view: userModelDetail, detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: long, Status: long, Version: long, Writer: long, Origin: long, SourceSessionID: long, SourceProposalID: long, Description: long, Value: long}}}, client.Capabilities{UserModel: true}, hk, width, 40))
+		st := &soulState{view: soulPanel, soul: client.Soul{Present: true, Content: long, SHA256: long}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Soul: true}, marks: hk}}
+		soulBody, _ := st.Render(width-th.Style("askCard").GetHorizontalFrameSize(), 40-th.Style("askCard").GetVerticalFrameSize())
+		assertFits(t, "soul", centerCard(th, soulBody, width, 40))
+		inventory := &userModelState{deps: surfaceDeps{theme: th, caps: client.Capabilities{UserModel: true}, marks: hk}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
+		inventory.setModel(client.UserModel{Entries: []client.UserModelEntry{{Key: long, Description: long}}})
+		body, _ := inventory.Render(width, 40)
+		assertFits(t, "user model inventory", body)
+		detail := &userModelState{deps: inventory.deps, view: userModelDetail, viewport: &bounded.Viewport{}, detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: long, Status: long, Version: long, Writer: long, Origin: long, SourceSessionID: long, SourceProposalID: long, Description: long, Value: long}}}
+		body, _ = detail.Render(width, 40)
+		assertFits(t, "user model", body)
 	})
 }

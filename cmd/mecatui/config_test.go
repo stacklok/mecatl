@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +16,8 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
@@ -56,6 +60,172 @@ func TestContextWindowOverrideFlagWiring(t *testing.T) {
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
 // agent-definition discovery (consistent with EnableTeams/EnableParallel; inert until a
 // <name>.md exists under a conventional dir).
+type embeddedExecutionReadyManager struct {
+	calls int
+	err   error
+}
+
+func (m *embeddedExecutionReadyManager) EnsureReady(ctx context.Context, _ microvmmanager.ReadyRequest) (string, error) {
+	m.calls++
+	microvmmanager.ReportReadinessStage(ctx, microvmmanager.StageDownload)
+	if m.err != nil {
+		return "", m.err
+	}
+	return "unix:///run/test-microvmd.sock", nil
+}
+
+func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("execution: {default_placement: microvm-local}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	progress := make(chan string, 16)
+	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true, microVMProgress: progress}, port.NopDiagnostics{})
+	cfg.PermissionConfigs = []string{settings}
+	cfg.MicroVMReadyRequest = func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+		return microvmmanager.ReadyRequest{}, nil
+	}
+	factoryCalled := false
+	manager := &embeddedExecutionReadyManager{err: errors.New("private readiness failure at /home/operator/secret")}
+	cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+		factoryCalled = true
+		return manager, "unix:///run/test-microvmd.sock", nil
+	}
+	configured, err := app.ConfigureExecution(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := app.Build(t.Context(), configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	if !factoryCalled || manager.calls != 0 {
+		t.Fatalf("bare embedded construction did not select MicroVM lazily: factory=%v readiness=%d", factoryCalled, manager.calls)
+	}
+	if _, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{}); err == nil {
+		t.Fatal("bare embedded session silently fell back after unavailable microvmd")
+	} else {
+		if manager.calls != 1 {
+			t.Fatalf("bare embedded session failed before selected MicroVM readiness: calls=%d err=%v", manager.calls, err)
+		}
+		if !strings.Contains(err.Error(), "category=artifact_download") || strings.Contains(err.Error(), "/home/operator/secret") {
+			t.Fatalf("embedded server did not preserve safe readiness detail: %v", err)
+		}
+	}
+	var updates []string
+	for len(progress) > 0 {
+		updates = append(updates, <-progress)
+	}
+	joined := strings.Join(updates, "\n")
+	for _, want := range []string{"Guest IPv4 egress is permissive", "Downloading microVM components"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("embedded progress %q omitted %q", updates, want)
+		}
+	}
+	for _, want := range []string{"mecated microvm doctor", "mecatui diagnostics log"} {
+		if !strings.Contains(microVMFailureHint(config{}), want) {
+			t.Fatalf("embedded failure hint omitted %q", want)
+		}
+	}
+	if strings.ContainsAny(microVMFailureHint(config{}), `/\\`) {
+		t.Fatalf("embedded failure hint exposed a host path: %q", microVMFailureHint(config{}))
+	}
+}
+
+func TestBareEmbeddedHostLocalOmissionDoesNoMicroVMWork(t *testing.T) {
+	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true}, port.NopDiagnostics{})
+	factoryCalled := false
+	cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+		factoryCalled = true
+		return nil, "", fmt.Errorf("must not initialize microVM manager")
+	}
+	built, err := app.Build(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factoryCalled || sess.EnvironmentRef.Kind != session.EnvKindLocal {
+		t.Fatalf("bare host-local omission touched MicroVM or selected wrong placement: factory=%v ref=%+v", factoryCalled, sess.EnvironmentRef)
+	}
+}
+
+func TestConnectDoesNotResolveOperatorExecutionSettings(t *testing.T) {
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	dataHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	if err := os.MkdirAll(filepath.Join(configHome, "mecatl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configHome, "mecatl", "settings.yaml"), []byte("execution: {default_placement: invalid}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseRunConfig(invocationResolution{
+		mode: modeConnect, address: "127.0.0.1:8080", remaining: []string{"--anonymous"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, cleanup, err := resolveTransport(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	} else {
+		cleanup()
+	}
+	for _, path := range []string{
+		filepath.Join(stateHome, "mecatl", "microvm"),
+		filepath.Join(dataHome, "mecatl", "microvm"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("remote connect touched local MicroVM manager state %q: %v", path, err)
+		}
+	}
+}
+
+func TestEmbeddedConfigCarriesMicroVMReadinessForOperatorSettings(t *testing.T) {
+	cfg := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
+	if cfg.DefaultPlacementSet || cfg.MicroVMGuestEgressSet {
+		t.Fatal("bare mecatui must not synthesize command-line execution overrides")
+	}
+	if cfg.MicroVMReadyRequest == nil {
+		t.Fatal("bare mecatui did not provide embedded MicroVM release readiness")
+	}
+}
+
+func TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults(t *testing.T) {
+	if microVMReleaseStampRequired != "release" {
+		t.Skip("release linker-contract assertion")
+	}
+	if version != "v0.0.0-host-contract" {
+		t.Fatalf("version linker stamp = %q", version)
+	}
+	cfg := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
+	request, err := cfg.MicroVMReadyRequest(microvmmanager.NewGuestEgressSelection())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Release.URL != "https://example.invalid/microvm.tar.gz" || request.Policy.PolicyRevision != "contract" {
+		t.Fatalf("embedded readiness did not consume mecatui linker defaults: %+v", request)
+	}
+}
+
+func TestMecatuiRemovedMicroVMSurface(t *testing.T) {
+	for _, args := range [][]string{{"--default-placement=microvm-local"}, {"--microvm-guest-egress=deny-all"}} {
+		if _, _, err := parseTransportFlags(modeLocal, io.Discard, args); err == nil {
+			t.Fatalf("removed mecatui flag %q was accepted", args[0])
+		}
+	}
+	if got := resolveInvocation([]string{"mecatui", "microvm", "status"}); got.err == nil {
+		t.Fatal("removed mecatui microvm administration command was accepted")
+	}
+}
+
 func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
 	if ac.ServerImplementation != mecatuiServerImplementation {
@@ -71,7 +241,7 @@ func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 
 // TestEmbeddedConfigPermissionPosture asserts the TUI discovers the conventional
 // per-project permission config and imports Claude-Code settings (issue #13), but
-// that project TRUST is DEFAULT FALSE (WORKSPACE-TRUST Phase 0): unified with
+// that project TRUST is DEFAULT FALSE: unified with
 // mecated, a project's ALLOW rules + project soul are gated behind --trust-project.
 func TestEmbeddedConfigPermissionPosture(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
@@ -196,16 +366,21 @@ func TestParseFlagsDefaults(t *testing.T) {
 	}
 }
 
-func TestParseFlagsDebugResolution(t *testing.T) {
-	debugEnvs := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
-	for _, key := range debugEnvs {
-		t.Setenv(key, "")
+func TestRemovedOperatorAliasesAreRejected(t *testing.T) {
+	for _, args := range [][]string{{"--no-bash"}, {"--user-model-review"}, {"--user-model-review-interval=2"}} {
+		if _, err := parseFlags(args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("parseFlags(%v) error = %v, want unknown-flag rejection", args, err)
+		}
 	}
+}
 
-	assertSurfaces := func(t *testing.T, cfg config, debug, mouse, steer, ask, keymap bool) {
+func TestParseFlagsDebugResolution(t *testing.T) {
+	t.Setenv("MECATUI_DEBUG", "")
+
+	assertSurfaces := func(t *testing.T, cfg config, want bool) {
 		t.Helper()
-		if cfg.debug != debug || cfg.debugMouse != mouse || cfg.debugSteer != steer || cfg.debugAsk != ask || cfg.debugKeymap != keymap {
-			t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t, want debug:%t mouse:%t steer:%t ask:%t keymap:%t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap, debug, mouse, steer, ask, keymap)
+		if cfg.debug != want || cfg.debugMouse != want || cfg.debugSteer != want || cfg.debugAsk != want || cfg.debugKeymap != want {
+			t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t, want all %t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap, want)
 		}
 	}
 
@@ -213,55 +388,40 @@ func TestParseFlagsDebugResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSurfaces(t, cfg, true, true, true, true, true)
+	assertSurfaces(t, cfg, true)
 
 	t.Setenv("MECATUI_DEBUG", "1")
 	cfg, err = parseFlags(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSurfaces(t, cfg, true, true, true, true, true)
+	assertSurfaces(t, cfg, true)
 
-	for _, key := range debugEnvs {
-		t.Setenv(key, "1")
-	}
 	cfg, err = parseFlags([]string{"--debug=false"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSurfaces(t, cfg, false, false, false, false, false)
+	assertSurfaces(t, cfg, false)
 }
 
-func TestExplicitDebugFalseDisablesEveryEnvAlias(t *testing.T) {
-	aliases := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
-	cases := make([][]string, 0, len(aliases)+1)
-	for _, alias := range aliases {
-		cases = append(cases, []string{alias})
-	}
-	cases = append(cases, aliases)
-	for _, enabled := range cases {
-		t.Run(strings.Join(enabled, "+"), func(t *testing.T) {
-			for _, alias := range aliases {
-				t.Setenv(alias, "")
-			}
-			for _, alias := range enabled {
-				t.Setenv(alias, "1")
-			}
-			cfg, err := parseFlags([]string{"--debug=false"})
+func TestLegacyDebugEnvironmentAliasesAreIgnored(t *testing.T) {
+	t.Setenv("MECATUI_DEBUG", "")
+	for _, key := range []string{"MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "1")
+			cfg, err := parseFlags(nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if cfg.debug || cfg.debugMouse || cfg.debugSteer || cfg.debugAsk || cfg.debugKeymap {
-				t.Fatalf("--debug=false did not disable aliases %v: debug:%t mouse:%t steer:%t ask:%t keymap:%t", enabled, cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap)
+				t.Fatalf("%s unexpectedly enabled a debug surface", key)
 			}
 		})
 	}
 }
 
 func TestCanonicalDebugWiresEveryRuntimeSurface(t *testing.T) {
-	for _, key := range []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"} {
-		t.Setenv(key, "")
-	}
+	t.Setenv("MECATUI_DEBUG", "")
 	cfg, err := parseFlags([]string{"--debug"})
 	if err != nil {
 		t.Fatal(err)
@@ -270,36 +430,6 @@ func TestCanonicalDebugWiresEveryRuntimeSurface(t *testing.T) {
 	applyDebugConfig(cfg, &deps)
 	if !deps.Debug || !deps.DebugMouse || !deps.DebugSteer || !deps.DebugAsk || !cfg.debugKeymap {
 		t.Fatalf("canonical debug wiring = Debug:%t mouse:%t steer:%t ask:%t keymap:%t", deps.Debug, deps.DebugMouse, deps.DebugSteer, deps.DebugAsk, cfg.debugKeymap)
-	}
-}
-
-func TestParseFlagsLegacyDebugAliasesStayNarrow(t *testing.T) {
-	debugEnvs := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
-	for _, key := range debugEnvs {
-		t.Setenv(key, "")
-	}
-	for _, tc := range []struct {
-		env                       string
-		mouse, steer, ask, keymap bool
-	}{
-		{env: "MECATUI_DEBUG_MOUSE", mouse: true},
-		{env: "MECATUI_DEBUG_STEER", steer: true},
-		{env: "MECATUI_DEBUG_ASK", ask: true},
-		{env: "MECATUI_DEBUG_KEYMAP", keymap: true},
-	} {
-		t.Run(tc.env, func(t *testing.T) {
-			for _, key := range debugEnvs {
-				t.Setenv(key, "")
-			}
-			t.Setenv(tc.env, "1")
-			cfg, err := parseFlags(nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if cfg.debug || cfg.debugMouse != tc.mouse || cfg.debugSteer != tc.steer || cfg.debugAsk != tc.ask || cfg.debugKeymap != tc.keymap {
-				t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap)
-			}
-		})
 	}
 }
 
@@ -437,7 +567,7 @@ func TestParseFlagsNoMouse(t *testing.T) {
 }
 
 // TestParseFlagsThemeResolution asserts cfg.theme (the light-theme
-// auto-detect gate's input, ADR 0280 — resolveThemeAutoDetect treats an empty
+// auto-detect gate's input — resolveThemeAutoDetect treats an empty
 // cfg.theme as "no explicit theme") stays empty with none given, and picks up
 // a theme name from either --theme or the MECATUI_THEME fallback.
 func TestParseFlagsThemeResolution(t *testing.T) {
@@ -1287,7 +1417,7 @@ func TestEmbeddedConfigMapsPosture(t *testing.T) {
 }
 
 // TestParseFlagsSubagentModelRouter covers the --subagent-model-router kill-switch
-// (ADR 0042) end-to-end through mecatui's embeddedConfig: the router is enabled by the
+// end-to-end through mecatui's embeddedConfig: the router is enabled by the
 // models.router: taxonomy, so the bool flag only sets RouterDisabled when given as
 // =false. Unset → set==false → RouterDisabled==false (taxonomy governs); bare/=true →
 // set==true/value==true, RouterDisabled stays false (a harmless no-op, does NOT disable);
@@ -1335,7 +1465,7 @@ func TestParseFlagsSubagentModelRouter(t *testing.T) {
 // TestPostureRefusalReason proves the generalised root-refusal (the exported
 // app.PostureRefusalReason) gates auto AND yolo (both waive the mutate-ask floor) while
 // strict/trusted are NEVER refused (they suppress no prompt), and only when PRIVILEGED.
-// It would fail if the gate regressed to the historical yolo-only check.
+// It would fail if the gate regressed to a yolo-only check.
 func TestPostureRefusalReason(t *testing.T) {
 	tests := []struct {
 		name       string

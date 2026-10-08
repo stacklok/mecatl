@@ -37,7 +37,7 @@ const (
 	// (re-exported through internal/configgen), so the read and write paths can never
 	// resolve different files.
 	UserSettingsRelPath = "mecatl/settings.yaml"
-	// userSubdirMecatl is the historical internal alias for UserSettingsRelPath.
+	// userSubdirMecatl is an internal alias for UserSettingsRelPath.
 	userSubdirMecatl = UserSettingsRelPath // joined under <config>/...
 	// userSubdirClaude is the Claude-Code-compatible user-level settings file,
 	// rooted at the home directory (~/.claude/settings.json).
@@ -98,7 +98,7 @@ type cacheEntry struct {
 	rules  []governance.Rule
 	stamps map[string]fileStamp // keyed by the project-relative file path
 	// projectModels is the SANITIZED project-tier models: block captured during the
-	// SAME resolution that built rules/stamps (ADR 0030 Phase 4): slots/aliases/default
+	// SAME resolution that built rules/stamps: slots/aliases/default
 	// only (the allowlist: key is stripped — non-wideable), and ONLY when the project is
 	// trusted AND an operator allowlist exists. nil when the project carried no honoured
 	// models: block. It lives on the cacheEntry so it invalidates with the project rules
@@ -127,6 +127,9 @@ type Resolver struct {
 	// computed once at construction. Always fully trusted.
 	userRules []governance.Rule
 
+	operatorHarnessContext    *HarnessContextSection
+	operatorHarnessContextErr error
+
 	// operatorGuardrails is the OPERATOR-TIER guardrails config (issue #27), read
 	// ONCE at construction from the user-global + explicit (CLI) tiers ONLY. A
 	// project-tier file's guardrails: block is deliberately IGNORED (a project repo
@@ -143,8 +146,8 @@ type Resolver struct {
 	// files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorPosture string
 
-	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar (ADR
-	// 0055), read ONCE at construction from the user-global + CLI tiers ONLY. A
+	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar,
+	// read ONCE at construction from the user-global + CLI tiers ONLY. A
 	// project-tier file's reasoning-effort: key is deliberately IGNORED (operator-
 	// tier only, for consistency with posture — loadProjectRules WARNs
 	// when it sees one). Empty when no operator-tier file carried a reasoning-effort:
@@ -152,7 +155,7 @@ type Resolver struct {
 	operatorReasoningEffort string
 
 	// operatorPlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve: bool
-	// (issue #206 Wave 6a), read ONCE at construction from the user-global + CLI
+	// (issue #206), read ONCE at construction from the user-global + CLI
 	// tiers ONLY. A project-tier file's plan-mode-auto-approve: key is deliberately
 	// IGNORED (a project repo enabling autonomous plan approval is a security
 	// DOWNGRADE — loadProjectRules WARNs when it sees one). false when no
@@ -176,11 +179,11 @@ type Resolver struct {
 	operatorSteer    bool
 	operatorSteerSet bool
 
-	// operatorModels is the OPERATOR-TIER models: subtree (ADR 0030), read ONCE at
+	// operatorModels is the OPERATOR-TIER models: subtree, read ONCE at
 	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
 	// captureModels from loadUserRules; there is no second capture path). It carries
 	// the operator's own slots/aliases/default AND the non-wideable Allowlist cap that
-	// gates the PROJECT-tier bindings (Phase 4). A project-tier file's models: block is
+	// gates the PROJECT-tier bindings. A project-tier file's models: block is
 	// honoured only WITHIN this Allowlist on a trusted workspace (loadProjectRules) —
 	// when the Allowlist is empty the project block stays WARN-ignored (the opt-in).
 	// nil when no operator-tier file carried a models: section. CLI (explicit files)
@@ -219,9 +222,12 @@ type Resolver struct {
 	operatorStorageManagement    *StorageManagementSection
 	operatorStorageManagementErr error
 	operatorCommandRunner        *CommandRunnerSection
+	operatorSystemPrompt         *SystemPromptSection
 	operatorCommandRunnerErr     error
 	operatorTemporaryStorage     *TemporaryStorageSection
 	operatorTemporaryStorageErr  error
+	operatorExecution            *ExecutionSection
+	operatorExecutionErr         error
 
 	// operatorProviders and operatorProviderOverrides are immutable operator-tier
 	// provider configuration captured once at resolver construction.
@@ -306,6 +312,15 @@ func (r *Resolver) OperatorCredentialEnvironmentNames() []string {
 	return append([]string(nil), out...)
 }
 
+// OperatorCommitCoauthor returns the optional operator setting. Nil means absent,
+// so later composition can retain its enabled-by-default behavior.
+func (r *Resolver) OperatorCommitCoauthor() *bool {
+	if r == nil || r.operatorSystemPrompt == nil {
+		return nil
+	}
+	return r.operatorSystemPrompt.CommitCoauthor
+}
+
 // OperatorCommandRunner returns the immutable effective operator-tier command-runner policy.
 func (r *Resolver) OperatorCommandRunner() (*CommandRunnerSection, error) {
 	if r == nil {
@@ -321,6 +336,31 @@ func (r *Resolver) OperatorTemporaryStorage() (*TemporaryStorageSection, error) 
 		return nil, nil
 	}
 	return r.operatorTemporaryStorage, r.operatorTemporaryStorageErr
+}
+
+// OperatorExecution returns the immutable operator-tier execution policy and any
+// strict parse failure that would otherwise silently restore host execution.
+func (r *Resolver) OperatorExecution() (*ExecutionSection, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return r.operatorExecution, r.operatorExecutionErr
+}
+
+// HarnessContextError reports an explicit operator policy that could not be parsed.
+func (r *Resolver) HarnessContextError() error {
+	if r == nil {
+		return nil
+	}
+	return r.operatorHarnessContextErr
+}
+
+// OperatorHarnessContext returns the strict operator-tier harness source policy.
+func (r *Resolver) OperatorHarnessContext() *HarnessContextSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorHarnessContext
 }
 
 // OperatorGuardrails returns the operator-tier guardrails config (user-global + CLI
@@ -346,7 +386,7 @@ func (r *Resolver) OperatorPosture() string {
 }
 
 // OperatorReasoningEffort returns the operator-tier reasoning-effort: scalar
-// (user-global + CLI only), or "" when none was configured (ADR 0055). It is the
+// (user-global + CLI only), or "" when none was configured. It is the
 // SOLE accessor the composition layer uses to read reasoning-effort from config —
 // by construction it never returns a project-tier value (a project reasoning-effort:
 // is ignored with a WARN in loadProjectRules). nil-safe. Mirrors OperatorPosture().
@@ -358,8 +398,8 @@ func (r *Resolver) OperatorReasoningEffort() string {
 }
 
 // OperatorPlanModeAutoApprove returns the operator-tier plan-mode-auto-approve:
-// bool (user-global + CLI only), or false when none was configured (issue #206
-// Wave 6a). It is the SOLE accessor the composition layer uses to read the flag
+// bool (user-global + CLI only), or false when none was configured (issue #206).
+// It is the SOLE accessor the composition layer uses to read the flag
 // from config — by construction it never returns a project-tier value (a project
 // plan-mode-auto-approve: is ignored with a WARN in loadProjectRules). nil-safe.
 // Mirrors OperatorPosture().
@@ -496,7 +536,7 @@ func (r *Resolver) OperatorRetention() (*RetentionSection, error) {
 }
 
 // OperatorModelPolicy returns the operator-tier models: subtree (user-global + CLI
-// only), or nil when none was configured (ADR 0030 Phase 4). It is the accessor the
+// only), or nil when none was configured. It is the accessor the
 // composition layer reads the operator ALLOWLIST and the operator DEFAULT from — the
 // non-wideable cap that gates project-tier bindings. It reads the SAME operatorModels
 // backing field as OperatorModelSlots (allowlist+default+slots+aliases all ride the
@@ -510,7 +550,7 @@ func (r *Resolver) OperatorModelPolicy() *ModelsSection {
 }
 
 // ProjectModelBindings returns the SANITIZED project-tier models: block for the given
-// workspace (ADR 0030 Phase 4): slots/aliases/default only (the allowlist: key is
+// workspace: slots/aliases/default only (the allowlist: key is
 // stripped at capture — non-wideable), captured ONLY when the project was trusted AND
 // an operator allowlist exists. It is a pure read of the per-root cacheEntry; a cold
 // root is resolved first (the same revalidated-cache path Resolve uses), so the
@@ -665,7 +705,7 @@ func stampsEqual(a, b map[string]fileStamp) bool {
 // each at its tier scope (local > shared), applies the trust gate, and logs the
 // import report. It is fail-soft PER FILE: an unreadable/malformed file is logged
 // and skipped, so a bad shared YAML never suppresses a good local/Claude file.
-func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule, *ModelsSection) {
+func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule, *ModelsSection) { //nolint:gocyclo // Project-tier parsing keeps per-subtree warnings at one trust boundary.
 	var report Report
 	var rules []governance.Rule
 	var projectModels *ModelsSection
@@ -685,7 +725,8 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 			rules = append(rules, imported...)
 			continue
 		}
-		cfg, perr := parseYAML(data)
+		r.warnProjectHarnessContext(data, src.path, ws.Root())
+		cfg, perr := parseYAMLForTier(data, true)
 		if perr != nil {
 			// The skip drops the WHOLE file — its DENY/ASK rules included, so a
 			// typo LOOSENS policy. Name the lost per-effect counts (best-effort
@@ -721,7 +762,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set posture in your user-global settings.yaml or via --posture)",
 				"file", src.path, "root", ws.Root())
 		}
-		// ReasoningEffort is OPERATOR-TIER ONLY (ADR 0055), for consistency with
+		// ReasoningEffort is OPERATOR-TIER ONLY, for consistency with
 		// posture: a project file's reasoning-effort: scalar is IGNORED
 		// with a loud WARN. It is a cost/quality preference, not a security control,
 		// but keeping it operator-tier-only matches the established pattern and prevents
@@ -731,7 +772,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"reasoning-effort: IGNORING a project-tier reasoning-effort: scalar (operator-tier only — set reasoning-effort in your user-global settings.yaml or via --reasoning-effort)",
 				"file", src.path, "root", ws.Root())
 		}
-		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206 Wave 6a), for
+		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206), for
 		// consistency with posture/guardrails: a project file's plan-mode-auto-approve:
 		// key is IGNORED with a loud WARN. Enabling it from a project repo would let a
 		// repo enable autonomous plan approval — a security DOWNGRADE (the same
@@ -774,7 +815,13 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"retention: IGNORING a project-tier retention block (operator-tier only; projects cannot weaken cleanup protection)",
 				"file", src.path, "root", ws.Root())
 		}
+		r.warnProjectSystemPrompt(cfg.SystemPrompt, src.path, ws.Root())
 		r.warnProjectCommandRunner(cfg.CommandRunner, src.path, ws.Root())
+		if cfg.Execution != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"execution: IGNORING project-tier execution block (operator-tier only)",
+				"file", src.path, "root", ws.Root())
+		}
 		if cfg.TemporaryStorage != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"temporary_storage: IGNORING a project-tier temporary_storage block (operator-tier only; projects cannot redirect command temporary storage or alter cleanup retention)",
@@ -785,13 +832,13 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"storage_management: IGNORING a project-tier authority block (operator-tier only)",
 				"file", src.path, "root", ws.Root())
 		}
-		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST (ADR 0030 Phase 4),
+		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST,
 		// otherwise IGNORED. captureProjectModels applies the full gate (allowlist key
 		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
 		// honoured slots/aliases/default across project files (local > shared by load
 		// order — first non-empty wins per field/key). It WARNs precisely on each
-		// not-honoured reason. Outside an operator allowlist this is byte-identical to the
-		// pre-Phase-4 WARN-ignore.
+		// not-honoured reason. Without an operator allowlist the project block is
+		// WARN-ignored.
 		if cfg.Models != nil {
 			projectModels = r.captureProjectModels(ws, src.path, cfg.Models, projectModels)
 		}
@@ -803,6 +850,13 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 	return rules, projectModels
 }
 
+func (r *Resolver) warnProjectHarnessContext(data []byte, file, root string) {
+	if !hasTopLevelKey(data, "harness_context") {
+		return
+	}
+	r.diag.Log(context.Background(), port.LevelWarn, "harness_context: IGNORING project-tier block (operator-tier only)", "file", file, "root", root)
+}
+
 func (r *Resolver) warnProjectCommandRunner(section *CommandRunnerSection, file, root string) {
 	if section == nil {
 		return
@@ -812,7 +866,16 @@ func (r *Resolver) warnProjectCommandRunner(section *CommandRunnerSection, file,
 		"file", file, "root", root)
 }
 
-// captureProjectModels applies the ADR 0030 Phase 4 gate to ONE project-tier models:
+func (r *Resolver) warnProjectSystemPrompt(section *SystemPromptSection, file, root string) {
+	if section == nil {
+		return
+	}
+	r.diag.Log(context.Background(), port.LevelWarn,
+		"system_prompt: IGNORING a project-tier system_prompt block (operator-tier only; configure it in user-global settings.yaml or an explicit operator file)",
+		"file", file, "root", root)
+}
+
+// captureProjectModels applies the project models: gate to ONE project-tier models:
 // block and merges its honoured bindings onto acc (the running per-root accumulator
 // across the local→shared file order; first-non-empty wins, so the higher-precedence
 // LOCAL file's binding is kept). It is the SINGLE choke point for the project-tier
@@ -838,7 +901,7 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 			"file", file, "root", ws.Root())
 	}
 
-	// (1b) A project-tier router: is OPERATOR-TIER ONLY (ADR 0031) — strip + WARN, but
+	// (1b) A project-tier router: is OPERATOR-TIER ONLY — strip + WARN, but
 	// keep the rest. The semantic model-router taxonomy is an autonomous-spend/capability
 	// decision the operator owns (like the allowlist); a project must not define which
 	// models its delegated tasks route to. captureProjectModels never copies Router onto
@@ -878,6 +941,12 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 			"file", file, "root", ws.Root())
 	}
 
+	if value, ok := block.Slots["guardrail"]; ok && value.ExplicitProvider {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models: IGNORING project-tier models.slots.guardrail provider object (operator-tier only)",
+			"file", file, "root", ws.Root())
+	}
+
 	// (2) Opt-in by operator allowlist, then trust-gated.
 	op := r.operatorModels
 	if op == nil || len(op.Allowlist) == 0 {
@@ -901,9 +970,24 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 	if block.Default != "" && acc.Default == "" {
 		acc.Default = block.Default
 	}
-	acc.Slots = mergeFirstWins(acc.Slots, block.Slots)
+	acc.Slots = mergeFirstWinsSlots(acc.Slots, block.Slots)
 	acc.Aliases = mergeFirstWins(acc.Aliases, block.Aliases)
 	return acc
+}
+
+func mergeFirstWinsSlots(dst, src ModelSlots) ModelSlots {
+	if dst == nil && len(src) > 0 {
+		dst = make(ModelSlots, len(src))
+	}
+	for key, value := range src {
+		if value.ExplicitProvider {
+			continue
+		}
+		if _, exists := dst[key]; !exists {
+			dst[key] = value
+		}
+	}
+	return dst
 }
 
 // mergeFirstWins copies src entries into dst, keeping any key dst already holds (the
@@ -949,6 +1033,9 @@ func (r *Resolver) applyTrustGate(rules []governance.Rule, report *Report) []gov
 // Read from the host filesystem via the injectable env (NOT a workspace — these
 // live outside any session root). Fail-soft per file.
 func (r *Resolver) captureOperatorParseError(data []byte, err error) {
+	if hasTopLevelKey(data, "harness_context") && r.operatorHarnessContextErr == nil {
+		r.operatorHarnessContextErr = errors.New("operator harness_context configuration is invalid")
+	}
 	if (hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides") || hasTopLevelKey(data, "credential_store")) && r.operatorProviderConfigErr == nil {
 		r.operatorProviderConfigErr = errors.New("operator provider configuration is invalid")
 	}
@@ -960,6 +1047,9 @@ func (r *Resolver) captureOperatorParseError(data []byte, err error) {
 	}
 	if hasTopLevelKey(data, "command_runner") && r.operatorCommandRunnerErr == nil {
 		r.operatorCommandRunnerErr = err
+	}
+	if hasTopLevelKey(data, "execution") && r.operatorExecutionErr == nil {
+		r.operatorExecutionErr = err
 	}
 	if hasTopLevelKey(data, "temporary_storage") && r.operatorTemporaryStorageErr == nil {
 		r.operatorTemporaryStorageErr = err
@@ -993,18 +1083,19 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		rules = append(rules, rulesFromConfig(cfg, governance.ScopeCLI, report)...)
 		// Operator-tier guardrails (issue #27): CLI files out-rank user-global, so the
 		// FIRST CLI file with a guardrails: block wins (first-non-nil keeps CLI).
+		r.captureHarnessContext(cfg.HarnessContext)
 		r.captureGuardrails(cfg.Guardrails)
 		// Operator-tier posture: same first-non-empty-keeps-CLI discipline as guardrails.
 		r.capturePosture(cfg.Posture)
-		// Operator-tier reasoning-effort (ADR 0055): same discipline as posture.
+		// Operator-tier reasoning-effort: same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
-		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
+		// Operator-tier plan-mode-auto-approve (issue #206): same discipline as posture.
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 		// Operator-tier learning: same first-non-nil-keeps-CLI discipline.
 		r.captureLearning(cfg.Learning)
 		// Operator-tier steer (issue #512): same discipline as posture.
 		r.captureSteer(cfg.Steer)
-		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
+		// Operator-tier models: same first-non-nil-keeps-CLI discipline.
 		r.captureModels(cfg.Models)
 		// Operator-tier openrouter: same first-non-nil-keeps-CLI discipline (issue #480).
 		r.captureOpenRouter(cfg.OpenRouter)
@@ -1015,7 +1106,9 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
+		r.captureSystemPrompt(cfg.SystemPrompt)
 		r.captureCommandRunner(cfg.CommandRunner)
+		r.captureExecution(cfg.Execution)
 		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
 
@@ -1036,12 +1129,13 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 			} else {
 				rules = append(rules, rulesFromConfig(cfg, governance.ScopeUser, report)...)
 				// User-global guardrails: captured only if no higher CLI file already did.
+				r.captureHarnessContext(cfg.HarnessContext)
 				r.captureGuardrails(cfg.Guardrails)
 				// User-global posture: captured only if no higher CLI file already did.
 				r.capturePosture(cfg.Posture)
-				// User-global reasoning-effort (ADR 0055): same discipline as posture.
+				// User-global reasoning-effort: same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
-				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
+				// User-global plan-mode-auto-approve (issue #206): same discipline as posture.
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 				// User-global learning: captured only if no higher CLI file already did.
 				r.captureLearning(cfg.Learning)
@@ -1058,7 +1152,9 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureMCP(cfg.MCP)
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
+				r.captureSystemPrompt(cfg.SystemPrompt)
 				r.captureCommandRunner(cfg.CommandRunner)
+				r.captureExecution(cfg.Execution)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 			}
@@ -1084,6 +1180,13 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 
 // captureProviders records the first complete operator provider snapshot. Explicit
 // files precede user-global settings, so the command-line operator tier wins.
+func (r *Resolver) captureExecution(s *ExecutionSection) {
+	if s == nil || r.operatorExecution != nil {
+		return
+	}
+	r.operatorExecution = s
+}
+
 func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides ProviderOverrides, store *CredentialStoreSection) {
 	if r.operatorProviders == nil && definitions != nil {
 		r.operatorProviders = definitions
@@ -1094,6 +1197,13 @@ func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides P
 	if r.operatorCredentialStore == nil && store != nil {
 		r.operatorCredentialStore = store
 	}
+}
+
+func (r *Resolver) captureHarnessContext(s *HarnessContextSection) {
+	if s == nil || r.operatorHarnessContext != nil {
+		return
+	}
+	r.operatorHarnessContext = s
 }
 
 // captureGuardrails records the FIRST operator-tier guardrails: block seen during
@@ -1129,7 +1239,7 @@ func (r *Resolver) capturePosture(p string) {
 // on first-non-empty). It is called only from loadUserRules — the operator
 // (user-global + CLI) tiers — never from loadProjectRules, so a project file can
 // never supply reasoning-effort (operator-tier only, for consistency with
-// posture — ADR 0055). A whitespace-only value is treated as absent.
+// posture). A whitespace-only value is treated as absent.
 func (r *Resolver) captureReasoningEffort(p string) {
 	if r.operatorReasoningEffort != "" {
 		return
@@ -1152,7 +1262,7 @@ func (r *Resolver) captureLearning(s *LearningSection) {
 // wins on first-non-zero). It is called only from loadUserRules — the operator
 // (user-global + CLI) tiers — never from loadProjectRules, so a project file can
 // never supply it (operator-tier only, for consistency with posture/guardrails —
-// issue #206 Wave 6a).
+// issue #206).
 func (r *Resolver) capturePlanModeAutoApprove(p bool) {
 	if r.operatorPlanModeAutoApprove {
 		return
@@ -1182,7 +1292,7 @@ func (r *Resolver) captureSteer(s *bool) {
 // cap + the operator's own slots/aliases/default) can only come from an operator-tier
 // file. A PROJECT file's models: block is NOT captured here — it is honoured (within
 // the operator allowlist, on a trusted workspace) by the SEPARATE captureProjectModels
-// path, which feeds cacheEntry.projectModels, never operatorModels (ADR 0030 Phase 4).
+// path, which feeds cacheEntry.projectModels, never operatorModels.
 func (r *Resolver) captureModels(m *ModelsSection) {
 	if m == nil || r.operatorModels != nil {
 		return
@@ -1224,6 +1334,13 @@ func (r *Resolver) captureRetention(s *RetentionSection) {
 		return
 	}
 	r.operatorRetention = s
+}
+
+func (r *Resolver) captureSystemPrompt(s *SystemPromptSection) {
+	if s == nil || r.operatorSystemPrompt != nil {
+		return
+	}
+	r.operatorSystemPrompt = s
 }
 
 func (r *Resolver) captureCommandRunner(s *CommandRunnerSection) {

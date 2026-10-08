@@ -48,8 +48,8 @@ func TestLearningStrictParse(t *testing.T) {
 			t.Fatalf("mode %q: cfg=%+v err=%v", mode, cfg, err)
 		}
 	}
-	cfg, err := parseYAML([]byte("learning:\n  mode: auto\n  skills:\n    activation: validated\n  sensitivity: eager\n  automatic:\n    cooldown: 0s\n    window: 1h\n    max_reflections: 0\n    max_tokens: 100000\n    max_reflections_per_principal: 4\n    max_tokens_per_principal: 50000\n"))
-	if err != nil || cfg.Learning.Skills == nil || cfg.Learning.Skills.Activation != "validated" || cfg.Learning.Sensitivity != "eager" || cfg.Learning.Automatic.MaxReflections != 0 || cfg.Learning.Automatic.Window != time.Hour {
+	cfg, err := parseYAML([]byte("learning:\n  mode: auto\n  admission_interval: 0\n  skills:\n    activation: validated\n  sensitivity: eager\n  automatic:\n    cooldown: 0s\n    window: 1h\n    max_reflections: 0\n    max_tokens: 100000\n    max_reflections_per_principal: 4\n    max_tokens_per_principal: 50000\n"))
+	if err != nil || cfg.Learning.AdmissionInterval == nil || *cfg.Learning.AdmissionInterval != 0 || cfg.Learning.Skills == nil || cfg.Learning.Skills.Activation != "validated" || cfg.Learning.Sensitivity != "eager" || cfg.Learning.Automatic.MaxReflections != 0 || cfg.Learning.Automatic.Window != time.Hour {
 		t.Fatalf("complete learning config = %+v, %v", cfg.Learning, err)
 	}
 	for _, body := range []string{
@@ -68,6 +68,7 @@ func TestLearningStrictParse(t *testing.T) {
 		"learning:\n  mode: automatic\n",
 		"learning:\n  mode: AUTO\n",
 		"learning:\n  mode: off\n  queue: x\n",
+		"learning:\n  mode: off\n  admission_interval: -1\n",
 		"learning:\n  mode: off\n  sensitivity: fast\n",
 		"learning:\n  mode: off\n  automatic:\n    window: 30s\n",
 		"learning:\n  mode: off\n  automatic:\n    cooldown: -1s\n",

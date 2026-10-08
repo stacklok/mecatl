@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	tea "charm.land/bubbletea/v2"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -57,6 +59,7 @@ type TurnEndMsg struct {
 	Turn       int32
 	Usage      Usage
 	DurationMs int64
+	Estimated  bool
 }
 
 // ToolCallMsg announces a tool invocation (status: running until its result).
@@ -76,6 +79,7 @@ type ToolResultMsg struct {
 	CallID            string
 	Content           string
 	IsError           bool
+	Available         bool // transient availability; false for canonical results
 	Blocks            []ContentBlock
 	StructuredContent string
 }
@@ -145,12 +149,24 @@ type MCPAuthorizationMsg struct {
 }
 
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
-// echoed back in ResumeApproval — never inferred from the tool name.
+// echoed back in ResumeApproval. RunID is the opaque exact-run identity used by
+// out-of-band run controls.
 type PermissionAskMsg struct {
-	AskID  string
-	Tool   string
-	Args   string // raw JSON
-	Reason string
+	RunID         string
+	AskID         string
+	Tool          string
+	Args          string // raw JSON
+	Reason        string
+	ExpectedRunID string
+	Guardrail     *GuardrailApprovalScope
+	Recovery      bool
+}
+
+// GuardrailApprovalScope distinguishes an outbound action approval from release
+// of an already-produced, privately-held result.
+type GuardrailApprovalScope struct {
+	ReviewID, Kind, GrantDigest  string
+	SessionOnly, RepeatAvailable bool
 }
 
 // PermissionRetractMsg withdraws a previously surfaced permission ask: the
@@ -184,10 +200,19 @@ const (
 // per-tool phases), and the Decision (info/blocked/modified/advisory) so the ui can
 // render it distinctly from a compaction notice and colour a blocked or advisory hook.
 type HookMsg struct {
-	Text     string
-	Phase    string
-	Tool     string
-	Decision HookDecision
+	Text      string
+	Phase     string
+	Tool      string
+	Decision  HookDecision
+	Guardrail *GuardrailReview
+}
+
+// GuardrailReview is the machine-only durable review projection. Human rationale
+// is fetched separately from the live detail RPC.
+type GuardrailReview struct {
+	ReviewID, Job, Assessment, Inspection, Disposition, ReasonCode string
+	RuleID, RuleOrigin, CheckerProviderID, CheckerModelID          string
+	ConcernRefs, SourceRefs                                        []string
 }
 
 // SubagentKind discriminates the three subagent.* event kinds carried by a
@@ -203,9 +228,24 @@ const (
 	SubagentEnd SubagentKind = "end"
 )
 
+// RoutingDecision is bounded, UI-independent configured-router evidence carried
+// on delegation start messages. Nil confidence/threshold preserve wire absence.
+type RoutingDecision struct {
+	Backend           string
+	ClassifierModel   string
+	CandidateCategory string
+	CandidateModel    string
+	Confidence        *float64
+	MinimumConfidence *float64
+	Outcome           string
+	ConsecutiveMisses int
+	MissLimit         int
+	BreakerOpen       bool
+}
+
 // SubagentMsg is the BOUNDED projection of a Subagent tool's child run. It carries
 // ids, a goal label, child tool names/counts, usage, stop, and duration — plus the
-// BOUNDED content previews the server clamp-scrubs per ADR 0079 (InnerKind/Text/
+// BOUNDED content previews the server clamp-scrubs (InnerKind/Text/
 // Detail on a subagent.tool event), so the ui renders a subagent's activity under
 // its Subagent card while the previews stay bounded, scrubbed, and client-only
 // (never entering the parent conversation — gauntlet #7). ParentCallID attributes
@@ -214,7 +254,7 @@ const (
 // it on subagent.start only, and an older server yields false (no marker).
 // RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare
 // metadata (a category label + a model id) on subagent.start, empty when no
-// router classified the delegation (ADR 0031) — never child content, so
+// router classified the delegation — never child content, so
 // gauntlet #7 holds.
 type SubagentMsg struct {
 	Kind           SubagentKind
@@ -225,23 +265,27 @@ type SubagentMsg struct {
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the opt-in router did NOT classify this delegation
-	// (subagent.start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
+	// (subagent.start only; issue #397): empty on a routed hit, otherwise a
 	// bounded harness/composition gate or classifier-miss string. Bare metadata —
 	// never child content — so gauntlet #7 holds.
-	RoutingReason string
+	RoutingReason   string
+	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the child ACTUALLY ran on (subagent.start only),
 	// regardless of how it was chosen — inherited default, agent-def pin, per-call
-	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
+	// override, or the opt-in router (issue #112). When routed, Model ==
 	// RoutedModel. Bare metadata, never child content, so gauntlet #7 holds.
 	Model    string
 	ToolName string
-	IsError  bool
-	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
+	// ChildToolCallID pairs child tool.call/tool.result within this child lane;
+	// empty on other events and when reading older servers.
+	ChildToolCallID string
+	IsError         bool
+	// InnerKind / Text / Detail are the bounded previews, set on a
 	// subagent.tool event per the child's forwarded inner event kind:
 	// InnerKind is "tool.call" (Detail = the bounded args preview), "tool.result"
 	// (Detail = the bounded result preview), or "message.delta" (Text = the capped
 	// message text); empty on start/end and from an older server (the ui then renders
-	// a bare chip, exactly the pre-ADR-0079 shape). The server clamp-scrubs every
+	// a bare chip, exactly the pre-preview shape). The server clamp-scrubs every
 	// preview (control bytes out, ≤200 runes); the ui caps again on render. ToolCount
 	// (tools started) and Usage (provider-reported) are CUMULATIVE totals stamped on
 	// EVERY subagent.tool event regardless of InnerKind — always current, so the ui
@@ -326,17 +370,18 @@ type TeamMemberSpec struct {
 	Lead     bool
 	// RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare metadata
 	// (a category label + a model id) for a routed member, empty when no router
-	// classified the member (ADR 0031 / ADR 0034) — never member content, so gauntlet
+	// classified the member — never member content, so gauntlet
 	// #7 holds.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the opt-in router did NOT classify this member
-	// (team.start roster only; issue #397 / ADR 0083): empty on a routed hit,
+	// (team.start roster only; issue #397): empty on a routed hit,
 	// otherwise a bounded harness/composition gate string. Bare metadata — never
 	// member content — so gauntlet #7 holds.
-	RoutingReason string
+	RoutingReason   string
+	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the member's engine ACTUALLY runs on (team.start
-	// roster only), regardless of how it was chosen (issue #112 / ADR 0035). When routed,
+	// roster only), regardless of how it was chosen (issue #112). When routed,
 	// Model == RoutedModel. Bare metadata, never member content, so gauntlet #7 holds.
 	Model string
 }
@@ -362,6 +407,7 @@ type TeamMsg struct {
 	InnerKind       string
 	Text            string
 	ToolName        string
+	ChildToolCallID string
 	Detail          string
 	IsError         bool
 	// Rounds / Stop are set on TeamEnd.
@@ -422,8 +468,8 @@ const (
 // Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a
 // join strategy and a single winner. It carries ids, a goal label, child tool
 // names/counts, usage, stop, duration, the join strategy, and the winner index —
-// plus the BOUNDED content previews the server clamp-scrubs per
-// ADR 0079 (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
+// plus the BOUNDED content previews the server clamp-scrubs
+// (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
 // client-only (never entering the parent conversation — gauntlet #7).
 // ParentCallID is the group key.
 type ParallelMsg struct {
@@ -443,24 +489,28 @@ type ParallelMsg struct {
 	Goal        string
 	// RoutedCategory/RoutedModel are the OPT-IN semantic model router's bare metadata
 	// (a category label + a model id) for a routed branch, set on branch_start only,
-	// empty when no router classified the branch (ADR 0031 / ADR 0034) — never branch
+	// empty when no router classified the branch — never branch
 	// content, so gauntlet #7 holds.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the opt-in router did NOT classify this branch
-	// (branch_start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
+	// (branch_start only; issue #397): empty on a routed hit, otherwise a
 	// bounded harness/composition gate or classifier-miss string. Bare metadata —
 	// never branch content — so gauntlet #7 holds.
-	RoutingReason string
+	RoutingReason   string
+	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the branch ACTUALLY ran on (branch_start only),
-	// regardless of how it was chosen (issue #112 / ADR 0035). When routed, Model ==
+	// regardless of how it was chosen (issue #112). When routed, Model ==
 	// RoutedModel. Bare metadata, never branch content, so gauntlet #7 holds.
 	Model string
 	// ToolName / IsError / ToolCount carry per-branch tool activity (branch_tool;
 	// ToolCount is also final on branch_end).
 	ToolName string
-	IsError  bool
-	// InnerKind / Text / Detail are the ADR-0079 bounded previews, set on a
+	// ChildToolCallID pairs child tool.call/tool.result within this child lane;
+	// empty on other events and when reading older servers.
+	ChildToolCallID string
+	IsError         bool
+	// InnerKind / Text / Detail are the bounded previews, set on a
 	// branch_tool event per the branch's forwarded inner event kind (tool.call /
 	// tool.result / message.delta), exactly as on SubagentMsg; empty from an older
 	// server. The server clamp-scrubs every preview; the ui caps again on render.
@@ -500,6 +550,15 @@ type NoProgressMsg struct{ Text string }
 // a transient status line (like NoProgressMsg); it is ABSENT on a cache hit
 // (OpenRouter strips the metadata) — the footer simply doesn't move.
 type ProviderRouteMsg struct{ Text string }
+
+// ControlRefusedMsg identifies the exact submitted approval control the server
+// rejected. Category is a stable machine code; Text is display-only.
+type ControlRefusedMsg struct {
+	AskID    string
+	Category string
+	RunID    string
+	Text     string
+}
 
 // RecoverNoticeMsg is an advisory notice emitted at run start when a session that
 // failed on a PERMANENT provider error is recovered for re-entry. It is rendered as
@@ -616,15 +675,6 @@ type ResultMsg struct {
 	StreamProgressPresent   bool
 }
 
-// FailedStepRetryEligible reports whether this terminal result proves that replaying the
-// failed model step is safe. Legacy/transient presentation signals are deliberately
-// ignored: failed-step retry requires both typed facts from a new server.
-func (r ResultMsg) FailedStepRetryEligible() bool {
-	return r.Stop == resultStopError &&
-		r.RetryDispositionPresent && r.RetryDisposition == RetryDispositionRetryable &&
-		r.StreamProgressPresent && r.StreamProgress == StreamProgressPrecommit
-}
-
 // Usage is the token accounting carried by ResultMsg (and usage-bearing events).
 // Duplicated as a plain struct so ui stays proto-free.
 type Usage struct {
@@ -696,18 +746,16 @@ type LiveReconnectedMsg struct{}
 // The log-only replay msgs. These three kinds (approval/user_prompt/
 // compaction.archive) are LOG-ONLY on the live Converse wire (the relay skips
 // them) and are relayed ONLY by the StreamSessionEvents replay. They are the
-// transcript-viewer's audit/history surface (cloud-native Phase 3a read-back).
+// transcript-viewer's audit/history surface.
 
 // ApprovalMsg is the verdict half of a permission ask (EvApproval), relayed
 // only by the replay (log-only on the live wire). Metadata-only (gauntlet #7):
-// tool NAME + verdict string + askID + callID + the allow-always flag. NEVER raw
-// args.
+// tool name + typed verdict + ask ID + call ID. NEVER raw args.
 type ApprovalMsg struct {
-	AskID       string
-	Verdict     string
-	Tool        string
-	CallID      string
-	AllowAlways bool
+	AskID   string
+	Verdict string
+	Tool    string
+	CallID  string
 }
 
 // UserPromptMsg is the recorded user message (EvUserPrompt), relayed only by the
@@ -715,7 +763,7 @@ type ApprovalMsg struct {
 // continuation/notice); Parts carries any non-text media (image/audio) that rode
 // alongside it, projected to the plain ContentBlock type (image/audio only).
 // Synthetic is the server-authored origin bit; false remains genuine/legacy.
-// A delivery-patterned user_prompt (the fire-result delivery channel, ADR 0075)
+// A delivery-patterned user_prompt (the fire-result delivery channel)
 // maps to DeliveryNoteMsg instead — see deliverNoteFrom.
 type UserPromptMsg struct {
 	Text      string
@@ -723,7 +771,7 @@ type UserPromptMsg struct {
 	Synthetic bool
 }
 
-// DeliveryNoteMsg is a fire-result delivery note (ADR 0075 Scenario 5): the
+// DeliveryNoteMsg is a fire-result delivery note: the
 // fenced-untrusted harness note the scheduler delivered into the origin session.
 // It is projected from an EvUserPrompt event whose text starts with the
 // "[scheduled task <name> (fire <id>) ..." provenance header renderFireDelivery
@@ -918,31 +966,66 @@ func hookDecisionFrom(d mecatlv1.HookDecision) HookDecision {
 	}
 }
 
+func routingDecisionFrom(in *mecatlv1.RoutingDecision) *RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := &RoutingDecision{
+		Backend: in.GetBackend(), ClassifierModel: in.GetClassifierModel(), CandidateCategory: in.GetCandidateCategory(),
+		CandidateModel: in.GetCandidateModel(), Outcome: in.GetOutcome(), ConsecutiveMisses: int(in.GetConsecutiveMisses()),
+		MissLimit: int(in.GetMissLimit()), BreakerOpen: in.GetBreakerOpen(),
+	}
+	if in.Confidence != nil {
+		value := in.GetConfidence()
+		out.Confidence = &value
+	}
+	if in.MinimumConfidence != nil {
+		value := in.GetMinimumConfidence()
+		out.MinimumConfidence = &value
+	}
+	return out
+}
+
+// childPreviewID admits only exact, bounded IDs. Never repair or truncate an
+// invalid key: either operation could correlate a result with a different call.
+func childPreviewID(id string) string {
+	if len(id) > 256 || !utf8.ValidString(id) {
+		return ""
+	}
+	return id
+}
+
 // subagentMsg builds a SubagentMsg of the given kind from a proto Subagent
 // payload (nil-safe via the generated getters). It is the single translation
 // point for the three subagent.* event kinds.
 func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
-	return SubagentMsg{
-		Kind:           kind,
-		ParentCallID:   s.GetParentCallId(),
-		ChildID:        s.GetChildId(),
-		Goal:           s.GetGoal(),
-		Background:     s.GetBackground(),
-		RoutedCategory: s.GetRoutedCategory(),
-		RoutedModel:    s.GetRoutedModel(),
-		RoutingReason:  s.GetRoutingReason(),
-		Model:          s.GetModel(),
-		ToolName:       s.GetToolName(),
-		IsError:        s.GetIsError(),
-		InnerKind:      s.GetInnerKind(),
-		Text:           s.GetText(),
-		Detail:         s.GetDetail(),
-		ToolCount:      int(s.GetToolCount()),
-		Usage:          usageFrom(s.GetUsage()),
-		Stop:           s.GetStop(),
-		Cause:          s.GetCause(),
-		DurationMs:     s.GetDurationMs(),
+	msg := SubagentMsg{
+		Kind:            kind,
+		ParentCallID:    s.GetParentCallId(),
+		ChildID:         s.GetChildId(),
+		Goal:            s.GetGoal(),
+		Background:      s.GetBackground(),
+		RoutedCategory:  s.GetRoutedCategory(),
+		RoutedModel:     s.GetRoutedModel(),
+		RoutingReason:   s.GetRoutingReason(),
+		RoutingDecision: routingDecisionFrom(s.GetRoutingDecision()),
+		Model:           s.GetModel(),
+		ToolName:        s.GetToolName(),
+		ChildToolCallID: childPreviewID(s.GetChildToolCallId()),
+		IsError:         s.GetIsError(),
+		InnerKind:       s.GetInnerKind(),
+		Text:            s.GetText(),
+		Detail:          s.GetDetail(),
+		ToolCount:       int(s.GetToolCount()),
+		Usage:           usageFrom(s.GetUsage()),
+		Stop:            s.GetStop(),
+		Cause:           s.GetCause(),
+		DurationMs:      s.GetDurationMs(),
 	}
+	if s.GetChildToolCallId() != "" && msg.ChildToolCallID == "" {
+		msg.InnerKind, msg.ToolName, msg.Detail = "", "", ""
+	}
+	return msg
 }
 
 // parallelMsg builds a ParallelMsg from a proto Parallel payload (nil-safe via the
@@ -950,31 +1033,37 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 // parallel.branch event, the proto kind discriminant (branch_start/tool/end). It is the
 // single translation point for the parallel.* event family.
 func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
-	return ParallelMsg{
-		Kind:           kind,
-		ParentCallID:   p.GetParentCallId(),
-		Join:           p.GetJoin(),
-		BranchCount:    int(p.GetBranchCount()),
-		BranchIndex:    int(p.GetBranchIndex()),
-		ChildID:        p.GetChildId(),
-		BranchLabel:    p.GetBranchLabel(),
-		Goal:           p.GetGoal(),
-		RoutedCategory: p.GetRoutedCategory(),
-		RoutedModel:    p.GetRoutedModel(),
-		RoutingReason:  p.GetRoutingReason(),
-		Model:          p.GetModel(),
-		ToolName:       p.GetToolName(),
-		IsError:        p.GetIsError(),
-		InnerKind:      p.GetInnerKind(),
-		Text:           p.GetText(),
-		Detail:         p.GetDetail(),
-		ToolCount:      int(p.GetToolCount()),
-		Failed:         p.GetFailed(),
-		Stop:           p.GetStop(),
-		Usage:          usageFrom(p.GetUsage()),
-		DurationMs:     p.GetDurationMs(),
-		Winner:         int(p.GetWinner()),
+	msg := ParallelMsg{
+		Kind:            kind,
+		ParentCallID:    p.GetParentCallId(),
+		Join:            p.GetJoin(),
+		BranchCount:     int(p.GetBranchCount()),
+		BranchIndex:     int(p.GetBranchIndex()),
+		ChildID:         p.GetChildId(),
+		BranchLabel:     p.GetBranchLabel(),
+		Goal:            p.GetGoal(),
+		RoutedCategory:  p.GetRoutedCategory(),
+		RoutedModel:     p.GetRoutedModel(),
+		RoutingReason:   p.GetRoutingReason(),
+		RoutingDecision: routingDecisionFrom(p.GetRoutingDecision()),
+		Model:           p.GetModel(),
+		ToolName:        p.GetToolName(),
+		ChildToolCallID: childPreviewID(p.GetChildToolCallId()),
+		IsError:         p.GetIsError(),
+		InnerKind:       p.GetInnerKind(),
+		Text:            p.GetText(),
+		Detail:          p.GetDetail(),
+		ToolCount:       int(p.GetToolCount()),
+		Failed:          p.GetFailed(),
+		Stop:            p.GetStop(),
+		Usage:           usageFrom(p.GetUsage()),
+		DurationMs:      p.GetDurationMs(),
+		Winner:          int(p.GetWinner()),
 	}
+	if p.GetChildToolCallId() != "" && msg.ChildToolCallID == "" {
+		msg.InnerKind, msg.ToolName, msg.Detail = "", "", ""
+	}
+	return msg
 }
 
 // parallelBranchKind maps the proto parallel.branch kind discriminant to its
@@ -1005,6 +1094,7 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 		InnerKind:       t.GetInnerKind(),
 		Text:            t.GetText(),
 		ToolName:        t.GetToolName(),
+		ChildToolCallID: childPreviewID(t.GetChildToolCallId()),
 		Detail:          t.GetDetail(),
 		IsError:         t.GetIsError(),
 		Rounds:          int(t.GetRounds()),
@@ -1014,16 +1104,20 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 		ContextWindow:   t.GetContextWindow(),
 		Cause:           t.GetCause(),
 	}
+	if t.GetChildToolCallId() != "" && msg.ChildToolCallID == "" {
+		msg.InnerKind, msg.ToolName, msg.Detail = "", "", ""
+	}
 	for _, r := range t.GetRoster() {
 		msg.Roster = append(msg.Roster, TeamMemberSpec{
-			Name:           r.GetName(),
-			Role:           r.GetRole(),
-			Mutating:       r.GetMutating(),
-			Lead:           r.GetLead(),
-			RoutedCategory: r.GetRoutedCategory(),
-			RoutedModel:    r.GetRoutedModel(),
-			RoutingReason:  r.GetRoutingReason(),
-			Model:          r.GetModel(),
+			Name:            r.GetName(),
+			Role:            r.GetRole(),
+			Mutating:        r.GetMutating(),
+			Lead:            r.GetLead(),
+			RoutedCategory:  r.GetRoutedCategory(),
+			RoutedModel:     r.GetRoutedModel(),
+			RoutingReason:   r.GetRoutingReason(),
+			RoutingDecision: routingDecisionFrom(r.GetRoutingDecision()),
+			Model:           r.GetModel(),
 		})
 	}
 	for _, tk := range t.GetTasks() {
@@ -1097,7 +1191,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return TurnStartMsg{Turn: ev.GetTurn()}
 	case "turn.end":
 		te := ev.GetTurnEnd()
-		return TurnEndMsg{Turn: ev.GetTurn(), Usage: usageFrom(te.GetUsage()), DurationMs: te.GetDurationMs()}
+		return TurnEndMsg{Turn: ev.GetTurn(), Usage: usageFrom(te.GetUsage()), DurationMs: te.GetDurationMs(), Estimated: te.GetEstimated()}
 	case "message.delta":
 		return AssistantDeltaMsg{Turn: ev.GetTurn(), Text: ev.GetText()}
 	case "reasoning.delta":
@@ -1105,32 +1199,26 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "tool.call":
 		tc := ev.GetToolCall()
 		return ToolCallMsg{ID: tc.GetId(), Name: tc.GetName(), Args: tc.GetArgs()}
-	case "tool.result":
+	case "tool.result", "tool.result.available":
 		tr := ev.GetToolResult()
 		return ToolResultMsg{
 			CallID:            tr.GetCallId(),
 			Content:           tr.GetContent(),
 			IsError:           tr.GetIsError(),
+			Available:         ev.GetType() == "tool.result.available",
 			Blocks:            contentBlocksFromProto(tr.GetBlocks()),
 			StructuredContent: tr.GetStructuredContent(),
 		}
 	case "tool.progress":
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
-		a := ev.GetAsk()
-		return PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+		return permissionAskMsg(ev)
 	case "permission.retract":
 		// The retraction payload rides the same ask field, carrying the AskID only
 		// (server-authored; no tool/args/reason).
 		return PermissionRetractMsg{AskID: ev.GetAsk().GetAskId()}
 	case "hook":
-		h := ev.GetHook()
-		return HookMsg{
-			Text:     ev.GetText(),
-			Phase:    h.GetPhase(),
-			Tool:     h.GetTool(),
-			Decision: hookDecisionFrom(h.GetDecision()),
-		}
+		return hookMsg(ev)
 	case "result":
 		return resultMsg(ev.GetResult())
 	case "approval":
@@ -1139,7 +1227,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		up := ev.GetUserPrompt()
 		text := up.GetText()
 		parts := contentPartsFromProto(up.GetParts())
-		// Route fire-result delivery notes (ADR 0075 Scenario 5) to a
+		// Route fire-result delivery notes to a
 		// distinct DeliveryNoteMsg so the ui renders them as a delivery
 		// card with a scheduled-task affordance, not as a user-typed
 		// prompt. The pattern is the renderFireDelivery provenance header.
@@ -1165,6 +1253,38 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	}
 }
 
+func permissionAskMsg(ev *mecatlv1.Event) PermissionAskMsg {
+	a := ev.GetAsk()
+	msg := PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason(), ExpectedRunID: ev.GetRunId()}
+	if scope := a.GetGuardrail(); scope != nil {
+		kind := string(SessionKindUnknown)
+		switch scope.GetKind() {
+		case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:
+			kind = "action"
+		case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE:
+			kind = "result_release"
+		}
+		msg.Guardrail = &GuardrailApprovalScope{ReviewID: scope.GetReviewId(), Kind: kind, GrantDigest: scope.GetGrantDigest(), SessionOnly: scope.GetSessionOnly(), RepeatAvailable: scope.GetRepeatAvailable()}
+	}
+	return msg
+}
+
+func hookMsg(ev *mecatlv1.Event) HookMsg {
+	h := ev.GetHook()
+	msg := HookMsg{Text: ev.GetText(), Phase: h.GetPhase(), Tool: h.GetTool(), Decision: hookDecisionFrom(h.GetDecision())}
+	if review := h.GetGuardrail(); review != nil {
+		machine := &GuardrailReview{ReviewID: review.GetReviewId(), Job: guardrailJob(review.GetJob()), Assessment: guardrailAssessment(review.GetAssessment()), Inspection: guardrailInspection(review.GetInspection()), Disposition: guardrailDisposition(review.GetDisposition()), ReasonCode: review.GetReasonCode(), RuleID: review.GetRuleId(), RuleOrigin: review.GetRuleOrigin(), CheckerProviderID: review.GetCheckerProviderId(), CheckerModelID: review.GetCheckerModelId()}
+		for _, ref := range review.GetConcerns() {
+			machine.ConcernRefs = append(machine.ConcernRefs, ref.GetRef())
+		}
+		for _, ref := range review.GetSources() {
+			machine.SourceRefs = append(machine.SourceRefs, ref.GetRef())
+		}
+		msg.Guardrail = machine
+	}
+	return msg
+}
+
 func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 	if title == nil {
 		return SessionTitleMsg{}
@@ -1184,6 +1304,9 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 // the caller falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
+	case "control.refused":
+		refused := ev.GetControlRefused()
+		return ControlRefusedMsg{AskID: refused.GetAskId(), Category: refused.GetCategory(), RunID: ev.GetRunId(), Text: ev.GetText()}
 	case "model.retry":
 		return ModelRetryMsg{Text: ev.GetText()}
 	case "compaction":
@@ -1334,11 +1457,23 @@ func contentPartsFromProto(in []*mecatlv1.Content) []ContentBlock {
 // log-only "approval" event kind.
 func approvalMsg(a *mecatlv1.Approval) ApprovalMsg {
 	return ApprovalMsg{
-		AskID:       a.GetAskId(),
-		Verdict:     a.GetVerdict(),
-		Tool:        a.GetTool(),
-		CallID:      a.GetCallId(),
-		AllowAlways: a.GetAllowAlways(),
+		AskID:   a.GetAskId(),
+		Verdict: approvalVerdictString(a.GetVerdict()),
+		Tool:    a.GetTool(),
+		CallID:  a.GetCallId(),
+	}
+}
+
+func approvalVerdictString(verdict mecatlv1.ApprovalVerdict) string {
+	switch verdict {
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY:
+		return "deny"
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE:
+		return "allow_once"
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
+		return "allow_always"
+	default:
+		return ""
 	}
 }
 
@@ -1419,15 +1554,8 @@ func resultMsg(r *mecatlv1.Result) ResultMsg {
 	progressPresent := r.StreamProgress != nil
 	disposition := retryDispositionFromProto(r.GetRetryDisposition())
 
-	transient := false
-	permanent := false
-	if dispositionPresent {
-		transient = r.GetStop() == resultStopError && disposition == RetryDispositionRetryable
-		permanent = r.GetStop() == resultStopError && disposition == RetryDispositionPermanent
-	} else {
-		permanent = r.GetPermanent()
-		transient = r.GetStop() == resultStopError && TransientResultError(r.GetError()) && !permanent
-	}
+	transient := r.GetStop() == resultStopError && disposition == RetryDispositionRetryable
+	permanent := r.GetStop() == resultStopError && disposition == RetryDispositionPermanent
 
 	return ResultMsg{
 		Stop:                    r.GetStop(),

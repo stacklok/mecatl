@@ -4,13 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
+	"math"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // defaultMaxTokens is the CONSERVATIVE flat fallback for the REQUIRED max_tokens
@@ -58,7 +64,7 @@ type Provider struct {
 	thinkingFor    thinkingResolver  // per-request LIVE thinking descriptor (WithThinkingResolver)
 	thinkingBudget int64
 	// effort is the reasoning-effort token stamped on every request's
-	// output_config.effort field (ADR 0055). Empty (and "auto") means OMIT the
+	// output_config.effort field. Empty (and "auto") means OMIT the
 	// field entirely (the model default applies). Anthropic's output_config.effort
 	// is INDEPENDENT of the extended-thinking config (both coexist); identity-maps
 	// low/medium/high/xhigh/max. It is an adapter-CONSTRUCTION knob, not a
@@ -66,8 +72,8 @@ type Provider struct {
 	// when a session's effort differs from the operator default.
 	effort string
 	// caps is the per-SESSION input-capability intersection (catalog ∩ adapter)
-	// the request builder consults when projecting a tool result's typed Parts
-	// (T7): port.RouteToolResultParts drops image/audio blocks the (provider, model)
+	// the request builder consults when projecting a tool result's typed Parts:
+	// port.RouteToolResultParts drops image/audio blocks the (provider, model)
 	// cannot receive. nil (the Option unset) DEGRADES to the adapter's own static
 	// Capabilities() — so a provider constructed without the Option (tests, the
 	// byte-identical default path) behaves exactly as before. It is DISTINCT from
@@ -77,7 +83,7 @@ type Provider struct {
 	// no Parts always takes the legacy single-string path regardless.
 	caps *port.ProviderCapabilities
 	// conversationCaching gates the three NEW conversation cache_control
-	// breakpoints (ADR 0100): the two conditional conversation anchors (the
+	// breakpoints: the two conditional conversation anchors (the
 	// leading-turn-0-fragment boundary and the previous-turn boundary) plus the
 	// top-level automatic marker. It does NOT gate the pre-existing StablePrefix
 	// breakpoint in buildSystem, which shipped before this feature and stays
@@ -88,7 +94,7 @@ type Provider struct {
 	// cacheTTL is the raw TTL token (mirrors effort) stamped on EVERY breakpoint
 	// the adapter emits — the StablePrefix marker, the two conditional
 	// conversation anchors, and the top-level automatic marker all carry the SAME
-	// ttl (the uniform-TTL rule, ADR 0100). "" (the default) omits the ttl field
+	// ttl (the uniform-TTL rule). "" (the default) omits the ttl field
 	// everywhere (the API's own 5m default applies), byte-identical to today.
 	// Mapped per-request via cacheTTLFor; an unrecognised token degrades to ""
 	// fail-soft, mirroring outputConfigEffortFor's omit-on-unknown arm.
@@ -163,7 +169,7 @@ func WithThinkingBudget(n int64) Option {
 }
 
 // WithReasoningEffort sets the reasoning-effort token stamped on every request's
-// output_config.effort field (ADR 0055). The value is a NEUTRAL composition token;
+// output_config.effort field. The value is a NEUTRAL composition token;
 // Anthropic identity-maps all five tiers (low/medium/high/xhigh/max). Empty (and
 // "auto") OMITS the field — the model default applies. It is INDEPENDENT of the
 // extended-thinking config (WithThinkingBudget / WithThinkingResolver) — both
@@ -177,14 +183,14 @@ func WithReasoningEffort(effort string) Option {
 
 // WithProviderCapabilities sets the per-SESSION input-capability intersection
 // (the catalog ∩ adapter value composition computes via modelCapability) the
-// request builder consults when projecting a tool result's typed Parts (T7). It
+// request builder consults when projecting a tool result's typed Parts. It
 // is an adapter-CONSTRUCTION Option, not a port.LLMRequest field — the per-
 // session engine factory re-mints the adapter (alongside reasoning effort) when
 // the session's resolved (provider, model) carries a DIFFERENT intersection than
 // the operator-default model the shared provider was built with; the default
 // path (same model) reuses the shared provider byte-for-byte. When unset, the
-// builder degrades to the adapter's own static Capabilities() — byte-identical
-// to the pre-T7 path, and a tool result with no Parts always takes the legacy
+// builder degrades to the adapter's own static Capabilities(), and a tool result
+// with no Parts always takes the legacy
 // single-string tool_result block regardless. A deliberately text-only
 // (zero-value) caps is distinct from unset (nil).
 func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
@@ -195,7 +201,7 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 }
 
 // WithConversationCaching toggles the three NEW conversation cache_control
-// breakpoints (ADR 0100): the two conditional conversation anchors — the
+// breakpoints: the two conditional conversation anchors — the
 // leading-turn-0-fragment boundary and the previous-turn boundary — plus the
 // top-level automatic marker (MessageNewParams.CacheControl, which self-
 // advances to the last cacheable block on every turn). It does NOT gate the
@@ -210,7 +216,7 @@ func WithConversationCaching(enabled bool) Option {
 // WithCacheTTL sets the raw TTL token stamped on EVERY breakpoint the adapter
 // emits — the StablePrefix marker, the two conditional conversation anchors,
 // and the top-level automatic marker all carry the SAME ttl (the uniform-TTL
-// rule, ADR 0100: it makes every documented TTL-ordering 400 unreachable).
+// rule: it makes every documented TTL-ordering 400 unreachable).
 // Accepts "5m" or "1h"; "" (the default) omits the ttl field everywhere (the
 // API's own 5m default applies), byte-identical to today. An unrecognised
 // token degrades to "" fail-soft — mirrors outputConfigEffortFor's
@@ -371,7 +377,7 @@ func (*Provider) Capabilities() port.ProviderCapabilities {
 // sessionCaps returns the per-session capability intersection the request
 // builder consults for tool-result Part projection: the composition-set value
 // (WithProviderCapabilities) when present, else the adapter's static transmit
-// Capabilities() (the byte-identical pre-T7 default).
+// Capabilities() (the default).
 func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	if p.caps != nil {
 		return *p.caps
@@ -379,13 +385,14 @@ func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	return p.Capabilities()
 }
 
-// anthropicStreamError wraps a terminal stream error as port.PermanentError so
+// anthropicStreamError carries typed retry disposition for terminal stream errors so
 // the llmresilience layer can distinguish permanent client-side rejections (4xx
 // other than 408/429) from transient failures (5xx, rate limits, unknown). It
-// carries the SDK error for Unwrap and a human-readable message for Error().
+// carries the SDK error for Unwrap and renders a safe category/status for Error().
 type anthropicStreamError struct {
 	err      error  // original SDK/transport error (for Unwrap)
-	msg      string // human-readable Error() string
+	msg      string // private raw classification input; never rendered
+	display  string // safe target/correlation projection when present
 	status   int    // HTTP-status equivalent; 0 = unknown
 	metadata providerErrorMetadata
 }
@@ -396,9 +403,16 @@ type providerErrorMetadata struct {
 	providerCode    string
 	correlationKind string
 	correlationID   string
+	retryNotBefore  time.Time
+	hasRetryAfter   bool
 }
 
-func (e *anthropicStreamError) Error() string             { return e.msg }
+func (e *anthropicStreamError) Error() string {
+	if e.display != "" {
+		return e.display
+	}
+	return providerErrorText(e.status, e.msg)
+}
 func (e *anthropicStreamError) Unwrap() error             { return e.err }
 func (e *anthropicStreamError) StatusCode() int           { return e.status }
 func (e *anthropicStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
@@ -408,19 +422,19 @@ func (e *anthropicStreamError) ProviderErrorCorrelationKind() string {
 	return e.metadata.correlationKind
 }
 func (e *anthropicStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
+func (e *anthropicStreamError) RetryNotBefore() (time.Time, bool) {
+	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
+}
 
-// Permanent implements port.PermanentError. The error is permanent when the
-// message signals a context-window overflow, or when the status is a known
-// non-retryable 4xx. Status 0 and retryable codes (408, 429, 5xx) are NOT
-// permanent — fail-open, because an unclassifiable error may succeed on retry.
-func (e *anthropicStreamError) Permanent() bool {
-	if isContextOverflowMessage(e.msg) {
-		return true
+// RetryDisposition implements session.RetryDispositionError.
+func (e *anthropicStreamError) RetryDisposition() session.RetryDisposition {
+	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+		return session.RetryDispositionPermanent
 	}
-	if e.status != 0 && !retryableStatus(e.status) {
-		return true
+	if retryableStatus(e.status) {
+		return session.RetryDispositionRetryable
 	}
-	return false
+	return session.RetryDispositionUnknown
 }
 
 // isContextOverflowMessage is duplicated from provider/openai/stream.go (separate
@@ -443,32 +457,60 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
-// anthropicHTTPErrorText projects only the structured API envelope for display.
-// sdk.Error.Error includes the request URL, request ID, and raw response body, so it
-// must remain unwrap-only.
-func anthropicHTTPErrorText(err *sdk.Error) string {
+var retryAfterHorizon = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+func parseRetryAfter(header http.Header, received time.Time) (time.Time, bool) {
+	values := header.Values("Retry-After")
+	if len(values) != 1 {
+		return time.Time{}, false
+	}
+	value := values[0]
+	if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		// The digit check above leaves only overflow as a parse failure.
+		if err != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
+			return retryAfterHorizon, true
+		}
+		at := received.Add(time.Duration(seconds) * time.Second)
+		if !at.Before(retryAfterHorizon) {
+			return retryAfterHorizon, true
+		}
+		return at, true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if at.Before(received) {
+		return received, true
+	}
+	if !at.Before(retryAfterHorizon) {
+		return retryAfterHorizon, true
+	}
+	return at, true
+}
+
+// anthropicHTTPErrorMessage extracts private classification input, not display text.
+func anthropicHTTPErrorMessage(err *sdk.Error) string {
 	var envelope struct {
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal([]byte(err.RawJSON()), &envelope)
-	return structuredHTTPErrorText(string(err.Type()), envelope.Error.Message)
+	return envelope.Error.Message
 }
 
-func structuredHTTPErrorText(kind, message string) string {
-	kind = strings.TrimSpace(kind)
-	message = strings.TrimSpace(message)
-	switch {
-	case kind != "" && message != "":
-		return kind + ": " + message
-	case kind != "":
-		return kind
-	case message != "":
-		return message
-	default:
-		return "provider request failed"
+// providerErrorText renders only harness/standard-library text. Raw messages
+// remain private classification inputs, never display fragments.
+func providerErrorText(status int, message string) string {
+	if isContextOverflowMessage(message) {
+		return "provider request failed: context window exceeded"
 	}
+	if text := http.StatusText(status); text != "" {
+		return fmt.Sprintf("provider request failed (%d %s)", status, text)
+	}
+	return "provider request failed"
 }
 
 // anthropicStreamErr wraps the given error while retaining the SDK error in the
@@ -476,18 +518,32 @@ func structuredHTTPErrorText(kind, message string) string {
 func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 	var sdkErr *sdk.Error
 	status := 0
+	display := ""
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
-		msg = port.AppendHTTPErrorDisplay(anthropicHTTPErrorText(sdkErr), sdkErr.Request, sdkErr.RequestID)
+		msg = anthropicHTTPErrorMessage(sdkErr)
+		if kind := string(sdkErr.Type()); isContextOverflowMessage(kind) {
+			msg = kind
+		}
 		status = sdkErr.StatusCode
+		// SSE error envelopes arrive through the SDK with HTTP 200. Display
+		// their known error category, without changing causal retry metadata.
+		displayStatus := status
+		if status == http.StatusOK {
+			displayStatus = anthropicErrorTypeToStatus(string(sdkErr.Type()))
+		}
+		display = port.AppendHTTPErrorDisplay(providerErrorText(displayStatus, msg), sdkErr.Request, sdkErr.RequestID)
 		metadata.httpStatus = status
+		if sdkErr.Response != nil {
+			metadata.retryNotBefore, metadata.hasRetryAfter = parseRetryAfter(sdkErr.Response.Header, time.Now())
+		}
 		metadata.providerCode = string(sdkErr.Type())
 		if sdkErr.RequestID != "" {
 			metadata.correlationKind = "request"
 			metadata.correlationID = sdkErr.RequestID
 		}
 	}
-	return &anthropicStreamError{err: err, msg: msg, status: status, metadata: metadata}
+	return &anthropicStreamError{err: err, msg: msg, display: display, status: status, metadata: metadata}
 }
 
 // Compile-time assertion that Provider satisfies the port.

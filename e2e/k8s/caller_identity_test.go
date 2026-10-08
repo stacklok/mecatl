@@ -18,6 +18,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -67,6 +70,11 @@ func createSessionAs(ctx context.Context, addr, bearer string) (int, string) {
 
 // promptAs drives a prompt through the authenticated edge, draining the SSE body
 // so the run reaches terminal and its events are appended before we assert.
+const (
+	maxPromptSSEDrainBytes          = 1 << 20
+	maxPromptFailureDiagnosticBytes = 8192
+)
+
 func promptAs(ctx context.Context, addr, sessionID, bearer, text string) int {
 	ginkgo.GinkgoHelper()
 	body, _ := json.Marshal(map[string]any{"text": text})
@@ -80,8 +88,100 @@ func promptAs(ctx context.Context, addr, sessionID, bearer, text string) int {
 	resp, err := http.DefaultClient.Do(req)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "POST prompt")
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	drainPromptResponse(resp, bearer, ginkgo.GinkgoWriter)
 	return resp.StatusCode
+}
+
+func drainPromptResponse(resp *http.Response, bearer string, diagnostics io.Writer) {
+	if resp.StatusCode/100 == 5 {
+		writePromptFailureDiagnostic(diagnostics, resp.StatusCode, resp.Body, bearer)
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxPromptSSEDrainBytes))
+}
+
+func writePromptFailureDiagnostic(diagnostics io.Writer, statusCode int, body io.Reader, bearer string) {
+	raw, _ := io.ReadAll(io.LimitReader(body, maxPromptFailureDiagnosticBytes))
+	var problem struct {
+		Code   string `json:"code"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(raw, &problem); err != nil {
+		fmt.Fprintf(diagnostics, "POST prompt returned HTTP %d; response was not an RFC 9457 problem document\n", statusCode)
+		return
+	}
+	fmt.Fprintf(diagnostics, "POST prompt returned HTTP %d: code=%q title=%q detail=%q\n", statusCode,
+		boundedRedacted(problem.Code, bearer, maxPromptFailureDiagnosticBytes),
+		boundedRedacted(problem.Title, bearer, maxPromptFailureDiagnosticBytes),
+		boundedRedacted(problem.Detail, bearer, maxPromptFailureDiagnosticBytes))
+}
+
+func TestPromptResponseDiagnosticsAndSSEDrain(t *testing.T) {
+	t.Run("reports redacted RFC 9457 server failures", func(t *testing.T) {
+		const bearer = "known-bearer-token"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"code":"prompt_failed","title":"Prompt failed","detail":"upstream rejected known-bearer-token"}`)
+		}))
+		defer srv.Close()
+
+		resp, err := http.Get(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var diagnostics bytes.Buffer
+		drainPromptResponse(resp, bearer, &diagnostics)
+		got := diagnostics.String()
+		if !strings.Contains(got, `code="prompt_failed" title="Prompt failed" detail="upstream rejected [REDACTED]"`) {
+			t.Fatalf("diagnostic = %q", got)
+		}
+		if strings.Contains(got, bearer) {
+			t.Fatalf("diagnostic leaked bearer: %q", got)
+		}
+	})
+
+	t.Run("drains successful SSE", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: started\n\n")
+			w.(http.Flusher).Flush()
+			<-release
+			_, _ = io.WriteString(w, "data: complete\n\n")
+		}))
+		defer srv.Close()
+		defer func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		}()
+
+		resp, err := http.Get(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var diagnostics bytes.Buffer
+		drained := make(chan struct{})
+		go func() {
+			drainPromptResponse(resp, "", &diagnostics)
+			close(drained)
+		}()
+		close(release)
+		select {
+		case <-drained:
+		case <-time.After(time.Second):
+			t.Fatal("successful SSE body was not drained")
+		}
+		if got := diagnostics.String(); got != "" {
+			t.Fatalf("success diagnostics = %q", got)
+		}
+	})
 }
 
 // sessionOwner reads the owner off the LIST row over plain HTTP.
@@ -133,7 +233,7 @@ func sessionOwner(ctx context.Context, addr, bearer, sessionID string) (subject,
 // were got wrong by an earlier draft, which could therefore only ever time out:
 //   - the record is an ENVELOPE, {"v":"redisstore-eventlog/1","ev":<event>}
 //   - session.Event carries NO json tags, so keys are GO-CASED ("Actor"/"Subject")
-//   - the log is a STREAM, not a LIST (ADR 0250), so the read is XRANGE and
+//   - the log is a STREAM, not a LIST, so the read is XRANGE and
 //     redis-cli's raw (non-TTY) output FLATTENS each entry to three lines:
 //     the entry id, the field name, then the value. LRANGE here returns
 //     WRONGTYPE, whose error text is not JSON.
@@ -168,7 +268,7 @@ func eventActors(sessionID string) []string {
 		gomega.ExpectWithOffset(1, json.Unmarshal([]byte(line), &rec)).To(gomega.Succeed(),
 			"event-log record is not the expected envelope: %.200s", line)
 		if rec.V == "redisstore-eventlog-gap/1" {
-			// A gap marker (ADR 0250) legitimately carries no event and so no
+			// A gap marker legitimately carries no event and so no
 			// actor. Nothing calls AppendGap in production yet, but skipping it
 			// here keeps this helper from turning the FIRST failed append on a
 			// healthy cluster into a confusing failure of an identity assertion.
@@ -430,7 +530,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 		// attribution with no isolation, and this spec asserted exactly that
 		// (Bob's list containing Alice's session) so the absence of scoping could
 		// not be mistaken for a bug. #368 landed application-wide ownership
-		// enforcement (ADR-0212) — a caller's list now contains only that
+		// enforcement — a caller's list now contains only that
 		// caller's own rows (AC2.3). Do not delete this spec; it is the
 		// regression pin for that scoping.
 		ginkgo.It("shows the owner on the list row over plain HTTP, scoped to the caller's own sessions", func() {
@@ -465,7 +565,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 		// session (recording him as actor, her as owner — attribution without
 		// isolation) and this spec asserted exactly that. #368 landed enforcement:
 		// a foreign prompt is now refused, absence-shaped (AC3.1). The
-		// actor-vs-owner distinction this spec also pins (ADR-0204 decision 7)
+		// actor-vs-owner distinction this spec also pins
 		// remains real and is now re-asserted on ALICE's own action instead, so
 		// this spec keeps covering both properties rather than losing one.
 		ginkgo.It("refuses a foreign caller and records the acting caller as the actor on the owner's own run", func() {
@@ -492,7 +592,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 			gomega.Expect(ownerSub).To(gomega.Equal(aliceSubject))
 
 			// Alice's OWN prompt still succeeds and is attributed to her — the
-			// owner/actor distinction (ADR-0204 decision 7) still holds on the
+			// owner/actor distinction still holds on the
 			// path that's still allowed.
 			gomega.Expect(promptAs(ctx, addr, aliceSess, alice, "alice acting on her own session")).
 				To(gomega.Equal(http.StatusOK), "alice was refused on her own session")

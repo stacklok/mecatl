@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // approvalModel builds a connected, awaiting-approval Model with the given ask. The
@@ -25,9 +26,9 @@ func approvalModel(t *testing.T, ask pendingAsk) Model {
 
 // lastNotice returns the raw text of the last notice block, or "".
 func lastNotice(m Model) string {
-	for i := len(m.conv.blocks) - 1; i >= 0; i-- {
-		if m.conv.blocks[i].kind == blockNotice {
-			return m.conv.blocks[i].raw
+	for i := len(m.conv.testBlocks()) - 1; i >= 0; i-- {
+		if notice, ok := m.conv.testBlocks()[i].Payload.(scrollback.NoticeCardSnapshot); ok {
+			return notice.Text
 		}
 	}
 	return ""
@@ -108,12 +109,12 @@ func TestApprovalWResolvesAlways(t *testing.T) {
 // the modal stays open and no notice is recorded.
 func TestApprovalWIgnoredOnChildAsk(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Shell", offerAlways: false})
-	before := len(m.conv.blocks)
+	before := len(m.conv.testBlocks())
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'w', Text: "w"})
 	if m.phase != phaseAwaitingApproval {
 		t.Errorf("w on a child ask must NOT resolve; phase = %v", m.phase)
 	}
-	if len(m.conv.blocks) != before {
+	if len(m.conv.testBlocks()) != before {
 		t.Errorf("w on a child ask must record no notice; got %q", lastNotice(m))
 	}
 }
@@ -179,6 +180,24 @@ func TestApprovalCycleTwoButtons(t *testing.T) {
 	}
 	if !strings.HasPrefix(lastNotice(m), "permission allowed") {
 		t.Errorf("two-button enter must not be always-allow")
+	}
+}
+
+func TestControlRefusedRestoresByExactAskIDAcrossRunMismatch(t *testing.T) {
+	ask := pendingAsk{AskID: "ask-current", Tool: "Shell", expectedRunID: "run-old"}
+	m := approvalModel(t, ask)
+	intent := &approvalResolvedIntent{ask: ask, askID: ask.AskID, expectedRunID: ask.expectedRunID, resume: phaseRunning}
+	m.pendingApproval = intent
+	approvalSurfaceOf(t, m).ask = pendingAsk{}
+
+	if m.restoreControlRefused(client.ControlRefusedMsg{AskID: "ask-other", RunID: "run-new", Text: "stale"}) {
+		t.Fatal("unrelated refusal restored the pending approval")
+	}
+	if !m.restoreControlRefused(client.ControlRefusedMsg{AskID: ask.AskID, RunID: "run-new", Text: "stale"}) {
+		t.Fatal("matching refusal was dropped because the active run changed")
+	}
+	if got := approvalSurfaceOf(t, m).ask.AskID; got != ask.AskID {
+		t.Fatalf("restored ask = %q, want %q", got, ask.AskID)
 	}
 }
 

@@ -14,11 +14,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/automaticconformance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
 func TestAutomaticStoreConformance(t *testing.T) {
@@ -37,7 +37,7 @@ func TestAutomaticLedgerDriverConformance(t *testing.T) {
 	})
 }
 
-func TestADR_0259_AutomaticLedgerRejectsClientPolicyAndClockAuthority(t *testing.T) {
+func TestAutomaticLedgerRejectsClientPolicyAndClockAuthority(t *testing.T) {
 	policy := automaticPolicy(1, 100, 10, 100, 0)
 	backendClock := automaticconformance.NewClock(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	clients := newIndependentAutomaticClients(t, policy, backendClock)
@@ -127,7 +127,7 @@ func TestInvariant_automatic_reservation_records_are_durably_bounded(t *testing.
 	})
 }
 
-func TestADR_0259_AutomaticAdmissionControlsAreProcessIndependent(t *testing.T) {
+func TestAutomaticAdmissionControlsAreProcessIndependent(t *testing.T) {
 	checks := []struct {
 		name   string
 		policy learning.AutomaticAdmissionPolicy

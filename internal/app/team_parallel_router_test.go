@@ -9,18 +9,18 @@ import (
 	"sync"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
-// team_parallel_router_test.go covers the composition half of issue #100 (ADR 0034):
-// extending the ADR-0031 model router to team members and Parallel branches.
+// team_parallel_router_test.go covers the composition half of issue #100:
+// extending the subagent model router to team members and Parallel branches.
 //
 //   - buildMemberEngine honours routedModel for an UNDEFINED member and IGNORES it for a
 //     DEFINED member (the def pins its own model).
@@ -306,7 +306,7 @@ func routerE2ECfg(workspace string, parentCtor func() port.LLMProvider, enable f
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
-		// ADR 0042: the taxonomy is the enable — no flag needed to turn the router on.
+		// The taxonomy is the enable — no flag needed to turn the router on.
 		RouterCategories: []permconfig.RouterCategory{
 			{Name: "small", Description: "trivial mechanical tasks", Model: routerSmall},
 			{Name: "large", Description: "deep reasoning and architecture", Model: routerLarge},
@@ -381,7 +381,7 @@ func TestTeamRouterOffByteIdenticalE2E(t *testing.T) {
 
 	cfg := routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableTeams = true })
-	cfg.RouterDisabled = true // OFF via the ADR 0042 kill-switch
+	cfg.RouterDisabled = true // OFF via the kill-switch
 	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -526,7 +526,7 @@ func TestParallelRouterOffByteIdenticalE2E(t *testing.T) {
 
 	cfg := routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableParallel = true })
-	cfg.RouterDisabled = true // OFF via the ADR 0042 kill-switch
+	cfg.RouterDisabled = true // OFF via the kill-switch
 	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)

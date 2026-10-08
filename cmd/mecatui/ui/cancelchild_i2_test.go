@@ -67,7 +67,7 @@ func TestParallelBranchCancelKeyDoneLaneNoOp(t *testing.T) {
 	// Move the branch selection to the second (done) branch.
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mm.(Model)
-	if m.parallel.branchCursor != 1 {
+	if boundedListCursor(m.parallel.branches) != 1 {
 		t.Fatalf("down did not move the branch cursor: %+v", m.parallel)
 	}
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})

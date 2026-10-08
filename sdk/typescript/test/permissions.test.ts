@@ -4,9 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import {
   connect,
+  InvalidStateError,
   PermissionAskAlreadyResolvedError,
-  type PermissionVerdict,
+  PermissionVerdict,
 } from "../src/index.js";
+
+describe("permission verdict constants", () => {
+  it("exports the server verdict vocabulary", () => {
+    expect(PermissionVerdict).toEqual({
+      AllowOnce: "allow_once",
+      AllowAlways: "allow_always",
+      Deny: "deny",
+    });
+  });
+});
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -16,10 +27,19 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function ask(runId: string, askId: string) {
+function ask(
+  runId: string,
+  askId: string,
+  guardrail?: {
+    kind: number;
+    repeatAvailable: boolean;
+    reviewId: string;
+    sessionOnly: boolean;
+  },
+) {
   return {
     event: {
-      ask: { args: `{"ask":"${askId}"}`, askId, reason: "test", tool: "Bash" },
+      ask: { args: `{"ask":"${askId}"}`, askId, guardrail, reason: "test", tool: "Bash" },
       runId,
       type: "permission.ask",
     },
@@ -230,6 +250,85 @@ describe("permission asks", () => {
     }
   });
 
+  it("retains guardrail scope across a correlated refusal and one corrected retry", async () => {
+    const controls: Array<{
+      askId: string;
+      expectedRunId: string;
+      guardrailKind: number;
+      reviewId: string;
+      verdict: number;
+    }> = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: () => ({ sessionId: "session-guardrail" }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        converse: async function* (requests) {
+          const input = requests[Symbol.asyncIterator]();
+          await input.next();
+          yield ask("run-guardrail", "ask-guardrail", {
+            kind: 2,
+            repeatAvailable: false,
+            reviewId: "review-7",
+            sessionOnly: true,
+          });
+          const first = await input.next();
+          if (first.value?.kind.case === "resumeApproval") controls.push(first.value.kind.value);
+          yield {
+            event: {
+              controlRefused: { askId: "ask-guardrail", category: "approval_intent_mismatch" },
+              runId: "run-guardrail",
+              text: "approval intent does not match pending ask",
+              type: "control.refused",
+            },
+          };
+          const second = await input.next();
+          if (second.value?.kind.case === "resumeApproval") controls.push(second.value.kind.value);
+          yield terminal("run-guardrail");
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+    const run = await session.run("start");
+    const iterator = run[Symbol.asyncIterator]();
+
+    const permission = await iterator.next();
+    expect(permission.value).toMatchObject({
+      kind: "permission.ask",
+      payload: { guardrail: { kind: "result_release", reviewId: "review-7" } },
+    });
+    await expect(run.resolveAsk("ask-guardrail", "allow_always")).rejects.toBeInstanceOf(
+      InvalidStateError,
+    );
+    await run.resolveAsk("ask-guardrail", "allow_once");
+    const refusal = await iterator.next();
+    expect(refusal.value).toMatchObject({
+      kind: "control.refused",
+      payload: { askId: "ask-guardrail", category: "approval_intent_mismatch" },
+    });
+    await run.resolveAsk("ask-guardrail", "deny");
+    await iterator.next();
+
+    expect(controls).toHaveLength(2);
+    expect(controls).toMatchObject([
+      {
+        askId: "ask-guardrail",
+        expectedRunId: "run-guardrail",
+        guardrailKind: 2,
+        reviewId: "review-7",
+        verdict: 2,
+      },
+      {
+        askId: "ask-guardrail",
+        expectedRunId: "run-guardrail",
+        guardrailKind: 2,
+        reviewId: "review-7",
+        verdict: 1,
+      },
+    ]);
+    await client.close();
+  });
+
   it("late verdicts fail typed", async () => {
     const controls: Array<{ askId: string; runId: string }> = [];
     let runNumber = 0;
@@ -305,6 +404,105 @@ describe("permission asks", () => {
     expect(controls).toEqual([
       { askId: "ask-resolved", runId: "run-late-1" },
       { askId: "ask-current", runId: "run-late-4" },
+    ]);
+    await client.close();
+  });
+
+  it("rejects unknown approve ids without sending a scope-less fallback", async () => {
+    const controls: string[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: () => ({ sessionId: "session-unknown" }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        converse: async function* (requests) {
+          const input = requests[Symbol.asyncIterator]();
+          await input.next();
+          yield { event: { runId: "run-unknown", text: "started", type: "message.delta" } };
+          const next = await Promise.race([
+            input.next(),
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 10)),
+          ]);
+          if (next?.value?.kind.case === "resumeApproval")
+            controls.push(next.value.kind.value.askId);
+          yield terminal("run-unknown");
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+    const run = await session.run("start");
+
+    await expect(
+      run.resolveAsk("ask-never-seen", PermissionVerdict.AllowOnce),
+    ).rejects.toBeInstanceOf(PermissionAskAlreadyResolvedError);
+    await run.result();
+    expect(controls).toEqual([]);
+    await client.close();
+  });
+
+  it("restores only the correlated stale approval and retries with the ask event run id", async () => {
+    const controls: Array<{ askId: string; expectedRunId: string }> = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: () => ({ sessionId: "session-stale" }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        converse: async function* (requests) {
+          const input = requests[Symbol.asyncIterator]();
+          await input.next();
+          yield { event: { runId: "run-original", text: "started", type: "message.delta" } };
+          yield ask("run-current", "ask-current");
+          const first = await input.next();
+          if (first.value?.kind.case === "resumeApproval") {
+            controls.push({
+              askId: first.value.kind.value.askId,
+              expectedRunId: first.value.kind.value.expectedRunId,
+            });
+          }
+          yield {
+            event: {
+              controlRefused: { askId: "ask-other", category: "stale_run_control" },
+              runId: "run-current",
+              text: "unrelated refusal",
+              type: "control.refused",
+            },
+          };
+          yield {
+            event: {
+              controlRefused: { askId: "ask-current", category: "stale_run_control" },
+              runId: "run-current",
+              text: "stale approval refused",
+              type: "control.refused",
+            },
+          };
+          const retry = await input.next();
+          if (retry.value?.kind.case === "resumeApproval") {
+            controls.push({
+              askId: retry.value.kind.value.askId,
+              expectedRunId: retry.value.kind.value.expectedRunId,
+            });
+          }
+          yield terminal("run-original");
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+    const run = await session.run("start");
+    const events = run[Symbol.asyncIterator]();
+
+    await events.next();
+    await events.next();
+    await run.resolveAsk("ask-current", "allow_once");
+    await events.next();
+    await expect(run.resolveAsk("ask-current", "deny")).rejects.toBeInstanceOf(
+      PermissionAskAlreadyResolvedError,
+    );
+    await events.next();
+    await run.resolveAsk("ask-current", "deny");
+    await events.next();
+    expect(controls).toEqual([
+      { askId: "ask-current", expectedRunId: "run-current" },
+      { askId: "ask-current", expectedRunId: "run-current" },
     ]);
     await client.close();
   });

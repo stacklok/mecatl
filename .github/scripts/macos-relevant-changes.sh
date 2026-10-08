@@ -26,7 +26,7 @@
 # them ever enters that closure, so this list cannot silently drift fail-open).
 #
 # Note on matching: POSIX `case` globs treat `*` as matching any string INCLUDING
-# `/`, so `docs/*.md` matches `docs/adr/nested.md` too (same convention as
+# `/`, so `docs/*.md` matches `docs/architecture/nested.md` too (same convention as
 # docs-only-changes.sh). Suffix patterns keep non-Markdown assets under docs/
 # (e.g. docs/architecture/*.yaml) OUT of the irrelevant set.
 set -euo pipefail
@@ -40,12 +40,14 @@ irrelevant() {
     *) return 1 ;;
   esac
 
-  # Common to both categories: documentation, the docs/user-facing site, and the
-  # terminal leaf packages that no macOS-job binary or test imports.
+  # Common to both categories: documentation, the docs/user-facing site, the
+  # Mecatl Studio workspace (apps/ holds no Go package and depends on the
+  # PUBLISHED SDK, so it can reach neither a macOS Go job nor the SDK spawn job),
+  # and the terminal leaf packages that no macOS-job binary or test imports.
   case "$1" in
-    README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*)
+    README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|apps/*)
       return 0 ;;
-    cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|examples/*|perf/*|e2e/*|deploy/*|docs/lint/*)
+    cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|examples/*|perf/*|e2e/*|deploy/*)
       return 0 ;;
   esac
 

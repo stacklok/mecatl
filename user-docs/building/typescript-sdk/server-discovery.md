@@ -1,8 +1,7 @@
 ---
 title: Inspect a server before creating a session
 description:
-  Check Mecatl compatibility and safe server identity before creating a
-  session.
+  Check Mecatl compatibility and safe server identity before creating a session.
 sidebar_position: 8
 ---
 
@@ -10,6 +9,12 @@ sidebar_position: 8
 
 Use `client.server` to check what a Mecatl server supports and read its safe
 build identity. These calls do not create or bind a session.
+
+## Prerequisites
+
+Create a connected client using [Connect an application](connect.md). Supply the
+deployment's required credentials before calling its discovery endpoints. The
+examples below use that client as `client`.
 
 ## Check compatibility
 
@@ -22,13 +27,12 @@ const compatibility = await client.server.compatibility({
 });
 ```
 
-Each explicit call starts a fresh compatibility request. The newest request
-also becomes the compatibility check shared by subsequent ordinary SDK
-operations. Ordinary operations reuse that request until it fails or another
-explicit call refreshes it.
+Each explicit call starts a fresh compatibility request. The newest request also
+becomes the compatibility check shared by subsequent ordinary SDK operations.
+Ordinary operations reuse that request until it fails or another explicit call
+refreshes it.
 
-Interpret the result according to the question your application needs to
-answer:
+Interpret the result according to the question your application needs to answer:
 
 |Field|Use it for|
 |-|-|
@@ -38,8 +42,8 @@ answer:
 |`deployment`|Displaying an optional operator-defined deployment label. Treat it as opaque text.|
 
 Use `ServerFeature` for known feature identifiers. Use `ServerPosture` when
-comparing known `capabilities.posture` values, but preserve and handle unknown
-posture strings so newer servers remain observable.
+comparing known `capabilities.posture` values. Preserve unknown posture strings
+so your application can display a value introduced by a newer server.
 
 ## Read safe server identity
 
@@ -65,8 +69,8 @@ provider from a session, model, or server default.
 `info.buildId` identifies the composed server build, and
 `info.serverImplementation` identifies its composition family. The optional
 `info.llmProviderDisplayEndpoint` is sanitized diagnostic text. Display or log
-that endpoint for troubleshooting; use your application's configured Mecatl
-URL to create connections.
+that endpoint for troubleshooting; use your application's configured Mecatl URL
+to create connections.
 
 ## Handle discovery failures
 
@@ -90,5 +94,5 @@ Handle typed errors according to the action your application can take:
 ## Related information
 
 - [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md)
-- [Feature availability](/features/capability-matrix.md)
-- [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md)
+- [Feature availability](/features/get-oriented/capability-matrix.md)
+- [Connect with gRPC or HTTP](/building/grpc-http.md)

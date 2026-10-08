@@ -18,110 +18,8 @@ import (
 // line, restart-now confirm overlay, ctrl+g global default, ●/★ markers, reconcile
 // notice naming the fallback. Client-only (no proto/server change).
 
-// --- header next: badge ----------------------------------------------------
-
-// idleModelWith builds an idle, sized model with the given effective + pending-next
-// selections wired (no overlays open), so the header next-badge logic is exercised
-// directly. effective is delivered as the create response's resolved model; next is
-// set as the pending createModelSelection.
-func idleModelWith(t *testing.T, effective client.ResolvedModel, next client.ModelSelection, inv []client.ModelInfo) Model {
-	t.Helper()
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := newTestModelFromDeps(Deps{
-		Session: conv,
-		Conv:    conv,
-		Theme:   theme.New("aztec", theme.AztecPalette()),
-		Server:  "127.0.0.1:8080",
-		Mode:    "default",
-		Ctx:     context.Background(),
-	})
-	m.modelCatalog.models = inv
-	m = applyAll(m,
-		tea.WindowSizeMsg{Width: 160, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001", ResolvedModel: effective},
-	)
-	m.createModelSelection = next
-	return m
-}
-
-// TestHeaderNextBadgeShownWhenDiffers: a pending-next model that differs from the
-// effective model renders a "next: <name>" header segment (display name resolved
-// from the inventory).
-func TestHeaderNextBadgeShownWhenDiffers(t *testing.T) {
-	inv := []client.ModelInfo{
-		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5"},
-		{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"},
-	}
-	m := idleModelWith(t,
-		client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"},
-		client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"},
-		inv)
-	if got := m.headerNextBadge(); got != "next: Claude" {
-		t.Fatalf("headerNextBadge = %q, want %q", got, "next: Claude")
-	}
-	header := stripANSIstr(m.renderHeader())
-	if !strings.Contains(header, "next: Claude") {
-		t.Fatalf("header missing the next: badge:\n%s", header)
-	}
-	// The effective model (GPT-5) is still the primary model segment.
-	if !strings.Contains(header, "GPT-5") {
-		t.Fatalf("header missing the effective model segment:\n%s", header)
-	}
-}
-
-// TestHeaderNextBadgeHiddenWhenSame: a pending-next equal to the effective model
-// shows NO badge (nothing to preview).
-func TestHeaderNextBadgeHiddenWhenSame(t *testing.T) {
-	m := idleModelWith(t,
-		client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"},
-		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"},
-		nil)
-	if got := m.headerNextBadge(); got != "" {
-		t.Fatalf("headerNextBadge = %q, want empty (same model ⇒ no badge)", got)
-	}
-	if strings.Contains(stripANSIstr(m.renderHeader()), "next:") {
-		t.Fatalf("header should carry no next: badge when next==effective")
-	}
-}
-
-// TestHeaderNextBadgeHiddenWhenNoEffective: with no known effective model (older
-// server / connecting), the model SEGMENT already shows the pending-next, so a next:
-// badge would duplicate — it is suppressed.
-func TestHeaderNextBadgeHiddenWhenNoEffective(t *testing.T) {
-	m := idleModelWith(t,
-		client.ResolvedModel{}, // no effective model known
-		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"},
-		nil)
-	if got := m.headerNextBadge(); got != "" {
-		t.Fatalf("headerNextBadge = %q, want empty (no effective ⇒ no badge)", got)
-	}
-}
-
-// TestHeaderNextBadgeDroppedUnderWidthPressure: at a narrow width the next: badge is
-// the FIRST segment shed — the socket/mode survive, the badge does not.
-func TestHeaderNextBadgeDroppedUnderWidthPressure(t *testing.T) {
-	inv := []client.ModelInfo{
-		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5"},
-		{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"},
-	}
-	m := idleModelWith(t,
-		client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"},
-		client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"},
-		inv)
-	// Wide: the badge fits.
-	if !strings.Contains(stripANSIstr(m.renderHeader()), "next: Claude") {
-		t.Fatalf("at 160 cols the next: badge should fit")
-	}
-	// Narrow: shed the badge first; the socket (the LAST identity segment) survives.
-	m = applyAll(m, tea.WindowSizeMsg{Width: 60, Height: 30})
-	header := stripANSIstr(m.renderHeader())
-	if strings.Contains(header, "next:") {
-		t.Fatalf("at 60 cols the next: badge must be dropped first, got:\n%s", header)
-	}
-	if !strings.Contains(header, "127.0.0.1:8080") {
-		t.Fatalf("the socket must survive when the next: badge is dropped, got:\n%s", header)
-	}
-}
+// Model picker tests below cover selection and provenance; the selected status source
+// owns the former header-only next-model preview.
 
 // --- provenance line -------------------------------------------------------
 
@@ -247,9 +145,8 @@ func TestModelProvenanceNoStatusRow_NotAutoSelected(t *testing.T) {
 
 // --- ●/★ markers -----------------------------------------------------------
 
-// TestModelRowMarkers asserts the fixed-width 2-marker column: ● on the pending
-// (active) row, ★ on the global-default row, "●★" when a row is both, and two
-// spaces when neither — layout-stable for goldens.
+// TestModelRowMarkers asserts that current/default state is projected through separate
+// bounded status cells, never embedded into model text.
 func TestModelRowMarkers(t *testing.T) {
 	active := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
 	gd := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
@@ -257,18 +154,25 @@ func TestModelRowMarkers(t *testing.T) {
 	claude := client.ModelInfo{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"}
 	mini := client.ModelInfo{ID: "gpt-5-mini", ProviderID: "openai", DisplayName: "GPT-5 mini"}
 
-	if got := modelRowText(active, gd, nil, gpt); !strings.HasPrefix(got, "●  ") {
-		t.Errorf("active row should start with the ● marker (+ space pad), got %q", got)
-	}
-	if got := modelRowText(active, gd, nil, claude); !strings.HasPrefix(got, " ★ ") {
-		t.Errorf("global-default row should carry the ★ marker, got %q", got)
-	}
-	if got := modelRowText(active, gd, nil, mini); !strings.HasPrefix(got, "   ") {
-		t.Errorf("a plain row should have a blank 2-cell marker column, got %q", got)
-	}
-	// A row that is BOTH active AND the global default shows "●★".
-	if got := modelRowText(active, active, nil, gpt); !strings.HasPrefix(got, "●★ ") {
-		t.Errorf("a row that is both active and global default should show ●★, got %q", got)
+	for _, tc := range []struct {
+		name string
+		mi   client.ModelInfo
+		def  client.ModelSelection
+		want [2]string
+	}{
+		{name: "active", mi: gpt, def: gd, want: [2]string{"●", ""}},
+		{name: "global default", mi: claude, def: gd, want: [2]string{"", "★"}},
+		{name: "plain", mi: mini, def: gd, want: [2]string{}},
+		{name: "both", mi: gpt, def: active, want: [2]string{"●", "★"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := modelStatusCells(active, tc.def, tc.mi); got != tc.want {
+				t.Errorf("status cells = %q, want %q", got, tc.want)
+			}
+			if got := modelRowText(active, tc.def, nil, tc.mi); strings.HasPrefix(got, "●") || strings.HasPrefix(got, "★") {
+				t.Errorf("model text embeds status markers: %q", got)
+			}
+		})
 	}
 }
 
@@ -424,6 +328,9 @@ func TestCarryoverHandoff(t *testing.T) {
 
 	// The carryover create fired (recreate signal shared with restart-now).
 	waitClosed(t, "carryover re-create", conv.recreated, 5*time.Second)
+	// Wait for adoption and closure before quitting: re-created only means
+	// CreateSession was entered, not that the close command has run.
+	waitForClosedSession(t, "old session close after carryover handoff", conv, "sess-test-0001", 5*time.Second)
 
 	// Graceful double-ctrl+c quit, then assert on the final model.
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
@@ -439,7 +346,6 @@ func TestCarryoverHandoff(t *testing.T) {
 		t.Fatalf("carryover source ids = %v, want [sess-test-0001] (the old session)", srcs)
 	}
 	// (b) the OLD session was closed (best-effort, after the new one was ready).
-	waitForClosedSession(t, "old session close after carryover handoff", conv, "sess-test-0001", 5*time.Second)
 	closed := conv.closed()
 	if len(closed) != 1 || closed[0] != "sess-test-0001" {
 		t.Fatalf("CloseSession calls = %v, want [sess-test-0001] (the old session, closed after the new one was ready)", closed)

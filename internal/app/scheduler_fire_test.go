@@ -12,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
@@ -24,14 +25,13 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
-// TestSchedulerFire is the Phase 1f user-reachable gate (issue #189): a full
-// app.Build with --scheduler over a real on-disk jsonlstore (which exposes a
+// TestSchedulerFire is the user-reachable scheduler gate (issue #189): a full
+// app.Build with the scheduler enabled over a real on-disk jsonlstore (which exposes a
 // ScheduleStore), a one-shot schedule saved to the store, and the scheduler's
-// tick loop firing it. It proves the whole Phase 1 arc end-to-end:
+// tick loop firing it. It proves the whole fire path end-to-end:
 //
 //  1. the scheduler started (non-nil on the Service);
 //  2. within a bounded timeout a "sched--" session was created + persisted
@@ -134,7 +134,7 @@ func TestSchedulerFire(t *testing.T) {
 
 	// (2) A session was persisted for the fire. The schedule's LastFireSessionID
 	// points at it (the FireFunc set it via RecordFire); load it from the session
-	// store. ADR 0059 decision #7 Phase-2: the fire id IS the session id, and it
+	// store. The fire id IS the session id, and it
 	// is "sched--"-prefixed (the fire path pre-mints it via newFireID and passes
 	// it as the WithSessionID override on CreateSessionWithProfile, so the
 	// persisted session carries the sched-- GC-retention family prefix).
@@ -452,7 +452,7 @@ func eventually(deadline time.Duration, f func() bool) bool {
 	return f()
 }
 
-// TestRenderCarriedContext is the Phase-2 carried-context gate (ADR 0059). A
+// TestRenderCarriedContext is the Phase-2 carried-context gate. A
 // prior session's conversation is rendered as a FENCED UNTRUSTED preamble:
 // the assistant text appears, wrapped in the governance.UntrustedFence markers
 // (<<<UNTRUSTED … <<<UNTRUSTED), so the carried context is data, not live
@@ -493,7 +493,7 @@ func TestRenderCarriedContext(t *testing.T) {
 }
 
 // TestRenderCarriedContextNeutralisesForgedFence is the prompt-injection guard
-// (ADR 0059 Phase 2): a prior session whose assistant text contains a forged
+// a prior session whose assistant text contains a forged
 // <<<UNTRUSTED marker (an attempt to close the quarantine fence early and break
 // out into trusted-instruction space) is NEUTRALISED by NeutraliseFraming (called
 // inside FenceUntrusted). The rendered preamble must NOT contain a raw
@@ -536,8 +536,8 @@ func TestRenderCarriedContextNeutralisesForgedFence(t *testing.T) {
 	}
 }
 
-// TestRenderCarriedContextDisabledByDefault pins the pre-feature path is
-// byte-identical: CarryContext=false (the default) produces NO preamble. The
+// TestRenderCarriedContextDisabledByDefault pins the default path:
+// CarryContext=false (the default) produces NO preamble. The
 // makeFireFunc gate is `if sched.Spec.CarryContext && ...`, so a non-opted-in
 // schedule's prompt is the spec's prompt verbatim. This test asserts the helper
 // returns "" for an empty/nil prior session (the degrade path) and that the
@@ -608,7 +608,7 @@ func TestNewFireIDSanitizesName(t *testing.T) {
 }
 
 // TestRenderCarriedContextRespectsRuneBudget pins that carried-context clamping
-// is RUNE-accurate, not byte-based (ADR 0059 Phase-2). The removed in-loop
+// is RUNE-accurate, not byte-based. The removed in-loop
 // early-exit compared b.Len() (BYTES) against carriedContextMaxRunes, so for
 // multi-byte UTF-8 it broke out after only ~budget/bytes-per-rune runes —
 // UNDER-filling the intended rune budget. The final clampRunes is now the single

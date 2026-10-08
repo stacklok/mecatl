@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -15,7 +16,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // newScheduleService builds a Service over a jsonlstore (which exposes a
@@ -198,10 +198,10 @@ func TestCreateScheduleRejectsReadleaningWithWriteMode(t *testing.T) {
 	}
 }
 
-// TestADR_0291_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef
+// TestScheduleResolvesSelectorBeforePersistingExactEnvironmentRef
 // proves a public create carries no private path/ref while the server resolves
 // its default selector and persists the exact durable identity and scope.
-func TestADR_0291_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef(t *testing.T) {
+func TestScheduleResolvesSelectorBeforePersistingExactEnvironmentRef(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	svc, schedStore := newScheduleService(t, now)
 	ctx := context.Background()

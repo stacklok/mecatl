@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -18,7 +19,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
@@ -1083,7 +1083,7 @@ func (*errQueue) MarkDelivered(_ context.Context, _ session.SessionID, _ uint64)
 
 var _ port.DeliveryQueue = (*errQueue)(nil)
 
-// --- Phase 4a: started-notice delivery tests (deliverFireStarted) ---
+// --- started-notice delivery tests (deliverFireStarted) ---
 
 // TestFireStarted_StartedNoticeEnqueuedWithIDs verifies the started notice is
 // enqueued via deliverFireStarted carrying the schedule name + fire id.

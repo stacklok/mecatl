@@ -25,15 +25,20 @@ package openaichat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
@@ -47,15 +52,14 @@ const (
 type Provider struct {
 	client oai.ChatCompletionService
 	// effort is the reasoning-effort token stamped on every request's
-	// reasoning_effort field (ADR 0055). Empty (and "auto"/unknown) OMITS the
+	// reasoning_effort field. Empty (and "auto"/unknown) OMITS the
 	// field — the provider default applies. Composition supplies an already-
 	// normalised neutral token; unlike the openai (Responses) adapter this
 	// endpoint accepts xhigh/max, so they are NOT clamped to high.
 	effort string
 	// cacheDialect selects which provider-side prompt-cache wire dialect
-	// (ADR 0100) buildParams (method) emits. "" (CacheDialectNone, the zero
-	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
-	// wire.
+	// buildParams (method) emits. "" (CacheDialectNone, the zero value) emits
+	// no cache hints at all — the byte-identical wire without cache hints.
 	cacheDialect CacheDialect
 	// openCodeSessionHeader enables the OpenCode-specific session header without
 	// changing the generic adapter's wire behavior.
@@ -89,7 +93,7 @@ func WithBaseURL(url string) Option {
 }
 
 // WithReasoningEffort sets the reasoning-effort token stamped on every request's
-// reasoning_effort field (ADR 0055). Empty/"auto"/unknown OMITS the field. It is
+// reasoning_effort field. Empty/"auto"/unknown OMITS the field. It is
 // an adapter-CONSTRUCTION Option, not a port.LLMRequest field — the per-session
 // engine factory re-mints the adapter when a session's effort differs from the
 // operator default.
@@ -255,13 +259,14 @@ func (*Provider) Capabilities() port.ProviderCapabilities {
 // Compile-time assertion that Provider satisfies the port.
 var _ port.LLMProvider = (*Provider)(nil)
 
-// openaichatStreamError wraps a terminal stream error as port.PermanentError so
+// openaichatStreamError carries typed retry disposition for terminal stream errors so
 // the llmresilience layer can distinguish permanent client-side rejections (4xx
 // other than 408/429) from transient failures. It carries the SDK error for
-// Unwrap and a human-readable message for Error().
+// Unwrap and renders a safe category/status for Error().
 type openaichatStreamError struct {
 	err      error  // original SDK/transport error (for Unwrap)
-	msg      string // human-readable Error() string
+	msg      string // private raw classification input; never rendered
+	display  string // safe target/correlation projection when present
 	status   int    // HTTP-status equivalent; 0 = unknown
 	metadata providerErrorMetadata
 }
@@ -272,9 +277,16 @@ type providerErrorMetadata struct {
 	providerCode    string
 	correlationKind string
 	correlationID   string
+	retryNotBefore  time.Time
+	hasRetryAfter   bool
 }
 
-func (e *openaichatStreamError) Error() string             { return e.msg }
+func (e *openaichatStreamError) Error() string {
+	if e.display != "" {
+		return e.display
+	}
+	return providerErrorText(e.status, e.msg)
+}
 func (e *openaichatStreamError) Unwrap() error             { return e.err }
 func (e *openaichatStreamError) StatusCode() int           { return e.status }
 func (e *openaichatStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
@@ -284,19 +296,19 @@ func (e *openaichatStreamError) ProviderErrorCorrelationKind() string {
 	return e.metadata.correlationKind
 }
 func (e *openaichatStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
+func (e *openaichatStreamError) RetryNotBefore() (time.Time, bool) {
+	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
+}
 
-// Permanent implements port.PermanentError. The error is permanent when the
-// message signals a context-window overflow, or when the status is a known
-// non-retryable 4xx. Status 0 and retryable codes (408, 429, 5xx) are NOT
-// permanent — fail-open.
-func (e *openaichatStreamError) Permanent() bool {
-	if isContextOverflowMessage(e.msg) {
-		return true
+// RetryDisposition implements session.RetryDispositionError.
+func (e *openaichatStreamError) RetryDisposition() session.RetryDisposition {
+	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+		return session.RetryDispositionPermanent
 	}
-	if e.status != 0 && !retryableStatus(e.status) {
-		return true
+	if retryableStatus(e.status) {
+		return session.RetryDispositionRetryable
 	}
-	return false
+	return session.RetryDispositionUnknown
 }
 
 // isContextOverflowMessage is duplicated from provider/openai/stream.go (separate
@@ -318,22 +330,49 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
-func structuredHTTPErrorText(code, kind, message string) string {
-	label := strings.TrimSpace(code)
-	if label == "" {
-		label = strings.TrimSpace(kind)
+var retryAfterHorizon = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+func parseRetryAfter(header http.Header, received time.Time) (time.Time, bool) {
+	values := header.Values("Retry-After")
+	if len(values) != 1 {
+		return time.Time{}, false
 	}
-	message = strings.TrimSpace(message)
-	switch {
-	case label != "" && message != "":
-		return label + ": " + message
-	case label != "":
-		return label
-	case message != "":
-		return message
-	default:
-		return "provider request failed"
+	value := values[0]
+	if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		// The digit check above leaves only overflow as a parse failure.
+		if err != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
+			return retryAfterHorizon, true
+		}
+		at := received.Add(time.Duration(seconds) * time.Second)
+		if !at.Before(retryAfterHorizon) {
+			return retryAfterHorizon, true
+		}
+		return at, true
 	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if at.Before(received) {
+		return received, true
+	}
+	if !at.Before(retryAfterHorizon) {
+		return retryAfterHorizon, true
+	}
+	return at, true
+}
+
+// providerErrorText renders only harness/standard-library text. Raw messages
+// remain private classification inputs, never display fragments.
+func providerErrorText(status int, message string) string {
+	if isContextOverflowMessage(message) {
+		return "provider request failed: context window exceeded"
+	}
+	if text := http.StatusText(status); text != "" {
+		return fmt.Sprintf("provider request failed (%d %s)", status, text)
+	}
+	return "provider request failed"
 }
 
 // openaichatStreamErr wraps the given error as an openaichatStreamError while
@@ -341,6 +380,7 @@ func structuredHTTPErrorText(code, kind, message string) string {
 func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamError {
 	var sdkErr *oai.Error
 	status := 0
+	display := ""
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
 		metadata.providerCode = sdkErr.Code
@@ -353,19 +393,28 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 		}
 		requestID := ""
 		if sdkErr.Response != nil {
+			metadata.retryNotBefore, metadata.hasRetryAfter = parseRetryAfter(sdkErr.Response.Header, time.Now())
 			requestID = sdkErr.Response.Header.Get("X-Request-ID")
 			if requestID != "" {
 				metadata.correlationKind = "request"
 				metadata.correlationID = requestID
 			}
 		}
-		msg = port.AppendHTTPErrorDisplay(structuredHTTPErrorText(sdkErr.Code, sdkErr.Type, sdkErr.Message), sdkErr.Request, requestID)
+		msg = sdkErr.Message
+		label := sdkErr.Code
+		if strings.TrimSpace(label) == "" {
+			label = sdkErr.Type
+		}
+		if isContextOverflowMessage(label) {
+			msg = label
+		}
+		display = port.AppendHTTPErrorDisplay(providerErrorText(status, msg), sdkErr.Request, requestID)
 	}
 	if metadata.correlationID == "" && completionID != "" {
 		metadata.correlationKind = "completion"
 		metadata.correlationID = completionID
 	}
-	return &openaichatStreamError{err: err, msg: msg, status: status, metadata: metadata}
+	return &openaichatStreamError{err: err, msg: msg, display: display, status: status, metadata: metadata}
 }
 
 func openaichatErrorCodeToStatus(code string) int {

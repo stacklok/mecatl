@@ -1,0 +1,23 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "disconnect-chain-first",
+          "name": "mcp__fixture__one",
+          "args": { "request": "first" }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "disconnect-chain-second",
+          "name": "mcp__fixture__two",
+          "args": { "request": "second" }
+        }
+      ]
+    },
+    { "text": "chained cancellation completed" }
+  ]
+}

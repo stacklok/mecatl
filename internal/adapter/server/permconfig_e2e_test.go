@@ -114,7 +114,7 @@ func runWriteSession(t *testing.T, client mecatlv1.HarnessServiceClient, workspa
 			sawAsk = true
 			_ = stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
-					ResumeApproval: &mecatlv1.ResumeApproval{AskId: ev.GetAsk().GetAskId(), Allow: true},
+					ResumeApproval: &mecatlv1.ResumeApproval{AskId: ev.GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE},
 				},
 			})
 		case "tool.result":
@@ -197,7 +197,7 @@ func TestE2EPerSessionConfigDiverges(t *testing.T) {
 			}
 			_ = stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
-					ResumeApproval: &mecatlv1.ResumeApproval{AskId: ev.GetAsk().GetAskId(), Allow: true},
+					ResumeApproval: &mecatlv1.ResumeApproval{AskId: ev.GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE},
 				},
 			})
 		case "result":

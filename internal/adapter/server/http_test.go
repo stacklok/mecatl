@@ -191,7 +191,8 @@ func TestHTTPPromptSSE(t *testing.T) {
 }
 
 // TestHTTPApprove mirrors the gRPC headline test over HTTP: a prompt pauses on
-// a permission.ask; a concurrent POST /approve resolves it; the run completes.
+// a permission.ask; a concurrent POST /controls/resolve-ask resolves it; the run
+// completes.
 func TestHTTPApprove(t *testing.T) {
 	write := &scriptTool{name: "Write", readOnly: false, content: "wrote"}
 	llm := mockllm.New(
@@ -215,7 +216,8 @@ func TestHTTPApprove(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Read the SSE stream incrementally; when the ask arrives, POST /approve.
+	// Read the SSE stream incrementally; when the ask arrives, POST
+	// /controls/resolve-ask.
 	r := bufio.NewReader(resp.Body)
 	var events []*mecatlv1.Event
 	var approved bool
@@ -229,15 +231,19 @@ func TestHTTPApprove(t *testing.T) {
 			events = append(events, &ev)
 			if ev.GetType() == "permission.ask" && !approved {
 				approved = true
-				body, _ := json.Marshal(map[string]any{"ask_id": ev.GetAsk().GetAskId(), "allow": true})
-				ar, aerr := http.Post(srv.URL+"/v1/sessions/"+id+"/approve",
+				body, _ := json.Marshal(map[string]any{
+					"expected_run_id": ev.GetRunId(),
+					"ask_id":          ev.GetAsk().GetAskId(),
+					"verdict":         session.VerdictStringAllowOnce,
+				})
+				ar, aerr := http.Post(srv.URL+"/v1/sessions/"+id+"/controls/resolve-ask",
 					"application/json", bytes.NewReader(body))
 				if aerr != nil {
 					t.Fatalf("POST approve: %v", aerr)
 				}
 				ar.Body.Close()
-				if ar.StatusCode != http.StatusNoContent {
-					t.Fatalf("approve status = %d", ar.StatusCode)
+				if ar.StatusCode != http.StatusOK {
+					t.Fatalf("resolve ask status = %d", ar.StatusCode)
 				}
 			}
 			if ev.GetType() == "result" {
@@ -284,6 +290,41 @@ func TestHTTPGetSession(t *testing.T) {
 	}
 	if out.SessionID != id || out.State != "idle" {
 		t.Fatalf("snapshot = %+v", out)
+	}
+}
+
+func TestHTTPGetSessionContextOccupancyParity(t *testing.T) {
+	svc := newService(t, mockllm.New(mockllm.TextTurn("done")), allowRules())
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+	id := createHTTPSession(t, srv)
+
+	prompt, err := http.Post(srv.URL+"/v1/sessions/"+id+"/prompt", "application/json", strings.NewReader(`{"text":"go"}`))
+	if err != nil {
+		t.Fatalf("POST prompt: %v", err)
+	}
+	_ = parseSSE(t, bufio.NewReader(prompt.Body))
+	_ = prompt.Body.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/sessions/" + id)
+	if err != nil {
+		t.Fatalf("GET session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		LatestContextOccupancy *struct {
+			InputTokens int  `json:"input_tokens"`
+			Estimated   bool `json:"estimated"`
+		} `json:"latest_context_occupancy"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.LatestContextOccupancy == nil || out.LatestContextOccupancy.InputTokens <= 0 || !out.LatestContextOccupancy.Estimated {
+		t.Fatalf("latest_context_occupancy = %+v, want non-zero estimate", out.LatestContextOccupancy)
 	}
 }
 
@@ -916,7 +957,7 @@ func TestHTTPRunTeamEmptyTeamOutcomeOnly(t *testing.T) {
 	}
 }
 
-// TestHTTPScheduleLifecycle (S7): the schedule REST surface over
+// TestHTTPScheduleLifecycle: the schedule REST surface over
 // httptest.NewServer(NewHTTPHandler(svc)) — create+get+fire+pause over a
 // jsonlstore-backed Service, plus the no-store→501 path on a memstore-backed
 // Service. Mirrors the repo's http_test.go convention.
@@ -947,7 +988,7 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 	if !created.GetSchedule().GetState().GetEnabled() {
 		t.Error("Enabled = false, want true")
 	}
-	// Singleton defaulted to true (S3: the create-seam applies the default).
+	// Singleton defaulted to true (the create-seam applies the default).
 	if !created.GetSchedule().GetSpec().GetSingleton() {
 		t.Error("Singleton = false, want true (the create-seam default)")
 	}
@@ -1094,7 +1135,7 @@ func TestHTTPCreateSessionRejectsLegacyCarryoverField(t *testing.T) {
 	}
 }
 
-// TestHTTPScheduleNoStore501 (S7): a Service with no ScheduleStore (memstore)
+// TestHTTPScheduleNoStore501: a Service with no ScheduleStore (memstore)
 // reports schedule RPCs as 501.
 func TestHTTPScheduleNoStore501(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())

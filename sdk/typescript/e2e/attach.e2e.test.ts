@@ -102,6 +102,57 @@ async function drain<T>(values: AsyncIterable<T>): Promise<void> {
 }
 
 describe("offline durable attachment wire", () => {
+  it("projects the durable permission call ID through HTTP JSON and the SDK", async () => {
+    await withDaemon({ http: true, script: fixture("awaiting.json") }, async ({ ready }) => {
+      if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
+      const baseUrl = `http://${ready.http_address}`;
+      const client = connectHttp({ baseUrl });
+      try {
+        const session = await client.sessions.create({});
+        const run = await session.run("park on the scripted write approval");
+        const ownedEnd = run.result().catch((error: unknown) => error);
+        const attached = await session.attach(run.id);
+        const iterator = attached[Symbol.asyncIterator]();
+        let sdkAsk: WatchEnvelope | undefined;
+        while (sdkAsk === undefined) {
+          const next = await iterator.next();
+          if (next.done) throw new Error("attachment ended before the permission ask");
+          if (next.value.kind === "event" && next.value.event.kind === "permission.ask") {
+            sdkAsk = next.value;
+          }
+        }
+        expect(sdkAsk).toMatchObject({
+          event: { kind: "permission.ask", payload: { callId: "restart-write" }, runId: run.id },
+        });
+
+        const response = await fetch(
+          `${baseUrl}/v1/sessions/${encodeURIComponent(session.id)}/events`,
+          {
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        expect(response.status).toBe(200);
+        const frames = (await response.text())
+          .split("\n")
+          .filter((line) => line.startsWith("data: "))
+          .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
+        expect(frames).toContainEqual(
+          expect.objectContaining({
+            ask: expect.objectContaining({ call_id: "restart-write" }),
+            run_id: run.id,
+            type: "permission.ask",
+          }),
+        );
+        await run.cancel();
+        await iterator.return?.();
+        await ownedEnd;
+        await session.delete();
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   it("attach replays and follows a live run over gRPC", async () => {
     await withDaemon({ script: fixture("attach.json") }, async ({ ready }) => {
       const client = grpcClient(ready);
@@ -164,7 +215,7 @@ describe("offline durable attachment wire", () => {
             throw new Error("restarted mecated omitted HTTP readiness");
           }
           const response = await fetch(
-            `http://${daemon.ready.http_address}/v1/sessions/${encodeURIComponent(session.id)}/approve`,
+            `http://${daemon.ready.http_address}/v1/sessions/${encodeURIComponent(session.id)}/controls/resolve-ask`,
             {
               body: JSON.stringify({
                 ask_id: askId,
@@ -177,8 +228,8 @@ describe("offline durable attachment wire", () => {
             },
           );
           expect(response.status).toBe(200);
-          expect(response.headers.get("content-type")).toContain("text/event-stream");
-          await response.arrayBuffer();
+          expect(response.headers.get("content-type")).toContain("application/json");
+          await response.json();
           await drainIterator(iterator, envelopes);
 
           const terminal = envelopes.find(

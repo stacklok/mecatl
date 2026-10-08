@@ -9,6 +9,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -17,12 +18,11 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner pins ADR
-// 0102's creation rule: the verified owner is persisted before visibility, the
+// TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner pins the
+// creation rule: the verified owner is persisted before visibility, the
 // same immutable request is retry-idempotent, and another owner learns only
 // absence from a colliding caller-selected ID.
 func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.T) {
@@ -278,7 +278,7 @@ func TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey(t *te
 // TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide pins
 // AC6.1: a schedule name already used by a DIFFERENT owner is not a collision
 // at all — the create-seam namespaces the store-facing key by verified owner
-// (issue #368, ADR-0212 decision 1), so two owners may use the identical
+// (issue #368), so two owners may use the identical
 // literal name, each independently loadable/updatable/deletable.
 func TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
@@ -333,7 +333,7 @@ func TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide(t *testi
 
 // TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected pins AC6.2: a
 // create using a name already used by the SAME owner is still rejected,
-// unchanged from today's behavior — only the CROSS-owner case changed.
+// — only the CROSS-owner case is admitted.
 func TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
 
@@ -558,7 +558,7 @@ func callerScheduleWithOrigin(name string, origin session.SessionID) port.Schedu
 }
 
 // TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected pins review
-// finding 1 (issue #368, ADR 0212): under ownership enforcement, a caller who
+// finding 1 (issue #368): under ownership enforcement, a caller who
 // merely KNOWS another caller's session id must not be able to name it as a
 // schedule's OriginSessionID — that field is what the fire delivery path later
 // trusts to enqueue the fire's content into. The create must be rejected

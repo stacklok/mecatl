@@ -27,8 +27,9 @@ Read-before-overwrite:
   clobber concurrent changes. If the file changed, re-read it, then retry.
 
 Arguments:
-- path    (required): workspace-relative path to write. Absolute paths that
-  resolve inside the workspace root are accepted.
+- path    (required): workspace-relative or in-root absolute file path. In a
+  local main session, policy may allow external absolute paths; yolo also
+  allows external ../ paths.
 - content (required): the full new file contents.
 
 Example:
@@ -60,7 +61,7 @@ func (WriteTool) Spec() tool.ToolSpec {
 		Schema: schema(`{
   "type": "object",
   "properties": {
-    "path": {"type": "string", "description": "Workspace-relative path to write. Absolute paths that resolve inside the workspace root are accepted."},
+    "path": {"type": "string", "description": "File path; see tool description for external-path rules."},
     "content": {"type": "string", "description": "Full new contents of the file."}
   },
   "required": ["path", "content"]
@@ -72,7 +73,7 @@ func (WriteTool) Spec() tool.ToolSpec {
 func (WriteTool) ReadOnly() bool { return false }
 
 // Execute writes the file, enforcing read-before-overwrite on existing paths
-// via the version protocol (ADR 0208): a NEW file uses create-only; an
+// via the version protocol: a NEW file uses create-only; an
 // EXISTING file requires a recorded version, re-reads the current version, and
 // finishes with a conditional replace against that current version. No
 // unconditional operation is used by the agent-facing Write tool.
@@ -98,7 +99,7 @@ func (WriteTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 	case statErr == nil:
 		// Existing file: require read-before-overwrite via the version protocol.
 		// A non-nil err from RecordedVersion means the ledger lookup itself is
-		// UNAVAILABLE or CORRUPT (ADR 0281) — DISTINCT from ordinary absence —
+		// UNAVAILABLE or CORRUPT — DISTINCT from ordinary absence —
 		// and must refuse BEFORE ReplaceFile is ever called.
 		recorded, recordedOK, err := ledger.RecordedVersion(ctx, tool.LedgerKey(ws.Root(), args.Path))
 		if err != nil {
@@ -138,7 +139,7 @@ func (WriteTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 		}
 		// Re-record the new version so a subsequent Edit/Write in the same turn
 		// is valid. The overwrite ALREADY SUCCEEDED; a failure here is reported
-		// honestly WITHOUT rollback and establishes no new evidence (ADR 0281).
+		// honestly WITHOUT rollback and establishes no new evidence.
 		if err := ledger.RecordRead(ctx, tool.LedgerKey(ws.Root(), args.Path), newVer); err != nil {
 			return session.NewToolError(in.ID, fmt.Sprintf(
 				"overwrote %q (%d bytes), but failed to retain read evidence for the new version: %v. No new evidence was stored; any earlier evidence remains subject to version checks.",
@@ -158,7 +159,7 @@ func (WriteTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envi
 			return session.ToolResult{}, fmt.Errorf("write: creating %q: %w", args.Path, err)
 		}
 		// The create ALREADY SUCCEEDED; a failure here is reported honestly
-		// WITHOUT rollback and establishes no new evidence (ADR 0281).
+		// WITHOUT rollback and establishes no new evidence.
 		if err := ledger.RecordRead(ctx, tool.LedgerKey(ws.Root(), args.Path), newVer); err != nil {
 			return session.NewToolError(in.ID, fmt.Sprintf(
 				"wrote %q (%d bytes), but failed to retain read evidence for it: %v. No new evidence was stored; any earlier evidence remains subject to version checks.",

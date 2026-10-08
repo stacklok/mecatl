@@ -83,6 +83,17 @@ func resolveCommand(argv []string) commandResolution {
 		return resolveMCPSubcommand(args)
 	}
 
+	// Local microVM administration is a handled one-shot. It runs before daemon
+	// configuration, provider construction, and listener setup.
+	if first == "microvm" {
+		return commandResolution{
+			handled: true,
+			run: subcommandAction(func(stdin io.Reader, stdout, _ io.Writer) error {
+				return runLocalMicroVMCommand(args[2:], stdin, stdout)
+			}),
+		}
+	}
+
 	// `mecated import` is an offline migration command. It never starts a
 	// listener or constructs an LLM provider.
 	if first == "import" {
@@ -191,7 +202,7 @@ func resolveConfigSubcommand(args []string) commandResolution {
 		}
 	}
 	// `config daemon <init|validate>` — the daemon topology config group
-	// (issue #338, ADR 0088). A bare `config daemon` or an unknown
+	// (issue #338). A bare `config daemon` or an unknown
 	// `config daemon <x>` is a usage error (fail closed).
 	if len(args) >= 3 && args[2] == "daemon" {
 		if len(args) >= 4 && args[3] == "init" {
@@ -244,7 +255,8 @@ func writeTopLevelCommands(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  mcp add NAME URL         discover and authorize a direct OAuth MCP server\n")
 	_, _ = fmt.Fprintf(out, "  mcp list                 list configured MCP profiles without network or prompts\n")
 	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize a configured OAuth MCP server\n")
-	_, _ = fmt.Fprintf(out, "  mcp remove NAME          remove a configured direct OAuth MCP server\n")
+	_, _ = fmt.Fprintf(out, "  mcp remove NAME [--force] remove a configured direct OAuth MCP server\n")
+	_, _ = fmt.Fprintf(out, "  microvm doctor|status|delete inspect and administer local microVM attachments\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write or print an operator settings.yaml template\n")
 	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing\n")
@@ -289,7 +301,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 }
 
 func writeMCPHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]  discover, save, and authorize a direct OAuth server\n  list [--file PATH]                                                show configured profiles without network or prompts\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]                                         remove a local profile (no upstream revocation)\n\nLifecycle settings are host-local; changes affect newly started daemons. Use mecated mcp login SERVER to authorize a profile.")
+	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]  discover, save, and authorize a direct OAuth server\n  list [--file PATH]                                                show configured profiles without network or prompts\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--force] [--file PATH]                               remove a local profile (no upstream revocation)\n\nLifecycle settings are host-local; changes affect newly started daemons. Use mecated mcp login SERVER to authorize a profile.")
 }
 
 func mcpUsageError(argv []string) error {
@@ -297,7 +309,7 @@ func mcpUsageError(argv []string) error {
 	if len(argv) >= 3 {
 		sub = argv[2]
 	}
-	const commands = "available subcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]"
+	const commands = "available subcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--force] [--file PATH]"
 	if sub == "" {
 		return errors.New("mcp: missing subcommand\n" + commands)
 	}
@@ -307,7 +319,7 @@ func mcpUsageError(argv []string) error {
 // configUsageError builds the error message for a bare/unknown `config` invocation.
 // It distinguishes the two config surfaces: `config init` owns the operator
 // settings.yaml (permissions/trust POLICY), `config daemon` owns the daemon.yaml
-// (listener TOPOLOGY) — see ADR 0088.
+// (listener TOPOLOGY).
 func configUsageError(argv []string) error {
 	sub := ""
 	if len(argv) >= 3 {

@@ -53,7 +53,7 @@ const cursorEnvelopeVersion = "cur/1"
 // record up to and including this position".
 //
 // Opaque is a promise, not an implementation detail. The encoding is stateless
-// — a server-side cursor registry was rejected in ADR 0250 because it would need
+// — a server-side cursor registry was rejected because it would need
 // eviction and a cloud-inventory row to buy nothing — which does make a cursor
 // inspectable by a determined client. That is exactly why the generation is
 // inside it: a client that decodes one, hand-edits it, and passes it back gets
@@ -167,7 +167,7 @@ const (
 
 	// LogRecordGap marks a position where an append is KNOWN to have failed.
 	//
-	// It is a log-record envelope variant, NOT a session.Event (ADR 0250): a gap
+	// It is a log-record envelope variant, NOT a session.Event: a gap
 	// is a fact about DELIVERY, not something that happened in the run, and
 	// making it an event would leak it into the event taxonomy, the proto Event
 	// message, the kind-parity gate, and every consumer that folds events into a
@@ -244,7 +244,7 @@ type ReadOptions struct {
 // record landed, and reads resume from a position rather than always from the
 // start.
 //
-// It is ADDITIVE (ADR 0250). EventLog is unchanged and unbroken, and a backend
+// It is ADDITIVE. EventLog is unchanged and unbroken, and a backend
 // opts in by also implementing this interface. A backend that does not is NOT
 // silently degraded to "replay the whole log every time" — the watch operation
 // reports the feature as unsupported, because a client asking to resume from a
@@ -268,7 +268,7 @@ type CursorEventLog interface {
 
 	// AppendGap durably records a gap marker at the next position.
 	//
-	// This is the best-effort, cross-process tier of ADR 0250's three-tier
+	// This is the best-effort, cross-process tier of the three-tier
 	// append-gap guarantee: when an append fails, one gap marker is attempted, and
 	// if it lands then every watcher everywhere learns of the gap deterministically
 	// rather than silently skipping it. It covers the LIKELY failure — one

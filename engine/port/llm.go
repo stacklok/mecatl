@@ -159,18 +159,6 @@ type LLMProvider interface {
 	Capabilities() ProviderCapabilities
 }
 
-// RetryDisposition and StreamProgress remain aliases here for source compatibility;
-// the neutral vocabularies live in session so durable domain state does not import
-// this outward port package.
-type RetryDisposition = session.RetryDisposition
-
-// RetryDispositionUnknown and its siblings alias the session vocabulary.
-const (
-	RetryDispositionUnknown   = session.RetryDispositionUnknown
-	RetryDispositionRetryable = session.RetryDispositionRetryable
-	RetryDispositionPermanent = session.RetryDispositionPermanent
-)
-
 // RetryDispositionError exposes a failure's causal retry classification through
 // errors.As without adding provider-specific fields to LLMRequest.
 type RetryDispositionError interface {
@@ -178,43 +166,8 @@ type RetryDispositionError interface {
 	RetryDisposition() session.RetryDisposition
 }
 
-// StreamProgress aliases the session-owned semantic progress vocabulary.
-type StreamProgress = session.StreamProgress
-
-// StreamProgressUnknown and its siblings alias the session vocabulary.
-const (
-	StreamProgressUnknown   = session.StreamProgressUnknown
-	StreamProgressPrecommit = session.StreamProgressPrecommit
-	StreamProgressVisible   = session.StreamProgressVisible
-	StreamProgressComplete  = session.StreamProgressComplete
-)
-
 // StreamProgressError exposes the semantic progress of a terminal stream error.
 type StreamProgressError interface {
 	error
 	StreamProgress() session.StreamProgress
-}
-
-// PermanentError reports whether a provider error is a PERMANENT client-side
-// rejection — replaying the identical request cannot succeed (e.g. a 4xx other
-// than 408/429: invalid_encrypted_content, a policy-blocked model, a malformed
-// request shape baked into the persisted history). It is the neutral counterpart
-// to the retry classifier: the classification rides the error (as an
-// errors.As-reachable interface), NOT a port.LLMRequest field, so the loop,
-// EvResult, and clients can distinguish "transient — retry may work" from
-// "permanent — this request shape is rejected" without any provider-specific
-// type crossing into engine/agent.
-//
-// Fail-open contract: an error that does NOT implement PermanentError (or a nil
-// target) is treated as NOT permanent — today's behaviour is preserved for
-// unclassifiable errors. Adapters implement it on their terminal provider
-// errors; llmresilience wraps the surfaced non-retryable error.
-//
-// The request remains provider-neutral. Optional status/code/correlation detail
-// may ride the primitive structural ProviderErrorMetadataError and is consumed
-// only after root-side validation.
-type PermanentError interface {
-	error
-	// Permanent returns true when the error is a permanent client-side rejection.
-	Permanent() bool
 }

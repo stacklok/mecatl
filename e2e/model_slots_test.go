@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// modelSlotSpecs covers ADR 0030 (per-slot models, Phase 1+2) LIVE: a mecated
+// modelSlotSpecs covers per-slot models LIVE: a mecated
 // spawned with `--model-slot compaction=cheap --model-alias cheap=<cheap-model>`
 // and `--compaction cascade` must, on a real mid-run compaction, run the tier-4
 // SUMMARY call on the SLOT model — not the session model. The offline twin lives in
@@ -44,9 +44,10 @@ func modelSlotSpecs() {
 					ginkgo.Skip("remote target: cannot spawn with --model-slot / --context-window-override")
 				}
 
-				// The cheap slot model: a real, cheap model on the OpenRouter lane. The
-				// session runs on DefaultModel(); the compaction summary must route here.
-				cheap := envOrDefault("MECATL_E2E_SLOT_CHEAP_MODEL", "openai/gpt-4.1-mini")
+				// The cheap slot model is an inexpensive, distinct model on the OpenRouter lane.
+				// It supports the native cache-breakpoint lane. The session runs on DefaultModel();
+				// the compaction summary must route here.
+				cheap := envOrDefault("MECATL_E2E_SLOT_CHEAP_MODEL", "google/gemini-2.5-flash")
 				window := envOrDefault("MECATL_E2E_COMPACTION_WINDOW", "2000")
 
 				spawn, err := harness.NewLocalWith(

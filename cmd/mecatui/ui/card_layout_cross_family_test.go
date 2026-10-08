@@ -59,7 +59,11 @@ func TestMecatuiCardLayout_Scenario4_NoPaddingBeforeWrapRegression(t *testing.T)
 	})
 
 	t.Run("dynamic inventory", func(t *testing.T) {
-		rows := strings.Split(stripANSIstr(agentsInvRowLines(aztec(), []client.Agent{{Name: fixture}}, bodyWidth)[0]), "\n")
+		rendered := agentsInvRowLines(aztec(), []client.Agent{{Name: fixture}}, bodyWidth)
+		rows := make([]string, len(rendered))
+		for i := range rendered {
+			rows[i] = stripANSIstr(rendered[i])
+		}
 		// Dynamic inventory names normalize display-only trailing whitespace before
 		// wrapping, so the final whitespace-only source row is not a paragraph.
 		assertRows(t, "dynamic inventory", rows, 0)
@@ -80,7 +84,11 @@ func TestMecatuiCardLayout_Scenario4_RenderingExceptionsRemainIntact(t *testing.
 	plain := "dynamic-row-" + strings.Repeat("value-", 3) + "\x1b[2J\u202e   "
 
 	t.Run("plain dynamic card text", func(t *testing.T) {
-		rows := strings.Split(stripANSIstr(agentsInvRowLines(aztec(), []client.Agent{{Name: plain}}, bodyWidth)[0]), "\n")
+		rendered := agentsInvRowLines(aztec(), []client.Agent{{Name: plain}}, bodyWidth)
+		rows := make([]string, len(rendered))
+		for i := range rendered {
+			rows[i] = stripANSIstr(rendered[i])
+		}
 		joined := strings.Join(rows, "\n")
 		if strings.ContainsRune(joined, '\x1b') || strings.ContainsRune(joined, '\u202e') {
 			t.Fatalf("plain card text retained terminal controls: %q", joined)

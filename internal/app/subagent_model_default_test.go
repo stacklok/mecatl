@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -14,7 +15,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -60,8 +60,8 @@ func TestDefaultExplorerUsesSubagentModel(t *testing.T) {
 }
 
 // TestDefaultExplorerInheritsParentWhenUnset is the zero-config guard: with NO
-// SubagentModel the explorer stays on the parent model with the default window —
-// behaviourally identical to the pre-#35 shape at the Deps seam.
+// SubagentModel the explorer stays on the parent model with the default window
+// at the Deps seam.
 func TestDefaultExplorerInheritsParentWhenUnset(t *testing.T) {
 	prov := mockllm.New()
 	reg := regForTest(prov, providerAnthropic, "claude-default")
@@ -193,17 +193,30 @@ func TestParallelJudgeStaysOnParentModel(t *testing.T) {
 		mu     sync.Mutex
 		models []string
 	)
-	prov := observedProvider(&models, &mu, mockllm.TextTurn("winner: 1"))
+	usage := session.Usage{InputTokens: 6, OutputTokens: 2}
+	prov := observedProvider(&models, &mu, mockllm.ChunksTurn(
+		mockllm.TextChunk(`{"winner":1,"rationale":"best"}`),
+		mockllm.UsageChunk(usage),
+		mockllm.DoneChunk(session.StopEndTurn),
+	))
 	cfg := Config{Model: "parent-model", SubagentModel: "cheap-model-1.0"}
 
 	reg := regForTest(prov, providerOpenAI, "parent-model")
 	reg.contextWindows = map[string]map[string]int{providerOpenAI: {"parent-model": 333_000}}
 	cfg.contextWindows = reg.contextWindows
-	judge := buildParallelJudgeEngine(modelCfgFor(cfg, "parent-model"), reg, providerOpenAI, prov)
-	if got := judge.ContextWindow(); got != 333_000 {
+	judgeEngine := buildParallelJudgeEngine(modelCfgFor(cfg, "parent-model"), reg, providerOpenAI, prov)
+	if got := judgeEngine.ContextWindow(); got != 333_000 {
 		t.Fatalf("judge ContextWindow = %d, want exact configured window 333000", got)
 	}
-	drainEngine(t, judge)
+	judge := agent.NewEngineJudge(judgeEngine)
+	winner, _, gotUsage, err := judge.Judge(t.Context(), []agent.BranchSummary{{Label: "one"}, {Label: "two"}}, "best")
+	if err != nil || winner != 0 {
+		t.Fatalf("composition judge winner=%d err=%v", winner, err)
+	}
+	bucket := gotUsage.Buckets[session.UsageKindParallelJudge]
+	if bucket.Total != usage || bucket.Models[providerOpenAI+"/parent-model"] != usage {
+		t.Fatalf("parallel judge composition attribution = %#v, want exact %s/parent-model=%+v", bucket, providerOpenAI, usage)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(models) == 0 || models[0] != "parent-model" {
@@ -456,7 +469,7 @@ func TestBuildNarratesSubagentModelExactlyOnce(t *testing.T) {
 // the registered Parallel tool's BRANCH child must carry the configured
 // SubagentModel on its LLM request, proving registerParallelTool threads cfg +
 // the registry + the session model together into buildParallelChildEngine. A
-// revert to the pre-#35 modelCfgFor(cfg, s.model) wiring runs the branch on the
+// regression to modelCfgFor(cfg, s.model) wiring (issue #35) runs the branch on the
 // session model and fails here. The branch WINDOW through this seam is asserted
 // one level down (TestParallelBranchUsesSubagentModel over parallelChildDeps):
 // ParallelTool does not expose its child engine, and widening engine/agent's API
@@ -559,8 +572,7 @@ func TestRegisterParallelToolThreadsStore(t *testing.T) {
 }
 
 // TestSubagentModelRoutesChildToCheapModel is the end-to-end proof through the REAL
-// composition (app.Build → server.Service, the providerConstructor mock seam — see
-// docs/adr/0016-multi-provider.md §2): with --subagent-model configured, a turn that
+// composition (app.Build → server.Service, the providerConstructor mock seam): with --subagent-model configured, a turn that
 // delegates to the default Subagent explorer sends the CHILD's LLM request with the
 // cheap model while the PARENT's requests stay on the session model. All offline.
 func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {

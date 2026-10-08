@@ -12,7 +12,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// The user-reachable E2E for the /effort fork-resume slice (ADR 0068), at the
+// The user-reachable E2E for the /effort fork-resume slice, at the
 // teatest level (the real program loop). It proves the headline behaviour
 // end-to-end: driving /effort → enter forks the session at the new effort, the
 // TRANSCRIPT SURVIVES (no resetSession wipe), the session id rebinds to the fork,
@@ -100,8 +100,9 @@ func TestEffortE2EForkPreservesTranscript(t *testing.T) {
 	if conv.forkedEffort == "" {
 		t.Fatalf("ForkSession carried an empty effort, want the picked tier")
 	}
-	// The fork's SessionReadyMsg rebinds the session and returns to idle.
-	prog.wait(t, phaseIdle, 5*time.Second)
+	// Wait for the asynchronous source retirement, rather than the earlier idle
+	// transition that schedules it.
+	waitForClosedSession(t, "source close after /effort handoff", conv, "sess-test-0001", 5*time.Second)
 
 	// Graceful double-ctrl+c quit.
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
@@ -168,7 +169,7 @@ func TestEffortE2EForkFailureLeavesSourceOpen(t *testing.T) {
 }
 
 // TestEffortE2ELocalMidRunThenForksAfterRunEnd pins the in-flight-run ordering
-// ADR 0068 promises ("switchEffort ends any in-flight run before forking") at the
+// the effort fork promises ("switchEffort ends any in-flight run before forking") at the
 // teatest level. /effort is a bare local built-in, so typed mid-run it reaches its
 // idle-only guard immediately: it does NOT open the picker, enqueue, or fork over
 // a live run. After the run ends, a fresh /effort opens the picker and enter forks.

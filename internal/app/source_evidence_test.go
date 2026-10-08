@@ -14,12 +14,12 @@ type countingCanonicalEvidenceReflector struct {
 	calls int
 }
 
-func (r *countingCanonicalEvidenceReflector) ReflectProjection(context.Context, learning.Projection) (learning.Outcome, error) {
+func (r *countingCanonicalEvidenceReflector) ReflectProjection(context.Context, learning.Projection) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.calls++
-	return learning.Outcome{Kind: learning.OutcomeProposed}, nil
+	return learning.Outcome{Kind: learning.OutcomeProposed}, session.AuxiliaryUsage{}, nil
 }
 
-func TestADR_0259_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
+func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}

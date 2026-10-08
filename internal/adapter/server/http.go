@@ -20,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/creatediag"
 )
 
 // HTTPHandler is the HTTP/SSE adapter over the shared Service. It serves the
@@ -38,11 +39,11 @@ import (
 //	POST   /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry -> replace one exact enrollment
 //	POST   /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel -> cancel one exact enrollment
 //	POST   /v1/sessions/{id}/prompt   -> start a run; text/event-stream of Events
-//	POST   /v1/sessions/{id}/approve  -> resolve the paused ask on the run
-//	POST   /v1/sessions/{id}/cancel   -> cancel the in-flight run
+//	POST   /v1/sessions/{id}/controls/resolve-ask -> resolve an ask on one exact run
+//	POST   /v1/sessions/{id}/controls/cancel -> cancel one exact run
 //	POST   /v1/sessions/{id}/cancel-child -> cancel ONE child (subagent) of the run
-//	POST   /v1/sessions/{id}/steer    -> enqueue a mid-run steer; JSON outcome
-//	POST   /v1/sessions/{id}/cancel-steer -> retract a pending steer; JSON outcome
+//	POST   /v1/sessions/{id}/controls/steer -> steer one exact run
+//	POST   /v1/sessions/{id}/controls/cancel-steer -> retract a steer on one exact run
 //	POST   /v1/sessions/{id}/fork     -> ForkSession (peer session from a history snapshot; 201)
 //	GET    /v1/sessions/{id}/events   -> replay the durable event log; the stream ENDS
 //	GET    /v1/sessions/{id}/watch    -> durable replay-then-follow; the stream STAYS OPEN
@@ -73,6 +74,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/rename", h.renameSession},
 		{"POST /v1/sessions/{id}/delete", h.deleteSession},
 		{"POST /v1/sessions/{id}/compact", h.compactSession},
+		{"POST /v1/sessions/{id}/mcp-refresh", h.refreshMcpSources},
 		{"GET /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation", h.mcpAuthorizationPresentation},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck", h.recheckMCPAuthorization},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel", h.cancelMCPAuthorization},
@@ -81,13 +83,10 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel", h.cancelWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/prompt", h.prompt},
 		{"POST /v1/sessions/{id}/retry", h.retry},
-		{"POST /v1/sessions/{id}/approve", h.approve},
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
-		{"POST /v1/sessions/{id}/cancel", h.cancel},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
-		{"POST /v1/sessions/{id}/steer", h.steer},
-		{"POST /v1/sessions/{id}/cancel-steer", h.cancelSteer},
 		{"POST /v1/sessions/{id}/controls/resolve-ask", h.resolveRunAsk},
+		{"POST /v1/sessions/{id}/controls/resolve-plan-ask", h.resolvePlanAsk},
 		{"POST /v1/sessions/{id}/controls/cancel", h.cancelRun},
 		{"POST /v1/sessions/{id}/controls/steer", h.steerRun},
 		{"POST /v1/sessions/{id}/controls/cancel-steer", h.cancelRunSteer},
@@ -132,11 +131,6 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/worktrees", h.listWorktrees)
 	h.mux.HandleFunc("GET /v1/sessions", h.listSessions)
 	h.mux.HandleFunc("GET /v1/storage/health", h.getStorageHealth)
-	h.mux.HandleFunc("POST /v1/storage/migrations/plan", h.planSessionMigration)
-	h.mux.HandleFunc("POST /v1/storage/migrations/apply", h.applySessionMigration)
-	h.mux.HandleFunc("GET /v1/storage/migrations/{id}", h.getSessionMigrationJob)
-	h.mux.HandleFunc("POST /v1/storage/migrations/{id}/resume", h.resumeSessionMigration)
-	h.mux.HandleFunc("POST /v1/storage/migrations/{id}/cancel", h.cancelSessionMigration)
 	h.mux.HandleFunc("POST /v1/storage/cleanup:plan", h.planSessionCleanup)
 	h.mux.HandleFunc("POST /v1/storage/cleanup:apply", h.applySessionCleanup)
 	h.mux.HandleFunc("POST /v1/storage/cleanup/jobs/{id}/cancel", h.cancelSessionCleanup)
@@ -149,7 +143,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/teams/{id}/run", h.runTeam)
 	h.mux.HandleFunc("GET /v1/teams/{id}", h.listTeam)
 	h.mux.HandleFunc("DELETE /v1/teams/{id}", h.cleanupTeam)
-	// Schedule routes (issue #232, Phase 2a): a peer REST surface over the same
+	// Schedule routes (issue #232): a peer REST surface over the same
 	// Service.CreateSchedule/... methods the gRPC ScheduleService delegates to.
 	h.mux.HandleFunc("POST /v1/schedules", h.createSchedule)
 	h.mux.HandleFunc("GET /v1/schedules", h.listSchedules)
@@ -229,8 +223,8 @@ func (h *HTTPHandler) getServerInfo(w http.ResponseWriter, r *http.Request) {
 type createSessionBody struct {
 	Mode   string    `json:"mode,omitempty"`
 	Limits *limitsIn `json:"limits,omitempty"`
-	// ProviderID / ModelID select a per-session provider+model (multi-provider
-	// Phase 0, S3). Empty both => the server default provider. ProviderID without
+	// ProviderID / ModelID select a per-session provider+model.
+	// Empty both => the server default provider. ProviderID without
 	// ModelID => the provider's default model; ModelID without ProviderID is a
 	// client error (a bare model on the default provider is ambiguous).
 	ProviderID string `json:"provider_id,omitempty"`
@@ -239,7 +233,7 @@ type createSessionBody struct {
 	// "no-fs" explicitly attenuates filesystem access. The public request carries
 	// no workspace, cwd, placement ID, or selector. Any other value is a 400.
 	Profile string `json:"profile,omitempty"`
-	// ReasoningEffort sets the session's reasoning-effort tier (ADR 0055),
+	// ReasoningEffort sets the session's reasoning-effort tier,
 	// mirroring the proto field: "" / "auto" = unset (operator/provider default),
 	// else low/medium/high/xhigh/max. The server normalises + per-provider-clamps +
 	// capability-gates it; an unknown value falls back to the operator default with
@@ -250,7 +244,7 @@ type createSessionBody struct {
 	DebugTargetSessionID string   `json:"debug_target_session_id,omitempty"`
 	DebugMCPServers      []string `json:"debug_mcp_servers,omitempty"`
 	// MCPServers are CLIENT-PROVIDED streaming-HTTP MCP servers mounted for this
-	// session's lifetime, mirroring the proto field (issue #821, ADR 0237). Empty
+	// session's lifetime, mirroring the proto field (issue #821). Empty
 	// is byte-identical to today. Whether the field is accepted at all is a
 	// DEPLOYMENT policy: a deployment with any network-facing API listener refuses
 	// every non-empty value with a 501 "client_mcp_unsupported" problem. A stdio or
@@ -301,8 +295,7 @@ type limitsIn struct {
 }
 
 type createSessionResp struct {
-	SessionID    string                  `json:"session_id"`
-	Capabilities *serverCapabilitiesJSON `json:"capabilities,omitempty"`
+	SessionID string `json:"session_id"`
 	// SessionCapabilities echoes the per-session resolved input capability (catalog
 	// ∩ adapter for THIS session's provider+model), so an HTTP client gates
 	// per-session @-attach UX on the same intersected value the gRPC client gets.
@@ -356,64 +349,9 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 	return &resolvedModelJSON{ProviderID: rm.ProviderID, ModelID: rm.ModelID, ContextWindow: rm.ContextWindow, ReasoningEffort: rm.ReasoningEffort}
 }
 
-// serverCapabilitiesJSON mirrors mecatlv1.ServerCapabilities for the JSON
-// surface, so an HTTP client receives the same honest feature flags the gRPC
-// client gets. Populated from the shared Service.capabilities() so the two
-// surfaces cannot drift.
-type serverCapabilitiesJSON struct {
-	MCPConnectorStatus bool                              `json:"mcp_connector_status"`
-	MCP                bool                              `json:"mcp"`
-	SlashCommands      bool                              `json:"slash_commands"`
-	Memory             bool                              `json:"memory"`
-	Skills             bool                              `json:"skills"`
-	Teams              bool                              `json:"teams"`
-	Bash               bool                              `json:"bash"`
-	Image              bool                              `json:"image"`
-	Audio              bool                              `json:"audio"`
-	ModelSelection     bool                              `json:"model_selection"`
-	Reflection         bool                              `json:"reflection"`
-	LearningProposals  bool                              `json:"learning_proposals"`
-	LearnedSkills      bool                              `json:"learned_skills"`
-	StorageHealth      bool                              `json:"storage_health"`
-	StorageMigration   bool                              `json:"storage_migration"`
-	StorageCleanup     bool                              `json:"storage_cleanup"`
-	SessionDebug       bool                              `json:"session_debug"`
-	DebugMCP           bool                              `json:"debug_mcp"`
-	ManualDream        *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
-	Steer              bool                              `json:"steer"`
-	ManualCompaction   bool                              `json:"manual_compaction"`
-	Posture            string                            `json:"posture,omitempty"`
-}
-
-// capabilitiesJSON projects the shared proto capabilities onto the JSON shape.
-func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
-	if c == nil {
-		return nil
-	}
-	return &serverCapabilitiesJSON{
-		MCPConnectorStatus: c.GetMcpConnectorStatus(),
-		MCP:                c.GetMcp(),
-		SlashCommands:      c.GetSlashCommands(),
-		Memory:             c.GetMemory(),
-		Skills:             c.GetSkills(),
-		Teams:              c.GetTeams(),
-		Bash:               c.GetBash(),
-		Image:              c.GetImage(),
-		Audio:              c.GetAudio(),
-		ModelSelection:     c.GetModelSelection(),
-		Reflection:         c.GetReflection(),
-		LearningProposals:  c.GetLearningProposals(),
-		LearnedSkills:      c.GetLearnedSkills(),
-		StorageHealth:      c.GetStorageHealth(),
-		StorageMigration:   c.GetStorageMigration(),
-		StorageCleanup:     c.GetStorageCleanup(),
-		SessionDebug:       c.GetSessionDebug(),
-		DebugMCP:           c.GetDebugMcp(),
-		ManualDream:        c.GetManualDream(),
-		Steer:              c.GetSteer(),
-		ManualCompaction:   c.GetManualCompaction(),
-		Posture:            c.GetPosture(),
-	}
+type contextOccupancyJSON struct {
+	InputTokens int  `json:"input_tokens"`
+	Estimated   bool `json:"estimated"`
 }
 
 type sessionResp struct {
@@ -426,13 +364,6 @@ type sessionResp struct {
 	// SessionCapabilities mirrors the per-session media capability carried by the
 	// create and gRPC snapshot surfaces. Global feature bits remain on capabilities.
 	SessionCapabilities *sessionCapabilitiesJSON `json:"session_capabilities,omitempty"`
-	// Title is the human-readable session label (snapshot Title, or the lazy
-	// deriveTitle fallback when the snapshot Title is empty). Omitted via
-	// omitempty only when both are empty (no genuine prompt).
-	Title string `json:"title,omitempty"`
-	// TitleProvenance records whether Title is prompt-derived, operator-authored,
-	// or legacy/unknown.
-	TitleProvenance string `json:"title_provenance,omitempty"`
 	// TitleMetadata is the bounded source-free title lifecycle projection.
 	TitleMetadata *sessionTitleJSON `json:"title_metadata,omitempty"`
 	// TokenUsage is the canonical durable accounting projection.
@@ -441,9 +372,10 @@ type sessionResp struct {
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
 	// source). Omitted (nil) when no model resolved (older-server-equivalent).
-	ResolvedModel *resolvedModelJSON            `json:"resolved_model,omitempty"`
-	Kind          string                        `json:"kind,omitempty"`
-	Relationship  *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
+	ResolvedModel          *resolvedModelJSON            `json:"resolved_model,omitempty"`
+	LatestContextOccupancy *contextOccupancyJSON         `json:"latest_context_occupancy,omitempty"`
+	Kind                   string                        `json:"kind,omitempty"`
+	Relationship           *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
 }
 
 type sessionTitleJSON struct {
@@ -493,7 +425,8 @@ type modeBody struct {
 }
 
 type promptBody struct {
-	Text string `json:"text"`
+	Text                        string `json:"text"`
+	ServerOwnedPlanContinuation bool   `json:"server_owned_plan_continuation,omitempty"`
 	// Parts carries non-text media (image/audio) alongside the text. Each part
 	// names its kind ("image"/"audio"), mime type, and EITHER base64 data OR a url.
 	Parts []promptContentBody `json:"parts,omitempty"`
@@ -543,26 +476,15 @@ func toContentParts(parts []promptContentBody) ([]session.Content, error) {
 	return out, nil
 }
 
-type approveBody struct {
-	AskID string `json:"ask_id"`
-	// Allow is the LEGACY boolean (back-compat): true -> allow once, false -> deny.
-	// It is used only when Verdict is empty/unspecified.
-	Allow bool `json:"allow"`
-	// Verdict is the preferred three-way resolution: "deny", "allow_once", or
-	// "allow_always" (allow_always additionally learns a per-session rule). An
-	// empty/unknown value falls back to Allow.
-	Verdict string `json:"verdict,omitempty"`
-	// ExpectedRunID, when set, scopes this control to ONE run: the request is
-	// refused with a 409 problem (code "stale_run_control") if the session's
-	// current run is a different one. Empty is the legacy behaviour — the control
-	// applies to whatever run is current. See ADR 0249.
-	ExpectedRunID string `json:"expected_run_id,omitempty"`
-}
-
 // --- handlers ---------------------------------------------------------------
 
 // createSession handles POST /v1/sessions.
 func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
+	if h.svc.cfg.ExecutionAccess != nil {
+		r = r.WithContext(creatediag.Start(r.Context(), h.svc.Diagnostics()))
+	}
+	creatediag.Note(r.Context(), "http_handler", "begin", 0)
+	defer func() { creatediag.Note(r.Context(), "http_handler", "returned", 1) }()
 	var body createSessionBody
 	// STRICT decode. An unknown field is a 400, not a silent drop.
 	//
@@ -577,8 +499,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	// ("unknown field \"mcpServers\""), which turns an otherwise baffling 400 into a
 	// self-diagnosing one. It describes the caller's own input, so it leaks nothing.
 	//
-	// It is a deliberate behaviour CHANGE: a request carrying a stray field used to
-	// succeed. The strictness matches decodeLearningJSON's existing posture on this
+	// A request carrying a stray field is rejected. The strictness matches decodeLearningJSON's existing posture on this
 	// same handler set.
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -617,7 +538,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if len(body.DebugMCPServers) > 0 {
 		opts = append(opts, WithDebugMCP(body.DebugMCPServers))
 	}
-	// Client-provided MCP servers (issue #821, ADR 0237): the SAME Service seam the
+	// Client-provided MCP servers (issue #821): the SAME Service seam the
 	// gRPC handler calls, so both transports classify through one validator and
 	// read one deployment policy. No filtering or classification happens here.
 	grant, err := h.svc.ClientMCPFromWire(clientMCPFromJSON(body.MCPServers))
@@ -633,14 +554,15 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	responseDone := creatediag.Begin(r.Context(), "http_response")
 	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
-		Capabilities:        capabilitiesJSON(h.svc.capabilitiesFor(r.Context())),
 		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
-		ResolvedModel:       resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
+		ResolvedModel:       resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
 		Placement:           placementMetadataToJSON(sess.Placement),
 	})
+	responseDone(r.Context().Err())
 }
 
 // getSession handles GET /v1/sessions/{id}.
@@ -758,28 +680,30 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 }
 
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
-	title := sess.Title
-	if title == "" {
-		// Lazy display-time fallback (no write-on-read: sess.Title is not mutated).
-		title = DeriveTitle(sess)
-	}
 	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, status, sessionResp{
-		SessionID:           string(sess.ID),
-		State:               string(sess.State),
-		Mode:                string(sess.Mode),
-		Placement:           placementMetadataToJSON(sess.Placement),
-		Turns:               sess.Counters.Turns,
-		ToolCalls:           sess.Counters.ToolCalls,
-		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
-		Title:               valid(title),
-		TitleProvenance:     valid(string(sess.TitleProvenance)),
-		TitleMetadata:       sessionTitleToJSON(titlePayload(sess)),
-		TokenUsage:          tokenUsageToJSON(sess.TokenUsageSnapshot()),
-		ResolvedModel:       resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
-		Kind:                string(sess.Kind),
-		Relationship:        toProtoSessionRelationship(sess.Relationship),
+		SessionID:              string(sess.ID),
+		State:                  string(sess.State),
+		Mode:                   string(sess.Mode),
+		Placement:              placementMetadataToJSON(sess.Placement),
+		Turns:                  sess.Counters.Turns,
+		ToolCalls:              sess.Counters.ToolCalls,
+		SessionCapabilities:    &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
+		TitleMetadata:          sessionTitleToJSON(titlePayload(sess)),
+		TokenUsage:             tokenUsageToJSON(sess.TokenUsageSnapshot()),
+		ResolvedModel:          resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
+		LatestContextOccupancy: contextOccupancyToJSON(sess),
+		Kind:                   string(sess.Kind),
+		Relationship:           toProtoSessionRelationship(sess.Relationship),
 	})
+}
+
+func contextOccupancyToJSON(sess *session.Session) *contextOccupancyJSON {
+	occupancy, ok := sess.LatestContextOccupancy()
+	if !ok {
+		return nil
+	}
+	return &contextOccupancyJSON{InputTokens: occupancy.InputTokens, Estimated: occupancy.Estimated}
 }
 
 func tokenUsageToJSON(in map[session.UsageKind]session.TokenUsage) map[string]tokenUsageJSON {
@@ -1052,7 +976,13 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	var run *agent.Run
+	var err error
+	if body.ServerOwnedPlanContinuation {
+		run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(r.Context(), id, body.Text, parts)
+	} else {
+		run, err = h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1133,7 +1063,7 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	// wedge in its own sends behind a dead relay. The failure flag is sticky —
 	// no further write happens after the first error.
 	//
-	// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+	// The durable event-log Append is DECOUPLED from the
 	// client write: it runs for EVERY observed event, BEFORE and independent of the
 	// drain-to-discard guard, so a disconnected client never stops the log (the
 	// whole point of a server-side durable log is to survive the client — it must
@@ -1172,82 +1102,6 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 			continue
 		}
 		flusher.Flush()
-	}
-}
-
-// approve handles POST /v1/sessions/{id}/approve, resolving the paused ask on
-// the session's in-flight run.
-func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
-	id := session.SessionID(r.PathValue("id"))
-	var body approveBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if body.AskID == "" {
-		writeError(w, http.StatusBadRequest, "ask_id is required")
-		return
-	}
-	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdictFromHTTP(body.Verdict, body.Allow), body.ExpectedRunID)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	if run == nil {
-		// SAME-PROCESS path: a live run resolved the ask over its channel and the
-		// existing stream (the prompt SSE / the bidi relay) delivers the effects.
-		// Ack only.
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	// REHYDRATE path (cloud-native Phase 2): the process that parked the ask died
-	// and we re-entered the loop AT the ask in this process. The resumed run has no
-	// existing stream to ride, so relay its events as SSE on this approve response —
-	// the standard reconnect-and-relay shape, no streaming-approve proto change. A
-	// client that does not consume the body still gets a correct run: the drain-to-
-	// discard keeps it unwedged and the terminal state persists.
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		// No streaming: the resumed run is registered and will drive to completion;
-		// fall back to an ack so the verdict is not lost. Drain in the background so
-		// the run never wedges behind an unread buffer — but STILL append every
-		// event to the durable log (cloud-native Phase 3a): the log records what
-		// happened regardless of whether a client consumes the stream. Use a
-		// cancel-detached context so the request returning does not abort the writes.
-		logCtx := context.WithoutCancel(r.Context())
-		recorder := NewRunEventRecorder(logCtx, h.svc, id)
-		go func() {
-			defer recorder.Close()
-			for ev := range run.Events() {
-				recorder.Observe(ev)
-			}
-			h.svc.finishRelayRun(context.WithoutCancel(r.Context()), id, run)
-		}()
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	h.relayRunSSE(w, r, id, run, flusher, "")
-}
-
-// verdictFromHTTP maps the HTTP approve body's string verdict to the domain
-// ApprovalVerdict, preferring an explicit verdict and falling back to the legacy
-// allow bool. It is fail-safe: an empty verdict with allow=false, and any
-// unrecognized string, resolve to VerdictDeny.
-func verdictFromHTTP(verdict string, allow bool) session.ApprovalVerdict {
-	switch verdict {
-	case "allow_always":
-		return session.VerdictAllowAlways
-	case "allow_once":
-		return session.VerdictAllowOnce
-	case "deny":
-		return session.VerdictDeny
-	case "":
-		if allow {
-			return session.VerdictAllowOnce
-		}
-		return session.VerdictDeny
-	default:
-		return session.VerdictDeny
 	}
 }
 
@@ -1424,29 +1278,24 @@ func (h *HTTPHandler) compactSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.CompactSessionResponse{Compacted: result.Changed})
 }
 
-// cancelBody is the OPTIONAL JSON body of POST /v1/sessions/{id}/cancel.
-//
-// The endpoint predates it and must keep accepting an empty body, so decoding is
-// best-effort: a missing or unparseable body leaves ExpectedRunID empty, which is
-// the legacy "cancel whatever is running" behaviour. Refusing a malformed body
-// would break every existing caller that sends none.
-type cancelBody struct {
-	// ExpectedRunID, when set, scopes the cancel to ONE run. Cancelling the wrong
-	// run destroys work rather than merely permitting it, so a client that knows
-	// which run it is stopping should always send this. See ADR 0249.
-	ExpectedRunID string `json:"expected_run_id,omitempty"`
-}
-
-// cancel handles POST /v1/sessions/{id}/cancel, cancelling the in-flight run.
-func (h *HTTPHandler) cancel(w http.ResponseWriter, r *http.Request) {
-	id := session.SessionID(r.PathValue("id"))
-	var body cancelBody
-	_ = json.NewDecoder(r.Body).Decode(&body) // optional body; see cancelBody
-	if err := h.svc.Cancel(r.Context(), id, body.ExpectedRunID); err != nil {
+// refreshMcpSources handles bodyless POST /v1/sessions/{id}/mcp-refresh.
+func (h *HTTPHandler) refreshMcpSources(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 2))
+	if err != nil || len(body) != 0 {
+		writeError(w, http.StatusBadRequest, "request body must be empty")
+		return
+	}
+	result, err := h.svc.RefreshMcpSources(r.Context(), session.SessionID(id))
+	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, &mecatlv1.RefreshMcpSourcesResponse{Revision: result.Revision, Changed: result.Changed})
 }
 
 // cancelChildBody is the JSON body of POST /v1/sessions/{id}/cancel-child.
@@ -1458,7 +1307,7 @@ type cancelChildBody struct {
 
 // cancelChild handles POST /v1/sessions/{id}/cancel-child, cancelling ONE child
 // (a subagent) of the session's in-flight run while the run itself keeps
-// streaming. Mirrors /approve: 204 on success, 404 for an unknown session OR an
+// streaming. 204 on success, 404 for an unknown session OR an
 // unknown/already-finished child, 409 for a known-but-runless session.
 func (h *HTTPHandler) cancelChild(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
@@ -1476,29 +1325,6 @@ func (h *HTTPHandler) cancelChild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// steerBody is the JSON body of POST /v1/sessions/{id}/steer. It mirrors the
-// gRPC Steer frame, including multimodal content and strict run targeting.
-type steerBody struct {
-	Text          string              `json:"text"`
-	Parts         []promptContentBody `json:"parts,omitempty"`
-	MessageID     string              `json:"message_id,omitempty"`
-	ExpectedRunID string              `json:"expected_run_id,omitempty"`
-}
-
-// cancelSteerBody is optional: an empty body is the unqualified, uncorrelated
-// idempotent operation, while a supplied body is decoded strictly.
-type cancelSteerBody struct {
-	MessageID     string `json:"message_id,omitempty"`
-	ExpectedRunID string `json:"expected_run_id,omitempty"`
-}
-
-type steerResponse struct {
-	Outcome   string `json:"outcome"`
-	MessageID string `json:"message_id,omitempty"`
-	Promoted  bool   `json:"promoted,omitempty"`
-	RunID     string `json:"run_id,omitempty"`
 }
 
 // decodeSteerControlJSON applies one strict, bounded request contract to both
@@ -1524,13 +1350,6 @@ func decodeSteerControlJSON(w http.ResponseWriter, r *http.Request, dst any, all
 	return true
 }
 
-func decodeOptionalSteerControlJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if r.ContentLength == 0 {
-		return true
-	}
-	return decodeSteerControlJSON(w, r, dst, true)
-}
-
 func writeSteerControlDecodeError(w http.ResponseWriter, err error) {
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
@@ -1540,84 +1359,12 @@ func writeSteerControlDecodeError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, "invalid JSON body")
 }
 
-// steer handles the unary HTTP peer of the gRPC steer frame. A live run
-// returns accepted/appended. An unqualified terminal-race steer retains the
-// existing promotion contract, but the HTTP response stays deterministically
-// unary: the promoted run is drained into durable state in the background and
-// its identity is returned in the JSON acknowledgement.
-func (h *HTTPHandler) steer(w http.ResponseWriter, r *http.Request) {
-	id := session.SessionID(r.PathValue("id"))
-	var body steerBody
-	if !decodeSteerControlJSON(w, r, &body, false) {
-		return
-	}
-	if body.Text == "" && len(body.Parts) == 0 {
-		writeError(w, http.StatusBadRequest, "text or parts is required")
-		return
-	}
-	parts, err := toContentParts(body.Parts)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	// Promotion outlives this unary request by design. Detach cancellation while
-	// preserving caller identity; the registered run remains cancellable through
-	// the Service lifecycle and explicit run controls.
-	controlCtx := context.WithoutCancel(r.Context())
-	outcome, promoted, run, err := h.svc.Steer(controlCtx, id, body.Text, parts, body.MessageID, body.ExpectedRunID)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	response := steerResponse{Outcome: string(outcome), MessageID: body.MessageID}
-	if promoted {
-		if run == nil {
-			writeServiceError(w, fmt.Errorf("%w: promoted steer returned no run", ErrInternal))
-			return
-		}
-		response.Promoted = true
-		response.RunID = run.RunID()
-		logCtx := controlCtx
-		recorder := NewRunEventRecorder(logCtx, h.svc, id)
-		go func() {
-			defer recorder.Close()
-			for ev := range run.Events() {
-				// No client stream receives this event, but the shared relay
-				// lifecycle still owns durable logging, awaiting-state persistence,
-				// and optional plan auto-approval.
-				h.svc.relayEvent(logCtx, id, ev, true, recorder)
-			}
-			h.svc.finishRelayRun(logCtx, id, run)
-		}()
-	}
-	writeJSON(w, http.StatusOK, response)
-}
-
-// cancelSteer retracts only the pending, un-drained steer bundle. With an
-// expected_run_id it fails stale when that exact run is absent or replaced;
-// without one it remains idempotent and reports none_pending.
-func (h *HTTPHandler) cancelSteer(w http.ResponseWriter, r *http.Request) {
-	id := session.SessionID(r.PathValue("id"))
-	var body cancelSteerBody
-	if !decodeOptionalSteerControlJSON(w, r, &body) {
-		return
-	}
-	if err := validateSteerMessageID(body.MessageID); err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	outcome, err := h.svc.CancelSteer(r.Context(), id, body.ExpectedRunID)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, steerResponse{Outcome: string(outcome), MessageID: body.MessageID})
-}
-
 type resolveRunAskBody struct {
 	ExpectedRunID string `json:"expected_run_id"`
 	AskID         string `json:"ask_id"`
 	Verdict       string `json:"verdict"`
+	ReviewID      string `json:"review_id,omitempty"`
+	GuardrailKind string `json:"guardrail_kind,omitempty"`
 }
 
 type cancelRunBody struct {
@@ -1679,7 +1426,34 @@ func (h *HTTPHandler) resolveRunAsk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
 		return
 	}
-	ack, err := h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	var ack RunAskAcknowledgement
+	var err error
+	if body.ReviewID != "" || body.GuardrailKind != "" {
+		ack, err = h.svc.ResolveScopedRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, agent.ApprovalResolution{
+			AskID: body.AskID, ReviewID: body.ReviewID, Kind: session.GuardrailApprovalKind(body.GuardrailKind), Verdict: verdict,
+		})
+	} else {
+		ack, err = h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resolveRunAskResponse(ack))
+}
+
+// resolvePlanAsk is the strict acknowledgement-only HTTP mirror of ResolvePlanAsk.
+func (h *HTTPHandler) resolvePlanAsk(w http.ResponseWriter, r *http.Request) {
+	var body resolveRunAskBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	verdict, ok := strictRunAskVerdict(body.Verdict)
+	if body.ExpectedRunID == "" || body.AskID == "" || !ok {
+		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
+		return
+	}
+	ack, err := h.svc.ResolvePlanAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -2246,9 +2020,9 @@ func (h *HTTPHandler) getMcpPrompt(w http.ResponseWriter, r *http.Request) {
 //
 // It reads the SAME Service.CompatibilityInfo projection the gRPC handler does,
 // so the two transports cannot disagree about what this server permits — the
-// transport parity the SDK's normalized surface depends on. See ADR 0248.
+// transport parity the SDK's normalized surface depends on.
 //
-// GET /v1/info is the sibling route for build identity (ADR 0245); the two are
+// GET /v1/info is the sibling route for build identity; the two are
 // deliberately separate resources rather than one overloaded document.
 func (h *HTTPHandler) getCompatibilityInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.svc.CompatibilityInfo(r.Context()))
@@ -2266,12 +2040,12 @@ func (h *HTTPHandler) listSessionMcpConnectors(w http.ResponseWriter, r *http.Re
 
 // listMcpSources handles GET /v1/mcp/sources.
 func (h *HTTPHandler) listMcpSources(w http.ResponseWriter, r *http.Request) {
-	infos := h.svc.ListMcpSources(r.Context())
-	out := make([]*mecatlv1.McpSource, 0, len(infos))
-	for _, s := range infos {
+	cached := h.svc.ListMcpSources(r.Context())
+	out := make([]*mecatlv1.McpSource, 0, len(cached.Sources))
+	for _, s := range cached.Sources {
 		out = append(out, toProtoMcpSource(s))
 	}
-	writeJSON(w, http.StatusOK, &mecatlv1.ListMcpSourcesResponse{Sources: out})
+	writeJSON(w, http.StatusOK, &mecatlv1.ListMcpSourcesResponse{Sources: out, Revision: cached.Revision, Stale: cached.Stale, Reconciling: cached.Reconciling})
 }
 
 // listToolHiveGroups handles GET /v1/mcp/toolhive/groups.
@@ -2400,13 +2174,10 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-// listModels handles GET /v1/models. Threads (issue #262) the per-provider
-// live-listing status alongside the model list; ListModels itself triggers
-// the on-demand refresh (when installed), so ProviderStatuses is read AFTER
-// it to reflect the just-completed refresh.
+// listModels handles GET /v1/models from one captured model/status publication.
 func (h *HTTPHandler) listModels(w http.ResponseWriter, r *http.Request) {
-	models := h.svc.ListModels(r.Context())
-	writeJSON(w, http.StatusOK, &mecatlv1.ListModelsResponse{Models: models, ProviderStatus: h.svc.ProviderStatuses()})
+	view := h.svc.ListModelSnapshot(r.Context())
+	writeJSON(w, http.StatusOK, &mecatlv1.ListModelsResponse{Models: view.Models, ProviderStatus: view.ProviderStatus})
 }
 
 // getSoul handles GET /v1/soul.
@@ -2692,7 +2463,7 @@ func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 }
 
 // listSessions handles GET /v1/sessions — the stored-session inventory picker
-// (issue #245 Phase 1). Read-only; loads no conversation content.
+// (issue #245). Read-only; loads no conversation content.
 func (h *HTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
 	pageSize := 0
 	if raw := r.URL.Query().Get("page_size"); raw != "" {
@@ -2723,68 +2494,6 @@ func (h *HTTPHandler) getStorageHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toProtoStorageHealth(health))
-}
-
-func (h *HTTPHandler) planSessionMigration(w http.ResponseWriter, r *http.Request) {
-	plan, err := h.svc.PlanSessionMigration(r.Context())
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProtoMigrationPlan(plan))
-}
-
-func (h *HTTPHandler) applySessionMigration(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		PlanID    string `json:"plan_id"`
-		BatchSize int    `json:"batch_size"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, fmt.Errorf("%w: invalid migration request", ErrInvalidArgument))
-		return
-	}
-	job, err := h.svc.ApplySessionMigration(r.Context(), body.PlanID, body.BatchSize)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
-}
-
-func (h *HTTPHandler) resumeSessionMigration(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		BatchSize int `json:"batch_size"`
-	}
-	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeServiceError(w, fmt.Errorf("%w: invalid migration request", ErrInvalidArgument))
-			return
-		}
-	}
-	job, err := h.svc.ResumeSessionMigration(r.Context(), r.PathValue("id"), body.BatchSize)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
-}
-
-func (h *HTTPHandler) cancelSessionMigration(w http.ResponseWriter, r *http.Request) {
-	job, err := h.svc.CancelSessionMigration(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
-}
-
-func (h *HTTPHandler) getSessionMigrationJob(w http.ResponseWriter, r *http.Request) {
-	job, err := h.svc.SessionMigrationJob(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
 }
 
 func (h *HTTPHandler) planSessionCleanup(w http.ResponseWriter, r *http.Request) {
@@ -2842,8 +2551,8 @@ func (h *HTTPHandler) getSessionCleanupJob(w http.ResponseWriter, r *http.Reques
 }
 
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
-// durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
-// native Phase 3a read-back). This is the READ path: it never calls appendEvent
+// durable event log as a Server-Sent Events stream (issue #245). This is
+// the READ path: it never calls appendEvent
 // and never starts a run.
 func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
@@ -2898,7 +2607,7 @@ func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request
 }
 
 // watchSessionEvents handles GET /v1/sessions/{id}/watch — the DURABLE
-// replay-then-follow watch as a Server-Sent Events stream (issue #821, ADR 0250).
+// replay-then-follow watch as a Server-Sent Events stream (issue #821).
 //
 // It is a NEW route, deliberately beside GET /v1/sessions/{id}/events rather than
 // a widening of it. That route is a bounded replay that ends; this one replays,
@@ -3034,11 +2743,9 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 // writeServiceError writes a service sentinel error as an RFC 9457 problem.
 //
-// It is a REGISTRY LOOKUP, not a switch. It used to be a 49-case
-// errors.Is chain maintained in parallel with toStatus in grpc.go; the two
-// agreed only by discipline, and a sentinel added to one and forgotten in the
-// other would have reported a different class per transport. Both now read
-// errorRegistry, so they cannot disagree. See ADR 0248.
+// It is a REGISTRY LOOKUP, not a switch. It and toStatus in grpc.go both read
+// errorRegistry, so the two transports cannot report a different class for the
+// same sentinel.
 func writeServiceError(w http.ResponseWriter, err error) {
 	writeProblem(w, classifyError(err), err.Error())
 }

@@ -34,7 +34,8 @@ var mutatingTools = map[string]bool{
 //
 // Resolution rules (doc 08 §10):
 //   - A Deny in ANY scope beats an Allow or Ask in ANY scope.
-//   - Otherwise an Ask in any scope beats an Allow.
+//   - Otherwise an Ask beats an Allow, except that a higher-scope Allow overrides
+//     an Ask from the built-in default floor (ScopeBuiltinDefault).
 //   - Among rules of the SAME effect, the highest-precedence Scope wins (its
 //     Reason is reported).
 //   - With no matching rule the result is Ask (the safe default: pause for the
@@ -149,17 +150,18 @@ func (e *Evaluator) EvaluateWith(tool string, args json.RawMessage, planMode boo
 //     than learn a tool-wide allow.
 //
 // When learnable, the returned Rule is {Tool, Pattern, Effect: Allow, Exact: true,
-// Scope: <lowest precedence>} — Exact so it matches literally (never via glob),
-// and lowest scope so it can never out-rank a configured rule of any effect.
+// Scope: ScopeUser} — Exact so it matches literally (never via glob), and the
+// lowest configured scope so it can never out-rank a configured rule of any effect.
 func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) {
 	pattern, ok := learnablePattern(tool, args)
 	if !ok || pattern == "" {
 		return Rule{}, false
 	}
 	return Rule{
-		// ScopeUser is the LOWEST precedence (largest Scope value); a learned allow
-		// can never out-rank a configured rule. Precedence only breaks SAME-effect
-		// ties anyway, and deny/ask always beat allow regardless of scope.
+		// ScopeUser is the lowest configured precedence (only ScopeBuiltinDefault
+		// sits below it); a learned allow can never out-rank a configured rule.
+		// Precedence only breaks SAME-effect ties anyway: a configured deny or ask
+		// always beats it, and only a built-in default Ask yields to it.
 		Scope:   ScopeUser,
 		Tool:    tool,
 		Pattern: pattern,
@@ -244,28 +246,23 @@ func (e *Evaluator) resolvePatterns(rules []Rule, tool string, patterns []string
 	anyConfiguredAsk := false
 	for _, pattern := range patterns {
 		d := e.resolveSimple(rules, tool, pattern)
-		anyConfiguredAsk = anyConfiguredAsk || d.ConfiguredAsk
+		anyConfiguredAsk = anyConfiguredAsk || d.AskProvenance == AskProvenanceConfigured
 		if effectRank(d.Effect) > effectRank(worst.Effect) {
 			worst = d
 		}
 	}
-	if worst.Effect == Ask {
-		worst.ConfiguredAsk = anyConfiguredAsk
+	if worst.Effect == Ask && anyConfiguredAsk {
+		worst.AskProvenance = AskProvenanceConfigured
 	}
 	return worst
 }
 
 // resolveShell evaluates each canonicalized sub-command of a (possibly compound)
 // Shell line and folds them with deny → ask → allow: the worst outcome wins. It
-// also folds the two child-ask decision bits (issue #32): ConfiguredAsk (any
-// segment's winning Ask came from a configured rule — conservative, so a
-// configured Ask anywhere gates the whole compound) and FlooredConfiguredAllow
-// (the ONLY reason the fold is Ask is the substitution floor, every floored
-// segment had a configured Allow match AND passes flooredAllowSafe — every
-// extracted inner positively read-only, blanked outer escape-rejection-free —
-// and the floor-free fold is Allow). The two are mutually exclusive by
-// construction: a configured Ask on any segment makes the floor-free fold
-// not-Allow.
+// also folds the child-ask provenance: a configured Ask anywhere gates the
+// whole compound; configured-allow-floor provenance requires every floored
+// segment to cooperate; and built-in-floor provenance requires the built-in
+// Allow to be the only floor-free authority.
 func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionDecision {
 	cmd, _ := ShellCommandFromArgs(args)
 	subs := SplitCommands(cmd)
@@ -276,10 +273,11 @@ func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionD
 	worst := PermissionDecision{Effect: Allow, Reason: ""}
 	haveDecision := false
 	var (
-		anyConfiguredAsk bool // some segment's (un-floored) Ask is configured
-		flooredOK        int  // floored segments covered by a configured Allow + escape-free
-		flooredBad       bool // some floored segment NOT covered (or escape-capable)
-		unflooredNotAll  bool // some segment's FLOOR-FREE decision is not Allow
+		anyConfiguredAsk  bool // some segment's (un-floored) Ask is configured
+		flooredConfigured int  // floored segments covered by a configured Allow + escape-free
+		flooredBuiltin    int  // floored segments covered only by the built-in Allow
+		flooredBad        bool // some floored segment has no Allow coverage (or is escape-capable)
+		unflooredNotAll   bool // some segment's FLOOR-FREE decision is not Allow
 	)
 	for _, sub := range subs {
 		var d PermissionDecision
@@ -312,10 +310,12 @@ func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionD
 				// read-only (the configured Allow vouches only for the OUTER literal —
 				// never for what a substitution hides), and the blanked outer must pass
 				// the worktree-escape rejections — the precondition for
-				// FlooredConfiguredAllow on the folded decision. The segment's
+				// configured-allow-floor provenance on the folded decision. The segment's
 				// FLOOR-FREE effect is Allow either way, so unflooredNotAll stays unset.
 				if ruleIsConfigured(segRule) && flooredAllowSafe(sub) {
-					flooredOK++
+					flooredConfigured++
+				} else if segRule != nil && segRule.Scope == ScopeBuiltinDefault {
+					flooredBuiltin++
 				} else {
 					flooredBad = true
 				}
@@ -337,7 +337,7 @@ func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionD
 		if d.Effect != Allow {
 			unflooredNotAll = true
 		}
-		if d.Effect == Ask && d.ConfiguredAsk {
+		if d.Effect == Ask && d.AskProvenance == AskProvenanceConfigured {
 			anyConfiguredAsk = true
 		}
 		if !haveDecision || effectRank(d.Effect) > effectRank(worst.Effect) {
@@ -345,15 +345,27 @@ func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionD
 			haveDecision = true
 		}
 	}
-	// Fold the decision bits fresh — the worst segment's own bits may not describe
-	// the COMPOUND (a configured Ask elsewhere must still gate; the floored-allow
-	// bit requires EVERY segment to cooperate). Both are meaningful only on Ask.
-	worst.ConfiguredAsk, worst.FlooredConfiguredAllow = false, false
-	if worst.Effect == Ask {
-		worst.ConfiguredAsk = anyConfiguredAsk
-		worst.FlooredConfiguredAllow = !anyConfiguredAsk && flooredOK > 0 && !flooredBad && !unflooredNotAll
-	}
+	// Fold one typed provenance value for the whole compound. A configured Ask
+	// elsewhere must still gate, and either floor provenance requires every
+	// segment to cooperate.
+	worst.AskProvenance = shellAskProvenance(worst.Effect, anyConfiguredAsk, flooredConfigured, flooredBuiltin, flooredBad, unflooredNotAll)
 	return worst
+}
+
+func shellAskProvenance(effect Effect, configured bool, configuredFloors, builtinFloors int, floorBad, otherNonAllow bool) AskProvenance {
+	if effect != Ask {
+		return AskProvenanceUnknown
+	}
+	switch {
+	case configured:
+		return AskProvenanceConfigured
+	case !floorBad && !otherNonAllow && configuredFloors > 0 && builtinFloors == 0:
+		return AskProvenanceConfiguredAllowFloor
+	case !floorBad && !otherNonAllow && builtinFloors > 0 && configuredFloors == 0:
+		return AskProvenanceBuiltinSubstitutionFloor
+	default:
+		return AskProvenanceUnknown
+	}
 }
 
 // ruleIsConfigured reports whether r is a CONFIGURED rule: non-nil and scoped
@@ -361,6 +373,13 @@ func (e *Evaluator) resolveShell(rules []Rule, args json.RawMessage) PermissionD
 // own defaults). The no-matching-rule default carries a nil rule.
 func ruleIsConfigured(r *Rule) bool {
 	return r != nil && r.Scope != ScopeBuiltinDefault
+}
+
+func configuredAskProvenance(r *Rule) AskProvenance {
+	if ruleIsConfigured(r) {
+		return AskProvenanceConfigured
+	}
+	return AskProvenanceUnknown
 }
 
 // resolveSimple finds the winning decision for a single tool+pattern against the
@@ -419,9 +438,9 @@ func (e *Evaluator) resolveSimpleRule(rules []Rule, tool, pattern string) (Permi
 		if ask.Scope == ScopeBuiltinDefault && allow.Scope.HasHigherPrecedenceThan(ask.Scope) {
 			return PermissionDecision{Effect: Allow, Reason: ruleReason(allow, tool, pattern)}, allow
 		}
-		return PermissionDecision{Effect: Ask, Reason: ruleReason(ask, tool, pattern), ConfiguredAsk: ruleIsConfigured(ask)}, ask
+		return PermissionDecision{Effect: Ask, Reason: ruleReason(ask, tool, pattern), AskProvenance: configuredAskProvenance(ask)}, ask
 	case ask != nil:
-		return PermissionDecision{Effect: Ask, Reason: ruleReason(ask, tool, pattern), ConfiguredAsk: ruleIsConfigured(ask)}, ask
+		return PermissionDecision{Effect: Ask, Reason: ruleReason(ask, tool, pattern), AskProvenance: configuredAskProvenance(ask)}, ask
 	case allow != nil:
 		return PermissionDecision{Effect: Allow, Reason: ruleReason(allow, tool, pattern)}, allow
 	}
@@ -455,7 +474,7 @@ func effectRank(e Effect) int {
 // with an exact-match fast path. The audience check is symmetric-permissive
 // (issue #32): a rule binds iff the rule's audience is AudienceAll, the
 // evaluator's is AudienceAll, or they are equal — so untagged rules and untagged
-// evaluators keep their full historical reach.
+// evaluators keep their full reach.
 func ruleMatches(r *Rule, tool, pattern string, audience Audience) bool {
 	if r.Audience != AudienceAll && audience != AudienceAll && r.Audience != audience {
 		return false

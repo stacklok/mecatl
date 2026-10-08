@@ -2,12 +2,14 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -17,13 +19,13 @@ import (
 
 // failingForker is a tool.EnvironmentForker that FAILS the test if Fork is ever
 // called. A direct-write (mode:"read-write") Subagent must NOT fork — it runs
-// against the real parent workspace (ADR 0041) — so wiring this as the read-only
+// against the real parent workspace — so wiring this as the read-only
 // childForker proves the writable path never forks.
 type failingForker struct{ t *testing.T }
 
 func (f *failingForker) Fork(_ context.Context, _ tool.Environment, _ string) (tool.Environment, func() error, string, error) {
 	f.t.Helper()
-	f.t.Fatal("a mode:\"read-write\" Subagent must NOT fork the workspace (direct-write, ADR 0041)")
+	f.t.Fatal("a mode:\"read-write\" Subagent must NOT fork the workspace (direct-write)")
 	return tool.Environment{}, nil, "", errors.New("unreachable")
 }
 
@@ -50,7 +52,7 @@ func writableChildWriting(t *testing.T, summary string, recordedRoot *atomic.Poi
 // read-only explorer engine (whose summary differs so a test can tell which engine
 // ran) plus a writable child engine. The read-only childEngine is the mandatory first
 // arg. There is no forker and no merger — a writable child writes the parent tree
-// directly (ADR 0041).
+// directly.
 func newWritableSubagent(t *testing.T, writable *agent.Engine, extra ...agent.SubagentOption) tool.Tool {
 	t.Helper()
 	readOnly := childEngineWith(mockllm.New(mockllm.TextTurn("READ-ONLY EXPLORER RAN")), catalogWith(t))
@@ -253,8 +255,8 @@ func TestSubagentWritablePartialEditSurvivesStopCancelled(t *testing.T) {
 
 // TestSubagentWritableTimeoutSurfacesTimeBudgetError is the time-budget guard: a
 // writable child that lands ONE real edit and then blows its timeout_ms is stopped with
-// the time-budget error AND warned that its edits may be PARTIAL. Under direct-write (ADR
-// 0041) the edit DID land in the real tree, and a mid-task timeout kill can leave
+// the time-budget error AND warned that its edits may be PARTIAL. Under direct-write
+// the edit DID land in the real tree, and a mid-task timeout kill can leave
 // half-finished work — so the timeout terminal must carry the same git-recovery thread
 // the StopError/cancel path gets, never the benign "edited directly" note.
 func TestSubagentWritableTimeoutSurfacesTimeBudgetError(t *testing.T) {
@@ -327,9 +329,9 @@ func TestSubagentWritableWithOutputSchemaComposes(t *testing.T) {
 // TestSubagentWritableNotIsolatedSkipsA2 is the BEHAVIORAL isolated:false guard,
 // driving the REAL run() posture (not a hand-built childPosture): a writable child
 // issuing an isolation-APPROVABLE Shell substitution (`go test $(echo ./...)`) under a
-// HEADLESS parent must AUTO-DENY it — because a direct-write child is isolated:false
-// (ADR 0041), so the A2 isolation auto-approve (which only fires when isolated) does
-// NOT apply. If run()'s posture were `isolated: true || ...` (the pre-0041 bug) the A2
+// HEADLESS parent must AUTO-DENY it — because a direct-write child is isolated:false,
+// so the A2 isolation auto-approve (which only fires when isolated) does
+// NOT apply. If run()'s posture were `isolated: true || ...` (the pre-direct-write bug) the A2
 // path would auto-APPROVE and the Shell would RUN — so this test FAILS under that
 // mutation. The read-only forker is a failingForker to also prove no fork happens.
 func TestSubagentWritableNotIsolatedSkipsA2(t *testing.T) {
@@ -369,8 +371,8 @@ func TestSubagentWritableReadOnlyStaysTrue(t *testing.T) {
 
 // TestSubagentModeCombinationGuards is the combination table: an unknown mode,
 // read-write+background, read-write+agent+model, and read-write+agent-without-factory are
-// all rejected; read-write+agent SUCCEEDS when the writable-specialist factory is wired
-// (ADR 0058); read-write with no writable engine wired is "not supported"; read-write+fork
+// all rejected; read-write+agent SUCCEEDS when the writable-specialist factory is wired;
+// read-write with no writable engine wired is "not supported"; read-write+fork
 // is ALLOWED (composes).
 func TestSubagentModeCombinationGuards(t *testing.T) {
 	makeWritable := func() tool.Tool {
@@ -407,7 +409,7 @@ func TestSubagentModeCombinationGuards(t *testing.T) {
 	})
 
 	t.Run("read-write + agent succeeds via factory", func(t *testing.T) {
-		// ADR 0058: read-write+agent is ALLOWED when the deployment wires the writable-
+		// read-write+agent is ALLOWED when the deployment wires the writable-
 		// specialist factory (WithAgentWritableEngineFactory). The factory returns a
 		// writable specialist engine (carrying a Write fakeTool + a marker summary); the
 		// call SUCCEEDS, the writable specialist ran (marker), the pre-built read-only
@@ -577,7 +579,7 @@ func readOnlySubagentFailureBody(t *testing.T) string {
 // one conditional body:
 //
 //   - subagentErrorBody's cause-leads composition (issue #319),
-//   - the conditional partial-edits honesty ADR 0041 owes,
+//   - the conditional partial-edits honesty direct-write owes,
 //   - the resume affordance (issue #318).
 //
 // The load-bearing property is that the last two arrive as ONE decision. Stated as two
@@ -621,7 +623,7 @@ func TestWritableSubagentFailureRendersOneCombinedNextAction(t *testing.T) {
 	}
 	// (b) The direct-write honesty: edits may be sitting half-finished in the real tree.
 	if !strings.Contains(body, "may be PARTIAL") {
-		t.Fatalf("a mid-task killed writable child must warn that its edits may be PARTIAL (ADR 0041), got:\n%s", body)
+		t.Fatalf("a mid-task killed writable child must warn that its edits may be PARTIAL, got:\n%s", body)
 	}
 	// (c) ONE decision, with the two options named as mutually exclusive.
 	if !strings.Contains(body, "Either resume it with the agentId below") || !strings.Contains(body, "Do not do both") {
@@ -683,4 +685,58 @@ func TestStorelessWritableSubagentFailureKeepsPlainPartialNote(t *testing.T) {
 	if strings.Contains(body, "Do not do both") {
 		t.Fatalf("the combined resume-or-discard decision must not appear where resume is unsupported, got:\n%s", body)
 	}
+}
+
+func TestMicroVMEnvironments_Scenario7_DirectWriteUsesParentEnvironment(t *testing.T) {
+	parentWS := memfs.NewWorkspace("/workspace")
+	parentRef := session.EnvironmentRef{Kind: "microvm", ID: "parent", Revision: "7"}
+	parentEnv := tool.MustEnvironment(parentRef, parentWS, memledger.New(), microVMMutationRunner{ws: parentWS})
+	var seenRef session.EnvironmentRef
+	bash := &environmentProbeTool{run: func(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+		seenRef = env.Ref()
+		if _, err := env.CommandRunner().Run(ctx, "write"); err != nil {
+			return session.NewToolError(call.ID, err.Error()), nil
+		}
+		return session.NewToolResult(call.ID, "wrote through parent runner"), nil
+	}}
+	writable := childEngineWith(mockllm.New(
+		mockllm.ToolCallTurn(toolCall("w1", "Bash", `{}`)),
+		mockllm.TextTurn("done"),
+	), catalogWith(t, bash))
+	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
+
+	call := toolCall("p1", "Subagent", `{"prompt":"implement","mode":"read-write"}`)
+	mutator, ok := task.(interface{ MutatesParent(session.ToolCall) bool })
+	if !ok || !mutator.MutatesParent(call) {
+		t.Fatal("direct-write microVM Subagent must be parent-mutate-serial")
+	}
+	result, err := task.Execute(context.Background(), call, parentEnv)
+	if err != nil || result.IsError {
+		t.Fatalf("direct-write Execute: result=%+v err=%v", result, err)
+	}
+	if seenRef != parentRef {
+		t.Fatalf("child EnvironmentRef = %+v, want parent %+v", seenRef, parentRef)
+	}
+	if got, err := parentWS.Read(context.Background(), "direct-write.txt"); err != nil || string(got) != "parent mutation" {
+		t.Fatalf("parent mutation = %q, %v", got, err)
+	}
+}
+
+type microVMMutationRunner struct{ ws tool.Workspace }
+
+func (r microVMMutationRunner) Run(ctx context.Context, _ string) (tool.CommandResult, error) {
+	_, err := r.ws.CreateFile(ctx, "direct-write.txt", []byte("parent mutation"))
+	return tool.CommandResult{}, err
+}
+
+type environmentProbeTool struct {
+	run func(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error)
+}
+
+func (*environmentProbeTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "Bash", Description: "test", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (*environmentProbeTool) ReadOnly() bool { return false }
+func (t *environmentProbeTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	return t.run(ctx, call, env)
 }

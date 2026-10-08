@@ -69,6 +69,12 @@ func TestMessageReasoningCarriersAreNeutral(t *testing.T) {
 		if f.Name == "Text" || f.Name == "Role" {
 			continue
 		}
+		// UserPromptProvenance is a domain authority enum, not an opaque
+		// provider reasoning carrier; keep its exclusion deliberate so this
+		// tripwire continues to catch newly added bare-string carriers.
+		if f.Name == "UserPromptProvenance" {
+			continue
+		}
 		got = append(got, f.Name)
 	}
 	sort.Strings(got)

@@ -22,13 +22,12 @@ import (
 const meterName = "github.com/stacklok/mecatl/internal/adapter/telemetry"
 
 // Latency-instrument names. Each is an explicit-bucket-histogram latency
-// instrument (ADR 0045, superseding the base-2 exponential aggregation of ADR
-// 0018 §5 decision 2). They are exported as package constants because the
-// MeterProvider installs an explicit-bucket metric.View keyed on each exact
-// name; the view and the instrument name MUST agree, so views target
-// instruments by these constants rather than duplicated string literals. The
-// explicit ladder renders as classic Prometheus le= buckets in the text
-// exposition, so a plain `curl :9099/metrics` / promtool — and the perf-MCP
+// instrument (superseding an earlier base-2 exponential aggregation). They are
+// exported as package constants because the MeterProvider installs an
+// explicit-bucket metric.View keyed on each exact name; the view and the
+// instrument name MUST agree, so views target instruments by these constants
+// rather than duplicated string literals. The explicit ladder renders as
+// classic Prometheus le= buckets in the text exposition, so a plain `curl :9099/metrics` / promtool — and the perf-MCP
 // reducer's classicLadder path — yield p50/p90/p99 with zero scrape config.
 const (
 	// toolDurationInstrument is the per-tool execution wall-clock histogram.
@@ -98,19 +97,17 @@ func latencyBucketAggregation() sdkmetric.AggregationExplicitBucketHistogram {
 }
 
 // LatencyViews returns the explicit-bucket-histogram views for EVERY latency
-// instrument (tool/turn duration, TTFT, inter-token, tool-queue; ADR 0045,
-// superseding ADR 0018 §5 decision 2). It is the single source of truth for the
-// latency aggregation: any MeterProvider feeding NewMetrics MUST install these
-// (sdkmetric.WithView(LatencyViews()...)), or the latency series fall back to the
-// SDK default explicit buckets (a coarser ladder that misses the ms low end and
+// instrument (tool/turn duration, TTFT, inter-token, tool-queue). It is the
+// single source of truth for the latency aggregation: any MeterProvider
+// feeding NewMetrics MUST install these (sdkmetric.WithView(LatencyViews()...)),
+// or the latency series fall back to the SDK default explicit buckets (a coarser ladder that misses the ms low end and
 // the minute-scale high end the latencyBucketBoundaries cover).
 //
 // The explicit ladder renders as classic Prometheus le= buckets, so the text
 // /metrics exposition + promtool + the perf-MCP reducer's classicLadder path all
-// yield p50/p90/p99 with zero scrape config — the issue #158 fix. (OTLP push, were
-// it ever wired, would carry the same explicit buckets; the exponential-tail
-// precision OTLP could have aggregated is unconsumed today since no OTLP metrics
-// reader exists.)
+// yield p50/p90/p99 with zero scrape config — the issue #158 fix. The OTLP
+// metrics push reader (attached when a metrics endpoint is configured) shares the
+// same MeterProvider and views, so it carries the same explicit buckets.
 //
 // Aggregation choice is a view-on-the-provider/reader concern, NOT a
 // per-instrument hint, which is why it belongs to whoever assembles the

@@ -139,8 +139,8 @@ describe("raw steer", () => {
         return new Response(prompt, { headers: { "content-type": "text/event-stream" } });
       }
       if (
-        path === `/v1/sessions/${scriptedState.sessionId}/steer` ||
-        path === `/v1/sessions/${scriptedState.sessionId}/cancel-steer`
+        path === `/v1/sessions/${scriptedState.sessionId}/controls/steer` ||
+        path === `/v1/sessions/${scriptedState.sessionId}/controls/cancel-steer`
       ) {
         controls.push({
           body: JSON.parse(String(init?.body)) as Record<string, unknown>,
@@ -189,11 +189,11 @@ describe("raw steer", () => {
           parts: [],
           text: "turn left",
         },
-        path: `/v1/sessions/${scriptedState.sessionId}/steer`,
+        path: `/v1/sessions/${scriptedState.sessionId}/controls/steer`,
       },
       {
         body: { expected_run_id: "run-http", message_id: "cancel-http" },
-        path: `/v1/sessions/${scriptedState.sessionId}/cancel-steer`,
+        path: `/v1/sessions/${scriptedState.sessionId}/controls/cancel-steer`,
       },
     ]);
   });

@@ -22,6 +22,7 @@ func TestTeamPayloadHasReviewedContentFields(t *testing.T) {
 		"InnerKind":         "projected event kind",
 		"Text":              "bounded member message/result preview",
 		"ToolName":          "member tool name only",
+		"ChildToolCallID":   "exact member tool.call/tool.result ID scoped by member lane; empty otherwise",
 		"Detail":            "bounded member tool args/result preview",
 		"IsError":           "tool-result error flag",
 		"Rounds":            "terminal round count",
@@ -47,7 +48,7 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		"Role":     "short role label",
 		"Mutating": "workspace mode flag",
 		"Lead":     "lead flag",
-		// OPT-IN model router (ADR 0034): a CATEGORY label (operator taxonomy name) and a
+		// OPT-IN model router: a CATEGORY label (operator taxonomy name) and a
 		// concrete MODEL id the member's engine was minted on — bare metadata, never the
 		// member's role/prompt or the classifier's reasoning.
 		"RoutedCategory": "router category label",
@@ -55,8 +56,13 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		// ISSUE #397: the bare-metadata REASON the member was not routed (a
 		// session.RoutingReason* gate const or a bounded harness/composition miss code),
 		// EMPTY on a routed hit — never the member's role/prompt or classifier output.
-		"RoutingReason": "routing miss/gate reason label (bare metadata, empty on a hit)",
-		// ISSUE #112 / ADR 0035: the concrete MODEL id the member's engine ACTUALLY runs
+		"RoutingReason":   "routing miss/gate reason label (bare metadata, empty on a hit)",
+		"RoutingDecision": "sanitized bounded classifier decision metadata",
+		// Trusted log-only exact lifetime correlation for the retained debugger
+		// join. Neither field is projected to protobuf, HTTP, SDK, UI, or debugger JSON.
+		"MemberSessionID":   "private member session id correlation",
+		"MemberIncarnation": "private member incarnation correlation",
+		// ISSUE #112: the concrete MODEL id the member's engine ACTUALLY runs
 		// on, regardless of how it was chosen — bare metadata, never member content.
 		"Model": "resolved concrete model id (bare metadata)",
 	})

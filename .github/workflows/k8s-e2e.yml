@@ -1,4 +1,4 @@
-# kind-based k8s e2e suite for mecak8s (ADR 0048).
+# kind-based k8s e2e suite for mecak8s.
 #
 # Spins a real kind cluster + Redis StatefulSet + two storage-free mecak8s agent
 # replicas and asserts lease exclusion, graceful failover, session persistence,
@@ -30,13 +30,30 @@ on:
     paths:
       - cmd/mecak8s/**
       - internal/cliconfig/**
-      - internal/adapter/redisstore/**
+      - adapters/redisstore/**
+      - adapters/go.mod
+      - adapters/go.sum
+      - internal/adaptersupport/**
+      - contracts/gen/go/mecatl/driver/**
+      - go.work
+      - go.work.sum
       - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
       - deploy/helm/mecak8s/**
+      - deploy/helm/mecatl-execution/**
+      - cmd/mecatl-execution-provider/**
+      - cmd/mecatl-executor/**
+      - internal/adapter/executioncontroller/**
+      - internal/adapter/executionclient/**
+      - internal/executionenv/**
+      - contracts/proto/mecatl/execution/**
+      - e2e/k8s_execution/**
+      - deploy/mecatl-execution-kind/**
+      - build/execution-provider/Dockerfile
+      - build/execution-workload/Dockerfile
       - e2e/k8s/**
       - go.mod
       - go.sum
@@ -47,13 +64,30 @@ on:
     paths:
       - cmd/mecak8s/**
       - internal/cliconfig/**
-      - internal/adapter/redisstore/**
+      - adapters/redisstore/**
+      - adapters/go.mod
+      - adapters/go.sum
+      - internal/adaptersupport/**
+      - contracts/gen/go/mecatl/driver/**
+      - go.work
+      - go.work.sum
       - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
       - deploy/helm/mecak8s/**
+      - deploy/helm/mecatl-execution/**
+      - cmd/mecatl-execution-provider/**
+      - cmd/mecatl-executor/**
+      - internal/adapter/executioncontroller/**
+      - internal/adapter/executionclient/**
+      - internal/executionenv/**
+      - contracts/proto/mecatl/execution/**
+      - e2e/k8s_execution/**
+      - deploy/mecatl-execution-kind/**
+      - build/execution-provider/Dockerfile
+      - build/execution-workload/Dockerfile
       - e2e/k8s/**
       - go.mod
       - go.sum
@@ -98,6 +132,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            adapters/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -123,9 +160,9 @@ jobs:
 
       # kind: pinned version, installed via `go install` (no third-party action —
       # the house idiom for go-installable tools, matching actionlint/govulncheck
-      # in ci.yml). v0.32.0 is the current release.
+      # in ci.yml). v0.33.0 is the current release.
       - name: Install kind
-        run: go install sigs.k8s.io/kind@v0.32.0
+        run: go install sigs.k8s.io/kind@v0.33.0
 
       # ko: pinned version, same `go install` idiom. v0.18.1 builds the mecak8s
       # image from .ko.yaml onto the distroless base. KO_DOCKER_REPO=ko.local below
@@ -160,9 +197,53 @@ jobs:
       # the job log instead of silent.
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: k8s-e2e-artifacts-${{ github.run_id }}
           path: k8s-e2e-output.log
+          retention-days: 7
+          if-no-files-found: warn
+
+  execution-production-e2e:
+    name: execution provider production profile (kind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            adapters/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+      - name: Install pinned Kind and ko
+        run: |
+          go install sigs.k8s.io/kind@v0.33.0
+          go install github.com/google/ko@v0.18.1
+      - name: Run production execution qualification
+        shell: bash
+        env:
+          CONTAINER_ENGINE: docker
+          MECATL_EXECUTION_QUAL_CI: "1"
+        run: task e2e:k8s:execution:production
+      - name: Upload bounded failure artifact
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: execution-e2e-artifacts-${{ github.run_id }}
+          path: .scratch/k8s-execution/*/production-failure-artifact.txt
           retention-days: 7
           if-no-files-found: warn

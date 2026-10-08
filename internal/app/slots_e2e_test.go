@@ -63,7 +63,7 @@ func TestCompactionSlotE2ESummaryModel(t *testing.T) {
 		ModelSlots:   map[string]string{slotCompaction: slotCheap},
 		ModelAliases: map[string]string{slotCheap: cheapModel},
 	}
-	deps := engineDepsForProvider(cfg, summaryLLM, sessionModel, func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), nil, nil, nil)
+	deps := engineDepsForProvider(cfg, summaryLLM, testProviderModel(sessionModel), func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), nil, nil, nil)
 	cc, ok := deps.Compactor.(agent.CascadeCompactor)
 	if !ok {
 		t.Fatalf("Compactor type = %T, want CascadeCompactor", deps.Compactor)
@@ -86,7 +86,7 @@ func TestCompactionSlotE2ESummaryModel(t *testing.T) {
 		session.NewAssistantMessage("recent answer", "", nil),
 	}}
 
-	if _, _, err := cc.Compact(context.Background(), conv); err != nil {
+	if _, _, _, err := cc.Compact(context.Background(), conv); err != nil {
 		t.Fatalf("Compact (tier-4): %v", err)
 	}
 	if !rec.contains(cheapModel) {
@@ -101,7 +101,7 @@ func TestCompactionSlotE2ESummaryModel(t *testing.T) {
 // driven once, sends the slot model to the provider while a no-slot baseline sends
 // the configured guardrails model — proving the slot routes ONLY the checker call.
 // The #159 sub-case pins that a slot ALONE (no GuardrailsModel) builds a checker that
-// runs the slot model (configure = enable, ADR 0046).
+// runs the slot model (configure = enable).
 func TestGuardrailSlotE2ECheckerModel(t *testing.T) {
 	const sessionModel = "session-model"
 
@@ -131,6 +131,6 @@ func TestGuardrailSlotE2ECheckerModel(t *testing.T) {
 		ModelAliases: map[string]string{slotCheap: "mock-cheap-model"},
 	}
 	if m := checkerModel(t, slotOnly, sessionModel); m != "mock-cheap-model" {
-		t.Fatalf("slot-only guardrail checker model = %q, want %q (the slot must enable + route, ADR 0046)", m, "mock-cheap-model")
+		t.Fatalf("slot-only guardrail checker model = %q, want %q (the slot must enable + route)", m, "mock-cheap-model")
 	}
 }

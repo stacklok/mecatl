@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // connectAction is the workspace-enrollment action used by /tools-connect.
@@ -105,7 +106,7 @@ func (m Model) applyWorkspaceEnrollmentPresentation(msg workspaceEnrollmentPrese
 	}
 	if msg.err != nil {
 		if !errors.Is(msg.err, context.Canceled) {
-			m.enrollment.err = oneLine(sanitizeTerminal(msg.err.Error()))
+			m.enrollment.err = oneLine(terminaltext.Sanitize(msg.err.Error()))
 			m.statusMsg = m.deps.Theme.Style("warning").Render("could not open browser: " + m.enrollment.err)
 		}
 		return m, nil
@@ -250,7 +251,7 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 			m.enrollment.presentationDelivered = false
 			return m, nil
 		default:
-			m.enrollment.err = oneLine(sanitizeTerminal(msg.err.Error()))
+			m.enrollment.err = oneLine(terminaltext.Sanitize(msg.err.Error()))
 			m.workspaceEnrollmentNotice = m.enrollment.err
 			if msg.action == "check" && m.enrollment.Status == client.WorkspaceEnrollmentPending && m.enrollment.presentationDelivered {
 				return m, workspaceEnrollmentPollTickCmd(m.sessionID, m.enrollment.ID, m.enrollment.controlGen)

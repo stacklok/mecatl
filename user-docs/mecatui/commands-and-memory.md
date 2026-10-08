@@ -15,11 +15,18 @@ embedded session and a remote server can expose different commands.
 
 ## Workspace service enrollment
 
-When the server provides protected workspace services, run `/tools-connect` to
-start or recheck the connection. Run `/tools-cancel` to cancel a pending
-connection. You can continue editing the prompt while browser consent is
-pending. If the server requires the connection before accepting a prompt,
-`mecatui` sends the retained prompt after the connection succeeds.
+When the server provides protected workspace services, run `/mcp-refresh` to
+start or recheck the connection. This broker path keeps the existing destructive
+reconnection disclosure and browser consent flow. `/tools-connect` is a
+deprecated broker-only alias. Run `/tools-cancel` to cancel a pending connection.
+You can continue editing the prompt while browser consent is pending. If the
+server requires the connection before accepting a prompt, `mecatui` sends the
+retained prompt after the connection succeeds.
+
+On a direct MCP server, `/mcp-refresh` performs the direct refresh without a
+browser consent flow. `mecatui` enables exactly one path from server
+capabilities. It refuses the command when both modes, neither mode, or the
+matching client collaborator are unavailable.
 
 ## Completed-session learning
 
@@ -34,7 +41,7 @@ change a separately configured consolidation schedule.
 In embedded mode, these settings live with the embedded server. In `connect`
 mode, ask the remote server operator to change the settings and restart the
 server. For configuration details, see
-[Memory and knowledge](/building/what-you-get/memory.md).
+[Memory and user model](/features/agent-behavior/memory.md).
 
 ## Review and maintain memory
 
@@ -52,12 +59,12 @@ server. For configuration details, see
 
 If a command is absent or unavailable, the connected server does not support it
 under its current configuration and policy. For learning, consolidation, and
-authorization behavior, see [Learning](/features/learning.md) and
-[Dreaming and memory consolidation](/features/dreaming.md). Builders configuring
-stores, retention, or learning should use the
-[memory guide](/building/what-you-get/memory.md).
+authorization behavior, see [Learning](/features/agent-behavior/learning.md) and
+[Dreaming and memory consolidation](/features/agent-behavior/dreaming.md).
+Builders configuring stores, retention, or learning should use the
+[memory guide](/features/agent-behavior/memory.md).
 
 ## Next steps
 
-- [Review learning behavior](/features/learning.md).
-- [Configure memory stores and retention](/building/what-you-get/memory.md).
+- [Review learning behavior](/features/agent-behavior/learning.md).
+- [Configure memory stores and retention](/features/agent-behavior/memory.md).

@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // models.go owns /models installation plus model-selection restart and persistence
@@ -35,6 +37,7 @@ func (m Model) openModels() (tea.Model, tea.Cmd) {
 		provenance:   m.modelProvenanceLine(),
 		loading:      true,
 		filter:       ti,
+		list:         new(bounded.List),
 		deps:         (&m).surfaceDeps(),
 	}
 	return m, tea.Batch(client.ListModelsCmd(m.deps.Ctx, m.deps.Models, requestToken), textinput.Blink)
@@ -56,7 +59,7 @@ func (m Model) chooseModel(sel client.ModelSelection, label string) (tea.Model, 
 // on the SessionReadyMsg rebind. The picker owns the single cache warning; this
 // receipt only confirms that the server-authoritative conversation was adopted.
 func modelSwitchNote(label string) string {
-	return "switched to " + label + " — conversation kept"
+	return "switched to " + terminaltext.SanitizeSingleLine(label) + " — conversation kept"
 }
 
 // restartOnModel performs the restart-now handoff: it persists the pick
@@ -212,7 +215,7 @@ func (m Model) carryoverCmd(oldID string, sel client.ModelSelection, token uint6
 	}
 }
 
-// switchEffort performs the /effort fork-resume handoff (ADR 0068): like
+// switchEffort performs the /effort fork-resume handoff: like
 // restartOnModel it persists the pick, records provenance, ends any in-flight run,
 // and drives phaseConnecting — but it deliberately does NOT resetSession(): the
 // server forks the session's conversation onto the peer session, so the transcript
@@ -337,7 +340,7 @@ type selectionSavedMsg struct{ err error }
 func (m Model) setGlobalDefault(sel client.ModelSelection, label string) (tea.Model, tea.Cmd) {
 	m.modelCatalog.globalDefault = sel
 	m.statusMsg = m.deps.Theme.Style("success").Render(
-		"global default set: " + sanitizeTerminal(label) + " (used by new workspaces)")
+		"global default set: " + terminaltext.Sanitize(label) + " (used by new workspaces)")
 	return m, m.saveGlobalDefaultCmd(sel)
 }
 

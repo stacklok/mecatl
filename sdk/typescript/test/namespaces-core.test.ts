@@ -28,6 +28,7 @@ import {
   ListToolHiveGroupsRequestSchema,
   ListWorktreesRequestSchema,
   ReadMcpResourceRequestSchema,
+  RefreshMcpSourcesRequestSchema,
 } from "../src/gen/mecatl/v1/harness_pb.js";
 import { connect } from "../src/index.js";
 import { RPC_CATALOG } from "../src/rpc-catalog.js";
@@ -41,6 +42,7 @@ const batchACatalogKeys = [
   "HarnessService.ListMcpPrompts",
   "HarnessService.GetMcpPrompt",
   "HarnessService.ListMcpSources",
+  "HarnessService.RefreshMcpSources",
   "HarnessService.ListToolHiveGroups",
   "HarnessService.ListAgents",
   "HarnessService.ListCommands",
@@ -69,6 +71,7 @@ const expectedSignatures = {
     "listPrompts(request: ListMcpPromptsRequest, options?: RequestOptions): Promise<ListMcpPromptsResponse>;",
     "listResources(request: ListMcpResourcesRequest, options?: RequestOptions): Promise<ListMcpResourcesResponse>;",
     "listSources(request: ListMcpSourcesRequest, options?: RequestOptions): Promise<ListMcpSourcesResponse>;",
+    "refresh(request: RefreshMcpSourcesRequest, options?: RequestOptions): Promise<RefreshMcpSourcesResponse>;",
     "listToolHiveGroups(request: ListToolHiveGroupsRequest, options?: RequestOptions): Promise<ListToolHiveGroupsResponse>;",
     "readResource(request: ReadMcpResourceRequest, options?: RequestOptions): Promise<ReadMcpResourceResponse>;",
   ],
@@ -199,6 +202,7 @@ describe("core typed namespaces", () => {
           }),
         ),
       () => client.mcp.listSources(create(ListMcpSourcesRequestSchema)),
+      () => client.mcp.refresh(create(RefreshMcpSourcesRequestSchema, { sessionId: "session-1" })),
       () => client.mcp.listToolHiveGroups(create(ListToolHiveGroupsRequestSchema)),
       () => client.agents.list(create(ListAgentsRequestSchema)),
       () => client.commands.list(create(ListCommandsRequestSchema, { sessionId: "session-1" })),
@@ -213,6 +217,7 @@ describe("core typed namespaces", () => {
       "ListMcpPrompts",
       "GetMcpPrompt",
       "ListMcpSources",
+      "RefreshMcpSources",
       "ListToolHiveGroups",
       "ListAgents",
       "ListCommands",

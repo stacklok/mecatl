@@ -1,7 +1,9 @@
 // Package memfs implements an in-memory tool.FileSystem and tool.Workspace
 // (map-backed) for fast, offline FS-tool tests. It enforces the same path-escape
-// rejection and the same Edit read-ledger semantics as the osfs adapter, and
-// performs Grep over the in-memory contents.
+// rejection and file-version protocol (content-hash versions, create-only and
+// compare-and-swap writes) as the osfs adapter, and performs Grep over the
+// in-memory contents. It keeps no read-before-edit evidence: that is the
+// Environment's separately selected tool.ReadLedger (for example memledger).
 //
 // memfs has no shell, so its Workspace deliberately does NOT execute commands.
 // For deterministic Shell-tool stubbing it exposes a separate, programmable
@@ -285,6 +287,52 @@ func (w *Workspace) ReadVersion(_ context.Context, p string) ([]byte, tool.FileV
 	}
 	out := bytes.Clone(n.data)
 	return out, versionOf(n.data), nil
+}
+
+// ReadVersionBounded returns one consistent snapshot without allocating beyond
+// the caller's byte limit.
+func (w *Workspace) ReadVersionBounded(_ context.Context, p string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	if maxBytes < 0 {
+		return nil, tool.FileVersion{}, errors.New("memfs: negative bounded read limit")
+	}
+	key, err := cleanPath(p)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	w.fs.mu.RLock()
+	defer w.fs.mu.RUnlock()
+	n, ok := w.fs.files[key]
+	if !ok {
+		return nil, tool.FileVersion{}, fmt.Errorf("memfs: open %q: %w", p, ErrNotExist)
+	}
+	if int64(len(n.data)) > maxBytes {
+		return nil, tool.FileVersion{}, fmt.Errorf("memfs: file %q is %d bytes, exceeds the %d-byte bounded read limit", p, len(n.data), maxBytes)
+	}
+	return bytes.Clone(n.data), versionOf(n.data), nil
+}
+
+// ReadVersionRangeBounded returns one page and the version/size of the same
+// locked in-memory snapshot without copying the rest of the file.
+func (w *Workspace) ReadVersionRangeBounded(_ context.Context, p string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	if offset < 0 || maxBytes < 0 || totalLimit < 0 {
+		return nil, tool.FileVersion{}, 0, errors.New("memfs: negative bounded range")
+	}
+	key, err := cleanPath(p)
+	if err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	w.fs.mu.RLock()
+	defer w.fs.mu.RUnlock()
+	n, ok := w.fs.files[key]
+	if !ok {
+		return nil, tool.FileVersion{}, 0, fmt.Errorf("memfs: open %q: %w", p, ErrNotExist)
+	}
+	total := int64(len(n.data))
+	if total > totalLimit || offset > total {
+		return nil, tool.FileVersion{}, total, fmt.Errorf("memfs: file %q exceeds bounded range", p)
+	}
+	end := min(total, offset+maxBytes)
+	return bytes.Clone(n.data[offset:end]), versionOf(n.data), total, nil
 }
 
 // Write is an adapter-public bootstrap operation, deliberately outside

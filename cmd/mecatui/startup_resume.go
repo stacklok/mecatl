@@ -17,6 +17,10 @@ type startupResumeSource interface {
 	client.SessionGetter
 }
 
+type pendingApprovalRecoverySource interface {
+	DiscoverPendingApproval(context.Context, string) (client.PendingApproval, error)
+}
+
 const startupReasonNotFound = client.CapabilityReasonUnknown
 
 type startupResumeError struct {
@@ -58,7 +62,7 @@ func resolveStartupResume(ctx context.Context, source startupResumeSource, exact
 		return nil, nil
 	}
 	if exactID != "" {
-		return loadExactStartupResume(ctx, source, exactID)
+		return loadExactStartupResume(ctx, source, exactID, true)
 	}
 	rows, err := source.ListSessions(ctx)
 	if err != nil {
@@ -92,7 +96,7 @@ func resolveStartupResume(ctx context.Context, source startupResumeSource, exact
 	return nil, &startupResumeError{Reason: startupReasonNotFound, noEligibleChat: true, text: "no eligible resumable chat was found; use --resume with an exact ID or start a new chat"}
 }
 
-func loadExactStartupResume(ctx context.Context, source startupResumeSource, id string) (*client.ResumeSelection, error) {
+func loadExactStartupResume(ctx context.Context, source startupResumeSource, id string, recoverPending bool) (*client.ResumeSelection, error) {
 	snapshot, err := source.GetSession(ctx, id)
 	if err != nil {
 		reason := client.CapabilityReasonUnknown
@@ -124,11 +128,37 @@ func loadExactStartupResume(ctx context.Context, source startupResumeSource, id 
 		row.ReasonCode = client.CapabilityReasonInspectOnlyKind
 	} else if snapshot.State == "awaiting" {
 		row.ReasonCode = client.CapabilityReasonAwaitingApproval
+		if !recoverPending {
+			return nil, &startupResumeError{Reason: row.ReasonCode, text: capabilityStartupGuidance(row.ReasonCode)}
+		}
+		recovery, ok := source.(pendingApprovalRecoverySource)
+		if !ok {
+			return nil, pendingApprovalStartupError(nil)
+		}
+		pending, discoverErr := recovery.DiscoverPendingApproval(ctx, id)
+		if discoverErr != nil {
+			return nil, pendingApprovalStartupError(discoverErr)
+		}
+		current, currentErr := source.GetSession(ctx, id)
+		if currentErr != nil || current.State != "awaiting" {
+			return nil, pendingApprovalStartupError(currentErr)
+		}
+		return &client.ResumeSelection{Row: row, Transcript: transcript, Snapshot: current, Pending: &pending}, nil
 	}
 	if !startupResumeEligible(row, false) {
 		return nil, &startupResumeError{Reason: row.ReasonCode, text: capabilityStartupGuidance(row.ReasonCode)}
 	}
 	return &client.ResumeSelection{Row: row, Transcript: transcript, Snapshot: snapshot}, nil
+}
+
+func pendingApprovalStartupError(err error) error {
+	text := "that chat is awaiting approval, but recovery could not be verified; retry or leave the approval pending"
+	if client.IsPendingApprovalFailure(err, client.PendingApprovalWatchUnsupported) {
+		text = "that chat is awaiting approval; this server does not support durable pending-approval recovery"
+	} else if client.IsPendingApprovalFailure(err, client.PendingApprovalUnsupportedAsk) {
+		text = "that chat requires a dedicated plan or guardrail approval flow; ordinary approval recovery cannot resolve it"
+	}
+	return &startupResumeError{Reason: client.CapabilityReasonAwaitingApproval, text: text, cause: err}
 }
 
 func startupResumeEligible(row client.SessionListItem, latest bool) bool {

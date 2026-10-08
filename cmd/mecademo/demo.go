@@ -85,7 +85,7 @@ func RunScenario(ctx context.Context, provider port.LLMProvider, model string) (
 		// AllowAlways exercises the learned-permission path: the policy records a
 		// per-session allow for this exact tool+pattern, so a repeat would not ask.
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
-			run.Approve(ev.Ask.AskID, session.VerdictAllowAlways)
+			_ = run.Approve(ev.Ask.AskID, session.VerdictAllowAlways)
 		}
 	}
 	return events, nil

@@ -25,7 +25,9 @@ import (
 	"context"
 	"strings"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	search "github.com/stacklok/mecatl/engine/adapter/search"
 	coreskillfs "github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -33,7 +35,6 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -72,24 +73,31 @@ import (
 //     tool, so ForkPreservedCap stays a PROCESS bound (a per-session reaper would
 //     multiply the cap by the number of sessions).
 type catalogAssets struct {
-	globalMgr        *mcp.Manager
-	agentReg         *agents.Registry
-	memStore         tool.MemoryStore
-	userModelStore   tool.MemoryStore
-	memoryDream      *dream.Consolidator
-	userModelDream   *dream.Consolidator
-	skills           []tool.SkillMeta
-	skillSource      tool.SkillSource
-	skillIndex       skillIndex
-	liveSkills       *coreskillfs.AtomicCatalog
-	learnedSkills    learning.SkillRepository
-	skillPublication *learnedSkillPublication
-	skillPartition   learning.SkillPartition
-	skillOwner       string
-	forkReaper       *agent.LRUForkReaper
+	globalMgr *mcp.Manager
+	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
+	// Catalog copies select the operation-pinned manager before assembly; cached
+	// engines retain only the returned revision tag.
+	mcpRuntimes          *mcpRuntimeSet
+	mcpReconciler        *mcpSourceReconciler
+	sharedEngineRevision uint64
+	buildRuntimeRelease  func()
+	agentReg             *agents.Registry
+	memStore             tool.MemoryStore
+	userModelStore       tool.MemoryStore
+	memoryDream          *dream.Consolidator
+	userModelDream       *dream.Consolidator
+	skills               []tool.SkillMeta
+	skillSource          tool.SkillSource
+	skillIndex           skillIndex
+	liveSkills           *coreskillfs.AtomicCatalog
+	learnedSkills        learning.SkillRepository
+	skillPublication     *learnedSkillPublication
+	skillPartition       learning.SkillPartition
+	skillOwner           string
+	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
-	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
-	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a
+	// Parallel single-branch auto-merge (the writable Subagent does not merge —
+	// it writes the parent tree directly). It wraps a forker.Merger in a
 	// forker.SerializingMerger so concurrent merges across sessions are serialized
 	// by a single mutex (a per-session instance would not serialize cross-session).
 	// Built ONCE in Phase A like forkReaper, and only when Parallel is enabled. Nil
@@ -106,8 +114,8 @@ type catalogAssets struct {
 	// the child catalogs for read-only-discovery parity with WebFetch.
 	searchProvider tool.SearchProvider
 	// scheduleManagerFactory is the resolver for the consumer-local
-	// port.ScheduleManager the Schedule tool drives (ADR 0073). The manager is
-	// STORE-shaped (ADR 0076), resolvable from the session store BEFORE
+	// port.ScheduleManager the Schedule tool drives. The manager is
+	// STORE-shaped, resolvable from the session store BEFORE
 	// buildEngine, so buildEngine binds this factory EAGERLY onto the assets
 	// (inside buildCatalog, before the build-time assembly) — registerScheduleTool
 	// fires on the SHARED pass and every per-session assembleCatalog call reads
@@ -120,7 +128,7 @@ type catalogAssets struct {
 	// known-non-nil or untyped nil.
 	scheduleManagerFactory func() port.ScheduleManager
 	// deliveryQueue is the DURABLE per-session pending-delivery queue
-	// (fire-result-delivery, ADR 0075 decision #3). It is built once in Build
+	// (fire-result delivery). It is built once in Build
 	// (a FileDeliveryQueue under the store dir for a durable store, an
 	// InMemoryDeliveryQueue for the in-memory default) and read by both
 	// baseEngineDeps (the shared engine — the loop's Step 2a drain) and the
@@ -130,17 +138,19 @@ type catalogAssets struct {
 	// no-delivery path). It is the SAME instance across main + per-session
 	// engines so a note queued during one run drains on the next.
 	deliveryQueue port.DeliveryQueue
-	// learningAdmission is the ONE process-wide completion counter shared by the
+	// learningAdmissionGate is the ONE process-wide completion counter shared by the
 	// default and every per-session/provider reviewer.
-	learningAdmission        *learningAdmission
+	learningAdmissionGate    *learningAdmissionGate
 	reflectionLifecycle      *materializationLifecycle
 	reflectionCoordinator    *reflectionCoordinator
 	reflectionRepository     learning.ProposalRepository
 	attemptRepository        learning.AttemptRepository
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
-	modelInventory           *resolvedModelInventory
+	modelInventory           server.ModelInventory
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
+	guardrailGrants          interface{ ClearSession(string) }
+	sessionContextFactory    server.SessionContextEngineFactory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -167,7 +177,8 @@ type catalogSession struct {
 	// EXACTLY as in the default profile — guarded by TestNoFSCatalogProfile,
 	// which pins the EXACT name-set delta. Always false for the build-time shared
 	// catalog (a process always has a default-profile shared engine).
-	noFS bool
+	noFS   bool
+	remote bool
 	// mode is the session's permission mode (the per-session factory passes the
 	// session's resolved mode; the build-time shared catalog leaves it
 	// ModeDefault). The Schedule registration reads it to register the
@@ -214,7 +225,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	classified := newClassifiedCatalog()
 	cat := classified.catalog
 	classified.captureEach(coreToolClassification, func() {
-		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
+		registerCoreTools(cfg, cat, s.narrate, s.noFS, s.remote, a.searchProvider)
 	})
 	for _, sessionTool := range s.sessionTools {
 		// A direct global manager retains ownership of its existing query wrapper.
@@ -285,27 +296,31 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		refMgr = s.clientMgr
 	}
 	var subagentClose func() error
-	classified.captureEach(delegationToolClassification, func() {
-		subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
-	})
-	// Parallel is ABSENT under the no-FS profile (not merely disarmed): every
-	// branch is a force-copy filesystem fork and the deliverable is a preserved
-	// fork PATH — both meaningless without a filesystem.
-	if !s.noFS {
+	if !s.remote {
+		classified.captureEach(delegationToolClassification, func() {
+			subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
+		})
+	}
+	// Parallel is ABSENT under no-FS and remote execution profiles.
+	if !s.noFS && !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
 			registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
 		})
 	}
-	classified.captureEach(delegationToolClassification, func() {
-		registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
-	})
+	if !s.remote {
+		classified.captureEach(delegationToolClassification, func() {
+			registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
+		})
+	}
 	classified.capture(server.ClassificationEntry{Kind: server.KindCallerOwned,
 		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
 		registerMemoryFamilies(ctx, cfg, cat, *a)
 	})
-	classified.captureEach(scheduleToolClassification, func() {
-		registerScheduleTool(ctx, cfg, cat, a, s)
-	})
+	if !s.remote {
+		classified.captureEach(scheduleToolClassification, func() {
+			registerScheduleTool(ctx, cfg, cat, a, s)
+		})
+	}
 	classified.captureEach(func(t tool.Tool) (server.ClassificationEntry, bool) {
 		return skillToolClassification(t, *a, s)
 	}, func() {
@@ -428,13 +443,13 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// parent base. The builder applies the SAME trust-UNGATED hardening
 	// buildForceCopyRunner does (force-copy forks do no fork-time git, so the
 	// trust gate does not apply — see the comment above).
-	fk := forker.New(newForkWorkspace(), forker.WithForceCopy(),
+	fk := routeChildForker(cfg, forker.New(newForkWorkspace(), forker.WithForceCopy(),
 		forker.WithRunner(func(childRoot string) tool.CommandRunner {
 			if !forceCopyShellAvailable(cfg) {
 				return nil
 			}
 			return newHardenedRunnerForRoot(cfg, childRoot)
-		}))
+		})))
 	// Parallel branches run Shell through the HARDENED, trust-UNGATED runner (issue
 	// #40) — the same construction as Mutating team members (buildForceCopyRunner).
 	// Ungated because a force-copy fork is created by a pure FS copy, with NO git
@@ -456,7 +471,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		// surfaced "branch id:" — the same store InspectSubagent reads and the Subagent
 		// tool persists children to (disjoint "parallel-" prefix).
 		agent.WithParallelStore(store),
-		// OPT-IN model router (ADR 0034): the per-branch model-override factory mints a
+		// OPT-IN model router: the per-branch model-override factory mints a
 		// branch engine on a router-classified model through the SAME contamination-safe
 		// per-provider path the branch child uses (window/compactor/counter re-derived).
 		// Wired unconditionally — it is consulted only when the run also wired routeTask
@@ -477,7 +492,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		cfg.diag().Log(ctx, port.LevelWarn,
 			"Parallel preserved-fork reaper missing from catalog assets; preserved winner forks will NOT be bounded (Phase A builds it under EnableParallel — hand-rolled assets?)")
 	}
-	// AUTO-MERGE (default-on, no flag — see docs/adr/0039-parallel-auto-merge.md):
+	// AUTO-MERGE (default-on, no flag):
 	// wire a forker.Merger so a SINGLE-BRANCH join=first/join=judge winner's diff is
 	// merged back into the parent workspace after the run — a delegated
 	// implementer's edits land without a manual copy/merge step. Multi-branch runs
@@ -489,7 +504,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// Use the SHARED process-wide serializing merger from the assets (built once in
 	// Phase A), NOT a fresh forker.NewMerger() — so the SAME mutex serializes every
 	// Parallel merge process-wide. A nil merger (hand-rolled assets) skips auto-merge
-	// entirely (the historical boundary).
+	// entirely.
 	if a.autoMerger != nil {
 		opts = append(opts, agent.WithAutoMerge(a.autoMerger))
 	}
@@ -562,10 +577,11 @@ func scheduleManagerPresent(a catalogAssets) bool {
 	return a.scheduleManagerFactory() != nil
 }
 
-// registerScheduleTool registers the model-facing Schedule tool (ADR 0073) when
+// registerScheduleTool registers the model-facing Schedule tool when
 // the assets carry a scheduleManager — the conditional-registration gate that
 // keeps the tool present exactly when the session's store backs a
-// port.ScheduleStore and ABSENT (honest, not a stub) otherwise, agreeing with
+// port.ScheduleStore and the session is not a remote-execution profile (the
+// caller skips it when remote), and ABSENT (honest, not a stub) otherwise, agreeing with
 // ServerCapabilities.Scheduling. The SAME conditional-registration shape as
 // registerMemoryFamilies (a nil-asset check, never a stub). Registered in BOTH
 // profiles: managing a schedule is not a filesystem act (a no-fs session can
@@ -576,7 +592,7 @@ func scheduleManagerPresent(a catalogAssets) bool {
 // (a ScopeBuiltinDefault Allow in defaultRules keyed on the tool name), so it is
 // pre-approved but config-overridable, the memory-tool posture.
 func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a *catalogAssets, s catalogSession) {
-	// The factory is bound EAGERLY by buildEngine (ADR 0076 — the manager is
+	// The factory is bound EAGERLY by buildEngine (the manager is
 	// store-shaped, resolvable before any catalog assembly); a nil factory or
 	// a factory returning nil means no schedule backend → the tool stays absent.
 	if a.scheduleManagerFactory == nil {
@@ -592,7 +608,7 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
 	// No origin wiring here: the Schedule tool stamps OriginSessionID from the
-	// run context itself (fire-result-delivery, ADR 0209), so there is nothing
+	// run context itself (fire-result delivery), so there is nothing
 	// composition can forget to wrap.
 	//
 	// The READ-ONLY half (AC1.4): list/inspect live on a separate query tool so
@@ -646,7 +662,7 @@ func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a c
 			cfg.diag().Log(ctx, port.LevelWarn, "registering skills failed; Skill tool disabled", "err", err)
 		}
 	}
-	if !s.noFS {
+	if !s.noFS && !s.remote {
 		if a.learnedSkills != nil && cfg.SkillsDraftDir != "" {
 			inventory := make([]learning.SkillInventoryItem, 0, len(a.skills))
 			for _, meta := range a.skills {
@@ -680,7 +696,7 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 		// WebSearch (issue #26) for read-only-discovery parity with WebFetch: a no-FS
 		// explorer's natural workflow is search-then-fetch, so it carries both. Built
 		// over the SAME process-wide provider as the main catalog (a.searchProvider).
-		cat.MustRegister(tools.NewWebSearchTool(a.searchProvider))
+		cat.MustRegister(search.NewWebSearchTool(a.searchProvider))
 	})
 	classified.capture(server.ClassificationEntry{Kind: server.KindSharedInfrastructure,
 		Rationale: "server-global MCP tools are process-wide configured infrastructure shared by every caller"}, func() {

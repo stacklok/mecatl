@@ -410,6 +410,39 @@ func TestScheduleInspectLoadsFires(t *testing.T) {
 	}
 }
 
+func TestScheduleDeletionPendingRenderIncludesRetryGuidance(t *testing.T) {
+	sched := sampleSchedule("cleanup")
+	sched.State.Enabled = false
+	sched.State.DeletionPending = true
+	fs := &fakeScheduleLister{schedules: []client.Schedule{sched}, sched: sched}
+	conv := newScheduleConv(scheduleCaps())
+	m := newScheduleModel(t, conv, fs, scheduleCaps())
+	mm, _ := m.openSchedule()
+	m = mm.(Model)
+	m = applyAll(m, client.SchedulesMsg{Schedules: fs.schedules})
+
+	panel := stripANSIstr(m.View().Content)
+	for _, want := range []string{"cleanup pending", "retry delete"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("schedule panel missing %q:\n%s", want, panel)
+		}
+	}
+	if strings.Contains(panel, "  paused") {
+		t.Errorf("schedule panel mislabeled pending cleanup as paused:\n%s", panel)
+	}
+
+	m.schedule.cursor = 0
+	mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	m = feedCmd(t, m, cmd)
+	inspect := stripANSIstr(m.View().Content)
+	for _, want := range []string{"deletion_pending: true", "cleanup is pending", "retry delete"} {
+		if !strings.Contains(inspect, want) {
+			t.Errorf("schedule inspect missing %q:\n%s", want, inspect)
+		}
+	}
+}
+
 // TestScheduleConfirmDeleteBackout asserts esc backs out of the confirm sub-view
 // without deleting.
 func TestScheduleConfirmDeleteBackout(t *testing.T) {

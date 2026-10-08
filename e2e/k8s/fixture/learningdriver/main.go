@@ -19,12 +19,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/reflectionstore"
 	"github.com/stacklok/mecatl/internal/adapter/skillstore"
 )

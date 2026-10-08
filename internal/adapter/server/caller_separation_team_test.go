@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked pins the ADR 0212
+// TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked pins the
 // live-team boundaries: lookup, run, and cleanup are all absence-shaped for a foreign
 // caller, while the owner retains each operation.
 func TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked(t *testing.T) {
@@ -136,6 +136,12 @@ func TestCallerSeparation_GRPCTeamMembersAreOwnerStamped(t *testing.T) {
 	}
 
 	memberID := agent.MemberSessionID(teamID, "lead")
+	if _, err := store.Load(context.Background(), memberID); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("member materialized before RunTeam: %v", err)
+	}
+	if _, err := svc.RunTeam(ctx, teamID, func(agent.TeamEvent) {}); err != nil {
+		t.Fatalf("RunTeam: %v", err)
+	}
 	sess, err := store.Load(context.Background(), memberID)
 	if err != nil {
 		t.Fatalf("load member %q: %v", memberID, err)

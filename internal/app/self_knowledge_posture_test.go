@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -316,6 +319,39 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 		t.Fatalf("user-docs/ not reachable from this package (%v) — fix the path, do not delete the gate", err)
 	}
 
+	// A page can move in the source tree while keeping its published route via
+	// front matter. Index those explicit routes instead of requiring URL and
+	// source layout to remain identical.
+	slugPages := map[string]string{}
+	if err := filepath.WalkDir(docsRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || (filepath.Ext(path) != ".md" && filepath.Ext(path) != ".mdx") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		parts := strings.SplitN(string(content), "---\n", 3)
+		if len(parts) != 3 || parts[0] != "" {
+			return nil
+		}
+		var metadata struct {
+			Slug string `yaml:"slug"`
+		}
+		if err := yaml.Unmarshal([]byte(parts[1]), &metadata); err != nil {
+			return err
+		}
+		if strings.HasPrefix(metadata.Slug, "/") {
+			slugPages[strings.Trim(metadata.Slug, "/")] = path
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("read documentation routes: %v", err)
+	}
+
 	seen := map[string]bool{}
 	pages := 0
 	for _, ref := range docPathRef.FindAllString(note, -1) {
@@ -341,7 +377,7 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 				filepath.Join(docsRoot, rel, "index.md"),
 			}
 		}
-		found := false
+		_, found := slugPages[strings.Trim(rel, "/")]
 		for _, c := range candidates {
 			if _, err := os.Stat(c); err == nil {
 				found = true
@@ -350,7 +386,7 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 		}
 		if !found {
 			sort.Strings(candidates)
-			t.Errorf("the note points the model at %q, which has no page under user-docs/ (tried %v) — update the note when a doc page moves",
+			t.Errorf("the note points the model at %q, which has no page or explicit slug under user-docs/ (tried %v) — update the note when a doc page moves",
 				ref, candidates)
 		}
 	}
@@ -457,7 +493,7 @@ func TestSelfKnowledgeBehaviouralClaimsMatchImplementation(t *testing.T) {
 		autoAllowed := map[string]bool{}
 		for name, call := range calls {
 			d := policy.Evaluate(context.Background(), session.SessionID("s1"), session.ModeAccept, call, nil)
-			autoAllowed[name] = d.Effect == governance.Allow
+			autoAllowed[name] = d.Decision.Effect == governance.Allow
 		}
 
 		// The claim: Edit and Write auto-allow, Shell does not.

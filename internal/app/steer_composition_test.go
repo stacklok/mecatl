@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// Scenario 6 of docs/acceptance/steer-while-running.md: the composition gate.
+// Steer while running: the composition gate.
 // The steer inbox is armed by a DEFAULT-ON composition knob (Config.DisableSteer
 // is the opt-OUT), threaded through engineDepsForProvider into agent.Deps.EnableSteer
 // and reflected — via the SAME wired engine's Engine.SteerEnabled() — in
@@ -63,17 +63,11 @@ func writeOperatorSteerFile(t *testing.T, value string) string {
 	return path
 }
 
-// steerCapsFromBuild creates a session against the built Service via the gRPC
-// CreateSession handler and returns the echoed ServerCapabilities — the SAME
-// projection a real client reads (mirrors postureEchoFromBuild).
+// steerCapsFromBuild returns the canonical deployment-wide compatibility
+// capabilities a real client reads.
 func steerCapsFromBuild(t *testing.T, built *Built) *mecatlv1.ServerCapabilities {
 	t.Helper()
-	resp, err := server.NewHarnessServer(built.Service).CreateSession(context.Background(),
-		&mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	return resp.GetCapabilities()
+	return built.Service.CompatibilityInfo(context.Background()).GetCapabilities()
 }
 
 // TestSteer_EnabledByDefaultEndToEnd is AC6.1: with steer enabled (the DEFAULT —

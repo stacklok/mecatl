@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestADR_0281_DefaultManagedRootUsesSystemTemp(t *testing.T) {
+func TestDefaultManagedRootUsesSystemTemp(t *testing.T) {
 	base := t.TempDir()
 	got, err := resolveTemporaryStorage(Config{}, func(key string) string {
 		if key == "TMPDIR" {
@@ -29,7 +29,7 @@ func TestADR_0281_DefaultManagedRootUsesSystemTemp(t *testing.T) {
 	}
 }
 
-func TestADR_0281_TemporaryStorageConfigValidation(t *testing.T) {
+func TestTemporaryStorageConfigValidation(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "managed")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestADR_0281_TemporaryStorageConfigValidation(t *testing.T) {
 	}
 }
 
-func TestADR_0281_ManagedModeUnixAdmission(t *testing.T) {
+func TestManagedModeUnixAdmission(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		mode     temporaryStorageMode
@@ -62,6 +62,7 @@ func TestADR_0281_ManagedModeUnixAdmission(t *testing.T) {
 	}{
 		{name: "managed linux", mode: temporaryStorageManaged, platform: "linux"},
 		{name: "managed macOS", mode: temporaryStorageManaged, platform: "darwin"},
+		{name: "managed FreeBSD", mode: temporaryStorageManaged, platform: "freebsd", wantErr: true},
 		{name: "managed windows", mode: temporaryStorageManaged, platform: "windows", wantErr: true},
 		{name: "managed other", mode: temporaryStorageManaged, platform: "plan9", wantErr: true},
 		{name: "system macOS", mode: temporaryStorageSystem, platform: "darwin"},

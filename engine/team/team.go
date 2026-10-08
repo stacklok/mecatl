@@ -1,5 +1,5 @@
 // Package team is the DOMAIN coordination substrate for headless agent teams
-// (see docs/adr/0014-agent-teams.md). It holds the pure, in-memory state two
+// (see docs/architecture/subagents-and-teams.md). It holds the pure, in-memory state two
 // or more concurrently-running agent sessions share to coordinate: a roster of
 // members with lifecycle states, a dependency-aware task list members claim and
 // complete, and a mailbox members use to message one another.
@@ -106,8 +106,8 @@ type Member struct {
 	// AgentType is the optional agent-definition name this member adopts (its
 	// scoped tools / model / prompt); empty for a generic member.
 	AgentType string
-	// Session is the id of the running session backing this member (empty until
-	// the supervisor wires it).
+	// Session is the stable id reserved for the runtime session backing this
+	// member. It may be advertised before that runtime is materialized.
 	Session session.SessionID
 	// State is the member's lifecycle state.
 	State MemberState

@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-// TestPhase3ReconstructFromStoreAndLog is the cloud-native Phase 3 GATE: it drives
+// TestPhase3ReconstructFromStoreAndLog is the store+log reconstruction GATE: it drives
 // a session that takes THREE distinct verdicts (deny / allow-once / allow-always)
 // AND crosses a compaction boundary, persists to a REAL on-disk jsonlstore via the
 // full composition (app.Build + the HTTP SSE relay, which Appends every event to
@@ -114,8 +114,12 @@ func TestPhase3ReconstructFromStoreAndLog(t *testing.T) {
 		if ev.Type != "permission.ask" {
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": verdictFor(asks)})
-		ar, aerr := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/approve",
+		body, _ := json.Marshal(map[string]any{
+			"expected_run_id": ev.RunID,
+			"ask_id":          ev.Ask.AskID,
+			"verdict":         verdictFor(asks),
+		})
+		ar, aerr := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/controls/resolve-ask",
 			"application/json", strings.NewReader(string(body)))
 		if aerr != nil {
 			t.Errorf("POST approve #%d: %v", asks+1, aerr)
@@ -216,9 +220,9 @@ func TestPhase3ReconstructFromStoreAndLog(t *testing.T) {
 		}
 	}
 
-	// (d) WHAT THE USER ASKED survives in the log (ADR 0038 / EvUserPrompt): the durable
+	// (d) WHAT THE USER ASKED survives in the log (EvUserPrompt): the durable
 	// log now records the user prompt text, so a from-store+log reconstruction can show
-	// what the user requested — the gap ADR 0027 row 11 left open. Before EvUserPrompt
+	// what the user requested. Before EvUserPrompt
 	// the relay never re-emitted the prompt, so the log could not show it.
 	foundPrompt := false
 	for _, ev := range logged {
@@ -254,7 +258,7 @@ func kindNames(set map[session.EventType]bool) []session.EventType {
 // childLeakSentinel is a secret-SHAPED stand-in for a Subagent child's tool arg
 // (gauntlet #7): an innocuous literal that must NEVER surface VERBATIM in any durable
 // log event — the no-leak mutation-verify asserts on the ABSENCE of its full form
-// (ADR 0079: the delegation projection forwards a clampPreview-BOUNDED preview, so
+// (the delegation projection forwards a clampPreview-BOUNDED preview, so
 // only a clamped head may cross). It is longer than the clampPreview cap (200 runes)
 // so verbatim carriage is impossible by construction.
 var childLeakSentinel = "SENTINEL_phase3_child_arg_must_not_leak_7b2e" + strings.Repeat("_pad", 120) + "_TAIL"
@@ -262,10 +266,10 @@ var childLeakSentinel = "SENTINEL_phase3_child_arg_must_not_leak_7b2e" + strings
 // childLeakSentinelTail is the part of the sentinel that clamping MUST remove.
 const childLeakSentinelTail = "_TAIL"
 
-// TestPhase3LogNoChildLeak is the Phase 3 GATE's no-leak mutation-verify: a
+// TestPhase3LogNoChildLeak is the reconstruction GATE's no-leak mutation-verify: a
 // Subagent delegation's child makes a tool call whose args carry a secret-shaped
 // sentinel. The delegation events the relay records (subagent.*) are BOUNDED
-// previews (ADR 0079), so the sentinel's TAIL must NOT appear in ANY durable-log
+// previews, so the sentinel's TAIL must NOT appear in ANY durable-log
 // event's serialized body. The
 // log inherits the stream's redaction; it adds none of its own — and the
 // compaction archive carries only the PARENT's conversation, never child content.
@@ -352,7 +356,7 @@ func TestPhase3LogNoChildLeak(t *testing.T) {
 		}
 	}
 
-	// CHILD-ISOLATION for EvUserPrompt (ADR 0038): the child's OWN prompt is the
+	// CHILD-ISOLATION for EvUserPrompt: the child's OWN prompt is the
 	// delegated goal ("investigate"). It is emitted on the CHILD run's stream (drained
 	// inside the Subagent tool, like every child event) and must NEVER reach the PARENT
 	// log. So the parent log's EvUserPrompt events carry only the parent's input

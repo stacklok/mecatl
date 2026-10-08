@@ -51,7 +51,7 @@ func sessionHeaderVectors(t *testing.T) []sessionHeaderVector {
 	return vectors
 }
 
-func TestADR_0294_SessionHeaderLegalValueParity(t *testing.T) {
+func TestSessionHeaderLegalValueParity(t *testing.T) {
 	if sessionIDHeaderName != "X-Mecatl-Session-ID" {
 		t.Fatalf("sessionIDHeaderName = %q", sessionIDHeaderName)
 	}
@@ -69,7 +69,7 @@ func TestADR_0294_SessionHeaderLegalValueParity(t *testing.T) {
 }
 
 func sessionHeaderFallbackRequest(model string) port.LLMRequest {
-	assistant := session.NewAssistantMessage("", "opaque-blob", nil)
+	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), nil)
 	assistant.ReasoningItemID = "rs_bad"
 	return port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi"), assistant}}
 }
@@ -87,7 +87,7 @@ func drainSessionHeaderFallbackStream(ctx context.Context, t *testing.T, p *Prov
 	}
 }
 
-func TestADR_0294_ProviderSessionHeaderExact(t *testing.T) {
+func TestProviderSessionHeaderExact(t *testing.T) {
 	const id = "session/exact:42?node=a&b=c"
 	headers := make(chan string, 4)
 	var requests int
@@ -120,7 +120,7 @@ func TestADR_0294_ProviderSessionHeaderExact(t *testing.T) {
 	}
 }
 
-func TestADR_0294_ProviderSessionHeaderOptional(t *testing.T) {
+func TestProviderSessionHeaderOptional(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
@@ -173,7 +173,7 @@ func (b *sessionHeaderPairBarrier) wait(ctx context.Context) error {
 	}
 }
 
-func TestADR_0294_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
+func TestProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		captured = map[string]int{}

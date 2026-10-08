@@ -28,7 +28,7 @@ func dreamStore(t *testing.T) *memory.Store {
 		{Key: "a", Value: "same", Description: "same"},
 		{Key: "b", Value: "same", Description: "same"},
 	} {
-		if err := store.RememberEntry(context.Background(), entry); err != nil {
+		if _, err := store.Remember(context.Background(), entry, tool.MemoryCurrent{}); err != nil {
 			t.Fatal(err)
 		}
 	}

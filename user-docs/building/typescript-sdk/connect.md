@@ -9,9 +9,15 @@ sidebar_position: 2
 # Connect an application
 
 Use `connect()` when an operator owns the Mecatl daemon and your application
-owns only the client connection. Node.js, Bun, and Deno connect to the gRPC listener.
-Browser applications use the HTTP and SSE API and
-connect through a same-origin backend-for-frontend (BFF).
+owns only the client connection. Node.js, Bun, and Deno connect to the gRPC
+listener. Browser applications use the HTTP and SSE API and connect through a
+same-origin backend-for-frontend (BFF).
+
+## Prerequisites
+
+Install `@stacklok-oss/mecatl-sdk` in your application. Ask the operator for the
+listener URL, authentication method, and any private CA certificate. Keep the
+daemon running while your application uses the connection.
 
 ## Connect from Node.js or Bun
 
@@ -54,8 +60,6 @@ headers.
 
 ## Connect from Deno
 
-The Deno integration is unreleased and excluded from SDK v0.1.0.
-
 Import `connect()` from the Deno entry point and pass the gRPC listener's HTTP
 or HTTPS authority. Deno uses the same ConnectRPC transport as Node.js and Bun:
 
@@ -78,11 +82,11 @@ pass its certificate through `nodeOptions.ca`; grant read access if your
 application loads the certificate from disk.
 
 To connect to a Unix-domain socket, pass `socketPath` instead of `baseUrl` and
-grant network access with `--allow-net=unix:<ABSOLUTE_SOCKET_PATH>`. The socket's
-operating-system permissions also apply. See the
-[Deno API reference](/reference/typescript-sdk-api/deno.md) for connection options.
-If your daemon exposes only HTTP and SSE, import `connect()` from the root
-`@stacklok-oss/mecatl-sdk` entry point instead.
+grant network access with `--allow-net=unix:<ABSOLUTE_SOCKET_PATH>`. The
+socket's operating-system permissions also apply. See the
+[Deno API reference](/reference/typescript-sdk-api/deno.md) for connection
+options. If your daemon exposes only HTTP and SSE, import `connect()` from the
+root `@stacklok-oss/mecatl-sdk` entry point instead.
 
 ## Connect from a browser
 
@@ -107,24 +111,28 @@ Keep privileged daemon credentials out of browser JavaScript. The SDK supplies
 the browser-facing HTTP and SSE client; it does not include a BFF server.
 
 For local browser development, an operator can configure the daemon's exact CORS
-origins. See
-[Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md) for
-listener and transport configuration.
+origins. See [Connect with gRPC or HTTP](/building/grpc-http.md) for listener
+and transport configuration.
 
 ## Read timestamps and durations over HTTP
 
 The SDK decodes protobuf `Timestamp` and `Duration` fields automatically in
 unary HTTP responses and SSE events. This works when the daemon sends either a
 ProtoJSON string or an object with `seconds` and `nanos` members. The transport
-uses the generated protobuf descriptors to find these fields in nested
-messages, lists, and maps, so application messages with similarly named fields
-keep their original meaning.
+uses the generated protobuf descriptors to find these fields in nested messages,
+lists, and maps, so application messages with similarly named fields keep their
+original meaning.
 
 Decoded messages contain the standard protobuf-es values. `getRawJson()` still
 returns the original parsed HTTP value, including object-form timestamps and
 durations and unknown fields. A malformed or out-of-range value raises a
-`ProtocolError` with `transport` set to `"http"`. Use the decoded values directly
-and handle this error as a response-protocol failure.
+[`ProtocolError`](/reference/typescript-sdk-api/core.md#api-protocolerror-class)
+with `transport` set to `"http"`. Malformed successful unary responses and
+ordinary SSE data frames do not attach the JSON or protobuf decoder as the
+error's `cause`, because a runtime decoder message can contain response text.
+Use `code`, `status`, and `requestId` for logging and correlation. Server,
+authentication, network, and response-body read failures keep their documented
+cause behavior.
 
 ## Observe connection status
 
@@ -153,6 +161,6 @@ The status vocabulary is `connecting`, `online`, `reconnecting`, `offline`,
 
 ## Related information
 
-- [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md)
+- [Connect with gRPC or HTTP](/building/grpc-http.md)
 - [HTTP and SSE API reference](/reference/http-sse-api.md)
 - [gRPC API reference](/reference/grpc-api.md)

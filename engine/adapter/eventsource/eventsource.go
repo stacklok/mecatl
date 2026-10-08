@@ -5,14 +5,13 @@
 //
 // WHY THIS EXISTS. mecatl persists a session via SNAPSHOTS (engine/adapter/sessnap,
 // the JSON DTO the store adapters round-trip), and its OWN resume always reloads
-// from that snapshot. But the durable EventLog (ADR 0027 Phase 3a) records the FULL
+// from that snapshot. But the durable EventLog records the FULL
 // chronological timeline — the same events a relay emits — and a host that already
 // keeps an append-only event log as its system of record (a downstream consumer) would rather
 // implement port.SessionStore.Load by folding its own event stream into a Session
-// than maintain a parallel snapshot. ADR 0027 shipped the durable RECORDING of that
-// stream (List-2 row 11) but left the RECONSTRUCTION direction as snapshot-only; this
-// package is the documented, reference-implemented shape that closes that deferral
-// (ADR 0038).
+// than maintain a parallel snapshot. The durable RECORDING of that stream shipped
+// first, with the RECONSTRUCTION direction left snapshot-only; this package is the
+// documented, reference-implemented shape that closes that gap.
 //
 // WHAT FOLD RECONSTRUCTS — AND WHAT IT CANNOT. A pure event fold rebuilds the
 // STRUCTURAL conversation faithfully: the assistant/tool message sequence, every
@@ -38,7 +37,7 @@
 // (which carries them) is the byte-identical path, which is why mecatl's own resume
 // uses the snapshot; the fold is for event-log-SoR hosts that accept (or themselves
 // carry, in a richer event schema) this contract boundary. This is a DOCUMENTED
-// CONTRACT LIMITATION (engine/COMPATIBILITY.md, ADR 0038), not a bug.
+// CONTRACT LIMITATION (engine/COMPATIBILITY.md), not a bug.
 //
 // CREATION METADATA is supplied via SessionMeta: id, mode, limits, exact
 // EnvironmentRef, display-only placement metadata, profile, provider/model selector,
@@ -46,8 +45,7 @@
 // are facts that NO event carries, so the caller
 // (who created or discovered the session and thus knows them) provides them alongside
 // the stream. A legacy empty title falls back to the first genuine EvUserPrompt.
-// There is deliberately no EvSessionCreated event (ADR 0038 records that as a
-// possible future).
+// There is deliberately no EvSessionCreated event.
 //
 // USER MESSAGES: the loop emits a log-only EvUserPrompt at every site it records a
 // user-role message — the genuine client prompt AND the harness-authored synthetic
@@ -96,7 +94,7 @@ type SessionMeta struct {
 	// ("" / "" = server default).
 	ProviderID string
 	ModelID    string
-	// ReasoningEffort is the opaque neutral reasoning-effort token (ADR 0055), ""
+	// ReasoningEffort is the opaque neutral reasoning-effort token, ""
 	// when unset. Opaque to the domain; carried so the rehydrated session re-mints
 	// the same-effort per-session engine via the factory.
 	ReasoningEffort string
@@ -117,6 +115,9 @@ type SessionMeta struct {
 	TitleAttempts      []session.TitleAttempt
 	// TokenUsage is the canonical durable accounting ledger supplied by snapshot metadata.
 	TokenUsage map[session.UsageKind]session.TokenUsage
+	// LatestContextOccupancy is the optional display-only context meter supplied by
+	// the event-log host's stored snapshot metadata, never reconstructed from events.
+	LatestContextOccupancy *session.ContextOccupancy
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
@@ -126,8 +127,8 @@ type SessionMeta struct {
 	Incarnation session.IncarnationID
 	Owner       *session.Principal
 	// Authority is the plain derived-capability payload supplied with creation
-	// metadata. Nil is a documented pre-feature legacy record; a present payload
-	// is validated and bound before reconstruction proceeds.
+	// metadata. Nil is a documented legacy record written without authority; a
+	// present payload is validated and bound before reconstruction proceeds.
 	Authority *session.Authority
 	// ExternalBinding is the opaque composition-issued process-external
 	// identity (e.g. an MCP broker attachment binding). Not event-carried:
@@ -211,6 +212,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
 	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
+	if meta.LatestContextOccupancy != nil {
+		s.RecordLatestContextOccupancy(*meta.LatestContextOccupancy)
+	}
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
@@ -228,17 +232,19 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
 	// through the SAME state-driving logic sessnap.Restore uses (sessnap.RestoreState),
 	// so the terminal-transition vocabulary lives in exactly one place.
-	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
+	usage := foldedTokenUsage(meta.TokenUsage, f.usage)
+	data := sessnap.RestoreData{
+		State: f.restoreState(), Stop: f.stop, Counters: f.finalCounters(),
+		TokenUsage: usage,
+		Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
+		LastError:  f.lastError,
+	}
+	if f.retryPending {
+		data.RetryPending = true
+		data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
+	}
+	if err := sessnap.RestoreState(s, data); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	restoreTokenUsage(s, meta.TokenUsage, f.usage)
-	if s.State == session.StateFailed {
-		if err := s.RecordFailureMetadata(f.disposition, f.progress); err != nil {
-			return nil, fmt.Errorf("%w: restore failure metadata: %w", ErrReconstruct, err)
-		}
-	}
-	if err := f.restoreRetryPending(s); err != nil {
-		return nil, err
 	}
 	// Seed the session Title from the first genuine user prompt captured during the
 	// fold (set-once + clamped via SetTitle). This reuses the domain predicate + the
@@ -250,18 +256,15 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	return s, nil
 }
 
-// restoreTokenUsage makes canonical persisted usage authoritative and derives it
-// from the legacy compatibility projection only when the ledger is absent.
-func restoreTokenUsage(s *session.Session, persisted map[session.UsageKind]session.TokenUsage, legacy session.Usage) {
+func foldedTokenUsage(persisted map[session.UsageKind]session.TokenUsage, main session.Usage) map[session.UsageKind]session.TokenUsage {
 	if persisted != nil {
-		s.RestoreTokenUsage(persisted)
-		return
+		return persisted
 	}
-	if legacy != (session.Usage{}) {
-		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
-			session.UsageKindMain: {Total: legacy, Models: map[string]session.Usage{"unknown": legacy}},
-		})
+	usage := make(map[session.UsageKind]session.TokenUsage)
+	if main != (session.Usage{}) {
+		usage[session.UsageKindMain] = session.TokenUsage{Total: main, Models: map[string]session.Usage{"unknown": main}}
 	}
+	return usage
 }
 
 func (f *folder) finalizeOpenTurn() {
@@ -277,16 +280,6 @@ func (f *folder) finalizeOpenTurn() {
 		f.curText = ""
 		f.curCalls = nil
 	}
-}
-
-func (f *folder) restoreRetryPending(s *session.Session) error {
-	if !f.retryPending {
-		return nil
-	}
-	if err := s.RestoreFailedStepRetryPending(f.retryDisposition, f.retryProgress); err != nil {
-		return fmt.Errorf("%w: restore failed-step retry intent: %w", ErrReconstruct, err)
-	}
-	return nil
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
@@ -320,7 +313,7 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
-	restoreTokenUsage(s, meta.TokenUsage, f.usage)
+	s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
 	}
@@ -369,11 +362,10 @@ type folder struct {
 	firstGenuineText string
 
 	// derived lifecycle.
-	usage       session.Usage // cumulative = SUM of every EvResult.Usage
+	usage       session.Usage // cumulative = SUM of every EvResult.Result.Usage
 	stop        session.StopReason
 	pending     *session.PendingAsk
 	ended       bool // a terminal EvResult was seen
-	permanent   bool // compatibility projection of disposition==permanent
 	disposition session.RetryDisposition
 	progress    session.StreamProgress
 	lastError   string // last EvResult.Error (meaningful only when stop==StopError) — issue #332
@@ -580,6 +572,10 @@ func (f *folder) consumeHistoryEvent(ev session.Event) {
 			return
 		}
 		msg := session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts)
+		msg.UserPromptProvenance = ev.UserPrompt.Provenance
+		if msg.UserPromptProvenance == session.UserPromptProvenanceUnknown && ev.UserPrompt.Synthetic {
+			msg.UserPromptProvenance = session.UserPromptProvenanceHarness
+		}
 		f.messages = append(f.messages, msg)
 		if f.firstGenuineText == "" && session.IsGenuineUserPrompt(msg) && strings.TrimSpace(msg.Text) != "" {
 			f.firstGenuineText = msg.Text
@@ -587,13 +583,11 @@ func (f *folder) consumeHistoryEvent(ev session.Event) {
 	}
 }
 
-// applyResult folds a terminal EvResult. EvResult.Usage is the PER-RUN figure; the
+// applyResult folds a terminal EvResult. ResultPayload.Usage is the PER-RUN figure; the
 // cumulative session usage is the SUM across every run's EvResult (a multi-run log
-// carries several), so using a single EvResult.Usage (not the sum) would undercount
-// a reopened session's spend. Permanence is recorded ONLY when this run ended in a
-// StopError (transient failures and clean terminals carry Permanent==false); the
-// fold's last terminal result wins, mirroring how a snapshot captures the final
-// state. The terminal counters are snapshotted, then the live segment is reset: a
+// carries several), so using a single result's usage would undercount a reopened
+// session's spend. Retry metadata is recorded only when this run ended in an
+// incomplete StopError; the fold's last terminal result wins, mirroring snapshots.
 // subsequent EvTurnStart (a Reopen) begins a fresh run whose Counters are per-run
 // (resetToIdle zeroes them on Reopen); the FINAL counters reflect the latest run.
 func (f *folder) applyResult(ev session.Event) {
@@ -616,15 +610,10 @@ func (f *folder) applyResult(ev session.Event) {
 		f.stop = ev.Result.Stop
 		f.disposition = session.RetryDispositionUnknown
 		f.progress = ev.Result.Progress
-		f.permanent = false
 		f.lastError = ""
 		if failedStream {
 			f.disposition = ev.Result.Disposition
-			if f.disposition == session.RetryDispositionUnknown && ev.Result.Permanent {
-				f.disposition = session.RetryDispositionPermanent
-			}
 			f.progress = ev.Result.Progress
-			f.permanent = f.disposition == session.RetryDispositionPermanent
 			f.lastError = ev.Result.Error
 		}
 	}

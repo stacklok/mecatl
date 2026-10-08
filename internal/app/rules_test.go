@@ -10,11 +10,11 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	rules "github.com/stacklok/mecatl/engine/adapter/rulesfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/rules"
 )
 
 // fakeRulesEnv installs a faked XDG/home path-resolution env for the duration of
@@ -152,8 +152,8 @@ func TestBuildInstructionAssemblerRulesOrdering(t *testing.T) {
 	soulSrc := staticSoulSource{soulBody: "SOUL-MARKER"}
 	rulesSrc := staticRulesSource{rules: []prompt.Rule{{Name: "testing", Body: "RULES-MARKER"}}}
 
-	asm := buildInstructionAssembler(rulesSrc, soulSrc, nil, nil, false)
-	msgs, err := asm.Assemble(ctx, memfs.NewWorkspace("/ws"))
+	asm := buildInstructionAssembler(memfs.NewWorkspace("/ws"), rulesSrc, soulSrc, nil, nil, false)
+	msgs, _, err := asm.Assemble(ctx, []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -170,8 +170,11 @@ func TestBuildInstructionAssemblerRulesOrdering(t *testing.T) {
 		t.Fatalf("second message must be the soul fragment; got:\n%s", msgs[1].Text)
 	}
 	// A nil rulesSrc must NOT include the rules header.
-	noRules := buildInstructionAssembler(nil, soulSrc, nil, nil, false)
-	msgs2, _ := noRules.Assemble(ctx, memfs.NewWorkspace("/ws"))
+	noRules := buildInstructionAssembler(memfs.NewWorkspace("/ws"), nil, soulSrc, nil, nil, false)
+	msgs2, _, err := noRules.Assemble(ctx, []string{"."}, &session.InstructionSnapshot{}, 65536)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(msgs2) != 1 {
 		t.Fatalf("want one soul-only message, got %d", len(msgs2))
 	}
@@ -184,7 +187,7 @@ func TestBuildInstructionAssemblerRulesOrdering(t *testing.T) {
 // all-nil inputs return a BARE RootAssembler (not a MultiAssembler carrying
 // typed-nil assemblers).
 func TestBuildInstructionAssemblerAllNilIsRootAssembler(t *testing.T) {
-	asm := buildInstructionAssembler(nil, nil, nil, nil, false)
+	asm := buildInstructionAssembler(nil, nil, nil, nil, nil, false)
 	if _, ok := asm.(prompt.RootAssembler); !ok {
 		t.Fatalf("all-nil inputs returned %T, want prompt.RootAssembler (typed-nil guard)", asm)
 	}
@@ -204,7 +207,7 @@ func TestPerSessionAssemblerMatchesShared(t *testing.T) {
 	// This is EXACTLY what sessionEngineFactory captures: the composed assembler
 	// built ONCE at Build over the resolved rulesSrc. The factory threads it
 	// verbatim into every per-session engine's Deps.Instructions.
-	asm := buildInstructionAssembler(rulesSrc, nil, nil, nil, false)
+	asm := buildInstructionAssembler(nil, rulesSrc, nil, nil, nil, false)
 
 	obs := &observedReq{}
 	prov := mockllm.NewWith(
@@ -231,7 +234,7 @@ func TestPerSessionAssemblerMatchesShared(t *testing.T) {
 	if rulesCount != 1 {
 		t.Fatalf("turn-0 request must carry the rules fragment exactly once; got %d (userMsgs=%v)", rulesCount, obs.userMsgs)
 	}
-	// Ephemeral (ADR 0043): the rules fragment must NOT be persisted into the
+	// Ephemeral: the rules fragment must NOT be persisted into the
 	// conversation — it is prepended per-run, never recorded.
 	for _, m := range sess.Conversation.Messages {
 		if m.Role == session.RoleUser && strings.Contains(m.Text, "RULES-ONCE-MARKER") {

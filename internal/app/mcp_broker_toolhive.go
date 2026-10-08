@@ -7,10 +7,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 )
 
 // buildToolHiveAuthRedisClient connects to the operator's configured Redis
@@ -66,6 +66,7 @@ func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL stri
 			}
 			if oauth.Client.Preregistered != nil {
 				converted.ClientID = oauth.Client.Preregistered.ID
+				converted.ClientSecretFile = oauth.Client.Preregistered.SecretFile
 				converted.ClientSecretEnv = oauth.Client.Preregistered.SecretEnv
 			} else if oauth.Client.CIMD != nil {
 				converted.ClientID = oauth.Client.CIMD.DocumentURL

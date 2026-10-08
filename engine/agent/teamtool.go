@@ -47,7 +47,7 @@ const maxTeamPreview = 200
 // session — it is the exact shape server.MemberEngineFactory has, so one factory
 // serves both paths.
 //
-// routedModel is the OPT-IN model router's classification (ADR 0034) — the
+// routedModel is the OPT-IN model router's classification — the
 // ALREADY-RESOLVED concrete model id for an UNDEFINED member, "" otherwise. The factory
 // substitutes it for the default child model on the undefined branch only; a DEFINED
 // member's factory ignores it (its def pins the model). The supervisor owns the route
@@ -379,11 +379,10 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	if budget > 0 {
 		opts = append(opts, WithTeamTokenBudget(budget))
 	}
-	// Thread the parent's caps so an unresolved member permission ask is surfaced to the
-	// human (interactive parent) or auto-denied with the accurate message (headless). The
-	// member askIDs are child-namespaced (team-<teamID>-<member>), so the parent router
-	// routes a verdict back without a wire change.
-	opts = append(opts, withParentCaps(caps))
+	// Thread the parent's caps and exact Team call so an unresolved member permission
+	// ask can surface and each member's durable relationship is correlated before it
+	// is registered, persisted, or projected.
+	opts = append(opts, withParentCaps(caps), withParentTeamCall(call.ID))
 	sup := NewSupervisor(tm, env, factory, opts...)
 
 	roster := teamRoster(args.Members)
@@ -400,7 +399,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	}
 
 	if emit != nil {
-		// Project each member's OPT-IN model-router classification (ADR 0034) onto its
+		// Project each member's OPT-IN model-router classification onto its
 		// roster entry: AddMember routed each undefined member once and recorded the bare
 		// category/model metadata, which MemberRouting reads back by name. A defined member
 		// (its def pinned the model) and a router miss both leave the fields empty. This is
@@ -410,7 +409,12 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 			cat, model, reason := sup.MemberRouting(roster[i].Name)
 			roster[i].RoutedCategory, roster[i].RoutedModel = cat, model
 			roster[i].RoutingReason = routingReasonPayload(reason)
+			roster[i].RoutingDecision = sup.memberRoutingDecision(roster[i].Name)
 			roster[i].Model = sup.MemberModel(roster[i].Name)
+			if memberID, incarnation, ok := sup.memberIdentity(roster[i].Name); ok {
+				roster[i].MemberSessionID = memberID
+				roster[i].MemberIncarnation = incarnation
+			}
 		}
 		emit(session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
 			ParentCallID: string(call.ID),
@@ -598,16 +602,18 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		}
 		base.Text = clampPreview(ev.Text)
 	case session.EvToolCall:
-		if ev.ToolCall == nil {
+		if ev.ToolCall == nil || !previewChildToolCallID(ev.ToolCall.ID) {
 			return session.Event{}, false
 		}
 		base.ToolName = ev.ToolCall.Name
+		base.ChildToolCallID = ev.ToolCall.ID
 		base.Detail = clampPreview(string(ev.ToolCall.Args))
-	case session.EvToolResult:
-		if ev.ToolResult == nil {
+	case session.EvToolResultAvailable, session.EvToolResult:
+		if ev.ToolResult == nil || !previewChildToolCallID(ev.ToolResult.CallID) {
 			return session.Event{}, false
 		}
 		base.IsError = ev.ToolResult.IsError
+		base.ChildToolCallID = ev.ToolResult.CallID
 		base.Detail = clampPreview(ev.ToolResult.Content)
 	case session.EvTurnEnd:
 		if ev.TurnEnd != nil {

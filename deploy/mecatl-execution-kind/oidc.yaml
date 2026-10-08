@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oidc-issuer
+  namespace: execution-qualification
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: oidc-issuer}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: oidc-issuer}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: issuer
+        image: OIDC_IMAGE
+        imagePullPolicy: IfNotPresent
+        args:
+        - --tls-cert=/identity/tls.crt
+        - --tls-key=/identity/tls.key
+        - --signing-key=/identity/jwt-key.pem
+        - --issuer=https://oidc-issuer.execution-qualification.svc.cluster.local:8443
+        - --audience=mecatl
+        ports: [{name: https, containerPort: 8443}]
+        readinessProbe: {httpGet: {scheme: HTTPS, path: /healthz, port: https}, periodSeconds: 2}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {cpu: 200m, memory: 128Mi}
+        volumeMounts:
+        - {name: identity, mountPath: /identity, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - name: identity
+        secret: {secretName: oidc-fixture-identity, defaultMode: 0440}
+      - name: tmp
+        emptyDir: {sizeLimit: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oidc-issuer
+  namespace: execution-qualification
+spec:
+  selector: {app.kubernetes.io/name: oidc-issuer}
+  ports: [{name: https, port: 8443, targetPort: https}]

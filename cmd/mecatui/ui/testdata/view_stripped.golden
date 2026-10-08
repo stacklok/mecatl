@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
                ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -9,6 +9,7 @@
                ┃  changes:                                                         ┃
                ┃  note.txt · 1 line (overwrites if it exists)                      ┃
                ┃  + reviewed                                                       ┃
+               ┃  \ No newline at end of content                                   ┃
                ┃                                                                   ┃
                ┃  Write requires approval                                          ┃
                ┃                                                                   ┃
@@ -20,11 +21,10 @@
                ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
-
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⚠ awaiting approval                                                      ctx 1.2K · ↑0 ↓0 cache 0%
+ ⚠ awaiting approval                                      ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // gcFixture builds a deterministic sweep harness: a memstore whose Save times
@@ -305,7 +305,7 @@ func TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity(t *test
 }
 
 // TestChildGCMainPassDisabledByDefault pins that with the main knobs at 0,
-// UNPREFIXED sessions are NEVER touched even when ancient — the historical
+// UNPREFIXED sessions are NEVER touched even when ancient — the
 // "main sessions are never deleted" guarantee holds for the zero-config default
 // (the mecated posture). It is the safety twin of TestChildGCMainSessionsNeverDeleted
 // but with the CHILD passes also off, so ONLY the main knobs could touch them.
@@ -681,17 +681,23 @@ func (failingPrunable) PageSessionMetadata(context.Context, port.SessionMetadata
 func (failingPrunable) Delete(context.Context, session.SessionID) error { return nil }
 
 // recordingDiag captures diagnostics lines and attributes for assertion.
+// Attribute values are treated as immutable; incoming and returned slices are owned copies.
 type recordingDiag struct {
+	mu    sync.Mutex
 	msgs  []string
 	attrs [][]any
 }
 
 func (r *recordingDiag) Log(_ context.Context, _ port.Level, msg string, attrs ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.msgs = append(r.msgs, msg)
-	r.attrs = append(r.attrs, attrs)
+	r.attrs = append(r.attrs, slices.Clone(attrs))
 }
 func (r *recordingDiag) With(...any) port.Diagnostics { return r }
 func (r *recordingDiag) has(substr string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, m := range r.msgs {
 		if strings.Contains(m, substr) {
 			return true
@@ -699,8 +705,24 @@ func (r *recordingDiag) has(substr string) bool {
 	}
 	return false
 }
-func (r *recordingDiag) messages() []string { return r.msgs }
+func (r *recordingDiag) messages() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.msgs)
+}
+func (r *recordingDiag) snapshot() ([]string, [][]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	msgs := slices.Clone(r.msgs)
+	attrs := make([][]any, len(r.attrs))
+	for i, values := range r.attrs {
+		attrs[i] = slices.Clone(values)
+	}
+	return msgs, attrs
+}
 func (r *recordingDiag) attr(key string) (any, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, attrs := range r.attrs {
 		for i := 0; i+1 < len(attrs); i += 2 {
 			if attrs[i] == key {
@@ -709,6 +731,66 @@ func (r *recordingDiag) attr(key string) (any, bool) {
 		}
 	}
 	return nil, false
+}
+
+func TestRecordingDiagOwnsLogAttributes(t *testing.T) {
+	rec := &recordingDiag{}
+	attrs := []any{"key", "original"}
+	rec.Log(t.Context(), port.LevelInfo, "message", attrs...)
+	attrs[1] = "caller mutation"
+	if value, ok := rec.attr("key"); !ok || value != "original" {
+		t.Fatalf("retained attribute = (%v, %v), want (original, true)", value, ok)
+	}
+}
+
+func TestRecordingDiagConcurrent(t *testing.T) {
+	const iterations = 256
+	rec := &recordingDiag{}
+	rec.Log(t.Context(), port.LevelInfo, "seed", "message", "seed")
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for writer := range 2 {
+		wg.Go(func() {
+			<-start
+			for i := range iterations {
+				msg := fmt.Sprintf("writer-%d-%d", writer, i)
+				rec.Log(t.Context(), port.LevelInfo, msg, "message", msg)
+			}
+		})
+	}
+	wg.Go(func() {
+		<-start
+		for range iterations {
+			msgs, attrs := rec.snapshot()
+			if len(msgs) != len(attrs) {
+				t.Errorf("snapshot lengths = (%d, %d)", len(msgs), len(attrs))
+				continue
+			}
+			for i, msg := range msgs {
+				if len(attrs[i]) != 2 || attrs[i][0] != "message" || attrs[i][1] != msg {
+					t.Errorf("snapshot record %d = %q, %v", i, msg, attrs[i])
+				}
+			}
+			// Mutating returned slices must not affect the recorder or other readers.
+			msgs[0] = "snapshot mutation"
+			attrs[0][1] = "snapshot mutation"
+			attrs[0] = nil
+			messages := rec.messages()
+			messages[0] = "messages mutation"
+			if !rec.has("seed") {
+				t.Error("seed message lost")
+			}
+			if value, ok := rec.attr("message"); !ok || value != "seed" {
+				t.Errorf("seed attribute = (%v, %v)", value, ok)
+			}
+		}
+	})
+	close(start)
+	wg.Wait()
+	msgs, attrs := rec.snapshot()
+	if len(msgs) != 1+2*iterations || len(attrs) != len(msgs) {
+		t.Fatalf("final snapshot lengths = (%d, %d), want %d each", len(msgs), len(attrs), 1+2*iterations)
+	}
 }
 
 // TestChildGCCapPassTieBreakDeterministic pins the cap pass's eviction order
@@ -1373,7 +1455,7 @@ func TestBuildEnabledChildGCNarratesAndStops(t *testing.T) {
 	built.Close()
 }
 
-// --- Schedule-fire retention (ADR 0059 decision #7 Phase-2) -----------------
+// --- Schedule-fire retention -------------------------------------------------
 
 // TestScheduleFireGCAgePass pins the schedule-fire age pass: "sched--"-prefixed
 // sessions older than ScheduleFireRetention are deleted by the schedule-fire
@@ -1430,8 +1512,8 @@ func TestScheduleFireGCSkipsLive(t *testing.T) {
 	}
 }
 
-// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (ADR 0059
-// Phase-2, the symmetric peer of the main cap): with more sched-- fire sessions than
+// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (the
+// symmetric peer of the main cap): with more sched-- fire sessions than
 // scheduleFireMaxTotal, the OLDEST fire snapshots go first, the cap is store-wide,
 // and a LIVE fire is protected and excluded from the eligible cap slots.
 func TestScheduleFireGCCountCap(t *testing.T) {

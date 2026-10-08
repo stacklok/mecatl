@@ -4,11 +4,11 @@ import (
 	"context"
 	"path/filepath"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hashutil"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/soul"
@@ -22,12 +22,12 @@ import (
 // developer's real ~/.config. It is used only to compute a path string (no write).
 var soulEnv = xdgconfig.OSEnv
 
-// soulselect.go is the composition-layer SOUL PROVENANCE + TRUST GATE (issue #14,
-// Phase 3, Item 2). The soul is fenced DATA, never a permission scope, so this is
+// soulselect.go is the composition-layer SOUL PROVENANCE + TRUST GATE (issue #14).
+// The soul is fenced DATA, never a permission scope, so this is
 // NOT routed through engine/governance — but it REUSES the issue-#13 trust gate
 // (Config.TrustProject) so an imported/project-sourced soul is governed by the
-// EXACT same operator gesture that gates a project's ALLOW permission rules. As of
-// the Workspace-Trust feature (Phase 1), Config.TrustProject carries the FOLDED
+// EXACT same operator gesture that gates a project's ALLOW permission rules.
+// Config.TrustProject carries the FOLDED
 // TrustDecision (trust.go): the --trust-project flag OR a settings.yaml
 // `trustedWorkspaces:` declaration. A declared-trusted workspace therefore honours
 // a project soul exactly as --trust-project does — through this same gate, never a
@@ -73,7 +73,7 @@ const (
 	// <workspace>/.mecatl/soul.md (only selected when --trust-project is set).
 	soulProject
 	// soulDriver means the selected soul came from a remote soul-source driver
-	// (--soul-source-url, Phase C1). Operator-configured infrastructure: it
+	// (--soul-source-url). Operator-configured infrastructure: it
 	// occupies the USER slot in the precedence and is always trusted; the drift
 	// baseline is SKIPPED for it (sidecar-file machinery — the driver sits
 	// behind the operator's own auth), so --soul-strict/--approve-soul are
@@ -242,8 +242,8 @@ func selectSoulSource(cfg Config, io baselineIO, gate soulGate) (prompt.SoulSour
 		}
 	}
 
-	// USER-slot candidate first (always trusted). The remote DRIVER (Phase C1,
-	// --soul-source-url) OCCUPIES the user slot when configured — mutually
+	// USER-slot candidate first (always trusted). The remote DRIVER
+	// (--soul-source-url) OCCUPIES the user slot when configured — mutually
 	// exclusive with --soul-file (validateDriverConfig), and the conventional
 	// user file is NOT consulted (one user-slot source, never two). Otherwise
 	// the user file: an explicit --soul-file is a user-scoped override of the
@@ -325,8 +325,8 @@ func selectSoulSource(cfg Config, io baselineIO, gate soulGate) (prompt.SoulSour
 	}
 }
 
-// selectDriverSoul resolves the USER-slot DRIVER candidate (--soul-source-url,
-// Phase C1): dial through the build-scoped conn cache (Build's probe already
+// selectDriverSoul resolves the USER-slot DRIVER candidate (--soul-source-url):
+// dial through the build-scoped conn cache (Build's probe already
 // owns the once-guarded close), load + re-validate the body through the
 // grpcdriver client (which applies the full soul.ValidateBody discipline —
 // a driver is never trusted to sanitize), and select it when usable.

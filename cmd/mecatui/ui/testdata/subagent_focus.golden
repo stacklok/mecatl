@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -11,8 +11,8 @@
   ┃    bounded previews — child content is clamped + scrubbed, never in the parent               ┃
   ┃      conversation                                                                            ┃
   ┃                                                                                              ┃
-  ┃    ✓ Grep                                                                                    ┃
-  ┃    ✓ Grep — pattern: auth                                                                    ┃
+  ┃    … Grep · pending                                                                          ┃
+  ┃    … Grep · pending                                                                          ┃
   ┃    checking the login flow                                                                   ┃
   ┃                                                                                              ┃
   ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                     ┃
@@ -26,5 +26,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                           ⛭ subagents 3◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+ connected                             ⛭ subagents 3◐ 2✓  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

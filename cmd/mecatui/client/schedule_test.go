@@ -167,6 +167,23 @@ func TestMapScheduleFieldsAndNilSafe(t *testing.T) {
 	}
 }
 
+func TestMapScheduleDeletionPending(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   bool
+	}{
+		{name: "pending", in: true},
+		{name: "not pending", in: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapScheduleState(&mecatlv1.ScheduleState{DeletionPending: tc.in})
+			if got.DeletionPending != tc.in {
+				t.Fatalf("DeletionPending = %v, want %v", got.DeletionPending, tc.in)
+			}
+		})
+	}
+}
+
 func TestListSchedulesMapping(t *testing.T) {
 	fake := &fakeScheduleClient{listResp: &mecatlv1.ListSchedulesResponse{Schedules: []*mecatlv1.Schedule{
 		sampleProtoSchedule("a"),

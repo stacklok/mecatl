@@ -1,0 +1,24 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "real-write",
+          "name": "Write",
+          "args": { "path": "approved.txt", "content": "approved\n" }
+        }
+      ]
+    },
+    { "delay_ms": 5000, "text": "The write approval completed." },
+    {
+      "tool_calls": [
+        {
+          "id": "real-plan",
+          "name": "PresentPlan",
+          "args": { "plan": "Inspect, change, then verify the workspace." }
+        }
+      ]
+    },
+    { "text": "The approved plan continued." }
+  ]
+}

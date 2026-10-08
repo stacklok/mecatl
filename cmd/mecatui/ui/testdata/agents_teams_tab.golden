@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
@@ -15,16 +15,16 @@
   ┃    ◆ ✎ builder                                                                               ┃
   ┃      Edit… · implementer                                                                     ┃
   ┃      ↑3.4K ↓220                                                                              ┃
-  ┃    · +1 rows below                                                                           ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                       ⟳ 4/4 working · f6  ⛭ subagents 1◐ 0✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+ connected      ⛭ subagents 1◐ 0✓  ⟳ team- · 4/4 working  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

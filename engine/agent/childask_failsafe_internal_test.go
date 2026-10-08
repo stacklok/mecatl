@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -21,12 +22,11 @@ func TestResolveChildAskBothBitsTrueFailsSafe(t *testing.T) {
 	// Both bits true (the illegal state) + a HEADLESS posture (no surfaceAsk):
 	// step 0 (ConfiguredAsk) must win → fall through to headless auto-deny.
 	ask := session.PendingAsk{
-		AskID:                  askID,
-		Tool:                   "Shell",
-		Args:                   json.RawMessage(`{"command":"go test $(git rev-parse HEAD)"}`),
-		Reason:                 "approval required by rule for Shell (go test*)",
-		ConfiguredAsk:          true,
-		FlooredConfiguredAllow: true,
+		AskID:         askID,
+		Tool:          "Shell",
+		Args:          json.RawMessage(`{"command":"go test $(git rev-parse HEAD)"}`),
+		Reason:        "approval required by rule for Shell (go test*)",
+		AskProvenance: governance.AskProvenanceConfigured,
 	}
 	resolveChildAsk(child, ask, childPosture{isolated: true})
 

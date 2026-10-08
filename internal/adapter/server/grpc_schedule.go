@@ -193,7 +193,7 @@ func (h *ScheduleServer) ListFires(ctx context.Context, req *mecatlv1.ListFiresR
 // created_at are left zero (the create-seam stamps CreatedAt itself, so a caller
 // need not set it — an honest overwrite, not a silent default).
 //
-// It deliberately does NOT read in.Owner (ADR 0204 decision 6): a schedule's
+// It deliberately does NOT read in.Owner: a schedule's
 // owner is captured by the create seam from the create SURFACE (the executing
 // session's owner, or the verified context principal), never from the request
 // body — the same discipline that keeps an owner field off CreateSessionRequest.
@@ -279,7 +279,7 @@ func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 		OneShotRetry:      in.OneShotRetry,
 		OneShotMaxRetries: ClampInt32(in.OneShotMaxRetries),
 		CarryContext:      in.CarryContext,
-		// The captured owner is projected read-only (ADR 0204 decision 6); a nil
+		// The captured owner is projected read-only; a nil
 		// owner stays a nil message — an ownerless schedule is never rendered as
 		// an anonymous somebody.
 		Owner: toProtoPrincipal(in.Owner),
@@ -312,6 +312,7 @@ func scheduleStateToProto(in port.ScheduleState) *mecatlv1.ScheduleState {
 		Enabled:           in.Enabled,
 		LastFireSessionId: string(in.LastFireSessionID),
 		OneShotRetryCount: ClampInt32(in.OneShotRetryCount),
+		DeletionPending:   in.DeletionID != "",
 	}
 	if !in.NextFireAt.IsZero() {
 		out.NextFireAt = timestamppb.New(in.NextFireAt)

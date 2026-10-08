@@ -20,7 +20,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestNormalizeReasoningEffort pins the neutral-vocabulary validator (ADR 0055):
+// TestNormalizeReasoningEffort pins the neutral-vocabulary validator:
 // auto/"" → unset (ok), the five tiers pass through (lowercased+trimmed), an unknown
 // token → ("", false) so the caller treats it as unset + WARN (fail-soft).
 func TestNormalizeReasoningEffort(t *testing.T) {
@@ -50,7 +50,7 @@ func TestNormalizeReasoningEffort(t *testing.T) {
 	}
 }
 
-// TestClampEffortForProvider pins the per-provider clamp (ADR 0055): openai/openrouter
+// TestClampEffortForProvider pins the per-provider clamp: openai/openrouter
 // clamp xhigh/max DOWN to high (clamped=true); low/medium/high pass through;
 // anthropic identity-maps all five; "" is always a no-op.
 func TestClampEffortForProvider(t *testing.T) {
@@ -77,7 +77,7 @@ func TestClampEffortForProvider(t *testing.T) {
 	}
 }
 
-// TestResolveSessionEffortPrecedence pins precedence + fail-soft (ADR 0055): a valid
+// TestResolveSessionEffortPrecedence pins precedence + fail-soft: a valid
 // per-session value out-ranks the operator default; an unknown per-session value
 // falls back to the operator default WITH a WARN; an unknown operator default
 // normalises to unset WITH a WARN.
@@ -144,7 +144,7 @@ func TestFoldOperatorReasoningEffortCLIOutRanksYAML(t *testing.T) {
 	}
 }
 
-// TestModelReasoningSupport pins the capability-gate source (ADR 0055): the mock
+// TestModelReasoningSupport pins the capability-gate source: the mock
 // provider is known-incapable; an UNKNOWN (uncatalogued) model is known=false (so
 // the caller fails open); a catalogued reasoning model is known+supported.
 func TestModelReasoningSupport(t *testing.T) {
@@ -153,7 +153,7 @@ func TestModelReasoningSupport(t *testing.T) {
 			providerMock: {id: providerMock, provider: mockllm.New(mockllm.TextTurn("x")), available: true},
 		},
 		defaultID: providerMock,
-		meta:      newLiveMetaStore(),
+		meta:      newMetadataFixture(),
 	}
 	// Mock → known-incapable.
 	if sup, known := modelReasoningSupport(reg, providerMock, "anything"); !known || sup {
@@ -165,8 +165,8 @@ func TestModelReasoningSupport(t *testing.T) {
 	}
 }
 
-// TestOperatorDefaultEffortForClampsAndWarns pins the STARTUP clamp narration (ADR
-// 0055): an operator default of "max" against OpenAI clamps to "high" AND emits a
+// TestOperatorDefaultEffortForClampsAndWarns pins the STARTUP clamp narration:
+// an operator default of "max" against OpenAI clamps to "high" AND emits a
 // WARN naming both the requested and clamped-to values; against Anthropic it
 // identity-maps with NO warn; an unset default is silent.
 func TestOperatorDefaultEffortForClampsAndWarns(t *testing.T) {
@@ -216,7 +216,7 @@ func regWithRemintRecorder(defaultReply string) (*providerRegistry, *mockllm.Pro
 			},
 		},
 		defaultID: providerOpenAI,
-		meta:      newLiveMetaStore(),
+		meta:      newMetadataFixture(),
 	}
 	return reg, def, &reminted
 }
@@ -224,7 +224,7 @@ func regWithRemintRecorder(defaultReply string) (*providerRegistry, *mockllm.Pro
 // TestFactoryRemintsOnEffortDiffersFromDefault is the composition e2e: a session
 // requesting an effort DIFFERENT from the operator default re-mints the adapter
 // (the recording closure captures the clamped token), the turn runs on the re-minted
-// provider, and the result echoes the resolved effort (ADR 0055).
+// provider, and the result echoes the resolved effort.
 func TestFactoryRemintsOnEffortDiffersFromDefault(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
 	cfg := Config{Model: "gpt-5"} // operator default effort unset
@@ -253,15 +253,15 @@ func TestFactoryRemintsOnEffortDiffersFromDefault(t *testing.T) {
 	}
 }
 
-// TestFactoryDegradesOnNoReasoningModel is the capability-gate DEGRADE (ADR 0055,
-// adversarial #1): a session on a model the live source says has NO reasoning support
+// TestFactoryDegradesOnNoReasoningModel is the capability-gate DEGRADE
+// (adversarial #1): a session on a model the live source says has NO reasoning support
 // drops the effort (no re-mint) and WARNs. A re-mint recorder + a recording diag prove
 // both halves.
 func TestFactoryDegradesOnNoReasoningModel(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
 	rec := &recordingDiag{}
 	// The live source describes "no-reason-model" as Reasoning:false (known-incapable).
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: "no-reason-model", Reasoning: false}},
 	})
 	cfg := Config{Model: "gpt-5", Diagnostics: rec}
@@ -286,8 +286,32 @@ func TestFactoryDegradesOnNoReasoningModel(t *testing.T) {
 	}
 }
 
-// TestFactoryFailsOpenOnUnknownModel is the capability-gate FAIL-OPEN (ADR 0055,
-// adversarial fail-open arm): a session on an UNKNOWN (uncatalogued, no live entry)
+func TestModelReasoningSupportLiveUnknownIsProviderNeutral(t *testing.T) {
+	reg, _, _ := regWithRemintRecorder("unused")
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
+		providerOpenAI: {
+			{ID: "unknown", reasoningUnknown: true},
+			{ID: "unsupported"},
+			{ID: "supported", Reasoning: true},
+		},
+	})
+	for _, tc := range []struct {
+		model            string
+		supported, known bool
+	}{
+		{model: "unknown"},
+		{model: "unsupported", known: true},
+		{model: "supported", supported: true, known: true},
+	} {
+		supported, known := modelReasoningSupport(reg, providerOpenAI, tc.model)
+		if supported != tc.supported || known != tc.known {
+			t.Errorf("%s: support = (%v, %v), want (%v, %v)", tc.model, supported, known, tc.supported, tc.known)
+		}
+	}
+}
+
+// TestFactoryFailsOpenOnUnknownModel is the capability-gate FAIL-OPEN
+// (adversarial fail-open arm): a session on an UNKNOWN (uncatalogued, no live entry)
 // model SENDS the effort anyway (re-mint happens) — the provider 400s honestly if it
 // really cannot, matching the thinking-path unknown=capable posture.
 func TestFactoryFailsOpenOnUnknownModel(t *testing.T) {

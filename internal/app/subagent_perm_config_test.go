@@ -170,16 +170,16 @@ permissions:
       - "Shell(curl:*)"
 `)
 	provider := &shellWriteProvider{command: "true", marker: "x"}
-	deps := childEngineDepsForProvider(cfg, "task", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), explorerPromptConfig(modelCfgFor(cfg, cfg.Model)), nil)
+	deps := childEngineDepsForProvider(cfg, "task", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), explorerPromptConfig(modelCfgFor(cfg, cfg.Model)), nil)
 
 	eval := func(cmd string) governance.PermissionDecision {
 		args, _ := json.Marshal(map[string]string{"command": cmd})
 		// nil workspace: the PINNED resolver must still serve the project rules.
 		return deps.Policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-			session.NewToolCall("c1", "Shell", args), nil)
+			session.NewToolCall("c1", "Shell", args), nil).Decision
 	}
 
-	if got := eval("go test ./..."); got.Effect != governance.Ask || !got.ConfiguredAsk {
+	if got := eval("go test ./..."); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfigured {
 		t.Fatalf("subagent ask must bind the child policy as a CONFIGURED ask; got %+v", got)
 	}
 	if got := eval("curl example.com"); got.Effect != governance.Deny {
@@ -188,10 +188,10 @@ permissions:
 	// `cat $(ls) > out.txt`: read-only inner, NON-read-only outer (redirection,
 	// so A1 cannot clear it) covered by the configured `cat*` allow — the
 	// floored-configured-allow shape.
-	if got := eval("cat $(ls) > out.txt"); got.Effect != governance.Ask || !got.FlooredConfiguredAllow {
+	if got := eval("cat $(ls) > out.txt"); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfiguredAllowFloor {
 		t.Fatalf("subagent allow must mark the floored read-only-inner substitution FlooredConfiguredAllow; got %+v", got)
 	}
-	if got := eval("cat $(zap)"); got.Effect != governance.Ask || got.FlooredConfiguredAllow {
+	if got := eval("cat $(zap)"); got.Effect != governance.Ask || got.AskProvenance == governance.AskProvenanceConfiguredAllowFloor {
 		t.Fatalf("a hidden non-read-only inner must NOT mark FlooredConfiguredAllow; got %+v", got)
 	}
 	// The top-level (AudienceMain) ask must NOT bind a child: the floor allow-all
@@ -224,26 +224,26 @@ func TestAutoTierChildLoosensMutateFloorNotSubstitution(t *testing.T) {
 	// Mirror buildEngine's main-policy construction (rules + evaluator options +
 	// the build-once resolver — nil here, no config sources).
 	mainPolicy := permpolicy.NewPolicyWithResolver(mainRules(cfg), nil, cfg.permResolver, mainEvaluatorOptions(cfg)...)
-	if got := mainPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, subCall, nil); got.Effect != governance.Allow {
+	if got := mainPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, subCall, nil); got.Decision.Effect != governance.Allow {
 		t.Fatalf("auto-tier main policy should loosen the substitution floor; got %+v", got)
 	}
 
 	childPolicy := childPermPolicy(cfg)
 	// Plain mutate: the blanket child floor allows it (no mutate-ask floor exists
 	// for a child to loosen) → Allow regardless of tier.
-	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, mutateCall, nil); got.Effect != governance.Allow {
+	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, mutateCall, nil); got.Decision.Effect != governance.Allow {
 		t.Fatalf("child plain mutate should be Allow (blanket floor); got %+v", got)
 	}
 	// Substitution with a non-read-only inner: at AUTO the child loosening is OFF, so the
 	// child still floors at Ask — the load-bearing safety assertion.
-	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, subCall, nil); got.Effect != governance.Ask {
+	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, subCall, nil); got.Decision.Effect != governance.Ask {
 		t.Fatalf("auto tier must NOT loosen a CHILD's substitution floor; got %+v", got)
 	}
 }
 
-// TestChildRulesFloorScopeNeutral pins the childRules() re-scope (allow-all at
-// ScopeBuiltinDefault instead of the legacy zero Scope) as behaviour-neutral
-// with no config: identical effects to the historical bare allow-all policy
+// TestChildRulesFloorScopeNeutral pins the childRules() scoping (allow-all at
+// ScopeBuiltinDefault rather than the zero Scope) as behaviour-neutral
+// with no config: identical effects to a bare allow-all policy
 // across the decision surface, and the floor allow-all never registers as a
 // CONFIGURED allow (no FlooredConfiguredAllow without a real config rule).
 func TestChildRulesFloorScopeNeutral(t *testing.T) {
@@ -268,10 +268,10 @@ func TestChildRulesFloorScopeNeutral(t *testing.T) {
 		if got.Effect != want.Effect {
 			t.Fatalf("childRules() not neutral for %q: got %v, legacy %v", cmd, got.Effect, want.Effect)
 		}
-		if got.FlooredConfiguredAllow {
+		if got.AskProvenance == governance.AskProvenanceConfiguredAllowFloor {
 			t.Fatalf("the floor allow-all must never register as a configured allow (%q)", cmd)
 		}
-		if got.ConfiguredAsk {
+		if got.AskProvenance == governance.AskProvenanceConfigured {
 			t.Fatalf("no configured ask exists in childRules() (%q)", cmd)
 		}
 	}
@@ -309,9 +309,9 @@ func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
 		// nil per-call workspace: a child evaluates over its FORK workspace,
 		// which the pin must ignore — the session root still drives resolution.
 		return policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-			session.NewToolCall("c1", "Shell", args), nil)
+			session.NewToolCall("c1", "Shell", args), nil).Decision
 	}
-	if got := eval("go test ./..."); got.Effect != governance.Ask || !got.ConfiguredAsk {
+	if got := eval("go test ./..."); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfigured {
 		t.Fatalf("the SESSION root's subagent ask must bind the per-session child policy; got %+v", got)
 	}
 	if got := eval("zap"); got.Effect != governance.Allow {
@@ -322,7 +322,7 @@ func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
 	shared := childPermPolicy(serverCfg)
 	args, _ := json.Marshal(map[string]string{"command": "zap"})
 	if got := shared.Evaluate(context.Background(), "s2", session.ModeDefault,
-		session.NewToolCall("c2", "Shell", args), nil); got.Effect != governance.Deny {
+		session.NewToolCall("c2", "Shell", args), nil); got.Decision.Effect != governance.Deny {
 		t.Fatalf("the shared engine's children must keep the server-root pin; got %+v", got)
 	}
 }
@@ -343,7 +343,7 @@ func TestMainPolicyIgnoresSubagentBlock(t *testing.T) {
 	args, _ := json.Marshal(map[string]string{"command": "echo hi > f.txt"})
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 		session.NewToolCall("c1", "Shell", args), ws)
-	if got.Effect != governance.Ask {
+	if got.Decision.Effect != governance.Ask {
 		t.Fatalf("a subagent-block allow must be INVISIBLE to the main policy (mutate-ask floor stands); got %+v", got)
 	}
 }

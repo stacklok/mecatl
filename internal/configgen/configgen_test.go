@@ -5,9 +5,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
+
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
 )
+
+func TestHarnessContextGeneratedScaffoldingParsesWhenUncommented(t *testing.T) {
+	var lines []string
+	capturing := false
+	for _, line := range strings.Split(configgen.Skeleton(), "\n") {
+		if line == "# harness_context:" {
+			capturing = true
+		}
+		if capturing && strings.HasPrefix(line, "#| ===") {
+			break
+		}
+		if capturing && strings.HasPrefix(line, "# ") {
+			lines = append(lines, strings.TrimPrefix(line, "# "))
+		}
+	}
+	var cfg permconfig.Config
+	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")+"\n"), &cfg); err != nil {
+		t.Fatalf("uncommented generated harness_context scaffolding is not executable configuration: %v\n%s", err, strings.Join(lines, "\n"))
+	}
+	if cfg.HarnessContext == nil || cfg.HarnessContext.Kinds.Instructions.Mode != "combine" {
+		t.Fatal("uncommented generated scaffolding did not parse into the configured subtree")
+	}
+}
 
 // authoritativeKeys reflects over the permconfig *Section structs to collect EVERY
 // yaml key the strict-decode maps accept — derived independently of the renderers so
@@ -43,6 +68,7 @@ func authoritativeKeys() []string {
 	collect("retention.main", permconfig.RetentionLimitSection{})
 	collect("retention.child", permconfig.RetentionLimitSection{})
 	collect("retention.scheduled", permconfig.RetentionLimitSection{})
+	collect("system_prompt", permconfig.SystemPromptSection{})
 	collect("command_runner", permconfig.CommandRunnerSection{})
 	collect("command_runner.environment", permconfig.CommandRunnerEnvironment{})
 	collect("temporary_storage", permconfig.TemporaryStorageSection{})
@@ -56,8 +82,12 @@ func authoritativeKeys() []string {
 		"providers.team-gateway.auth.oidc.issuer", "providers.team-gateway.auth.oidc.client_id", "providers.team-gateway.auth.oidc.resource_audience", "providers.team-gateway.auth.oidc.scopes",
 		"providers.team-gateway.auth.oidc.issuer_trust", "providers.team-gateway.auth.oidc.gateway_trust",
 	)
+	collect("execution", permconfig.ExecutionSection{})
+	collect("execution.microvm", permconfig.ExecutionMicroVMSection{})
+	collect("execution.microvm.guest_egress", permconfig.ExecutionGuestEgressSection{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
+	collect("models.router.jev", permconfig.JevRouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
 	collect("openrouter", permconfig.OpenRouterSection{})
 	collect("openrouter.models", permconfig.OpenRouterModelRoute{})
@@ -80,10 +110,10 @@ func authoritativeKeys() []string {
 	collect("mcp.servers.auth.oauth.tools", permconfig.MCPStaticToolProfile{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
-	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
+	// output-economy is absent: the setting was REMOVED (a
 	// clean break) and MUST NOT appear in generated artifacts (pinned by
 	// TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts).
-	// reasoning-effort is likewise a bare scalar Config field (ADR 0055).
+	// reasoning-effort is likewise a bare scalar Config field.
 	keys = append(keys, "reasoning-effort")
 	// plan-mode-auto-approve is likewise a bare scalar Config field (operator-tier
 	// only).
@@ -142,10 +172,10 @@ func TestGeneratedArtifactsDescribeSchemaDefaults(t *testing.T) {
 			t.Errorf("%s does not distinguish schema fallbacks from process-runtime defaults", name)
 		}
 	}
-	if !strings.Contains(skeleton, "https://mecatl.dev/docs/building/deployment/settings") {
+	if !strings.Contains(skeleton, "https://mecatl.dev/docs/operating/settings") {
 		t.Error("skeleton does not direct operators to the public configuration-plane guide")
 	}
-	if !strings.Contains(reference, "](/building/deployment/settings.md)") {
+	if !strings.Contains(reference, "](/operating/settings.md)") {
 		t.Error("reference does not link to the rendered configuration-plane guide")
 	}
 }
@@ -202,7 +232,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"mode: broker", "mode: none", "mode: oauth", "mode: oauth2",
 		"authorization_endpoint: https://github.com/login/oauth/authorize",
 		"token_endpoint: https://github.com/login/oauth/access_token",
-		"secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET", "token_env: MECATL_MCP_STATIC_TOKEN",
+		"secret_file: /var/run/secrets/mecatl/github-mcp-client-secret", "token_env: MECATL_MCP_STATIC_TOKEN",
 		"key_env: MECATL_MCP_CREDENTIAL_KEY",
 		"- name: get_issue", "input_schema:", "read_only: true",
 	} {
@@ -217,7 +247,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"`mcp.servers[].auth.oauth.upstream.mode`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint`",
-		"`mcp.servers[].auth.oauth.client.preregistered.secret_env`",
+		"`mcp.servers[].auth.oauth.client.preregistered.secret_file`",
 		"`mcp.servers[].auth.oauth.client.cimd.document_url`",
 		"`mcp.servers[].auth.oauth.credentials.environment.credential_env`",
 		"`mcp.servers[].auth.oauth.network.private_origins`",
@@ -336,16 +366,19 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"permissions":            configgen.TierProject,  // allow/ask/deny + subagent: project-settable (allows trust-gated)
 		"guardrails":             configgen.TierOperator, // operator-only: a project cannot weaken a security checker
 		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
-		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
+		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"providers":              configgen.TierOperator, // operator-only: a project cannot choose LLM endpoints or auth posture
 		"credential_store":       configgen.TierOperator, // operator-only: OIDC credential custody is host authority
 		"provider_overrides":     configgen.TierOperator, // operator-only: a project cannot redirect built-in provider traffic
+		"harness_context":        configgen.TierOperator, // operator-only: project content cannot register or reorder its own sources
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
+		"system_prompt":          configgen.TierOperator, // operator-only: project cannot weaken standard prompt guidance
 		"command_runner":         configgen.TierOperator, // operator-only: project cannot select a shell or restore ambient credentials
 		"temporary_storage":      configgen.TierOperator, // operator-only: project cannot redirect command storage or cleanup
 		"storage_management":     configgen.TierOperator, // operator-only: project cannot grant process-wide management
+		"execution":              configgen.TierOperator, // operator-only: project cannot choose host execution placement or guest egress
 		"steer":                  configgen.TierOperator, // operator-only: a project cannot flip the mid-run steer surface (issue #512)
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)

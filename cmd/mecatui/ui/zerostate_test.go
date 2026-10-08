@@ -44,7 +44,7 @@ func zeroStateModel(t *testing.T, caps client.Capabilities) Model {
 // offers "?", "/" (built-ins always exist), "f6" (teams on) and "ctrl+t",
 // and notes that memory is on.
 func TestZeroStateEmbeddedGolden(t *testing.T) {
-	m := zeroStateModel(t, embeddedCaps())
+	m := goldenStatusFrame(t, zeroStateModel(t, embeddedCaps()))
 	if !m.conv.isEmpty() {
 		t.Fatal("conversation should be empty for the zero-state")
 	}
@@ -55,7 +55,7 @@ func TestZeroStateEmbeddedGolden(t *testing.T) {
 // TestZeroStateAllOnGolden locks the welcome card under an all-on server: it adds
 // the "/" line (commands on).
 func TestZeroStateAllOnGolden(t *testing.T) {
-	m := zeroStateModel(t, allOnCaps())
+	m := goldenStatusFrame(t, zeroStateModel(t, allOnCaps()))
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "zerostate_all_on.golden", got)
 }
@@ -79,7 +79,7 @@ func TestZeroStateVanishesAfterPrompt(t *testing.T) {
 // TestZeroStateCapsTailoring asserts the affordance list tracks caps WITHOUT
 // pinning layout: "/" ALWAYS appears (built-in slash commands always exist),
 // "f6" ALWAYS appears (the unified agents overlay — subagents are always
-// available via Subagent, so it is no longer gated on the teams cap), and notes only
+// available via Subagent, so it is not gated on the teams cap), and notes only
 // when their cap is on.
 func TestZeroStateCapsTailoring(t *testing.T) {
 	embedded := stripANSIstr(zeroStateModel(t, embeddedCaps()).renderZeroState())
@@ -161,7 +161,7 @@ func TestZeroStateGatewayNote(t *testing.T) {
 		}
 	}
 
-	// Suppressed with no statuses (byte-identical pre-feature path).
+	// Suppressed with no statuses.
 	m.modelCatalog.statuses = nil
 	plain = stripANSIstr(m.renderZeroState())
 	if strings.Contains(plain, "gateway detected") {

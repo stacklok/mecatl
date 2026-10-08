@@ -1,133 +1,109 @@
-# Context management & the compaction cascade
+# Context and compaction
 
-> Part of the [mecatl architecture guide](../architecture.md).
+A long run eventually produces more history than the model's context window holds.
+Before each model turn, the [agent loop](agent-loop.md) measures the complete request
+and, when it nears the window, compacts the persisted conversation. This page explains
+how the window and the token estimate are produced, what each compactor does, and why
+compaction must never split a tool call from its result. The operator-facing settings
+are in [context windows](../../user-docs/features/sessions/context-windows.md).
 
-**What this covers:** the token budget (`MaxRunTokens`), `TokenCounter`/`Compactor` seams, the compaction cascade (cost-first tiered), back-snap to recent user turns, forward-snap past leading tool results, and the `ValidateToolPairing` abort guard.
+## The window
 
-**Prerequisites:** [the agent loop](agent-loop.md) — the loop triggers compaction at the turn boundary.
+Composition resolves the window for the exact provider and model at the point of
+use (`internal/app/provider_discovery.go`); the user guide above lists the precedence
+and fallback, and [providers](providers.md) covers discovery. With no usable window,
+the server rejects the run with `context_window_unavailable` before recording the
+prompt. The engine rereads the window through `Deps.ContextWindow` on every check,
+and a non-positive window disables automatic compaction.
 
-**Follow-on:** return to the [reading map](../READING.md) and choose another topic branch. **Related:** [memory](memory.md) covers cross-session recall, which is independent of compaction.
+## Counting tokens
 
-Two seams keep a long run inside the model's context window. Composition resolves that
-window once per use through one provider/model-exact precedence chain: the global
-`--context-window-override`, operator-tier `models.context_windows`, positive live
-metadata, the models.dev catalog, then the 128K fallback. Alias and slot routing happen
-first, so configuration keys are final provider/model IDs; the same resolver feeds
-compaction, engine introspection, session echoes, model listings, per-session engines,
-and provider-bound children. The operator-owned exact-map decision is recorded in
-[ADR 0207](../adr/0207-context-window-overrides.md).
+`agent.TokenCounter` (`engine/agent/tokencount.go`) estimates tokens for text and
+messages, including framing, reasoning, tool calls, and media parts. The default
+`HeuristicTokenCounter` divides bytes by four; the offline tiktoken counter in
+`internal/adapter/tokenizer` is more accurate. Neither must be exact, but both must
+be deterministic, or compaction decisions would not be reproducible. A tool result
+counts as the larger of its flattened text and its typed parts, so a typed-only
+result is never free.
 
-The positive 128K engine fallback is not used speculatively while initial live
-metadata for the effective model is still unsettled. After the service resolves
-the actual shared/per-session and mode-routed engine, run admission invokes a
-composition callback before prompt recording, retry preparation, approval
-resumption, compaction, or inference. `internal/app/livemeta.go` owns a close-once
-settlement channel on the existing live metadata store; admission waits on that
-channel with the caller context and the existing ten-second refresh bound. A
-known override, exact configured value, live value, or catalog value bypasses the
-wait. Discovery failure or an honest empty inventory yields the retryable
-`context_window_unavailable` server error; a later run reuses the bounded stale
-refresh path. A successful listing that omits a passthrough model/window, and a
-provider with no lister, retain the settled unknown-model fallback. This
-pre-compaction safety decision is recorded in [ADR 0342](../adr/0342-context-window-admission.md).
+## When compaction runs
 
-- **`TokenCounter`** (`engine/agent/tokencount.go`) estimates model-visible request
-  cost. The default `HeuristicTokenCounter` (about chars/4) needs no dependencies;
-  the offline **`tokenizer.Counter`** (`internal/adapter/tokenizer/tokenizer.go`,
-  tiktoken BPE tables embedded, no network or CGO) is the accurate swap-in selected
-  with `--tokenizer=tiktoken`. Both count message framing, reasoning, tool calls,
-  message parts, and typed tool-result parts. For a tool result they use the larger
-  of flattened `Content` and `Parts`, which avoids double-counting alternate
-  projections without treating typed-only results as free.
-- **Automatic trigger.** Before every model turn, `engine/agent/loop.go`
-  (`estimateRequestTokens`) estimates the complete `port.LLMRequest`: the rendered
-  system prompt, ephemeral turn-0 fragments plus persisted conversation messages,
-  and every advertised tool's name, description, JSON schema, and envelope overhead.
-  At the default ratio, `maybeCompact` runs when that estimate reaches **0.8** of the
-  resolved window. Only `Session.Conversation` is compactible. System instructions,
-  ephemeral fragments, and tool definitions remain in the request, so they are
-  irreducible overhead and can by themselves keep the estimate above the trigger.
-  After a successful pass the loop rebuilds only the message suffix; the system and
-  tool layers remain byte-for-byte unchanged.
-- **`Compactor`** (`engine/agent/compaction.go`) compresses persisted conversation
-  history once the trigger is crossed. The default `HeuristicCompactor` is
-  single-summary: it preserves the goal + touched file paths, truncates large tool
-  bodies, and keeps the last N messages. The swap-in `CascadeCompactor`
-  (`engine/agent/cascade.go`, `--compaction=cascade`) runs a **cheapest-first tiered
-  cascade**: snip, strip tool bodies, collapse large file bodies, then summarize. On
-  automatic compaction it derives a request-local target from the same live window:
-  complete request ≤ **0.6** of the window, minus measured irreducible system, fragment,
-  and tool-schema overhead for the compactible persisted-history budget. The configured
-  cascade budget remains the manual-pass behavior. This 0.8/0.6 trigger/target hysteresis
-  avoids thrash and prevents a fixed 128k target from no-oping on a smaller live window.
+At step 5 of each turn, `Engine.maybeCompact` (`engine/agent/loop.go`) estimates the
+request it is about to send: the rendered system prompt, the instruction fragments,
+the persisted conversation, and every advertised tool's name, description, and
+schema. Compaction runs when that estimate reaches `Deps.CompactionRatio` of the
+window, 0.8 by default.
 
-  Both compactors **back-snap the kept-tail boundary to recent user turns** (the
-  shared `snapCutToRecentUserTurn` helper) so the most-recent user instruction(s)
-  survive verbatim instead of falling into the summarised head — the role-blind
-  count-tail bug (during heavy tool use the last N messages are all assistant/tool,
-  so the user's actual task was lost). The first user message stays pinned, the
-  back-snap pulls up to `recentUserTurnsKept` recent user turns into the tail
-  (bounded by `maxUserSnapLookback` so an ancient lone turn can't drag everything
-  in), and tier-4 summarises older/superseded intent under a dedicated
-  `## User instructions and intent` section (prior art: Codex, gemini-cli). They
-  then **snap the kept-tail boundary past leading tool results** (the shared
-  `snapCutToTurnBoundary` helper, applied LAST) so the preserved tail never STARTS on
-  a `RoleTool` message whose matching assistant tool call was dropped into the head —
-  an orphaned tool result draws a provider HTTP 400 on replay. As a final guard
-  each compactor **self-validates** the assembled slice with
-  `session.ValidateToolPairing` (bidirectional: no orphaned results, no dangling
-  calls) and, on failure, **aborts to the original history** with the
-  `agent.ErrCompactionWouldOrphan` sentinel; the loop treats it like any other
-  compaction failure (keep the uncompacted history, WARN, continue). The aggregate
-  itself backstops this: `Session.ReplaceHistory` rejects an unpaired slice.
+Only the persisted conversation can shrink; the system prompt, fragments, and tool
+schemas are irreducible. A compactor that accepts a budget, such as the cascade, is
+told to fit history into 0.6 of the window minus that overhead. The gap between the
+trigger and the 0.6 target stops the next turn from triggering again at once.
+After a pass, the loop swaps only the message suffix of the built request, so the
+system prompt and tool definitions stay byte-identical for the prompt cache. Each
+pass emits a `compaction` event and a log-only `compaction.archive` event holding
+the replaced messages, so the event log keeps the full history
+([observability](observability.md)).
+
+## The compactors
+
+`agent.Compactor` (`engine/agent/compaction.go`) is the seam; composition picks one
+per engine. `HeuristicCompactor`, the default, makes no model call. It keeps system
+messages and the first genuine user message (the goal), adds one message listing
+every file path touched so far, and keeps the recent tail with long tool bodies
+truncated.
+
+`CascadeCompactor` (`engine/agent/cascade.go`) also keeps the goal, touched paths,
+and recent tail, and applies cheaper tiers first, stopping once history fits:
+
+1. **Snip** drops the older half of the middle segment.
+2. **Strip** truncates large tool-result bodies.
+3. **Collapse** replaces large file bodies with a pointer; the model can reread them.
+4. **Summarize** asks the compaction-slot model for a structured summary of the
+   middle, framed as data rather than instructions, and records it as compaction
+   usage. Without a wired provider the cascade stays deterministic and stops at 3.
+
+Both compactors move the start of the kept tail back, within a fixed lookback, to
+include the most recent user turns. In tool-heavy stretches the last few messages
+are all tool traffic, and a count-only cut would drop the user's current request.
+
+## Keeping tool history paired
+
+Providers reject a tool result without its matching call, or a call without its
+result. History like that fails on every later replay, so one bad compaction would
+leave the session unusable. Both compactors therefore move the cut forward past any
+leading tool results as their last step, so the tail never opens on an orphan. Each
+then checks its output with `session.ValidateToolPairing` and, on failure, returns
+the original history with `agent.ErrCompactionWouldOrphan`. The shared admission
+step checks the candidate again, and `Session.ReplaceHistory` refuses an unpaired
+slice as the final backstop.
 
 ## Manual compaction
 
-Automatic compaction waits for the 0.8 trigger. A client can instead request one
-forced pass through `engine/agent/manual_compaction.go` (`CompactSession`), regardless
-of the current estimate. This is an out-of-band session operation, not a prompt or
-model turn. The configured compactor still applies, so the cascade's summary tier can
-make a compaction-slot model call and incur its normal cost.
+`Engine.CompactSession` (`engine/agent/manual_compaction.go`) runs the configured
+compactor once, whatever the estimate, with the same admission rules but the
+compactor's own budget. The aggregate allows it only at a turn boundary, never while
+a run is in progress or awaiting approval. The server's `CompactSession` operation
+also limits it to main chat sessions, serializes it with run starts and the session
+lease, and saves the snapshot before appending the compaction events; a failed
+append only logs a warning. The [gRPC API reference](../../user-docs/reference/grpc-api.md)
+lists the call.
 
-`internal/adapter/server/service.go` (`CompactSession`) accepts owned main-chat
-sessions at a turn boundary: idle, completed, cancelled, or failed. It rejects
-running and awaiting sessions, delegation and scheduled sessions, and any same-process
-live run. The per-session run-entry lock serializes it with prompt start, and a
-configured mutation lease excludes another server replica. Rehydrated sessions use
-their persisted provider/model/profile engine rather than the shared default.
+## Failure modes
 
-An empty, identical, pairing-invalid, or non-reducing candidate is never applied (pairing
-invalidity is reported; the other cases are successful no-ops). Automatic compaction uses
-the same admission gate, so irreducible overhead cannot make short histories grow by
-accumulating summaries. A manual no-op reports no change and the service performs no save
-or event append. On a real change,
-the service saves the compacted snapshot first, then appends the existing
-`EvCompaction` notice and `EvCompactionArchive` in order. A save failure returns an
-error before either event. Event-log append failure is best-effort after commit: it is
-warned and does not roll back or retry the compacted snapshot, so the event log can
-lack the notice or archive.
+Compaction is best-effort and never fails a run by itself.
 
-The operation is exposed as gRPC `CompactSession` and bodyless HTTP
-`POST /v1/sessions/{id}/compact`. `ServerCapabilities.manual_compaction` lets clients
-hide it when talking to an older server. Mecatui uses that bit for its bare `/compact`
-built-in; the command is local control flow and never becomes model input. These
-additive decisions are recorded in [ADR 0276](../adr/0276-full-request-and-manual-compaction.md).
-
-## Prerequisites
-
-- [The agent loop that triggers compaction](agent-loop.md)
-
-## Follow-on reading
-
-- Return to the [reading map](../READING.md) and choose another topic branch.
+- **Compactor error or unpaired output:** the loop keeps the existing history, logs
+  a warning, and continues. A failed tier-4 summary aborts the whole pass the same
+  way.
+- **No reduction:** an empty, unchanged, or no-smaller candidate is discarded, so
+  irreducible overhead cannot make history grow by stacking summaries.
+- **Still over the window:** when overhead alone exceeds the trigger, or the best
+  candidate is still too large, the loop sends the request anyway. If the provider
+  rejects it as too long, the run fails like any other provider error.
 
 ## Related
 
-- [Memory — cross-session recall](memory.md)
-
-- [Providers — the per-model token counter & window](providers.md)
-- [Observability & persistence](observability.md) — `EvCompactionArchive` is the durable, non-destructive bridge: compaction emits the pre-compaction conversation to the event log.
-
----
-
-[← Architecture guide](../architecture.md)
+- [The agent loop](agent-loop.md)
+- [Providers](providers.md)
+- [Observability](observability.md)
+- [Context windows](../../user-docs/features/sessions/context-windows.md)

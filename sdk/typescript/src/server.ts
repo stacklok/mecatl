@@ -18,6 +18,7 @@ import { projectServerCapabilities, type ServerCapabilities } from "./session-pr
 // BEGIN MECATL_SERVER_FEATURES
 /** Known server feature identifiers. Unknown identifiers remain observable. @public */
 export const ServerFeature = {
+  ExactPlanAskControl: "exact_plan_ask_control",
   HttpSteer: "http_steer",
   McpServersOnCreate: "mcp_servers_on_create",
   PromptFreeControls: "prompt_free_controls",
@@ -42,14 +43,6 @@ export const ServerPosture = {
 
 /** One known server posture value. @public */
 export type ServerPosture = (typeof ServerPosture)[keyof typeof ServerPosture];
-
-/**
- * Known watch-session-events feature identifier.
- *
- * @deprecated Use `ServerFeature.WatchSessionEvents`.
- * @public
- */
-export const WATCH_SESSION_EVENTS_FEATURE = ServerFeature.WatchSessionEvents;
 
 /** A detached view of one server compatibility negotiation. @public */
 export interface ServerCompatibility {

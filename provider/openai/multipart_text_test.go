@@ -8,7 +8,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0302_DistinctIdentitiesEmitOrderedChunkText(t *testing.T) {
+func TestDistinctIdentitiesEmitOrderedChunkText(t *testing.T) {
 	got := decodeFixture(t, "distinct_text_identities_turn.sse")
 	want := []port.Chunk{
 		{Kind: port.ChunkText, Text: "item"},
@@ -21,7 +21,7 @@ func TestADR_0302_DistinctIdentitiesEmitOrderedChunkText(t *testing.T) {
 	assertChunks(t, got, want)
 }
 
-func TestADR_0302_InterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *testing.T) {
+func TestInterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *testing.T) {
 	got := decodeFixture(t, "interleaved_multipart_turn.sse")
 	if len(got) != 8 {
 		t.Fatalf("got %d chunks, want 8: %+v", len(got), got)
@@ -51,7 +51,7 @@ func TestADR_0302_InterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *
 	if got[4].Text != "future_phase" {
 		t.Fatalf("phase = %q, want opaque future_phase", got[4].Text)
 	}
-	items := unpackReasoningItems(got[5].Text, got[5].ReasoningItemID)
+	items := unpackReasoningItems(got[5].Text)
 	if len(items) != 1 || items[0].ID != "rs_1" || items[0].Blob != "OPAQUE_REASONING" || items[0].After != 0 {
 		t.Fatalf("reasoning replay = %q (%+v), want rs_1 opaque item before call", got[5].Text, items)
 	}

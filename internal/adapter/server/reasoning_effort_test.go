@@ -44,7 +44,7 @@ func effortEchoFactory(echo string, gotSel *server.ProviderSelector) server.Sess
 // (a) crosses the factory seam in the selector, (b) is echoed on
 // CreateSessionResponse.resolved_model.reasoning_effort with the resolved/clamped
 // value the factory returned, and (c) is mirrored on GetSession's resolved_model
-// (ADR 0055, runtime-discoverability). The factory echoes "high" to model the
+// (runtime-discoverability). The factory echoes "high" to model the
 // openai "max"→"high" clamp.
 func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	var gotSel server.ProviderSelector
@@ -81,8 +81,8 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 }
 
 // TestCreateSessionEffortPersistsOnSession: the per-session reasoning_effort is
-// written onto the persisted Session aggregate as an inert creation label (ADR
-// 0055), so a restart can re-mint the same-effort engine. The Service writes
+// written onto the persisted Session aggregate as an inert creation label,
+// so a restart can re-mint the same-effort engine. The Service writes
 // sess.ReasoningEffort via setSessionLabels.
 func TestCreateSessionEffortPersistsOnSession(t *testing.T) {
 	var gotSel server.ProviderSelector
@@ -100,7 +100,7 @@ func TestCreateSessionEffortPersistsOnSession(t *testing.T) {
 }
 
 // TestEffortSessionRehydratesWithPersistedEffort is the restart-rehydration guard
-// for the reasoning-effort label (ADR 0055) — the WHOLE reason Session.ReasoningEffort
+// for the reasoning-effort label — the WHOLE reason Session.ReasoningEffort
 // is persisted. It mirrors TestSelectorSessionRehydratesWithPersistedSelector
 // (rehydrate_selector_test.go) but with ReasoningEffort in wantSel: a persisted
 // effort-bound session whose per-session engine died with the process must be

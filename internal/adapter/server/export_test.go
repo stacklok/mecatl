@@ -11,8 +11,7 @@ import (
 // TrackedClientKeysForTest returns the post-validation rate-limiter's per-client
 // bucket keys (empty when rate limiting is disabled). It lets an external test
 // assert WHAT the limiter keys on — the verified (iss, sub) rather than the raw
-// token — and that a rejected token creates no post-validation bucket (ADR 0204
-// decision 3).
+// token — and that a rejected token creates no post-validation bucket.
 func (a *Authenticator) TrackedClientKeysForTest() []string {
 	if a.limiters == nil {
 		return nil
@@ -35,10 +34,8 @@ func (a *Authenticator) RejectedTrackedClientCountForTest() int {
 	return len(a.rejectedLimiters.clients)
 }
 
-// SetEngineCloseTimeoutForTest overrides the package-level engineCloseTimeout var
-// for the duration of one test; it returns a restore func (defer it). The override
-// lets a test shrink the timeout so a bounded-engine-close assertion runs in
-// milliseconds, not seconds.
+// SetEngineCloseTimeoutForTest overrides the aggregate shutdown phase timeout
+// for the duration of one test; it returns a restore func (defer it).
 func SetEngineCloseTimeoutForTest(d time.Duration) (restore func()) {
 	prev := engineCloseTimeout
 	engineCloseTimeout = d
@@ -93,6 +90,15 @@ func (s *Service) NeedsRehydrationForTest(sess *session.Session) bool {
 	return s.needsRehydration(sess)
 }
 
+// SetSteerPromotionStartedForTest installs an inert callback invoked after a
+// received steer is admitted to the terminal-race promotion path. Configure it
+// before serving.
+func (s *Service) SetSteerPromotionStartedForTest(fn func()) {
+	s.mu.Lock()
+	s.steerPromotionStarted = fn
+	s.mu.Unlock()
+}
+
 // SetSteerPromotionRegisteredForTest installs an inert callback invoked after a
 // promoted steer has registered its replacement run. Configure it before serving.
 func (s *Service) SetSteerPromotionRegisteredForTest(fn func()) {
@@ -107,7 +113,7 @@ func SteerOutcomeToProtoForTest(o agent.SteerOutcome) mecatlv1.SteerOutcome {
 	return steerOutcomeToProto(o)
 }
 
-// ShrinkWatchDeliveryForTest narrows the bounded watch delivery state (ADR 0250)
+// ShrinkWatchDeliveryForTest narrows the bounded watch delivery state
 // for one test and returns the restore func.
 //
 // The bounds are deliberately NOT configuration: an operator has no reason to

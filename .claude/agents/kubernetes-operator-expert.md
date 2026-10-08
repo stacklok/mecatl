@@ -1,43 +1,10 @@
 ---
 name: kubernetes-operator-expert
 description: >-
-  Designs, reviews, and refactors Kubernetes operators and custom controllers
-  built with kubebuilder / operator-sdk / sigs.k8s.io/controller-runtime.
-  Covers CRD schema design (OpenAPI v3 + CEL x-kubernetes-validations,
-  printer columns, subresources, conversion strategy), reconciler patterns
-  (idempotency, level-triggered logic, requeue/backoff discipline),
-  finalizers, status conditions (standard types from
-  k8s.io/apimachinery/pkg/api/meta), owner references and cascading
-  deletion, predicates and watch filters, admission webhooks
-  (validating/mutating/conversion), leader election, manager setup, caching
-  semantics (cache vs APIReader), envtest-based testing, multi-version API
-  migrations, and the gotchas that cause production operators to
-  hot-loop or leak resources. Read-only review by default; emits design
-  guidance.
-
-  Examples:
-
-  <example>
-  Context: User is starting a new operator.
-  user: "I'm going to write an operator that manages Foo resources backed by an external API. Where do I start?"
-  assistant: "Let me use the kubernetes-operator-expert agent — there's a chunk of upfront design (CRD versioning, finalizer for external cleanup, status condition vocab) that's much cheaper to get right at the start than to retrofit."
-  </example>
-
-  <example>
-  Context: User notices their operator is reconciling in a tight loop.
-  user: "My operator keeps reconciling the same Foo every ~200ms. CPU is pegged. What did I do wrong?"
-  assistant: "Classic hot-loop. I'll use the kubernetes-operator-expert agent to walk through the usual causes (status update triggering its own watch, missing predicate, non-idempotent reconcile)."
-  </example>
-
-  <example>
-  Context: User adds a v1beta1 CRD version next to existing v1alpha1.
-  user: "Adding v1beta1 to FooBar. Conversion strategy is None."
-  assistant: "Conversion: None means clients see whichever version they ask for and the schemas had better be wire-compatible. I'll use the kubernetes-operator-expert agent to review the diff against the conversion rules."
-  </example>
-
-  NOT for: deploying operators (use kubernetes-deployment-expert),
-  general Go architecture review (use go-architect), Helm chart layout for
-  operator distribution (use kubernetes-deployment-expert).
+  Designs and reviews Kubernetes operators and controllers built with
+  controller-runtime: CRD schemas, reconcile idempotency, finalizers, status
+  conditions, webhooks, and envtest testing. Use for controller or CRD changes.
+  Read-only. Not for deployment manifests (use kubernetes-deployment-expert).
 tools: [Read, Glob, Grep, Bash]
 color: purple
 memory: project

@@ -8,12 +8,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapeclassifier.go is the path-escape-posture Scenario 1 seam
-// (docs/acceptance/path-escape-posture.md): a PURE composition-layer
-// classification answering "is this FS-tool call an out-of-root escape?" It
-// changes NO behaviour — a later wave's root-aware wrapping
-// port.PermissionPolicy consumes it; here it only needs to exist and be proven
-// to agree with the tool body. The classifier is composition, not domain, per
+// escapeclassifier.go is the path-escape-posture classification seam: a PURE
+// composition-layer classification answering "is this FS-tool call an
+// out-of-root escape?" It changes NO behaviour — the root-aware wrapping
+// port.PermissionPolicy in escapepolicy.go consumes it; this file only has to
+// agree with the tool body. The classifier is composition, not domain, per
 // the layering rule: the escape *decision* is a posture/policy concern, while
 // engine/tool keeps FileSystem/Workspace (the port↔tool cycle gotcha).
 //
@@ -98,17 +97,17 @@ func underRoot(canon, root string) bool {
 	return canon == root || strings.HasPrefix(canon, root+string(filepath.Separator))
 }
 
-// fsPathArg is the arg envelope of the three path-carrying FS tools
-// (Read/Write/Edit) — the classifier reads only the path.
+// fsPathArg is the arg envelope of the path-carrying FS tools
+// (Read/ListDir/Write/Edit) — the classifier reads only the path.
 type fsPathArg struct {
 	Path string `json:"path"`
 }
 
-// classify reports the escapeKind of an FS-tool call. Only Read/Write/Edit
+// classify reports the escapeKind of an FS-tool call. Only Read/ListDir/Write/Edit
 // carry a workspace path the escape decision applies to: Shell commands are
 // gated by the bash classifiers (SplitCommands/ReadOnlyShell), Glob/Grep route
-// patterns (not paths) and stay workspace-confined at every posture (ADR-0047
-// point 5), and every other tool has no FS path — all classify in-root so the
+// patterns (not paths) and stay workspace-confined at every posture,
+// and every other tool has no FS path — all classify in-root so the
 // later wrapping policy leaves them to the inner policy untouched. A malformed
 // or missing path arg also classifies in-root (the tool body's own arg
 // validation rejects it; the escape decision never invents a path).
@@ -128,7 +127,7 @@ type fsPathArg struct {
 //     canonical target is a pseudo-fs mount).
 func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escapeKind {
 	switch toolName {
-	case "Read", "Write", "Edit":
+	case "Read", listDirToolName, writeToolName, editToolName:
 	default:
 		return escapeInRoot
 	}
@@ -146,7 +145,13 @@ func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escap
 	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
 		rel, ok := osfs.LocalizeInRoot(path)
 		if !ok {
-			return escapeEscape // ".." climbs out: os.Root would refuse
+			// A lexical ../ escape can land in a pseudo-filesystem. Check its
+			// physical destination before posture policy can allow the escape.
+			canon, err := osfs.Canonicalize(c.root, path)
+			if err == nil && isPseudoFSPath(canon) {
+				return escapePseudoFS
+			}
+			return escapeEscape
 		}
 		canon, err := osfs.Canonicalize(c.root, rel)
 		if err != nil {

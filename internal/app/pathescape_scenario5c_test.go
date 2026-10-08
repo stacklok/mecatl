@@ -10,19 +10,18 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// pathescape_scenario5c_test.go pins AC5.1d/AC5.1e
-// (docs/acceptance/path-escape-posture.md Scenario 5): a base-SHARING
+// pathescape_scenario5c_test.go pins that a base-SHARING
 // (shell-less) read-only team member — the supervisor's base-share fallback
 // tier, reached whenever the factory cannot isolate the member (no read-only
 // runner / forker wired) — must NOT inherit the main session's relaxed
@@ -112,7 +111,7 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 			// itself still serves the read — the member denial above is a real
 			// base-share propagation boundary, not a vacuous "the relax was
 			// never on".
-			relaxed := osfsWorkspaceFactory(port.NopDiagnostics{})(f.workspace)
+			relaxed := osfsWorkspaceFactory(port.NopDiagnostics{}, PostureStrict)(f.workspace)
 			if relaxed == nil {
 				t.Fatalf("relaxed base workspace is nil at %s", posture)
 			}
@@ -151,7 +150,7 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 			writeRepoFile(t, f.workspace, "inroot.txt", "in-root\n")
 			gitCommitTest(t, f.workspace, "add inroot")
 
-			base := osfsWorkspaceFactory(port.NopDiagnostics{})(f.workspace)
+			base := osfsWorkspaceFactory(port.NopDiagnostics{}, PostureStrict)(f.workspace)
 			if base == nil {
 				t.Fatalf("relaxed base workspace is nil at %s", posture)
 			}

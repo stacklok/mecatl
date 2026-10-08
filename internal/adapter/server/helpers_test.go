@@ -46,8 +46,8 @@ func call(id, name, args string) session.ToolCall {
 	return session.NewToolCall(session.ToolCallID(id), name, json.RawMessage(args))
 }
 
-// blockingChunks streams one text delta then blocks until ctx is cancelled.
-// Used to exercise the Cancel path: the mock honours ctx within its iterator.
+// blockingChunks is a finite text stream that cancellation can interrupt before
+// ChunkDone. It does not itself block the provider.
 func blockingChunks() []port.Chunk {
 	// A long sequence of text chunks; mockllm.Stream stops yielding when ctx is
 	// done, so cancellation interrupts the stream mid-flight before ChunkDone.

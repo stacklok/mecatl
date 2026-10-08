@@ -37,8 +37,12 @@ func (s *renderedHeaderDebugServer) CreateSession(_ context.Context, req *mecatl
 	s.mu.Lock()
 	s.target = req.GetDebugTargetSessionId()
 	s.mu.Unlock()
-	return &mecatlv1.CreateSessionResponse{
-		SessionId:    "debug-created",
+	return &mecatlv1.CreateSessionResponse{SessionId: "debug-created"}, nil
+}
+
+func (*renderedHeaderDebugServer) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	return &mecatlv1.GetCompatibilityInfoResponse{
+		ApiMajor:     1,
 		Capabilities: &mecatlv1.ServerCapabilities{SessionDebug: true},
 	}, nil
 }

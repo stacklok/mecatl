@@ -49,6 +49,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/productmetrics"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -60,6 +61,12 @@ import (
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
+)
+
+var (
+	microVMReleaseVersion       = "dev"
+	microVMReleaseDefaultsB64   string
+	microVMReleaseStampRequired string
 )
 
 // TRUST MODEL (security): the mecated API exposes command and file execution
@@ -126,16 +133,20 @@ type config struct {
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262: auto-detecting the ToolHive LLM gateway proxy), applied onto
 	// app.Config in appConfig alongside providerFlags.
-	toolhiveLLMFlags     *cliconfig.ToolhiveLLMFlags
-	useMock              bool
-	mockScript           string
-	mockProvider         port.LLMProvider
-	storeDir             string
-	shell                string
-	shellFlagSet         bool
-	noShell              bool
-	authorityEvaluator   string
-	cedarAuthorityPolicy string
+	toolhiveLLMFlags      *cliconfig.ToolhiveLLMFlags
+	useMock               bool
+	mockScript            string
+	mockProvider          port.LLMProvider
+	storeDir              string
+	shell                 string
+	shellFlagSet          bool
+	noShell               bool
+	authorityEvaluator    string
+	cedarAuthorityPolicy  string
+	defaultPlacement      string
+	microVMGuestEgress    microvmmanager.GuestEgressSelection
+	microVMDevRelease     string
+	microVMDevAcknowledge bool
 
 	// Context management: the compaction strategy and the token counter. Both
 	// default to the current behaviour exactly (heuristic compactor + heuristic
@@ -159,12 +170,13 @@ type config struct {
 
 	// LLM resilience knobs (see package internal/adapter/llmresilience).
 	llmMaxAttempts       int
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	llmBreakerThreshold  int
 	llmBreakerCooldown   time.Duration
 
-	// Provider-side prompt caching (ADR 0100).
+	// Provider-side prompt caching.
 	noPromptCache     bool
 	anthropicCacheTTL string
 
@@ -211,11 +223,11 @@ type config struct {
 	// --metrics-addr (the admin listener it rides) AND that address to be loopback:
 	// the surface is UNAUTHENTICATED and can embed goroutine-derived names/timing,
 	// so serve() FAILS CLOSED if --perf-mcp is set on a non-loopback --metrics-addr
-	// (decision 6 + the security review's CWE-306 Low finding).
+	// (the security review's CWE-306 Low finding).
 	perfMCP bool
 
 	// goroutineWarnThreshold arms a background watchdog that logs slog.Warn when
-	// runtime.NumGoroutine() exceeds it (decision 10: a live leak alarm, not just
+	// runtime.NumGoroutine() exceeds it (a live leak alarm, not just
 	// the test-time goleak gate). 0 (default) disables it. The runtime collector
 	// already exports the goroutine COUNT as a series; this is the ALARM on top.
 	goroutineWarnThreshold int
@@ -225,7 +237,7 @@ type config struct {
 	// Memory: per-project memory store directory (empty disables memory tools).
 	memoryDir string
 
-	// Remote store drivers (Phase B): gRPC driver endpoints replacing the local
+	// Remote store drivers: gRPC driver endpoints replacing the local
 	// session/memory stores (mutually exclusive with --store-dir/--memory-dir;
 	// app.Build validates). The driver auth/TLS knobs apply to every driver
 	// connection; the token also reads MECATL_DRIVER_AUTH_TOKEN when the flag
@@ -245,7 +257,7 @@ type config struct {
 	driverTLSCert    string
 	driverTLSKey     string
 
-	// Session leasing (cloud-native Phase 4): OPTIONAL cross-process single-writer
+	// Session leasing: OPTIONAL cross-process single-writer
 	// enforcement for multi-replica deployments over a shared store. Empty =
 	// no leasing (the byte-identical single-writer-by-affinity default). Exactly
 	// one backend: URL (driver), k8s namespace, or flock dir.
@@ -255,7 +267,7 @@ type config struct {
 	sessionLeaseTTL           time.Duration
 	sessionLeaseRenewInterval time.Duration
 
-	// Scheduled tasks (issue #189, Phase 1f; ADR 0073): the in-process scheduler
+	// Scheduled tasks (issue #189): the in-process scheduler
 	// ticks the durable ScheduleStore and fires due schedules. ON by default on
 	// any schedule-capable store (--store-dir / --redis-url / a driver store that
 	// exposes the accessor); a store with no ScheduleStore (the in-memory
@@ -266,11 +278,11 @@ type config struct {
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
 
-	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona fragment.
+	// Soul (issue #14): a user-scoped, agent-READ-ONLY persona fragment.
 	// ON by default reading the conventional ~/.config/mecatl/soul.md (fail-soft if
 	// absent). soulFile overrides the path; noSoul disables it entirely.
 	//
-	// Drift baseline (issue #14, Phase 3, Item 1): the harness records the soul's
+	// Drift baseline (issue #14): the harness records the soul's
 	// content hash in a sidecar (<soulPath>.sha256) trust-on-first-use; a later run
 	// whose hash differs logs a drift WARN and still loads. approveSoul (re)writes the
 	// baseline to the current hash (accept the edit); soulStrict makes a DRIFTED soul
@@ -280,18 +292,17 @@ type config struct {
 	approveSoul bool
 	soulStrict  bool
 
-	// User model (issue #14, Phase 2): a user-scoped, cross-project memory of
+	// User model (issue #14): a user-scoped, cross-project memory of
 	// durable FACTS about the operator (explicit user-memory tools plus a live
 	// bounded operator profile in the volatile system suffix). ON by default at the conventional
 	// ~/.config/mecatl/usermodel; noUserModel disables it; userModelDir overrides
-	// the dir. userModelReview is the deprecated alias for completed-trajectory
-	// auto review; userModelReviewInterval is its session-count debounce.
-	// userModelConsolidateInterval independently authorizes the process-wide
+	// the dir. learningAdmissionInterval is the process-wide automatic-reflection
+	// debounce; userModelConsolidateInterval independently authorizes the process-wide
 	// cross-project "user/" dream consolidator; learning.mode does not gate it.
 	userModelDir                 string
 	noUserModel                  bool
-	userModelReview              bool
-	userModelReviewInterval      int
+	learningAdmissionInterval    int
+	learningAdmissionIntervalSet bool
 	userModelConsolidateInterval time.Duration
 
 	// Skills: explicit directories of progressive-disclosure skill units laid out
@@ -319,7 +330,7 @@ type config struct {
 	// modelSlots binds a named internal lightweight call (compaction/ask-reviewer/
 	// guardrail) — or a tier (cheap/fast/reasoning) a slot falls through to — to a
 	// model selector (an alias or a concrete id), via the repeatable --model-slot
-	// flag. Resolved THROUGH modelAliases in the composition layer (ADR 0030).
+	// flag. Resolved THROUGH modelAliases in the composition layer.
 	modelSlots *cliconfig.KeyValueList
 
 	// Headless ask reviewer (issue #31): subagentAskReviewer names the model (or
@@ -334,7 +345,7 @@ type config struct {
 	subagentAskReviewerPolicyFile string
 	subagentAskReviewerPolicy     string
 
-	// Subagent model router (ADR 0031; enable model per ADR 0042): the router is ENABLED
+	// Subagent model router: the router is ENABLED
 	// by configuring a `models.router:` taxonomy in the user-global settings.yaml — the
 	// guardrails-parity enable model (no flag to forget). The --subagent-model-router
 	// flag is a KILL-SWITCH: subagentModelRouter holds its value and
@@ -348,7 +359,7 @@ type config struct {
 	// Guardrails (issue #27): guardrailsModel names the tool-less checker model that
 	// inspects PreToolUse (outbound-args exfil) and PostToolUse (inbound-result
 	// injection) tool content. Configuring a model here OR via a bound `guardrail`
-	// model slot ENABLES guardrails (configure = enable, ADR 0046); empty + no slot
+	// model slot ENABLES guardrails (configure = enable); empty + no slot
 	// disables them. guardrailsOff is the master kill-switch (--guardrails=off) that
 	// forces guardrails off regardless of config. The RULE LIST + cost knobs live in
 	// the OPERATOR-TIER `guardrails:` subtree of the user-global settings.yaml (a flag
@@ -398,7 +409,7 @@ type config struct {
 	mainRetention         time.Duration
 	mainRetentionMaxTotal int
 
-	// Schedule-fire retention/GC (ADR 0059 decision #7 Phase-2): age threshold
+	// Schedule-fire retention/GC: age threshold
 	// for persisted "sched--"-prefixed fire-session snapshots. Default 7d when
 	// scheduling is on (applied below); 0 disables (fire sessions never swept).
 	scheduleFireRetention         time.Duration
@@ -497,16 +508,16 @@ type config struct {
 	// settings.yaml posture: key raises it). The resolved tier is reported by the
 	// structured `operator posture` startup diagnostic emitted by app.Build.
 	posture string
-	// deploymentID is the operator-set opaque label surfaced on GetServerInfo
-	// (ADR 0248). Sanitised by sanitizeDeploymentID before it reaches app.Config.
+	// deploymentID is the operator-set opaque label surfaced on GetServerInfo.
+	// Sanitised by sanitizeDeploymentID before it reaches app.Config.
 	deploymentID string
-	// corsOrigins is the EXACT-match browser origin allowlist for the HTTP API
-	// (ADR 0248). Empty (the default) installs no CORS middleware at all.
+	// corsOrigins is the EXACT-match browser origin allowlist for the HTTP API.
+	// Empty (the default) installs no CORS middleware at all.
 	corsOrigins stringList
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
-	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055): ""
+	// reasoningEffort is the operator-tier reasoning-effort default: ""
 	// or "auto" (unset → the provider default) or low/medium/high/xhigh/max.
 	// Operator-tier only: the operator-global settings.yaml reasoning-effort: key
 	// folds in, a project-tier key is WARN-ignored. A per-session CreateSession
@@ -614,7 +625,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing settings.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -650,7 +661,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 }
 
 // runConfigDaemonInit implements `mecated config daemon init [--print] [--force]`:
-// it scaffolds a minimal, commented v1 daemon.yaml (issue #338, ADR 0088) at the
+// it scaffolds a minimal, commented v1 daemon.yaml (issue #338) at the
 // documented conventional path <XDG_CONFIG_HOME>/mecatl/daemon.yaml. It does NOT
 // cause automatic loading — the file is loaded ONLY when `mecated serve --config
 // PATH` is supplied explicitly. --print emits the skeleton to out and writes
@@ -665,7 +676,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the daemon.yaml skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing daemon.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -697,7 +708,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(out, "wrote daemon config skeleton to %s\n", path)
 	_, _ = fmt.Fprintf(out, "it is NOT auto-loaded; start the server with 'mecated serve --config %s' to use it.\n", path)
-	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See https://mecatl.dev/docs/building/deployment/mecated for the full reference.\n")
+	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See https://mecatl.dev/docs/operating/mecated for the full reference.\n")
 	return nil
 }
 
@@ -716,7 +727,7 @@ func runConfigDaemonValidate(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var file string
 	fs.StringVar(&file, "file", "", "path to the daemon.yaml to validate (default: the conventional $XDG_CONFIG_HOME/mecatl/daemon.yaml)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -758,7 +769,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 	fs.StringVar(&quarantine, "skills-draft-dir", "", "the QUARANTINE directory the candidate was drafted into")
 	fs.StringVar(&active, "skills-dir", "", "the ACTIVE skills directory to promote the candidate into")
 	fs.BoolVar(&assumeYes, "yes", false, "skip the interactive content review and promote without confirmation (scripted/CI use only)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -795,7 +806,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 
 // runPerfMCPPrintConfig implements `mecated perf-mcp print-config [--metrics-addr
 // host:port]`: it prints the paste-ready client .mcp.json snippet pointing at the
-// loopback perf MCP server's /mcp endpoint. Per decision 6 (loopback, no auth) the
+// loopback perf MCP server's /mcp endpoint. Because it is loopback-only with no auth, the
 // snippet carries NO Authorization header — adding one is a future off-loopback
 // concern. --metrics-addr sets the host:port in the printed URL (default
 // 127.0.0.1:9090, matching defaultMetricsAddr). Output goes to stdout so it can be
@@ -805,7 +816,7 @@ func runPerfMCPPrintConfig(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var addr string
 	fs.StringVar(&addr, "metrics-addr", defaultMetricsAddr, "the loopback admin listen address the perf MCP server is mounted on (host:port); sets the host:port in the printed URL")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -874,7 +885,7 @@ func run(mode commandMode, remaining []string) error {
 	// perf surface's nil-Logger fallback) is correctly routed there. cmd/ mains are the
 	// only layer allowed to call slog.SetDefault; all of internal/ flows through the
 	// injected port.Diagnostics (ban-guarded). The TUI, by contrast, redirects the
-	// default to a FILE because it owns the alt-screen. See docs/adr/0020-diagnostics.md.
+	// default to a FILE because it owns the alt-screen. See docs/architecture/observability.md#diagnostics.
 	slog.SetDefault(logger)
 	// Diagnostics and ambient slog share this configured logger.
 	// The warning, if any, was emitted by the logger factory above.
@@ -987,6 +998,10 @@ func run(mode commandMode, remaining []string) error {
 	}
 
 	composition := appConfig(cfg, sink, cliconfig.TeeToolCallRecorder(mainScoped, pm.ToolCallRecorder), roleScoper, obs.metrics, diag)
+	composition, err = app.ConfigureExecution(composition)
+	if err != nil {
+		return err
+	}
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		return err
@@ -1048,7 +1063,7 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		return observability{}, fmt.Errorf("setup metrics: %w", err)
 	}
 	// Process-RSS gauge (mecatl.process.rss): Linux-only, no-op elsewhere. It
-	// rides the same MeterProvider so it renders on /metrics (decision 9).
+	// rides the same MeterProvider so it renders on /metrics.
 	if rerr := telemetry.RegisterProcessGauges(providers.Meter, diag); rerr != nil {
 		return observability{}, fmt.Errorf("setup process gauges: %w", rerr)
 	}
@@ -1087,7 +1102,7 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		}
 	}
 
-	// Live goroutine-leak alarm (decision 10): the runtime collector already
+	// Live goroutine-leak alarm: the runtime collector already
 	// exports the goroutine COUNT as a /metrics series; this is the operator-facing
 	// ALARM on top — a background watchdog logging slog.Warn when the count exceeds
 	// a configured ceiling. Disabled by default (threshold 0). It is bound to ctx
@@ -1131,7 +1146,7 @@ func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {
 // before starting the heartbeat goroutine and before returning — never
 // deferred to a check on the returned handles' FirstRun field afterward,
 // which would leave a window where the pipeline could record/export before
-// a human ever saw the notice (ADR 0338). run() only threads the resulting
+// a human ever saw the notice. run() only threads the resulting
 // handles and the heartbeat-context cancel func (both callers must defer
 // unconditionally: the handles' Shutdown is always a safe no-op when
 // disabled/errored). The returned error is informational only — a caller
@@ -1164,10 +1179,29 @@ const mecatedServerImplementation = "mecated"
 
 // appConfig constructs the command root's declarative app.Config. app.Build loads the
 // injected provider credential after resolving operator definitions.
+func microVMReadyRequestWithDevelopment(descriptor string, acknowledge bool, egress ...microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+	request, enabled, err := microVMDevelopmentReadyRequest(descriptor, acknowledge, buildinfo.BuildID, microVMReleaseStampRequired != "" || microVMReleaseDefaultsB64 != "", egress...)
+	if enabled || err != nil {
+		return request, err
+	}
+	return microVMReadyRequest(egress...)
+}
+
+func microVMReadyRequest(egress ...microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+	return microvmmanager.ReadyRequestFromDefaults(microVMReleaseDefaultsB64, microVMReleaseVersion, egress...)
+}
+
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
 	out := app.Config{
-		Workspace:                     cfg.workspace,
+		Workspace:             cfg.workspace,
+		DefaultPlacement:      cfg.defaultPlacement,
+		DefaultPlacementSet:   cfg.cliExplicit["default-placement"],
+		MicroVMGuestEgress:    cfg.microVMGuestEgress,
+		MicroVMGuestEgressSet: cfg.cliExplicit["microvm-guest-egress"] || cfg.cliExplicit["microvm-guest-allow"],
+		MicroVMReadyRequest: func(selection microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+			return microVMReadyRequestWithDevelopment(cfg.microVMDevRelease, cfg.microVMDevAcknowledge, selection)
+		},
 		ClientMCPOnCreate:             clientMCPOnCreateForListeners(cfg),
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
@@ -1186,6 +1220,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Tokenizer:                     cfg.tokenizer,
 		ContextWindowOverride:         cfg.contextWindowOverride,
 		LLMMaxAttempts:                cfg.llmMaxAttempts,
+		LLMRecoveryBudget:             cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:          cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:          cfg.llmStreamIdleTimeout,
 		LLMBreakerThreshold:           cfg.llmBreakerThreshold,
@@ -1234,8 +1269,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SoulStrict:                    cfg.soulStrict,
 		UserModelDir:                  cfg.userModelDir,
 		NoUserModel:                   cfg.noUserModel,
-		UserModelReview:               cfg.userModelReview,
-		UserModelReviewInterval:       cfg.userModelReviewInterval,
+		LearningAdmissionInterval:     cfg.learningAdmissionInterval,
+		LearningAdmissionIntervalSet:  cfg.learningAdmissionIntervalSet,
 		UserModelConsolidateInterval:  cfg.userModelConsolidateInterval,
 		SkillsDirs:                    cfg.skillsDirs,
 		SkillsConventional:            cfg.skillsConventional,
@@ -1247,7 +1282,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SubagentAskReviewerModel:      cfg.subagentAskReviewer,
 		SubagentAskReviewerMaxDenies:  cfg.subagentAskReviewerMaxDenies,
 		SubagentAskReviewerPolicy:     cfg.subagentAskReviewerPolicy,
-		// Subagent model router (ADR 0042): the router is enabled by the operator-tier
+		// Subagent model router: the router is enabled by the operator-tier
 		// models.router: taxonomy (folded by foldOperatorModelRouter); this flag is a
 		// KILL-SWITCH. =false forces the router OFF (RouterDisabled). A bare flag / =true
 		// is a harmless no-op (the router stays governed by the taxonomy). Unset leaves
@@ -1304,7 +1339,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
 		DeploymentID:   cfg.deploymentID,
-		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
+		// Reasoning-effort tier: operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
 		ReasoningEffortFlagSet: cfg.reasoningEffortFlagSet,
@@ -1503,7 +1538,7 @@ func (c config) tcpGRPCConfigured() bool {
 // The rule is intentionally UDS-only; loopback TCP is still a network listener.
 //
 //   - A workspace path lends the daemon's FILESYSTEM authority over a root the
-//     operator already chose. Loopback is accepted there as ADR 0237's shipped
+//     operator already chose. Loopback is accepted there as the shipped
 //     precedent.
 //   - An MCP endpoint plus its auth headers lends the daemon's OUTBOUND NETWORK
 //     authority: the caller names a host and the daemon connects to it carrying
@@ -1514,20 +1549,19 @@ func (c config) tcpGRPCConfigured() bool {
 //     (listenUnixSocket creates the parent directory owner-only).
 //
 // So this is the fail-closed reading of AC9.2 — "the same request over a TCP
-// listener is refused" — and of ADR 0248, which already publishes the words "a
-// feature that is only reachable on a UDS listener is advertised only on that
-// listener". A loopback TCP daemon is a TCP daemon.
+// listener is refused" — and of the published GetServerInfo contract that a
+// feature only reachable on some listeners is advertised only on a listener
+// that permits it. A loopback TCP daemon is a TCP daemon.
 //
 // It costs the intended consumer nothing: the SDK-spawned daemon shape from
 // Scenario 8 is exactly --grpc-unix-socket with --http-addr "", which is the one
 // topology this returns true for.
 //
-// DEPLOYMENT-SCOPED, not per-connection, per ADR 0237's Decision: authority is "a
+// DEPLOYMENT-SCOPED, not per-connection: authority is a
 // deployment/composition policy, not an inference made from a request or from the
-// server package's socket state". One *Service backs both listeners, so adding
+// server package's socket state. One *Service backs both listeners, so adding
 // ANY TCP listener gives the feature up on all of them, the UNIX socket included.
-// A per-connection answer would contradict 0237 as written and would need its own
-// ADR.
+// A per-connection answer would contradict that policy.
 //
 // The two tests are asymmetric because the two listeners are. HTTP is always TCP
 // (serve() binds it with net.Listen("tcp", ...)), so an empty --http-addr — the
@@ -1604,7 +1638,7 @@ func validateEffectiveConfig(cfg config) error {
 	// FAIL CLOSED on a non-loopback --metrics-addr with --perf-mcp set, BEFORE
 	// serve() binds any listener, so the refusal is a pure config error with no
 	// side effects (matching the embed path). The /mcp surface is UNAUTHENTICATED
-	// and can embed goroutine-derived function names and timing (decision 6 + the
+	// and can embed goroutine-derived function names and timing (the
 	// security review's CWE-306 Low finding), so it must never be reachable off
 	// loopback — including via a file-supplied metrics_addr.
 	if cfg.perfMCP && !isLoopbackHostPort(cfg.metricsAddr) {
@@ -1614,6 +1648,12 @@ func validateEffectiveConfig(cfg config) error {
 	// or non-finite value is an operator misconfiguration. Reject before the
 	// server is constructed so a malformed file or CLI value never reaches the
 	// rate limiter.
+	if cfg.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if cfg.cliExplicit["llm-max-attempts"] && cfg.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
+	}
 	if cfg.rateLimit < 0 || math.IsNaN(cfg.rateLimit) || math.IsInf(cfg.rateLimit, 0) {
 		return fmt.Errorf("rate_limit %v is invalid: must be >= 0 and finite (0 disables rate limiting)", cfg.rateLimit)
 	}
@@ -1651,6 +1691,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs := flag.NewFlagSet("mecated", flag.ContinueOnError)
 	fs.SetOutput(out)
 	var cfg config
+	cfg.microVMGuestEgress = microvmmanager.NewGuestEgressSelection()
 
 	cwd, _ := os.Getwd()
 
@@ -1694,21 +1735,26 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.authorityEvaluator, "authority-evaluator", "local", "authority evaluator: local (default), noop, or cedar; cedar requires --cedar-authority-policy")
 	fs.StringVar(&cfg.cedarAuthorityPolicy, "cedar-authority-policy", "", "path to the static operator Cedar authority policy; read once at startup when --authority-evaluator=cedar")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.StringVar(&cfg.defaultPlacement, "default-placement", "", "override execution.default_placement for this mecated serve: host-local or microvm-local (omitted: operator settings, then host-local)")
+	fs.Var(cfg.microVMGuestEgress.ModeValue(), "microvm-guest-egress", "override execution.microvm.guest_egress.mode: permissive, deny-all, or allowlist; omitted: operator settings, then permissive")
+	fs.Var(cfg.microVMGuestEgress.AllowValue(), "microvm-guest-allow", "allow one microvm-local guest destination as HOST:PORT/tcp|udp (repeatable; requires --microvm-guest-egress=allowlist; hostnames only, no IP literals or wildcards)")
+	registerMicroVMDevelopmentFlags(fs, &cfg.microVMDevRelease, &cfg.microVMDevAcknowledge)
 
 	fs.StringVar(&cfg.compaction, "compaction", "heuristic", "compaction strategy: \"heuristic\" (default, single-summary) or \"cascade\" (tiered snip→strip→collapse→summarize)")
 	fs.StringVar(&cfg.tokenizer, "tokenizer", "heuristic", "token counter for the compaction trigger: \"heuristic\" (default, dependency-free) or \"tiktoken\" (offline tiktoken vocab)")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens for compaction and the client context meter. Default 0 uses the configured, reported, cataloged, or 128k value.")
 
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "max LLM stream-establish attempts (initial call plus retries)")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "timeout for connecting to an LLM stream and receiving its first chunk. It does not interrupt an active stream. Set 0 to disable.")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; the watchdog bounds each gap, so precommit timeouts may recover while visible stalls are terminal (0 disables)")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "consecutive LLM failures that open the circuit breaker (0 disables)")
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "how long the LLM circuit breaker stays open before half-opening")
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "maximum cumulative input and output tokens per run. Child agents inherit the limit. Default 0 allows unlimited tokens.")
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "maximum cumulative input and output tokens across a team run; checked between rounds. A per-call team limit can only lower it. Default 0 allows unlimited tokens.")
 
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching. Caching is enabled by default.")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic ephemeral prompt-cache TTL: \"5m\" or \"1h\". Default empty uses the API default of 5m. Other values are ignored with a warning.")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic ephemeral prompt-cache TTL: \"5m\" or \"1h\". Default empty uses 1h on Anthropic, OpenRouter's Anthropic endpoint and the ToolHive gateway, and the API default of 5m elsewhere; set 5m for cheaper cache writes. Other values are ignored with a warning.")
 
 	fs.StringVar(&cfg.metricsAddr, "metrics-addr", defaultMetricsAddr, "Prometheus /metrics listen address (empty disables the metrics endpoint)")
 
@@ -1746,10 +1792,10 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host and port of a remote gRPC learning store. The server must provide attempt, proposal, and skill repositories. Uses the same driver authentication and TLS settings as --session-store-url.")
 	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host and port of a remote session-lease driver for cross-process single-writer enforcement. Empty disables leasing. Mutually exclusive with --session-lease-dir and --session-lease-k8s-namespace.")
 	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for local flock-based session leases between processes on one host. flock releases leases after a crash. Use --session-lease-k8s-namespace or --session-lease-url across hosts. Empty disables leasing.")
-	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/building/deployment/mecated). Empty = no leasing")
+	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/operating/mecated). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
-	// Scheduled tasks (issue #189, Phase 1f; ADR 0073). The scheduler is ON by
+	// Scheduled tasks (issue #189). The scheduler is ON by
 	// default whenever the configured store exposes a ScheduleStore; the flag
 	// surface is the opt-OUT knob.
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "disable scheduling for a schedule-capable durable store. Create, list, and manual fire operations remain available.")
@@ -1770,8 +1816,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 
 	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "directory for user-scoped facts shared across projects. Default is the conventional XDG location. It supplies user-memory tools and a bounded operator profile; agent behavior comes from the soul and system rules.")
 	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "disable the user-model entirely (explicit tools and live operator profile)")
-	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "set learning.mode to auto unless settings explicitly select another mode. Eligible completed sessions can contribute facts to the user model.")
-	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "process-wide completed-session debounce for automatic user-model review: review every Nth eligible completion (1 = every completion). Applies to learning.mode: auto and the compatibility --user-model-review alias")
+	fs.IntVar(&cfg.learningAdmissionInterval, "learning-admission-interval", 1, "process-wide automatic-learning debounce: admit every Nth eligible reflection (0 or 1 admits every eligible reflection)")
 	fs.DurationVar(&cfg.userModelConsolidateInterval, "user-model-consolidate-interval", 0, "independent process-wide interval for background consolidation (dream) of the cross-project user-model store's user/ namespace; 0 disables. Requires the user-model store and provider; learning.mode (including a project off ceiling) does not gate this explicit maintenance schedule")
 
 	fs.Var(&cfg.skillsDirs, "skills-dir", "directory of skills arranged as <name>/SKILL.md. Repeatable; these directories have highest precedence. An SKILL.md can steer the model, so use only trusted directories.")
@@ -1863,7 +1908,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		writeServeCommonHelp(out, fs)
 	}
 
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		// Return the fully-registered FlagSet even on a parse/help error so the
 		// progressive-help completeness invariant (validateFlagMeta) can run over
 		// the full real registration path via the --help-triggered ErrHelp path.
@@ -1907,9 +1952,15 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		return fs, config{}, fmt.Errorf("command runner configuration: %w", err)
 	}
 	cfg.shell = resolvedShell
+	if err := validateMicroVMPlacementFlags(mode, cfg); err != nil {
+		return fs, config{}, err
+	}
+	if err := cfg.microVMGuestEgress.Validate(); err != nil {
+		return fs, config{}, err
+	}
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
-	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
+	// explicitly: the scheduler is ON by
 	// default on a schedule-capable store, and a durable store accumulates a
 	// "sched--" session per fire, so a sane default keeps it bounded. An explicit
 	// --schedule-fire-retention=0 leaves fire sessions untouched (the sweep is
@@ -1967,7 +2018,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	case "off":
 		cfg.guardrailsOff = true
 	default:
-		return nil, config{}, fmt.Errorf("--guardrails %q: only \"off\" is accepted (the kill-switch); to ENABLE guardrails set --guardrails-model OR bind the `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — configuring a checker model is the enable (ADR 0046). Leave --guardrails unset to keep guardrails governed by the model/slot config", cfg.guardrailsMode)
+		return nil, config{}, fmt.Errorf("--guardrails %q: only \"off\" is accepted (the kill-switch); to ENABLE guardrails set --guardrails-model OR bind the `guardrail` model slot (--model-slot guardrail=… / models.slots.guardrail) — configuring a checker model is the enable. Leave --guardrails unset to keep guardrails governed by the model/slot config", cfg.guardrailsMode)
 	}
 	// WebSearch master switch (issue #26): only `--websearch=off` is meaningful (the
 	// kill switch — it forces web search off regardless of the backend ladder). An
@@ -1998,7 +2049,7 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 		case "shell":
 			cfg.shellFlagSet = true
 		case "subagent-model-router":
-			// Tri-state (ADR 0042): record that the kill-switch flag was given so
+			// Tri-state: record that the kill-switch flag was given so
 			// appConfig can distinguish "unset" (router governed by the taxonomy) from
 			// "=false" (kill-switch); "=true/bare" is inert (the taxonomy still governs).
 			cfg.subagentModelRouterSet = true
@@ -2018,6 +2069,8 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.retentionCLISet.ScheduledMaxCount = true
 		case "child-gc-interval":
 			cfg.retentionCLISet.SweepCadence = true
+		case "learning-admission-interval":
+			cfg.learningAdmissionIntervalSet = true
 		case "no-steer":
 			cfg.noSteerFlagSet = true
 		}
@@ -2033,13 +2086,36 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 	})
 }
 
+func validateMicroVMPlacementFlags(mode commandMode, cfg config) error {
+	if cfg.defaultPlacement != "" && cfg.defaultPlacement != app.PlacementHostLocal && cfg.defaultPlacement != app.PlacementMicroVMLocal {
+		return fmt.Errorf("unsupported --default-placement %q (supported: %s|%s)", cfg.defaultPlacement, app.PlacementHostLocal, app.PlacementMicroVMLocal)
+	}
+	executionSet := cfg.cliExplicit["default-placement"] || cfg.cliExplicit["microvm-guest-egress"] || cfg.cliExplicit["microvm-guest-allow"]
+	if mode == modeACP && executionSet {
+		return errors.New("execution placement flags are supported only by 'mecated serve'")
+	}
+	return validateMicroVMDevelopmentFlags(mode, cfg)
+}
+
+func validateMicroVMDevelopmentFlags(mode commandMode, cfg config) error {
+	if mode != modeServe && (cfg.microVMDevRelease != "" || cfg.microVMDevAcknowledge) {
+		return errors.New("microVM development release flags are supported only by 'mecated serve'")
+	}
+	if (cfg.microVMDevRelease == "") != !cfg.microVMDevAcknowledge {
+		return errors.New("--microvm-dev-release and --microvm-dev-acknowledge-untrusted-local-artifacts are required together")
+	}
+	if cfg.microVMDevRelease != "" && cfg.defaultPlacement != microvmmanager.Alias {
+		return errors.New("microVM development release flags require --default-placement microvm-local")
+	}
+	return nil
+}
+
 // applyScheduleFireRetentionDefault sets the schedule-fire retention to 7 days
 // when the operator did not pass --schedule-fire-retention explicitly. The
-// scheduler is ON by default on any schedule-capable store (ADR 0073), so the
+// scheduler is ON by default on any schedule-capable store, so the
 // default activates on the default path too — not only under an explicit
 // enable flag. An explicit --schedule-fire-retention=0 disables the sweep.
-// Extracted from parseFlags to keep its cyclomatic complexity under the gate
-// (ADR 0059 decision #7 Phase-2).
+// Extracted from parseFlags to keep its cyclomatic complexity under the gate.
 func applyScheduleFireRetentionDefault(cfg *config) {
 	if !cfg.scheduleFireRetentionSet && cfg.scheduleFireRetention == 0 {
 		cfg.scheduleFireRetention = 7 * 24 * time.Hour
@@ -2231,11 +2307,11 @@ func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *
 		slog.Info("lifetime pipe closed (the spawning parent exited); stopping servers")
 	case err := <-errCh:
 		slog.Error("server failed; shutting down", "err", err)
-		shutdown(grpcSrv, httpSrv, metricsSrv)
+		shutdown(svc, grpcSrv, httpSrv, metricsSrv)
 		return err
 	}
 
-	shutdown(grpcSrv, httpSrv, metricsSrv)
+	shutdown(svc, grpcSrv, httpSrv, metricsSrv)
 	return nil
 }
 
@@ -2371,7 +2447,7 @@ func (l *boundListeners) serveAdmin(metricsSrv *http.Server, cfg config, adminPa
 // SECURITY: pprof/FlightRecorder/expvar output can embed prompt text, file
 // paths, and goroutine stacks. This listener is loopback-bound by default and
 // MUST stay loopback — these endpoints are never mounted on the public
-// gRPC/HTTP service surface (decision 6 in docs/adr/0018-perf-observability.md).
+// gRPC/HTTP service surface.
 func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) (*http.Server, string) {
 	adminPaths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
 	if cfg.metricsAddr == "" || cfg.httpAddr == "" {
@@ -2381,7 +2457,7 @@ func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.
 	// Perf MCP server: mount /mcp on the SAME loopback admin mux. It is
 	// UNAUTHENTICATED and its output can embed goroutine-derived function names
 	// and timing, so a non-loopback --metrics-addr with --perf-mcp is REFUSED
-	// (decision 6 + the security review's CWE-306 Low finding). That refusal is
+	// (the security review's CWE-306 Low finding). That refusal is
 	// enforced fail-closed in parseFlags (config validation), BEFORE serve()
 	// binds anything — so by the time we reach here the address is loopback.
 	if cfg.perfMCP {
@@ -2435,7 +2511,7 @@ func logListenerPosture(cfg config, callerAuthenticated bool) {
 // exactly one job, and adding a secret to it would break its own tests first.
 //
 // Capabilities are deliberately dropped from that projection: the ready file is
-// an unauthenticated local artefact, and ADR 0245 keeps operator configuration
+// an unauthenticated local artefact, and operator configuration stays
 // out of the equivalent unauthenticated-shaped surface. A parent that wants the
 // capability set can ask for it over the socket it just learned about.
 func publishReadyFile(cfg config, svc *server.Service, lis boundListeners) error {
@@ -2470,7 +2546,7 @@ func publishReadyFile(cfg config, svc *server.Service, lis boundListeners) error
 // ctx is the SERVER-ROOT context: the validator owns background JWKS refresh, so
 // it must outlive any request. EVERY failure here is fatal and the daemon
 // refuses to start — silently falling back to the unauthenticated path would
-// turn an authenticated deployment into an open one (ADR 0204).
+// turn an authenticated deployment into an open one.
 func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authenticator, *server.CORSPolicy, error) {
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {
@@ -2630,13 +2706,17 @@ func storeKind(cfg config) string {
 	return "jsonl (resumable across restart)"
 }
 
-// shutdown gracefully stops the servers, bounding the HTTP drains with a
-// timeout. httpSrv may be nil when --http-addr is empty (the HTTP/SSE surface is
-// disabled, AC8.2); metricsSrv may be nil when the admin endpoint is disabled by
-// an empty --metrics-addr or with the HTTP surface.
-func shutdown(grpcSrv *grpc.Server, httpSrv, metricsSrv *http.Server) {
+// shutdown first stops admission and cancels active runs, then gracefully stops
+// the servers, bounding the complete drain with a timeout. httpSrv may be nil when
+// --http-addr is empty (the HTTP/SSE surface is disabled, AC8.2); metricsSrv may
+// be nil when the admin endpoint is disabled by an empty --metrics-addr or with
+// the HTTP surface.
+func shutdown(svc *server.Service, grpcSrv *grpc.Server, httpSrv, metricsSrv *http.Server) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := svc.GracefulDrain(shutdownCtx); err != nil {
+		slog.Warn("service graceful drain", "err", err)
+	}
 	if httpSrv != nil {
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("http graceful shutdown", "err", err)

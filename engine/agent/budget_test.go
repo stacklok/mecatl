@@ -214,8 +214,8 @@ func (p *subagentSpammerProvider) Stream(ctx context.Context, _ port.LLMRequest)
 // terminal StopBudget asserted off the event stream, mirroring TestBudgetTerminatesRunawayCleanly.
 // The parent provider delegates a plain Subagent every turn with ZERO parent usage; a wired
 // SubagentModelRouter (the Deps closure the composition builds) classifies each delegation,
-// returning a fixed non-zero classifier usage that the dispatch-path routeTask folds into the
-// parent sess.Usage. With no other parent spend, the run must terminate StopBudget purely from
+// returning fixed non-zero classifier usage that routeTask records in the separate
+// router bucket. With no other parent spend, the run must terminate StopBudget purely from
 // accumulated classifier cost — COMPLETED + Reopen-recoverable, the clean-terminal contract.
 //
 // A regression that dropped the fold (routeTask not folding, or RunModelRouter/
@@ -239,10 +239,10 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 		Catalog:      catalogWith(t, subagentTool),
 		MaxRunTokens: budget,
 		// The composition-built router closure stand-in: classify (hit) and report spend.
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &agent.SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) agent.ModelRouteResult {
 			routeCalls.Add(1)
-			return "large", "", classifierUsage, "", true // empty model → inherit default child; the FOLD is what matters
-		},
+			return agent.ModelRouteResult{Category: "large", Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{session.UsageKindRouter: {Total: classifierUsage, Models: map[string]session.Usage{"test/classifier": classifierUsage}}}}, OK: true} // empty model → inherit default child; the FOLD is what matters
+		}},
 	})
 	sess := newSession(t, session.Limits{}) // no turn/tool limits: the budget is the only brake
 	ws := memfs.NewWorkspace("/ws")
@@ -266,10 +266,87 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 	if got := routeCalls.Load(); got < 3 {
 		t.Fatalf("router classified %d time(s), want >= 3 (the budget should trip after repeated folds)", got)
 	}
-	if got := sess.Usage.TotalTokens(); got < budget {
+	if got := sess.UsageFor(session.UsageKindRouter).TotalTokens(); got < budget {
 		t.Fatalf("cumulative parent usage = %d, want >= budget %d (folded classifier spend only)", got, budget)
 	}
 	_ = classifierPerCall
+}
+
+func TestAuxiliaryTokenUsage_Scenario1_AuxiliaryKindsDoNotSpendMainBudget(t *testing.T) {
+	for _, kind := range []session.UsageKind{
+		session.UsageKindSessionTitle,
+		session.UsageKindCompaction,
+		session.UsageKindReflection,
+		session.UsageKindAskReviewer,
+		session.UsageKindGuardrail,
+		session.UsageKindParallelJudge,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			e := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), MaxRunTokens: 1})
+			sess := newSession(t, session.Limits{})
+			sess.RecordTokenUsage(kind, "provider", "model", session.Usage{InputTokens: 100, OutputTokens: 50})
+
+			res := lastResult(t, drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "continue"})))
+			if res.Stop != session.StopEndTurn {
+				t.Fatalf("terminal stop = %q, want end_turn; %q must not spend main budget", res.Stop, kind)
+			}
+			if got := res.Usage; got != (session.Usage{}) {
+				t.Fatalf("EvResult.Usage = %#v, want zero (the Team budget consumes this projection)", got)
+			}
+			if got := sess.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+				t.Fatalf("main usage = %#v, want zero", got)
+			}
+			if got := sess.TokenUsageSnapshot()[kind].Total.TotalTokens(); got != 150 {
+				t.Fatalf("auxiliary bucket tokens = %d, want 150", got)
+			}
+		})
+	}
+}
+
+func TestAuxiliaryTokenUsage_Scenario1_PreservesOpaqueKindsWithoutBudgetEffect(t *testing.T) {
+	const opaque session.UsageKind = "future_accounting_purpose"
+	sess := newSession(t, session.Limits{})
+	sess.RecordTokenUsage(opaque, "provider", "future-model", session.Usage{InputTokens: 100, OutputTokens: 50})
+	restored := newSession(t, session.Limits{})
+	restored.RestoreTokenUsage(sess.TokenUsageSnapshot())
+
+	e := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), MaxRunTokens: 1})
+	res := lastResult(t, drain(e.Run(context.Background(), restored, agent.MemEnv("/ws"), agent.RunRequest{Text: "continue"})))
+	if res.Stop != session.StopEndTurn {
+		t.Fatalf("terminal stop = %q, want end_turn; opaque usage must be budget-neutral", res.Stop)
+	}
+	if got := res.Usage; got != (session.Usage{}) {
+		t.Fatalf("EvResult.Usage = %#v, want zero", got)
+	}
+	if got := restored.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Fatalf("main usage = %#v, want zero", got)
+	}
+	if got := restored.TokenUsageSnapshot()[opaque].Models["provider/future-model"].TotalTokens(); got != 150 {
+		t.Fatalf("opaque round-trip tokens = %d, want 150", got)
+	}
+}
+
+func TestRouterUsageRetainsSpendBound(t *testing.T) {
+	const budget = 350
+	llm := &countingProvider{inner: mockllm.New(mockllm.TextTurn("should-never-run"))}
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, loopTool()), MaxRunTokens: budget})
+	sess := newSession(t, session.Limits{})
+	sess.RecordTokenUsage(session.UsageKindRouter, "provider", "router-model", session.Usage{InputTokens: 300, OutputTokens: 50})
+
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "continue"}))
+	res := lastResult(t, evs)
+	if res.Stop != session.StopBudget {
+		t.Fatalf("terminal stop = %q, want %q from router usage", res.Stop, session.StopBudget)
+	}
+	if got := llm.calls.Load(); got != 0 {
+		t.Fatalf("model was called %d time(s), want router spend to stop before a main call", got)
+	}
+	if got := sess.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Fatalf("main usage = %#v, want zero", got)
+	}
+	if got := res.Usage; got != (session.Usage{}) {
+		t.Fatalf("EvResult.Usage = %#v, want zero", got)
+	}
 }
 
 // countingProvider records how many Stream calls it received, then delegates to a
@@ -286,16 +363,16 @@ func (p *countingProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 	return p.inner.Stream(ctx, req)
 }
 
-// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard (cloud-native
-// Phase 1): an ordinary Engine.Run always has a zero baseline, so a session loaded
+// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard: an
+// ordinary Engine.Run always has a zero baseline, so a session loaded
 // carrying cumulative Usage ALREADY past the MaxRunTokens ceiling trips StopBudget
 // at the FIRST turn boundary — before any model call — instead of re-granting a
 // fresh budget. Internal cleanup/synthesis baselines must never leak into this
 // public run entry point.
-// The budget brake is evaluated against the AGGREGATE's cumulative Usage
-// (sess.Usage), NOT a fresh-from-zero per-run total; there is no loop seed. Mutation:
-// changing the budget check from `budgetExhausted(r, sess.Usage)` to
-// `budgetExhausted(r, total)` makes the run proceed and the model gets called.
+// The budget brake is evaluated against the aggregate's cumulative main usage plus
+// its separate router bucket, NOT a fresh-from-zero per-run total; there is no loop seed.
+// Mutation: changing the boundary check to `budgetExhausted(r, total)` makes the run
+// proceed and the model gets called.
 func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 	const budget = 350
 
@@ -305,7 +382,9 @@ func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 
 	// A session reloaded mid-conversation with prior spend already over the ceiling.
 	sess := newSession(t, session.Limits{})
-	sess.Usage = session.Usage{InputTokens: 300, OutputTokens: 100} // 400 >= 350
+	sess.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+		session.UsageKindMain: {Models: map[string]session.Usage{"unknown": {InputTokens: 300, OutputTokens: 100}}},
+	}) // 400 >= 350
 
 	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "continue"}))
 
@@ -318,7 +397,7 @@ func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 	}
 	// The aggregate's cumulative usage still reflects the loaded prior spend (the
 	// per-run EvResult.Usage is zero here — no turn ran this run — which is correct).
-	if got := sess.Usage.TotalTokens(); got < budget {
+	if got := sess.UsageFor(session.UsageKindMain).TotalTokens(); got < budget {
 		t.Fatalf("aggregate usage = %d, want >= prior spend %d", got, budget)
 	}
 	// Clean terminal, Reopen-recoverable.

@@ -257,7 +257,7 @@ type FileSystem interface {
 }
 
 // FileVersion is the opaque, comparable content version a Workspace attaches to a
-// version-bearing read (ADR 0208). It is an adapter-minted token (a content hash,
+// version-bearing read. It is an adapter-minted token (a content hash,
 // an inode+mtime pair, a remote ETag, …) the caller compares for equality with
 // another FileVersion from the SAME adapter and passes back to a conditional
 // mutation. It carries NO meaning outside equality and is NEVER used as a
@@ -322,12 +322,13 @@ func DecodeFileVersion(encoded string) FileVersion {
 // It carries the PLAIN (non-versioned) Read/Stat: non-agent consumers that only
 // inspect the tree (permission config, prompt discovery, the agent-def/skill
 // sources) never participate in the read-ledger / conditional-mutation protocol
-// (ADR 0208) and do not need a FileVersion. The agent-facing built-in
+// and do not need a FileVersion. The agent-facing built-in
 // Read/Edit/Write tools use the version-bearing ReadVersion + CreateFile/
 // ReplaceFile on the full Workspace, NOT this plain Read.
 //
 // Workspace embeds it, so any *Workspace is usable where a WorkspaceReader is
-// expected. Paths are session-relative and adapters reject escapes.
+// expected. Paths are normally session-relative; adapter-specific serving
+// exceptions require composition-level authorization.
 type WorkspaceReader interface {
 	// Root returns the absolute session root all paths are scoped to.
 	Root() string
@@ -335,6 +336,79 @@ type WorkspaceReader interface {
 	Read(ctx context.Context, path string) ([]byte, error)
 	// Stat returns metadata for the file at the session-relative path.
 	Stat(ctx context.Context, path string) (FileInfo, error)
+}
+
+// LocalFileOperands returns only operands whose built-in tool semantics identify
+// workspace-local files. It mirrors the built-in decoders' field matching only
+// for required path operands; it intentionally does not validate other arguments.
+// Argument names on MCP, custom, or delegation tools are payload labels and never
+// mint local filesystem authority.
+func LocalFileOperands(name string, args json.RawMessage) []string {
+	call := session.NewToolCall("", name, args)
+	switch name {
+	case "Read", "Edit", "Write", "Remove", "ListDir":
+		var operands struct {
+			Path string `json:"path"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok || operands.Path == "" {
+			return nil
+		}
+		return []string{operands.Path}
+	case "Copy", "Move":
+		var operands struct {
+			Source      string `json:"source"`
+			Destination string `json:"destination"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok || operands.Source == "" || operands.Destination == "" {
+			return nil
+		}
+		return []string{operands.Source, operands.Destination}
+	case ShellToolName:
+		var operands struct {
+			Command string `json:"command"`
+		}
+		if _, ok := session.ParseArgs(call, &operands); !ok {
+			return nil
+		}
+		if path, ok := exactLocalShellScript(operands.Command); ok {
+			return []string{path}
+		}
+	}
+	return nil
+}
+
+func exactLocalShellScript(command string) (string, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || strings.ContainsAny(trimmed, ";&|$`()<>\\\n\r") {
+		return "", false
+	}
+	parts := strings.Fields(trimmed)
+	if strings.Join(parts, " ") != trimmed {
+		return "", false
+	}
+	if len(parts) == 1 && (strings.HasPrefix(parts[0], "./") || strings.HasSuffix(parts[0], ".sh")) {
+		return parts[0], true
+	}
+	if len(parts) == 2 && (parts[0] == "sh" || parts[0] == "bash" || parts[0] == "dash") && (strings.HasPrefix(parts[1], "./") || strings.HasSuffix(parts[1], ".sh")) {
+		return parts[1], true
+	}
+	return "", false
+}
+
+// BoundedWorkspaceReader is the optional evidence-safe versioned read seam.
+// ReadVersionBounded must reject content larger than maxBytes before allocating
+// more than maxBytes+1 bytes and must return content and version from one
+// consistent snapshot. Callers must fail closed when a Workspace lacks it.
+type BoundedWorkspaceReader interface {
+	ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
+}
+
+// BoundedWorkspaceRangeReader is the optional paging extension used for finite
+// evidence larger than one native preview. It must read at most maxBytes from
+// offset, reject files larger than totalLimit without allocating them, and
+// return the authoritative version and total size from the same opened snapshot.
+type BoundedWorkspaceRangeReader interface {
+	ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, FileVersion, int64, error)
 }
 
 // AuthorityResourceResolver derives the physical, workspace-confined identity of a
@@ -350,23 +424,24 @@ type AuthorityResourceResolver interface {
 	AuthorityResourcePath(path string) (target, workspace string, err error)
 }
 
-// Workspace is the session-scoped seam every Tool executes against. It scopes
-// all paths to a single session root (rejecting escapes such as "../"), exposes
+// Workspace is the session-scoped seam every Tool executes against. It normally
+// scopes paths to a single session root; explicit adapter-specific exceptions
+// require composition-level authorization. It exposes
 // the read/search operations the core file tools need, and carries the explicit,
 // unambiguous versioned mutation operations the built-in Edit/Write tools use
-// with the Environment's independently selected ReadLedger (ADR 0208, ADR 0281).
+// with the Environment's independently selected ReadLedger.
 //
-// All paths are relative to the session root unless documented otherwise;
-// adapters must reject any path that resolves outside the root.
+// Paths are normally relative to the session root. Adapters must reject
+// out-of-root paths unless explicitly paired with an authorizing policy.
 //
-// VERSION PROTOCOL (ADR 0208). The Workspace capability exposes only the
+// VERSION PROTOCOL. The Workspace capability exposes only the
 // explicit create-only / conditional-replace-by-version pair, so a tool mutation
 // can never silently clobber a concurrent change:
 //
 //   - ReadVersion returns the content AND the authoritative FileVersion the
 //     adapter currently holds for path. The built-in Read tool records that
 //     version in the Environment's ReadLedger under LedgerKey(ws.Root(), path)
-//     (ADR 0281: fresh in-memory by default, or explicitly injected durable
+//     (fresh in-memory by default, or explicitly injected durable
 //     storage; the ledger performs NO file-content I/O), so a
 //     later Edit/Write can assert read-before-mutate-and-unchanged.
 //   - Existing-file Write and Edit: require a recorded version, ReadVersion
@@ -386,8 +461,7 @@ type AuthorityResourceResolver interface {
 // instances unless their backend contract says so. A NON-COOPERATING POSIX writer
 // (a shell command, an external editor) that bypasses the Workspace seam can still
 // race a conditional replace — this is honest best-effort same-process CAS, NOT
-// kernel-level locking; a future remote transport will provide true backend CAS
-// (ADR 0208, remote transport deferred).
+// kernel-level locking; a future remote transport will provide true backend CAS.
 type Workspace interface {
 	// WorkspaceReader is the read-only subset (Root + plain Read + Stat);
 	// embedding it keeps the read methods defined once and lets a *Workspace
@@ -477,11 +551,10 @@ func (e *VersionMismatchError) Error() string {
 // RPC: physical symlink aliases may conservatively produce distinct entries
 // (a safe false-negative that forces another Read).
 //
-//   - A session-RELATIVE path keys by its cleaned slash form (filepath.Clean,
-//     ToSlash). filepath.IsLocal reports not-relative for absolute/slash-prefixed
-//     operands; a relative path that climbs above the root ("../x") still keys by
-//     its cleaned form (the ledger is a lookup, not a confinement gate —
-//     confinement is the Workspace's business at use time).
+//   - A session-RELATIVE path normally keys by its cleaned slash form. If it
+//     climbs above an absolute root, it keys by the resulting absolute path,
+//     matching an external absolute alias. The ledger is not a confinement gate;
+//     the Workspace verifies paths at use time.
 //   - An ordinary ABSOLUTE <root>/<rel> path is reduced with filepath.Rel so it
 //     converges with the relative <rel> form.
 //   - An absolute path that does NOT lie under root (an out-of-root relaxed-read
@@ -498,7 +571,11 @@ func LedgerKey(root, path string) string {
 		return "."
 	}
 	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
-		return filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+		cleaned := filepath.Clean(filepath.FromSlash(path))
+		if !filepath.IsAbs(root) || cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(cleaned)
+		}
+		path = filepath.Join(root, cleaned)
 	}
 	cleaned := filepath.Clean(path)
 	if root != "" {
@@ -548,12 +625,14 @@ type MemoryEntry struct {
 // every implementation must pass (the flock-file reference adapter runs it
 // today; remote drivers run it over their client).
 type MemoryStore interface {
-	// RememberEntry stores e, overwriting any existing entry under e.Key and
-	// bumping its UpdatedAt. e.Description is the optional one-line tier-0 hook;
-	// an empty description means "derive from the value's first non-empty line
-	// on Index". An empty (or whitespace-only) key is rejected with an error.
-	RememberEntry(ctx context.Context, e MemoryEntry) error
-	// Recall returns the entry for the exact key. The boolean reports whether an
+	// Remember atomically creates or replaces a record only when expected matches
+	// its complete current state. Exists=false is create-only; Exists=true requires
+	// the exact opaque version. Empty versions never request an unconditional write.
+	Remember(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
+	// Inspect returns current state and revision history, including tombstones. A
+	// miss is (zero, false, nil).
+	Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
+	// Recall returns the active entry for the exact key. The boolean reports whether an
 	// entry was found; a miss is (zero, false, nil), not an error.
 	Recall(ctx context.Context, key string) (MemoryEntry, bool, error)
 	// List returns all entries whose key has the given prefix, sorted by key for
@@ -561,8 +640,12 @@ type MemoryStore interface {
 	// Search, List returns FULL entries — Value included — so consumers (e.g. a
 	// consolidation planner, a prefix-fallback read) can load payloads from it.
 	List(ctx context.Context, prefix string) ([]MemoryEntry, error)
-	// Forget deletes the entry for key. Deleting a missing key is not an error.
-	Forget(ctx context.Context, key string) error
+	// Forget atomically appends a tombstone when expected is the exact current
+	// opaque version.
+	Forget(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
+	// Undo atomically appends a compensating revision when expected is the exact
+	// current opaque version.
+	Undo(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
 	// Index returns the tier-0 routing table: every entry as (key, description,
 	// updated-at) with the VALUE OMITTED, sorted by key for deterministic output.
 	// The implementation fills Description (explicit, else derived from the

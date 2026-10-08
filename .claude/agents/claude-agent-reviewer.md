@@ -1,40 +1,10 @@
 ---
 name: claude-agent-reviewer
 description: >-
-  Reviews Claude Code sub-agent definitions (Markdown + YAML frontmatter files
-  under .claude/agents/ or ~/.claude/agents/) against the official Claude Code
-  sub-agents specification at code.claude.com/docs/en/sub-agents and Anthropic's
-  published best practices. Catches: bad description (the field that decides
-  auto-delegation), missing examples, over-broad tool grants, hardcoded models
-  that should inherit, missing calibration discipline (the "reviewers flag
-  noise" trap), missing discovery/CLAUDE.md awareness, missing "When to defer"
-  composition, missing severity rubric, restated-spec bloat, invented
-  frontmatter keys, name/filename mismatch, redundant `Skill` in `tools` (use
-  `skills:` to preload), and the rest of the spec-conformance surface. Read-only.
-
-  Examples:
-
-  <example>
-  Context: User just drafted a new agent.
-  user: "Here's a new agent definition for reviewing GraphQL schemas."
-  assistant: "Let me use the claude-agent-reviewer agent — the description, examples, and tool scope decide whether Claude will actually delegate to it, and a few minutes of review on those fields is high-leverage."
-  </example>
-
-  <example>
-  Context: User asks why one of their agents never gets picked.
-  user: "I never see Claude delegate to my db-schema-reviewer."
-  assistant: "Almost always a description problem — auto-delegation runs off the description alone, not the body. I'll use the claude-agent-reviewer agent to diagnose."
-  </example>
-
-  <example>
-  Context: User wants to audit a project's accumulated agent collection.
-  user: "Can you scan all the agents in .claude/agents and tell me which ones are weak?"
-  assistant: "I'll use the claude-agent-reviewer agent to audit them against the spec and Anthropic's published guidance."
-  </example>
-
-  NOT for: writing the agent's domain content (the user owns that), reviewing
-  Claude Code skills (use claude-skill-reviewer), reviewing CLAUDE.md files
-  (use the claude-md skill), debugging plugin packaging.
+  Reviews Claude Code sub-agent definitions (.claude/agents/*.md) against the
+  official sub-agent spec: description quality, tool scope, model choice, and
+  frontmatter. Use after writing or changing an agent definition. Read-only. Not
+  for skills (use claude-skill-reviewer).
 tools: [Read, Glob, Grep, WebFetch, Bash]
 color: cyan
 memory: project

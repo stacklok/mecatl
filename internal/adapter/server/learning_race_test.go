@@ -20,14 +20,14 @@ type blockedConvergenceStore struct {
 	release chan struct{}
 }
 
-func (s *blockedConvergenceStore) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, current tool.MemoryCurrent) (tool.MemoryRecord, error) {
+func (s *blockedConvergenceStore) Remember(ctx context.Context, entry tool.MemoryEntry, current tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	close(s.started)
 	select {
 	case <-s.release:
 	case <-ctx.Done():
 		return tool.MemoryRecord{}, ctx.Err()
 	}
-	return s.Store.RememberIfCurrent(ctx, entry, current)
+	return s.Store.Remember(ctx, entry, current)
 }
 
 func TestLearningReadsNeverReconcileActivePromotion(t *testing.T) {

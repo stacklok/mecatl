@@ -23,8 +23,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_scenario3_test.go pins the path-escape-posture Scenario 3
-// acceptance criteria (docs/acceptance/path-escape-posture.md): at yolo an
+// pathescape_scenario3_test.go pins relaxed out-of-root writes: at yolo an
 // out-of-root Write/Edit succeeds; at auto (no guardrail knob) a write escape
 // surfaces an EvPermissionAsk and executes only on an allow verdict; the Edit
 // read-ledger keys out-of-root paths canonically; write escapes stay
@@ -366,7 +365,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
 	gate := &readGateWorkspace{
-		Workspace: newEscapeWorkspace(base, clf),
+		Workspace: newEscapeWorkspace(base, clf, false),
 		gatePath:  canonical,
 		entered:   make(chan struct{}),
 		release:   make(chan struct{}),
@@ -493,7 +492,7 @@ func newSerialProbeWorkspace(t *testing.T, root string, inflight, maxSeen *atomi
 		t.Fatalf("NewWorkspace(%q): %v", root, err)
 	}
 	return &serialProbeWorkspace{
-		Workspace: newEscapeWorkspace(ws, clf),
+		Workspace: newEscapeWorkspace(ws, clf, false),
 		inflight:  inflight,
 		maxSeen:   maxSeen,
 		pause:     pause,
@@ -651,8 +650,8 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		}, nil)
 		p := newEscapePolicy(inner, PostureYolo)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Deny {
-			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the posture-relaxed escape Allow", d.Effect)
+		if d.Decision.Effect != governance.Deny {
+			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the posture-relaxed escape Allow", d.Decision.Effect)
 		}
 	})
 
@@ -663,10 +662,10 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		}, nil)
 		p := newEscapePolicy(inner, PostureYolo)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Ask {
-			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Effect)
+		if d.Decision.Effect != governance.Ask {
+			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Decision.Effect)
 		}
-		if !d.ConfiguredAsk {
+		if d.Decision.AskProvenance != governance.AskProvenanceConfigured {
 			t.Fatal("ConfiguredAsk = false — the surviving Ask must stay marked configured (the child-ask model honours a configured Ask)")
 		}
 	})
@@ -680,7 +679,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		// roots the policy has already seen — in the loop, Learn only ever
 		// follows an Evaluate of the same call).
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Ask || d.ConfiguredAsk {
+		if d.Decision.Effect != governance.Ask || d.Decision.AskProvenance == governance.AskProvenanceConfigured {
 			t.Fatalf("escape at auto = %+v, want an unconfigured escape Ask", d)
 		}
 		// The loop calls Learn on an allow-always verdict; the wrapper must

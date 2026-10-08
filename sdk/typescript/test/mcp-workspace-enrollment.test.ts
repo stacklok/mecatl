@@ -54,7 +54,11 @@ it("session MCP connector inventory projects every typed protocol state", async 
           targetCalls.push("connect");
           return {};
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: ["workspace_enrollment_test"],
+        }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         listMcpSources: () => {
           targetCalls.push("direct-mcp");
@@ -203,7 +207,11 @@ it("workspace enrollment methods preserve correlation and state transitions", as
             status,
           };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: ["workspace_enrollment_test"],
+        }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         retryWorkspaceEnrollment: (request) => {
           requests.push({
@@ -317,7 +325,11 @@ it("workspace enrollment methods preserve correlation and state transitions", as
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           connectWorkspaceServices: () => response,
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["workspace_enrollment_test"],
+          }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         });
       }),
@@ -336,7 +348,11 @@ it("workspace enrollment methods preserve correlation and state transitions", as
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           cancelWorkspaceEnrollment: () => response,
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["workspace_enrollment_test"],
+          }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           retryWorkspaceEnrollment: () => response,
         });
@@ -364,7 +380,11 @@ it("workspace enrollment methods preserve correlation and state transitions", as
     transport: createRouterTransport((router) => {
       router.service(HarnessService, {
         connectWorkspaceServices: () => rejected,
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: ["workspace_enrollment_test"],
+        }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     }),

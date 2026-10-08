@@ -50,7 +50,13 @@ describe("run controls", () => {
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();
-          yield event("run-controls", "started");
+          yield {
+            event: {
+              ask: { args: "{}", askId: "ask-1", reason: "test", tool: "Shell" },
+              runId: "run-controls",
+              type: "permission.ask",
+            },
+          };
           for (let index = 0; index < 3; index += 1) {
             const next = await input.next();
             const kind = next.value?.kind;
@@ -69,7 +75,7 @@ describe("run controls", () => {
     const client = connect({ transport });
     const session = await client.sessions.create({});
     const run = await session.run("start");
-    await run.approve("ask-1", true);
+    await run.resolveAsk("ask-1", "allow_once");
     await run.steer("continue differently");
     await run.cancel();
     await run.result();

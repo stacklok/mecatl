@@ -13,8 +13,9 @@ import (
 
 type coordinatorReflectorFunc func(context.Context, learning.Input) (learning.Outcome, error)
 
-func (f coordinatorReflectorFunc) Reflect(ctx context.Context, input learning.Input) (learning.Outcome, error) {
-	return f(ctx, input)
+func (f coordinatorReflectorFunc) Reflect(ctx context.Context, input learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
+	outcome, err := f(ctx, input)
+	return outcome, session.AuxiliaryUsage{}, err
 }
 
 func TestScalableReflectionEvidence_Scenario2_SelectedEvidenceIdentityBoundary(t *testing.T) {
@@ -117,7 +118,7 @@ func TestScalableReflectionEvidence_Scenario2_SelectedDigestDrivesProposalID(t *
 	}
 }
 
-func TestADR_0300_OneSelectedInputOneProviderCall(t *testing.T) {
+func TestOneSelectedInputOneProviderCall(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan session.SessionID, 2)
 	reflector := &testReflector{start: started, release: release}
@@ -147,7 +148,7 @@ func TestADR_0300_OneSelectedInputOneProviderCall(t *testing.T) {
 	}
 }
 
-func TestADR_0300_CoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
+func TestCoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
 	release := make(chan struct{})
 	reflector := &testReflector{release: release}
 	job := testJob("principal", "existing-bytes", reflector)
@@ -172,7 +173,7 @@ func TestADR_0300_CoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
 	}
 }
 
-func TestADR_0300_CoordinatorResourceSafetyUnchanged(t *testing.T) {
+func TestCoordinatorResourceSafetyUnchanged(t *testing.T) {
 	release := make(chan struct{})
 	starts := make(chan session.SessionID, 8)
 	reflector := &testReflector{start: starts, release: release}

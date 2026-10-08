@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	serveradapter "github.com/stacklok/mecatl/internal/adapter/server"
@@ -25,8 +27,10 @@ const (
 	coldGatewayProvider     = "stacklok-gateway"
 	coldGatewayModel        = "gpt-5.6-sol"
 	coldGatewayDefaultModel = "gpt-5.6-terra"
+	coldGatewayPlanModel    = "terra-1.1m"
 	coldGatewayWindow       = 1_050_000
-	coldGatewayListing      = `{"data":[{"id":"gpt-5.6-sol","display_name":"GPT-5.6 Sol","context_window":1050000},{"id":"gpt-5.6-terra","display_name":"GPT-5.6 Terra","context_window":1050000}]}`
+	coldGatewayPlanWindow   = 1_100_000
+	coldGatewayListing      = `{"data":[{"id":"gpt-5.6-sol","display_name":"GPT-5.6 Sol","context_window":1050000},{"id":"gpt-5.6-terra","display_name":"GPT-5.6 Terra","context_window":1050000},{"id":"terra-1.1m","display_name":"Terra 1.1M","context_window":1100000}]}`
 )
 
 type coldGatewayModelServer struct {
@@ -145,6 +149,8 @@ func coldGatewayConfig(t *testing.T, fixture *coldGatewayModelServer, storeDir, 
 	return Config{
 		Workspace:               workspace,
 		MemoryDir:               memoryDir,
+		UserModelDir:            memoryDir + "/usermodel",
+		LearningMode:            learning.Off,
 		StoreDir:                storeDir,
 		NoSoul:                  true,
 		NoShell:                 true,
@@ -351,7 +357,7 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 			t.Fatalf("GetSession before cold run: %v", err)
 		}
 		beforeAsk, beforePending := before.PendingAsk()
-		beforeRetryDisposition, beforeRetryProgress, beforeRetry := before.FailedStepRetryPending()
+		beforeRetryMetadata, beforeRetry := before.FailedStepRetryPending()
 		coldEcho := built.Service.ResolvedModel(id).ContextWindow
 
 		resultCh := startColdGatewayPrompt(ctx, built, id, "cold-admitted prompt must wait for metadata")
@@ -375,13 +381,13 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 			t.Fatalf("GetSession while cold admission is waiting: %v", err)
 		}
 		afterAsk, afterPending := afterAdmission.PendingAsk()
-		afterRetryDisposition, afterRetryProgress, afterRetry := afterAdmission.FailedStepRetryPending()
+		afterRetryMetadata, afterRetry := afterAdmission.FailedStepRetryPending()
 		if len(afterAdmission.Conversation.Messages) != len(before.Conversation.Messages) ||
 			afterPending != beforePending || !reflect.DeepEqual(afterAsk, beforeAsk) ||
-			afterRetry != beforeRetry || afterRetryDisposition != beforeRetryDisposition || afterRetryProgress != beforeRetryProgress {
-			t.Fatalf("cold admission mutated durable work before metadata release: messages=%d->%d pending=%v->%v retry=(%v,%v,%v)->(%v,%v,%v)",
+			afterRetry != beforeRetry || afterRetryMetadata != beforeRetryMetadata {
+			t.Fatalf("cold admission mutated durable work before metadata release: messages=%d->%d pending=%v->%v retry=(%v,%v)->(%v,%v)",
 				len(before.Conversation.Messages), len(afterAdmission.Conversation.Messages), beforeAsk, afterAsk,
-				beforeRetryDisposition, beforeRetryProgress, beforeRetry, afterRetryDisposition, afterRetryProgress, afterRetry)
+				beforeRetryMetadata, beforeRetry, afterRetryMetadata, afterRetry)
 		}
 
 		release()
@@ -409,6 +415,164 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 			t.Fatalf("cold restart compacted before live metadata was ready: window=%d model=%q request=%+v compactions=%d archived=%d messages=%d, want window=%d model=%q no archive and %d messages", window, model, req, compactions, archived, len(after.Conversation.Messages), coldGatewayWindow, coldGatewayModel, len(before.Conversation.Messages)+2)
 		}
 	})
+}
+
+func TestBuildHTTPColdRestartUsesPersistedProviderDefaultPlanIdentity(t *testing.T) {
+	ctx := context.Background()
+	fixture := newColdGatewayModelServer(t)
+	root := t.TempDir()
+
+	warmCfg := coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, newColdGatewayCapture())
+	warmCfg.ModelSlots = map[string]string{slotPlan: coldGatewayPlanModel}
+	warm, err := buildIsolated(t, ctx, warmCfg)
+	if err != nil {
+		t.Fatalf("warm Build: %v", err)
+	}
+	warmHTTP := httptest.NewServer(serveradapter.NewHTTPHandler(warm.Service))
+	createBody := strings.NewReader(`{"mode":"plan","provider_id":"` + coldGatewayProvider + `"}`)
+	createResp, err := http.Post(warmHTTP.URL+"/v1/sessions", "application/json", createBody)
+	if err != nil {
+		t.Fatalf("POST create session: %v", err)
+	}
+	var created struct {
+		SessionID     string `json:"session_id"`
+		ResolvedModel struct {
+			ProviderID    string `json:"provider_id"`
+			ModelID       string `json:"model_id"`
+			ContextWindow int64  `json:"context_window"`
+		} `json:"resolved_model"`
+	}
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		createResp.Body.Close()
+		t.Fatalf("decode create session: %v", err)
+	}
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", createResp.StatusCode, http.StatusCreated)
+	}
+	if created.ResolvedModel.ProviderID != coldGatewayProvider || created.ResolvedModel.ModelID != coldGatewayPlanModel {
+		t.Fatalf("created resolved model = %+v, want provider-only default re-resolved to plan model %q", created.ResolvedModel, coldGatewayPlanModel)
+	}
+	warmHTTP.Close()
+	warm.Close()
+
+	entered, release := fixture.hold()
+	capture := newColdGatewayCapture()
+	admitted := make(chan struct{ provider, model string }, 1)
+	coldCfg := coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", false, capture)
+	coldCfg.ModelSlots = map[string]string{slotPlan: coldGatewayPlanModel}
+	coldCfg.awaitContextWindowObserver = func(provider, model string) {
+		admitted <- struct{ provider, model string }{provider, model}
+	}
+	coldCfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		turn := mockllm.ChunksTurn(
+			mockllm.TextChunk("offline plan answer"),
+			mockllm.UsageChunk(session.Usage{InputTokens: 7, OutputTokens: 3}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		)
+		return mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(capture.observe)}, turn)
+	}
+	cold, err := buildIsolated(t, ctx, coldCfg)
+	if err != nil {
+		release()
+		t.Fatalf("cold Build: %v", err)
+	}
+	defer func() {
+		release()
+		cold.Close()
+	}()
+	waitColdGatewayEntered(t, entered)
+	coldHTTP := httptest.NewServer(serveradapter.NewHTTPHandler(cold.Service))
+	defer coldHTTP.Close()
+
+	type sessionProjection struct {
+		ResolvedModel struct {
+			ProviderID    string `json:"provider_id"`
+			ModelID       string `json:"model_id"`
+			ContextWindow int64  `json:"context_window"`
+		} `json:"resolved_model"`
+		TokenUsage map[string]struct {
+			Models map[string]struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"models"`
+		} `json:"token_usage"`
+	}
+	getSession := func() sessionProjection {
+		t.Helper()
+		resp, err := http.Get(coldHTTP.URL + "/v1/sessions/" + created.SessionID)
+		if err != nil {
+			t.Fatalf("GET session: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET session status = %d, want 200", resp.StatusCode)
+		}
+		var got sessionProjection
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatalf("decode GET session: %v", err)
+		}
+		return got
+	}
+
+	before := getSession()
+	if before.ResolvedModel.ProviderID != coldGatewayProvider || before.ResolvedModel.ModelID != coldGatewayPlanModel || before.ResolvedModel.ContextWindow != 0 {
+		t.Fatalf("cold GET resolved model = %+v, want persisted provider-only selector + plan slot with provisional window", before.ResolvedModel)
+	}
+	if capture.count() != 0 {
+		t.Fatalf("read-only GET made %d inference calls, want 0", capture.count())
+	}
+	select {
+	case got := <-admitted:
+		t.Fatalf("read-only GET entered run admission for %q/%q", got.provider, got.model)
+	default:
+	}
+
+	promptDone := make(chan error, 1)
+	go func() {
+		resp, err := http.Post(coldHTTP.URL+"/v1/sessions/"+created.SessionID+"/prompt", "application/json", strings.NewReader(`{"text":"use the persisted plan model"}`))
+		if err == nil {
+			_, err = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if err == nil && resp.StatusCode != http.StatusOK {
+				err = fmt.Errorf("prompt status = %d", resp.StatusCode)
+			}
+		}
+		promptDone <- err
+	}()
+	var admission struct{ provider, model string }
+	select {
+	case admission = <-admitted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for selected-engine context-window admission")
+	}
+	if admission.provider != coldGatewayProvider || admission.model != coldGatewayPlanModel {
+		t.Fatalf("admission identity = %q/%q, want %q/%q", admission.provider, admission.model, coldGatewayProvider, coldGatewayPlanModel)
+	}
+	if capture.count() != 0 {
+		t.Fatalf("inference calls before selected-model metadata settled = %d, want 0", capture.count())
+	}
+	release()
+	select {
+	case err := <-promptDone:
+		if err != nil {
+			t.Fatalf("POST prompt: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for HTTP prompt completion")
+	}
+	request := capture.last(t)
+	if request.model != coldGatewayPlanModel {
+		t.Fatalf("inference model = %q, want %q", request.model, coldGatewayPlanModel)
+	}
+	after := getSession()
+	if after.ResolvedModel.ContextWindow != coldGatewayPlanWindow {
+		t.Fatalf("healed context window = %d, want %d", after.ResolvedModel.ContextWindow, coldGatewayPlanWindow)
+	}
+	usage := after.TokenUsage[string(session.UsageKindMain)].Models[coldGatewayProvider+"/"+coldGatewayPlanModel]
+	if usage.InputTokens != 7 || usage.OutputTokens != 3 {
+		t.Fatalf("selected-model usage = %+v, want input=7 output=3", usage)
+	}
 }
 
 func TestCatalogBackedEmptyDiscoveryRejectsUncataloguedSelectionWithoutMutation(t *testing.T) {
@@ -473,7 +637,10 @@ func TestColdGatewayDiscoveryFailureRejectsWithoutMutationAndRetries(t *testing.
 			fixture.setResponse(tc.status, tc.body)
 			root := t.TempDir()
 			capture := newColdGatewayCapture()
-			built, err := buildIsolated(t, context.Background(), coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture))
+			var discoveryOffset atomic.Int64
+			cfg := coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture)
+			cfg.modelDiscoveryNow = func() time.Time { return time.Now().Add(time.Duration(discoveryOffset.Load())) }
+			built, err := buildIsolated(t, context.Background(), cfg)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -506,6 +673,13 @@ func TestColdGatewayDiscoveryFailureRejectsWithoutMutationAndRetries(t *testing.
 			}
 
 			fixture.setResponse(http.StatusOK, coldGatewayListing)
+			if _, err := built.Service.StartRun(context.Background(), sess.ID, "still cooling down"); !errors.Is(err, serveradapter.ErrContextWindowUnavailable) {
+				t.Fatalf("cooldown admission=%v, want unavailable", err)
+			}
+			if fixture.callCount() != 1 {
+				t.Fatal("cooldown started another listing")
+			}
+			discoveryOffset.Add(int64(discoveryCooldown))
 			events := runColdGatewayPrompt(t, built, sess.ID, "retry after discovery recovery")
 			_, archived, window, model := coldGatewayEventFacts(events)
 			if archived != 0 || window != coldGatewayWindow || model != coldGatewayModel || capture.count() != 1 || fixture.callCount() != 2 {

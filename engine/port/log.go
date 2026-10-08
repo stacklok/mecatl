@@ -42,8 +42,8 @@ type ToolCallRecorder interface {
 
 // RunAwareToolCallRecorder is an OPTIONAL capability a ToolCallRecorder may
 // ALSO implement to additionally receive the RunID of the run that made the
-// call (the same opaque per-run correlation id carried on session.Event.RunID,
-// ADR 0249) — the one thing ToolCall's signature cannot express, since a
+// call (the same opaque per-run correlation id carried on session.Event.RunID)
+// — the one thing ToolCall's signature cannot express, since a
 // SessionID can span many sequential runs over a session's lifetime and
 // ToolCall alone gives no way to tell which run a given call belongs to.
 //

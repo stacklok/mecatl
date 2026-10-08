@@ -1,30 +1,40 @@
-# mecatl documentation
+# Mecatl documentation
 
-This is the documentation root — a short front door that routes each audience to
-the right living guide. The full progressive reading map is in
-[`READING.md`](READING.md) — start there.
-
-The coding-agent contract lives in [`../AGENTS.md`](../AGENTS.md); this page does
-not restate it.
+This directory explains how Mecatl works inside, for contributors. Start with the
+[reading map](READING.md). Contributor and agent instructions live in
+[`AGENTS.md`](../AGENTS.md); this page doesn't restate them.
 
 ## Audience routes
 
 | Audience | Route |
 | --- | --- |
-| **Contributor / agent** | [`READING.md`](READING.md) → foundation spine (architecture → domain → ports → loop) → topic branches |
-| **Operator** | [`../README.md`](../README.md) → [public documentation](https://mecatl.dev/docs/) → [run `mecated`](https://mecatl.dev/docs/building/deployment/mecated) |
-| **Library consumer** | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
-| **API client developer** | [Drive via gRPC / HTTP](https://mecatl.dev/docs/building/deployment/grpc-http) → [`contracts/proto/mecatl/v1/`](../contracts/proto/mecatl/v1) → [gRPC reference](https://mecatl.dev/docs/reference/grpc-api) or [HTTP/SSE reference](https://mecatl.dev/docs/reference/http-sse-api) |
+| **Contributor / agent** | [`READING.md`](READING.md) → foundations (overview → domain model → ports → agent loop) → the chapter for your area |
+| **Operator** | [`../README.md`](../README.md) → [public documentation](https://mecatl.dev/docs/) → [run `mecated`](https://mecatl.dev/docs/operating/mecated) |
+| **Library consumer** | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/go/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
+| **API client developer** | [Drive via gRPC / HTTP](https://mecatl.dev/docs/building/grpc-http) → [`contracts/proto/mecatl/v1/`](../contracts/proto/mecatl/v1) → [gRPC reference](https://mecatl.dev/docs/reference/grpc-api) or [HTTP/SSE reference](https://mecatl.dev/docs/reference/http-sse-api) |
+
+## What goes where
+
+Each kind of guidance has one home. Put a fact at the narrowest level that covers it.
+
+| Home | Holds | Loaded |
+| --- | --- | --- |
+| Root [`AGENTS.md`](../AGENTS.md) | Commands, layout, and invariants for the whole repo | Every agent session |
+| Module `AGENTS.md` | Where to change what in that module, its commands and invariants | When an agent works in that directory |
+| `.claude/rules/*.md` | Invariants for a file pattern that spans directories, such as `*_test.go` | When an agent reads a matching file |
+| `.claude/skills/` | Multi-step workflows, such as cutting a release | When invoked |
+| `.claude/agents/` | Reviewer and helper subagent definitions | When delegated to |
+| `docs/` | How the system works today, for contributors: intent, boundaries, and invariants | When read |
+| [`docs/drafts/`](drafts/README.md) | Proposals and work records; never current behavior | When read |
+| [`docs/examples/`](examples/README.md) | Example Mecatl skills to copy or read as reference | When read |
+| [`user-docs/`](../user-docs/intro.md) | How to use Mecatl, published at mecatl.dev | When read |
+
+Every `AGENTS.md` stays under 200 lines and has a `CLAUDE.md` symlink beside it; rules
+stay at or under 25 lines. `task docs` checks these limits.
 
 ## Nearby
 
-- [`READING.md`](READING.md) — the full progressive reader map (contributor foundation spine, topic branches, and operator/library routes).
-- [`architecture.md`](architecture.md) — the living architecture reference.
-- [Public documentation](https://mecatl.dev/docs/) — canonical user-facing guidance and reference.
-- [`adr/README.md`](adr/README.md) — the frozen ADR index (the *why* archive).
-- [`design/PRODUCTION-READINESS.md`](design/PRODUCTION-READINESS.md) — the live shipped/deferred status tracker.
-- [ADR 0215](adr/0215-openai-subscription-manual-token.md) — the landed,
-  experimental `openai-codex` capability and its private-backend boundary.
-- [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent
-  protocol for remote access to files, folders, and callable actions over
-  HTTP; not yet implemented in mecatl.
+- [Reading map](READING.md): the contributor, operator, and library routes.
+- [Architecture overview](architecture.md): layers, request flow, code map, and principles.
+- [Public documentation](https://mecatl.dev/docs/): user-facing guides and reference.
+- [Drafts](drafts/README.md): proposals, not current behavior.

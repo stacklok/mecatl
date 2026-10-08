@@ -350,8 +350,8 @@ func translateMessageStop(st *streamState) ([]port.Chunk, error) {
 // mapStop maps an Anthropic stop_reason to a domain StopReason. A natural stop
 // (end_turn / stop_sequence) and a tool_use stop both map to StopEndTurn — the
 // loop decides to continue when the turn carried tool calls (mirrors the openai
-// adapter's completed-with-calls handling). pause_turn is treated as end in P1
-// (a long-running-turn continuation is deferred). max_tokens and refusal map to
+// adapter's completed-with-calls handling). pause_turn is treated as end
+// (long-running-turn continuation is not implemented). max_tokens and refusal map to
 // StopError so the run is diagnosable.
 func mapStop(reason sdk.StopReason) session.StopReason {
 	switch reason {

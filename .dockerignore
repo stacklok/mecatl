@@ -5,3 +5,11 @@ bin/
 .scratch/
 **/node_modules
 **/dist
+
+# Never ship local credentials into a build context. The Studio Compose file
+# documents creating apps/.env with provider API keys, and the mecated demo
+# image copies the whole repository, so an un-ignored .env would land in an
+# image layer and the build cache.
+**/.env
+**/.env.*
+!**/.env.example

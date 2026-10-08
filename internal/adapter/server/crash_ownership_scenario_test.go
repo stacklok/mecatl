@@ -16,6 +16,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -27,7 +28,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -793,13 +793,13 @@ func TestSessionAffinityAndHandoff_Scenario7_KilledOwnerDropsStream(t *testing.T
 	f.assertKilledOwnerSnapshot(t)
 }
 
-func TestADR_0294_PreTTLRequestsCannotAcquireOrRun(t *testing.T) {
+func TestPreTTLRequestsCannotAcquireOrRun(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.assertPreTTLBlocked(t)
 }
 
-func TestADR_0294_PostTTLSingleSurvivorAcquires(t *testing.T) {
+func TestPostTTLSingleSurvivorAcquires(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.advancePastTTL()
@@ -835,7 +835,7 @@ func TestSessionAffinityAndHandoff_Scenario7_RehydrateRepairAndContinue(t *testi
 	}
 }
 
-func TestADR_0294_HandoffEndToEndCorrelation(t *testing.T) {
+func TestHandoffEndToEndCorrelation(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.seedCrashOrphanWithRedisSidecars(t)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,8 +22,7 @@ import (
 // consumes neither its Workspace nor its CommandRunner.
 //
 // It holds the owning *Server (not a *ClientSession) so Execute can re-establish
-// a dropped session transparently via Server.withSession (see reconnect.go,
-// ADR 0056).
+// a dropped session transparently via Server.withSession (see reconnect.go).
 //
 // outputSchema carries the remote tool's optional OutputSchema (a JSON Schema),
 // marshaled to json.RawMessage at construction time. It is used ONLY for the
@@ -53,6 +54,18 @@ func newRemoteTool(serverName string, srv *Server, remote *mcpsdk.Tool) (*remote
 		return nil, fmt.Errorf("mcp: server %q advertised a tool with no name", serverName)
 	}
 
+	// Validate the complete identity before it can become durable authority.
+	// Never repair a name: rewriting would change the exact-name grant.
+	name := namespacedName(serverName, remote.Name)
+	if len(name) > 256 || !utf8.ValidString(name) {
+		return nil, fmt.Errorf("mcp: server %q advertised an invalid tool name", serverName)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return nil, fmt.Errorf("mcp: server %q advertised a control character in a tool name", serverName)
+		}
+	}
+
 	schema, err := schemaFor(remote.InputSchema)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: tool %q on server %q: input schema: %w", remote.Name, serverName, err)
@@ -73,7 +86,7 @@ func newRemoteTool(serverName string, srv *Server, remote *mcpsdk.Tool) (*remote
 
 	return &remoteTool{
 		spec: tool.ToolSpec{
-			Name:        namespacedName(serverName, remote.Name),
+			Name:        name,
 			Description: remote.Description,
 			Schema:      schema,
 		},

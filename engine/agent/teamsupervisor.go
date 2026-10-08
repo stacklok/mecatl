@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -18,7 +19,7 @@ import (
 )
 
 // teamsupervisor.go is the APPLICATION-layer orchestrator for agent teams (see
-// docs/adr/0014-agent-teams.md). It owns one shared *team.Team and drives a
+// docs/architecture/subagents-and-teams.md). It owns one shared *team.Team and drives a
 // set of long-lived member sessions that coordinate through that team's task list
 // and mailbox. Unlike Subagent/Fork (one-shot, drained internally), team members are
 // re-driven across rounds and their events are STREAMED to the caller (tagged with
@@ -70,6 +71,9 @@ var (
 	// holds a member of that name (a duplicate at the supervisor layer, distinct
 	// from team.ErrMemberExists at the aggregate layer). It is a bad-request error.
 	ErrMemberAlreadyAdded = errors.New("agent: member already added")
+	// ErrSupervisorClosed is returned when enrolment is attempted after Close or Run
+	// has claimed the supervisor lifecycle.
+	ErrSupervisorClosed = errors.New("agent: team supervisor is closed")
 	// ErrNoForker is returned by AddMember when a Mutating member is requested but
 	// no EnvironmentForker is configured. This is a server MISCONFIGURATION (the
 	// composition root did not wire a forker), not a bad client request.
@@ -118,7 +122,7 @@ const defaultMemberTurnBudget = 200
 
 // defaultMemberErrorRetries is how many times a member whose round ended in
 // StopError — and whose session the supervisor then RECOVERED successfully — is left
-// SCHEDULABLE instead of benched (ADR 0200, issue #318). One retry is the
+// SCHEDULABLE instead of benched (issue #318). One retry is the
 // default because the failure this closes is a TRANSIENT one (the terminal 180s
 // stream-idle stall): a single re-drive is enough to survive a network hiccup, while
 // keeping the wasted provider spend of a permanently-failing member to one extra
@@ -260,7 +264,7 @@ type MemberBuild struct {
 // isolated member MAY be given Shell while a base-sharing read-only member must not.
 //
 // routedModel is the OPT-IN semantic model router's classification for an UNDEFINED
-// member (ADR 0034), the ALREADY-RESOLVED concrete model id the member's engine should
+// member, the ALREADY-RESOLVED concrete model id the member's engine should
 // be minted on; it is "" when the router was off, missed, or the member is DEFINED (a
 // def pins its own model — the factory IGNORES routedModel then). The supervisor owns
 // the route decision (it holds the parent caps) and passes the result here; composition
@@ -321,7 +325,11 @@ type Supervisor struct {
 	budgetTripped bool
 	idPrefix      string
 	teamID        string
-	hooks         port.HookRunner
+	// parentCallID is populated only for a Team-tool supervisor. It binds every
+	// persisted member relationship to the exact parent Team call whose events
+	// advertise that member; directly-driven teams leave it empty.
+	parentCallID session.ToolCallID
+	hooks        port.HookRunner
 
 	// goal is the team's top-level objective, rendered as the TRUSTED top-level
 	// instruction into every member's round-0 turn and into the lead's synthesis
@@ -342,6 +350,14 @@ type Supervisor struct {
 	// transcript out of band. Nil disables persistence. The supervisor consumes the
 	// port.SessionStore interface — never a concrete adapter (layering holds).
 	store port.SessionStore
+
+	lifecycleMu sync.Mutex
+	runStarted  bool
+	runDone     chan struct{}
+	runCancel   context.CancelFunc
+	closed      bool
+	cleanupOnce sync.Once
+	cleanupDone chan struct{}
 	// leadName caches the first Lead member's name (set in AddMember) so the
 	// synthesis phase and persistence find the lead without re-scanning the roster.
 	leadName string
@@ -458,7 +474,7 @@ type memberRT struct {
 	// folded in the same capture block as turnsUsed, before Reopen.
 	tokensUsed session.Usage
 	// routedCategory / routedModel are the OPT-IN semantic model router's classification
-	// for this member (ADR 0034), captured ONCE at AddMember (decide-once — a member's
+	// for this member, captured ONCE at AddMember (decide-once — a member's
 	// engine is built once and reused across rounds via Reopen, so it is never re-routed).
 	// Both empty when the router was off, missed, or the member is DEFINED (a def pins its
 	// own model so the router never fired). routingReason is the bare-metadata WHY-NOT
@@ -466,9 +482,10 @@ type memberRT struct {
 	// a routed hit. They are BARE METADATA the Team tool reads back (MemberRouting) to
 	// project onto the EvTeamStart roster — never member content. Written once in
 	// AddMember (single goroutine, before any round), read after AddMember.
-	routedCategory string
-	routedModel    string
-	routingReason  string
+	routedCategory  string
+	routedModel     string
+	routingReason   string
+	routingDecision *session.RoutingDecision
 }
 
 // SupervisorOption configures a Supervisor.
@@ -589,7 +606,7 @@ func WithMemberTurnBudget(n int) SupervisorOption {
 // WithMemberErrorRetries sets how many times a member whose round ended in
 // session.StopError — and whose session the supervisor then RECOVERED successfully —
 // is left SCHEDULABLE for a later round instead of being benched (default
-// defaultMemberErrorRetries = 1; ADR 0200, issue #318). A retried member
+// defaultMemberErrorRetries = 1; issue #318). A retried member
 // releases its in-progress task claim (so it, or a peer, can re-claim the work) and is
 // force-scheduled for exactly one turn even when it holds no message and no claimable
 // task. Once its errored-round count EXCEEDS this cap it is benched exactly as before
@@ -668,6 +685,16 @@ func withParentCaps(caps parentCaps) SupervisorOption {
 	return func(s *Supervisor) { s.caps = caps }
 }
 
+// withParentTeamCall binds Team-tool member sessions to the exact parent call.
+// It is intentionally private: direct RunTeam supervisors have no parent call.
+func withParentTeamCall(callID session.ToolCallID) SupervisorOption {
+	return func(s *Supervisor) {
+		if s.caps.parentSessionID != "" && s.caps.parentIncarnation.Valid() {
+			s.parentCallID = callID
+		}
+	}
+}
+
 // WithMemberLiveness injects the maintenance exclusion used for team-member
 // sessions. Run acquires it for every member before scheduling begins and
 // cleanupAll releases each hold after the between-round and synthesis lifecycle
@@ -720,11 +747,13 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		concurrency: defaultTeamConcurrency,
 		turnBudget:  defaultMemberTurnBudget,
 		// The retry cap is a NONZERO default, so a caller that never sets an option still
-		// survives one transient member failure (ADR 0200).
+		// survives one transient member failure.
 		memberErrorRetries: defaultMemberErrorRetries,
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
 		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
 		members:            make(map[string]*memberRT),
+		runDone:            make(chan struct{}),
+		cleanupDone:        make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(s)
@@ -744,6 +773,11 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 //
 //nolint:gocyclo // Enrolment ordering keeps authority derivation before runtime acquisition.
 func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.runStarted {
+		return ErrSupervisorClosed
+	}
 	if strings.TrimSpace(spec.Name) == "" {
 		return ErrMemberNameRequired
 	}
@@ -766,7 +800,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		}
 	}
 
-	// OPT-IN model router (ADR 0034): classify this member ONCE here, before the engine
+	// OPT-IN model router: classify this member ONCE here, before the engine
 	// is built (decide-once — the member engine is built once and reused across rounds via
 	// Reopen, never re-routed). maybeRouteMember gates on a PLAIN UNDEFINED member (no
 	// agent def) AND a wired routeTask, and is FAIL-SOFT (a miss returns ""). routedModel
@@ -775,7 +809,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel, routingReason := s.maybeRouteMember(ctx, spec)
+	routedCategory, routedModel, routingReason, routingDecision := s.maybeRouteMember(ctx, spec)
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
@@ -789,6 +823,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("%w for %q", ErrNilEngine, spec.Name)
 	}
+	routeAccepted := strings.TrimSpace(routedModel) == "" || eng.Model() == strings.TrimSpace(routedModel)
+	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
 
 	// Workspace selection (three tiers). needFork is true for any member that runs in
 	// its OWN isolated workspace — a Mutating member (force-copy fork, s.forker) or a
@@ -850,6 +887,11 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
 	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
+	if err == nil && s.parentCallID != "" {
+		rel := sess.Relationship
+		rel.CallID = s.parentCallID
+		err = sess.RestoreSessionMetadata(session.SessionKindTeamMember, rel)
+	}
 	if err != nil {
 		if cleanup != nil {
 			_ = cleanup()
@@ -857,7 +899,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("agent: stamp team-member relationship: %w", err)
 	}
-	// The member is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// The member is attributed to the PARENT session's owner,
 	// or carries delegated authority when the parent run is authority-bound.
 	if s.caps.parentSessionID != "" && s.caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(sess, s.caps.owner, delegatedAuthority); authorityErr != nil {
@@ -905,7 +947,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, env: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
-		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason}
+		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
+		routingDecision: cloneRoutingDecision(routingDecision)}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -930,7 +973,7 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 	return nil
 }
 
-// maybeRouteMember consults the OPT-IN semantic model router (ADR 0034) for a PLAIN
+// maybeRouteMember consults the OPT-IN semantic model router for a PLAIN
 // UNDEFINED member and returns the classified category + the ALREADY-RESOLVED concrete
 // model id the member's engine should be minted on (both empty when not routed).
 // PRECEDENCE is enforced by GATING, mirroring maybeRouteModel (the Subagent gate): a
@@ -947,22 +990,25 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string) {
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string, decision *session.RoutingDecision) {
 	if strings.TrimSpace(spec.AgentType) != "" {
-		return "", "", session.RoutingReasonAgentDefPinned
+		if s.caps.skipRoute != nil {
+			decision = s.caps.skipRoute(session.RoutingReasonAgentDefPinned)
+		}
+		return "", "", session.RoutingReasonAgentDefPinned, decision
 	}
-	if s.caps.routeTask == nil {
-		return "", "", session.RoutingReasonRouterDisabled
+	if s.caps.routeDecision == nil {
+		return "", "", session.RoutingReasonRouterDisabled, nil
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
 		artifact = spec.Name
 	}
-	cat, m, missReason, ok := s.caps.routeTask(ctx, artifact)
-	if ok {
-		return cat, strings.TrimSpace(m), ""
+	routed := s.caps.routeConfigured(ctx, artifact)
+	if routed.ok {
+		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
 	}
-	return "", "", missReason
+	return "", "", routed.reason, routed.decision
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
@@ -978,13 +1024,28 @@ func (s *Supervisor) MemberRouting(name string) (category, model, reason string)
 	return "", "", ""
 }
 
+func (s *Supervisor) memberRoutingDecision(name string) *session.RoutingDecision {
+	if m, ok := s.members[name]; ok {
+		return cloneRoutingDecision(m.routingDecision)
+	}
+	return nil
+}
+
+func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.IncarnationID, bool) {
+	m, ok := s.members[name]
+	if !ok || m.sess == nil {
+		return "", "", false
+	}
+	return m.sess.ID, m.sess.Incarnation(), true
+}
+
 // MemberModel returns the concrete MODEL id the named member's engine actually runs
 // on ("" for an unknown member). It is the read-only seam the Team tool uses to
 // surface the member's resolved model on the EvTeamStart roster — independent of how
 // it was chosen (inherited default member model, agent-def pin, or the opt-in router).
 // Captured at AddMember (the engine is built once and reused). Bare metadata, never
 // member content. When the router classified the member, MemberModel == the routed
-// model. See issue #112 / ADR 0035.
+// model. See issue #112.
 func (s *Supervisor) MemberModel(name string) string {
 	if m, ok := s.members[name]; ok {
 		return m.engine.Model()
@@ -1054,8 +1115,8 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 // DOES carry the dirty-overlay, so a degraded read-only-member fork could surface this
 // advisory symmetrically to a member's prompt — a deliberate scope boundary: the
 // surfacing was implemented for the read-only SUBAGENT (the user's case), and threading
-// it through the member-engine prompt assembly is a separate, intentional follow-up,
-// not a silent omission. The mutating-member forker (s.forker) is force-copy and never
+// it through the member-engine prompt assembly is not implemented (an intentional
+// boundary, not a silent omission). The mutating-member forker (s.forker) is force-copy and never
 // degrades, so for it the discard is correct unconditionally.
 func forkOrWrap(ctx context.Context, f tool.EnvironmentForker, base tool.Environment, name string, ledgerFactory func() tool.ReadLedger) (tool.Environment, func() error, error) {
 	child, cl, _, err := f.Fork(ctx, base, name)
@@ -1127,7 +1188,7 @@ type MemberStopReason string
 const (
 	// StopReasonError is a run that failed (StopError) or a session that could not be
 	// returned to idle — both the internal-fault class. A failed run is RECOVERED
-	// (issue #318), so this reason no longer implies the session is undrivable; only
+	// (issue #318), so this reason does not imply the session is undrivable; only
 	// memberRT.nonResumable says that.
 	StopReasonError MemberStopReason = "error"
 	// StopReasonCancelled is a member ended by ctx cancellation.
@@ -1154,8 +1215,8 @@ type MemberOutcome struct {
 	// done member.
 	Reason MemberStopReason
 	// ErrorRounds is how many of this member's rounds ended in session.StopError,
-	// whether it was RETRIED through them or finally benched by them (issue #318 /
-	// ADR 0200). It is the disposition-HONESTY signal: a bounded retry means
+	// whether it was RETRIED through them or finally benched by them (issue #318).
+	// It is the disposition-HONESTY signal: a bounded retry means
 	// a member can fail a round and still finish, and such a member reports
 	// DispositionDone with no Reason — so without this count a transient failure would
 	// be invisible to the caller and the run would read as silently clean. It is a
@@ -1190,11 +1251,77 @@ type turnInput struct {
 	prompt string
 }
 
+// Close cancels an active run and waits until every enrolled member has stopped
+// and its resources have been torn down. Event callbacks may still be draining;
+// Run waits for every ordered callback before it returns. Close is safe to call
+// repeatedly, concurrently, and from an event callback.
+//
+// Member factories and cleanup callbacks must not synchronously call Close: they
+// are part of the resource construction/destruction that Close joins, so recursive
+// teardown cannot complete.
+//
+// A supervisor is single-use: AddMember after Close or after Run starts returns
+// ErrSupervisorClosed, and a second Run returns an empty outcome.
+func (s *Supervisor) Close() {
+	s.lifecycleMu.Lock()
+	if !s.closed {
+		s.closed = true
+	}
+	cancel := s.runCancel
+	started := s.runStarted
+	cleanupDone := s.cleanupDone
+	s.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if !started {
+		s.settleCleanup()
+	}
+	<-cleanupDone
+}
+
+func (s *Supervisor) settleCleanup() {
+	s.cleanupOnce.Do(func() {
+		s.cleanupAll()
+		close(s.cleanupDone)
+	})
+}
+
+func (s *Supervisor) beginRun(ctx context.Context) (context.Context, bool) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.runStarted {
+		return ctx, false
+	}
+	s.runStarted = true
+	runCtx, cancel := context.WithCancel(ctx)
+	s.runCancel = cancel
+	return runCtx, true
+}
+
+func (s *Supervisor) finishRun() {
+	s.settleCleanup()
+	s.lifecycleMu.Lock()
+	s.closed = true
+	if s.runCancel != nil {
+		s.runCancel()
+		s.runCancel = nil
+	}
+	close(s.runDone)
+	s.lifecycleMu.Unlock()
+}
+
 // Run drives the team to quiescence (or the round cap), invoking sink for every
 // member event as it is produced, and returns the outcome. sink may be nil. The
 // run is bounded by ctx: cancelling it stops scheduling further rounds and lets the
 // in-flight round finish. Forked member workspaces are cleaned up on return.
 func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome {
+	var ok bool
+	ctx, ok = s.beginRun(ctx)
+	if !ok {
+		return TeamOutcome{}
+	}
+	defer s.finishRun()
 	// Direct Service RunTeam has no parent child registry by design. Register its
 	// members through the independent lifecycle capability before planning can run;
 	// registrations remain held through idle rounds and lead synthesis.
@@ -1218,7 +1345,6 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 			m.releaseLiveness = release
 		}
 	}
-	defer s.cleanupAll()
 	if sink == nil {
 		sink = func(TeamEvent) {}
 	}
@@ -1285,10 +1411,15 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 		rounds++
 	}
 
-	close(evCh)
-	<-done
 	o := s.outcome(rounds)
 	o.Report = report
+	// Member work and teardown settle before callback draining. This lets an event
+	// callback call Close without forming Close -> runDone -> callback deadlock;
+	// Run still waits below until every already-queued callback has returned. Capture
+	// the outcome first because cleanup attributes any never-driven members.
+	s.settleCleanup()
+	close(evCh)
+	<-done
 	return o
 }
 
@@ -1447,11 +1578,10 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	// idle — and is set ONLY when that transition itself failed. `stopped` keeps its
 	// MEANING: a member BENCHED by its errors is descheduled and reports StopReasonError,
 	// because the honest signal to the lead ("this member stopped before finishing") and
-	// the task release that lets a peer pick the work up both hang off it. It is no longer
-	// where an errored round LANDS, though: the bounded-retry block ~20 lines below leaves
+	// the task release that lets a peer pick the work up both hang off it. It is not
+	// where every errored round LANDS, though: the bounded-retry block ~20 lines below leaves
 	// a member that is still under the cap schedulable and stop-reason-free. Read the two
 	// together — this comment describes the benched end state, not every errored round.
-	// See docs/adr/0200-resume-a-failed-subagent.md.
 	var reopenErr error
 	if m.sess.State == session.StateFailed {
 		reopenErr = m.sess.Recover()
@@ -1460,7 +1590,7 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	}
 	warnUnexpectedRecovery(ctx, s.caps.diag, m.spec.Name, stop, reopenErr)
 
-	// BOUNDED RETRY (ADR 0200, issue #318). Recovering the session made the
+	// BOUNDED RETRY (issue #318). Recovering the session made the
 	// member DRIVABLE again; on its own that only rescued the lead's synthesis turn,
 	// because `stopped` still descheduled the member for the rest of the run. A member
 	// that hits ONE transient stall must still participate in later rounds, so an errored
@@ -1594,11 +1724,12 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
+	req := RunRequest{Text: prompt, reviewRoot: s.caps.reviewRoot, reviewIsolated: m.isolated}
 	var run *Run
 	if synthesis {
-		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, req)
 	} else {
-		run = m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+		run = m.engine.Run(driveCtx, m.sess, m.env, req)
 	}
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role
@@ -1647,6 +1778,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		case <-s.caps.hardAbort:
 		}
 	}
+	posture.emitChildApprovals(run)
 	return text, stop, usage
 }
 
@@ -2056,7 +2188,7 @@ func MemberSessionID(teamID, member string) session.SessionID {
 // (team-namespaced) prefix. The prefix is "<memberSessionIDPrefix><teamID>" so the
 // full id is "team-<teamID>-<member>" — identical to MemberSessionID(teamID, name)
 // — keeping the supervisor's saved id in lock-step with the inspect tool's derived
-// id. A supervisor constructed without WithMemberSessionPrefix keeps the historical
+// id. A supervisor constructed without WithMemberSessionPrefix keeps the
 // "team-<member>" shape (no team id), used only by tests that do not persist.
 func (s *Supervisor) sessionID(name string) session.SessionID {
 	return session.SessionID(fmt.Sprintf("%s-%s", s.idPrefix, name))

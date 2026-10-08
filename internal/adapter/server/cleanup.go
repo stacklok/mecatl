@@ -26,6 +26,10 @@ const (
 	cleanupStateRunning   = "running"
 	cleanupKind           = "cleanup"
 	cleanupBackendFailure = "backend_failure"
+
+	maintenanceReasonChanged = "changed"
+	maintenanceReasonActive  = "active"
+	maintenanceReasonLeased  = "leased"
 )
 
 // CleanupScope is the exact durable-kind subset a store-wide management plan covers.
@@ -156,6 +160,7 @@ func (s *Service) PlanSessionCleanup(ctx context.Context, scope CleanupScope) (C
 		return CleanupPlan{}, err
 	}
 	pager, pageOK := s.cfg.Store.(port.SessionMetadataPager)
+	pageOK = pageOK && port.SupportsSessionMetadataPaging(s.cfg.Store)
 	_, pruneOK := s.cfg.Store.(port.ConditionalPrunableStore)
 	if !pageOK || !pruneOK || !supportsCleanupDelete(s.cfg.Store) {
 		return CleanupPlan{UnavailableReason: storageBackendUnsupported}, nil

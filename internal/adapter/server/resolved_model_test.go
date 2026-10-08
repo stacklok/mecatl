@@ -2,6 +2,10 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -156,36 +160,33 @@ func TestServiceResolvedModelNilResolverByteIdentical(t *testing.T) {
 	}
 }
 
-// TestServiceResolvedModelResolverZeroKeepsBaked (issue #66 review gap): a DEFAULT
-// session with a baked NON-ZERO DefaultResolvedModel.ContextWindow and a
-// ResolveContextWindow returning 0 (not-yet-swapped / unknown to the live store) must
-// echo the BAKED window — the resolver's 0 must NOT clobber a known baked value. This
-// pins the `if w > 0` overlay guard.
-//
-// MUTATION-VERIFY: dropping the `if w > 0` guard in Service.ResolvedModel (so the
-// resolver's 0 overwrites rm.ContextWindow) makes this fail.
-func TestServiceResolvedModelResolverZeroKeepsBaked(t *testing.T) {
-	const baked = 200000
-	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-baked", ContextWindow: baked}
-	// A resolver that returns 0 for everything (pre-swap: the live store has no entry
-	// for this model and — unlike contextWindowFor — this stand-in does not floor to
-	// the catalog, so it returns a bare 0).
-	resolve := func(_, _ string) int64 { return 0 }
-	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
-
-	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
-	if err != nil {
-		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
-	}
-	if got := svc.ResolvedModel(sess.ID); got.ContextWindow != baked {
-		t.Fatalf("ResolvedModel.ContextWindow = %d, want the baked %d (a resolver 0 must NOT clobber a known baked window)", got.ContextWindow, baked)
+// A wired resolver is authoritative even when discovery cannot resolve a window.
+func TestProviderModelDiscovery_Scenario3_AuthoritativeUnknownEcho(t *testing.T) {
+	for _, wired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wired=%t", wired), func(t *testing.T) {
+			dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "uncatalogued", ContextWindow: 128000}
+			var resolve func(string, string) int64
+			want := dflt
+			if wired {
+				resolve = func(_, _ string) int64 { return 0 }
+				want.ContextWindow = 0
+			}
+			svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := svc.ResolvedModel(sess.ID); got != want {
+				t.Fatalf("ResolvedModel = %+v, want %+v", got, want)
+			}
+		})
 	}
 }
 
 // TestServiceResolvedModelResolverNeverLowers (issue #66 regression): a CATALOGUED
 // default model with the resolver wired still echoes its catalog window — the
 // resolver returns the catalog floor when no live entry exists, so the fix never
-// lowers a known window. (A zero from the resolver keeps the baked seed.)
+// lowers a known window when the resolver still has positive evidence.
 func TestServiceResolvedModelResolverNeverLowers(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 400000}
 	// Resolver returns the catalog floor for the catalogued model (mirrors
@@ -328,6 +329,7 @@ func TestServiceResolvedModelPerSession(t *testing.T) {
 		t.Fatalf("ResolvedModel(per-session) = %+v, want the resolved selector %+v", got, want)
 	}
 	svc.CloseSession(sess.ID)
+	dflt.ContextWindow = 0 // The wired resolver has no evidence for the default.
 	if got := svc.ResolvedModel(sess.ID); got != dflt {
 		t.Fatalf("ResolvedModel after CloseSession = %+v, want fallback to default %+v", got, dflt)
 	}
@@ -390,9 +392,129 @@ func TestGRPCCreateSessionEchoesResolvedModel(t *testing.T) {
 	})
 }
 
+func TestGRPCGetSessionAfterRestartEchoesPersistedResolvedModel(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	const (
+		provider = "gateway"
+		model    = "terra-1"
+		window   = int64(1_100_000)
+	)
+	var factoryCalls int
+	var builtWindow int
+	resolvedWindow := window
+	factory := func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
+		factoryCalls++
+		eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: sel.ModelID, ContextWindow: func() int { return int(window) }})
+		builtWindow = eng.ContextWindow()
+		return server.SessionEngineResult{
+			Engine:       eng,
+			ProviderID:   sel.ProviderID,
+			ModelID:      sel.ModelID,
+			BuiltForMode: mode,
+			Close:        func() error { return nil },
+		}, nil
+	}
+	newService := func() *server.Service {
+		t.Helper()
+		svc, err := newPlacementTestService(server.Config{
+			Engine:               agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("default")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "default-model"}),
+			Store:                store,
+			SessionEngine:        factory,
+			DefaultResolvedModel: server.ResolvedModel{ProviderID: "default", ModelID: "default-model", ContextWindow: 128_000},
+			ResolveContextWindow: func(p, m string) int64 {
+				if p == provider && m == model {
+					return resolvedWindow
+				}
+				return 128_000
+			},
+		})
+		if err != nil {
+			t.Fatalf("new service: %v", err)
+		}
+		return svc
+	}
+
+	svcA := newService()
+	created, err := svcA.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: provider, ModelID: model})
+	if err != nil {
+		t.Fatalf("CreateSessionWithProvider: %v", err)
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("create factory calls = %d, want 1", factoryCalls)
+	}
+
+	factoryCalls = 0
+	svcB := newService()
+	resp, err := server.NewHarnessServer(svcB).GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatalf("GetSession after restart: %v", err)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("read-only GetSession rebuilt the engine %d times, want 0", factoryCalls)
+	}
+	rm := resp.GetSession().GetResolvedModel()
+	if rm.GetProviderId() != provider || rm.GetModelId() != model || rm.GetContextWindow() != window {
+		t.Fatalf("cold gRPC resolved_model = %+v, want %s/%s/%d", rm, provider, model, window)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+string(created.ID), nil)
+	req.SetPathValue("id", string(created.ID))
+	recorder := httptest.NewRecorder()
+	server.NewHTTPHandler(svcB).ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("HTTP GetSession status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	var httpResp struct {
+		ResolvedModel resolvedModelBody `json:"resolved_model"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&httpResp); err != nil {
+		t.Fatalf("decode HTTP GetSession: %v", err)
+	}
+	if got := httpResp.ResolvedModel; got != (resolvedModelBody{ProviderID: provider, ModelID: model, ContextWindow: window}) {
+		t.Fatalf("cold HTTP resolved_model = %+v, want %s/%s/%d", got, provider, model, window)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("read-only HTTP GetSession rebuilt the engine %d times, want 0", factoryCalls)
+	}
+
+	if got := drainAndFinish(t, svcB, created.ID, mustStart(t, svcB, created.ID, "resume")); got != "ok" {
+		t.Fatalf("post-restart prompt reply = %q, want ok", got)
+	}
+	if factoryCalls != 1 || builtWindow != int(window) {
+		t.Fatalf("rehydrated engine: factory calls=%d context window=%d, want 1/%d", factoryCalls, builtWindow, window)
+	}
+	if got := svcB.ResolvedModel(created.ID); got.ProviderID != provider || got.ModelID != model || got.ContextWindow != window {
+		t.Fatalf("active-engine resolved model = %+v, want %s/%s/%d", got, provider, model, window)
+	}
+
+	resolvedWindow = 0
+	factoryCalls = 0
+	svcC := newService()
+	coldHarness := server.NewHarnessServer(svcC)
+	provisional, err := coldHarness.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatalf("provisional GetSession: %v", err)
+	}
+	if got := provisional.GetSession().GetResolvedModel(); got.GetProviderId() != provider || got.GetModelId() != model || got.GetContextWindow() != 0 {
+		t.Fatalf("provisional cold resolved_model = %+v, want %s/%s/0", got, provider, model)
+	}
+	resolvedWindow = window
+	healed, err := coldHarness.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatalf("healed GetSession: %v", err)
+	}
+	if got := healed.GetSession().GetResolvedModel(); got.GetContextWindow() != window {
+		t.Fatalf("healed cold context window = %d, want %d", got.GetContextWindow(), window)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("cold provisional/healed reads rebuilt the engine %d times, want 0", factoryCalls)
+	}
+}
+
 // TestGRPCGetSessionEchoesResolvedModel proves the gRPC GetSession handler threads
-// Service.ResolvedModel(sess.ID) into the Session snapshot (toProtoSession), not a
-// zero ResolvedModel. Uses an explicit selector so the per-session resolved value is
+// the session-aware resolved projection into the Session snapshot (toProtoSession),
+// not a zero ResolvedModel. Uses an explicit selector so the per-session resolved value is
 // distinct from the default — a handler dropping it would echo zero and fail.
 func TestGRPCGetSessionEchoesResolvedModel(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-default", ContextWindow: 128000}

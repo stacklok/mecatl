@@ -18,7 +18,7 @@ import (
 // registry type crosses into the server/acp adapters — they receive this computed
 // value only. This ONE value feeds three sinks so they CANNOT disagree:
 //
-//	(a) ModelInfo.Image in modelSnapshot (ListModels),
+//	(a) ModelInfo.Image in the provider discovery projection (ListModels),
 //	(b) the CreateSessionResponse.session_capabilities echo (per-session), and
 //	(c) the ACP gate via Service.ProviderCapabilities() (default caps).
 //
@@ -53,45 +53,22 @@ import (
 // authority bit in P0. ModelInfo.reasoning stays catalog-sourced. If P1 wants
 // reasoning intersected, add the adapter bit then (anti-speculative).
 func modelCapability(reg *providerRegistry, providerID, modelID string) port.ProviderCapabilities {
-	adapterCaps := modelAdapterCaps(reg, providerID)
-
-	// (1) Live-first: a provider with a live lister (openrouter) carries authoritative
-	// per-model input_modalities in the meta store — the SAME modelEntry.InputModalities
-	// the picker reads. nil-guarded (modalitiesFor → lookup is nil-safe).
-	if reg != nil && reg.meta != nil {
-		if liveMods, found := reg.meta.modalitiesFor(providerID, modelID); found {
-			return port.ProviderCapabilities{
-				Image:           adapterCaps.Image && hasImageModality(liveMods),
-				Audio:           adapterCaps.Audio && hasAudioModality(liveMods),
-				EmbeddedContext: adapterCaps.EmbeddedContext,
-			}
-		}
+	var view *discoverySnapshot
+	if reg != nil {
+		view = reg.meta.current()
 	}
-
-	// (2) Catalog floor: no live entry, but the embedded catalog knows the model.
-	catImage, catAudio, catalogued := catalogModalities(providerID, modelID)
-	if !catalogued {
-		// (3) Passthrough / uncatalogued model: catalog AND live are silent, so trust
-		// the adapter alone. Zeroing here would strip image from every uncatalogued model.
-		return adapterCaps
-	}
-
-	return port.ProviderCapabilities{
-		Image:           adapterCaps.Image && catImage,
-		Audio:           adapterCaps.Audio && catAudio,
-		EmbeddedContext: adapterCaps.EmbeddedContext,
-	}
+	return modelCapabilityCandidate(reg, view, providerID, modelID)
 }
 
 // modelReasoningSupport reports whether the (provider, model) is known to support
-// reasoning-effort, and whether that fact is KNOWN at all (ADR 0055 capability
-// gate). It mirrors modelCapability's precedence: (1) LIVE-FIRST — a live meta
-// entry's Reasoning bit is authoritative when present; (2) CATALOG floor — the
-// embedded catalog's SupportsReasoning; (3) UNKNOWN — neither source describes the
-// model (a passthrough/uncatalogued model), so known=false and the caller
-// FAILS-OPEN (sends effort anyway; the provider 400s honestly if it really cannot
-// — the same unknown=capable posture the thinking path takes). The mock provider
-// is treated as known-incapable so an offline test never sends effort to it.
+// reasoning-effort, and whether that fact is known (the reasoning-effort
+// capability gate). A live entry's Reasoning bit is authoritative only when its
+// support is known: Anthropic listings preserve omitted thinking as unknown
+// even when a model row exists. When no live row exists, the embedded catalog
+// supplies a floor; a model with no evidence also fails open, forwarding a configured effort so
+// the provider can reject it. The public inventory's boolean reasoning flag
+// cannot express unknown and does not control this gate. The mock provider is
+// known-incapable so offline tests never send effort to it.
 func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (supported, known bool) {
 	if providerID == providerMock {
 		return false, true
@@ -99,7 +76,14 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	// (1) Live-first.
 	if reg != nil && reg.meta != nil {
 		if entry, ok := reg.meta.lookup(providerID, modelID); ok {
-			return entry.Reasoning, true
+			return entry.Reasoning, !entry.reasoningUnknown
+		}
+	}
+	// Preserve the configured default's presence floor for non-Messages protocols.
+	// Anthropic's missing live row is not an explicit unsupported declaration.
+	if reg != nil && modelID != "" {
+		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID && entry.protocol != protocolAnthropicMessages {
+			return false, true
 		}
 	}
 	// (2) Catalog floor.
@@ -177,25 +161,23 @@ func catalogModalities(providerID, modelID string) (image, audio, found bool) {
 	if !ok {
 		return false, false, false
 	}
-	for _, m := range p.Models() {
-		if m.ID() != modelID {
-			continue
-		}
-		// Image derives from the SHARED hasImageModality predicate over the catalog's
-		// raw modality list — the SAME function liveModelSnapshot (the picker) uses —
-		// so the session echo and ListModels provably agree on a model's image-ness
-		// (the anti-divergence guarantee rests on ONE function, not two copies of the
-		// "is image among inputModalities" test, for BOTH the live and embedded paths).
-		// Audio derives from the same raw list for forward-compatibility; it is false
-		// in the P0 data, so the AND in modelCapability is false regardless.
-		mods := m.InputModalities()
-		image = hasImageModality(mods)
-		for _, mod := range mods {
-			if mod == "audio" {
-				audio = true
-			}
-		}
-		return image, audio, true
+	m, ok := p.Model(modelID)
+	if !ok {
+		return false, false, false
 	}
-	return false, false, false
+	// Image derives from the SHARED hasImageModality predicate over the catalog's
+	// raw modality list — the SAME function liveModelSnapshot (the picker) uses —
+	// so the session echo and ListModels provably agree on a model's image-ness
+	// (the anti-divergence guarantee rests on ONE function, not two copies of the
+	// "is image among inputModalities" test, for BOTH the live and embedded paths).
+	// Audio derives from the same raw list for forward-compatibility; it is false
+	// in the P0 data, so the AND in modelCapability is false regardless.
+	mods := m.InputModalities()
+	image = hasImageModality(mods)
+	for _, mod := range mods {
+		if mod == "audio" {
+			audio = true
+		}
+	}
+	return image, audio, true
 }

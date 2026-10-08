@@ -2,6 +2,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 
 import {
   InvalidStateError,
+  type MecatlErrorOptions,
   PermissionAskAlreadyResolvedError,
   ProtocolError,
   type TransportKind,
@@ -16,6 +17,7 @@ import {
 import {
   ApprovalVerdict,
   type ConverseRequestSchema,
+  GuardrailApprovalKind,
   type Event as ProtoEvent,
 } from "./gen/mecatl/v1/harness_pb.js";
 import {
@@ -25,8 +27,15 @@ import {
   planPermissionVerdict,
 } from "./plan.js";
 
-/** A server permission verdict accepted by run.resolveAsk(). @public */
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+/** Canonical server permission verdicts. @public */
+export const PermissionVerdict = {
+  AllowOnce: "allow_once",
+  AllowAlways: "allow_always",
+  Deny: "deny",
+} as const;
+
+/** One server permission verdict accepted by run.resolveAsk(). @public */
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 
 /** An optional automatic responder invoked for each permission ask on a run. @public */
 export type PermissionAskResponder = (
@@ -40,6 +49,12 @@ export interface RunOptions {
   onPermissionAsk?: PermissionAskResponder;
   /** Automatically answers only plan-originated PresentPlan asks. */
   onPlanApproval?: PlanApprovalResponder;
+  /**
+   * Lets the server start the proceed run after an exact plan-ask approval.
+   * Defaults to false. True requires `exact_plan_ask_control`, excludes
+   * `onPlanApproval`, and is rejected by `Session.retry()`.
+   */
+  serverOwnedPlanContinuation?: boolean;
 }
 
 /** The terminal outcome of a consumed run. Server-declared stops are values, not errors. @public */
@@ -55,27 +70,59 @@ export interface RunResult {
   readonly rawEvent: EventOf<"result">;
 }
 
+/** A normally completed run outcome returned by `Run.outcome()`. @public */
+export interface RunCompletedOutcome {
+  readonly outcome: "completed";
+  readonly result: RunResult;
+}
+
+/**
+ * A run that handed off one pending external authorization.
+ *
+ * This detached value carries correlation only. The server retains lifecycle ownership.
+ * @public
+ */
+export interface RunAuthorizationRequiredOutcome {
+  readonly outcome: "authorization_required";
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly authorization: EventOf<"authorization.required">;
+}
+
+/** The closed set of completion and authorization-park outcomes from `Run.outcome()`. @public */
+export type RunOutcome = RunCompletedOutcome | RunAuthorizationRequiredOutcome;
+
+/**
+ * `Run.result()` consumed a valid authorization handoff instead of a completed result.
+ *
+ * Read `outcome` to create `Session.mcpAuthorization()` with the exact authorization ID.
+ * @public
+ */
+export class RunAuthorizationRequiredError extends InvalidStateError {
+  readonly outcome: RunAuthorizationRequiredOutcome;
+
+  constructor(outcome: RunAuthorizationRequiredOutcome, options: Omit<MecatlErrorOptions, "code">) {
+    super(`Run ${outcome.runId} requires external authorization`, options);
+    this.outcome = outcome;
+  }
+}
+
 /** One accepted server run and its single-consumption event stream. @public */
 export interface Run extends AsyncIterable<Event> {
   readonly id: string;
   readonly sessionId: string;
   /**
-   * Sends a Boolean permission verdict for a `permission.ask` event.
-   *
-   * @param askId - ID carried by the permission ask.
-   * @param allow - Whether to allow the call once.
-   * @returns A promise that resolves after the verdict is sent.
-   * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
-   */
-  approve(askId: string, allow: boolean): Promise<void>;
-  /**
    * Resolves one pending ask on this run with the server's string verdict vocabulary.
    *
    * @param askId - ID carried by the permission ask.
    * @param verdict - Decision to apply to the pending ask.
-   * @returns A promise that resolves after the server accepts the verdict.
+   * @returns A promise that resolves after the verdict frame is handed to the
+   * active stream transport. This send-only API does not acknowledge server
+   * acceptance; use `Session.controls(runId).resolveAsk()` when an acknowledged
+   * control operation is required.
    * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
-   * @throws `InvalidStateError` when used for a plan-approval ask.
+   * @throws `InvalidStateError` when used for a plan-approval ask. An opted-in
+   * server-owned run uses `Session.controls(runId).resolvePlanAsk()` instead.
    */
   resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
   /**
@@ -92,10 +139,18 @@ export interface Run extends AsyncIterable<Event> {
    */
   steer(text: string): Promise<void>;
   /**
-   * Drains all remaining events and returns the typed terminal outcome.
+   * Drains all remaining events and returns either completion or an authorization handoff.
+   *
+   * @returns The normal terminal outcome for this run.
+   * @throws `InvalidStateError` when the run is already being consumed.
+   */
+  outcome(): Promise<RunOutcome>;
+  /**
+   * Drains all remaining events and returns the completed terminal result.
    *
    * @returns The terminal result for this run.
    * @throws `InvalidStateError` when the run is already being consumed.
+   * @throws `RunAuthorizationRequiredError` when the run parks on external authorization.
    */
   result(): Promise<RunResult>;
 }
@@ -106,8 +161,14 @@ export interface RunOperations {
   send(frame: MessageInitShape<typeof ConverseRequestSchema>): void;
 }
 
-type ConsumptionMode = "events" | "result";
-type PendingAsk = { readonly controller: AbortController; readonly plan: boolean };
+type ConsumptionMode = "events" | "outcome" | "result";
+type PendingAsk = {
+  readonly controller: AbortController;
+  readonly plan: boolean;
+  readonly runId: string;
+  readonly scope: PermissionAskEventPayload["guardrail"];
+  submitted: boolean;
+};
 
 export class RunImpl implements Run {
   readonly id: string;
@@ -118,11 +179,14 @@ export class RunImpl implements Run {
   readonly #knownAsks = new Set<string>();
   readonly #onPermissionAsk: PermissionAskResponder | undefined;
   readonly #onPlanApproval: PlanApprovalResponder | undefined;
+  readonly #serverOwnedPlanContinuation: boolean;
   readonly #operations: RunOperations;
   readonly #pendingAsks = new Map<string, PendingAsk>();
   #consumption: ConsumptionMode | undefined;
   #ended = false;
   #firstPending = true;
+  #authorization: EventOf<"authorization.required"> | undefined;
+  #streamEnded = false;
   #terminal: EventOf<"result"> | undefined;
   #steerSequence = 0;
 
@@ -141,21 +205,8 @@ export class RunImpl implements Run {
     this.#operations = operations;
     this.#onPermissionAsk = options.onPermissionAsk;
     this.#onPlanApproval = options.onPlanApproval;
+    this.#serverOwnedPlanContinuation = options.serverOwnedPlanContinuation === true;
     this.#observe(this.#first);
-  }
-
-  async approve(askId: string, allow: boolean): Promise<void> {
-    this.#operations.assertOpen();
-    if (this.#knownAsks.has(askId)) {
-      await this.resolveAsk(askId, allow ? "allow_once" : "deny");
-      return;
-    }
-    this.#send({
-      kind: {
-        case: "resumeApproval",
-        value: { allow, askId, expectedRunId: this.id },
-      },
-    });
   }
 
   async resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void> {
@@ -168,9 +219,18 @@ export class RunImpl implements Run {
     }
     if (pending.plan) {
       throw new InvalidStateError(
-        `Plan approval ask ${askId} must be resolved through onPlanApproval`,
+        `Plan approval ask ${askId} must be resolved through ${
+          this.#serverOwnedPlanContinuation
+            ? "Session.controls(runId).resolvePlanAsk()"
+            : "onPlanApproval"
+        }`,
         { transport: this.#operations.transportKind },
       );
+    }
+    if (pending.submitted) {
+      throw new PermissionAskAlreadyResolvedError(askId, {
+        transport: this.#operations.transportKind,
+      });
     }
 
     await this.#resolvePendingAsk(askId, verdict, pending);
@@ -198,15 +258,41 @@ export class RunImpl implements Run {
     pending: PendingAsk,
   ): Promise<void> {
     const wireVerdict = approvalVerdict(verdict, this.#operations.transportKind);
-    this.#pendingAsks.delete(askId);
+    const scope = pending.scope;
+    if (scope?.kind === "unknown") {
+      throw new InvalidStateError(`Approval ask ${askId} has an unknown guardrail scope`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    if (
+      verdict === "allow_always" &&
+      scope !== undefined &&
+      (scope.kind === "result_release" || !scope.repeatAvailable)
+    ) {
+      throw new InvalidStateError(`Approval ask ${askId} does not permit allow_always`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    if (pending.submitted) {
+      throw new PermissionAskAlreadyResolvedError(askId, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    pending.submitted = true;
     pending.controller.abort();
     this.#send({
       kind: {
         case: "resumeApproval",
         value: {
-          allow: verdict !== "deny",
           askId,
-          expectedRunId: this.id,
+          expectedRunId: pending.runId,
+          guardrailKind:
+            scope?.kind === "action"
+              ? GuardrailApprovalKind.ACTION
+              : scope?.kind === "result_release"
+                ? GuardrailApprovalKind.RESULT_RELEASE
+                : GuardrailApprovalKind.UNSPECIFIED,
+          reviewId: scope?.reviewId ?? "",
           verdict: wireVerdict,
         },
       },
@@ -239,26 +325,46 @@ export class RunImpl implements Run {
     return this.#consumer();
   }
 
+  async outcome(): Promise<RunOutcome> {
+    this.#claim("outcome");
+    return this.#drainOutcome();
+  }
+
   async result(): Promise<RunResult> {
     this.#claim("result");
+    const outcome = await this.#drainOutcome();
+    if (outcome.outcome === "authorization_required") {
+      throw new RunAuthorizationRequiredError(outcome, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    return outcome.result;
+  }
+
+  async #drainOutcome(): Promise<RunOutcome> {
     for (;;) {
       const next = await this.#next();
       if (next.done) break;
     }
     const event = this.#terminal;
-    if (event === undefined) {
-      throw new ProtocolError("The Converse stream ended without a terminal result", {
-        transport: this.#operations.transportKind,
-      });
+    if (event !== undefined) {
+      return { outcome: "completed", result: runResult(this.sessionId, this.id, event) };
     }
+
+    const authorization = this.#authorization;
+    if (authorization !== undefined) return this.#authorizationOutcome(authorization);
+
+    throw this.#protocol("The Converse stream ended without a terminal outcome");
+  }
+
+  #authorizationOutcome(
+    authorization: EventOf<"authorization.required">,
+  ): RunAuthorizationRequiredOutcome {
     return {
-      content: event.payload.text,
-      rawEvent: event,
+      authorization,
+      outcome: "authorization_required",
       runId: this.id,
       sessionId: this.sessionId,
-      stopReason: event.payload.stop,
-      text: event.payload.text,
-      usage: event.payload.usage ?? event.usage,
     };
   }
 
@@ -276,7 +382,12 @@ export class RunImpl implements Run {
   #consumer(): AsyncIterator<Event> {
     return {
       next: () => this.#next(),
-      return: async () => ({ done: true, value: undefined }),
+      return: async () => {
+        if (this.#authorization !== undefined || this.#terminal !== undefined) {
+          await this.#closeStream();
+        }
+        return { done: true, value: undefined };
+      },
     };
   }
 
@@ -286,7 +397,7 @@ export class RunImpl implements Run {
       this.#firstPending = false;
       return { done: false, value: this.#first };
     }
-    if (this.#terminal !== undefined) return { done: true, value: undefined };
+    if (this.#streamEnded) return { done: true, value: undefined };
     let next: IteratorResult<ProtoEvent>;
     try {
       next = await this.#events.next();
@@ -295,22 +406,58 @@ export class RunImpl implements Run {
       throw error;
     }
     if (next.done) {
+      this.#streamEnded = true;
       this.#end();
-      throw new ProtocolError("The Converse stream ended without a terminal result", {
-        transport: this.#operations.transportKind,
-      });
+      if (this.#terminal !== undefined || this.#authorization !== undefined) {
+        return { done: true, value: undefined };
+      }
+      throw this.#protocol("The Converse stream ended without a terminal outcome");
     }
-    if (next.value.runId !== this.id) {
-      throw new ProtocolError("The Converse stream changed run id", {
-        transport: this.#operations.transportKind,
-      });
+    if (this.#terminal !== undefined) {
+      await this.#closeStream();
+      throw this.#protocol("The Converse stream returned an event after its terminal result");
     }
-    const event = decodeEvent(next.value, this.#operations.transportKind);
-    this.#observe(event);
-    return { done: false, value: event };
+    if (this.#authorization !== undefined) {
+      await this.#closeStream();
+      throw this.#protocol("The Converse stream returned an event after authorization parking");
+    }
+    const correlatedControlEvent =
+      next.value.type === "permission.ask" || next.value.type === "control.refused";
+    if (next.value.runId !== this.id && !correlatedControlEvent) {
+      await this.#closeStream();
+      throw this.#protocol("The Converse stream changed run id");
+    }
+    try {
+      const event = decodeEvent(next.value, this.#operations.transportKind);
+      this.#observe(event);
+      return { done: false, value: event };
+    } catch (error) {
+      await this.#closeStream();
+      throw error;
+    }
   }
 
   #observe(event: Event): void {
+    if (event.kind === "authorization.required") {
+      if (
+        this.sessionId === "" ||
+        this.id === "" ||
+        event.runId !== this.id ||
+        event.payload.status !== "pending" ||
+        event.payload.authorizationId === "" ||
+        event.payload.callId === ""
+      ) {
+        throw this.#protocol("The Converse stream returned a malformed authorization requirement");
+      }
+      this.#authorization = event;
+      this.#end();
+      return;
+    }
+    if (event.kind === "control.refused") {
+      const pending = this.#pendingAsks.get(event.payload.askId);
+      if (pending !== undefined) pending.submitted = false;
+      return;
+    }
     if (event.kind === "permission.ask") {
       this.#startAsk(event);
       return;
@@ -334,7 +481,13 @@ export class RunImpl implements Run {
     if (this.#ended || this.#knownAsks.has(askId)) return;
     this.#knownAsks.add(askId);
     const plan = event.payload.tool === PLAN_APPROVAL_TOOL;
-    const pending = { controller: new AbortController(), plan };
+    const pending: PendingAsk = {
+      controller: new AbortController(),
+      plan,
+      runId: event.runId,
+      scope: event.payload.guardrail,
+      submitted: false,
+    };
     this.#pendingAsks.set(askId, pending);
     if (plan) {
       this.#startPlanResponder(event, pending);
@@ -401,6 +554,17 @@ export class RunImpl implements Run {
     this.#pendingAsks.clear();
   }
 
+  async #closeStream(): Promise<void> {
+    if (this.#streamEnded) return;
+    this.#streamEnded = true;
+    this.#end();
+    await this.#events.return?.();
+  }
+
+  #protocol(message: string): ProtocolError {
+    return new ProtocolError(message, { transport: this.#operations.transportKind });
+  }
+
   #send(frame: MessageInitShape<typeof ConverseRequestSchema>): void {
     this.#operations.assertOpen();
     this.#operations.send(frame);
@@ -422,6 +586,18 @@ function approvalVerdict(verdict: PermissionVerdict, transport: TransportKind): 
 
 function terminal(event: Event): event is EventOf<"result"> {
   return event.kind === "result";
+}
+
+function runResult(sessionId: string, runId: string, event: EventOf<"result">): RunResult {
+  return {
+    content: event.payload.text,
+    rawEvent: event,
+    runId,
+    sessionId,
+    stopReason: event.payload.stop,
+    text: event.payload.text,
+    usage: event.payload.usage,
+  };
 }
 
 export type ConverseFrame = MessageInitShape<typeof ConverseRequestSchema>;

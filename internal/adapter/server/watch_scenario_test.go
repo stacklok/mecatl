@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -27,7 +28,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 // --- fixture ----------------------------------------------------------------
@@ -620,7 +620,7 @@ func TestSDKServerEnablers_Scenario7_WatchOwnershipEnforced(t *testing.T) {
 
 // --- AC7.5 ------------------------------------------------------------------
 
-// TestADR_0250_SlowWatcherTerminatesWithoutBackpressure is AC7.5: a slow watcher
+// TestSlowWatcherTerminatesWithoutBackpressure is AC7.5: a slow watcher
 // is terminated with a resumable error and never backpressures the run; the run
 // completes normally.
 //
@@ -630,7 +630,7 @@ func TestSDKServerEnablers_Scenario7_WatchOwnershipEnforced(t *testing.T) {
 // halves are asserted, because either alone is satisfiable by the wrong
 // implementation: dropping would pass "the run completes", and a blocking write
 // would pass "nothing was dropped".
-func TestADR_0250_SlowWatcherTerminatesWithoutBackpressure(t *testing.T) {
+func TestSlowWatcherTerminatesWithoutBackpressure(t *testing.T) {
 	defer server.ShrinkWatchDeliveryForTest(2, 150*time.Millisecond)()
 
 	log := memstore.NewEventLog()
@@ -697,7 +697,7 @@ func TestADR_0250_SlowWatcherTerminatesWithoutBackpressure(t *testing.T) {
 
 // --- AC7.6 ------------------------------------------------------------------
 
-// TestADR_0250_AppendFailureTerminatesLocalWatchers is AC7.6: a durable append
+// TestAppendFailureTerminatesLocalWatchers is AC7.6: a durable append
 // failure terminates watchers in that process with ActivityGapError without
 // advancing their cursor, and the owned run continues.
 //
@@ -706,7 +706,7 @@ func TestADR_0250_SlowWatcherTerminatesWithoutBackpressure(t *testing.T) {
 // except the last envelope it actually received. That is asserted directly — a
 // server-supplied cursor here would be the bug, because it would point past
 // envelopes still sitting in the delivery buffer.
-func TestADR_0250_AppendFailureTerminatesLocalWatchers(t *testing.T) {
+func TestAppendFailureTerminatesLocalWatchers(t *testing.T) {
 	inner := memstore.NewEventLog()
 	log := newCountingCursorLog(inner)
 	svc, client, id := watchedRun(t, log)
@@ -795,7 +795,7 @@ func TestADR_0250_AppendFailureTerminatesLocalWatchers(t *testing.T) {
 
 // --- AC7.7 ------------------------------------------------------------------
 
-// TestADR_0250_GapMarkerObservedCrossProcess is AC7.7: the best-effort durable
+// TestGapMarkerObservedCrossProcess is AC7.7: the best-effort durable
 // gap marker, when it lands, is observed by watchers in a SECOND process.
 //
 // Two independent Services over two independent jsonlstore handles on ONE
@@ -805,13 +805,13 @@ func TestADR_0250_AppendFailureTerminatesLocalWatchers(t *testing.T) {
 // adapter instance reading the same bytes is exactly the property under test.
 //
 // Note what this test does NOT claim. It proves the marker is observable WHEN IT
-// LANDS. ADR 0250 decision 6 is deliberately weaker than an absolute: a failed
+// LANDS. The append-gap guarantee is deliberately weaker than an absolute: a failed
 // append consumes no position, so it leaves nothing for another process to see,
 // and a total backend outage cannot record its own failure. Writer A's
 // AppendEvent fails while its AppendGap succeeds precisely because that is the
 // LIKELY failure the tier covers — one rejected record — and not the outage it
 // does not.
-func TestADR_0250_GapMarkerObservedCrossProcess(t *testing.T) {
+func TestGapMarkerObservedCrossProcess(t *testing.T) {
 	dir := t.TempDir()
 
 	writerStore, err := jsonlstore.New(dir)
@@ -847,7 +847,7 @@ func TestADR_0250_GapMarkerObservedCrossProcess(t *testing.T) {
 		if env.Phase == server.WatchPhaseGap {
 			sawGap = true
 			if env.Event != nil {
-				t.Fatal("a gap frame carries an event; a gap is a delivery-envelope phase, never a session.Event (ADR 0250 decision 5)")
+				t.Fatal("a gap frame carries an event; a gap is a delivery-envelope phase, never a session.Event")
 			}
 			if env.Cursor == "" {
 				t.Fatal("a gap frame carries no cursor; it occupies a real append position and cursors must advance past it")
@@ -871,7 +871,7 @@ func TestADR_0250_GapMarkerObservedCrossProcess(t *testing.T) {
 
 // --- AC7.8 ------------------------------------------------------------------
 
-// TestADR_0250_OneAppendPerEvent is AC7.8: exactly one append occurs per event,
+// TestOneAppendPerEvent is AC7.8: exactly one append occurs per event,
 // and cursor assignment happens at the persistence chokepoint rather than at the
 // emit site.
 //
@@ -880,7 +880,7 @@ func TestADR_0250_GapMarkerObservedCrossProcess(t *testing.T) {
 // into bounded chunks, so a turn of many delta events legitimately becomes one
 // record. This test pins both halves at once, because "one append per event"
 // read literally would forbid the coalescing the recorder exists to do.
-func TestADR_0250_OneAppendPerEvent(t *testing.T) {
+func TestOneAppendPerEvent(t *testing.T) {
 	inner := memstore.NewEventLog()
 	log := newCountingCursorLog(inner)
 	_, _, id := watchedRun(t, log)
@@ -1102,7 +1102,7 @@ func TestSDKServerEnablers_Scenario7_LegacyStreamEndpointsUnchanged(t *testing.T
 	})
 }
 
-// TestADR_0250_WatchEnvelopeSurvivesAnInvalidUTF8Cursor pins the mapper's
+// TestWatchEnvelopeSurvivesAnInvalidUTF8Cursor pins the mapper's
 // mechanical UTF-8 backstop on the one watch field that is not harness-authored.
 //
 // A cursor is BACKEND-owned. The four in-tree backends mint ASCII, so only a
@@ -1112,7 +1112,7 @@ func TestSDKServerEnablers_Scenario7_LegacyStreamEndpointsUnchanged(t *testing.T
 // does corrupt it; that is the better failure, because a corrupt cursor is
 // rejected loudly at the next resume while a dead stream takes the whole live
 // view with it.
-func TestADR_0250_WatchEnvelopeSurvivesAnInvalidUTF8Cursor(t *testing.T) {
+func TestWatchEnvelopeSurvivesAnInvalidUTF8Cursor(t *testing.T) {
 	inner := memstore.NewEventLog()
 	_, _, id := watchedRun(t, inner)
 	svc := watchService(t, badCursorLog{CursorEventLog: inner}, false)
@@ -1260,8 +1260,8 @@ func TestSDKServerEnablers_Scenario7_RunFilterDeliversOneRunAndEveryGap(t *testi
 // EventSource grammar splits a line into `field: value` at the first colon, so a
 // bare `{"code":...}` parses as the unrecognised field `{"code"` and is
 // DISCARDED. The client sees the stream fall silent and cannot tell a delivery
-// gap from a clean end — which is precisely the failure ADR 0250 exists to
-// abolish, reintroduced one layer down at the transport. Producing the right
+// gap from a clean end — which is precisely the failure the durable watch exists
+// to abolish, reintroduced one layer down at the transport. Producing the right
 // error and framing it unreadably is the same bug as not producing it.
 //
 // The assertion parses like a CONFORMING CLIENT — it reads the `event:` tag and

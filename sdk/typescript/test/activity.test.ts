@@ -62,7 +62,7 @@ function filtered(
             askId: "ask-1",
             callId: "call-1",
             tool: "Bash",
-            verdict: "allow_once",
+            verdict: 2,
           },
           runId,
           type: kind,

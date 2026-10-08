@@ -14,9 +14,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_guardrail_test.go pins ADR 0080 / AC-W2-G2
-// (docs/acceptance/path-escape-posture.md, deferred decision
-// "Guardrail-routed escape checking"): at posture auto WITH the operator-tier
+// pathescape_guardrail_test.go pins guardrail-routed escape checking: at
+// posture auto WITH the operator-tier
 // escape knob (guardrails.escape) configured, an out-of-root escape is routed
 // through the LLM guardrail checker as a composition-level PRE-CHECK inside
 // the escape policy — a checker "unsafe" verdict DENIES the escape, a "safe"
@@ -47,7 +46,7 @@ func evalEscapeAtAuto(t *testing.T, p port.PermissionPolicy, workspace string, c
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws)
+	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws).Decision
 }
 
 // TestPathEscapePosture_GuardrailRoutedEscape pins AC-W2-G2: auto + the
@@ -61,7 +60,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 
 	t.Run("unsafe verdict denies the escape", func(t *testing.T) {
 		t.Parallel()
-		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"safe":false,"reason":"targeted /etc shadow read"}`))
+		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"targeted /etc shadow read","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Deny {
 			t.Fatalf("routed unsafe escape = %v (%q), want Deny — the checker's block must veto the escape", d.Effect, d.Reason)
@@ -73,7 +72,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 
 	t.Run("safe verdict falls back to the auto read-allow row", func(t *testing.T) {
 		t.Parallel()
-		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"safe":true,"reason":"ordinary file read"}`))
+		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Allow {
 			t.Fatalf("routed safe escape = %v (%q), want Allow — a safe verdict falls back to the ordinary auto row", d.Effect, d.Reason)
@@ -100,7 +99,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 	t.Run("write escape routed too", func(t *testing.T) {
 		t.Parallel()
 		wcall := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "x"})
-		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"safe":false,"reason":"destructive write outside the workspace"}`))
+		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"destructive write outside the workspace","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`))
 		d := evalEscapeAtAuto(t, p, f.workspace, wcall)
 		if d.Effect != governance.Deny {
 			t.Fatalf("routed unsafe WRITE escape = %v (%q), want Deny — the route covers both read and write escapes", d.Effect, d.Reason)
@@ -110,7 +109,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 	t.Run("yolo and strict never route", func(t *testing.T) {
 		t.Parallel()
 		// The route is the AUTO-only knob: yolo demotes guardrails to advisory
-		// (ADR 0062) and never spends a checker call on a decision the posture
+		// and never spends a checker call on a decision the posture
 		// already made; strict/trusted keep their own Scenario-4 escape Ask.
 		for _, posture := range []Posture{PostureYolo, PostureStrict, PostureTrusted} {
 			posture := posture
@@ -120,7 +119,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 				// posture row wins and the checker was never consulted (a
 				// consumed verdict would flip the outcome).
 				checker := buildGuardrailsChecker(Config{UseMock: true, GuardrailsModel: "checker-model"}, nil,
-					mockllm.New(mockllm.TextTurn(`{"safe":false,"reason":"must not be consulted"}`)), "mock", "m")
+					mockllm.New(mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"must not be consulted","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`)), "mock", "m")
 				p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture, withEscapeGuardrailRoute(checker))
 				d := evalEscapeAtAuto(t, p, f.workspace, call)
 				switch posture {
@@ -153,7 +152,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Deny},
 		}, nil)
-		checker := buildGuardrailsChecker(cfg, nil, mockllm.New(mockllm.TextTurn(`{"safe":true,"reason":"must not be consulted"}`)), "mock", "m")
+		checker := buildGuardrailsChecker(cfg, nil, mockllm.New(mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`)), "mock", "m")
 		p := newEscapePolicy(inner, PostureAuto, withEscapeGuardrailRoute(checker))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Deny {
@@ -163,7 +162,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 
 	t.Run("the composition wires the route from the knob", func(t *testing.T) {
 		t.Parallel()
-		// The factory-path half (the ADR-0070 discipline): a REAL Build at auto
+		// The factory-path half (the model-visible affordance discipline): a REAL Build at auto
 		// with GuardrailsModel + the escape knob must DENY the escape when the
 		// checker scripts unsafe — deleting the knob wiring in buildEngine
 		// fails this, even though the policy-level subtests above stay green.
@@ -173,7 +172,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		args, _ := json.Marshal(map[string]string{"path": f.target})
 		turns := []mockllm.Turn{
 			mockllm.ToolCallTurn(session.NewToolCall("r1", "Read", json.RawMessage(args))),
-			mockllm.TextTurn(`{"safe":false,"reason":"sensitive out-of-root read"}`), // the checker's verdict
+			mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"sensitive out-of-root read","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`), // the checker's verdict
 			mockllm.TextTurn("done"),
 		}
 		bcfg := escapeCfg(t, f, PostureAuto, turns...)
@@ -203,6 +202,10 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)
 		bcfg.GuardrailsModel = "checker-model"
+		// Isolate the escape-route assertion from the contextual guardrails' default inbound Read
+		// coverage: an explicit unrelated rule keeps guardrails enabled without
+		// reviewing this Read result through the ordinary tool boundary.
+		bcfg.GuardrailsRules = []GuardrailRule{{Match: "Shell", Phases: []string{"pre"}, Mode: "block"}}
 		built, err := buildIsolated(t, context.Background(), bcfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
@@ -219,24 +222,18 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		}
 	})
 
-	t.Run("checker-authored and error reasons are clamped", func(t *testing.T) {
+	t.Run("checker rationale stays out of the decision surface", func(t *testing.T) {
 		t.Parallel()
-		// Reviewer-flagged hardening parity: a checker-authored deny reason and a
-		// checker-error string both fold into a model-visible
-		// PermissionDecision.Reason — they must be bounded by the SAME 240-rune
-		// clamp the hook path applies (modelhook.ClampReason), never reflected
-		// unbounded into the model's tool error / the human's ask.
-		long := strings.Repeat("r", 500)
-		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"safe":false,"reason":"`+long+`"}`))
+		// Reviewer rationale belongs only in the transient, owner-authorized detail
+		// sink. The escape decision carries a generic machine-safe reason.
+		secretRationale := strings.Repeat("r", 500)
+		p := buildRoutedEscapePolicy(t, cfg, mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"`+secretRationale+`","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Deny {
-			t.Fatalf("unsafe escape = %v, want Deny", d.Effect)
+			t.Fatalf("prohibited escape = %v, want Deny", d.Effect)
 		}
-		if len([]rune(d.Reason)) > 400 {
-			t.Fatalf("deny reason is %d runes — the checker-authored reason must be clamped, got %q…", len([]rune(d.Reason)), string([]rune(d.Reason)[:80]))
-		}
-		if !strings.HasSuffix(d.Reason, "…") {
-			t.Fatalf("deny reason = %q…, want the clamp ellipsis", string([]rune(d.Reason)[:60]))
+		if strings.Contains(d.Reason, secretRationale) || !strings.Contains(d.Reason, "guardrail") {
+			t.Fatalf("decision reason leaked checker rationale or lost machine reason: %q", d.Reason)
 		}
 	})
 }

@@ -302,9 +302,8 @@ const SessionHandleWidth = 12
 // SessionHandle returns the fixed, terminal-safe escaped prefix used by every
 // ordinary mecatui session presentation. Unreserved ASCII is copied verbatim,
 // except that a leading hyphen is escaped; every other UTF-8 byte is one
-// uppercase %HH atom. The longest complete-atom
-// prefix fitting SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have
-// no handle.
+// uppercase %HH atom. The longest complete-atom prefix fitting
+// SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have no handle.
 func SessionHandle(id string) string {
 	if id == "" || !utf8.ValidString(id) {
 		return ""
@@ -461,13 +460,34 @@ func (c *Client) CreateSessionWithCarryover(ctx context.Context, sel ModelSelect
 	return resp.GetSessionId(), snapshot.Capabilities, snapshot.ResolvedModel, nil
 }
 
+func withoutSessionAffinity(ctx context.Context) context.Context {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	md.Delete(sessionaffinity.HeaderName)
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+// compatibilityCapabilities reads the sole server-wide capability source.
+func (c *Client) compatibilityCapabilities(ctx context.Context) (Capabilities, error) {
+	resp, err := c.svc.GetCompatibilityInfo(withoutSessionAffinity(ctx), &mecatlv1.GetCompatibilityInfoRequest{})
+	if err != nil {
+		return Capabilities{}, fmt.Errorf("get compatibility info: %w", err)
+	}
+	return capabilitiesFrom(resp.GetCapabilities()), nil
+}
+
 // createSession is the shared CreateSession proto call and response unwrap body.
 func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (string, Capabilities, ResolvedModel, error) {
+	caps, err := c.compatibilityCapabilities(ctx)
+	if err != nil {
+		return "", Capabilities{}, ResolvedModel{}, err
+	}
 	resp, err := c.svc.CreateSession(ctx, req)
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("create session: %w", err)
 	}
-	return resp.GetSessionId(), capabilitiesWithSessionMedia(resp.GetCapabilities(), resp.GetSessionCapabilities()), resolvedModelFrom(resp.GetResolvedModel()), nil
+	caps = capabilitiesWithSessionMediaFrom(caps, resp.GetSessionCapabilities())
+	return resp.GetSessionId(), caps, resolvedModelFrom(resp.GetResolvedModel()), nil
 }
 
 // ClearSession creates an empty-history successor. A nil selector inherits the
@@ -494,8 +514,8 @@ func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *Wo
 }
 
 // ForkSession creates a peer session from the conversation-history snapshot of the
-// session srcID (ADR 0065) and returns the bare new session id. reasoningEffort is
-// the OPTIONAL effort override (ADR 0068): empty inherits the source's effort
+// session srcID and returns the bare new session id. reasoningEffort is
+// the OPTIONAL effort override: empty inherits the source's effort
 // verbatim; provider and model ALWAYS inherit. This is the SINGLE proto-build point
 // for the fork — the ui passes plain strings and never sees the proto request. The
 // caller owns the follow-up GetSession refetch for the forked session's resolved
@@ -587,6 +607,31 @@ func containsBoundedCode(s, code string) bool {
 
 func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
 
+// SafeStartupRunEntryErrorTitle returns a non-empty closed title only when the
+// status can be presented without weakening masked session absence.
+func SafeStartupRunEntryErrorTitle(err error) string {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.FailedPrecondition, codes.Aborted, codes.AlreadyExists:
+		return "turn not started"
+	default:
+		return ""
+	}
+}
+
+// SafeStartupRunEntryError maps a pre-session.init Converse failure to closed,
+// user-actionable text. Absence and authorization failures deliberately share the
+// generic message so unknown and foreign session IDs remain indistinguishable.
+func SafeStartupRunEntryError(err error) string {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return "The service is temporarily unavailable. Retry this turn."
+	case codes.FailedPrecondition, codes.Aborted, codes.AlreadyExists:
+		return "This chat is not ready for a new turn. Retry after its current operation finishes."
+	default:
+		return "This conversation could not be loaded. You cannot continue this session."
+	}
+}
+
 // TransientStreamErr classifies a Converse stream Recv error for presentation and
 // compatibility only. A stream error has no semantic commit fact, so the TUI never
 // uses this signal to authorize automatic replay or queue draining. The gRPC status
@@ -657,11 +702,13 @@ func (c *Client) openConverse(ctx context.Context) (*Stream, error) {
 // ModeDefaultString is the canonical CLI/UI spelling for default permission mode.
 const ModeDefaultString = "default"
 
+const modePlanString = "plan"
+
 // ModeFromString maps a CLI mode string to the proto enum. Unknown/empty maps to
 // UNSPECIFIED (the server defaults that to DEFAULT).
 func ModeFromString(s string) mecatlv1.PermissionMode {
 	switch s {
-	case "plan":
+	case modePlanString:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_PLAN
 	case "accept-edits", "acceptEdits", "accept_edits", "accept edits":
 		return mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS
@@ -677,7 +724,7 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 func ModeString(m mecatlv1.PermissionMode) string {
 	switch m {
 	case mecatlv1.PermissionMode_PERMISSION_MODE_PLAN:
-		return "plan"
+		return modePlanString
 	case mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS:
 		return "accept-edits"
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
@@ -691,8 +738,8 @@ func ModeString(m mecatlv1.PermissionMode) string {
 func NextMode(mode string) string {
 	switch ModeString(ModeFromString(mode)) {
 	case ModeDefaultString:
-		return "plan"
-	case "plan":
+		return modePlanString
+	case modePlanString:
 		return "accept-edits"
 	default:
 		return ModeDefaultString
@@ -758,7 +805,7 @@ func (b bearerCreds) RequireTransportSecurity() bool { return !b.allowInsecure }
 //     which satisfies every other plaintext guard in Dial.
 //
 // It lives in Dial rather than in a caller's transport policy so EVERY caller of
-// this package inherits it. See docs/adr/0287-target-aware-mecatui-tls.md.
+// this package inherits it.
 func bearerTransportRefusal(cfg DialConfig, local bool) error {
 	if local || (cfg.AuthToken == "" && cfg.TokenSource == nil) {
 		return nil
@@ -779,7 +826,7 @@ func bearerTransportRefusal(cfg DialConfig, local bool) error {
 // filesystem, not the network, protects). Every plaintext/TLS decision in this
 // package and in the mecatui connect TLS policy goes through THIS predicate, so
 // the pre-dial guards and the per-RPC credential can never disagree about a
-// target. See docs/adr/0287-target-aware-mecatui-tls.md.
+// target.
 func IsLocalTarget(server string) bool {
 	return strings.HasPrefix(strings.TrimSpace(server), "unix://") || IsLoopbackHost(server)
 }

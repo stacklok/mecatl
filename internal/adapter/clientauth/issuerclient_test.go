@@ -126,8 +126,8 @@ func certPEMFromServer(t *testing.T, srv *httptest.Server) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
 }
 
-// Both registry write paths must normalise. Enroll previously validated only the
-// CA path, so a bad policy enrolled successfully and was then quarantined by
+// Both registry write paths must normalise. If Enroll validated only the CA
+// path, a bad policy would enroll successfully and then be quarantined by
 // readRows on the next load -- a "successful" login with no visible entry and an
 // orphaned refresh token.
 func TestBothRegistryWritePathsNormalisePolicy(t *testing.T) {

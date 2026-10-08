@@ -169,20 +169,17 @@ func TestSubagentFocusPaneWithLongCauseFitsViewport(t *testing.T) {
 // card stopping rendering the error body — is caught here.
 func TestSubagentErrorCardShowsProviderCause(t *testing.T) {
 	const cause = "upstream 503: model overloaded"
-	out := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
-		c.setSubagentEnd("p1", client.Usage{}, 0, "error", 100)
+	out := subagentCard(t, func(c *conversation) {
+		c.startSubagentCard("p1", "investigate the loop", "", "", "", "")
+		c.finishSubagentCard("p1", client.Usage{}, 0, "error", 100)
 		// The server-composed body: the cause leads, the child's last text follows as
 		// labelled context (renderSubagentResult → subagentErrorBody).
 		c.resolveTool("p1", "Subagent: "+cause+
 			"\n\nLast activity before the failure: Now let me check the tests."+
 			"\n\nagentId: subagent-p1", true)
 	})
-	if !strings.Contains(out, "stop:error") {
-		t.Fatalf("errored card should show stop:error, got %q", out)
-	}
-	if !strings.Contains(out, cause) {
-		t.Fatalf("errored card must render the provider cause, got %q", out)
+	if got, want := out, " ✗ Subagent · investigate the loop · failed"; got != want {
+		t.Fatalf("failed subagent line = %q, want %q", got, want)
 	}
 }
 
@@ -218,7 +215,7 @@ func TestSubagentFailureLineCollapsesEveryWhitespaceKind(t *testing.T) {
 // U+FEFF (BOM) and U+202E (right-to-left override) are Unicode Cf, so the collapse leaves
 // them in place. A provider cause or child summary carrying an RTL override can therefore
 // present a failure line that READS as something other than what it says (CWE-1007), on a
-// pane whose whole job is telling the operator what went wrong. sanitizeTerminal now strips
+// pane whose whole job is telling the operator what went wrong. terminaltext.Sanitize now strips
 // Cf alongside C0/C1/ESC/DEL.
 //
 // The vectors are \u escapes deliberately: an invisible character in source is

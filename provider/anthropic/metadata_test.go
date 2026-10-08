@@ -139,7 +139,7 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	if !errors.As(streamErr, &preserved) {
 		t.Fatal("errors.As did not preserve the original SDK error")
 	}
-	if got, want := streamErr.Error(), "authentication_error: credentials are invalid (target: "+srv.URL+"/v1/messages; request ID: req_http_409)"; got != want {
+	if got, want := streamErr.Error(), "provider request failed (401 Unauthorized) (target: "+srv.URL+"/v1/messages; request ID: req_http_409)"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 	if strings.Contains(streamErr.Error(), "must-not-leak") {
@@ -179,7 +179,7 @@ func TestProviderHTTPErrorOmitsInvalidRequestIDFromDisplay(t *testing.T) {
 	if streamErr == nil {
 		t.Fatal("expected SDK HTTP error")
 	}
-	if got, want := streamErr.Error(), "authentication_error: credentials are invalid (target: "+srv.URL+"/v1/messages)"; got != want {
+	if got, want := streamErr.Error(), "provider request failed (401 Unauthorized) (target: "+srv.URL+"/v1/messages)"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }

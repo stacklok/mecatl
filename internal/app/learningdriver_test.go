@@ -9,16 +9,16 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memattempt"
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
-func TestADR_0259_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
+func TestLearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 	enforcedAddr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
@@ -34,8 +34,8 @@ func TestADR_0259_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 	if closeEnforced != nil {
 		closeEnforced()
 	}
-	if err == nil || !strings.Contains(err.Error(), "ADR-0213") {
-		t.Fatalf("unauthenticated self-advertised enforced driver error = %v, want ADR-0213 fail-closed error", err)
+	if err == nil || !strings.Contains(err.Error(), "unavailable with ownership enforcement") {
+		t.Fatalf("unauthenticated self-advertised enforced driver error = %v, want ownership-enforcement fail-closed error", err)
 	}
 
 	trustedAddr := startSourceDriver(t, func(server *grpc.Server) {

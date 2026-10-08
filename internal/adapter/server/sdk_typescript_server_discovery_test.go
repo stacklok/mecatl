@@ -60,14 +60,4 @@ func TestSDKServerDiscovery_Scenario4_ConstantRegistryParity(t *testing.T) {
 		"Go server postures",
 	)
 	assertParitySets(t, "Go/TypeScript server-posture registry", wirePostures, typedPostures)
-
-	alias := singleSourceValue(
-		t,
-		typescript,
-		regexp.MustCompile(`(?m)^export const WATCH_SESSION_EVENTS_FEATURE = ServerFeature\.([A-Za-z0-9]+);$`),
-		"deprecated watch-session feature alias",
-	)
-	if alias != "WatchSessionEvents" {
-		t.Fatalf("WATCH_SESSION_EVENTS_FEATURE aliases ServerFeature.%s, want WatchSessionEvents", alias)
-	}
 }

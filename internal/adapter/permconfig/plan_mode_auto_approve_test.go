@@ -13,7 +13,7 @@ import (
 
 // TestOperatorPlanModeAutoApproveFromCLIHonoured: an OPERATOR-TIER (CLI explicit)
 // plan-mode-auto-approve: true is read and returned by OperatorPlanModeAutoApprove()
-// (issue #206 Wave 6a), mirroring the reasoning-effort operator-tier test.
+// (issue #206), mirroring the reasoning-effort operator-tier test.
 func TestOperatorPlanModeAutoApproveFromCLIHonoured(t *testing.T) {
 	const yaml = "plan-mode-auto-approve: true\n"
 	env := envWithExplicit("/etc/mecatl/plan.yaml", yaml)
@@ -27,7 +27,7 @@ func TestOperatorPlanModeAutoApproveFromCLIHonoured(t *testing.T) {
 }
 
 // TestProjectPlanModeAutoApproveIgnoredWithWarn pins the feature's highest-risk
-// invariant (issue #206 Wave 6a): a PROJECT-TIER plan-mode-auto-approve: key must
+// invariant (issue #206): a PROJECT-TIER plan-mode-auto-approve: key must
 // NEVER become the operator value — a project repo (attacker-influenceable) must not
 // be able to enable autonomous plan approval, which bypasses the human plan-review
 // gate (a security DOWNGRADE). The resolver WARNs naming why, mirroring the sibling

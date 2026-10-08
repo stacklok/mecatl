@@ -76,17 +76,25 @@ fi
 require 'go_relevant=true' 'go_relevant must start fail-closed to RUN'
 require 'sdk_relevant=true' 'sdk_relevant must start fail-closed to RUN'
 require 'site_relevant=true' 'site_relevant must start fail-closed to RUN'
+require 'studio_relevant=true' 'studio_relevant must start fail-closed to RUN'
+require 'microvm_relevant=true' 'microvm_relevant must start fail-closed to RUN'
 require 'go_relevant: ${{ steps.classify.outputs.go_relevant }}' 'go_relevant must be a changes-job output'
 require 'sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}' 'sdk_relevant must be a changes-job output'
 require 'site_relevant: ${{ steps.classify.outputs.site_relevant }}' 'site_relevant must be a changes-job output'
+require 'studio_relevant: ${{ steps.classify.outputs.studio_relevant }}' 'studio_relevant must be a changes-job output'
+require 'microvm_relevant: ${{ steps.classify.outputs.microvm_relevant }}' 'microvm_relevant must be a changes-job output'
 require 'relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"' 'trusted classifier must be extracted outside the candidate checkout'
 require 'if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then' 'classifier extraction must read the trusted base ref and stay fail-closed'
-require 'bash "$relevant_classifier" go)" || go_relevant=true' 'go relevance must use no-renames NUL paths and fail closed to RUN'
-require 'bash "$relevant_classifier" sdk)" || sdk_relevant=true' 'sdk relevance must use no-renames NUL paths and fail closed to RUN'
-require 'bash "$relevant_classifier" site)" || site_relevant=true' 'site relevance must use no-renames NUL paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true' 'go relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true' 'sdk relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true' 'site relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true' 'studio relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" microvm)" || microvm_relevant=true' 'microvm relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
 require 'echo "go_relevant=$go_relevant"' 'go_relevant must be written to GITHUB_OUTPUT'
 require 'echo "sdk_relevant=$sdk_relevant"' 'sdk_relevant must be written to GITHUB_OUTPUT'
 require 'echo "site_relevant=$site_relevant"' 'site_relevant must be written to GITHUB_OUTPUT'
+require 'echo "studio_relevant=$studio_relevant"' 'studio_relevant must be written to GITHUB_OUTPUT'
+require 'echo "microvm_relevant=$microvm_relevant"' 'microvm_relevant must be written to GITHUB_OUTPUT'
 
 # The candidate checkout's classifier must never run (a PR could tamper with it).
 if grep -Fq 'bash .github/scripts/relevant-changes.sh' "$workflow" \
@@ -102,11 +110,20 @@ if [[ -z "$validate_line" || -z "$extract_line" || "$extract_line" -le "$validat
 fi
 
 # --- per-job gating ------------------------------------------------------------
-# The Go build/test matrix gates on go_relevant.
-for job in build analysis fuzz-smoke engine-standalone provider-standalone \
-  api-compat vuln test-race-root-a test-race-root-b test-race-ui test-non-race-draft; do
+# The remaining Go build/analysis jobs gate on go_relevant; the required test
+# context checks changes.result itself, even when no Go tests need running.
+for job in build analysis fuzz-smoke engine-standalone provider-standalone api-compat vuln; do
   assert_if "$job" has "needs.changes.outputs.go_relevant == 'true'"
 done
+
+# Publication is a conditional step in Build, not another runner on every PR.
+build_block="$(job_block build)"
+grep -Fq "if: needs.changes.outputs.module_publication_relevant == 'true'" <<<"$build_block" \
+  || fail 'Build must gate the publication step on module_publication_relevant'
+grep -Fq 'task test:module-publication' <<<"$build_block" \
+  || fail 'Build must run the publication task'
+grep -Fq 'git fetch --unshallow --tags origin main' <<<"$build_block" \
+  || fail 'Build must fetch ancestry and nested tags before checking pins'
 
 # The pure-TypeScript SDK unit job gates on sdk_relevant ALONE (no go, no
 # docs_only — sdk_relevant already implies a non-docs, TS/contract change).
@@ -124,35 +141,19 @@ done
 assert_if user-docs has "needs.changes.outputs.site_relevant == 'true'"
 assert_if user-docs hasnot "docs_only"
 
-# Drift guard: pin the number of job-level `if:` gates carrying go_relevant so
-# adding or removing a Go-gated job forces a conscious update to the job lists
-# above. Unlike the macOS jobs (which share the `runs-on: macos-14` marker the
-# sibling test counts), Linux Go jobs share `runs-on: ubuntu-24.04` with
-# legitimately-ungated jobs (changes, docs, domain-model, the always() aggregators,
-# sdk, user-docs), so there is no runner marker to count — this pins the gate set
-# instead. Expected 15 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs.
-# The residual this cannot catch is a NEW Go job shipped with NO gate at all; the
-# job lists above are the record for that.
-go_gate_count="$(grep -cF "needs.changes.outputs.go_relevant == 'true'" "$workflow" || true)"
-if [[ "$go_gate_count" -ne 15 ]]; then
-  fail "expected 15 job if: gates on go_relevant (11 go-family + 4 go||sdk), found $go_gate_count — update the job lists in this test when gating/ungating a job"
-fi
+# The Mecatl Studio job gates on studio_relevant OR go_relevant (plus the
+# docs_only guard — an apps/README.md-only change is docs-only and needs no Node
+# run): its integration suite drives the BFF against the current bin/mecated,
+# so a daemon change can break it. Studio consumes the PUBLISHED SDK, so it must
+# NOT be tied to sdk relevance.
+assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
+assert_if studio has "needs.changes.outputs.docs_only != 'true'"
+assert_if studio hasnot "sdk_relevant"
 
-# --- required-check aggregators tolerate the new skips -------------------------
-# test and lint are the required checks; both must gain a go_relevant branch or a
-# non-Go PR (which legitimately skips the race shards / analysis) fails them.
-go_relevant_env="GO_RELEVANT: \${{ needs.changes.outputs.go_relevant }}"
-env_count="$(grep -cF "$go_relevant_env" "$workflow" || true)"
-if [[ "$env_count" -lt 2 ]]; then
-  fail "both test and lint aggregators must read go_relevant (found $env_count of 2)"
-fi
-# The identical GO_RELEVANT early-exit appears in BOTH aggregators, so a whole-file
-# grep cannot tell which one has it. Pin each within its own job body: the test
-# aggregator's shard-requirement skip, and the lint aggregator's analysis-skipped
-# requirement (its message is already unique to lint).
-if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block test)"; then
-  fail 'the test aggregator must skip the shard requirement for a non-Go change'
-fi
+# The opt-in MicroVM standalone job still uses the dedicated relevance output.
+assert_if microvm-standalone has "needs.changes.outputs.microvm_relevant == 'true'"
+
+# --- lint aggregator tolerates non-Go skips ------------------------------------
 if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block lint)"; then
   fail 'the lint aggregator must branch on go_relevant for a non-Go change'
 fi
@@ -177,17 +178,12 @@ else
 fi
 
 # The path classifiers decide which jobs run, so their self-tests must live in the
-# always-run `changes` job — never a flag-gated Go job that a misclassification
-# could skip. Pin that the changes job runs the relevant-changes tests and that
-# they are NOT (also) left in the go_relevant-gated test-race-root-a.
+# always-run `changes` job, not a flag-gated Go job.
 changes_block="$(job_block changes)"
 grep -Fq 'bash .github/scripts/relevant-changes_test.sh' <<<"$changes_block" \
   || fail 'the changes job must run relevant-changes_test.sh (always-run, not flag-gated)'
 grep -Fq 'bash .github/scripts/relevant-changes-workflow_test.sh' <<<"$changes_block" \
   || fail 'the changes job must run relevant-changes-workflow_test.sh (always-run, not flag-gated)'
-if grep -Fq 'bash .github/scripts/relevant-changes_test.sh' <<<"$(job_block test-race-root-a)"; then
-  fail 'classifier tests must not run in the go_relevant-gated test-race-root-a (self-gating blind spot)'
-fi
 
 if [[ "$failures" -ne 0 ]]; then
   exit 1

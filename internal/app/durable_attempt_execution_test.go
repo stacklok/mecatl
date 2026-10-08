@@ -20,21 +20,21 @@ type projectionCapturingReflector struct {
 	projections []learning.Projection
 }
 
-func (r *projectionCapturingReflector) Reflect(context.Context, learning.Input) (learning.Outcome, error) {
+func (r *projectionCapturingReflector) Reflect(context.Context, learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.rawCalls++
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
-func (r *projectionCapturingReflector) ReflectProjection(_ context.Context, projection learning.Projection) (learning.Outcome, error) {
+func (r *projectionCapturingReflector) ReflectProjection(_ context.Context, projection learning.Projection) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.projections = append(r.projections, projection)
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func (*projectionCapturingReflector) RequestTokenEstimate(learning.Input) (int, error) {
 	return 1, nil
 }
 
-func TestADR_0259_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
+func TestDurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
 	const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"

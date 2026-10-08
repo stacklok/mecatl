@@ -402,13 +402,6 @@ func (s DirSource) Agents(_ context.Context) ([]Discovered, []SkipError, error) 
 	return out, skips, nil
 }
 
-// Discover scans dir for agent defs and returns them. It is a thin convenience
-// wrapper over DirSource for callers (and tests) that want single-directory
-// discovery without composing a Source.
-func Discover(dir string) ([]Discovered, []SkipError, error) {
-	return DirSource{Dir: dir}.Agents(context.Background())
-}
-
 // parseAgentDef splits raw into YAML frontmatter and a markdown body and
 // validates the required header fields. It returns a fatal reason string (with a
 // zero AgentDef) on any structural problem so the caller records a SkipError and
@@ -461,7 +454,7 @@ func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
 
 	// `memory:` is a forgiving tier selector (mirrors the mcpServers skip-note
 	// posture): only "" / "user" / "project" are accepted. "local" is DELIBERATELY
-	// rejected (a scoped local-only memory is deferred). Any other value is a
+	// rejected (scoped local-only memory is not implemented). Any other value is a
 	// non-fatal note and falls back to "" (no memory), so a shared .claude/agents
 	// file naming a tier this harness doesn't support never fails the whole def.
 	mem := strings.ToLower(strings.TrimSpace(fm.Memory))

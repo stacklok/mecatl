@@ -2,7 +2,7 @@
 # binary (no diff/merge munging, no EOL normalization) and mark them
 # linguist-generated so GitHub collapses them in diffs and excludes them from
 # language stats. Forward-prep for a FUTURE committed cmd/mecated/default.pgo
-# (the production profile; see docs/adr/0019-perf-tracking.md Phase 4). None is
+# (the production profile; see docs/perf-tracking.md "Profile-guided optimization"). None is
 # committed today — the offline `task pgo:collect` profile stays under the
 # gitignored .scratch/pgo/.
 *.pgo binary linguist-generated

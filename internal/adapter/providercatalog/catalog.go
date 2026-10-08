@@ -21,15 +21,14 @@
 //
 // # Curation policy (full vendor for in-scope providers)
 //
-// The full catalog has 145+ providers and thousands of models. We vendor ONLY the
-// three providers in scope for multi-provider Phase 0/1 — but for each of them we
-// vendor ALL models (no hand-pinned allowlist). The DROPPED surface, stated plainly:
+// The full catalog has 145+ providers and thousands of models. We vendor ONLY
+// three providers — but for each of them we vendor ALL models (no hand-pinned
+// allowlist). The DROPPED surface, stated plainly:
 //
-//   - 142+ providers dropped wholesale (out of P0/P1 scope: Chat-Completions
-//     providers like Gemini-native / Together are P2 and need their own adapter,
-//     so their catalog entries are not useful yet).
-//   - openai: ALL models vendored (P0 native via the Responses adapter).
-//   - anthropic: ALL models vendored (P1 native Messages adapter).
+//   - 142+ providers dropped wholesale (out of scope: their catalog entries are
+//     not vendored).
+//   - openai: ALL models vendored (native via the Responses adapter).
+//   - anthropic: ALL models vendored (native Messages adapter).
 //   - openrouter: ALL models vendored (the OpenRouter flagship+long-tail set —
 //     hundreds of routes across dozens of upstream providers).
 //
@@ -250,6 +249,15 @@ func (p Provider) APIBaseURL() string { return p.api }
 // Models returns the curated model set, sorted by id. A fresh slice is returned
 // so a caller cannot corrupt the singleton.
 func (p Provider) Models() []Model { return append([]Model(nil), p.models...) }
+
+// Model returns the curated model with id and whether it is in this provider.
+func (p Provider) Model(id string) (Model, bool) {
+	i := sort.Search(len(p.models), func(i int) bool { return p.models[i].id >= id })
+	if i < len(p.models) && p.models[i].id == id {
+		return p.models[i], true
+	}
+	return Model{}, false
+}
 
 // ID returns the model's catalog id (e.g. "gpt-5", or "anthropic/claude-opus-4.5"
 // for an openrouter route).

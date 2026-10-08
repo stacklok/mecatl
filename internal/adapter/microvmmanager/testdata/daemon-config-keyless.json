@@ -1,0 +1,36 @@
+{
+  "release_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "binary_identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "policy_revision": "release-policy",
+  "artifact_cache": "/data/cache",
+  "runtime_dir": "/run/generations",
+  "required_attestations": {
+    "runtime": "https://slsa.dev/provenance/v1",
+    "firmware": "https://slsa.dev/provenance/v1",
+    "execution-image": "https://slsa.dev/provenance/v1",
+    "guest-agent": "https://slsa.dev/provenance/v1"
+  },
+  "artifacts": [
+    {
+      "kind": "runtime",
+      "reference": "registry.example/runtime@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "manifest_digest": "",
+      "discovery_reference": "",
+      "resolution_evidence": "",
+      "platform": "",
+      "path": "/data/runtime",
+      "provenance": "/data/runtime.provenance.json",
+      "sigstore_bundle": "/data/runtime.sigstore.json"
+    }
+  ],
+  "guest_egress": {
+    "Mode": "permissive",
+    "Allow": null
+  },
+  "profiles": {
+    "microvm-local": {}
+  },
+  "certificate_identity": "https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/v1.0.0",
+  "oidc_issuer": "https://token.actions.githubusercontent.com"
+}

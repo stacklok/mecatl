@@ -128,7 +128,7 @@ provider_overrides:
 	}
 }
 
-func TestADR_0238_BuiltinOverrideAllowlist(t *testing.T) {
+func TestBuiltinOverrideAllowlist(t *testing.T) {
 	for _, id := range []string{"openai", "openrouter", "anthropic", "opencode"} {
 		if _, err := parseYAML([]byte("provider_overrides:\n  " + id + ":\n    base_url: https://proxy.example")); err != nil {
 			t.Fatalf("%s override rejected: %v", id, err)

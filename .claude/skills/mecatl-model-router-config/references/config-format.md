@@ -21,7 +21,7 @@ models:
     plan: <selector>              # plan-mode turns swap to this model (opusplan pattern)
     router: <selector>            # the semantic subagent model-router classifier
 
-  router:                  # pick a subagent's model per task (taxonomy enables it; ADR 0042)
+  router:                  # pick a subagent's model per task (the taxonomy enables it)
     # disabled: true             # optional kill-switch: keep the taxonomy but turn routing off
     default-category: <name>
     classifier-slot: <selector>  # optional: override the classifier's own slot (default: router slot / cheap tier)
