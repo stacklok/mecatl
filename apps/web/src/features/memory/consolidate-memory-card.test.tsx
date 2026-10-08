@@ -254,6 +254,7 @@ describe("ConsolidateMemoryCard", () => {
   });
 
   it("offers a memory the agent cannot consolidate as disabled, without its reason, and picks a usable one by default", async () => {
+    const user = userEvent.setup();
     setManualDream({
       project_memory: { decide: true, generate: true },
       user_model: {
@@ -265,24 +266,32 @@ describe("ConsolidateMemoryCard", () => {
     renderCard();
 
     const picker = await screen.findByRole("combobox", { name: "Memory to consolidate" });
-    expect((picker as HTMLSelectElement).value).toBe("project_memory");
+    expect(text(picker)).toBe("Project memory");
     expect(screen.queryByTestId("dream-unavailable")).toBeNull();
     expect(isDisabled(await consolidateButton())).toBe(false);
+    expect(document.body.textContent).not.toMatch(/daemon|store/i);
 
-    const disabled = within(picker).getByRole("option", {
+    await user.click(picker);
+    const listbox = await screen.findByRole("listbox");
+    const disabled = within(listbox).getByRole("option", {
       name: "Facts about you (unavailable)",
     });
-    expect(isDisabled(disabled)).toBe(true);
-    expect(isDisabled(within(picker).getByRole("option", { name: "Project memory" }))).toBe(false);
-    expect(document.body.textContent).not.toMatch(/daemon|store/i);
+    expect(disabled.getAttribute("aria-disabled")).toBe("true");
+    expect(disabled.hasAttribute("data-disabled")).toBe(true);
+    const available = within(listbox).getByRole("option", { name: "Project memory" });
+    expect(available.hasAttribute("aria-disabled")).toBe(false);
+    expect(available.getAttribute("aria-selected")).toBe("true");
   });
 
   it("submits the chosen target from the picker", async () => {
     const user = userEvent.setup();
     renderCard();
     const picker = await screen.findByRole("combobox", { name: "Memory to consolidate" });
-    expect((picker as HTMLSelectElement).value).toBe("user_model");
-    await user.selectOptions(picker, "project_memory");
+    expect(text(picker)).toBe("Facts about you");
+    await user.click(picker);
+    await user.click(await screen.findByRole("option", { name: "Project memory" }));
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(text(picker)).toBe("Project memory");
     await generatePlan(user);
     expect(mutationState.generateCalls).toEqual([{ target: "project_memory" }]);
   });

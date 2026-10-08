@@ -26,6 +26,13 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { errorMessage } from "../knowledge/format";
 import { SettingsCard } from "../settings/settings-card";
 
@@ -265,31 +272,34 @@ export function ConsolidateMemoryCard() {
         {!plan && (
           <div className="flex flex-wrap items-center gap-2">
             {targets.length > 1 ? (
-              <select
-                aria-label="Memory to consolidate"
-                className="min-h-11 w-full min-w-56 flex-1 rounded-lg border border-control-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onChange={(event) =>
-                  setChosenTarget(event.target.value as MemoryConsolidationTarget)
-                }
+              <Select
+                onValueChange={(value) => setChosenTarget(value as MemoryConsolidationTarget)}
                 value={effectiveTarget}
               >
-                {targets.map((value) => {
-                  const canGenerate = targetCapability(manualDream, value).generate;
-                  return (
-                    <option disabled={!canGenerate} key={value} value={value}>
-                      {TARGET_LABELS[value]}
-                      {!canGenerate && " (unavailable)"}
-                    </option>
-                  );
-                })}
-              </select>
+                <SelectTrigger
+                  aria-label="Memory to consolidate"
+                  className="w-full min-w-56 flex-1"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targets.map((value) => {
+                    const canGenerate = targetCapability(manualDream, value).generate;
+                    return (
+                      <SelectItem disabled={!canGenerate} key={value} value={value}>
+                        {TARGET_LABELS[value]}
+                        {!canGenerate && " (unavailable)"}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             ) : (
               <span className="text-sm text-muted-foreground">
                 {TARGET_LABELS[effectiveTarget]}
               </span>
             )}
             <Button
-              className="min-h-11"
               disabled={
                 !connected || generate.isPending || decide.isPending || Boolean(generateBlocked)
               }
@@ -331,7 +341,6 @@ export function ConsolidateMemoryCard() {
               Nothing to merge. Memory is already tidy.
             </p>
             <Button
-              className="min-h-11"
               disabled={decide.isPending}
               onClick={() => void decidePlan("dismiss")}
               size="sm"
@@ -412,7 +421,6 @@ export function ConsolidateMemoryCard() {
             </ul>
             <div className="flex flex-wrap items-center gap-2">
               <Button
-                className="min-h-11"
                 disabled={decide.isPending || Boolean(applyBlocked)}
                 onClick={() =>
                   pendingDecision === "apply" ? void decidePlan("apply") : setConfirming("apply")
@@ -423,7 +431,6 @@ export function ConsolidateMemoryCard() {
                 {pendingDecision === "apply" ? "Try again" : "Apply"}
               </Button>
               <Button
-                className="min-h-11"
                 disabled={decide.isPending || Boolean(dismissBlocked)}
                 onClick={() => void decidePlan("dismiss")}
                 size="sm"
@@ -463,10 +470,8 @@ export function ConsolidateMemoryCard() {
             <AlertDialogDescription>{confirmation?.description}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
-            <AlertDialogAction className="min-h-11" onClick={confirmed}>
-              {confirmation?.confirmText}
-            </AlertDialogAction>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmed}>{confirmation?.confirmText}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
