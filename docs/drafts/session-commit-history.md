@@ -38,22 +38,101 @@ Starting a live feed before reading the snapshot requires buffering and reconcil
 Starting it afterward can miss changes in between.
 [Issue #2114](https://github.com/stacklok/mecatl/issues/2114) tracks the fidelity of the restored client view.
 
+## Intended qualities
+
+The design makes retained session facts independent of any one client connection or server process.
+A reconnecting client can recover the complete authorized history, including records from before compaction, and then follow committed changes without a silent gap.
+Private continuation and public display derive from the same authority, so they cannot disagree merely because an optional activity log missed a write.
+
+Multiple clients can operate on the same server-owned run.
+Submitted steers and approval decisions are reflected across clients, allowing a user to continue an interaction elsewhere without giving one connection exclusive control.
+
+Recovery reports what the evidence establishes: work that never started, a committed outcome, or an unknown outcome.
+It does not repeat an uncertain external action to make the history look complete.
+Registered extensions can add tool-specific state and display detail while sharing the same ordering, authorization, and recovery constraints.
+
+These qualities depend on storage availability and its declared durability guarantee.
+Execution stops at required commit gates when the server cannot establish committed state; provisional streaming and already-started external effects are not promises of durable progress.
+
+The first cutover targets trustworthy reload and explicit recovery, not seamless execution through every upgrade or crash.
+Graceful transfer of an active delegation tree, autonomous agent resume, and background work spanning runs are later capabilities that this foundation should support.
+The breaking rollout does not migrate legacy sessions.
+
 ## Proposed model
 
-A `Session` has one authoritative, ordered `CommittedHistory` of state changes.
-Each commit includes the information needed to rebuild continuation state, including private facts.
-Conversation, usage, and other durable session facts derive from these commits.
+A `Session` is the durable conversation and unit of interaction.
+A `Run` drives a sequence of model turns within that session; a turn is one model request and its response.
+When a response requests tool calls, the engine executes the calls and supplies their results to a subsequent model turn.
+In the normal course, the model ends the run by returning a terminal response rather than requesting more tools.
+Cancellation, failure, limits, and interruption can also end a run.
+Admission and server ownership describe how a run starts and who drives it, not what constitutes a run.
+*Admission* is the authorized decision to accept input or work against current committed state, not merely receipt of a network request.
+A session outlives both individual runs and client connections.
+A `Client` is an API consumer authorized to observe or act on that session.
+A *delegation tree* consists of a root session and its active delegated descendants.
 
-Two derived views serve different readers:
+Each `Session` has one authoritative, ordered `CommittedHistory` of state changes.
+A committed record is a private, versioned fact accepted by the storage adapter under its declared durability guarantee.
+Records include the information needed to rebuild continuation state, including facts that must never be sent to clients.
+Conversation, usage, and other durable session facts derive from these records.
+A *reducer* applies records in order to reconstruct state; registered extension reducers supply the rules for tool-specific state.
 
-- A `ContinuationCheckpoint` materializes private continuation state and identifies the last commit it includes.
-- A `ClientProjection` presents an authorized display view at a committed position.
+A *provisional observation* is live information that has not established a committed fact, such as streamed model text or a tool-progress preview.
+Clients may display it promptly, but must reconcile or discard it when committed state becomes available.
+The [vocabulary reference](#vocabulary-reference) collects these terms and the distinctions used throughout the proposal.
 
-Neither view is an independent source of truth.
+### Responsibilities
+
+The design retains the codebase's broad separation between domain behavior, persistence adapters, host composition, and client presentation.
+The table distinguishes those existing boundaries from changed responsibilities and new mechanisms; it does not describe the proposed commit system as already implemented.
+
+| Component | Existing code and responsibility | Responsibility in this design |
+| --- | --- | --- |
+| Core engine | `engine/agent.Engine` and `Run` drive turns and tools, mutate `engine/session.Session`, and save snapshots through `port.SessionStore`. | Retain execution and domain invariants; make required commits execution gates rather than best-effort saves, and use registered reducers for extension state. |
+| Storage adapter | Implementations of `engine/port.SessionStore`, `EventLog`, and `SessionLease` provide distinct snapshot, activity-history, and ownership contracts. | Replace the split authority with committed history; implement durable reads and append, assign history positions, and enforce atomic head and ownership checks under the declared operating mode. |
+| Host/server | `internal/app` wires dependencies; `internal/adapter/server.Service` manages sessions, run entry, controls, and leases, while server recorders write activity history. | Retain composition, authentication, and authorization; coordinate required commits and authorized projections, register extension handlers, forward to the owning replica, and drive recovery. Execution becomes independent of the initiating client stream. |
+| Extensions | `Subagent`, `Parallel`, and `Team` are built-in tools in `engine/agent`, with team domain behavior in `engine/team`, registered by host composition. They do not currently use the proposed generic extension record/state mechanism. | Introduce versioned records, private-state reducers, checkpoint serialization, lifecycle handlers, and approved display-detail projections within core constraints. |
+| Clients | `cmd/mecatui/client` receives server-produced transcripts and events; the TUI maintains local display state and submits controls. | Retain local rendering and control submission; consume complete authorized history and committed updates joined by position, reconcile provisional output, and reflect shared pending controls. |
+
+Today, persistence has several callers rather than one application coordinator.
+The engine's [`save`](../../engine/agent/loop.go) writes snapshots best-effort, and [`SubagentTool.persistChild`](../../engine/agent/subagent.go) has its own child-save path.
+Server [`RunEventRecorder`](../../internal/adapter/server/event_recorder.go) records activity separately.
+All of these writers must enter the required commit boundary in the redesign; the table does not move every write into the host or make the engine depend on concrete storage adapters.
+
+Here, *host* or *server* means the application layer that wires the core engine to adapters and exposes the API.
+*Session coordinator* names a proposed application-level responsibility for ordering transitions and coordinating commits with the engine, not an existing type or a storage-port implementation.
+The exact engine/coordinator interfaces and package allocation remain open.
+
+The *owning replica* is the host process holding the backend-authoritative right to drive a session and its delegation tree.
+That right is an `OwnershipClaim`, with an owner, writer epoch, and expiry.
+A writer epoch distinguishes successive ownership acquisitions so the adapter can reject an old writer; it is not a history position.
+Client attachment is a connection/interaction relationship, not an ownership claim.
+
+These are responsibility boundaries, not final interface names or a decision to place all coordination in one package.
+The exact allocation of commit APIs between the engine and application coordinator remains an interface question.
+
+### Derived views and their owners
+
+A `ContinuationCheckpoint` materializes private continuation state through a known committed position.
+The engine and registered extension reducers reconstruct that state from history.
+The host/coordinator arranges checkpoint construction and any persistence through the storage adapter to accelerate later loading.
+A checkpoint is optional acceleration, not another authority.
+
+A `ClientProjection` is the server-produced, authorized display view of committed session facts.
+Server-produced display views already exist: [`SessionTranscript`](../../cmd/mecatui/client/transcript.go) represents the authoritative snapshot-derived conversation alongside separately classified optional activity replay.
+The redesign changes the completeness and subscription contract by deriving retained display items from committed history and joining loads to updates with a committed position; it does not newly move rendering or all projection work to the server.
+The host applies access and disclosure rules, using approved extension projections for tool-specific detail, and sends projected snapshots, history items, and committed updates to clients.
+The name describes a read contract; it does not require a separately persisted projection object.
+
+Each client builds its own rendering state from those projected items.
+It does not interpret private history, decide which private fields are safe to disclose, or construct the engine's continuation state.
+A projected API snapshot and a persisted private checkpoint therefore serve different purposes, even though both may summarize state at a position.
+
+Neither derived view is an independent source of truth.
 Summary fields are derived wherever possible; a checkpoint may cache them at its known position.
 
 Compaction reduces model context, not stored history.
-A compaction commit describes the resulting conversation, while the full earlier `CommittedHistory` remains retained for the session's lifetime.
+The engine uses the replacement conversation described by a compaction commit, while the adapter retains full earlier `CommittedHistory` for the session's lifetime.
 Full history includes all admitted model-visible content and private continuation facts.
 It does not include unbounded external artifacts that never entered the agent's context.
 
@@ -62,42 +141,52 @@ It does not include unbounded external artifacts that never entered the agent's 
 A `Client` receives a display-safe `ClientProjection`, never private commit records.
 Provider replay data, pending authorization internals, and other private state stay server-side, even when the client loads the full available history.
 
-A client snapshot reports C as its committed position.
-A subscription after C delivers later authorized committed changes in order, with no gap between snapshot and subscription.
-If C has expired, the client reloads a snapshot rather than claiming to have caught up.
-Server-owned access checks apply to the snapshot and every subscription, including after reconnect.
+A *committed position* identifies a boundary in a session's ordered history.
+The *head* is its latest committed position; C denotes the position selected for a particular load, which may be older than the current head by the time the load finishes.
+A checkpoint reports P, the last position it includes, at or before the selected load position.
+A *subscription cursor* tells the server which committed position the client has reached so it can deliver changes after that boundary.
+A *record identity* identifies a particular committed transition for correlation and retry resolution; it is not interchangeable with its position in history.
 
-The store assigns positions in a session's history.
-A monotonic counter is useful for ordering; an incarnation or writer epoch can distinguish replaced histories or takeovers.
-Timestamps help diagnose conflicts but cannot fence stale writers.
-The authoritative store must reject commits from a writer that has lost ownership.
-The exact ID format remains open.
+The server reports C in the projected snapshot and serves later authorized committed changes after C in order, with no gap between snapshot and subscription.
+If the cursor at C has expired, the client reloads a snapshot rather than claiming to have caught up.
+The server checks access to the snapshot and every subscription, including after reconnect.
+
+The storage adapter assigns history positions and rejects commits from a writer that has lost ownership.
+A *history incarnation* distinguishes distinct histories, rather than successive writers of the same history.
+Ordering records, distinguishing history incarnations, and fencing successive writers are separate requirements; a monotonic counter may help with ordering, but neither timestamps nor position alone authorize a writer.
+The representations of committed positions and cursors, record identities, history incarnation, and writer epochs remain interface choices.
+This proposal does not assume that those values share one ID or encoding.
 
 ## Persistence layer
 
-The server writes private, versioned records through a commit boundary that assigns one session-wide position and rejects stale writers.
+The engine and host submit private, versioned transitions through a commit boundary; the storage adapter assigns one session-wide position and rejects stale writers.
 `CommittedHistory` supplies both continuation state and retained history; no second best-effort event log decides what is true.
-An adapter may partition records across files, tables, or runs, but exposes one ordered view per `Session`.
-Storage errors and ambiguous commits remain explicit caller outcomes.
+A storage adapter may partition records across files, tables, or runs, but exposes one ordered view per `Session`.
+Storage errors and ambiguous commits remain explicit caller outcomes; the coordinator resolves ambiguity against history before reporting confirmation.
 
 Records cover session creation and controls, run boundaries, completed model turns, tool intents and outcomes, and compaction replacements.
-They include private continuation material where needed; record types are distinct from public event types.
+A tool *request* records the model's requested call; an *intent* records authorization and readiness to dispatch that call; a *result* records its established outcome or an explicit recovery outcome.
+These are distinct transitions, with dispatch gated by intent and dependent model continuation gated by result.
+Records include private continuation material where needed; record types are distinct from public event types.
 Every writer, including title generation, approvals, compaction, and scheduler work, uses this boundary.
-Backend head checks or fencing order competing replicas; an in-process mutex alone cannot.
+The adapter's backend head checks or fencing order competing replicas; an in-process mutex alone cannot.
 
 ### Core records and extensions
 
-Keep tool-specific lifecycles in versioned `Extension` records rather than making each one a core event type.
-The core envelope owns:
+An `Extension` is a trusted, registered interpreter for namespaced, versioned session records and their derived state.
+Keep tool-specific lifecycles in these records rather than making each one a core event type.
+The core envelope is the shared record structure, not a storage implementation or client payload.
+It captures the information needed to enforce:
 
 - Session commit order, record identity, and root ownership epoch.
 - Run and tool-call correlation, continuation gates, and bounded payload admission.
 - The distinction between private records and client-safe projections.
 
-An `Extension` record carries a stable namespaced type and schema version inside that envelope.
-Storage preserves its validated bytes without interpreting its domain semantics.
-A registered server-side interpreter supplies any required continuation reducer and approved client projection.
-Registration also supplies a versioned private-state reducer and checkpoint codec, plus recovery, pause, resume, and cleanup capabilities when work can outlive a turn.
+The engine and coordinator enforce domain transitions using that information; the adapter enforces atomic append and ownership checks.
+An `Extension` record carries a stable namespaced type and schema version inside the envelope.
+The storage adapter preserves its validated bytes without interpreting its domain semantics.
+The host registers the extension's continuation reducers and approved display projection.
+Registration also supplies a versioned private-state reducer and checkpoint codec, which encodes and decodes materialized extension state, plus recovery, pause, resume, and cleanup capabilities when work can outlive a turn.
 
 Continuation-relevant extension state must be reconstructible from committed records.
 An extension checkpoint is a derived acceleration structure at P, never another writable authority.
@@ -112,10 +201,10 @@ The call may commit an immediate started-result; later operation progress and co
 This lets the envelope represent work that spans runs without implying that today's run-scoped background children do so.
 
 The trusted `Extension` declares how run end, explicit cancellation, shutdown, owner loss, and restart affect its `Operation`.
-Core records the resulting obligations without embedding the extension's private lifecycle.
+The engine and coordinator record the resulting obligations without embedding the extension's private lifecycle.
 Active background execution and writes remain under the root `OwnershipClaim`, even without a foreground `Run`.
 A run ending does not prove the session is unloaded.
-The scheduler independently produces sessions; it is not an event interpreter within session recovery.
+The host's scheduler independently produces sessions; it is not an event interpreter within session recovery.
 
 #### Initial extension support and trust
 
@@ -136,11 +225,13 @@ Tests must exercise known, unknown optional, and missing continuation-critical e
 The client API identifies approved extension items by stable type and version without exposing private records or arbitrary opaque bytes.
 Storage acceptance does not let unknown payloads bypass fencing, pairing, authorization, size limits, or parent-child disclosure rules.
 
-Continuation-critical extension types require a compatible interpreter; otherwise execution fails closed.
-Unknown display-only types can appear as explicitly unavailable history instead of being silently omitted.
-Core-only management, such as safe status inspection and logical deletion, remains possible when continuation-critical state is unsupported.
+An extension type is *continuation-critical* if the engine needs its meaning to reconstruct state or safely continue work.
+A display-only type affects presentation but carries no such execution requirement.
+The engine and registered reducers require a compatible interpreter for continuation-critical types; otherwise execution fails closed.
+The server can project unknown display-only types as explicitly unavailable history instead of silently omitting them.
+The host can still perform core-only management, such as safe status inspection and logical deletion, when continuation-critical state is unsupported.
 
-Commit portable safety metadata with each extension transition:
+The extension supplies portable safety metadata, which the coordinator commits with each transition:
 
 - Type, version, and continuation-critical classification.
 - Active obligations and child links.
@@ -169,11 +260,11 @@ An explicit release reports unowned/unloaded.
 An expired claim makes the last loaded report stale; it does not prove the former pod or an external call stopped.
 A failed status read reports unknown rather than unowned.
 
-The owner acquires the claim before loading and reports ready only after loading.
+The owning host acquires the claim through the storage adapter before loading continuation and reports ready only after loading.
 It reports released/unloaded only after local execution stops and local tree state is unloaded, with a durable handoff marker for an active tree.
 
-Acquire and renew on a coarse cadence.
-Each commit atomically checks the expected head, writer epoch, **and unexpired claim** against the backend's ownership time.
+The host acquires and renews the claim on a coarse cadence.
+On every append, the storage adapter atomically checks the expected head, writer epoch, **and unexpired claim** against the backend's ownership time.
 A matching epoch after expiry is not permission to append.
 
 If an owner reacquires a lapsed claim before anyone else, it atomically advances the epoch.
@@ -219,8 +310,9 @@ A last-reported loaded state can outlive a crashed pod; the claim and its expiry
 
 Ownership follows active work, not client connection count.
 With no executing `Run` or session-scoped background `Operation`, the host may unload the tree and release the claim, perhaps after a bounded idle period.
-A durable pending `PermissionAsk` does not require an engine or lease held in RAM for hours.
-An authorized verdict later acquires a claim and rehydrates that exact ask.
+A `PermissionAsk` is a durable request for an authorized decision gating work in an exact `Run`.
+A pending ask does not require an engine or lease held in RAM for hours.
+On a later authorized verdict, the host acquires a claim and rehydrates that exact ask.
 Independent runnable background work keeps the root claim active while another member waits for approval.
 Read-only clients can remain attached to committed history without pinning the owner.
 
@@ -233,7 +325,9 @@ Credential layout is not a new requirement on every storage backend.
 Read access does not imply a public API for private records, permission to mutate, or permission to activate the session.
 
 The storage port does not serialize protobuf or publish to clients.
-An application-level session coordinator owns the transition: it requests the commit, then projects an authorized update and may wake connected readers.
+The host's application-level session coordinator owns the transition: it requests the commit, then builds an authorized projected update and may wake connected readers.
+Extension handlers supply approved tool-specific detail; the host remains responsible for caller authorization and delivery.
+Clients apply those projected updates to local rendering state, not to private continuation state.
 Committed subscribers resume from the durable history, including across replicas.
 A lost notification can delay delivery but cannot erase a commit or leave a gap; followers must be able to catch up without the original writer.
 A commit whose outcome is ambiguous must be resolved against storage before claiming an acknowledgement or publishing it as confirmed.
@@ -275,13 +369,13 @@ Provisional streaming is a separate application path with no durability claim.
 ### Checkpoints, replay, and missing history
 
 A `ContinuationCheckpoint` accelerates loading but may lag the committed head.
-To load at position C, read a checkpoint at P, where P is at or before C, and apply every record in (P, C] in order.
-The assembled state, including summary facts, must reflect C before the engine or client receives it.
+To load at position C, the host reads a checkpoint at P through the adapter, where P is at or before C, and the engine's registered reducers apply every record in (P, C] in order.
+The assembled continuation and summary facts must reflect C before execution uses them; the host derives the authorized client view at C separately.
 The stored checkpoint still reports P, not C.
 
-Checkpoints can be published independently of appends.
+The host may publish checkpoints through the adapter independently of history appends.
 A crash during checkpoint publication must not create or erase a committed change.
-Replay detects missing or incompatible records and fails explicitly rather than presenting partial state.
+The loading/replay path detects missing or incompatible records and fails explicitly rather than presenting partial state.
 
 A previously acknowledged commit or writer epoch disappearing is a storage contract failure, not a lagging checkpoint.
 Stop session writes, loads, and confirmed client projections.
@@ -317,19 +411,22 @@ A generation marks a history boundary; it does not replace commit ordering or au
 
 ### Session catalog
 
-The catalog supports bounded, paged, authorized listing and exact creation/status lookup without activating sessions.
-Its display-safe entries project existing trusted `SessionKind` and kind-specific `SessionRelationship` values.
+The host's session catalog supports bounded, paged, authorized listing and exact creation/status lookup without activating sessions.
+A catalog is the listing and lifecycle index, not a transcript or another continuation authority.
+The host projects display-safe entries from existing trusted `SessionKind` and kind-specific `SessionRelationship` values.
+The storage adapter provides the listing and lifecycle-decision capabilities backing that API.
 Scheduled fires show their schedule relation and fire-session identity.
 Main sessions, delegated children, and other kinds are not all human-initiated.
 Do not add a second generic origin field now; future external triggers and schedule-group queries can extend the catalog later.
 
-Derived catalog metadata may lag a committed change.
+The host's catalog/reconciliation path maintains derived display metadata, which may lag a committed change.
 Each projection identifies the position it reflects, and missed updates converge through replay or reconciliation.
 `CommittedHistory`, not a stale list entry, answers authoritative session reads.
 
 Creation identity, ready/failed publication, logical deletion, and writer claims remain strict decisions.
-Before acknowledging deletion, durably suppress the entry and fence further writes.
-Every list, exact lookup, and history read honors the tombstone even if display metadata lags.
+The host acknowledges deletion only after the adapter durably suppresses the entry and fences further writes.
+A *tombstone* is the minimal retained identity marker preventing retries or ID reuse from resurrecting a deleted session.
+The host and adapter honor that deletion gate on every list, exact lookup, and history read even if display metadata lags.
 If an adapter cannot prove the deletion gate for a catalog read, it fails that read rather than exposing a stale title.
 The exact atomic or ordered storage primitive remains an interface question.
 
@@ -339,8 +436,9 @@ User-level settings and state remain a separate future design.
 
 ### Forks and retained history
 
-The initial cutover preserves head forking: an authorized, inactive main `Session` forks at its latest eligible committed continuation boundary into a new idle session.
-The fork receives the entire retained prefix through that boundary, including pre-compaction facts.
+A *fork* is a new independent session initialized from an eligible retained source prefix, not a transfer of source execution.
+The host admits a first-cutover head fork only from an authorized, inactive main `Session`, at its latest eligible committed continuation boundary; the destination becomes a new idle session.
+The host's copy worker uses the adapter to copy the entire retained prefix through that boundary, including pre-compaction facts, subject to the fork transformation below.
 It must not manufacture a "since last compaction" cutoff.
 
 Forking at an older completed main-run boundary is future work, including when the source has resumed execution.
@@ -353,8 +451,8 @@ An adapter may optimize the initial full-prefix copy only if retention and reada
 
 #### Asynchronous creation
 
-At admission, pin source position C and capture its metadata and fork policy under a short source-side boundary.
-The accepted creation reserves a new session ID and returns promptly with that ID and **creating** status; it does not hold a client request open for the entire copy.
+At admission, the host pins source position C and captures its metadata and fork policy under a short source-side boundary.
+The adapter's durable creation decision reserves a new session ID; the host returns promptly with that ID and **creating** status rather than holding the request open for the entire copy.
 The entry is visible in authorized session listings, and exact creation-ID/status lookup reports `creating`, `ready`, or `failed` (or a non-disclosing `deleted` for an exact lookup after deletion).
 Retrying the same ID returns the same creation decision.
 
@@ -368,7 +466,7 @@ Deleting the creating destination fences its copy and transitions it to a termin
 Cleanup of staged bytes may follow asynchronously.
 
 Publication does not require a transaction over the full source and destination histories.
-After copying, a short conditional catalog decision orders the fork against source deletion.
+After copying, the host requests a short conditional catalog decision from the adapter to order the fork against source deletion.
 New source runs and other fork copies do not wait on this copy.
 The source execution claim is neither held through the copy nor reacquired merely to finalize it.
 
@@ -380,7 +478,7 @@ A fork whose final decision won first is independent, even if its ready status a
 
 A fork request has a stable client creation identity and an idempotently recoverable result.
 A crashed creator may leave the catalog entry **creating** temporarily.
-A slower reconciler makes every ready publication conditional on the destination still being `creating`, even if the source-side fork decision already won.
+A slower host reconciler makes every ready publication conditional on the destination still being `creating`, even if the source-side fork decision already won.
 Destination deletion wins over every later publication or cleanup retry; a completed source-side decision is not permission to resurrect a deleted destination.
 
 Otherwise the reconciler completes publication for a finalized fork.
@@ -394,9 +492,9 @@ The exact fencing, status, and cleanup mechanism belongs in the interface contra
 
 #### Fork transformation and inherited history
 
-All fork/clone paths cross one explicit transformation boundary before creating the new `Session`.
-It selects inherited historical and continuation facts, strips source execution state and effective authority by default, and marks inherited provenance.
-Adapters must not bypass it by cloning a raw storage namespace.
+The host sends all fork/clone paths through one explicit transformation boundary before creating the new `Session`.
+That boundary selects inherited historical and continuation facts, strips source execution state and effective authority by default, and marks inherited provenance.
+Storage adapters must not bypass it by cloning a raw storage namespace.
 
 Some payloads may remain byte-identical after validation.
 This is still a semantic fork, not a replay of source ownership, approvals, or controls as new commands.
@@ -449,8 +547,8 @@ Rewind controls and branch projection are outside the initial committed-history 
 
 ## Client API
 
-The server returns authorized, display-safe session facts and timeline items as a `ClientProjection`.
-Clients need not understand private records or their storage layout.
+The server builds a `ClientProjection` from committed history and returns authorized, display-safe session facts and timeline items.
+Clients consume those projected items to maintain their own local display state; they do not interpret private records or their storage layout.
 The snapshot, history pages, and committed subscription share one session-wide position.
 Provisional updates advertise their weaker status separately.
 
@@ -465,8 +563,8 @@ These responsibilities do not specify RPC names or physical tables.
 
 ### Observation and activation
 
-**Observe** is read-only: inspecting summaries, paged history, or committed subscriptions does not claim ownership, load an engine, or start execution.
-An authorized **interactive attach** may acquire the tree's `OwnershipClaim` and load continuation to drive eligible work, even without a new prompt.
+**Observe** is read-only: the server serves summaries, paged history, or committed subscriptions without claiming ownership, loading an engine, or starting execution.
+On an authorized **interactive attach**, the host may acquire the tree's `OwnershipClaim` and load continuation to drive eligible work, even without a new prompt.
 Attach does not change permission mode or confer write authority by itself.
 An approval or other authorized mutation can enter this same activation path without a separate attach round trip.
 
@@ -477,14 +575,14 @@ Exact API spelling remains open.
 
 ### Complete history through a pinned position
 
-Initial reload loads the complete authorized display history through bounded pages, not one unbounded response.
-Each page belongs to one immutable view pinned at C for the load.
-Page tokens identify where to continue within that view, not where to resume live events, and are bound to the authorized session and view.
+On initial reload, the client loads the complete authorized display history through bounded pages, not one unbounded response.
+The server constructs each page for one immutable authorized view pinned at C for that load.
+Page tokens identify where to continue within that view, not where to resume live events, and the server binds them to the authorized session and view.
 Only a successful final page attests that authorized history through C is complete.
 
-If a page expires, fails, or no longer matches the view, discard the incomplete load and start a fresh snapshot.
+If a page expires, fails, or no longer matches the view, the client discards its incomplete load and starts a fresh snapshot.
 A material authorization change invalidates the view and its tokens.
-Later page and subscription reads recheck access; a token is not a grant.
+The server rechecks access on later page and subscription reads; a token is not a grant.
 Initial policy may be coarse, with finer caller-specific filtering later.
 A disconnection alone does not revoke access, and a silent cutoff must not appear complete.
 
@@ -526,7 +624,9 @@ Admission failure must not erase a committed background completion.
 
 ### Source-scoped steers
 
+A steer is submitted input for the agent, distinct from unsent client-local composer text.
 A `SteerSlot` holds one source's replaceable pending input, not an accumulating instruction queue.
+A `SteerRevision` identifies a committed version of that slot's content and disposition.
 Each `Session` has one shared user slot and one independent slot per registered `Extension`.
 The extension itself is the initial coalescing key; there are no extension-defined subkeys.
 All slots support the same set, replace, retract, and revision-specific consumption semantics.
@@ -542,9 +642,9 @@ Admission and the terminal race must not lose accepted input; recovery and cance
 
 #### Delivery and provenance
 
-Deliver all pending slots **together** at the next safe model-input boundary, in deterministic order.
-Delivery neither interrupts an in-flight request nor bypasses an awaiting approval.
-Commit the admitted input and consumption of each delivered `SteerRevision` before sending it to the model.
+A *safe model-input boundary* is a point before the next model request where the engine can incorporate pending input without interrupting an in-flight request or bypassing required approvals and committed outcomes.
+The engine incorporates all pending slots **together** at that boundary, in deterministic order.
+Through the coordinator's commit path, it commits the admitted input and consumption of each delivered `SteerRevision` before sending the request to the model.
 
 A replacement admitted after the delivery decision remains pending for a later boundary.
 Consuming an older revision cannot clear it.
@@ -581,7 +681,8 @@ Retracting the user slot never retracts an extension slot, or vice versa.
 
 #### Shared approval resolution
 
-Authorized clients also see pending `PermissionAsk` records and committed resolutions.
+The server reflects pending `PermissionAsk` state and committed resolutions to authorized clients.
+The host validates each response and submits its resolution through the same ordered commit path.
 The first valid, authorized **committed** resolution of an exact ask wins.
 Later conflicting answers receive the authoritative already-resolved decision.
 They cannot reverse authorization that may already have allowed execution.
@@ -591,7 +692,7 @@ Unsubmitted responses stay client-local, and a connection reserves no exclusive 
 
 ### One client timeline
 
-Expose the authorized `ClientProjection` as one session-ordered timeline, not separate run histories for the client to merge.
+The server exposes the authorized `ClientProjection` as one session-ordered timeline, not separate run histories for the client to merge.
 Each committed item has a place in `CommittedHistory` order.
 Run-associated items carry stable run IDs for grouping; session-wide changes share that order.
 
@@ -599,8 +700,8 @@ Run snapshots may organize storage, but the public read contract hides that part
 Current metadata and the `ContinuationCheckpoint` remain separate from the display timeline.
 
 Prefer one client-safe item schema for historical pages and committed updates.
-Clients can then preserve identity, order, and revision through one projection path across reload.
-This shares display projection, not private log records.
+The server applies the same authorized projection rules to both delivery paths; clients apply the resulting items through one local display-update path.
+That preserves item identity, order, and revision across reload without giving clients private log records or disclosure responsibility.
 
 Provisional streaming uses separate status and correlation identity until commitment establishes an authoritative item and position.
 Aggregate usage and permission mode may still appear as snapshot fields, avoiding the need to infer current authority from old activity.
@@ -637,7 +738,7 @@ The child's full transcript and private continuation stay in its own `Session`.
 
 #### Deeper child access
 
-A parent-scoped detail request resolves the child from a verified relationship and checks policy for the caller, parent, child, and requested detail.
+The server resolves a parent-scoped detail request from a verified child relationship and checks policy for the caller, parent, child, and requested detail.
 Possession of a child ID or access to the parent is not blanket access to the child.
 Live views and reloaded views use the same policy.
 Losing a client's in-memory fleet on reconnect must neither widen nor narrow access.
@@ -697,9 +798,9 @@ A reusable redaction subsystem, if wanted across product surfaces, is a separate
 
 #### Cross-history projection gaps
 
-Fold provisional child message deltas in memory.
-Commit approved parent activity only at stable child message/turn, tool intent/result, and terminal boundaries; the live typing animation need not survive reload.
-Normally the child commits a settled fact, then the parent commits its bounded projection before that child advances.
+The extension folds provisional child message deltas in memory and supplies approved parent activity at stable child message/turn, tool intent/result, and terminal boundaries.
+The coordinator commits that activity; the live typing animation need not survive reload.
+Normally the child commits a settled fact through the coordinator, then the parent commits its bounded projection before that child advances.
 
 A crash between the two commits can leave parent history missing a settled child item.
 Recovery uses child facts for execution safety but never reconstructs or backfills missing parent snippets.
@@ -717,16 +818,16 @@ The first cutover need not build a general recovery synthesizer.
 
 #### Disclosure before publication
 
-Leave the disclosure decision at the child-to-parent projection boundary, before any parent commit or live publish.
+The host applies disclosure policy to extension-supplied child-to-parent detail before any parent commit or live publication.
 That leaves room for a future opaque subagent: its private activity would stay in the child session, while only explicitly approved parent-visible facts and the tool's intended result cross to the parent.
 A read-time filter cannot make content already stored in a parent's retained history private retroactively.
 This proposal adds no opaque mode or new configuration; it preserves the boundary where such a policy could be applied later.
 
 ### Live delivery and acknowledgement
 
-A `Run` streams provisional model text and reasoning summaries as they arrive, without a record per token.
-If the server fails before committing a model response, reload may lose that entire response even when the client saw it live.
-The server commits the completed assistant turn when it has an accepted result.
+The engine produces provisional model text and reasoning summaries as they arrive; the server streams them to clients without a record per token.
+If the host fails before committing a model response, reload may lose that entire response even when the client saw it live.
+The engine's completed assistant turn crosses the coordinator's commit boundary once it has an accepted result.
 Tool progress and early result previews can also be provisional; dispatch and outcomes have separate durable boundaries below.
 
 Provisional updates have correlation identities for amendment or discard, not resume cursors.
@@ -769,15 +870,15 @@ Report transport state separately from server-confirmed run state:
 
 The client may present these facts compactly, but cannot infer completion or failure from a missing event.
 
-Once the server establishes that no writer can continue the old `Run`, it can commit an interrupted-run marker.
+The host's recovery coordinator commits an interrupted-run marker only after establishing that no writer can continue the old `Run`.
 That marker explains why streamed model text is absent from recovered conversation.
 Even after fencing, a started external tool may have had side effects; its outcome remains unknown until verified.
 If ownership or storage is unavailable, report uncertainty rather than claiming the run ended.
 Positions, writer identities, and bounded recovery status must remain meaningful across replica reconnects.
 
-A newer backend writer epoch definitively fences the old writer: stop starting work and cancel the local run.
+When the host observes a newer backend writer epoch, the old writer is definitively fenced: the host stops admitting work and cancels its local engine run.
 The host may inspect a Kubernetes Lease for diagnosis, but it cannot authorize an old-epoch append.
-A fresh owner acquires the current backend epoch and reloads committed state.
+A fresh owning host acquires the current backend claim through the adapter and reloads committed state using engine and extension reducers.
 This coordination stays server-side, without a Kubernetes dependency in engine core.
 
 #### Renewal uncertainty and limited speculation
@@ -805,7 +906,7 @@ Tool names or declared read-only classification alone cannot justify speculative
 
 Crash takeover and agent continuation are separate decisions.
 A crashed active `Run` is **interrupted**, not resumed under the same run identity in the first cutover.
-After fencing the former writer, recovery commits evidence to repair tool pairing.
+After fencing the former writer, the host's recovery coordinator uses committed request, intent, and result evidence to repair tool pairing, with registered extension handlers for tool-specific state.
 Requested calls with no intent were not started; intent without an established result has unknown outcome.
 No tool is automatically retried.
 
@@ -819,9 +920,9 @@ Pending steers and uncertain tools need explicit post-crash recovery decisions b
 No-client automatic agent continuation is deferred.
 A durably awaiting exact `PermissionAsk` remains resolvable by explicit verdict rather than becoming an interrupted run.
 
-Generic orphan settlement covers every session kind, including scheduled fires and delegated children.
+The host's generic orphan-settlement worker covers every session kind, including scheduled fires and delegated children.
 It neither restarts them nor knows schedule retry policy.
-The scheduler separately reconciles due claims and fire records from settled session state, without a competing direct session settlement path.
+The host's scheduler separately reconciles due claims and fire records from settled session state, without a competing direct session settlement path.
 An unobserved crashed fire does not replay on client activation; later due fires proceed.
 Opted-in one-shot retry remains schedule policy, not a general same-run crash-resume guarantee.
 
@@ -836,7 +937,7 @@ Who may change a session's policy and when remain later decisions; do not create
 
 ### Durable steer recovery
 
-Before acknowledging a steer, commit its admission to the source `SteerSlot`, including stable action identity and `SteerRevision`.
+The host coordinator commits a steer's admission to the source `SteerSlot`, including stable action identity and `SteerRevision`, before acknowledging it.
 Content, replacement, retraction, and consumption survive crash or handoff.
 Acceptance does not mean the model has received the input.
 
@@ -893,8 +994,8 @@ An unobserved interrupted run waits for authorized client activation or recovery
 
 ### Routing to the owning replica
 
-A non-owner receiving a mutation or provisional-stream request consults the authoritative `OwnershipClaim` and forwards over authenticated internal transport.
-The owner rechecks caller authority, tree identity, and current epoch; ingress affinity metadata grants no authority.
+A non-owning host replica receiving a mutation or provisional-stream request queries the authoritative `OwnershipClaim` through the storage adapter and forwards over authenticated internal transport.
+The owning host rechecks caller authority, tree identity, and current epoch; ingress affinity metadata grants no authority.
 Forward at most one hop, without loops or exposing private pod addresses.
 
 On handoff or a stale owner hint, refresh ownership.
@@ -923,8 +1024,8 @@ The following future contract describes what history must accommodate, not what 
 #### Parking the tree and closing approval admission
 
 Drain is a committed pause, not the end of a `Run`.
-The owner marks the whole tree draining and admits no new model or tool calls in any member.
-Each member finishes active calls, commits outcomes and continuation, then parks at a turn boundary.
+The owning host marks the whole tree draining and admits no new model or tool calls in any member.
+It coordinates engine and extension handlers so each member finishes active calls, commits outcomes and continuation, then parks at a turn boundary.
 
 A pending `PermissionAsk` is already a parkable continuation.
 Its exact ask and decision state survive handoff without waiting for the human.
@@ -980,13 +1081,14 @@ Other completed trees keep their graceful markers and immediate releases.
 
 ### Tool calls and uncertain outcomes
 
-Commit the completed assistant turn and requested tool-call identities before dispatching any call.
-For each call, commit its authorized intent and private continuation immediately before dispatch.
+The engine waits for the completed assistant turn and requested tool-call identities to commit through the coordinator before dispatching any call.
+For each call, it commits authorized intent and private continuation immediately before dispatch.
+The storage adapter checks ownership and expected head at those boundaries; it neither authorizes the tool nor dispatches it.
 The model's batch is not a storage or execution transaction.
 Permitted independent calls may overlap under the existing read-parallel/mutate-serial discipline.
 
-A client-safe projection may show an admitted call in flight.
-Commit each established result under its original call identity.
+The server's client-safe projection may show an admitted call in flight.
+The engine submits each established result for commit under its original call identity before dependent continuation.
 The durable evidence distinguishes three states:
 
 | Evidence | What the server can establish |
@@ -995,7 +1097,7 @@ The durable evidence distinguishes three states:
 | Committed intent, no committed result | The call might have started. |
 | Actionable durable ask | Approval is still pending; do not close the call as not-started. |
 
-After fencing the former writer and checking for a committed result, recovery closes an orphaned requested call with a harness-authored result:
+After fencing the former writer and checking for a committed result, the host's recovery path closes an orphaned requested call with a harness-authored result, using extension handlers where its semantics require them:
 
 - **Not-started** if no intent was committed: the dispatch gate prevented execution.
 - **Unknown-outcome** if intent committed but the outcome cannot be established: the tool may have had effects and may still be running.
@@ -1012,7 +1114,9 @@ Which tool-start phases and post-crash facts are meaningful across implementatio
 ### Execution gates
 
 The following boundaries distinguish fast observation from permission to advance the session.
-"Committed" means the authoritative store has accepted the record, including its ownership check; an in-process queue is not enough.
+The engine enforces execution gates, the host coordinator orders and submits transitions, and the storage adapter verifies and accepts their durable writes.
+The server exposes only authorized projections of accepted facts; clients may display provisional observations but cannot use them to authorize work.
+"Committed" means the authoritative adapter has accepted the record under its operating-mode and ownership contract; an in-process queue is not enough.
 
 | Action | Required before proceeding | What can be provisional |
 | --- | --- | --- |
@@ -1062,6 +1166,7 @@ Historical activity may remain a diagnostic view, but cannot attest session comp
 
 ### Logical deletion and retained bytes
 
+The host coordinates logical deletion; the adapter durably enforces the deletion gate on activation, writes, and reads.
 Logical deletion is irreversible, independently of physical purge timing.
 It fences activation and writes, prevents identity reuse, and denies new history reads even while records remain stored.
 Deleting a root `Session` also logically disables delegated children by default.
@@ -1112,10 +1217,40 @@ This draft and its companion model retain the unresolved design questions while 
 6. Extension registration and version compatibility, mandatory versus display-only state, and the exact generic operation/child-link contract.
    Later work may add active-tree handoff, autonomous run resume, historical forks, same-session rewind, and networked extensions; their hooks must not be mistaken for first-cutover behavior.
 
+## Vocabulary reference
+
+This reference keeps the prose consistent with the companion domain model and distinguishes terms that can otherwise look interchangeable.
+Definitions also appear where the detailed design first needs them.
+These names describe domain concepts, not finalized API types or wire encodings.
+
+| Term | Meaning and distinction |
+| --- | --- |
+| `Session` / `Run` | A durable conversation / a sequence of model turns continued through requested tool calls and their results, normally ending with the model's terminal response. Neither identity is a session-wide history position. |
+| `CommittedHistory` / committed record | The private ordered authority / one accepted transition within it. Public event items are projections, not private records. |
+| Record identity | Identifies a particular recorded transition for correlation or commit-retry resolution; distinct from its order in history. |
+| Committed position / head | A boundary in ordered session history / the latest such boundary. C denotes the position selected for a load. |
+| Subscription cursor / page token | Where to resume committed changes / where to continue pages of one pinned authorized view. Neither grants access. |
+| History incarnation / writer epoch | Distinguishes histories / distinguishes ownership acquisitions within the ownership domain. Neither substitutes for record order or an unexpired claim. |
+| `OwnershipClaim` / owning replica | The backend-authoritative owner, epoch, and expiry / the host process holding that right. A client attachment is not ownership. |
+| Admission | An authorized, ordered decision to accept input or work against current committed state; network receipt alone is insufficient. |
+| Provisional observation | Live information without a confirmed committed fact. Correlation permits later reconciliation, not durable replay. |
+| `ContinuationCheckpoint` | Private derived continuation materialized through P. The host may persist it through the adapter; loading at C replays (P, C]. |
+| `ClientProjection` / client display state | Server-produced authorized facts / the client's local rendering of those facts. A projection need not be a separately persisted object. |
+| Snapshot | A state view at a position. Specify projected API snapshot, private checkpoint, or storage-layout snapshot rather than implying one common object. |
+| `Extension` / `Operation` | A trusted versioned record/state interpreter / session-scoped work with an identity distinct from its initiating tool call and run. |
+| Continuation-critical | A type whose interpretation is required to reconstruct state or continue safely, unlike optional display-only detail. |
+| Request / intent / result | The model's requested tool call / the committed dispatch gate for that call / its established or explicit recovery outcome. An intent is not proof of completion. |
+| `SteerSlot` / `SteerRevision` | Replaceable pending input for one source / an identified committed version of its content and disposition. Revision-specific consumption cannot erase a newer replacement. |
+| Safe model-input boundary | Before a next model request, when the engine can incorporate pending input without interrupting a request or bypassing approvals and outcome commits. |
+| `PermissionAsk` | A durable exact-run decision request. Its projected display is distinct from private authorization and continuation material. |
+| Catalog / tombstone | The authorized listing/lifecycle index / a minimal retained identity marker enforcing irreversible logical deletion and preventing ID reuse. Neither is transcript authority. |
+| Fork / lineage | A new independent session initialized from an eligible source prefix / the source identity and pinned position it records. Neither transfers source execution or child access. |
+
 ## Related information
 
 - [Companion domain model](session-commit-history.modelith.md)
 - [Model source](session-commit-history.modelith.yaml)
+- [Prior-art research shortlist](session-commit-history-prior-art.md)
 - [Implemented persistence and reliability](../architecture/observability.md)
 - [Implemented API surface](../architecture/api-surface.md)
 - [Draft index](README.md)

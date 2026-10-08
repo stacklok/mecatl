@@ -17,3 +17,4 @@ rely on them for how Mecatl works.
 | [kubernetes-execution-and-filesystems.md](kubernetes-execution-and-filesystems.md) | Juan Antonio Osorio | Proposal for live shared files and shell access across separate Kubernetes Pods. | **2026-11-06** |
 | [session-commit-history.md](session-commit-history.md) | Joe Beda | Design discussion for authoritative committed session history, recovery, and shared client interaction. | **2026-11-06** |
 | [session-commit-history.modelith.md](session-commit-history.modelith.md) | Joe Beda | Rendered companion domain model for the session-history design, with [YAML source](session-commit-history.modelith.yaml). | **2026-11-06** |
+| [session-commit-history-prior-art.md](session-commit-history-prior-art.md) | Joe Beda | Prior-art research shortlist and comparison questions; not a completed survey. | **2026-11-06** |
