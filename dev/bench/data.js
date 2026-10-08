@@ -314629,6 +314629,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791477654776,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6947882e040fc6cb6a7c209af219713d41b0dfe3",
+          "message": "test(studio): reset storage after test-owned restores (#2214)\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T19:19:45+02:00",
+          "tree_id": "fc023e2e8179de294684309e891d3d837fc7d7e4",
+          "url": "https://github.com/stacklok/mecatl/commit/6947882e040fc6cb6a7c209af219713d41b0dfe3"
+        },
+        "date": 1791480665571,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3275,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 75.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -411567,6 +411606,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791480662183,
+  "lastUpdate": 1791480666288,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
