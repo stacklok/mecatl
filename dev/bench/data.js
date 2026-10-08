@@ -278918,6 +278918,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791443836143,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec9ef3bfefa78be5c0c47c9c17028847aa72b156",
+          "message": "fix(mcp): isolate failing servers during reconciliation (#2158)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T10:05:34+03:00",
+          "tree_id": "2ae267e3e0e72572e86fe8c2884e9a2845f235e9",
+          "url": "https://github.com/stacklok/mecatl/commit/ec9ef3bfefa78be5c0c47c9c17028847aa72b156"
+        },
+        "date": 1791444531114,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -404379,6 +404413,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791444528177,
+  "lastUpdate": 1791444532025,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
