@@ -255,3 +255,100 @@ describe("Mecatl knowledge adapter", () => {
     expect(activate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("listSkillFiles", () => {
+  const caps = {
+    learnedSkills: false,
+    learningProposals: false,
+    memoryConsolidation: { decide: false, generate: false, unavailableReason: "" },
+    reflection: false,
+    skills: true,
+    userModel: false,
+  };
+  const refusal = (code: string) =>
+    new MecatlError("refused", { code: code as never, transport: "grpc" });
+
+  function serviceWith(
+    files: Array<{ name: string; size: number }>,
+    read: (file: string) => string,
+  ) {
+    const readFile = vi.fn(async ({ file }: { file: string }) => ({ content: read(file) }));
+    const listFiles = vi.fn(async () => ({ files }));
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles, readFile } } as unknown as Client,
+      caps,
+    );
+    return { listFiles, readFile, service };
+  }
+
+  it("loads every file's text in one response, keeping the daemon's order", async () => {
+    const { listFiles, readFile, service } = serviceWith(
+      [
+        { name: "SKILL.md", size: 5 },
+        { name: "references/api.md", size: 3 },
+      ],
+      (file) => `text of ${file}`,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(listFiles).toHaveBeenCalledWith({
+      $typeName: "mecatl.v1.ListSkillFilesRequest",
+      name: "deploy",
+    });
+    expect(readFile).toHaveBeenCalledTimes(2);
+    expect(result.omitted).toBe(0);
+    expect(result.files).toEqual([
+      { content: "text of SKILL.md", name: "SKILL.md", size: 5, unavailable: "" },
+      { content: "text of references/api.md", name: "references/api.md", size: 3, unavailable: "" },
+    ]);
+  });
+
+  it("shows a refused file as unavailable instead of failing the whole skill", async () => {
+    const files = [
+      { name: "SKILL.md", size: 5 },
+      { name: "big.txt", size: 90000 },
+      { name: "blob.bin", size: 3 },
+    ];
+    const readFile = vi.fn(async ({ file }: { file: string }) => {
+      if (file === "big.txt") throw refusal("skill_file_too_large");
+      if (file === "blob.bin") throw refusal("skill_file_not_text");
+      return { content: "body" };
+    });
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles: async () => ({ files }), readFile } } as unknown as Client,
+      caps,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(result.files.map((f) => [f.name, f.content, f.unavailable])).toEqual([
+      ["SKILL.md", "body", ""],
+      ["big.txt", "", "Too large to show here."],
+      ["blob.bin", "", "This is a binary file, so it can't be shown here."],
+    ]);
+  });
+
+  it("loads only the first files and says how many more there are", async () => {
+    const files = Array.from({ length: 40 }, (_, i) => ({
+      name: `f${String(i).padStart(2, "0")}.md`,
+      size: 1,
+    }));
+    const { readFile, service } = serviceWith(files, () => "x");
+    const result = await service.listSkillFiles("many");
+    expect(result.files).toHaveLength(32);
+    expect(result.omitted).toBe(8);
+    expect(readFile).toHaveBeenCalledTimes(32);
+  });
+
+  it("lets a failure that is not about a file propagate", async () => {
+    const service = createMecatlKnowledgeService(
+      {
+        skills: {
+          listFiles: async () => ({ files: [{ name: "SKILL.md", size: 1 }] }),
+          readFile: async () => {
+            throw refusal("unavailable");
+          },
+        },
+      } as unknown as Client,
+      caps,
+    );
+    await expect(service.listSkillFiles("deploy")).rejects.toThrow("refused");
+  });
+});

@@ -14,6 +14,12 @@ const knowledge: KnowledgeService = {
     skills: true,
     userModel: true,
   },
+  async listSkillFiles() {
+    return {
+      files: [{ content: "# Review", name: "SKILL.md", size: 8, unavailable: "" }],
+      omitted: 0,
+    };
+  },
   async actOnLearnedSkill() {
     return {
       publicationError: "",
@@ -567,5 +573,23 @@ describe("knowledge routes", () => {
     });
     expect(response.status).toBe(400);
     expect(called).toBe(false);
+  });
+});
+
+describe("skill files route", () => {
+  it("returns a skill's files with their text", async () => {
+    const response = await csrfApp({ knowledge }).request("/api/v1/skills/review/files");
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      files: [{ content: "# Review", name: "SKILL.md", size: 8, unavailable: "" }],
+      omitted: 0,
+    });
+  });
+
+  it("explains an unsupported deployment instead of answering empty", async () => {
+    const off = { ...knowledge, capabilities: { ...knowledge.capabilities, skills: false } };
+    const response = await csrfApp({ knowledge: off }).request("/api/v1/skills/review/files");
+    expect(response.status).toBe(501);
+    await expect(response.json()).resolves.toMatchObject({ code: "skills_unsupported" });
   });
 });
